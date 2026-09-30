@@ -22,6 +22,16 @@ import Testing
         #expect(byPath["a.mp4"]?.folderID == folder.id)
     }
 
+    /// L2: a symlink next to its target must get its own entry id.
+    @Test func symlinkAndTargetGetDistinctIDs() throws {
+        let dir = try TempDir(); defer { dir.remove() }
+        let target = try dir.write("real.mp4", bytes: 10)
+        try FileManager.default.createSymbolicLink(at: dir.url.appendingPathComponent("link.mp4"), withDestinationURL: target)
+        guard case .online(let entries) = FolderScanner().scan(WatchedFolder(url: dir.url)) else { Issue.record("offline"); return }
+        #expect(entries.map(\.relativePath).sorted() == ["link.mp4", "real.mp4"])
+        #expect(Set(entries.map(\.id)).count == 2)
+    }
+
     @Test func missingFolderIsOfflineNotError() {
         let folder = WatchedFolder(url: URL(fileURLWithPath: "/nonexistent-\(UUID().uuidString)"))
         #expect(FolderScanner().scan(folder) == .offline)

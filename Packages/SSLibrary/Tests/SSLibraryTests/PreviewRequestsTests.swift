@@ -36,6 +36,11 @@ actor FakeProvider: PreviewProvider {
     }
 }
 
+actor CoordinatorBox {
+    private(set) var value: PreviewCoordinator?
+    func set(_ c: PreviewCoordinator) { value = c }
+}
+
 func waitUntil(_ condition: @Sendable () async -> Bool) async {
     for _ in 0..<500 {
         if await condition() { return }
@@ -174,6 +179,39 @@ func waitUntil(_ condition: @Sendable () async -> Bool) async {
         } else {
             Issue.record("stale request should fail")
         }
+    }
+
+    /// L1a: a request for older content must not supersede the newer flight or delete its files.
+    @Test func olderContentRequestIsIgnoredAndKeepsNewer() async throws {
+        let dir = try TempDir(); defer { dir.remove() }
+        let provider = FakeProvider(blocking: true)
+        let coordinator = PreviewCoordinator(cache: PreviewCache(cachesDirectory: dir.url), provider: provider)
+        let fresh = Task { try await coordinator.preview(for: req(size: 2)) }
+        await waitUntil { await provider.calls == 1 }
+        await #expect(throws: PreviewError.stale) { try await coordinator.preview(for: req(size: 1)) }
+        #expect(await provider.calls == 1)
+        await provider.open()
+        let url = try await fresh.value
+        #expect(FileManager.default.fileExists(atPath: url.path))
+        // A late old request after the newer one is cached must not delete the newer file either.
+        await #expect(throws: PreviewError.stale) { try await coordinator.preview(for: req(size: 1)) }
+        #expect(FileManager.default.fileExists(atPath: url.path))
+    }
+
+    /// L1b: supersede lands between the staleness check and the move; the moved file must not stay behind.
+    @Test func supersedeBetweenCheckAndMoveLeavesNoOrphan() async throws {
+        let dir = try TempDir(); defer { dir.remove() }
+        let cache = PreviewCache(cachesDirectory: dir.url)
+        let oldReq = req(size: 1), newReq = req(size: 2)
+        let box = CoordinatorBox()
+        let coordinator = PreviewCoordinator(cache: cache, provider: FakeProvider(), beforeMove: { request in
+            if request == oldReq, let c = await box.value { _ = await Task.detached { try? await c.preview(for: newReq) }.value }
+        })
+        await box.set(coordinator)
+        let old = Task { try await coordinator.preview(for: oldReq) }
+        _ = await old.result
+        #expect(!FileManager.default.fileExists(atPath: cache.fileURL(for: oldReq).path))
+        #expect(FileManager.default.fileExists(atPath: cache.fileURL(for: newReq).path))
     }
 
     @Test func providerFailureIsPropagatedAndNotCached() async throws {

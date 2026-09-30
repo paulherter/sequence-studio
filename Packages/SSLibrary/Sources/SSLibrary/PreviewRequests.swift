@@ -155,12 +155,22 @@ public actor PreviewCoordinator {
     private let cache: PreviewCache
     private let provider: any PreviewProvider
     private var flights: [String: Flight] = [:]
-    private var latestContent: [Slot: String] = [:]
+    private struct Version { var key: String; var modified: Date; var size: Int64 }
+    private var latestContent: [Slot: Version] = [:]
+    /// Test seam: runs after the staleness check, right before the finished file is moved into place.
+    private let beforeMove: (@Sendable (PreviewRequest) async -> Void)?
     private var knownFiles: [Slot: [String: Set<URL>]] = [:]
 
     public init(cache: PreviewCache, provider: any PreviewProvider) {
         self.cache = cache
         self.provider = provider
+        self.beforeMove = nil
+    }
+
+    init(cache: PreviewCache, provider: any PreviewProvider, beforeMove: @escaping @Sendable (PreviewRequest) async -> Void) {
+        self.cache = cache
+        self.provider = provider
+        self.beforeMove = beforeMove
     }
 
     public var inFlightCount: Int { flights.count }
@@ -171,8 +181,14 @@ public actor PreviewCoordinator {
     public func preview(for request: PreviewRequest) async throws -> URL {
         let slot = Slot(entryID: request.entryID, kind: request.kind)
         let content = request.contentHash.key
-        if let latest = latestContent[slot], latest != content { supersede(slot, keeping: content) }
-        latestContent[slot] = content
+        // Monotonic content version: a request for older content than the latest seen is dropped without
+        // touching the newer flight or its files.
+        let version = Version(key: content, modified: request.contentHash.modified, size: request.contentHash.size)
+        if let latest = latestContent[slot], latest.key != content {
+            if (version.modified, version.size) < (latest.modified, latest.size) { throw PreviewError.stale }
+            supersede(slot, keeping: content)
+        }
+        latestContent[slot] = version
 
         let destination = cache.fileURL(for: request)
         if FileManager.default.fileExists(atPath: destination.path) {
@@ -211,9 +227,15 @@ public actor PreviewCoordinator {
                 try await provider.generate(request, to: temp)
                 try Task.checkCancellation()
                 if await self.isSuperseded(key: key, id: id) { throw PreviewError.stale }
+                await beforeMove?(request)
                 if FileManager.default.fileExists(atPath: destination.path) { try FileManager.default.removeItem(at: destination) }
                 try FileManager.default.moveItem(at: temp, to: destination)
-                await self.finish(key: key, id: id, request: request, destination: destination)
+                // Registers the file atomically with the final staleness check; a supersede that landed after
+                // the check above but before now makes this remove the just-moved file.
+                if await !self.finish(key: key, id: id, request: request, destination: destination) {
+                    try? FileManager.default.removeItem(at: destination)
+                    throw PreviewError.stale
+                }
                 return destination
             } catch {
                 let wasSuperseded = await self.isSuperseded(key: key, id: id)
@@ -228,9 +250,12 @@ public actor PreviewCoordinator {
         return f.superseded
     }
 
-    private func finish(key: String, id: UUID, request: PreviewRequest?, destination: URL?) {
-        guard let f = flights[key], f.id == id else { return }
+    /// Returns false if the result is stale (superseded, or no longer the latest content of its slot).
+    @discardableResult
+    private func finish(key: String, id: UUID, request: PreviewRequest?, destination: URL?) -> Bool {
+        guard let f = flights[key], f.id == id else { return request == nil }
         flights[key] = nil
+        if request != nil, f.superseded || latestContent[f.slot]?.key != f.contentKey { return false }
         if let destination, !f.superseded {
             cache.touch(destination)
             cache.evict(protecting: [destination])
@@ -238,6 +263,7 @@ public actor PreviewCoordinator {
         if let request, let destination, !f.superseded {
             knownFiles[f.slot, default: [:]][request.contentHash.key, default: []].insert(destination)
         }
+        return true
     }
 
     private func leave(key: String, id: UUID) {

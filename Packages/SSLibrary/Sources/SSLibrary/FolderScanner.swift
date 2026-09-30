@@ -18,12 +18,22 @@ public struct FolderScanner: Sendable {
         guard let enumerator = fm.enumerator(
             at: folder.url, includingPropertiesForKeys: keys,
             options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return .offline }
-        let base = folder.url.resolvingSymlinksInPath().standardizedFileURL.path
+        let base = folder.url.standardizedFileURL.path
+        let resolvedBase = folder.url.resolvingSymlinksInPath().standardizedFileURL.path
         var entries: [LibraryEntry] = []
         for case let url as URL in enumerator {
-            guard let values = try? url.resourceValues(forKeys: Set(keys)), values.isRegularFile == true,
+            guard var values = try? url.resourceValues(forKeys: Set(keys + [.isSymbolicLinkKey])),
                   let kind = LibraryItemKind.classifyIfVisible(url) else { continue }
-            let full = url.resolvingSymlinksInPath().standardizedFileURL.path
+            if values.isSymbolicLink == true {
+                // A link to a file inside the folder is listed under its own (unresolved) path; the file
+                // attributes come from the target. Links pointing outside the folder are skipped.
+                let target = url.resolvingSymlinksInPath()
+                guard target.standardizedFileURL.path.hasPrefix(resolvedBase + "/"),
+                      let tv = try? target.resourceValues(forKeys: Set(keys)) else { continue }
+                values = tv
+            }
+            guard values.isRegularFile == true else { continue }
+            let full = url.standardizedFileURL.path
             guard full.hasPrefix(base + "/") else { continue }
             entries.append(LibraryEntry(
                 folderID: folder.id, relativePath: String(full.dropFirst(base.count + 1)), kind: kind,

@@ -15,17 +15,17 @@ Status column: open until a fix commit names the finding.
 - **T3 Low** `AnchoredPlayback.swift:114`, `KeyframeTemplate.swift:129`: Int64 overflow traps on extreme retime/migration. Fix: checked arithmetic, throw in migration.
 
 ## SSProxy
-- **P1 Med (latent)** `ProxyQueue.swift:80-100`, `ProxyCache.swift:45`: cache key ignores `timeRange`; a 5 s partial proxy is served for the whole file. Fix: key includes range, or drop `timeRange` from public `enqueue`.
-- **P2 Med** `ProxyCache.swift:61-87`: concurrent `lookup` can drop a record `commit` just replaced (orphaned file). Fix: `replaceItemAt`; drop only if `records[key] == r`.
-- **P3 Low** `ProxyCache.swift:41-42`: `updateSettings` writes outside the lock (stale on disk).
-- **P4 Low** `ProxyQueue.swift:87,122-125`: enqueue dedupes to a job that is being cancelled.
-- **P5 Low** `ProxyQueue.swift:71`: partial purge skipped if a job runs before `start()`.
-- **P6 Low** `ProxyTranscoder.swift:30-31,129`: traps on timescale > Int32.max or indefinite duration. Guard and throw.
+- **P1 Med (latent)** `ProxyQueue.swift:80-100`, `ProxyCache.swift:45`: cache key ignores `timeRange`; a 5 s partial proxy is served for the whole file. Fix: key includes range, or drop `timeRange` from public `enqueue`. — fixed
+- **P2 Med** `ProxyCache.swift:61-87`: concurrent `lookup` can drop a record `commit` just replaced (orphaned file). Fix: `replaceItemAt`; drop only if `records[key] == r`. — fixed
+- **P3 Low** `ProxyCache.swift:41-42`: `updateSettings` writes outside the lock (stale on disk). — fixed
+- **P4 Low** `ProxyQueue.swift:87,122-125`: enqueue dedupes to a job that is being cancelled. — fixed
+- **P5 Low** `ProxyQueue.swift:71`: partial purge skipped if a job runs before `start()`. — fixed
+- **P6 Low** `ProxyTranscoder.swift:30-31,129`: traps on timescale > Int32.max or indefinite duration. Guard and throw. — fixed
 
 ## SSLibrary
-- **L1 Med** `PreviewRequests.swift:174,213-266`: superseded flight can leave an orphan file (supersede between check and move); a late request for older content supersedes the newer flight and deletes its files. Fix: re-check after move; monotonic content version (mtime), ignore older.
-- **L2 Med** `FolderScanner.swift:26-29`: symlink and target in the same folder get the same entry id (relative path from resolved path). Fix: use the unresolved path.
-- **L3 Med** `FolderWatching.swift:60-82`: `FSEventsBox` unretained in the FSEvents context → use after free on a late callback. Fix: retain/release callbacks or drain the queue after invalidate.
+- **L1 Med** `PreviewRequests.swift:174,213-266`: superseded flight can leave an orphan file (supersede between check and move); a late request for older content supersedes the newer flight and deletes its files. Fix: re-check after move; monotonic content version (mtime), ignore older. — fixed
+- **L2 Med** `FolderScanner.swift:26-29`: symlink and target in the same folder get the same entry id (relative path from resolved path). Fix: use the unresolved path. — fixed
+- **L3 Med** `FolderWatching.swift:60-82`: `FSEventsBox` unretained in the FSEvents context → use after free on a late callback. Fix: retain/release callbacks or drain the queue after invalidate. — fixed
 
 ## Checked and correct
 SRT rounding/hours/CRLF; export colour tags 1-1-1 and pts math; writer cancel paths; queue state machine; anchored playback and template v1–v3; TextLayout metrics; proxy partial commit by rename, transcoder cancel, eviction; PresetStore write order; corrupt-backup pruning; transcript/caption timing (rational throughout).
