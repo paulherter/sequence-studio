@@ -1,5 +1,6 @@
 import Testing
 import Foundation
+import CoreText
 @testable import SSText
 
 @Suite struct TextLayoutTests {
@@ -186,5 +187,56 @@ import Foundation
     @Test func emptyTextHasZeroInk() {
         var s = plain(); s.stroke = TextStroke(color: .black, width: 3)
         #expect(TextLayout.layout(text: "", style: s, maxWidth: nil).inkBounds == .zero)
+    }
+}
+
+@Suite struct LineMetricsTests {
+    func style() -> TextStyle { TextStyle(fontName: "Helvetica", size: 32, alignment: .left) }
+    func mainHeight() -> Double {
+        let f = FontResolver.font(for: style())
+        return CTFontGetAscent(f) + CTFontGetDescent(f)
+    }
+
+    @Test func emojiLineIsAtLeastMainFontHeight() {
+        let r = TextLayout.layout(text: "Hello 😀🎉 world", style: style(), maxWidth: nil)
+        #expect(r.lines.count == 1)
+        #expect(r.lines[0].height >= mainHeight() - 1e-9)
+        #expect(r.lines[0].baseline <= r.lines[0].height)
+    }
+
+    @Test func lineHeightMatchesCTLineOfUsedRuns() {
+        let s = style(), text = "Hi 😀 漢字"
+        let f = FontResolver.font(for: s)
+        let attr = NSAttributedString(string: text, attributes: [NSAttributedString.Key(kCTFontAttributeName as String): f])
+        var a: CGFloat = 0, d: CGFloat = 0
+        _ = CTLineGetTypographicBounds(CTLineCreateWithAttributedString(attr), &a, &d, nil)
+        let h = TextLayout.layout(text: text, style: s, maxWidth: nil).lines[0].height
+        #expect(abs(h - max(Double(a + d), mainHeight())) < 1e-6)
+        #expect(h >= Double(a + d) - 1e-9)
+    }
+
+    @Test func mixedLinesDoNotOverlapAndPitchFollowsEachLine() {
+        let text = "Plain line\nEmoji 😀🎉🚀 line\n漢字 line\nPlain again"
+        let r = TextLayout.layout(text: text, style: style(), maxWidth: nil)
+        #expect(r.lines.count == 4)
+        for (a, b) in zip(r.lines, r.lines.dropFirst()) {
+            #expect(a.y + a.height <= b.y + 1e-9, "lines overlap")
+        }
+        #expect(r.lines.allSatisfy { $0.height >= mainHeight() - 1e-9 })
+        #expect(abs(r.bounds.maxY - r.lines.last!.rect.maxY) < 1e-9)
+    }
+
+    @Test func plainTextKeepsUniformPitch() {
+        let r = TextLayout.layout(text: "a\nb\nc", style: style(), maxWidth: nil)
+        let f = FontResolver.font(for: style())
+        let expected = CTFontGetAscent(f) + CTFontGetDescent(f) + CTFontGetLeading(f)
+        #expect(abs((r.lines[1].y - r.lines[0].y) - expected) < 1e-6)
+        #expect(abs((r.lines[2].y - r.lines[1].y) - expected) < 1e-6)
+    }
+
+    @Test func emojiWrappedLinesStayOrdered() {
+        let r = TextLayout.layout(text: String(repeating: "word 😀 ", count: 12), style: style(), maxWidth: 200)
+        #expect(r.lines.count > 2)
+        for (a, b) in zip(r.lines, r.lines.dropFirst()) { #expect(a.y + a.height <= b.y + 1e-9) }
     }
 }

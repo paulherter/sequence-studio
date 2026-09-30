@@ -33,7 +33,8 @@ public struct TextLine: Sendable, Hashable {
     public let y: Double
     /// Typographic width (trailing whitespace excluded).
     public let width: Double
-    /// ascent + descent (no leading / line spacing).
+    /// ascent + descent of the runs actually used on this line (fallback fonts such as emoji included, never
+    /// less than the main font); no leading / line spacing.
     public let height: Double
     /// Distance from `y` to the baseline.
     public let baseline: Double
@@ -63,35 +64,38 @@ public enum TextLayout {
     ///   (nil: the widest line).
     public static func layout(text: String, style: TextStyle, maxWidth: Double?) -> TextLayoutResult {
         let font = makeFont(style)
-        let ascent = CTFontGetAscent(font), descent = CTFontGetDescent(font), leading = CTFontGetLeading(font)
-        let pitch = ascent + descent + leading + style.lineSpacing
+        let fontAscent = CTFontGetAscent(font), fontDescent = CTFontGetDescent(font), fontLeading = CTFontGetLeading(font)
         let wrap = maxWidth.map { max(1, $0) } ?? Double.greatestFiniteMagnitude
 
-        // (text, width) per line
-        var raw: [(String, Double)] = []
+        var raw: [Measured] = []
         if !text.isEmpty {
             for para in text.components(separatedBy: "\n") {
-                if para.isEmpty { raw.append(("", 0)); continue }
+                if para.isEmpty { raw.append(Measured(text: "", width: 0, ascent: 0, descent: 0, leading: 0)); continue }
                 raw.append(contentsOf: wrapParagraph(para, font: font, maxWidth: wrap))
             }
         }
         guard !raw.isEmpty else { return TextLayoutResult(lines: [], bounds: .zero, inkBounds: .zero, backgroundRect: nil) }
 
-        let container = maxWidth.map { max(1, $0) } ?? raw.map(\.1).max()!
+        let container = maxWidth.map { max(1, $0) } ?? raw.map(\.width).max()!
         var lines: [TextLine] = []
-        for (i, (t, w)) in raw.enumerated() {
+        var y = 0.0
+        for m in raw {
+            // Runs in fallback fonts (emoji, CJK) may be taller than the main font; never shorter than it.
+            let ascent = max(fontAscent, m.ascent), descent = max(fontDescent, m.descent)
+            let leading = max(fontLeading, m.leading)
             let x: Double
             switch style.alignment {
             case .left: x = 0
-            case .center: x = (container - w) / 2
-            case .right: x = container - w
+            case .center: x = (container - m.width) / 2
+            case .right: x = container - m.width
             }
-            let box = TextRect(x: x, y: Double(i) * pitch, width: w, height: ascent + descent)
-            lines.append(TextLine(text: t, x: x, y: box.y, width: w, height: ascent + descent, baseline: ascent,
+            let box = TextRect(x: x, y: y, width: m.width, height: ascent + descent)
+            lines.append(TextLine(text: m.text, x: x, y: y, width: m.width, height: ascent + descent, baseline: ascent,
                                   inkBounds: inkRect(box, style: style)))
+            y += ascent + descent + leading + style.lineSpacing
         }
         let minX = lines.map(\.x).min()!, maxX = lines.map { $0.x + $0.width }.max()!
-        let bounds = TextRect(x: minX, y: 0, width: maxX - minX, height: lines.last!.y + ascent + descent)
+        let bounds = TextRect(x: minX, y: 0, width: maxX - minX, height: lines.last!.rect.maxY - lines[0].y)
         var bg: TextRect?
         if let b = style.background {
             bg = TextRect(x: bounds.x - b.padding.horizontal, y: bounds.y - b.padding.vertical,
@@ -111,20 +115,28 @@ public enum TextLayout {
 
     static func makeFont(_ style: TextStyle) -> CTFont { FontResolver.font(for: style) }
 
-    private static func wrapParagraph(_ para: String, font: CTFont, maxWidth: Double) -> [(String, Double)] {
+    private struct Measured {
+        var text: String
+        var width: Double
+        var ascent: Double, descent: Double, leading: Double
+    }
+
+    private static func wrapParagraph(_ para: String, font: CTFont, maxWidth: Double) -> [Measured] {
         let attr = NSAttributedString(string: para, attributes: [NSAttributedString.Key(kCTFontAttributeName as String): font])
         let ts = CTTypesetterCreateWithAttributedString(attr)
         let ns = para as NSString
-        var out: [(String, Double)] = []
+        var out: [Measured] = []
         var start = 0
         while start < ns.length {
             var count = CTTypesetterSuggestLineBreak(ts, start, maxWidth)
             if count < 1 { count = 1 }
             let line = CTTypesetterCreateLine(ts, CFRange(location: start, length: count))
-            let full = CTLineGetTypographicBounds(line, nil, nil, nil)
+            // Typographic bounds cover all runs actually used, including fallback fonts.
+            var a: CGFloat = 0, d: CGFloat = 0, l: CGFloat = 0
+            let full = CTLineGetTypographicBounds(line, &a, &d, &l)
             let w = max(0, full - CTLineGetTrailingWhitespaceWidth(line))
             let piece = ns.substring(with: NSRange(location: start, length: count))
-            out.append((piece.trimmingCharacters(in: .whitespaces), w))
+            out.append(Measured(text: piece.trimmingCharacters(in: .whitespaces), width: w, ascent: a, descent: d, leading: l))
             start += count
         }
         return out
