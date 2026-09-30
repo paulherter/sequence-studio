@@ -14,7 +14,7 @@ Short clip cut from `~/Documents/Videos` into the scratchpad / `TestMedia/` (git
 
 ## Open questions
 (collected during implementation)
-- Zero-length gap between two unchanged words: an inserted word gets a zero-length range at that point (no time to share without moving unchanged words). Acceptable, or steal time from neighbours?
+- Zero-length gap between two unchanged words: RESOLVED (Paul). Inserted words are never zero-length: when the gap is zero or below `minInsertedWordDuration` (10 ms) per inserted word, the time of both neighbours plus the gap is split proportionally by character count; neighbours keep their outer start/end, all contiguous and strictly increasing.
 - `minDuration` is a soft limit only (suppresses the sentence-end break for short captions); captions are never stretched beyond their words' bounds.
 - Real-clip test: `TestMedia/` is gitignored only at repo root, not under Packages/SSTranscribe. The test looks at SS_TRANSCRIBE_CLIP, then the session scratchpad clip, then `Packages/SSTranscribe/TestMedia/de_speech_20s.m4a` (add a gitignore line if that path is used). de-DE model was already installed here; no authorization prompt appeared in `swift test`.
 - Measurement (Arbeitszeitbetrug.mp4, first 20 s): 62 words, first "Achtung" at 0.06 s, last word ends 19.98 s, starts monotonic. Attribute runs come per word, so no run splitting was needed in practice.

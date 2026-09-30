@@ -6,6 +6,10 @@ public enum TranscriptEditing {
     /// (inserted at the start or end of a transcript, or into an empty one): 1/3 s per word.
     public static let fallbackWordDuration = Time(1, 3)
 
+    /// Minimum time per inserted word in a gap between unchanged neighbours. A smaller gap
+    /// (including zero) is widened by sharing time with the neighbours.
+    public static let minInsertedWordDuration = Time(1, 100)
+
     /// Comparison key: lowercased, surrounding punctuation stripped. Falls back to the raw token if nothing is left.
     static func normalise(_ token: String) -> String {
         let lower = token.lowercased()
@@ -23,7 +27,9 @@ extension Transcript {
     /// words' span; inserted words split the gap between their unchanged neighbours proportionally to
     /// character count; deleted words vanish. Never touches media.
     ///
-    /// Edge cases: a zero-length gap yields zero-length words at that point (no time to share);
+    /// Edge cases: when the gap between the neighbours is zero or smaller than
+    /// `TranscriptEditing.minInsertedWordDuration` per inserted word, the neighbours' time is shared with
+    /// the inserted words proportionally by character count (neighbours keep their outer start/end);
     /// inserts at the start/end use `TranscriptEditing.fallbackWordDuration` per word
     /// (at the start the run ends at the first word's start, clamped at zero).
     public func applyingText(_ newText: String) -> Transcript {
@@ -34,10 +40,34 @@ extension Transcript {
 
         var result: [TranscriptWord] = []
         var oi = 0, ni = 0
+        var pendingNextStart: Time?
         func flushRun(oldEnd: Int, newEnd: Int) {
             let oldRun = words[oi..<oldEnd]
             let newRun = Array(tokens[ni..<newEnd])
             guard !newRun.isEmpty else { return }
+            if oldRun.isEmpty, oldEnd < words.count, let prev = result.last {
+                let next = words[oldEnd]
+                let gap = next.range.start - prev.range.end
+                let needed = TranscriptEditing.minInsertedWordDuration * Int64(newRun.count)
+                let span = TimeRange(start: prev.range.start, end: next.range.end)
+                if (gap < needed) && (span.duration > Time.zero) {
+                    let weights = [Int64(max(prev.text.count, 1))] + newRun.map { Int64(max($0.count, 1)) } + [Int64(max(next.text.count, 1))]
+                    let total = weights.reduce(0, +)
+                    var bounds: [Time] = [span.start]
+                    var cum: Int64 = 0
+                    for wgt in weights.dropLast() {
+                        cum += wgt
+                        bounds.append(span.start + Time(span.duration.value * cum, span.duration.timescale * total))
+                    }
+                    bounds.append(span.end)
+                    result[result.count - 1].range = TimeRange(start: bounds[0], end: bounds[1])
+                    for (k, token) in newRun.enumerated() {
+                        result.append(TranscriptWord(text: token, range: TimeRange(start: bounds[k + 1], end: bounds[k + 2]), isEdited: true))
+                    }
+                    pendingNextStart = bounds[newRun.count + 1]
+                    return
+                }
+            }
             let (span, equal) = spanForRun(oldRun: oldRun, oldEnd: oldEnd, count: newRun.count, previous: result.last)
             result += Self.spread(newRun, over: span, equalWeights: equal)
         }
@@ -46,6 +76,7 @@ extension Transcript {
             if o < words.count, n < tokens.count {
                 var kept = words[o]
                 if kept.text != tokens[n] { kept.text = tokens[n]; kept.isEdited = true }
+                if let s = pendingNextStart { kept.range = TimeRange(start: s, end: kept.range.end); pendingNextStart = nil }
                 result.append(kept)
             }
             oi = o + 1

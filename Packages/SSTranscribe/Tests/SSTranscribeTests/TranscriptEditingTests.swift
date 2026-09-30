@@ -107,4 +107,60 @@ import SSCore
     @Test func languageIsPreserved() {
         #expect(base.applyingText("x").language == "de-DE")
     }
+
+    // MARK: zero / tiny gaps share time with neighbours
+
+    private func expectContiguousPositive(_ r: Transcript) {
+        for x in r.words { #expect(x.range.duration > .zero) }
+        for (a, b) in zip(r.words, r.words.dropFirst()) {
+            #expect(a.range.end == b.range.start)
+        }
+    }
+
+    @Test func zeroGapInsertionSharesTimeWithNeighboursByCharCount() {
+        // "abcd" 0..400, "efgh" 400..800, zero gap. Insert "xx" (2 chars): total 10 chars over 0..800.
+        let b = transcript([w("abcd", 0, 400), w("efgh", 400, 800)])
+        let r = b.applyingText("abcd xx efgh")
+        #expect(r.words.map(\.text) == ["abcd", "xx", "efgh"])
+        #expect(r.words[0].range.start == t(0))
+        #expect(r.words[2].range.end == t(800))
+        expectContiguousPositive(r)
+        #expect(r.words[1].isEdited)
+        #expect(r.words[1].range.duration == Time(800 * 2, 1000 * 10))
+        #expect(r.words[0].range.end == Time(800 * 4, 1000 * 10))
+    }
+
+    @Test func zeroGapMultipleInsertedWords() {
+        let b = transcript([w("aa", 100, 300), w("bb", 300, 500)])
+        let r = b.applyingText("aa c dd eee bb")
+        #expect(r.words.count == 5)
+        #expect(r.words[0].range.start == t(100))
+        #expect(r.words[4].range.end == t(500))
+        expectContiguousPositive(r)
+    }
+
+    @Test func tinyGapIsTreatedLikeZeroGap() {
+        let b = transcript([w("abcd", 0, 400), w("efgh", 401, 800)])
+        let r = b.applyingText("abcd xx yy efgh")
+        #expect(r.words[0].range.start == t(0))
+        #expect(r.words[3].range.end == t(800))
+        expectContiguousPositive(r)
+        for x in r.words { #expect(x.range.duration >= Time(1, 100)) }
+    }
+
+    @Test func zeroGapInsertionLeavesOtherWordsUntouched() {
+        let b = transcript([w("one", 0, 300), w("abcd", 300, 600), w("efgh", 600, 900), w("two", 900, 1200)])
+        let r = b.applyingText("one abcd xx efgh two")
+        #expect(r.words[0].range == b.words[0].range)
+        #expect(r.words[4].range == b.words[3].range)
+        #expect(r.words[0].id == b.words[0].id)
+        #expect(r.words[1].id == b.words[1].id)
+        #expect(r.words[3].id == b.words[2].id)
+    }
+
+    @Test func nonZeroRoomyGapDoesNotTouchNeighbours() {
+        let r = base.applyingText("Hallo, ab liebe Welt.")
+        #expect(r.words[0].range == base.words[0].range)
+        #expect(r.words[2].range == base.words[1].range)
+    }
 }
