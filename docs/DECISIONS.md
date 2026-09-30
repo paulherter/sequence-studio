@@ -88,3 +88,6 @@ Extra panel height is water-filled over the tracks (video weight 3, audio 2) up 
 
 ## 2026-10-01 [auto] Effects are an explicit per-clip list (project v9)
 `Clip.effects: [ClipEffect]` (id, kind, enabled, animatable parameters) replaces `ClipAnimation.cornerRadius`; no entry = effect not applied, no Effect Controls section, renderer ignores it. v8 -> v9: a non-default radius becomes an applied Rounded Corners effect, default = not applied. The effect's default (also what Reset restores) is Radius 24. While Effect Controls has focus, Delete/Backspace act on its selected keys, then the selected effect, never on timeline clips.
+
+## 2026-10-01 Paul: app icon
+App icon = spectrum timeline track with porcelain playhead (final 1b3), near-black; sources in App/AppIcon.icon (Liquid Glass .icon, ASSETCATALOG_COMPILER_APPICON_NAME = AppIcon).

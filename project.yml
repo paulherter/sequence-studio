@@ -22,7 +22,9 @@ targets:
   SequenceStudio:
     type: application
     platform: macOS
-    sources: [App/Sources]
+    sources:
+      - App/Sources
+      - App/AppIcon.icon
     info:
       path: App/Info.plist
       properties:
@@ -40,5 +42,6 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.paulherter.SequenceStudio
         GENERATE_INFOPLIST_FILE: NO
+        ASSETCATALOG_COMPILER_APPICON_NAME: AppIcon
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"
