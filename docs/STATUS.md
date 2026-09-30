@@ -149,3 +149,8 @@ Native decoded formats: Sony `x422` (10-bit 4:2:2, VT hands out the Apple-compre
 - Sony: long-GOP (GOP≈27) H.264 High 4:2:2 10-bit L5.1, 140 Mbit/s, LPCM audio.
 - 124 of the 210 clips in ~/Documents/Videos are ProRes (`apcs`, 1080×1920) — likely exports.
 
+
+## Feedback-1 batch (B6, Sequence Settings)
+- Effect Controls follow selection via `EffectControlsModel.sync(with:change:)`; a linked A/V selection shows the video clip (`Timeline.primaryClip(of:)`). Volume of the linked audio clip is not shown with it yet.
+- Stray 50 % line: `DividerSplitView` painted a stale NSSplitView divider; now the layer colour draws the gaps.
+- Sequence menu > Sequence Settings…, File > New Sequence… (Cmd+N): `SequenceSettingsSheet`, presets in `SequenceFormatPresets` (SSCore). Changing frame rate does not re-snap existing clips.

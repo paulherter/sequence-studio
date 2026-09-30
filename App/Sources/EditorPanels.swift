@@ -284,21 +284,19 @@ final class EditorPanels {
             monitorModel.duration = t?.duration ?? .zero
             monitorModel.markIn = t?.inOut?.start
             monitorModel.markOut = t?.inOut?.end
-            effectModel.frameDuration = fd
         }
         if change.contains(.selection) || change.contains(.project) {
             timelineView.setSelection(session.selection)
             timelineView.setCaptionSelection(session.captionSelection)
-            effectModel.setClip(session.singleSelectedClip)
         }
         if change.contains(.playhead) || change.contains(.project) {
             timelineView.setPlayhead(session.playhead)
             monitorModel.currentTime = session.playhead
-            effectModel.playhead = session.playhead
             if session.isPlaying { followPlayhead() }
         }
         // Every change re-reads the transport state, so the Play/Pause button can never lag behind the session.
         if monitorModel.isPlaying != session.isPlaying { monitorModel.isPlaying = session.isPlaying }
+        effectModel.sync(with: session, change: change)
         clipSections.sync(change)
         textView.sync(change)
         colorView.sync(change)

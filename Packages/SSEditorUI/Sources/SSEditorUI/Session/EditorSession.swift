@@ -234,6 +234,7 @@ public final class EditorSession {
         case .trackLocked: "The track is locked."
         case .collision: "Another clip is in the way."
         case .nestingCycle: "A sequence cannot contain itself."
+        case .invalidFormat: "That sequence format is not valid."
         case .clipNotFound, .timelineNotFound: "The clip no longer exists."
         case .wrongTrackKind: "That clip does not belong on this track."
         case .emptyClip: "Nothing to edit."
@@ -252,10 +253,9 @@ public final class EditorSession {
         notify(.selection)
     }
 
-    /// The one selected clip, for Effect Controls.
+    /// The clip Effect Controls shows: the one selected clip, or the video clip of a selected linked A/V pair.
     public var singleSelectedClip: Clip? {
-        guard selection.count == 1, let id = selection.first else { return nil }
-        return activeTimeline?.tracks.lazy.flatMap(\.clips).first { $0.id == id }
+        activeTimeline?.primaryClip(of: selection)
     }
 
     // MARK: Playhead and transport
@@ -441,12 +441,13 @@ public final class EditorSession {
 
     /// New empty sequence in the active sequence's format (V1, V2, A1, A2); it becomes the active one.
     @discardableResult
-    public func addSequence() -> Timeline.ID {
-        let format = activeTimeline?.format ?? SequenceFormat(frameDuration: Time(1001, 30000))
+    public func addSequence(name: String? = nil, format: SequenceFormat? = nil) -> Timeline.ID {
+        let format = format ?? activeTimeline?.format ?? SequenceFormat(frameDuration: Time(1001, 30000))
         let names = Set(project.timelines.map(\.name))
         var n = project.timelines.count + 1
         while names.contains(String(format: "Sequence %02d", n)) { n += 1 }
-        let t = Timeline(name: String(format: "Sequence %02d", n), format: format,
+        let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+        let t = Timeline(name: trimmed.isEmpty ? String(format: "Sequence %02d", n) : trimmed, format: format,
                          tracks: [Track(kind: .video), Track(kind: .video), Track(kind: .audio), Track(kind: .audio)])
         perform("New Sequence") { p in
             p.timelines.append(t)
@@ -454,6 +455,16 @@ public final class EditorSession {
         }
         setActiveTimeline(t.id)
         return t.id
+    }
+
+    /// Sequence Settings: one undo step. Clips keep their scale and position; only the canvas / rates change.
+    @discardableResult
+    public func setSequenceFormat(_ format: SequenceFormat) -> Bool {
+        guard let id = activeTimelineID, activeTimeline?.format != format else { return false }
+        do { try perform("Sequence Settings") { try $0.setFormat(format, of: id) } } catch {
+            setError(Self.message(for: error)); return false
+        }
+        return true
     }
 
     public func markIn() {

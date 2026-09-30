@@ -98,7 +98,12 @@ final class DividerSplitView: NSSplitView, NSSplitViewDelegate {
         autoresizesSubviews = true
         wantsLayer = true
         layer?.masksToBounds = true
+        // The gaps between panes show this colour. NSSplitView's own divider drawing is stale after `arrange()`
+        // moves the panes (it painted a 1 pt line at the default 50 % position, over the panes), so it is disabled.
+        layer?.backgroundColor = Theme.Colors.divider.cgColor
     }
+
+    override func drawDivider(in rect: NSRect) {}
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
     private var length: CGFloat { isVertical ? bounds.width : bounds.height }

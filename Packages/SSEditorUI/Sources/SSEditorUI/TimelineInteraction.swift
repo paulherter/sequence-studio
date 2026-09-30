@@ -338,6 +338,7 @@ public struct TimelineInteraction: Sendable {
         case .clipNotFound, .timelineNotFound: "The selected clips no longer exist."
         case .emptyClip: "Nothing to nest."
         case .wrongTrackKind: "Clips do not fit that track."
+        case .invalidFormat: "That sequence format is not valid."
         case nil: "Nest failed."
         }
     }

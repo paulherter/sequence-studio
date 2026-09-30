@@ -170,6 +170,17 @@ public final class EffectControlsModel {
         pruneSelection()
     }
 
+    /// Follows the session: the selected clip (or the video clip of a selected linked pair), nothing for no or a mixed
+    /// selection. Called for every session change; cheap when nothing relevant changed.
+    public func sync(with session: EditorSession, change: EditorSession.Change) {
+        if change.contains(.project) || change.contains(.media) {
+            let fd = session.activeTimeline?.frameDuration ?? frameDuration
+            if fd != frameDuration { frameDuration = fd }
+        }
+        if change.contains(.selection) || change.contains(.project) { setClip(session.singleSelectedClip) }
+        if change.contains(.playhead) || change.contains(.project), playhead != session.playhead { playhead = session.playhead }
+    }
+
     public var visibleSections: [EffectSection] {
         guard let clip else { return [] }
         return clip.kind == .audio ? [.volume] : [.motion, .opacity, .roundedCorners]

@@ -71,7 +71,7 @@ extension AppController {
         case .importMedia:
             showPanel(.project)
             panels.projectView.runImportPanel()
-        case .newSequence: session.addSequence()
+        case .newSequence: requestNewSequence()
         case .save: Task { await saveDocument() }
         case .export: showExport()
         default: break
@@ -114,6 +114,21 @@ extension AppController {
         mutateWorkspace { $0.show(p) }
         focusedPanel = p
         if p == .timeline { window.makeFirstResponder(panels.timelineView) }
+    }
+
+    func requestNewSequence() {
+        let base = session.activeTimeline?.format ?? SequenceFormat(frameDuration: Time(1001, 30000))
+        let n = session.project.timelines.count + 1
+        SequenceSettingsSheet.present(on: window, format: base, name: String(format: "Sequence %02d", n)) { [weak self] name, format in
+            self?.session.addSequence(name: name, format: format)
+        }
+    }
+
+    @objc func showSequenceSettings(_ sender: Any?) {
+        guard let f = session.activeTimeline?.format else { return }
+        SequenceSettingsSheet.present(on: window, format: f, name: nil) { [weak self] _, format in
+            self?.session.setSequenceFormat(format)
+        }
     }
 
     func requestNest() {

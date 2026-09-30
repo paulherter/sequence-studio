@@ -21,6 +21,12 @@ enum MenuBuilder {
                 }
             }
             if spec.title == "File" { extendFile(menu, target: target) }
+            if spec.title == "Sequence" {
+                let item = NSMenuItem(title: "Sequence Settings…", action: #selector(AppController.showSequenceSettings(_:)), keyEquivalent: "")
+                item.target = target
+                menu.insertItem(item, at: 0)
+                menu.insertItem(.separator(), at: 1)
+            }
             if spec.title == "Window" {
                 windowMenu(menu, target: target, map: map)
                 NSApp.windowsMenu = menu

@@ -11,6 +11,7 @@ public enum EditError: Error, Equatable {
     /// A sequence would contain itself, directly or through other nested sequences.
     case nestingCycle
     case timelineNotFound
+    case invalidFormat
 }
 
 /// What a clip plays: imported media, or another sequence of the project (nested sequence).
