@@ -1,6 +1,6 @@
 # Status
 
-## Current: Phase 2 planned (slices below), next slice: P2-02
+## Current: Phase 2 planned (slices below), next slice: P2-03
 Engine interfaces: docs/ARCHITECTURE.md. One slice per fresh implementer context, in order unless marked parallel-safe (‖).
 Each slice: read CLAUDE.md, ARCHITECTURE.md (named section) and only the listed files; tests first where logic is pure;
 finish with `scripts/test.sh <Pkg>` green (+ `scripts/build.sh` for app slices) and one line here marking it done.
@@ -15,7 +15,7 @@ Legend: **Files** to create/change · **API** (see ARCHITECTURE.md §) · **Acce
 
 ### A. Model prep (SSCore, tests first)
 - [x] **P2-01 Sequence format + track/sequence flags.** Files: SSCore Timeline.swift, Model.swift, new Marker.swift, ProjectFile.swift (v2 migration), tests. API §3 (`SequenceFormat`, `Marker`, Track name/isVisible/isMuted/isSolo/isTargeted/height, Timeline inOut/markers). Accept: v1 fixture JSON loads as v2 with defaults; round-trip tests; all existing SSCore tests green.
-- [ ] **P2-02 Evaluation.** Files: SSCore new Evaluation.swift + tests. API §3 `videoLayers(at:)`, `audioSegments(in:)`, `editPoints()`, `duration`. Accept: tests cover gaps, hidden track, mute/solo, clip edges (half-open), stacked order V1→Vn, source offset after slip.
+- [x] **P2-02 Evaluation.** Files: SSCore new Evaluation.swift + tests. API §3 `videoLayers(at:)`, `audioSegments(in:)`, `editPoints()`, `duration`. Accept: tests cover gaps, hidden track, mute/solo, clip edges (half-open), stacked order V1→Vn, source offset after slip.
 - [ ] **P2-03 Rate + shuttle.** ‖ Files: SSCore new Playback.swift + tests. API §3 `PlaybackRate`, `Shuttle`. Accept: table test of Premiere J/K/L sequences (L L L → 4×, J after L → −1, K+L held → 1/4, K+tap → ±1 frame, K → 0).
 - [ ] **P2-04 Edit helpers for cutting.** ‖ Files: SSCore Timeline+Edits.swift (or new Timeline+ThreePoint.swift) + tests. Reuse Timeline+RangeEdits.swift (`lift(range)`, `extract`, `moveInsert`). New API: `lift(_ ids:)` (link-aware delete of selected clips), `overwrite(_ placements:at:)`, `threePointEdit(source: TimeRange, media:, targets:, at:, mode: .insert/.overwrite)` building linked A/V clips, `addEdit(at:tracks:)` (Cmd+K / all tracks), `rippleTrimToPlayhead(_ edge:, at:, tracks:)` (Q/W), `extendEdit(to:)` (E). Accept: tests incl. locked tracks throw, sync lock honoured, links kept.
 
