@@ -5,14 +5,51 @@ public enum ClipEdge: Sendable { case head, tail }
 /// A sequence of tracks. (Named `Timeline` so it does not shadow `Swift.Sequence`.)
 /// Ripple edits work timeline-wide like Premiere: every track with sync lock on shifts together,
 /// locked tracks never shift, and an edit that touches a locked track is refused.
+public struct SequenceFormat: Sendable, Hashable, Codable {
+    public var width: Int
+    public var height: Int
+    public var frameDuration: Time
+    public var audioSampleRate: Int
+
+    public init(width: Int = 1920, height: Int = 1080, frameDuration: Time, audioSampleRate: Int = 48_000) {
+        self.width = width; self.height = height
+        self.frameDuration = frameDuration; self.audioSampleRate = audioSampleRate
+    }
+}
+
 public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     public var id: UUID
     public var name: String
-    public var frameDuration: Time
+    public var format: SequenceFormat
     public var tracks: [Track]
+    public var inOut: TimeRange?
+    public var markers: [Marker]
+
+    public var frameDuration: Time {
+        get { format.frameDuration }
+        set { format.frameDuration = newValue }
+    }
+
+    public init(id: UUID = UUID(), name: String, format: SequenceFormat, tracks: [Track] = [],
+                inOut: TimeRange? = nil, markers: [Marker] = []) {
+        self.id = id; self.name = name; self.format = format; self.tracks = tracks
+        self.inOut = inOut; self.markers = markers
+    }
 
     public init(id: UUID = UUID(), name: String, frameDuration: Time, tracks: [Track] = []) {
-        self.id = id; self.name = name; self.frameDuration = frameDuration; self.tracks = tracks
+        self.init(id: id, name: name, format: SequenceFormat(frameDuration: frameDuration), tracks: tracks)
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, name, format, tracks, inOut, markers }
+
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        id = try c.decode(UUID.self, forKey: .id)
+        name = try c.decode(String.self, forKey: .name)
+        format = try c.decode(SequenceFormat.self, forKey: .format)
+        tracks = try c.decodeIfPresent([Track].self, forKey: .tracks) ?? []
+        inOut = try c.decodeIfPresent(TimeRange.self, forKey: .inOut)
+        markers = try c.decodeIfPresent([Marker].self, forKey: .markers) ?? []
     }
 
     public func track(_ id: Track.ID) -> Track? { tracks.first { $0.id == id } }

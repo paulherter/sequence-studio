@@ -52,11 +52,46 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
     public var syncLock: Bool
     /// Sorted by start, never overlapping.
     public private(set) var clips: [Clip]
+    public var name: String
+    /// Eye toggle (video): hidden tracks are not rendered.
+    public var isVisible: Bool
+    /// Audio: muted tracks are silent. Solo silences every non-solo audio track.
+    public var isMuted: Bool
+    public var isSolo: Bool
+    /// Receives inserts/overwrites from the source monitor.
+    public var isTargeted: Bool
+    /// Row height in points (UI hint).
+    public var height: Double
+
+    public static let defaultHeight: Double = 48
 
     public init(id: UUID = UUID(), kind: TrackKind, clips: [Clip] = [],
-                isLocked: Bool = false, syncLock: Bool = true) {
+                isLocked: Bool = false, syncLock: Bool = true,
+                name: String = "", isVisible: Bool = true, isMuted: Bool = false, isSolo: Bool = false,
+                isTargeted: Bool = false, height: Double = Track.defaultHeight) {
         self.id = id; self.kind = kind; self.clips = clips
         self.isLocked = isLocked; self.syncLock = syncLock
+        self.name = name; self.isVisible = isVisible; self.isMuted = isMuted; self.isSolo = isSolo
+        self.isTargeted = isTargeted; self.height = height
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, kind, clips, isLocked, syncLock, name, isVisible, isMuted, isSolo, isTargeted, height
+    }
+
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(UUID.self, forKey: .id),
+                  kind: try c.decode(TrackKind.self, forKey: .kind),
+                  clips: try c.decodeIfPresent([Clip].self, forKey: .clips) ?? [],
+                  isLocked: try c.decodeIfPresent(Bool.self, forKey: .isLocked) ?? false,
+                  syncLock: try c.decodeIfPresent(Bool.self, forKey: .syncLock) ?? true,
+                  name: try c.decodeIfPresent(String.self, forKey: .name) ?? "",
+                  isVisible: try c.decodeIfPresent(Bool.self, forKey: .isVisible) ?? true,
+                  isMuted: try c.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false,
+                  isSolo: try c.decodeIfPresent(Bool.self, forKey: .isSolo) ?? false,
+                  isTargeted: try c.decodeIfPresent(Bool.self, forKey: .isTargeted) ?? false,
+                  height: try c.decodeIfPresent(Double.self, forKey: .height) ?? Track.defaultHeight)
     }
 
     /// Takes part in ripple edits made on other tracks.

@@ -54,9 +54,44 @@ import Testing
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try ProjectFile.write(try sample(), to: dir)
         let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
-        #expect(text.contains("\"formatVersion\" : 1"))
+        #expect(text.contains("\"formatVersion\" : 2"))
         #expect(text.contains("\n"))
         #expect(text.contains("2023-11-14T22:13:20Z"))
+    }
+
+    @Test func v1FixtureLoadsAsV2WithDefaults() throws {
+        let tid = UUID().uuidString, pid = UUID().uuidString, cid = UUID().uuidString
+        let v1 = #"""
+        {"formatVersion":1,"project":{"id":"\#(pid)","name":"Old","media":[],
+         "timelines":[{"id":"\#(tid)","name":"Main","frameDuration":{"value":1001,"timescale":30000},
+           "tracks":[{"id":"\#(cid)","kind":"video","isLocked":true,"syncLock":false,"clips":[]}]}]}}
+        """#
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        try Data(v1.utf8).write(to: dir.appendingPathComponent("project.json"))
+        let p = try ProjectFile.read(from: dir)
+        let tl = try #require(p.timelines.first)
+        #expect(tl.format == SequenceFormat(width: 1920, height: 1080, frameDuration: Time(1001, 30000), audioSampleRate: 48_000))
+        #expect(tl.frameDuration == Time(1001, 30000))
+        #expect(tl.inOut == nil && tl.markers.isEmpty)
+        let t = tl.tracks[0]
+        #expect(t.isLocked && !t.syncLock)
+        #expect(t.name == "" && t.isVisible && !t.isMuted && !t.isSolo && !t.isTargeted && t.height == Track.defaultHeight)
+    }
+
+    @Test func v2FieldsRoundTrip() throws {
+        var p = try sample()
+        var tl = p.timelines[0]
+        tl.format = SequenceFormat(width: 1080, height: 1920, frameDuration: Time(1, 25), audioSampleRate: 44_100)
+        tl.inOut = TimeRange(start: Time(1, 1), duration: Time(2, 1))
+        tl.markers = [Marker(time: Time(3, 2), name: "hit")]
+        tl.tracks[0].name = "V1"; tl.tracks[0].isVisible = false; tl.tracks[0].height = 80
+        tl.tracks[1].isMuted = true; tl.tracks[1].isSolo = true; tl.tracks[1].isTargeted = true
+        p.timelines[0] = tl
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        try ProjectFile.write(p, to: dir)
+        let back = try ProjectFile.read(from: dir)
+        #expect(back == p)
+        #expect(back.timelines[0].frameDuration == Time(1, 25))
     }
 
     @Test func missingAndCorrupt() throws {
@@ -64,14 +99,14 @@ import Testing
         #expect(throws: ProjectFileError.missing) { try ProjectFile.read(from: dir) }
         try Data("{ nope".utf8).write(to: dir.appendingPathComponent("project.json"))
         #expect(throws: ProjectFileError.corrupt) { try ProjectFile.read(from: dir) }
-        try Data(#"{"formatVersion":1,"project":{"x":1}}"#.utf8).write(to: dir.appendingPathComponent("project.json"))
+        try Data(#"{"formatVersion":2,"project":{"x":1}}"#.utf8).write(to: dir.appendingPathComponent("project.json"))
         #expect(throws: ProjectFileError.corrupt) { try ProjectFile.read(from: dir) }
     }
 
     @Test func newerVersionRefused() throws {
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try Data(#"{"formatVersion":99,"project":{}}"#.utf8).write(to: dir.appendingPathComponent("project.json"))
-        #expect(throws: ProjectFileError.newerVersion(found: 99, supported: 1)) { try ProjectFile.read(from: dir) }
+        #expect(throws: ProjectFileError.newerVersion(found: 99, supported: 2)) { try ProjectFile.read(from: dir) }
     }
 
     @Test func migrationFromFakeV0() throws {
@@ -84,13 +119,13 @@ import Testing
             p["media"] = [Any](); p["timelines"] = [Any]()
             o["project"] = p
             return o
-        }]
+        }, 1: ProjectFile.migrateV1toV2]
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try Data(v0.utf8).write(to: dir.appendingPathComponent("project.json"))
         let p = try ProjectFile.read(from: dir, migrations: migrations)
         #expect(p.name == "Old")
         // without a registered step, refuse rather than guess
-        #expect(throws: ProjectFileError.corrupt) { try ProjectFile.read(from: dir, migrations: [:]) }
+        #expect(throws: ProjectFileError.corrupt) { try ProjectFile.read(from: dir, migrations: [1: ProjectFile.migrateV1toV2]) }
     }
 
     @Test func failedWriteKeepsOldFile() throws {
