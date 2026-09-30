@@ -12,6 +12,9 @@ public struct PlaybackStats: Sendable, Equatable {
     /// |presented video time - audio clock| over the run (read right after each composite while playing on the audio
     /// clock). Stays 0 while the engine runs on the host clock.
     public var maxAVDrift: Time = .zero
+    /// Render-loop iterations (display-link ticks, or `tick()` calls when headless). Presents per tick well below
+    /// the display rate with no drops means the driver is ticking slowly (e.g. the window is hidden or occluded).
+    public var renderTicks = 0
     /// Bytes held by the frame cache.
     public var cacheBytes = 0
 

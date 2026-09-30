@@ -265,6 +265,51 @@ private struct Rig {
         await e.waitForDecodes()
         #expect(rig.tick() == 10)
     }
+
+    @Test func viewerZoomRepresentsWithoutDecoding() async throws {
+        let rig = try await Rig.make(Rig.single)
+        let e = rig.engine
+        #expect(e.viewerZoom == .fit)
+        e.seek(to: fd * 12)
+        await e.waitForDecodes()
+        #expect(rig.tick() == 12)
+        #expect(e.tick() == false)                       // nothing changed
+        #expect(e.loop.lastPresentedZoom == .fit)
+        let decodes = e.decodeCalls, presented = e.stats.presentedFrames
+
+        e.viewerZoom = .percent(200)
+        #expect(rig.tick() == 12)                        // same frame, presented again
+        #expect(e.loop.lastPresentedZoom == .percent(200))
+        #expect(e.stats.presentedFrames == presented + 1)
+        #expect(e.tick() == false)
+        e.viewerZoom = .percent(200)                     // unchanged: no re-present
+        #expect(e.tick() == false)
+        e.viewerZoom = .fit
+        #expect(e.tick())
+        #expect(e.loop.lastPresentedZoom == .fit)
+        await e.waitForDecodes()
+        #expect(e.decodeCalls == decodes)
+        #expect(e.position == fd * 12)
+        #expect(e.stats.droppedFrames == 0)
+    }
+
+    /// Position = start of the frame shown: exact for an on-grid seek, floored to the grid otherwise.
+    @Test func seekPositionIsFrameFloor() async throws {
+        let rig = try await Rig.make(Rig.single)
+        let e = rig.engine
+        e.seek(to: Time(1, 1))                           // 1 s is on the 30 fps grid
+        await e.waitForDecodes()
+        #expect(rig.tick() == 30)
+        #expect(e.position == Time(1, 1))
+        e.seek(to: Time(1, 1) + Time(1, 100))            // between frames 30 and 31
+        await e.waitForDecodes()
+        _ = e.tick()
+        #expect(e.position == Time(1, 1))
+        e.seek(to: fd * 31 - Time(1, 1_000_000))         // just before frame 31: still 30
+        await e.waitForDecodes()
+        _ = e.tick()
+        #expect(e.position == fd * 30)
+    }
 }
 
 private final class Hook: Sendable {

@@ -124,6 +124,8 @@ final class RenderLoop: @unchecked Sendable {
         /// Coalesces position reports to the main actor.
         var reportPending = false
         var lastOutcome: TickOutcome?
+        /// Zoom of the last composite handed to the present path (headless too; test hook).
+        var lastPresentedZoom: ViewerZoom?
     }
 
     /// GPU objects, touched only inside `tick` (the lock serialises ticks from the render thread and from tests).
@@ -236,6 +238,16 @@ final class RenderLoop: @unchecked Sendable {
         if let old { Task { await old.cancelAll() } }
     }
 
+    /// Viewer zoom for the present path. A change re-presents the current frame (from the cache, no decode).
+    func setZoom(_ z: ViewerZoom) {
+        state.withLock { s in
+            guard s.zoom != z else { return }
+            s.zoom = z; s.generation &+= 1
+        }
+    }
+
+    var lastPresentedZoom: ViewerZoom? { state.withLock { $0.lastPresentedZoom } }
+
     func setPresenter(_ p: Presenter?) { state.withLock { $0.presenter = p; $0.generation &+= 1 } }
 
     func invalidate() { state.withLock { $0.generation &+= 1 } }
@@ -251,6 +263,7 @@ final class RenderLoop: @unchecked Sendable {
     var stats: PlaybackStats {
         var s = state.withLock { $0.stats }
         s.cacheBytes = cache.usedBytes
+        s.renderTicks = timing.withLock { $0.ticks }
         return s
     }
 
@@ -275,8 +288,19 @@ final class RenderLoop: @unchecked Sendable {
     // MARK: Tick
 
     func tick(drawable: CAMetalDrawable? = nil) -> TickOutcome? {
-        gpu.withLock { g in tickLocked(&g, drawable: drawable) }
+        let start = ContinuousClock.now
+        let o = gpu.withLock { g in tickLocked(&g, drawable: drawable) }
+        let dt = ContinuousClock.now - start
+        timing.withLock { t in
+            t.ticks += 1; t.total += dt
+            if o?.presented == true { t.presents += 1; t.presentTotal += dt }
+        }
+        return o
     }
+
+    /// Render-loop iteration counts and wall time (bench / diagnostics; driver ticks included).
+    struct TickTiming: Sendable { var ticks = 0; var total = Duration.zero; var presents = 0; var presentTotal = Duration.zero }
+    let timing = Mutex(TickTiming())
 
     private struct LayerBuild { var layers: [RenderLayer] = []; var missing = 0; var waiting = false; var misses: [(UUID, Int)] = [] }
 
@@ -343,6 +367,7 @@ final class RenderLoop: @unchecked Sendable {
             s.incomplete = b.waiting
             guard presented else { return }
             s.lastTime = t
+            s.lastPresentedZoom = zoom
             s.stats.presentedFrames += 1
             // A drop is a playing frame shown without its exact picture; a paused seek/step waiting for decode is not.
             if isNew && b.missing > 0 && playing && !stepPending { s.stats.droppedFrames += 1 }

@@ -18,11 +18,15 @@ import SSRender
 /// loop runs on a dedicated render thread (`CAMetalDisplayLink`) while a layer is attached, or one iteration per
 /// `tick()` call when headless (tests, bench). Decoding runs in `DecodeScheduler` jobs on per-media serial queues.
 @MainActor public final class PlaybackEngine {
-    /// Last presented frame, on the sequence frame grid.
+    /// Start time of the last presented frame, on the sequence frame grid. After `seek(to: t)` this is `t` floored to
+    /// the grid: exactly `t` when `t` is a frame boundary, else the start of the frame containing `t` (e.g. 1 s on a
+    /// 59.94 fps grid is frame 59 = 0.9843 s). This is the frame on screen.
     public private(set) var position: Time = .zero
     public private(set) var rate: PlaybackRate = .zero
     /// Program monitor quality: decode size. A change keys new frames by the new scale (the others stay cached).
     public var quality: DecodeScale = .full { didSet { loop.setQuality(quality) } }
+    /// Program monitor zoom used by the present path. A change re-presents the current frame (no decode).
+    public var viewerZoom: ViewerZoom = .fit { didSet { if viewerZoom != oldValue { loop.setZoom(viewerZoom) } } }
     /// Called with the new position after a frame was presented (coalesced, at most display rate).
     public var onPositionChange: (@MainActor (Time) -> Void)?
 
@@ -98,7 +102,7 @@ import SSRender
         loop.invalidate()
     }
 
-    /// Exact frame (floored to the grid, clamped to the timeline); shown as soon as it is decoded.
+    /// Frame containing `t` (floored to the grid, clamped to the timeline); shown as soon as it is decoded.
     public func seek(to t: Time) {
         let target = timeline.map { RenderLoop.gridTime(t, $0) } ?? t
         loop.clock.seek(to: target)
