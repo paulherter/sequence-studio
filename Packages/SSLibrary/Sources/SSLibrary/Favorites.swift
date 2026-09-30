@@ -2,6 +2,9 @@ import Foundation
 
 public enum LibraryStoreError: Error, Equatable, Sendable {
     case newerFormat(found: Int, supported: Int)
+    case emptyName
+    case notFound
+    case duplicateID
 }
 
 /// Set of favorite entries keyed by stable entry id.
