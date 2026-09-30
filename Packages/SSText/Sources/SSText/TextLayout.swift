@@ -1,6 +1,8 @@
 import Foundation
 import CoreText
 
+/// Rectangle in layout space: sequence pixels (points = pixels, scale 1), origin top-left, y down.
+/// See docs/ARCHITECTURE.md "Coordinate convention". Renderers convert to Core Graphics/Metal at their own boundary.
 public struct TextRect: Sendable, Hashable, Codable {
     public var x: Double, y: Double, width: Double, height: Double
     public init(x: Double, y: Double, width: Double, height: Double) {
@@ -11,7 +13,8 @@ public struct TextRect: Sendable, Hashable, Codable {
     public var maxY: Double { y + height }
 }
 
-/// One laid-out line. Coordinates: origin top-left, y grows downward, in points.
+/// One laid-out line. Coordinates: sequence pixels (points = pixels), origin top-left, y grows downward.
+/// The layout origin (0, 0) is the top-left of the text block; callers place the block in the sequence.
 public struct TextLine: Sendable, Hashable {
     /// Line content without the trailing whitespace that caused the wrap.
     public let text: String
@@ -37,6 +40,10 @@ public struct TextLayoutResult: Sendable, Hashable {
 }
 
 /// Deterministic pure function of (text, style, maxWidth), built on Core Text.
+///
+/// Coordinate convention (docs/ARCHITECTURE.md): all output is in sequence pixels (font size and widths are
+/// points = pixels, scale 1), origin top-left of the text block, y down. Core Text's y-up baseline metrics are
+/// converted here; no consumer needs to flip.
 public enum TextLayout {
     /// - Parameter maxWidth: wrap width in points; nil disables wrapping. Also the alignment container
     ///   (nil: the widest line).
