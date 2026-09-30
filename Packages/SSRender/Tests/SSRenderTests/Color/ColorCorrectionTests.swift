@@ -2,6 +2,14 @@ import Testing
 import simd
 @testable import SSRender
 
+struct SystemRandomNumberGeneratorFixed {
+    var s: UInt64
+    mutating func next() -> Float {
+        s = s &* 6364136223846793005 &+ 1442695040888963407
+        return Float((s >> 40) & 0xFFFFFF) / Float(0x1000000) + 0.001
+    }
+}
+
 @Suite struct ColorCorrectionTests {
     let gamuts: [Gamut] = [.rec709, .bt2020, .sGamut3Cine]
     let samples: [SIMD3<Float>] = [[0.18, 0.18, 0.18], [0.5, 0.2, 0.1], [2, 1, 0.5], [0, 0, 0], [0.01, 0.3, 0.9], [12, 8, 20]]
@@ -38,11 +46,32 @@ import simd
         }
     }
 
-    @Test func saturation200Doubles() {
+    @Test func saturationHundredIsIdentity() {
+        let c = ColorCorrection()
+        for g in gamuts { for s in samples { #expect(c.apply(s, gamut: g) == s) } }
+    }
+
+    @Test func saturation200IsLogRatioDoubled() {
         var c = ColorCorrection(); c.saturation = 200
         let s = SIMD3<Float>(0.5, 0.2, 0.1)
         let y = simd_dot(Gamut.rec709.lumaRow, s)
-        #expect(simd_length(c.apply(s, gamut: .rec709) - (SIMD3(repeating: y) + (s - y) * 2)) < 1e-6)
+        let o = c.apply(s, gamut: .rec709)
+        for i in 0..<3 { #expect(abs(log2(o[i] / y) - 2 * log2(s[i] / y)) < 1e-4) }
+    }
+
+    @Test func saturationNeverNegativeAndHomogeneous() {
+        var rng = SystemRandomNumberGeneratorFixed(s: 11)
+        for sat: Float in [0, 50, 150, 200] {
+            var c = ColorCorrection(); c.saturation = sat
+            for g in gamuts { for _ in 0..<200 {
+                let s = SIMD3<Float>(rng.next(), rng.next(), rng.next()) * 4
+                let o = c.apply(s, gamut: g)
+                #expect(o.x >= 0 && o.y >= 0 && o.z >= 0 && o.x.isFinite && o.y.isFinite && o.z.isFinite)
+                let k: Float = 3.7
+                let o2 = c.apply(s * k, gamut: g)
+                #expect(simd_length(o2 - o * k) <= 1e-4 * max(1, simd_length(o * k)))
+            } }
+        }
     }
 
     @Test func contrastKeepsGreyFixedAndSpreads() {

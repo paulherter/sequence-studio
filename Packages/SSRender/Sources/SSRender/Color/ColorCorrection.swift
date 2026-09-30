@@ -85,8 +85,12 @@ public struct PreparedCorrection: Sendable {
             }
         }
         if hasSaturation {
+            // Perceptual (log2 ratio to luminance): Y * (max(rgb, 2^-16) / Y)^s. Never negative.
             let y = simd_dot(luma, c)
-            c = SIMD3(repeating: y) + (c - SIMD3(repeating: y)) * saturation
+            if y > Self.minLuma {
+                let r = simd_max(c, SIMD3<Float>(repeating: Self.minLuma)) / y
+                c = y * SIMD3(powf(r.x, saturation), powf(r.y, saturation), powf(r.z, saturation))
+            }
         }
         return c
     }
