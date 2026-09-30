@@ -7,7 +7,12 @@ commit until V1 is done. You do not write product code yourself: implementer age
 1. Read CLAUDE.md, docs/STATUS.md, docs/DECISIONS.md, `git log --oneline -30`, `git status --short`.
 2. First run only: merge the separate status files (docs/PHASE3/4/5/7/8.md, EXPORT.md, LIBRARY.md, PROXY.md,
    REVIEW-1.md) into ONE slice list in docs/STATUS.md (done / next / open). Keep the detail files as references.
-3. Continue with the next open slices.
+   Earlier parallel sessions may have been stopped mid-task. Their open items are in those files
+   (incl. answers Paul already gave there: Proxy auto-generation + 50 GB LRU cache, own 4-band compressor,
+   denoise mix ~50 %, review fixes 1-10, caption in/out anchors, Library open questions → decide yourself).
+3. Uncommitted leftovers in `git status`: per package, run its tests. Green and coherent → review briefly and commit.
+   Half-done → finish via an implementer agent or discard with `git restore`/delete, then note it in STATUS.md.
+4. Continue with the next open slices.
 
 ## Order of work
 1. Finish Phase 2 (engine slices, then shell/timeline/monitors/shortcuts). This is the critical path.
