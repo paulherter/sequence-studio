@@ -79,10 +79,10 @@ private func makeTimeline() -> (Timeline, v1: Track, v2: Track, a1: Track, a2: T
         let rows = g.rows(for: tl)
         #expect(rows.map(\.track) == [v2.id, v1.id, a1.id, a2.id])   // V2, V1, A1, A2
         #expect(rows.map(\.label) == ["V2", "V1", "A1", "A2"])
-        #expect(rows.map(\.height) == [20, 32, 26, 20])              // Track.height (48) is ignored
+        #expect(rows.map(\.height) == [32, 32, 26, 26])              // Track.height (48) is ignored
         #expect(rows[0].y == TimelineGeometry.rulerHeight)
         #expect(rows[1].y == rows[0].maxY)
-        #expect(g.contentHeight(for: tl) == TimelineGeometry.rulerHeight + 98)
+        #expect(g.contentHeight(for: tl) == TimelineGeometry.rulerHeight + 116)
     }
 
     @Test func heightOverride() {

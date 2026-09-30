@@ -9,7 +9,7 @@ private let link = UUID()
 
 /// 4 pt per frame: frame f is at x = 162 + 4 f. Rows: V2 y22..<42, V1 42..<74, A1 74..<100, A2 100..<120.
 private func X(_ f: Double) -> CGFloat { 162 + CGFloat(f) * 4 }
-private let yV2: CGFloat = 30, yV1: CGFloat = 58, yA1: CGFloat = 87, yA2: CGFloat = 110
+private let yV2: CGFloat = 38, yV1: CGFloat = 70, yA1: CGFloat = 99, yA2: CGFloat = 125
 
 private func mk(_ start: Int64, _ frames: Int64, kind: TrackKind = .video, link: UUID? = nil) -> Clip {
     Clip(name: "c", media: UUID(), kind: kind, source: TimeRange(start: fd * 50, duration: fd * frames),

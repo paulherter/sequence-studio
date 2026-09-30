@@ -81,4 +81,7 @@
 - Settings window (`AppSettings`, UserDefaults). Autosave interval and audio output are read at launch; the audio output device is stored but not yet used by the engine.
 
 ## [auto] Timeline track area fills the panel
-Extra panel height is water-filled over the tracks (video weight 3, audio 2) up to caps V1 200, A1 120, others 90 pt; user-resized tracks stay fixed. Only beyond the caps is there empty space. Chosen over a centre divider because it needs no new layout mode and hit testing keeps using one row list (`TimelineGeometry.viewportHeight`).
+Extra panel height is water-filled over the tracks (video weight 3, audio 2) up to caps video 120, audio 90 pt per track (uniform per kind, every track grows, not only V1/A1); user-resized tracks stay fixed. Only beyond the caps is there empty space. Chosen over a centre divider because it needs no new layout mode and hit testing keeps using one row list (`TimelineGeometry.viewportHeight`).
+
+## 2026-10-01 [auto] New sequences: 4 video + 4 audio tracks
+`Timeline.defaultTracks()` (V1-V4, A1-A4, first of each targeted) is used by New Sequence, the first-clip/untitled project and the demo. Key monitor: only an editable NSTextView keeps keys; a non-editable field editor no longer swallows Space/J/K/L (FEEDBACK-2 T3).

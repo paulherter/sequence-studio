@@ -51,3 +51,14 @@ private func track(_ kind: TrackKind, _ c: Clip) throws -> Track {
         #expect(tl.primaryClip(of: []) == nil)
     }
 }
+
+@Suite struct DefaultTracksTests {
+    @Test func fourPlusFourFirstTargeted() {
+        let t = Timeline.defaultTracks()
+        #expect(t.filter { $0.kind == .video }.count == 4)
+        #expect(t.filter { $0.kind == .audio }.count == 4)
+        #expect(t.prefix(4).allSatisfy { $0.kind == .video })
+        #expect(t.filter(\.isTargeted).count == 2)
+        #expect(t.allSatisfy { $0.clips.isEmpty })
+    }
+}
