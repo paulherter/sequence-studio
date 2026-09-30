@@ -262,7 +262,8 @@ final class EditorPanels {
             effectModel.playhead = session.playhead
             if session.isPlaying { followPlayhead() }
         }
-        if change.contains(.transport) { monitorModel.isPlaying = session.isPlaying }
+        // Every change re-reads the transport state, so the Play/Pause button can never lag behind the session.
+        if monitorModel.isPlaying != session.isPlaying { monitorModel.isPlaying = session.isPlaying }
         propertiesView.sync(change)
     }
 

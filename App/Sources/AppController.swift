@@ -382,6 +382,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         default: break
         }
         guard let c = item.representedObject as? EditorCommand else { return true }
+        // Plain-key items (no Command) belong to the KeyRouter; their key equivalent only fires when the router let the event pass.
+        if !item.keyEquivalent.isEmpty, !item.keyEquivalentModifierMask.contains(.command) {
+            if let tv = window?.firstResponder as? NSTextView, tv.isEditable || tv.isFieldEditor { return false }
+            if window?.firstResponder is NSTableView { return false }
+        }
         // Typing in a text field: the standard editing commands belong to it.
         if textResponder != nil, [.cut, .copy, .paste, .delete, .deleteProjectItems].contains(c) { return true }
         switch c {
