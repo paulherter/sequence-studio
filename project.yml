@@ -17,6 +17,7 @@ packages:
   SSPlayback: { path: Packages/SSPlayback }
   SSExport: { path: Packages/SSExport }
   SSTranscribe: { path: Packages/SSTranscribe }
+  SSEditorUI: { path: Packages/SSEditorUI }
 targets:
   SequenceStudio:
     type: application
@@ -29,6 +30,7 @@ targets:
       - package: SSPlayback
       - package: SSExport
       - package: SSTranscribe
+      - package: SSEditorUI
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.paulherter.SequenceStudio

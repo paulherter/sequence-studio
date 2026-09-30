@@ -1,0 +1,568 @@
+import Foundation
+import Observation
+import SSCore
+
+/// The editing document: one project with undo history, the active sequence, playhead, selection, file state and
+/// the Program engine. Every edit goes through `perform` / `performTimeline` (one undo step each); after each
+/// commit, undo and redo the active timeline is pushed to the engine with `setTimeline`.
+///
+/// Timeline edits run through `Project.edit` so a nested clip can never make a sequence contain itself.
+/// File work (save, open, autosave) runs on `ProjectSaveQueue`, off the main actor and serialised.
+@MainActor @Observable
+public final class EditorSession {
+    public enum SaveError: Error, Equatable { case noFileURL }
+
+    /// What changed, for the AppKit side that cannot use observation tracking cheaply.
+    public struct Change: OptionSet, Sendable {
+        public let rawValue: Int
+        public init(rawValue: Int) { self.rawValue = rawValue }
+        public static let project = Change(rawValue: 1)       // history, timeline, file state
+        public static let selection = Change(rawValue: 2)
+        public static let playhead = Change(rawValue: 4)
+        public static let transport = Change(rawValue: 8)
+        public static let media = Change(rawValue: 16)        // a background prepare finished
+        public static let status = Change(rawValue: 32)       // lastError changed
+    }
+
+    // MARK: State
+
+    public private(set) var history: History<Project>
+    public private(set) var fileURL: URL?
+    public private(set) var activeTimelineID: Timeline.ID?
+    public private(set) var playhead: Time = .zero
+    public private(set) var selection: Set<Clip.ID> = []
+    public private(set) var captionSelection: Set<CaptionItem.ID> = []
+    public private(set) var isPlaying = false
+    public private(set) var lastAutosave: Date?
+    /// Message of the last refused or failed action (locked track, disk error...); UI shows it in the status bar.
+    public private(set) var lastError: String?
+
+    @ObservationIgnored public let engine: any ProgramEngine
+    @ObservationIgnored public let media: ProjectMediaResolver
+    @ObservationIgnored public let autosaveStore: AutosaveStore
+    @ObservationIgnored private let saveQueue: ProjectSaveQueue
+    @ObservationIgnored private let clock: @Sendable () -> Date
+    @ObservationIgnored public var onChange: (@MainActor (Change) -> Void)?
+
+    @ObservationIgnored private var forceDirty = false
+    @ObservationIgnored private var pushed: (timeline: Timeline, sequences: [Timeline.ID: Timeline])?
+    @ObservationIgnored private var mediaSnapshot: [MediaRef] = []
+    @ObservationIgnored private var requestedMedia: Set<UUID> = []
+    @ObservationIgnored private var gestureCounter = 0
+    @ObservationIgnored private var autosaveTask: Task<Void, Never>?
+
+    public var project: Project { history.current }
+    public var isDirty: Bool { history.isDirty || forceDirty }
+    public var canUndo: Bool { history.canUndo }
+    public var canRedo: Bool { history.canRedo }
+    public var undoName: String? { history.undoName }
+    public var redoName: String? { history.redoName }
+    public var activeTimeline: Timeline? { activeTimelineID.flatMap { project.timeline($0) } }
+    public var displayName: String { fileURL?.deletingPathExtension().lastPathComponent ?? project.name }
+
+    // MARK: Lifecycle
+
+    public init(project: Project = EditorSession.makeUntitled(), fileURL: URL? = nil,
+                engine: any ProgramEngine = StubProgramEngine(),
+                media: ProjectMediaResolver = ProjectMediaResolver(),
+                saveQueue: ProjectSaveQueue = ProjectSaveQueue(),
+                autosaveStore: AutosaveStore = AutosaveStore(),
+                clock: @escaping @Sendable () -> Date = { Date() }) {
+        self.history = History(project)
+        self.fileURL = fileURL
+        self.engine = engine
+        self.media = media
+        self.saveQueue = saveQueue
+        self.autosaveStore = autosaveStore
+        self.clock = clock
+        self.activeTimelineID = project.activeTimeline ?? project.timelines.first?.id
+        engine.onPositionChange = { [weak self] t in self?.enginePositionChanged(t) }
+        beginMarker()
+        syncMedia()
+        pushTimeline(force: true)
+    }
+
+    deinit { autosaveTask?.cancel() }
+
+    /// Empty project with one 29.97 fps HD sequence (V1, V2, A1, A2).
+    public static func makeUntitled() -> Project {
+        let t = Timeline(name: "Sequence 01", format: SequenceFormat(frameDuration: Time(1001, 30000)),
+                         tracks: [Track(kind: .video), Track(kind: .video), Track(kind: .audio), Track(kind: .audio)])
+        return Project(name: "Untitled", timelines: [t])
+    }
+
+    /// Ends the crash marker and the autosave timer. Call on a clean quit or before replacing the session.
+    public func close() {
+        stopAutosaveTimer()
+        SessionMarker(store: autosaveStore).end(projectID: project.id)
+    }
+
+    private func beginMarker() {
+        try? SessionMarker(store: autosaveStore).begin(projectID: project.id, projectURL: fileURL, projectName: project.name)
+    }
+
+    private func notify(_ c: Change) { onChange?(c) }
+
+    // MARK: Editing
+
+    /// One undo step. `coalescing`: consecutive edits with the same key merge. Throws the edit's error and then
+    /// leaves the project untouched.
+    public func perform(_ name: String, coalescing key: String? = nil,
+                        _ edit: (inout Project) throws -> Void) rethrows {
+        try history.commit(name, coalescing: key, edit)
+        projectDidChange()
+    }
+
+    /// Edits the active timeline through `Project.edit`: a nesting cycle is refused with `.nestingCycle`.
+    public func performTimeline(_ name: String, coalescing key: String? = nil,
+                                _ body: (inout Timeline) throws -> Void) throws {
+        guard let id = activeTimelineID else { throw EditError.timelineNotFound }
+        try perform(name, coalescing: key) { try $0.edit(id, body) }
+    }
+
+    /// Like `performTimeline`, but a refused edit only sets `lastError`. Returns whether it was applied.
+    @discardableResult
+    private func attempt(_ name: String, coalescing key: String? = nil, _ body: (inout Timeline) throws -> Void) -> Bool {
+        let before = history.current
+        do { try performTimeline(name, coalescing: key, body) } catch {
+            setError(Self.message(for: error)); return false
+        }
+        return history.current != before
+    }
+
+    @discardableResult
+    public func undo() -> Bool {
+        guard history.undo() else { return false }
+        projectDidChange()
+        return true
+    }
+
+    @discardableResult
+    public func redo() -> Bool {
+        guard history.redo() else { return false }
+        projectDidChange()
+        return true
+    }
+
+    /// Applies a finished timeline gesture (`TimelineInteraction`) as ONE undo step by replaying its edits.
+    public func commit(_ c: TimelineCommit) {
+        let ok = attempt(c.undoName) { t in
+            if c.edits.isEmpty { t = c.timeline } else { for e in c.edits { try e.apply(to: &t) } }
+        }
+        guard ok else { return }
+        setSelection(clips: c.selection, captions: c.captionSelection)
+    }
+
+    /// Property edit of one clip (Effect Controls). Edits of one gesture (`continuesGesture`) merge into one step.
+    public func replaceClip(_ clip: Clip, name: String, continuesGesture: Bool) {
+        if !continuesGesture { gestureCounter += 1 }
+        attempt(name, coalescing: "clip:\(clip.id):\(gestureCounter)") { try $0.replaceClip(clip) }
+    }
+
+    /// Premiere "Nest" of the selected clips. Returns the new sequence.
+    @discardableResult
+    public func nestSelection(name: String) -> Timeline.ID? {
+        guard let id = activeTimelineID, !selection.isEmpty else { return nil }
+        var seq: Timeline.ID?
+        let ids = Array(selection)
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        do {
+            try perform("Nest") { p in seq = try p.nest(clips: ids, in: id, name: trimmed.isEmpty ? nil : trimmed) }
+        } catch { setError(Self.message(for: error)); return nil }
+        if let seq, let t = activeTimeline {
+            setSelection(clips: Set(t.tracks.flatMap(\.clips).filter { $0.sequence == seq }.map(\.id)), captions: [])
+        }
+        return seq
+    }
+
+    public func setActiveTimeline(_ id: Timeline.ID) {
+        guard project.timeline(id) != nil, id != activeTimelineID else { return }
+        activeTimelineID = id
+        selection = []; captionSelection = []
+        syncMedia()
+        pushTimeline(force: true)
+        notify([.project, .selection])
+    }
+
+    private func projectDidChange() {
+        if let id = activeTimelineID, project.timeline(id) == nil { activeTimelineID = nil }
+        if activeTimelineID == nil { activeTimelineID = project.activeTimeline.flatMap { project.timeline($0) }?.id ?? project.timelines.first?.id }
+        pruneSelection()
+        syncMedia()
+        pushTimeline(force: false)
+        notify([.project, .selection])
+    }
+
+    private func pushTimeline(force: Bool) {
+        guard let t = activeTimeline else { pushed = nil; return }
+        let nested = Dictionary(uniqueKeysWithValues: project.reachableSequences(from: t.id).compactMap { id in
+            project.timeline(id).map { (id, $0) }
+        })
+        if !force, let p = pushed, p.timeline == t, p.sequences == nested { return }
+        pushed = (t, nested)
+        engine.setTimeline(t, sequences: nested)
+    }
+
+    private func pruneSelection() {
+        guard let t = activeTimeline else { selection = []; captionSelection = []; return }
+        selection.formIntersection(Set(t.tracks.flatMap { $0.clips.map(\.id) }))
+        captionSelection.formIntersection(Set(t.captionTracks.flatMap { $0.items.map(\.id) }))
+    }
+
+    private func syncMedia() {
+        // Always: the active sequence's sample rate can change without the media changing.
+        media.update(project.media, sampleRate: activeTimeline?.format.audioSampleRate)
+        guard project.media != mediaSnapshot else { return }
+        mediaSnapshot = project.media
+        let fresh = project.media.map(\.id).filter { requestedMedia.insert($0).inserted }
+        guard !fresh.isEmpty else { return }
+        Task { [weak self, media] in
+            await media.prepare(fresh)
+            self?.notify(.media)
+        }
+    }
+
+    private func setError(_ m: String) { lastError = m; notify(.status) }
+    public func clearError() { guard lastError != nil else { return }; lastError = nil; notify(.status) }
+
+    static func message(for error: Error) -> String {
+        switch error as? EditError {
+        case .trackLocked: "The track is locked."
+        case .collision: "Another clip is in the way."
+        case .nestingCycle: "A sequence cannot contain itself."
+        case .clipNotFound, .timelineNotFound: "The clip no longer exists."
+        case .wrongTrackKind: "That clip does not belong on this track."
+        case .emptyClip: "Nothing to edit."
+        default: error.localizedDescription
+        }
+    }
+
+    // MARK: Selection
+
+    public func select(clips: Set<Clip.ID>, captions: Set<CaptionItem.ID> = []) { setSelection(clips: clips, captions: captions) }
+
+    private func setSelection(clips: Set<Clip.ID>, captions: Set<CaptionItem.ID>) {
+        guard clips != selection || captions != captionSelection else { return }
+        selection = clips; captionSelection = captions
+        pruneSelection()
+        notify(.selection)
+    }
+
+    /// The one selected clip, for Effect Controls.
+    public var singleSelectedClip: Clip? {
+        guard selection.count == 1, let id = selection.first else { return nil }
+        return activeTimeline?.tracks.lazy.flatMap(\.clips).first { $0.id == id }
+    }
+
+    // MARK: Playhead and transport
+
+    private var frameDuration: Time { activeTimeline?.frameDuration ?? Time(1, 30) }
+
+    /// Moves the playhead (frame-snapped, never before zero) and shows that frame.
+    public func seek(to t: Time) {
+        let target = max(.zero, t.snapped(to: frameDuration))
+        playhead = target
+        engine.seek(to: target)
+        notify(.playhead)
+    }
+
+    /// Reports the playhead without asking the engine to seek (the engine already is there).
+    /// Only while playing: when paused the session's playhead is the truth and the engine's last presented frame
+    /// may still lag behind a fast scrub. Playback stops at the end of the sequence.
+    private func enginePositionChanged(_ t: Time) {
+        guard isPlaying, t != playhead else { return }
+        let end = activeTimeline?.duration ?? .zero
+        if end > .zero, t >= end, engine.rate.isForward {
+            engine.pause(); isPlaying = false
+            playhead = end
+            notify([.playhead, .transport])
+            return
+        }
+        playhead = t
+        notify(.playhead)
+    }
+
+    public func beginScrub() { engine.beginScrub() }
+    public func scrub(to t: Time) {
+        let target = max(.zero, t.snapped(to: frameDuration))
+        playhead = target
+        engine.scrub(to: target)
+        notify(.playhead)
+    }
+    public func endScrub() { engine.endScrub() }
+
+    public func playPause() {
+        if isPlaying || !engine.rate.isPaused { engine.pause(); isPlaying = false } else { engine.play(.forward); isPlaying = true }
+        notify(.transport)
+    }
+
+    public func apply(shuttle action: ShuttleAction) {
+        switch action {
+        case .setRate(let r):
+            if r.isPaused { engine.pause(); isPlaying = false } else { engine.play(r); isPlaying = true }
+            notify(.transport)
+        case .step(let n): stepFrames(n)
+        case .none: break
+        }
+    }
+
+    public func stepFrames(_ n: Int) {
+        if isPlaying { engine.pause(); isPlaying = false; notify(.transport) }
+        seek(to: playhead + frameDuration * Int64(n))
+    }
+
+    public func goToStart() { seek(to: .zero) }
+    public func goToEnd() { seek(to: activeTimeline?.duration ?? .zero) }
+
+    public func goToNextEditPoint() {
+        if let t = activeTimeline?.editPoints().first(where: { $0 > playhead }) { seek(to: t) }
+    }
+
+    public func goToPreviousEditPoint() {
+        if let t = activeTimeline?.editPoints().last(where: { $0 < playhead }) { seek(to: t) }
+    }
+
+    public func goToIn() { if let io = activeTimeline?.inOut { seek(to: io.start) } }
+    public func goToOut() { if let io = activeTimeline?.inOut { seek(to: io.end) } }
+
+    // MARK: Timeline commands
+
+    /// Delete (lift, leaves a gap) or ripple delete of the selected clips and captions.
+    public func deleteSelection(ripple: Bool) {
+        guard !selection.isEmpty || !captionSelection.isEmpty else { return }
+        var edits: [TimelineEdit] = []
+        if !selection.isEmpty {
+            let ids = Array(selection)
+            edits.append(ripple ? .rippleDelete(ids) : .lift(ids))
+        }
+        edits += captionSelection.sorted { $0.uuidString < $1.uuidString }.map { .deleteCaption($0) }
+        let name = ripple && !selection.isEmpty ? "Ripple Delete" : "Delete"
+        if attempt(name, { t in for e in edits { try e.apply(to: &t) } }) {
+            selection = []; captionSelection = []
+            notify(.selection)
+        }
+    }
+
+    /// Cmd+K: cuts at the playhead on the tracks of the selected clips, else on the targeted tracks, else on all
+    /// (`allTracks`: always all, Cmd+Shift+K).
+    public func addEditAtPlayhead(allTracks: Bool = false) {
+        guard let t = activeTimeline else { return }
+        let selected = t.tracks.filter { tr in tr.clips.contains { selection.contains($0.id) } }.map(\.id)
+        let targeted = t.tracks.filter(\.isTargeted).map(\.id)
+        let ids = allTracks ? nil : (!selected.isEmpty ? selected : (!targeted.isEmpty ? targeted : nil))
+        let at = playhead
+        attempt(allTracks ? "Add Edit to All Tracks" : "Add Edit") { _ = try $0.addEdit(at: at, tracks: ids) }
+    }
+
+    /// Q (`.head`) / W (`.tail`): ripple-trims the clip under the playhead so that edge lands on it.
+    public func rippleTrimToPlayhead(_ edge: ClipEdge) {
+        let at = playhead
+        attempt(edge == .head ? "Ripple Trim Previous Edit" : "Ripple Trim Next Edit") {
+            _ = try $0.rippleTrimToPlayhead(edge, at: at, tracks: nil)
+        }
+    }
+
+    /// Tracks a range edit applies to: the targeted tracks, else every unlocked track.
+    private func rangeTracks(_ t: Timeline) -> [Track.ID] {
+        let targeted = t.tracks.filter { $0.isTargeted && !$0.isLocked }.map(\.id)
+        return targeted.isEmpty ? t.tracks.filter { !$0.isLocked }.map(\.id) : targeted
+    }
+
+    /// Removes the In/Out range and leaves a gap.
+    public func liftRange() {
+        guard let t = activeTimeline, let io = t.inOut, !io.isEmpty else { return }
+        let ids = rangeTracks(t)
+        attempt("Lift") { try $0.lift(io, tracks: ids) }
+    }
+
+    /// Removes the In/Out range and closes the gap.
+    public func extractRange() {
+        guard let t = activeTimeline, let io = t.inOut, !io.isEmpty else { return }
+        let ids = rangeTracks(t)
+        attempt("Extract") { _ = try $0.extract(io, tracks: ids) }
+    }
+
+    /// Places media items one after another starting at `time` (default: the playhead): video on `videoTrack` (else the
+    /// targeted or first video track), audio linked on the targeted or first audio track. Source marks from the
+    /// Project panel are honoured. Into a sequence without clips the first item sets the sequence format
+    /// (size and frame rate). Returns false when nothing could be placed (unknown ID, refused edit).
+    @discardableResult
+    public func placeMedia(_ ids: [MediaRef.ID], at time: Time? = nil, videoTrack: Track.ID? = nil,
+                           mode: ThreePointMode = .overwrite) -> Bool {
+        guard let t = activeTimeline else { return false }
+        let refs = ids.compactMap { project.media($0) }.filter { ($0.info?.duration ?? $0.duration) != nil }
+        guard !refs.isEmpty else { return false }
+        let isEmpty = t.tracks.allSatisfy { $0.clips.isEmpty }
+        let vTrack = videoTrack.flatMap { id in t.track(id).flatMap { $0.kind == .video ? id : nil } }
+            ?? t.tracks.first { $0.kind == .video && $0.isTargeted }?.id ?? t.tracks.first { $0.kind == .video }?.id
+        let aTrack = t.tracks.first { $0.kind == .audio && $0.isTargeted }?.id ?? t.tracks.first { $0.kind == .audio }?.id
+        let requested = time ?? playhead
+        let marks = project.sourceMarks
+        let done = attempt(mode == .insert ? "Insert" : "Overwrite") { tl in
+            if isEmpty, let v = refs[0].info?.video {
+                tl.format = SequenceFormat(width: v.width, height: v.height, frameDuration: v.nominalFrameDuration,
+                                           audioSampleRate: tl.format.audioSampleRate)
+            }
+            var at = requested.snapped(to: tl.frameDuration)   // after a format change: the new frame grid
+            for ref in refs {
+                let total = ref.info?.duration ?? ref.duration ?? .zero
+                let source = marks[ref.id]?.range ?? TimeRange(start: .zero, duration: total)
+                var targets: [Track.ID] = []
+                if ref.info?.video != nil || ref.info == nil, let v = vTrack { targets.append(v) }
+                if ref.info?.audio != nil, let a = aTrack { targets.append(a) }
+                try tl.threePointEdit(source: source, media: ref.id, name: ref.name, mediaDuration: total,
+                                      targets: targets, at: at, mode: mode)
+                at += source.duration
+            }
+        }
+        return done
+    }
+
+    /// New empty sequence in the active sequence's format (V1, V2, A1, A2); it becomes the active one.
+    @discardableResult
+    public func addSequence() -> Timeline.ID {
+        let format = activeTimeline?.format ?? SequenceFormat(frameDuration: Time(1001, 30000))
+        let names = Set(project.timelines.map(\.name))
+        var n = project.timelines.count + 1
+        while names.contains(String(format: "Sequence %02d", n)) { n += 1 }
+        let t = Timeline(name: String(format: "Sequence %02d", n), format: format,
+                         tracks: [Track(kind: .video), Track(kind: .video), Track(kind: .audio), Track(kind: .audio)])
+        perform("New Sequence") { p in
+            p.timelines.append(t)
+            p.normalizeBins()
+        }
+        setActiveTimeline(t.id)
+        return t.id
+    }
+
+    public func markIn() {
+        guard let t = activeTimeline else { return }
+        let at = playhead
+        let end = t.inOut.map(\.end).flatMap { $0 > at ? $0 : nil } ?? max(t.duration, at + frameDuration)
+        attempt("Mark In") { $0.inOut = TimeRange(start: at, end: end) }
+    }
+
+    public func markOut() {
+        guard let t = activeTimeline, playhead > .zero else { return }
+        let at = playhead
+        let start = t.inOut.map(\.start).flatMap { $0 < at ? $0 : nil } ?? .zero
+        attempt("Mark Out") { $0.inOut = TimeRange(start: start, end: at) }
+    }
+
+    public func clearInOut() {
+        guard activeTimeline?.inOut != nil else { return }
+        attempt("Clear In and Out") { $0.inOut = nil }
+    }
+
+    public func addMarkerAtPlayhead() {
+        let at = playhead
+        attempt("Add Marker") { _ = $0.addMarker(at: at) }
+    }
+
+    // MARK: Files
+
+    private func snapshotForSave() -> (base: Project, file: Project) {
+        var p = history.current
+        p.activeTimeline = activeTimelineID
+        return (history.current, p)
+    }
+
+    /// Saves to the current file. `.noFileURL` for an untitled project (use `saveAs`).
+    public func save() async throws {
+        guard let url = fileURL else { throw SaveError.noFileURL }
+        try await write(to: url)
+    }
+
+    public func saveAs(to url: URL) async throws {
+        try await write(to: url)
+        fileURL = url
+        beginMarker()
+        notify(.project)
+    }
+
+    private func write(to url: URL) async throws {
+        let (base, file) = snapshotForSave()
+        do { try await saveQueue.write(file, to: url) } catch { setError("Could not save: \(error.localizedDescription)"); throw error }
+        // Edits made while the write was running keep the project dirty.
+        if history.current == base { history.markSaved(); forceDirty = false }
+        notify(.project)
+    }
+
+    /// Replaces the session's project with the file's. The previous project's crash marker ends.
+    public func open(url: URL) async throws {
+        let p: Project
+        do { p = try await saveQueue.read(url) } catch { setError("Could not open: \(error.localizedDescription)"); throw error }
+        replace(with: p, fileURL: url, dirty: false)
+    }
+
+    public func newProject(_ project: Project = EditorSession.makeUntitled()) {
+        replace(with: project, fileURL: nil, dirty: false)
+    }
+
+    private func replace(with p: Project, fileURL url: URL?, dirty: Bool) {
+        SessionMarker(store: autosaveStore).end(projectID: project.id)
+        history = History(p)
+        fileURL = url
+        forceDirty = dirty
+        activeTimelineID = p.activeTimeline.flatMap { p.timeline($0) }?.id ?? p.timelines.first?.id
+        selection = []; captionSelection = []
+        playhead = .zero
+        lastAutosave = nil
+        mediaSnapshot = []; requestedMedia = []
+        beginMarker()
+        syncMedia()
+        pushTimeline(force: true)
+        engine.seek(to: .zero)
+        notify([.project, .selection, .playhead])
+    }
+
+    // MARK: Autosave and recovery
+
+    /// Writes an autosave version when the project is dirty and the policy says one is due. The app calls this
+    /// from a timer (`startAutosaveTimer`); tests call it with an injected clock. Returns whether a version was written.
+    @discardableResult
+    public func tickAutosave() async -> Bool {
+        let now = clock()
+        guard autosaveStore.policy.shouldAutosave(isDirty: isDirty, lastAutosave: lastAutosave, now: now) else { return false }
+        let (_, file) = snapshotForSave()
+        let projectID = project.id
+        do {
+            try await saveQueue.autosave(file, store: autosaveStore, date: now)
+            // The project was replaced (open, new, recover) while the write ran: the version belongs to the old one.
+            guard project.id == projectID else { return false }
+            lastAutosave = now
+            return true
+        } catch {
+            setError("Autosave failed: \(error.localizedDescription)")
+            return false
+        }
+    }
+
+    public func startAutosaveTimer(checkEvery seconds: TimeInterval = 30) {
+        stopAutosaveTimer()
+        autosaveTask = Task { [weak self] in
+            while !Task.isCancelled {
+                try? await Task.sleep(for: .seconds(seconds))
+                guard !Task.isCancelled else { return }
+                await self?.tickAutosave()
+            }
+        }
+    }
+
+    public func stopAutosaveTimer() { autosaveTask?.cancel(); autosaveTask = nil }
+
+    /// Crashed sessions with an autosave newer than their saved file (run at launch).
+    public static func recoveryCandidates(scanner: RecoveryScanner = RecoveryScanner(store: AutosaveStore())) -> [RecoveryCandidate] {
+        scanner.scan()
+    }
+
+    /// Opens the autosave as an untitled copy (new id, "(Recovered)"), marked dirty. The original is not touched.
+    public func recover(_ candidate: RecoveryCandidate, scanner: RecoveryScanner) async throws {
+        let p: Project
+        do { p = try await saveQueue.recover(candidate, scanner: scanner) } catch {
+            setError("Could not recover: \(error.localizedDescription)"); throw error
+        }
+        replace(with: p, fileURL: nil, dirty: true)
+        scanner.dismiss(candidate)
+    }
+}

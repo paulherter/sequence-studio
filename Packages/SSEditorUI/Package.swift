@@ -1,7 +1,7 @@
 // swift-tools-version: 6.2
 import PackageDescription
 
-// DECISIONS: SSEditorUI will depend on SSCore, SSMedia, SSRender, SSPlayback.
+// DECISIONS: SSEditorUI depends on SSCore, SSMedia, SSRender, SSPlayback.
 // So far SSCore, SSRender (scopes), SSExport, SSText, SSAudioFX, SSTranscribe, SSLibrary; add the others when a slice needs them.
 let package = Package(
     name: "SSEditorUI",
@@ -10,11 +10,11 @@ let package = Package(
     dependencies: [
         .package(path: "../SSCore"), .package(path: "../SSRender"), .package(path: "../SSExport"),
         .package(path: "../SSText"), .package(path: "../SSAudioFX"), .package(path: "../SSTranscribe"),
-        .package(path: "../SSLibrary"), .package(path: "../SSMedia"),
+        .package(path: "../SSLibrary"), .package(path: "../SSMedia"), .package(path: "../SSPlayback"),
     ],
     targets: [
         .target(name: "SSEditorUI", dependencies: [
-            "SSCore", "SSExport", "SSText", "SSAudioFX", "SSTranscribe", "SSLibrary", "SSMedia",
+            "SSCore", "SSExport", "SSText", "SSAudioFX", "SSTranscribe", "SSLibrary", "SSMedia", "SSPlayback",
             .product(name: "SSRender", package: "SSRender"),
         ]),
         .testTarget(name: "SSEditorUITests", dependencies: ["SSEditorUI", .product(name: "SSRender", package: "SSRender")]),

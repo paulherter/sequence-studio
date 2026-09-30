@@ -108,6 +108,19 @@ public struct Workspace: Sendable, Codable, Hashable {
 
     public static let builtIns: [Workspace] = [editingPC, editingMacBook]
 
+    /// The Color page of the Edit | Color switch: big Program monitor, inspector on the right, timeline below.
+    /// Not in `builtIns` (it is a page, not an Edit layout); the other panels are in the tree but hidden so the toggles work.
+    public static let color = Workspace(name: "Color", root: .split(axis: .vertical, children: [
+        .split(axis: .horizontal, children: [
+            .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor),
+            .tabs(panels: [.effectControls, .text, .properties], selected: .effectControls),
+        ], fractions: [0.64, 0.36]),
+        .split(axis: .horizontal, children: [
+            .tabs(panels: [.timeline], selected: .timeline),
+            .tabs(panels: [.project, .library, .effects], selected: .project),
+        ], fractions: [0.75, 0.25]),
+    ], fractions: [0.62, 0.38]), hidden: [.sourceMonitor, .project, .library, .effects])
+
     // MARK: Queries
 
     public var allPanels: [PanelID] { root.panels }

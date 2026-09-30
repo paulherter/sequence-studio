@@ -294,6 +294,14 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         if !model.delete(refs) { NSSound.beep() }
     }
 
+    /// Media items selected in the outline, in row order (for Insert / Overwrite).
+    public var selectedMediaIDs: [MediaRef.ID] {
+        outline.selectedRowIndexes.compactMap { row in
+            guard case .media(let id)? = (outline.item(atRow: row) as? Node)?.ref else { return nil }
+            return id
+        }
+    }
+
     // MARK: Import
 
     /// Shows an open panel and imports the chosen files (Cmd+I).

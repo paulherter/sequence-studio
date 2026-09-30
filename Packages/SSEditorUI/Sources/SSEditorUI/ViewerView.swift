@@ -17,6 +17,9 @@ public final class ViewerView: NSView {
     }
     private var driver: RenderDriver?
     public let device: MTLDevice?
+    /// false: another renderer (the playback engine, via `ProgramEngine.attach(metalLayer)`) presents into the layer;
+    /// the view then only keeps the layer sized. Set before the view enters a window.
+    public var drivesLayer = true
 
     public var frameProvider: FrameProvider? {
         get { state.withLock { $0.provider } }
@@ -38,7 +41,8 @@ public final class ViewerView: NSView {
     public override func makeBackingLayer() -> CALayer { CAMetalLayer() }
     public override var wantsUpdateLayer: Bool { true }
     public override var isOpaque: Bool { true }
-    private var metalLayer: CAMetalLayer? { layer as? CAMetalLayer }
+    /// The backing layer, for `ProgramEngine.attach`.
+    public var metalLayer: CAMetalLayer? { layer as? CAMetalLayer }
 
     private func configureLayer() {
         guard let ml = metalLayer else { return }
@@ -56,7 +60,7 @@ public final class ViewerView: NSView {
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil { driver?.stop(); driver = nil; return }
-        guard driver == nil, let device, let ml = metalLayer, let queue = device.makeCommandQueue() else { return }
+        guard drivesLayer, driver == nil, let device, let ml = metalLayer, let queue = device.makeCommandQueue() else { return }
         configureLayer()
         let presenter = Presenter(device: device, layer: ml)
         let d = RenderDriver(layer: ml, presenter: presenter, queue: queue) { [weak self] in

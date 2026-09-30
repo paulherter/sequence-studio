@@ -1,0 +1,88 @@
+import Foundation
+import QuartzCore
+import SSCore
+import SSMedia
+import SSPlayback
+
+/// What the editor needs from the Program playback engine (docs/ARCHITECTURE.md section 6). The real
+/// `SSPlayback.PlaybackEngine` conforms (below); tests run against `StubProgramEngine`.
+@MainActor
+public protocol ProgramEngine: AnyObject {
+    /// Value snapshot of the active sequence plus the sequences it nests (by ID); called after every commit, undo and redo.
+    func setTimeline(_ timeline: Timeline, sequences: [Timeline.ID: Timeline])
+    /// nil = headless.
+    func attach(_ layer: CAMetalLayer?)
+    /// Last presented frame, snapped to the frame grid.
+    var position: Time { get }
+    var rate: PlaybackRate { get }
+    func play(_ rate: PlaybackRate)
+    func pause()
+    func seek(to t: Time)
+    func step(_ frames: Int)
+    func beginScrub()
+    func scrub(to t: Time)
+    func endScrub()
+    var quality: DecodeScale { get set }
+    /// At most display rate; drives the playhead and timecode.
+    var onPositionChange: (@MainActor (Time) -> Void)? { get set }
+}
+
+extension PlaybackEngine: ProgramEngine {}
+
+/// Engine stand-in: records everything it is told and moves `position` on seek/step. Nothing is rendered.
+@MainActor
+public final class StubProgramEngine: ProgramEngine {
+    public enum Call: Equatable, Sendable {
+        case setTimeline, attach(Bool), play(PlaybackRate), pause, seek(Time), step(Int)
+        case beginScrub, scrub(Time), endScrub
+    }
+
+    public private(set) var timeline: Timeline?
+    public private(set) var timelines: [Timeline] = []
+    public private(set) var sequences: [Timeline.ID: Timeline] = [:]
+    public private(set) var calls: [Call] = []
+    public private(set) var layer: CAMetalLayer?
+    public private(set) var position: Time = .zero
+    public private(set) var rate: PlaybackRate = .zero
+    public var quality: DecodeScale = .full
+    public var onPositionChange: (@MainActor (Time) -> Void)?
+
+    public init() {}
+
+    private var frameDuration: Time { timeline?.frameDuration ?? Time(1, 30) }
+
+    public func setTimeline(_ timeline: Timeline, sequences: [Timeline.ID: Timeline]) {
+        self.timeline = timeline
+        self.sequences = sequences
+        timelines.append(timeline)
+        calls.append(.setTimeline)
+    }
+
+    public func attach(_ layer: CAMetalLayer?) { self.layer = layer; calls.append(.attach(layer != nil)) }
+
+    public func play(_ rate: PlaybackRate) { self.rate = rate; calls.append(.play(rate)) }
+    public func pause() { rate = .zero; calls.append(.pause) }
+
+    public func seek(to t: Time) {
+        calls.append(.seek(t))
+        move(to: t)
+    }
+
+    public func step(_ frames: Int) {
+        calls.append(.step(frames))
+        move(to: position + frameDuration * Int64(frames))
+    }
+
+    public func beginScrub() { calls.append(.beginScrub) }
+    public func scrub(to t: Time) { calls.append(.scrub(t)); move(to: t) }
+    public func endScrub() { calls.append(.endScrub) }
+
+    /// Test hook: pretends playback advanced by `dt` (what a real engine reports through `onPositionChange`).
+    public func simulatePlayback(advance dt: Time) { move(to: position + dt) }
+
+    private func move(to t: Time) {
+        let snapped = max(.zero, t).snapped(to: frameDuration)
+        position = snapped
+        onPositionChange?(snapped)
+    }
+}

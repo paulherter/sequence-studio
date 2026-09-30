@@ -26,6 +26,31 @@ public final class TimelineView: NSView {
     /// Fired after scroll or zoom changed, so a host can sync scrollers and a zoom slider.
     public var onViewportChange: (() -> Void)?
 
+    /// Gesture reducer behind the mouse handlers (tools, selection, snapping). The view feeds it view coordinates.
+    public private(set) var interaction: TimelineInteraction
+    /// A finished gesture: ONE undo step for the host (`EditorSession.commit`).
+    public var onCommit: ((TimelineCommit) -> Void)?
+    /// The selection changed by a click or marquee.
+    public var onSelectionChange: ((Set<Clip.ID>, Set<CaptionItem.ID>) -> Void)?
+    /// Ruler click: show this time. Dragging in the ruler calls begin/scrub/end.
+    public var onSeek: ((Time) -> Void)?
+    public var onScrubBegan: (() -> Void)?
+    public var onScrub: ((Time) -> Void)?
+    public var onScrubEnded: (() -> Void)?
+    /// Called when a click lands in the view, so the host can move keyboard focus to this panel.
+    public var onFocusRequest: (() -> Void)?
+    /// A gesture was refused by SSCore (locked track, collision): message for the status bar.
+    public var onRejection: ((String) -> Void)?
+    /// Media dragged in from the Project panel: ids, drop time, track under the pointer (nil = default track),
+    /// insert instead of overwrite (Command held at the drop).
+    public var onDropMedia: (([MediaRef.ID], Time, Track.ID?, Bool) -> Void)?
+    private var scrubbing: (began: Bool, active: Bool) = (false, false)
+    /// Active tool, snapping and linked selection.
+    public var toolState: ToolState {
+        get { interaction.toolState }
+        set { interaction.toolState = newValue }
+    }
+
     public static let minPointsPerSecond: Double = 0.02
     public static let maxPointsPerFrame: Double = 400
     public static let zoomStep: Double = 1.5
@@ -41,10 +66,12 @@ public final class TimelineView: NSView {
         self.timeline = timeline
         let fd = timeline.frameDuration
         self.geometry = TimelineGeometry(frameDuration: fd, pointsPerSecond: 40)
+        self.interaction = TimelineInteraction(timeline: timeline, geometry: geometry)
         self.ruler = RulerView(geometry: geometry)
         super.init(frame: frame)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
+        registerForDraggedTypes([.sequenceMediaIDs])
         addSubview(ruler)
         layoutChildren()
         rebuildHeaders()
@@ -58,6 +85,9 @@ public final class TimelineView: NSView {
         geometry.frameDuration = t.frameDuration
         selection.formIntersection(Set(t.tracks.flatMap { $0.clips.map(\.id) }))
         captionSelection.formIntersection(Set(t.captionTracks.flatMap { $0.items.map(\.id) }))
+        interaction.reset(timeline: t)
+        interaction.setSelection(selection)
+        interaction.setCaptionSelection(captionSelection)
         clampScroll()
         rebuildHeaders()
         syncChildren()
@@ -67,12 +97,14 @@ public final class TimelineView: NSView {
     public func setSelection(_ ids: Set<Clip.ID>) {
         guard ids != selection else { return }
         selection = ids
+        interaction.setSelection(ids)
         needsDisplay = true
     }
 
     public func setCaptionSelection(_ ids: Set<CaptionItem.ID>) {
         guard ids != captionSelection else { return }
         captionSelection = ids
+        interaction.setCaptionSelection(ids)
         needsDisplay = true
     }
 
@@ -202,12 +234,127 @@ public final class TimelineView: NSView {
         setZoom(pointsPerSecond: geometry.pointsPerSecond * (1 + Double(event.magnification)), anchorX: anchor)
     }
 
-    public override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2 {
-            let p = convert(event.locationInWindow, from: nil)
-            if case .caption(let id, _) = geometry.hitTest(p, in: timeline) { onEditCaptionText?(id); return }
+    private func gestureModifiers(_ e: NSEvent) -> GestureModifiers {
+        var m: GestureModifiers = []
+        if e.modifierFlags.contains(.shift) { m.insert(.shift) }
+        if e.modifierFlags.contains(.command) { m.insert(.command) }
+        if e.modifierFlags.contains(.option) { m.insert(.option) }
+        if e.modifierFlags.contains(.control) { m.insert(.control) }
+        return m
+    }
+
+    private func feedInteraction() {
+        interaction.geometry = geometry
+        interaction.playhead = playhead
+        interaction.markers = timeline.markers.map(\.time)
+    }
+
+    /// Shows the in-flight gesture (`interaction.preview`) and mirrors selection and scroll changes into the view.
+    private func refreshFromInteraction() {
+        if interaction.geometry.scrollX != geometry.scrollX || interaction.geometry.scrollY != geometry.scrollY {
+            setScroll(x: interaction.geometry.scrollX, y: interaction.geometry.scrollY)
         }
-        super.mouseDown(with: event)
+        let preview = interaction.preview
+        if preview != timeline {
+            timeline = preview
+            rebuildHeaders()
+            syncChildren()
+        }
+        if interaction.selection != selection || interaction.captionSelection != captionSelection {
+            selection = interaction.selection
+            captionSelection = interaction.captionSelection
+            onSelectionChange?(selection, captionSelection)
+        }
+        needsDisplay = true
+    }
+
+    public override func mouseDown(with event: NSEvent) {
+        window?.makeFirstResponder(self)
+        onFocusRequest?()
+        let p = convert(event.locationInWindow, from: nil)
+        if event.clickCount == 2, case .caption(let id, _) = geometry.hitTest(p, in: timeline) {
+            onEditCaptionText?(id)
+            return
+        }
+        if geometry.hitTest(p, in: timeline) == .ruler {
+            scrubbing = (false, true)
+            onSeek?(geometry.time(atX: p.x))
+            return
+        }
+        feedInteraction()
+        interaction.mouseDown(p, modifiers: gestureModifiers(event))
+        refreshFromInteraction()
+    }
+
+    public override func mouseDragged(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        if scrubbing.active {
+            if !scrubbing.began { scrubbing.began = true; onScrubBegan?() }
+            onScrub?(geometry.time(atX: p.x))
+            return
+        }
+        interaction.geometry = geometry
+        interaction.mouseDragged(p, modifiers: gestureModifiers(event))
+        refreshFromInteraction()
+    }
+
+    public override func mouseUp(with event: NSEvent) {
+        if scrubbing.active {
+            if scrubbing.began { onScrubEnded?() }
+            scrubbing = (false, false)
+            return
+        }
+        let p = convert(event.locationInWindow, from: nil)
+        interaction.geometry = geometry
+        let wasRejected = interaction.isRejected
+        let commit = interaction.mouseUp(p, modifiers: gestureModifiers(event))
+        refreshFromInteraction()
+        if wasRejected, let m = interaction.rejectionMessage { onRejection?(m) }
+        if let commit { onCommit?(commit) }
+    }
+
+    /// Right-click: selects the item under the pointer (see `TimelineInteraction.contextSelect`) before the menu opens.
+    public func contextSelect(at p: CGPoint) {
+        feedInteraction()
+        interaction.contextSelect(at: p)
+        refreshFromInteraction()
+    }
+
+    /// Escape during a drag.
+    public func cancelGesture() {
+        interaction.cancel()
+        refreshFromInteraction()
+    }
+
+    // MARK: Drop from the Project panel
+
+    private func droppedMedia(_ info: NSDraggingInfo) -> [MediaRef.ID] {
+        guard let s = info.draggingPasteboard.string(forType: .sequenceMediaIDs) else { return [] }
+        return ProjectPanelModel.decodeItems(s).compactMap { if case .media(let id) = $0 { id } else { nil } }
+    }
+
+    public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        droppedMedia(sender).isEmpty ? [] : .copy
+    }
+
+    public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
+        droppedMedia(sender).isEmpty ? [] : .copy
+    }
+
+    public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let ids = droppedMedia(sender)
+        guard !ids.isEmpty else { return false }
+        let p = convert(sender.draggingLocation, from: nil)
+        let time = max(geometry.time(atX: max(p.x, TimelineGeometry.contentOriginX)), .zero)
+        var track: Track.ID?
+        switch geometry.hitTest(p, in: timeline) {
+        case .clip(let id, _): track = timeline.tracks.first { $0.clips.contains { $0.id == id } }?.id
+        case .gap(let t, _): track = t
+        case .header(let t): track = t
+        default: break
+        }
+        onDropMedia?(ids, time, track, NSEvent.modifierFlags.contains(.command))
+        return true
     }
 
     public override func menu(for event: NSEvent) -> NSMenu? {
@@ -280,6 +427,7 @@ public final class TimelineView: NSView {
             drawCaptionLanes(clip: clip)
             drawLanes(rows: rows, clip: clip)
             drawPlayheadLine(clip: clip)
+            drawGestureOverlay(clip: clip)
             NSGraphicsContext.restoreGraphicsState()
         }
         drawToolColumn(dirty: dirtyRect)
@@ -346,6 +494,21 @@ public final class TimelineView: NSView {
         guard x >= clip.minX - 1, x <= clip.maxX + 1 else { return }
         Theme.Colors.playhead.setFill()
         CGRect(x: x.rounded() - 0.5, y: clip.minY, width: 1, height: clip.height).fill()
+    }
+
+    /// Marquee rectangle and the snap line of the gesture in flight.
+    private func drawGestureOverlay(clip: CGRect) {
+        if let t = interaction.snapTime {
+            let x = geometry.x(for: t).rounded()
+            Theme.Colors.clipSelect.setFill()
+            CGRect(x: x - 0.5, y: clip.minY, width: 1, height: clip.height).fill()
+        }
+        if let m = interaction.marquee {
+            Theme.Colors.accentTint.setFill()
+            m.fill()
+            Theme.Colors.accent.setStroke()
+            NSBezierPath(rect: m.insetBy(dx: 0.5, dy: 0.5)).stroke()
+        }
     }
 
     /// Placeholder: the real tools arrive with T-04. Only the column surface and its edge.
