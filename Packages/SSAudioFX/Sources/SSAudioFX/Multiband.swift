@@ -8,7 +8,7 @@ import Foundation
 struct MultibandCompressor {
     // MARK: filters
 
-    private struct Coef { var b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0 }
+    fileprivate struct Coef { var b0 = 1.0, b1 = 0.0, b2 = 0.0, a1 = 0.0, a2 = 0.0 }
 
     private struct Biquad {
         var z1 = 0.0, z2 = 0.0
@@ -21,7 +21,7 @@ struct MultibandCompressor {
     }
 
     /// LR4 low/high pair at one frequency (two cascaded Butterworth biquads each).
-    private struct Crossover {
+    fileprivate struct Crossover {
         var lp = Coef(), hp = Coef()
         init() {}
         init(freq: Double, sampleRate: Double) {
@@ -62,42 +62,98 @@ struct MultibandCompressor {
 
     // MARK: state
 
-    private let active: Bool
-    private let x1: Crossover, x2: Crossover, x3: Crossover
-    private let preGain: Double, makeup: Double
+    /// Everything `settings` decides, precomputed without touching filter/detector state.
+    /// Plain value (no arrays), so it can be built on any thread and applied on the render thread allocation-free.
+    struct Config {
+        fileprivate var active = false
+        fileprivate var x1 = Crossover(), x2 = Crossover(), x3 = Crossover()
+        fileprivate var preGain = 1.0, makeup = 1.0
+        fileprivate var b0 = BandState(), b1 = BandState(), b2 = BandState(), b3 = BandState()
+
+        init(settings raw: MultibandCompressorSettings, sampleRate: Double) {
+            let s = raw.normalized(sampleRate: sampleRate)
+            active = !s.bypass
+            x1 = Crossover(freq: s.crossoversHz[0], sampleRate: sampleRate)
+            x2 = Crossover(freq: s.crossoversHz[1], sampleRate: sampleRate)
+            x3 = Crossover(freq: s.crossoversHz[2], sampleRate: sampleRate)
+            preGain = AudioGain.linear(fromDB: s.preGainDB)
+            makeup = AudioGain.linear(fromDB: s.makeupGainDB)
+            // Detector decay follows the band's lowest frequency (one period), bounded to 3...20 ms,
+            // so the peak ripple stays small without slowing the detector down.
+            let lowEdges = [s.crossoversHz[0] / 2, s.crossoversHz[0], s.crossoversHz[1], s.crossoversHz[2]]
+            func make(_ i: Int) -> BandState {
+                let b = s.bands[i]
+                var st = BandState()
+                st.threshold = pow(10, b.thresholdDB / 20)
+                st.slope = 1 - 1 / b.ratio
+                let holdS = min(0.02, max(0.003, 1 / lowEdges[i]))
+                st.hold = exp(-1 / (holdS * sampleRate))
+                st.attack = exp(-1 / (max(0.0001, b.attackMs / 1000) * sampleRate))
+                st.release = exp(-1 / (max(0.0001, b.releaseMs / 1000) * sampleRate))
+                st.gain = AudioGain.linear(fromDB: b.gainDB)
+                return st
+            }
+            b0 = make(0); b1 = make(1); b2 = make(2); b3 = make(3)
+        }
+
+        fileprivate func band(_ i: Int) -> BandState {
+            switch i { case 0: b0; case 1: b1; case 2: b2; default: b3 }
+        }
+    }
+
+    private var active = false
+    private var x1 = Crossover(), x2 = Crossover(), x3 = Crossover()
+    private var preGain = 1.0, makeup = 1.0
     private var filters: [ChannelFilters]
     private var bands: [BandState]
+    private var scratch: [SIMD4<Double>]
 
-    init(settings raw: MultibandCompressorSettings, sampleRate: Double, channels: Int) {
-        let s = raw.normalized(sampleRate: sampleRate)
-        active = !s.bypass
-        x1 = Crossover(freq: s.crossoversHz[0], sampleRate: sampleRate)
-        x2 = Crossover(freq: s.crossoversHz[1], sampleRate: sampleRate)
-        x3 = Crossover(freq: s.crossoversHz[2], sampleRate: sampleRate)
-        preGain = AudioGain.linear(fromDB: s.preGainDB)
-        makeup = AudioGain.linear(fromDB: s.makeupGainDB)
+    init(settings: MultibandCompressorSettings, sampleRate: Double, channels: Int) {
         filters = Array(repeating: ChannelFilters(), count: max(1, channels))
-        // Detector decay follows the band's lowest frequency (one period), bounded to 3...20 ms,
-        // so the peak ripple stays small without slowing the detector down.
-        let lowEdges = [s.crossoversHz[0] / 2, s.crossoversHz[0], s.crossoversHz[1], s.crossoversHz[2]]
-        bands = (0..<4).map { i in
-            let b = s.bands[i]
-            var st = BandState()
-            st.threshold = pow(10, b.thresholdDB / 20)
-            st.slope = 1 - 1 / b.ratio
-            let holdS = min(0.02, max(0.003, 1 / lowEdges[i]))
-            st.hold = exp(-1 / (holdS * sampleRate))
-            st.attack = exp(-1 / (max(0.0001, b.attackMs / 1000) * sampleRate))
-            st.release = exp(-1 / (max(0.0001, b.releaseMs / 1000) * sampleRate))
-            st.gain = AudioGain.linear(fromDB: b.gainDB)
-            return st
+        bands = Array(repeating: BandState(), count: 4)
+        scratch = Array(repeating: .zero, count: max(1, channels))
+        apply(Config(settings: settings, sampleRate: sampleRate), keepingState: false)
+    }
+
+    /// Installs new settings. With `keepingState` the filter memories and the detector/gain-reduction
+    /// state survive (no click when a preset is tweaked). Allocation-free.
+    mutating func apply(_ c: Config, keepingState: Bool = true) {
+        active = c.active
+        x1 = c.x1; x2 = c.x2; x3 = c.x3
+        preGain = c.preGain; makeup = c.makeup
+        for i in 0..<4 {
+            var n = c.band(i)
+            if keepingState { n.env = bands[i].env; n.gr = bands[i].gr }
+            bands[i] = n
         }
+    }
+
+    /// Clears filter memories and detector state. Allocation-free.
+    mutating func reset() {
+        for c in 0..<filters.count { filters[c] = ChannelFilters() }
+        for i in 0..<4 { bands[i].env = 0; bands[i].gr = 0 }
     }
 
     mutating func process(_ buf: inout [[Float]]) {
         guard active, let n = buf.first?.count, n > 0 else { return }
-        let chans = min(buf.count, filters.count)
-        var v = [SIMD4<Double>](repeating: .zero, count: chans)
+        let ptrs = UnsafeMutablePointer<UnsafeMutablePointer<Float>>.allocate(capacity: buf.count)
+        defer { ptrs.deallocate() }
+        for c in 0..<buf.count {
+            let p = UnsafeMutablePointer<Float>.allocate(capacity: n)
+            p.initialize(from: buf[c], count: n)
+            (ptrs + c).initialize(to: p)
+        }
+        process(channels: ptrs, channelCount: buf.count, frames: n)
+        for c in 0..<buf.count {
+            buf[c] = Array(UnsafeBufferPointer(start: ptrs[c], count: n))
+            ptrs[c].deallocate()
+        }
+    }
+
+    /// Allocation-free core (realtime path): in place on deinterleaved channel pointers.
+    mutating func process(channels buf: UnsafeMutablePointer<UnsafeMutablePointer<Float>>, channelCount: Int, frames n: Int) {
+        guard active, n > 0 else { return }
+        let chans = min(channelCount, filters.count)
         for i in 0..<n {
             for c in 0..<chans {
                 let x = Double(buf[c][i]) * preGain
@@ -106,16 +162,16 @@ struct MultibandCompressor {
                 let d = filters[c].s3.run(b.hi, x3)
                 let b0 = filters[c].apLow3.allpass(filters[c].apLow2.allpass(a.lo, x2), x3)
                 let b1 = filters[c].apMid3.allpass(b.lo, x3)
-                v[c] = SIMD4(b0, b1, d.lo, d.hi)
+                scratch[c] = SIMD4(b0, b1, d.lo, d.hi)
             }
             var g = SIMD4<Double>(repeating: 1)
             for k in 0..<4 {
                 var peak = 0.0
-                for c in 0..<chans { peak = max(peak, abs(v[c][k])) }
+                for c in 0..<chans { peak = max(peak, abs(scratch[c][k])) }
                 g[k] = bands[k].step(peak: peak)
             }
             for c in 0..<chans {
-                let y = (v[c] * g).sum() * makeup
+                let y = (scratch[c] * g).sum() * makeup
                 buf[c][i] = Float(y)
             }
         }

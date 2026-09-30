@@ -13,4 +13,4 @@ after reading and checking it. Every reuse gets a line below: what, from where (
 ## Reused code
 | Source | License | Form | Use |
 |---|---|---|---|
-| RNNoise 0.1.1 (xiph/rnnoise, tarball v0.1.1) | BSD-3-Clause (Xiph.Org, Mozilla; license kept in `Packages/SSAudioFX/Sources/CRNNoise/COPYING`) | C, vendored unmodified (no `rnn_reader.c`, no training code) | Noise suppression in SSAudioFX. |
+| RNNoise 0.1.1 (xiph/rnnoise, tarball v0.1.1) | BSD-3-Clause (Xiph.Org, Mozilla; license kept in `Packages/SSAudioFX/Sources/CRNNoise/COPYING`) | C, vendored; one addition: `rnnoise_reset()` in denoise.c + rnnoise.h (in-place state reset for seeks, no allocation). No `rnn_reader.c`, no training code | Noise suppression in SSAudioFX. |

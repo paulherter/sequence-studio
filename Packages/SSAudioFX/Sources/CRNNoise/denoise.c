@@ -273,6 +273,20 @@ int rnnoise_init(DenoiseState *st, RNNModel *model) {
   return 0;
 }
 
+/* Sequence Studio addition: back to the state right after rnnoise_init, without any allocation (realtime safe). */
+void rnnoise_reset(DenoiseState *st) {
+  RNNModel *model = st->rnn.model;
+  float *vad = st->rnn.vad_gru_state, *noise = st->rnn.noise_gru_state, *den = st->rnn.denoise_gru_state;
+  memset(st, 0, sizeof(*st));
+  st->rnn.model = model;
+  memset(vad, 0, sizeof(float) * model->vad_gru_size);
+  memset(noise, 0, sizeof(float) * model->noise_gru_size);
+  memset(den, 0, sizeof(float) * model->denoise_gru_size);
+  st->rnn.vad_gru_state = vad;
+  st->rnn.noise_gru_state = noise;
+  st->rnn.denoise_gru_state = den;
+}
+
 DenoiseState *rnnoise_create(RNNModel *model) {
   DenoiseState *st;
   st = malloc(rnnoise_get_size());

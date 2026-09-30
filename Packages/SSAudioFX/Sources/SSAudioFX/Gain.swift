@@ -57,11 +57,28 @@ public struct VolumeAutomation: Sendable, Hashable, Codable {
     /// Applies gain (and pan) in place. `start` is the timeline time of sample 0 of `buffer`.
     public func apply(to buffer: inout [[Float]], start: Time, sampleRate: Int) {
         guard let n = buffer.first?.count, n > 0, sampleRate > 0 else { return }
+        let startSample = Self.sampleIndex(start, rate: Int64(sampleRate))
+        let ptrs = UnsafeMutablePointer<UnsafeMutablePointer<Float>>.allocate(capacity: buffer.count)
+        defer { ptrs.deallocate() }
+        for c in 0..<buffer.count {
+            let p = UnsafeMutablePointer<Float>.allocate(capacity: n)
+            p.initialize(from: buffer[c], count: n)
+            (ptrs + c).initialize(to: p)
+        }
+        apply(channels: ptrs, channelCount: buffer.count, frames: n, startSample: startSample, sampleRate: sampleRate)
+        for c in 0..<buffer.count {
+            buffer[c] = Array(UnsafeBufferPointer(start: ptrs[c], count: n))
+            ptrs[c].deallocate()
+        }
+    }
+
+    /// Allocation-free core (realtime path). `startSample` = absolute sample index of sample 0.
+    func apply(channels buffer: UnsafeMutablePointer<UnsafeMutablePointer<Float>>, channelCount: Int,
+               frames n: Int, startSample: Int64, sampleRate: Int) {
+        guard n > 0, sampleRate > 0 else { return }
         let rate = Int64(sampleRate)
-        // absolute sample index of buffer[0] (rounded to nearest)
-        let startSample = Self.sampleIndex(start, rate: rate)
         let step = Int64(Self.controlInterval)
-        let stereoPan = buffer.count == 2 && (pan != nil || panTrack != nil)
+        let stereoPan = channelCount == 2 && (pan != nil || panTrack != nil)
 
         func gains(at abs: Int64) -> (Double, Double) {
             let t = Time(abs, rate)
@@ -82,7 +99,7 @@ public struct VolumeAutomation: Sendable, Hashable, Codable {
             let f = Double(abs - k * step) / Double(step)
             let gl = g0.0 + (g1.0 - g0.0) * f
             let gr = g0.1 + (g1.1 - g0.1) * f
-            for c in 0..<buffer.count {
+            for c in 0..<channelCount {
                 buffer[c][i] *= Float(c == 1 ? gr : gl)
             }
         }

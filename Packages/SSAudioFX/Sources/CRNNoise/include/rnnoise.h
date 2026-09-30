@@ -70,6 +70,9 @@ RNNOISE_EXPORT int rnnoise_get_frame_size();
  */
 RNNOISE_EXPORT int rnnoise_init(DenoiseState *st, RNNModel *model);
 
+/** Sequence Studio addition: resets to the initial state in place, no allocation. */
+RNNOISE_EXPORT void rnnoise_reset(DenoiseState *st);
+
 /**
  * Allocate and initialize a DenoiseState
  *
