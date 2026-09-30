@@ -26,6 +26,8 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     public var markers: [Marker]
     /// Caption tracks, shown above the video tracks. Ripple edits shift them like sync-locked tracks.
     public var captionTracks: [CaptionTrack]
+    /// Label colour of the sequence in the Project panel and of its nested clips; nil = default.
+    public var label: LabelColor?
 
     public var frameDuration: Time {
         get { format.frameDuration }
@@ -33,7 +35,8 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     }
 
     public init(id: UUID = UUID(), name: String, format: SequenceFormat, tracks: [Track] = [],
-                inOut: TimeRange? = nil, markers: [Marker] = [], captionTracks: [CaptionTrack] = []) {
+                inOut: TimeRange? = nil, markers: [Marker] = [], captionTracks: [CaptionTrack] = [], label: LabelColor? = nil) {
+        self.label = label
         self.id = id; self.name = name; self.format = format; self.tracks = tracks
         self.inOut = inOut; self.markers = markers; self.captionTracks = captionTracks
     }
@@ -42,7 +45,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         self.init(id: id, name: name, format: SequenceFormat(frameDuration: frameDuration), tracks: tracks)
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, format, tracks, inOut, markers, captionTracks }
+    private enum CodingKeys: String, CodingKey { case id, name, format, tracks, inOut, markers, captionTracks, label }
 
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -53,6 +56,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         inOut = try c.decodeIfPresent(TimeRange.self, forKey: .inOut)
         markers = try c.decodeIfPresent([Marker].self, forKey: .markers) ?? []
         captionTracks = try c.decodeIfPresent([CaptionTrack].self, forKey: .captionTracks) ?? []
+        label = try c.decodeIfPresent(LabelColor.self, forKey: .label)
     }
 
     public func track(_ id: Track.ID) -> Track? { tracks.first { $0.id == id } }

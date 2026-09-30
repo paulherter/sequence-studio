@@ -13,6 +13,60 @@ private final class Node: NSObject {
     init(_ ref: BinItemRef) { self.ref = ref }
 }
 
+/// Label colour chip at the left of a row.
+private final class SwatchView: NSView {
+    var color: NSColor = .clear { didSet { needsDisplay = true } }
+    override var isFlipped: Bool { true }
+    override func draw(_ dirtyRect: NSRect) {
+        color.setFill()
+        NSBezierPath(roundedRect: bounds, xRadius: 2, yRadius: 2).fill()
+    }
+}
+
+@MainActor
+private enum IconImages {
+    private static var cache: [ProjectItemIcon: NSImage] = [:]
+
+    /// Template image of the base symbol with the optional badge composed into the bottom-right corner.
+    static func image(_ icon: ProjectItemIcon) -> NSImage? {
+        if let c = cache[icon] { return c }
+        let cfg = NSImage.SymbolConfiguration(pointSize: 11, weight: .regular)
+        guard let base = NSImage(systemSymbolName: icon.symbol, accessibilityDescription: nil)?.withSymbolConfiguration(cfg) else { return nil }
+        var result = base
+        if let badgeName = icon.badge,
+           let badge = NSImage(systemSymbolName: badgeName, accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(pointSize: 7, weight: .bold)) {
+            let size = NSSize(width: 16, height: 14)
+            let composed = NSImage(size: size, flipped: false) { rect in
+                let b = base.size
+                base.draw(in: NSRect(x: 0, y: rect.height - b.height, width: b.width, height: b.height))
+                let bs = badge.size
+                let badgeRect = NSRect(x: rect.width - bs.width, y: 0, width: bs.width, height: bs.height)
+                // Knock out a halo so the badge reads against the base symbol.
+                NSGraphicsContext.current?.compositingOperation = .destinationOut
+                NSBezierPath(ovalIn: badgeRect.insetBy(dx: -1.5, dy: -1.5)).fill()
+                NSGraphicsContext.current?.compositingOperation = .sourceOver
+                badge.draw(in: badgeRect)
+                return true
+            }
+            composed.isTemplate = true
+            result = composed
+        }
+        cache[icon] = result
+        return result
+    }
+
+    /// Menu chip for a label colour.
+    static func swatch(_ l: LabelColor) -> NSImage {
+        NSImage(size: NSSize(width: 12, height: 12), flipped: false) { r in
+            Theme.hex(l.rgb).setFill()
+            NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: 2.5, yRadius: 2.5).fill()
+            return true
+        }
+    }
+}
+
+
 private final class PanelOutlineView: NSOutlineView {
     var onDelete: (() -> Void)?
     var onReturn: (() -> Void)?
@@ -46,9 +100,14 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
     private var nodes: [BinItemRef: Node] = [:]
     private var tracking = true
     private var lastRevision = -1
+    private var layout: ProjectColumnLayout
+    private var rebuildingColumns = false
+    private let defaults: UserDefaults
 
-    public init(model: ProjectPanelModel) {
+    public init(model: ProjectPanelModel, defaults: UserDefaults = .standard) {
         self.model = model
+        self.defaults = defaults
+        self.layout = ProjectColumnLayout.load(from: defaults)
         super.init(frame: NSRect(x: 0, y: 0, width: 420, height: 300))
         appearance = NSAppearance(named: .darkAqua)
         wantsLayer = true
@@ -71,17 +130,7 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         status.textColor = Theme.Colors.label3
         status.translatesAutoresizingMaskIntoConstraints = false
 
-        let specs: [(ProjectPanelModel.Column, String, CGFloat, CGFloat)] = [
-            (.name, "Name", 180, 80), (.format, "Format", 210, 80), (.duration, "Duration", 84, 60)]
-        for (col, title, width, minWidth) in specs {
-            let c = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(col.rawValue))
-            c.title = title
-            c.width = width; c.minWidth = minWidth
-            c.headerCell.font = Theme.Fonts.mini
-            c.sortDescriptorPrototype = NSSortDescriptor(key: col.rawValue, ascending: true)
-            outline.addTableColumn(c)
-        }
-        outline.outlineTableColumn = outline.tableColumns[0]
+        rebuildColumns()
         outline.dataSource = self
         outline.delegate = self
         outline.rowHeight = Theme.Metrics.listRow
@@ -89,7 +138,7 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         outline.backgroundColor = Theme.Colors.content
         outline.usesAlternatingRowBackgroundColors = false
         outline.allowsMultipleSelection = true
-        outline.allowsColumnReordering = false
+        outline.allowsColumnReordering = true
         outline.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
         outline.style = .plain
         outline.indentationPerLevel = 14
@@ -102,6 +151,13 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         let menu = NSMenu()
         menu.delegate = self
         outline.menu = menu
+        let headerMenu = NSMenu()
+        headerMenu.delegate = self
+        outline.headerView?.menu = headerMenu
+        NotificationCenter.default.addObserver(self, selector: #selector(columnsChanged(_:)),
+                                               name: NSOutlineView.columnDidResizeNotification, object: outline)
+        NotificationCenter.default.addObserver(self, selector: #selector(columnsChanged(_:)),
+                                               name: NSOutlineView.columnDidMoveNotification, object: outline)
 
         scroll.documentView = outline
         scroll.hasVerticalScroller = true
@@ -189,34 +245,26 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
     public func outlineView(_ o: NSOutlineView, rowViewForItem item: Any) -> NSTableRowView? { PanelRowView() }
 
     public func outlineView(_ o: NSOutlineView, viewFor column: NSTableColumn?, item: Any) -> NSView? {
-        guard let n = item as? Node, let column else { return nil }
+        guard let n = item as? Node, let column, let col = ProjectPanelModel.Column(rawValue: column.identifier.rawValue) else { return nil }
         let id = column.identifier
         let cell = o.makeView(withIdentifier: id, owner: self) as? NSTableCellView ?? makeCell(id)
-        let p = model.project
-        var text = "", color = Theme.Colors.label, icon = "doc"
         var offline = false
-        switch n.ref {
-        case .bin(let b): text = p.rootBin.bin(b)?.name ?? ""; icon = "folder"
-        case .sequence(let s): text = p.timelines.first { $0.id == s }?.name ?? ""; icon = "film.stack"
-        case .media(let m):
-            guard let r = p.media(m) else { return nil }
+        if case .media(let m) = n.ref {
+            guard model.project.media(m) != nil else { return nil }
             offline = model.isOffline(m)
-            switch column.identifier.rawValue {
-            case "name": text = r.name; icon = r.info?.video == nil ? "waveform" : "film"
-            case "format": text = ProjectPanelModel.formatString(r); color = Theme.Colors.label2
-            default: text = ProjectPanelModel.durationString(r); color = Theme.Colors.label2
-            }
         }
-        if column.identifier.rawValue == "name" {
-            cell.imageView?.image = NSImage(systemSymbolName: icon, accessibilityDescription: nil)
+        cell.textField?.stringValue = model.cellText(col, n.ref)
+        if col == .name {
+            cell.imageView?.image = IconImages.image(model.icon(of: n.ref))
             cell.imageView?.contentTintColor = offline ? Theme.Colors.red : Theme.Colors.label2
+            (cell.subviews.compactMap { $0 as? SwatchView }.first)?.color = Theme.hex(model.label(of: n.ref).rgb)
             cell.textField?.font = Theme.Fonts.smallName
             cell.textField?.isEditable = true
+            cell.textField?.textColor = offline ? Theme.Colors.red : Theme.Colors.label
         } else {
             cell.textField?.font = Theme.Fonts.small
+            cell.textField?.textColor = offline ? Theme.Colors.red : Theme.Colors.label2
         }
-        cell.textField?.stringValue = text
-        cell.textField?.textColor = offline ? Theme.Colors.red : color
         return cell
     }
 
@@ -231,12 +279,18 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         tf.translatesAutoresizingMaskIntoConstraints = false
         cell.addSubview(tf); cell.textField = tf
         if id.rawValue == "name" {
+            let sw = SwatchView()
+            sw.translatesAutoresizingMaskIntoConstraints = false
+            cell.addSubview(sw)
             let iv = NSImageView()
-            iv.symbolConfiguration = .init(pointSize: 11, weight: .regular)
             iv.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(iv); cell.imageView = iv
             NSLayoutConstraint.activate([
-                iv.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: Theme.Spacing.xxs),
+                sw.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: Theme.Spacing.xxs),
+                sw.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+                sw.widthAnchor.constraint(equalToConstant: 8),
+                sw.heightAnchor.constraint(equalToConstant: 12),
+                iv.leadingAnchor.constraint(equalTo: sw.trailingAnchor, constant: 5),
                 iv.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 iv.widthAnchor.constraint(equalToConstant: 16),
                 tf.leadingAnchor.constraint(equalTo: iv.trailingAnchor, constant: Theme.Spacing.iconToLabel),
@@ -249,6 +303,74 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
             tf.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
         return cell
+    }
+
+    // MARK: Columns
+
+    private func rebuildColumns() {
+        rebuildingColumns = true
+        defer { rebuildingColumns = false }
+        for c in outline.tableColumns { outline.removeTableColumn(c) }
+        for col in layout.visible {
+            let c = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(col.rawValue))
+            c.title = col.title
+            c.width = layout.width(of: col); c.minWidth = col.minWidth
+            c.headerCell.font = Theme.Fonts.mini
+            c.sortDescriptorPrototype = NSSortDescriptor(key: col.rawValue, ascending: true)
+            outline.addTableColumn(c)
+        }
+        outline.outlineTableColumn = outline.tableColumns.first
+        if let sc = model.sortColumn, layout.isVisible(sc) {
+            outline.sortDescriptors = [NSSortDescriptor(key: sc.rawValue, ascending: model.sortAscending)]
+        } else {
+            outline.sortDescriptors = []
+            if model.sortColumn != nil { model.setSort(nil, ascending: true) }
+        }
+    }
+
+    /// Reads the order and widths back from the table and saves them per user.
+    @objc private func columnsChanged(_ note: Notification) {
+        guard !rebuildingColumns else { return }
+        var order = outline.tableColumns.compactMap { ProjectPanelModel.Column(rawValue: $0.identifier.rawValue) }
+        if order.first != .name, let i = outline.tableColumns.firstIndex(where: { $0.identifier.rawValue == "name" }) {
+            // Name stays first: undo a move across it.
+            rebuildingColumns = true
+            outline.moveColumn(i, toColumn: 0)
+            rebuildingColumns = false
+            order = outline.tableColumns.compactMap { ProjectPanelModel.Column(rawValue: $0.identifier.rawValue) }
+        }
+        var l = ProjectColumnLayout(visible: order, widths: layout.widths)
+        for c in outline.tableColumns {
+            if let col = ProjectPanelModel.Column(rawValue: c.identifier.rawValue) { l.setWidth(c.width, for: col) }
+        }
+        layout = l
+        layout.save(to: defaults)
+    }
+
+    @objc private func toggleColumn(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let col = ProjectPanelModel.Column(rawValue: raw) else { return }
+        layout.toggle(col)
+        layout.save(to: defaults)
+        rebuildColumns()
+        outline.reloadData()
+    }
+
+    @objc private func resetColumns() {
+        layout = .defaults
+        layout.save(to: defaults)
+        rebuildColumns()
+        outline.reloadData()
+    }
+
+    private func populateHeaderMenu(_ menu: NSMenu) {
+        for col in ProjectPanelModel.Column.allCases where col != .name {
+            let it = menu.addItem(withTitle: col.title, action: #selector(toggleColumn(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = col.rawValue
+            it.state = layout.isVisible(col) ? .on : .off
+        }
+        menu.addItem(.separator())
+        menu.addItem(withTitle: "Reset Columns", action: #selector(resetColumns), keyEquivalent: "").target = self
     }
 
     // MARK: Selection and sorting
@@ -370,33 +492,36 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
             let pn = target.id == model.project.rootBin.id ? nil : nodes[.bin(target.id)]
             o.setDropItem(pn, dropChildIndex: NSOutlineViewDropOnItemIndex)
         }
-        let internalItems = droppedItems(info)
-        if !internalItems.isEmpty {
-            for case .bin(let id) in internalItems {
+        switch model.classifyDrop(items: droppedItems(info), files: droppedFiles(info)) {
+        case .move(let items):
+            for case .bin(let id) in items {
                 if let moving = model.project.bin(id), moving.bin(target.id) != nil { return [] }   // into itself/descendant
             }
             return .move
+        case .importFiles: return .copy
+        case .none: return []
         }
-        return droppedFiles(info).isEmpty ? [] : .copy
     }
 
     public func outlineView(_ o: NSOutlineView, acceptDrop info: NSDraggingInfo, item: Any?, childIndex index: Int) -> Bool {
         let destBin = targetBin(item)
-        let items = droppedItems(info)
-        if !items.isEmpty {
+        switch model.classifyDrop(items: droppedItems(info), files: droppedFiles(info)) {
+        case .none: return false
+        case .move(let items):
             var at: Int?
             if index >= 0, model.sortColumn == nil, model.searchText.isEmpty {
                 // Model index counts the children after the moved items were removed.
                 let before = destBin.children.prefix(index).filter { items.contains($0.ref) }.count
                 at = index - before
             }
-            return model.move(items, to: destBin.id, at: at)
+            // Dropped back where it came from: nothing to do, but not a failed drop either.
+            _ = model.move(items, to: destBin.id, at: at)
+            return true
+        case .importFiles(let files):
+            model.currentBin = destBin.id
+            importURLs(files)
+            return true
         }
-        let files = droppedFiles(info)
-        guard !files.isEmpty else { return false }
-        model.currentBin = destBin.id
-        importURLs(files)
-        return true
     }
 
     // MARK: Context menu
@@ -405,6 +530,7 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
 
     public func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
+        if menu === outline.headerView?.menu { populateHeaderMenu(menu); return }
         let clicked = outline.clickedRow
         if clicked >= 0, !outline.selectedRowIndexes.contains(clicked) {
             outline.selectRowIndexes([clicked], byExtendingSelection: false)
@@ -415,11 +541,45 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         if !menuTargets.isEmpty {
             menu.addItem(withTitle: "Rename", action: #selector(menuRename), keyEquivalent: "").target = self
             menu.addItem(withTitle: "Delete", action: #selector(menuDelete), keyEquivalent: "").target = self
+            if menuTargets.contains(where: { if case .bin = $0 { false } else { true } }) {
+                menu.addItem(.separator())
+                addLabelItems(to: menu)
+            }
             if menuTargets.contains(where: { if case .media = $0 { true } else { false } }) {
                 menu.addItem(.separator())
                 menu.addItem(withTitle: "Reveal in Finder", action: #selector(menuReveal), keyEquivalent: "").target = self
             }
         }
+    }
+
+    private func addLabelItems(to menu: NSMenu) {
+        let sub = NSMenu(title: "Label")
+        let current = Set(menuTargets.filter { if case .bin = $0 { false } else { true } }.map { model.label(of: $0) })
+        for l in LabelColor.allCases {
+            let it = sub.addItem(withTitle: l.displayName, action: #selector(menuSetLabel(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = l.rawValue
+            it.image = IconImages.swatch(l)
+            it.state = current == [l] ? .on : .off
+        }
+        let parent = menu.addItem(withTitle: "Label", action: nil, keyEquivalent: "")
+        parent.submenu = sub
+        if let first = menuTargets.first(where: { if case .bin = $0 { false } else { true } }) {
+            let it = menu.addItem(withTitle: "Select Label Group", action: #selector(menuSelectLabelGroup(_:)), keyEquivalent: "")
+            it.target = self
+            it.representedObject = model.label(of: first).rawValue
+        }
+    }
+
+    @objc private func menuSetLabel(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let l = LabelColor(rawValue: raw) else { return }
+        model.setLabel(l, for: menuTargets)
+    }
+
+    @objc private func menuSelectLabelGroup(_ sender: NSMenuItem) {
+        guard let raw = sender.representedObject as? String, let l = LabelColor(rawValue: raw) else { return }
+        let rows = IndexSet(model.project.items(withLabel: l).compactMap { nodes[$0] }.map { outline.row(forItem: $0) }.filter { $0 >= 0 })
+        outline.selectRowIndexes(rows, byExtendingSelection: false)
     }
 
     @objc private func menuNewBin() {

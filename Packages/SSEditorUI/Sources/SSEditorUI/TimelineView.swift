@@ -15,8 +15,8 @@ public final class TimelineView: NSView {
     public private(set) var offlineMedia: Set<UUID> = []
     public private(set) var geometry: TimelineGeometry
 
-    /// Type colour per clip; default by track kind. Nest / title / caption hook in here later.
-    public var clipStyle: (Clip) -> ClipStyle = { ClipStyle(kind: $0.kind) }
+    /// Label colours of media and sequences (from the Project panel); a clip draws in its effective label colour.
+    public private(set) var labelResolver = LabelResolver()
     /// Header control clicks (callbacks only in T-02).
     public var onTrackToggle: ((Track.ID, TrackToggle) -> Void)?
     /// Double-click on a caption item: the host opens its text editor.
@@ -111,6 +111,12 @@ public final class TimelineView: NSView {
         guard ids != captionSelection else { return }
         captionSelection = ids
         interaction.setCaptionSelection(ids)
+        needsDisplay = true
+    }
+
+    public func setLabelResolver(_ r: LabelResolver) {
+        guard r != labelResolver else { return }
+        labelResolver = r
         needsDisplay = true
     }
 
@@ -505,7 +511,7 @@ public final class TimelineView: NSView {
                 if x1 < clip.minX { continue }
                 if x0 > clip.maxX { break }   // clips are sorted by start
                 ClipDrawing.draw(name: c.name, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
-                                 visible: visibleX, style: clipStyle(c), isSelected: selection.contains(c.id),
+                                 visible: visibleX, style: .label(labelResolver.label(for: c)), isSelected: selection.contains(c.id),
                                  isOffline: offlineMedia.contains(c.media))
             }
         }

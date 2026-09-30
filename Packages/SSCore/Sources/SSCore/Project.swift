@@ -24,9 +24,12 @@ public struct MediaRef: Codable, Hashable, Sendable, Identifiable {
     public var duration: Time?
     /// Probed media properties; nil for projects saved before probing existed.
     public var info: MediaInfo?
+    /// Label colour; nil = default for the media type.
+    public var label: LabelColor?
 
     public init(id: UUID = UUID(), name: String, path: String, bookmark: Data? = nil,
-                fingerprint: MediaFingerprint, duration: Time? = nil, info: MediaInfo? = nil) {
+                fingerprint: MediaFingerprint, duration: Time? = nil, info: MediaInfo? = nil, label: LabelColor? = nil) {
+        self.label = label
         self.id = id; self.name = name; self.path = path; self.bookmark = bookmark
         self.fingerprint = fingerprint; self.duration = duration; self.info = info
     }

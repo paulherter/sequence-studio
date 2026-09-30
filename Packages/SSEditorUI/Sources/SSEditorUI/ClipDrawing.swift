@@ -6,6 +6,8 @@ import SSCore
 /// nest / title / caption arrive with their slices, the colours are ready.
 public enum ClipStyle: Sendable, Hashable {
     case video, audio, nest, title, caption
+    /// Clip drawn in a label colour (Project panel labels). The type cases above stay for captions.
+    case label(LabelColor)
 
     public init(kind: TrackKind) { self = kind == .audio ? .audio : .video }
 
@@ -16,6 +18,7 @@ public enum ClipStyle: Sendable, Hashable {
         case .nest: Theme.Colors.clipNest
         case .title: Theme.Colors.clipTitle
         case .caption: Theme.Colors.clipCaption
+        case .label(let l): Theme.hex(l.rgb)
         }
     }
     public var edge: NSColor {
@@ -25,6 +28,7 @@ public enum ClipStyle: Sendable, Hashable {
         case .nest: Theme.Colors.clipNestEdge
         case .title: Theme.Colors.clipTitleEdge
         case .caption: Theme.Colors.clipCaptionEdge
+        case .label(let l): Theme.hex(l.rgb).blended(withFraction: 0.3, of: .white) ?? Theme.hex(l.rgb)
         }
     }
 }
@@ -60,7 +64,9 @@ public enum ClipDrawing {
     }
     private static let colorCache: [ClipStyle: Colors] = {
         var d: [ClipStyle: Colors] = [:]
-        for s in [ClipStyle.video, .audio, .nest, .title, .caption] { d[s] = Colors(fill: s.fill, edge: s.edge) }
+        for s in [ClipStyle.video, .audio, .nest, .title, .caption] + LabelColor.allCases.map({ ClipStyle.label($0) }) {
+            d[s] = Colors(fill: s.fill, edge: s.edge)
+        }
         return d
     }()
     private static let offlineColors = Colors(fill: offlineFill, edge: Theme.Colors.red)
