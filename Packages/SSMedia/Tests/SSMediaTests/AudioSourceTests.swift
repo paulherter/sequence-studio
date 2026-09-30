@@ -1,0 +1,107 @@
+import CoreMedia
+import Foundation
+import SSMediaTestSupport
+import Testing
+@testable import SSMedia
+
+private func readAll(_ s: any AudioSource, from: Int64, count: Int, channel: Int) throws -> [Float] {
+    var buf = [Float](repeating: 0, count: count)
+    let n = try buf.withUnsafeMutableBufferPointer { try s.read(from: from, count: count, into: $0.baseAddress!, channel: channel) }
+    return Array(buf[0..<n])
+}
+private func clickPositions(_ a: [Float], base: Int64 = 0, threshold: Float = 0.5) -> [Int64] {
+    a.enumerated().filter { abs($0.element) > threshold }.map { base + Int64($0.offset) }
+}
+
+@Suite struct AudioSourceTests {
+    @Test func memorySourceReadsAndStopsAtEnd() throws {
+        let s = MemoryAudioSource(mono: [1, 2, 3, 4])
+        #expect(try readAll(s, from: 2, count: 10, channel: 0) == [3, 4])
+        #expect(try readAll(s, from: 4, count: 10, channel: 1).isEmpty)
+        #expect(try readAll(s, from: -1, count: 2, channel: 0).isEmpty)
+    }
+
+    @Test func assetSourceClicksLandOnExactSamples() async throws {
+        var spec = TestClipSpec()
+        spec.frameCount = 90                          // 3 s
+        let times: [CMTime] = [CMTime(value: 1, timescale: 2), CMTime(value: 48_000, timescale: 48_000),
+                               CMTime(value: 72_001, timescale: 48_000), CMTime(value: 2, timescale: 1)]
+        spec.audioClicks = times
+        let expected = times.map(TestClipSpec.sampleIndex(of:))      // 24000, 48000, 72001, 96000
+        let url = try await TestClipWriter.write(spec)
+        let src = try await AssetAudioSource.open(url: url, sampleRate: 48_000)
+
+        // One sequential pass over 3 s in odd-sized reads (crosses 1 s block seams).
+        var found: [Int64] = []
+        var pos: Int64 = 0
+        while true {
+            let a = try readAll(src, from: pos, count: 7_001, channel: 0)
+            if a.isEmpty { break }
+            found += clickPositions(a, base: pos)
+            pos += Int64(a.count)
+        }
+        #expect(found == expected)
+        #expect(pos >= 144_000 - 1)                   // full length read, then 0 past the end
+
+        // Right channel identical; click value is full scale.
+        let r = try readAll(src, from: expected[1] - 2, count: 5, channel: 1)
+        #expect(r == [0, 0, 1, 0, 0])
+    }
+
+    @Test func backwardAndRandomAccessReadsAreExact() async throws {
+        var spec = TestClipSpec()
+        spec.frameCount = 90
+        spec.audioClicks = [CMTime(value: 30_000, timescale: 48_000), CMTime(value: 100_000, timescale: 48_000)]
+        let url = try await TestClipWriter.write(spec)
+        let src = try await AssetAudioSource.open(url: url, sampleRate: 48_000)
+        // Reverse block order, like reverse playback: 1024-frame blocks stepping down across two seams.
+        for (from, hit) in [(Int64(99_500), Int64(100_000)), (98_000, nil), (49_152, nil), (29_700, Int64(30_000)), (0, nil)] as [(Int64, Int64?)] {
+            let a = try readAll(src, from: from, count: 1024, channel: 0)
+            #expect(a.count == 1024)
+            #expect(clickPositions(a, base: from) == (hit.map { [$0] } ?? []), "block at \(from)")
+        }
+        // Jump forward far past the cursor, then back to the start.
+        #expect(clickPositions(try readAll(src, from: 100_000 - 10, count: 20, channel: 0), base: 99_990) == [100_000])
+        #expect(clickPositions(try readAll(src, from: 30_000 - 10, count: 20, channel: 0), base: 29_990) == [30_000])
+    }
+
+    @Test func resampleToOtherRateKeepsClickTimingWithinAFewSamples() async throws {
+        var spec = TestClipSpec()
+        spec.frameCount = 60
+        spec.audioClicks = [CMTime(value: 1, timescale: 2)]     // 0.5 s
+        let url = try await TestClipWriter.write(spec)
+        let src = try await AssetAudioSource.open(url: url, sampleRate: 96_000)
+        let a = try readAll(src, from: 0, count: 96_000, channel: 0)
+        let peak = try #require(a.enumerated().max { abs($0.element) < abs($1.element) })
+        #expect(abs(peak.offset - 48_000) <= 4, "peak at \(peak.offset)")
+    }
+
+    @Test func fileWithoutAudioThrows() async throws {
+        let url = try await TestClipWriter.write(TestClipSpec())
+        await #expect(throws: MediaError.self) { _ = try await AssetAudioSource.open(url: url, sampleRate: 48_000) }
+    }
+
+    @Test func backwardReadOfEvictedBlockWithinReaderRange() async throws {
+        var spec = TestClipSpec()
+        spec.frameCount = 240                          // 8 s
+        spec.audioClicks = [CMTime(value: 60_000, timescale: 48_000)]     // in block 1
+        let url = try await TestClipWriter.write(spec)
+        let src = try await AssetAudioSource.open(url: url, sampleRate: 48_000)
+        var pos: Int64 = 0
+        while try readAll(src, from: pos, count: 4_800, channel: 0).count == 4_800 { pos += 4_800 }   // evicts early blocks
+        let a = try readAll(src, from: 59_990, count: 20, channel: 0)
+        #expect(a.count == 20)
+        #expect(clickPositions(a, base: 59_990) == [60_000])
+    }
+
+    @Test func restartPastTheEndDoesNotCorruptTotalLength() async throws {
+        var spec = TestClipSpec()
+        spec.frameCount = 80                           // 128000 frames
+        spec.audioClicks = [CMTime(value: 1, timescale: 2)]
+        let url = try await TestClipWriter.write(spec)
+        let src = try await AssetAudioSource.open(url: url, sampleRate: 48_000)
+        #expect(try readAll(src, from: 127_990, count: 100, channel: 0).count == 10)
+        #expect(try readAll(src, from: 200_000, count: 100, channel: 0).isEmpty)
+        #expect(try readAll(src, from: 127_990, count: 100, channel: 0).count == 10)
+    }
+}
