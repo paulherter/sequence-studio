@@ -153,4 +153,74 @@ struct RelinkTests {
         #expect(new.path == b.path && new.name == "clip2.mov" && new.id == ref.id)
         #expect(new.bookmark != Data([1]))
     }
+
+    // MARK: Review fixes
+
+    @Test func depthBoundaryIsExact() throws {
+        let s = try Sandbox()
+        let a = try s.write("a/clip.mov", "Q")
+        let ref = s.ref(a)
+        try FileManager.default.removeItem(at: a)
+        try s.write("lib/d1/d2/clip.mov", "Q")          // 2 directories below the root: allowed at maxDepth 2
+        try s.write("lib/d1/d2/d3/clip.mov", "Q")       // 3 below: too deep
+        let r = MediaLocator(searchFolders: [s.dir("lib")], maxDepth: 2).locate(ref)
+        #expect(r.candidates.map { $0.url.deletingLastPathComponent().lastPathComponent } == ["d2"])
+    }
+
+    @Test func symlinkToFileInsideRootIsFoundButOutsideIsNot() throws {
+        let s = try Sandbox()
+        let a = try s.write("a/clip.mov", "SYM")
+        let ref = s.ref(a)
+        try FileManager.default.removeItem(at: a)
+        let real = try s.write("lib/real/clip.mov", "SYM")
+        let outside = try s.write("outside/other.mov", "SYM")
+        try FileManager.default.createDirectory(at: s.dir("lib/links"), withIntermediateDirectories: true)
+        try FileManager.default.removeItem(at: real)
+        try FileManager.default.createSymbolicLink(at: s.dir("lib/links/clip.mov"), withDestinationURL: outside)
+        var r = MediaLocator(searchFolders: [s.dir("lib")]).locate(ref)
+        #expect(r.candidates.isEmpty)                    // target outside the search root
+        try FileManager.default.removeItem(at: s.dir("lib/links/clip.mov"))
+        let target = try s.write("lib/.store/target.mov", "SYM")   // hidden: only reachable through the link
+        try FileManager.default.createSymbolicLink(at: s.dir("lib/links/clip.mov"), withDestinationURL: target)
+        r = MediaLocator(searchFolders: [s.dir("lib")]).locate(ref)
+        #expect(!r.candidates.isEmpty)
+        #expect(r.resolved?.url.resolvingSymlinksInPath().path == target.resolvingSymlinksInPath().path)
+    }
+
+    @Test func originalPathWithDifferentContentIsOnlyACandidate() throws {
+        let s = try Sandbox()
+        let a = try s.write("a/clip.mov", "ORIGINAL")
+        let ref = s.ref(a)
+        try Data("REPLACED-WITH-OTHER-FILE".utf8).write(to: a)
+        let r = MediaLocator().locate(ref)
+        #expect(r.resolved == nil)
+        #expect(r.candidates.first?.url.path == a.path)
+        #expect(r.candidates.first?.score != .fingerprint)
+    }
+
+    @Test func bookmarkToChangedFileIsOnlyACandidate() throws {
+        let s = try Sandbox()
+        let a = try s.write("a/clip.mov", "ORIGINAL")
+        var ref = s.ref(a)
+        ref.bookmark = try a.bookmarkData()
+        try Data("REPLACED-WITH-OTHER-FILE".utf8).write(to: a)
+        let r = MediaLocator().locate(ref)
+        #expect(r.resolved == nil)
+        #expect(r.candidates.count == 1)
+    }
+
+    @Test func relinkOthersComparesCaseInsensitivelyOnCaseInsensitiveVolume() throws {
+        let s = try Sandbox()
+        let sensitive = (try? s.root.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?
+            .volumeSupportsCaseSensitiveNames ?? true
+        guard !sensitive else { return }
+        let a = try s.write("old/clip.mov", "AAA")
+        let b = try s.write("old/b.mov", "BBB")
+        let ra = s.ref(a)
+        var rb = s.ref(b)
+        rb.path = s.root.appendingPathComponent("OLD/b.mov").path   // differently-cased spelling of the same folder
+        try FileManager.default.moveItem(at: s.dir("old"), to: s.dir("new"))
+        let (_, report) = MediaLocator.relinkOthers(chosen: ra, to: s.dir("new/clip.mov"), others: [rb])
+        #expect(report.relinked[rb.id] != nil)
+    }
 }

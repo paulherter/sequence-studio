@@ -26,6 +26,27 @@ public indirect enum LayoutNode: Sendable, Codable, Hashable {
         case .tabs(let p, _): p
         }
     }
+
+    /// Repaired copy: empty tab groups and empty splits removed (with their fractions), `selected` inside `panels`,
+    /// single-child splits collapsed, fractions one per child and summing to 1 (equal split otherwise). Nil when nothing is left.
+    public var sanitized: LayoutNode? {
+        switch self {
+        case .tabs(let panels, let selected):
+            guard let first = panels.first else { return nil }
+            return .tabs(panels: panels, selected: panels.contains(selected) ? selected : first)
+        case .split(let axis, let children, let fractions):
+            let usable = fractions.count == children.count
+            var kept: [LayoutNode] = [], fr: [Double] = []
+            for (i, c) in children.enumerated() {
+                if let s = c.sanitized { kept.append(s); if usable { fr.append(fractions[i]) } }
+            }
+            if kept.count <= 1 { return kept.first }
+            let sum = fr.reduce(0, +)
+            let ok = usable && fr.allSatisfy { $0.isFinite && $0 > 0 } && abs(sum - 1) < 1e-6
+            if !ok { fr = Array(repeating: 1 / Double(kept.count), count: kept.count) }
+            return .split(axis: axis, children: kept, fractions: fr)
+        }
+    }
 }
 
 /// A named layout plus view state (hidden panels, maximized panel). Value type.
@@ -40,6 +61,17 @@ public struct Workspace: Sendable, Codable, Hashable {
 
     public init(name: String, root: LayoutNode, hidden: Set<PanelID> = [], maximized: PanelID? = nil) {
         self.name = name; self.root = root; self.hidden = hidden; self.maximized = maximized
+    }
+
+    private enum CodingKeys: String, CodingKey { case name, root, hidden, maximized }
+
+    /// Decodes and validates the layout: a bad saved tree is repaired (see `LayoutNode.sanitized`) instead of trapping later.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        root = try c.decode(LayoutNode.self, forKey: .root).sanitized ?? Workspace.editingPC.root
+        hidden = try c.decodeIfPresent(Set<PanelID>.self, forKey: .hidden) ?? []
+        maximized = try c.decodeIfPresent(PanelID.self, forKey: .maximized)
     }
 
     // MARK: Built-ins (docs/UX.md section 1)

@@ -68,13 +68,27 @@ public struct MediaLocator: Sendable {
 
     // MARK: Locate
 
+    /// Synchronous and I/O heavy: hashes the head of every plausible file it meets and walks the search folders.
+    /// Never call it on the main thread; run it from a background task.
+    ///
+    /// A bookmark or original-path hit is only `resolved` when it still matches the stored fingerprint (if one with a
+    /// head hash is stored); a file that exists but differs is demoted to a candidate.
     public func locate(_ ref: MediaRef) -> LocateResult {
         let fm = FileManager.default
+        let verifies = ref.fingerprint.headHash != nil
+        var demoted: [URL] = []
         if let data = ref.bookmark, let u = Self.resolveBookmark(data), fm.fileExists(atPath: u.path) {
-            return LocateResult(resolved: .init(url: u, method: .bookmark), candidates: [])
+            if !verifies || Self.matches(ref.fingerprint, u) {
+                return LocateResult(resolved: .init(url: u, method: .bookmark), candidates: [])
+            }
+            demoted.append(u)
         }
         if fm.fileExists(atPath: ref.path) {
-            return LocateResult(resolved: .init(url: URL(fileURLWithPath: ref.path), method: .originalPath), candidates: [])
+            let u = URL(fileURLWithPath: ref.path)
+            if !verifies || Self.matches(ref.fingerprint, u) {
+                return LocateResult(resolved: .init(url: u, method: .originalPath), candidates: [])
+            }
+            demoted.append(u)
         }
 
         let originalDir = URL(fileURLWithPath: ref.path).deletingLastPathComponent().path
@@ -82,13 +96,15 @@ public struct MediaLocator: Sendable {
         var found: [RelinkCandidate] = []
         var neighbourHits = Set<String>()
 
-        func consider(_ url: URL, neighbour: Bool) {
+        func consider(_ url: URL, neighbour: Bool, force: Bool = false) {
             let key = url.resolvingSymlinksInPath().path
-            guard seen.insert(key).inserted, let c = score(url, for: ref) else { return }
+            guard seen.insert(key).inserted else { return }
+            guard let c = score(url, for: ref) ?? (force ? RelinkCandidate(url: url, score: .nameOnly) : nil) else { return }
             found.append(c)
             if neighbour { neighbourHits.insert(key) }
         }
 
+        for u in demoted { consider(u, neighbour: false, force: true) }
         if let pf = projectFolder {
             for (root, depth) in [(pf, 3), (pf.deletingLastPathComponent(), 2)] {
                 walk(root, depth: min(depth, maxDepth)) { consider($0, neighbour: true) }
@@ -128,12 +144,25 @@ public struct MediaLocator: Sendable {
     }
 
     /// Visits regular files below `root`, at most `depth` directory levels deep; skips hidden files and packages.
+    /// Directories at the depth limit are not descended into. Symlinks to regular files are visited by their resolved
+    /// URL, only when the target lies inside `root`.
     private func walk(_ root: URL, depth: Int, _ visit: (URL) -> Void) {
-        guard let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: [.isRegularFileKey],
+        let keys: Set<URLResourceKey> = [.isRegularFileKey, .isDirectoryKey, .isSymbolicLinkKey]
+        guard let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: Array(keys),
                                                      options: [.skipsHiddenFiles, .skipsPackageDescendants]) else { return }
+        let rootPath = root.resolvingSymlinksInPath().path
+        let prefix = rootPath.hasSuffix("/") ? rootPath : rootPath + "/"
         for case let u as URL in e {
-            if e.level > depth + 1 { e.skipDescendants(); continue }
-            if (try? u.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true { visit(u) }
+            let v = try? u.resourceValues(forKeys: keys)
+            if v?.isDirectory == true {
+                if e.level >= depth + 1 { e.skipDescendants() }   // its children would be deeper than `depth`
+            } else if v?.isSymbolicLink == true {
+                let target = u.resolvingSymlinksInPath()
+                if target.path.hasPrefix(prefix),
+                   (try? target.resourceValues(forKeys: [.isRegularFileKey]))?.isRegularFile == true { visit(target) }
+            } else if v?.isRegularFile == true {
+                visit(u)
+            }
         }
     }
 
@@ -173,15 +202,21 @@ public struct MediaLocator: Sendable {
         var out: [MediaRef] = [applying(newURL, to: chosen)]
         report.relinked[chosen.id] = newURL
 
+        // Case-insensitive volumes (APFS default) treat "Footage" and "footage" as one folder.
+        let caseSensitive = (try? newURL.resourceValues(forKeys: [.volumeSupportsCaseSensitiveNamesKey]))?
+            .volumeSupportsCaseSensitiveNames ?? true
+        func same(_ a: String, _ b: String) -> Bool {
+            caseSensitive ? a == b : a.compare(b, options: [.caseInsensitive]) == .orderedSame
+        }
         let old = URL(fileURLWithPath: chosen.path).deletingLastPathComponent().pathComponents
         let new = newURL.deletingLastPathComponent().pathComponents
         var k = 0
-        while k < old.count, k < new.count, old[old.count - 1 - k] == new[new.count - 1 - k] { k += 1 }
+        while k < old.count, k < new.count, same(old[old.count - 1 - k], new[new.count - 1 - k]) { k += 1 }
         let oldPrefix = Array(old.dropLast(k)), newPrefix = Array(new.dropLast(k))
 
         for ref in others {
             let comps = URL(fileURLWithPath: ref.path).pathComponents
-            guard comps.count > oldPrefix.count, Array(comps.prefix(oldPrefix.count)) == oldPrefix else {
+            guard comps.count > oldPrefix.count, zip(comps, oldPrefix).allSatisfy({ same($0, $1) }) else {
                 report.missing.append(ref.id); out.append(ref); continue
             }
             let mapped = URL(fileURLWithPath: NSString.path(withComponents: newPrefix + Array(comps.dropFirst(oldPrefix.count))))

@@ -73,7 +73,7 @@ public struct AutosaveStore: Sendable {
             try? fm.removeItem(at: tmp)
             throw error
         }
-        try? prune(project.id, now: date)
+        try? prune(project.id, now: date, keeping: final)
         return AutosaveVersion(url: final, date: date)
     }
 
@@ -89,13 +89,22 @@ public struct AutosaveStore: Sendable {
         }.sorted { $0.date > $1.date }
     }
 
-    /// Drops versions beyond `keep` and older than `maxAge`; the newest version always stays.
-    public func prune(_ projectID: UUID, now: Date = Date()) throws {
-        let all = versions(for: projectID)
-        for (i, v) in all.enumerated() where i > 0 {
-            if i >= policy.keep || now.timeIntervalSince(v.date) > policy.maxAge {
-                try FileManager.default.removeItem(at: v.url)
+    /// Drops versions beyond `keep` and older than `maxAge`; the newest version and `keeping` always stay
+    /// (and count towards `keep`). Also removes orphaned `.<uuid>.tmp` dirs older than one hour.
+    public func prune(_ projectID: UUID, now: Date = Date(), keeping: URL? = nil) throws {
+        let fm = FileManager.default
+        var kept = 0
+        for (i, v) in versions(for: projectID).enumerated() {
+            if i == 0 || v.url.lastPathComponent == keeping?.lastPathComponent || (kept < policy.keep && now.timeIntervalSince(v.date) <= policy.maxAge) {
+                kept += 1
+            } else {
+                try fm.removeItem(at: v.url)
             }
+        }
+        let items = (try? fm.contentsOfDirectory(at: folder(for: projectID), includingPropertiesForKeys: nil)) ?? []
+        for u in items where u.lastPathComponent.hasPrefix(".") && u.pathExtension == "tmp" {
+            let m = (try? fm.attributesOfItem(atPath: u.path))?[.modificationDate] as? Date
+            if let m, now.timeIntervalSince(m) > 3600 { try? fm.removeItem(at: u) }
         }
     }
 
@@ -104,35 +113,53 @@ public struct AutosaveStore: Sendable {
     }
 }
 
-/// A "running" lock file per project: written at open, removed on clean close.
+/// One "running" lock file per process and project (`running-<pid>.lock`): written at open, removed on clean close.
 public struct SessionMarker: Sendable {
     public struct Info: Codable, Sendable, Equatable {
         public var pid: Int32
         public var started: Date
         public var projectName: String
         public var projectPath: String?
+        /// Start time of the process, to tell a reused pid from the original one. Nil in old markers.
+        public var processStart: Date?
     }
 
     public let store: AutosaveStore
     public init(store: AutosaveStore) { self.store = store }
 
-    static let fileName = "running.lock"
-    func file(_ id: UUID) -> URL { store.folder(for: id).appendingPathComponent(Self.fileName) }
+    static func fileName(_ pid: Int32) -> String { "running-\(pid).lock" }
+    func file(_ id: UUID, pid: Int32) -> URL { store.folder(for: id).appendingPathComponent(Self.fileName(pid)) }
 
-    public func begin(projectID: UUID, projectURL: URL?, projectName: String,
-                      pid: Int32 = ProcessInfo.processInfo.processIdentifier, date: Date = Date()) throws {
-        try FileManager.default.createDirectory(at: store.folder(for: projectID), withIntermediateDirectories: true)
-        let info = Info(pid: pid, started: date, projectName: projectName, projectPath: projectURL?.path)
-        let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601
-        try e.encode(info).write(to: file(projectID), options: .atomic)
+    /// Kernel start time of a process (proc_pidinfo); nil when the process does not exist.
+    public static func startTime(of pid: Int32) -> Date? {
+        var info = proc_bsdinfo()
+        let size = Int32(MemoryLayout<proc_bsdinfo>.size)
+        guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
+        return Date(timeIntervalSince1970: TimeInterval(info.pbi_start_tvsec) + TimeInterval(info.pbi_start_tvusec) / 1_000_000)
     }
 
-    public func end(projectID: UUID) { try? FileManager.default.removeItem(at: file(projectID)) }
+    public func begin(projectID: UUID, projectURL: URL?, projectName: String,
+                      pid: Int32 = ProcessInfo.processInfo.processIdentifier, date: Date = Date(),
+                      processStart: Date? = nil) throws {
+        try FileManager.default.createDirectory(at: store.folder(for: projectID), withIntermediateDirectories: true)
+        let info = Info(pid: pid, started: date, projectName: projectName, projectPath: projectURL?.path,
+                        processStart: processStart ?? Self.startTime(of: pid))
+        let e = JSONEncoder(); e.dateEncodingStrategy = .iso8601
+        try e.encode(info).write(to: file(projectID, pid: pid), options: .atomic)
+    }
 
-    public func info(projectID: UUID) -> Info? {
-        guard let data = try? Data(contentsOf: file(projectID)) else { return nil }
+    /// Removes only this process's marker.
+    public func end(projectID: UUID, pid: Int32 = ProcessInfo.processInfo.processIdentifier) {
+        try? FileManager.default.removeItem(at: file(projectID, pid: pid))
+    }
+
+    /// All markers of a project, one per process.
+    public func infos(projectID: UUID) -> [Info] {
+        let items = (try? FileManager.default.contentsOfDirectory(at: store.folder(for: projectID), includingPropertiesForKeys: nil)) ?? []
         let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601
-        return try? d.decode(Info.self, from: data)
+        return items.filter { $0.lastPathComponent.hasPrefix("running-") && $0.pathExtension == "lock" }
+            .sorted { $0.lastPathComponent < $1.lastPathComponent }
+            .compactMap { (try? Data(contentsOf: $0)).flatMap { try? d.decode(Info.self, from: $0) } }
     }
 }
 
@@ -147,25 +174,35 @@ public struct RecoveryCandidate: Sendable, Hashable {
 public struct RecoveryScanner: Sendable {
     public let store: AutosaveStore
     let isProcessAlive: @Sendable (Int32) -> Bool
+    let processStart: @Sendable (Int32) -> Date?
 
     public static let systemProcessCheck: @Sendable (Int32) -> Bool = { pid in
         kill(pid, 0) == 0 || errno == EPERM
     }
 
     public init(store: AutosaveStore,
-                isProcessAlive: @escaping @Sendable (Int32) -> Bool = RecoveryScanner.systemProcessCheck) {
-        self.store = store; self.isProcessAlive = isProcessAlive
+                isProcessAlive: @escaping @Sendable (Int32) -> Bool = RecoveryScanner.systemProcessCheck,
+                processStart: @escaping @Sendable (Int32) -> Date? = { SessionMarker.startTime(of: $0) }) {
+        self.store = store; self.isProcessAlive = isProcessAlive; self.processStart = processStart
     }
 
-    /// Projects whose marker survived a dead session and whose newest autosave is newer than the saved file. Newest first.
+    /// Alive = the pid exists and, when recorded, the process start time still matches (pid reuse is not alive).
+    func isAlive(_ info: SessionMarker.Info) -> Bool {
+        guard isProcessAlive(info.pid) else { return false }
+        guard let recorded = info.processStart, let current = processStart(info.pid) else { return true }
+        return abs(current.timeIntervalSince(recorded)) < 2
+    }
+
+    /// Projects with a dead session's marker and no live session, whose newest autosave is newer than the saved file. Newest first.
     public func scan() -> [RecoveryCandidate] {
         let fm = FileManager.default
         let dirs = (try? fm.contentsOfDirectory(at: store.base, includingPropertiesForKeys: nil)) ?? []
         let marker = SessionMarker(store: store)
         var out: [RecoveryCandidate] = []
         for dir in dirs {
-            guard let id = UUID(uuidString: dir.lastPathComponent),
-                  let info = marker.info(projectID: id), !isProcessAlive(info.pid),
+            guard let id = UUID(uuidString: dir.lastPathComponent) else { continue }
+            let infos = marker.infos(projectID: id)
+            guard let info = infos.max(by: { $0.started < $1.started }), !infos.contains(where: isAlive),
                   let newest = store.versions(for: id).first else { continue }
             let url = info.projectPath.map { URL(fileURLWithPath: $0) }
             if let url,
@@ -184,8 +221,11 @@ public struct RecoveryScanner: Sendable {
         return p
     }
 
-    /// Discards the stale marker (user declined recovery or finished it).
+    /// Discards the stale markers (user declined recovery or finished it).
     public func dismiss(_ candidate: RecoveryCandidate) {
-        SessionMarker(store: store).end(projectID: candidate.projectID)
+        let marker = SessionMarker(store: store)
+        for info in marker.infos(projectID: candidate.projectID) where !isAlive(info) {
+            marker.end(projectID: candidate.projectID, pid: info.pid)
+        }
     }
 }

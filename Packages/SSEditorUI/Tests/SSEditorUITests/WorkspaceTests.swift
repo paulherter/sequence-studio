@@ -135,4 +135,57 @@ import Testing
             #expect(try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(b)) == b)
         }
     }
+
+    // MARK: Decode validation
+
+    private func decode(_ root: LayoutNode) throws -> Workspace {
+        // Encode a workspace carrying the malformed tree, then decode it the way a saved file would be read.
+        let data = try JSONEncoder().encode(Workspace(name: "Bad", root: root))
+        return try JSONDecoder().decode(Workspace.self, from: data)
+    }
+
+    @Test func decodeFixesFractionCountMismatch() throws {
+        let bad = LayoutNode.split(axis: .horizontal, children: [
+            .tabs(panels: [.library], selected: .library),
+            .tabs(panels: [.timeline], selected: .timeline),
+            .tabs(panels: [.project], selected: .project),
+        ], fractions: [0.5, 0.5])
+        var w = try decode(bad)
+        guard case .split(_, let c, let f) = w.root else { Issue.record("root"); return }
+        #expect(c.count == 3 && f.count == 3)
+        #expect(abs(f.reduce(0, +) - 1) < 1e-9)
+        w.hide(.project)
+        #expect(w.visibleRoot != nil)                          // prune does not trap
+        let applied = w.setFractions(at: [], [0.3, 0.7])
+        #expect(applied)
+    }
+
+    @Test func decodeFixesFractionsNotSummingToOne() throws {
+        let bad = LayoutNode.split(axis: .vertical, children: [
+            .tabs(panels: [.library], selected: .library),
+            .tabs(panels: [.timeline], selected: .timeline),
+        ], fractions: [3, 9])
+        let w = try decode(bad)
+        guard case .split(_, _, let f) = w.root else { Issue.record("root"); return }
+        #expect(f == [0.5, 0.5])
+    }
+
+    @Test func decodeRemovesEmptyGroupsAndDropsTheirFraction() throws {
+        let bad = LayoutNode.split(axis: .horizontal, children: [
+            .tabs(panels: [], selected: .library),
+            .tabs(panels: [.timeline], selected: .library),   // selected not in panels
+            .split(axis: .vertical, children: [], fractions: []),
+        ], fractions: [0.2, 0.5, 0.3])
+        let w = try decode(bad)
+        #expect(w.root == .tabs(panels: [.timeline], selected: .timeline))
+    }
+
+    @Test func decodeOfFullyEmptyLayoutFallsBackToDefault() throws {
+        let w = try decode(.tabs(panels: [], selected: .library))
+        #expect(w.root == Workspace.editingPC.root)
+    }
+
+    @Test func validLayoutIsUntouchedByDecode() throws {
+        for b in Workspace.builtIns { #expect(try decode(b.root) == Workspace(name: "Bad", root: b.root)) }
+    }
 }

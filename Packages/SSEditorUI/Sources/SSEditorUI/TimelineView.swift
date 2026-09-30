@@ -1,0 +1,297 @@
+import AppKit
+import SSCore
+
+/// Timeline container (T-02: draw, scroll and zoom only; editing interactions are T-04/T-05).
+/// Layer-backed, flipped, draws only the dirty rect. Children: `RulerView` on top, one `TrackHeaderView` per track.
+/// Clips, lanes, playhead line and the tool column are drawn here.
+///
+/// Model input: `setTimeline(_:)`, `setSelection(_:)`, `setPlayhead(_:)`, `setOfflineMedia(_:)`.
+@MainActor
+public final class TimelineView: NSView {
+    public private(set) var timeline: Timeline
+    public private(set) var selection: Set<Clip.ID> = []
+    public private(set) var playhead: Time = .zero
+    public private(set) var offlineMedia: Set<UUID> = []
+    public private(set) var geometry: TimelineGeometry
+
+    /// Type colour per clip; default by track kind. Nest / title / caption hook in here later.
+    public var clipStyle: (Clip) -> ClipStyle = { ClipStyle(kind: $0.kind) }
+    /// Header control clicks (callbacks only in T-02).
+    public var onTrackToggle: ((Track.ID, TrackToggle) -> Void)?
+    /// Fired after scroll or zoom changed, so a host can sync scrollers and a zoom slider.
+    public var onViewportChange: (() -> Void)?
+
+    public static let minPointsPerSecond: Double = 0.02
+    public static let maxPointsPerFrame: Double = 400
+    public static let zoomStep: Double = 1.5
+
+    private let ruler: RulerView
+    private var headers: [Track.ID: TrackHeaderView] = [:]
+
+    public override var isFlipped: Bool { true }
+    public override var isOpaque: Bool { true }
+    public override var acceptsFirstResponder: Bool { true }
+
+    public init(timeline: Timeline = Timeline(name: "", frameDuration: Time(1, 24)), frame: NSRect = NSRect(x: 0, y: 0, width: 1000, height: 200)) {
+        self.timeline = timeline
+        let fd = timeline.frameDuration
+        self.geometry = TimelineGeometry(frameDuration: fd, pointsPerSecond: 40)
+        self.ruler = RulerView(geometry: geometry)
+        super.init(frame: frame)
+        wantsLayer = true
+        layerContentsRedrawPolicy = .onSetNeedsDisplay
+        addSubview(ruler)
+        layoutChildren()
+        rebuildHeaders()
+    }
+    public required init?(coder: NSCoder) { fatalError("not used") }
+
+    // MARK: Model input
+
+    public func setTimeline(_ t: Timeline) {
+        timeline = t
+        geometry.frameDuration = t.frameDuration
+        selection.formIntersection(Set(t.tracks.flatMap { $0.clips.map(\.id) }))
+        clampScroll()
+        rebuildHeaders()
+        syncChildren()
+        needsDisplay = true
+    }
+
+    public func setSelection(_ ids: Set<Clip.ID>) {
+        guard ids != selection else { return }
+        selection = ids
+        needsDisplay = true
+    }
+
+    public func setOfflineMedia(_ ids: Set<UUID>) {
+        guard ids != offlineMedia else { return }
+        offlineMedia = ids
+        needsDisplay = true
+    }
+
+    public func setPlayhead(_ t: Time) {
+        guard t != playhead else { return }
+        let old = geometry.x(for: playhead)
+        playhead = t
+        let new = geometry.x(for: t)
+        ruler.movePlayhead(to: t)
+        for x in [old, new] {
+            setNeedsDisplay(CGRect(x: x - 1, y: TimelineGeometry.rulerHeight, width: 2, height: bounds.height))
+        }
+    }
+
+    // MARK: Viewport (scroll + zoom)
+
+    /// Visible time span of the content area.
+    public var visibleRange: TimeRange {
+        let a = max(geometry.time(atX: TimelineGeometry.contentOriginX), .zero)
+        let b = max(geometry.time(atX: bounds.width), a)
+        return TimeRange(start: a, end: b)
+    }
+
+    /// End of the last clip (zero for an empty timeline).
+    public var contentEnd: Time { timeline.tracks.compactMap { $0.clips.last?.timeline.end }.max() ?? .zero }
+
+    private var contentViewportWidth: CGFloat { max(bounds.width - TimelineGeometry.contentOriginX, 1) }
+
+    private func maxScrollX() -> CGFloat {
+        // Sequence end plus one viewport of room, so the tail can be scrolled to the left edge.
+        max(geometry.width(of: contentEnd) + contentViewportWidth * 0.5 - contentViewportWidth * 0.0, 0)
+    }
+
+    private func maxScrollY() -> CGFloat { max(geometry.contentHeight(for: timeline) - bounds.height, 0) }
+
+    private func clampScroll() {
+        geometry.scrollX = min(max(geometry.scrollX, 0), maxScrollX())
+        geometry.scrollY = min(max(geometry.scrollY, 0), maxScrollY())
+    }
+
+    public func scroll(toX x: CGFloat) { setScroll(x: x, y: geometry.scrollY) }
+    public func scroll(toY y: CGFloat) { setScroll(x: geometry.scrollX, y: y) }
+
+    public func scroll(byX dx: CGFloat, y dy: CGFloat) { setScroll(x: geometry.scrollX + dx, y: geometry.scrollY + dy) }
+
+    private func setScroll(x: CGFloat, y: CGFloat) {
+        let old = (geometry.scrollX, geometry.scrollY)
+        geometry.scrollX = x; geometry.scrollY = y
+        clampScroll()
+        guard (geometry.scrollX, geometry.scrollY) != old else { return }
+        viewportChanged()
+    }
+
+    /// Sets zoom, keeping the time under `anchorX` (view coordinates) fixed.
+    public func setZoom(pointsPerSecond: Double, anchorX: CGFloat? = nil) {
+        let fdSec = Double(geometry.frameDuration.value) / Double(geometry.frameDuration.timescale)
+        let maxPPS = Self.maxPointsPerFrame / fdSec
+        let pps = min(max(pointsPerSecond, Self.minPointsPerSecond), maxPPS)
+        guard pps != geometry.pointsPerSecond else { return }
+        let anchor = anchorX ?? defaultZoomAnchor()
+        let relX = Double(anchor - TimelineGeometry.contentOriginX)
+        let seconds = (relX + Double(geometry.scrollX)) / geometry.pointsPerSecond
+        geometry.pointsPerSecond = pps
+        geometry.scrollX = CGFloat(seconds * pps - relX)
+        clampScroll()
+        viewportChanged()
+    }
+
+    private func defaultZoomAnchor() -> CGFloat {
+        let x = geometry.x(for: playhead)
+        return x >= TimelineGeometry.contentOriginX && x <= bounds.width
+            ? x : TimelineGeometry.contentOriginX + contentViewportWidth / 2
+    }
+
+    public func zoomIn(anchorX: CGFloat? = nil) { setZoom(pointsPerSecond: geometry.pointsPerSecond * Self.zoomStep, anchorX: anchorX) }
+    public func zoomOut(anchorX: CGFloat? = nil) { setZoom(pointsPerSecond: geometry.pointsPerSecond / Self.zoomStep, anchorX: anchorX) }
+
+    /// `\`: fit the whole sequence (clips, or In/Out when set) into the content area.
+    public func zoomToFit() {
+        let span = timeline.inOut.flatMap { $0.isEmpty ? nil : $0 } ?? TimeRange(start: .zero, duration: contentEnd)
+        guard !span.isEmpty else { return }
+        let seconds = Double(span.duration.value) / Double(span.duration.timescale)
+        let startSeconds = Double(span.start.value) / Double(span.start.timescale)
+        let usable = Double(contentViewportWidth) - 2 * Double(Theme.Spacing.lg)
+        geometry.scrollX = 0
+        setZoom(pointsPerSecond: max(usable, 1) / seconds, anchorX: TimelineGeometry.contentOriginX)
+        geometry.scrollX = CGFloat(startSeconds * geometry.pointsPerSecond) - Theme.Spacing.lg
+        clampScroll()
+        viewportChanged()
+    }
+
+    private func viewportChanged() {
+        syncChildren()
+        needsDisplay = true
+        onViewportChange?()
+    }
+
+    // MARK: Events
+
+    public override func scrollWheel(with event: NSEvent) {
+        let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
+        if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.option) {
+            let anchor = convert(event.locationInWindow, from: nil).x
+            setZoom(pointsPerSecond: geometry.pointsPerSecond * exp(Double(dy) * 0.01), anchorX: anchor)
+            return
+        }
+        let horizontalOnly = event.modifierFlags.contains(.shift) || maxScrollY() == 0
+        if horizontalOnly {
+            scroll(byX: -(abs(dx) > abs(dy) ? dx : dy), y: 0)
+        } else {
+            scroll(byX: -dx, y: -dy)
+        }
+    }
+
+    public override func magnify(with event: NSEvent) {
+        let anchor = convert(event.locationInWindow, from: nil).x
+        setZoom(pointsPerSecond: geometry.pointsPerSecond * (1 + Double(event.magnification)), anchorX: anchor)
+    }
+
+    public override func keyDown(with event: NSEvent) {
+        switch event.charactersIgnoringModifiers {
+        case "+", "=": zoomIn()
+        case "-": zoomOut()
+        case "\\": zoomToFit()
+        default: super.keyDown(with: event)
+        }
+    }
+
+    // MARK: Layout
+
+    public override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        clampScroll()
+        layoutChildren()
+        syncChildren()
+    }
+
+    private func layoutChildren() {
+        ruler.frame = CGRect(x: 0, y: 0, width: bounds.width, height: TimelineGeometry.rulerHeight)
+    }
+
+    private func rebuildHeaders() {
+        let ids = Set(timeline.tracks.map(\.id))
+        for (id, view) in headers where !ids.contains(id) { view.removeFromSuperview(); headers[id] = nil }
+        for t in timeline.tracks where headers[t.id] == nil {
+            let v = TrackHeaderView(track: t, label: "")
+            v.onToggle = { [weak self] id, toggle in self?.onTrackToggle?(id, toggle) }
+            headers[t.id] = v
+            addSubview(v, positioned: .below, relativeTo: ruler)   // the ruler stays above scrolled-up headers
+        }
+    }
+
+    /// Pushes model and viewport into the ruler and header rows.
+    private func syncChildren() {
+        ruler.update(geometry: geometry, inOut: timeline.inOut, markers: timeline.markers, playhead: playhead)
+        let rows = geometry.rows(for: timeline)
+        var seen = Set<Track.ID>()
+        for row in rows {
+            guard let header = headers[row.track], let track = timeline.track(row.track) else { continue }
+            seen.insert(row.track)
+            header.isHidden = false
+            header.frame = CGRect(x: TimelineGeometry.toolColumnWidth, y: row.y,
+                                  width: TimelineGeometry.headerWidth, height: row.height)
+            header.apply(track: track, label: row.label)
+        }
+        for (id, h) in headers where !seen.contains(id) { h.isHidden = true }
+    }
+
+    // MARK: Drawing
+
+    public override func draw(_ dirtyRect: NSRect) {
+        Theme.Colors.timeline.setFill()
+        dirtyRect.fill()
+
+        let rows = geometry.rows(for: timeline)
+        let contentClip = CGRect(x: TimelineGeometry.contentOriginX, y: TimelineGeometry.rulerHeight,
+                                 width: max(bounds.width - TimelineGeometry.contentOriginX, 0),
+                                 height: max(bounds.height - TimelineGeometry.rulerHeight, 0))
+        let clip = dirtyRect.intersection(contentClip)
+        if !clip.isEmpty {
+            NSGraphicsContext.saveGraphicsState()
+            clip.clip()
+            drawLanes(rows: rows, clip: clip)
+            drawPlayheadLine(clip: clip)
+            NSGraphicsContext.restoreGraphicsState()
+        }
+        drawToolColumn(dirty: dirtyRect)
+    }
+
+    private func drawLanes(rows: [TrackRow], clip: CGRect) {
+        let visibleX = CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height)
+        for row in rows {
+            let laneRect = CGRect(x: clip.minX, y: row.y, width: clip.width, height: row.height)
+            guard laneRect.intersects(clip), let track = timeline.track(row.track) else { continue }
+            Theme.Colors.lane.setFill()
+            laneRect.fill()
+            Theme.Colors.separator.setFill()
+            CGRect(x: clip.minX, y: row.maxY - 1, width: clip.width, height: 1).fill()
+            for c in track.clips {
+                let x0 = geometry.x(for: c.timeline.start), x1 = geometry.x(for: c.timeline.end)
+                if x1 < clip.minX { continue }
+                if x0 > clip.maxX { break }   // clips are sorted by start
+                ClipDrawing.draw(name: c.name, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
+                                 visible: visibleX, style: clipStyle(c), isSelected: selection.contains(c.id),
+                                 isOffline: offlineMedia.contains(c.media))
+            }
+        }
+    }
+
+    private func drawPlayheadLine(clip: CGRect) {
+        let x = geometry.x(for: playhead)
+        guard x >= clip.minX - 1, x <= clip.maxX + 1 else { return }
+        Theme.Colors.playhead.setFill()
+        CGRect(x: x.rounded() - 0.5, y: clip.minY, width: 1, height: clip.height).fill()
+    }
+
+    /// Placeholder: the real tools arrive with T-04. Only the column surface and its edge.
+    private func drawToolColumn(dirty: CGRect) {
+        let col = CGRect(x: 0, y: TimelineGeometry.rulerHeight, width: TimelineGeometry.toolColumnWidth,
+                         height: max(bounds.height - TimelineGeometry.rulerHeight, 0))
+        let r = dirty.intersection(col)
+        guard !r.isEmpty else { return }
+        Theme.Colors.titlebar.setFill()
+        r.fill()
+        Theme.Colors.separator.setFill()
+        CGRect(x: col.maxX - 1, y: col.minY, width: 1, height: col.height).intersection(dirty).fill()
+    }
+}

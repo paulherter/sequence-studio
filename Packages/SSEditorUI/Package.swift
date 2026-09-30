@@ -10,11 +10,11 @@ let package = Package(
     dependencies: [
         .package(path: "../SSCore"), .package(path: "../SSRender"), .package(path: "../SSExport"),
         .package(path: "../SSText"), .package(path: "../SSAudioFX"), .package(path: "../SSTranscribe"),
-        .package(path: "../SSLibrary"),
+        .package(path: "../SSLibrary"), .package(path: "../SSMedia"),
     ],
     targets: [
         .target(name: "SSEditorUI", dependencies: [
-            "SSCore", "SSExport", "SSText", "SSAudioFX", "SSTranscribe", "SSLibrary",
+            "SSCore", "SSExport", "SSText", "SSAudioFX", "SSTranscribe", "SSLibrary", "SSMedia",
             .product(name: "SSRender", package: "SSRender"),
         ]),
         .testTarget(name: "SSEditorUITests", dependencies: ["SSEditorUI", .product(name: "SSRender", package: "SSRender")]),

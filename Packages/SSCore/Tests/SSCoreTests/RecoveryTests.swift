@@ -83,7 +83,7 @@ import Testing
         let marker = SessionMarker(store: store)
         try marker.begin(projectID: p.id, projectURL: nil, projectName: p.name, pid: 1, date: t(0))
         try store.write(p, date: t(10))
-        marker.end(projectID: p.id)
+        marker.end(projectID: p.id, pid: 1)
         #expect(RecoveryScanner(store: store, isProcessAlive: { _ in false }).scan().isEmpty)
     }
 
@@ -148,5 +148,76 @@ import Testing
         let store = AutosaveStore(base: try tempDir())
         try SessionMarker(store: store).begin(projectID: UUID(), projectURL: nil, projectName: "P", pid: 1, date: t(0))
         #expect(RecoveryScanner(store: store, isProcessAlive: { _ in false }).scan().isEmpty)
+    }
+
+    // MARK: Review fixes
+
+    @Test func markersPerPidCoexistAndEndRemovesOnlyOwn() throws {
+        let store = AutosaveStore(base: try tempDir())
+        let p = Project(name: "P")
+        let m = SessionMarker(store: store)
+        try m.begin(projectID: p.id, projectURL: nil, projectName: "P", pid: 1, date: t(0))
+        try m.begin(projectID: p.id, projectURL: nil, projectName: "P", pid: 2, date: t(0))
+        #expect(m.infos(projectID: p.id).count == 2)
+        m.end(projectID: p.id, pid: 1)
+        #expect(m.infos(projectID: p.id).map(\.pid) == [2])
+    }
+
+    @Test func liveSessionBlocksCrashOfOtherSession() throws {
+        let store = AutosaveStore(base: try tempDir())
+        let p = Project(name: "P")
+        let m = SessionMarker(store: store)
+        try m.begin(projectID: p.id, projectURL: nil, projectName: "P", pid: 1, date: t(0))
+        try m.begin(projectID: p.id, projectURL: nil, projectName: "P", pid: 2, date: t(0))
+        try store.write(p, date: t(10))
+        // pid 1 dead, pid 2 alive and open: not a crash yet.
+        #expect(RecoveryScanner(store: store, isProcessAlive: { $0 == 2 }).scan().isEmpty)
+        // pid 2 closes cleanly; pid 1's stale marker remains -> candidate.
+        m.end(projectID: p.id, pid: 2)
+        #expect(RecoveryScanner(store: store, isProcessAlive: { _ in false }).scan().count == 1)
+    }
+
+    @Test func reusedPidWithDifferentStartTimeIsDead() throws {
+        let store = AutosaveStore(base: try tempDir())
+        let p = Project(name: "P")
+        try SessionMarker(store: store).begin(projectID: p.id, projectURL: nil, projectName: "P",
+                                              pid: 42, date: t(0), processStart: t(0))
+        try store.write(p, date: t(10))
+        let other = t(5000), same = t(0)
+        let reused = RecoveryScanner(store: store, isProcessAlive: { _ in true }, processStart: { _ in other })
+        #expect(reused.scan().count == 1)
+        let alive = RecoveryScanner(store: store, isProcessAlive: { _ in true }, processStart: { _ in same })
+        #expect(alive.scan().isEmpty)
+    }
+
+    @Test func systemStartTimeOfOwnProcessIsStable() {
+        let pid = ProcessInfo.processInfo.processIdentifier
+        #expect(SessionMarker.startTime(of: pid) != nil)
+        #expect(SessionMarker.startTime(of: pid) == SessionMarker.startTime(of: pid))
+    }
+
+    @Test func writingOlderDateNeverPrunesJustWrittenVersion() throws {
+        let store = AutosaveStore(base: try tempDir(), policy: AutosavePolicy(keep: 2))
+        let p = Project(name: "P")
+        try store.write(p, date: t(100))
+        try store.write(p, date: t(200))
+        let v = try store.write(p, date: t(0))   // older than everything
+        #expect(fm.fileExists(atPath: v.url.path))
+        #expect(store.versions(for: p.id).contains { $0.url.lastPathComponent == v.url.lastPathComponent })
+    }
+
+    @Test func pruneRemovesOrphanedTmpDirsOlderThanOneHour() throws {
+        let store = AutosaveStore(base: try tempDir())
+        let p = Project(name: "P")
+        try store.write(p, date: t(0))
+        let dir = store.folder(for: p.id)
+        let old = dir.appendingPathComponent(".\(UUID().uuidString).tmp")
+        let fresh = dir.appendingPathComponent(".\(UUID().uuidString).tmp")
+        for u in [old, fresh] { try fm.createDirectory(at: u, withIntermediateDirectories: true) }
+        try fm.setAttributes([.modificationDate: t(0)], ofItemAtPath: old.path)
+        try fm.setAttributes([.modificationDate: t(7000)], ofItemAtPath: fresh.path)
+        try store.prune(p.id, now: t(7200))
+        #expect(!fm.fileExists(atPath: old.path))
+        #expect(fm.fileExists(atPath: fresh.path))
     }
 }

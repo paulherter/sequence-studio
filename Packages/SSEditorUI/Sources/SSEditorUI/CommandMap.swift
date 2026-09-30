@@ -1,0 +1,105 @@
+import Foundation
+
+public struct CommandMap: Sendable {
+    public struct Entry: Sendable, Hashable {
+        public var scope: CommandScope
+        public var binding: KeyBinding
+        public var command: EditorCommand
+    }
+
+    public let entries: [Entry]
+    private let table: [CommandScope: [KeyBinding: EditorCommand]]
+
+    public init(entries: [Entry]) {
+        self.entries = entries
+        var t: [CommandScope: [KeyBinding: EditorCommand]] = [:]
+        for e in entries where t[e.scope]?[e.binding] == nil { t[e.scope, default: [:]][e.binding] = e.command }
+        table = t
+    }
+
+    /// Entries whose (scope, binding) is bound more than once. Must be empty.
+    public var duplicates: [Entry] {
+        var seen: [CommandScope: Set<KeyBinding>] = [:]
+        var out: [Entry] = []
+        for e in entries where seen[e.scope, default: []].insert(e.binding).inserted == false { out.append(e) }
+        return out
+    }
+
+    /// Focus-specific scope wins over `global`.
+    public func command(for binding: KeyBinding, focus: PanelID?) -> EditorCommand? {
+        if let s = CommandScope.scope(for: focus), let c = table[s]?[binding] { return c }
+        return table[.global]?[binding]
+    }
+
+    /// First binding of a command (menus show it as key equivalent). Global scope preferred.
+    public func binding(for command: EditorCommand) -> KeyBinding? {
+        entries.first { $0.command == command && $0.scope == .global }?.binding
+            ?? entries.first { $0.command == command }?.binding
+    }
+
+    // MARK: Premiere defaults (docs/UX.md section 3)
+
+    public static let premiereDefault: CommandMap = {
+        var e: [Entry] = []
+        func add(_ s: CommandScope, _ k: Key, _ m: KeyModifiers, _ c: EditorCommand) {
+            e.append(Entry(scope: s, binding: KeyBinding(k, m), command: c))
+        }
+        func add(_ s: CommandScope, _ k: Key, _ c: EditorCommand) { add(s, k, [], c) }
+        func ch(_ c: Character) -> Key { .char(c) }
+        let g = CommandScope.global, t = CommandScope.timeline
+
+        // Transport
+        add(g, ch("j"), .shuttleReverse); add(g, ch("k"), .shuttleStop); add(g, ch("l"), .shuttleForward)
+        add(g, .space, .playPause)
+        add(g, .left, .stepBackward); add(g, .right, .stepForward)
+        add(g, .left, .shift, .stepBackward5); add(g, .right, .shift, .stepForward5)
+        add(g, .home, .goToStart); add(g, .end, .goToEnd)
+        // Marking
+        add(g, ch("i"), .markIn); add(g, ch("o"), .markOut)
+        add(g, ch("i"), .shift, .goToIn); add(g, ch("o"), .shift, .goToOut)
+        add(g, ch("x"), .markClip); add(g, ch("x"), .option, .clearInOut)
+        add(g, ch(";"), .lift); add(g, ch("'"), .extract)
+        add(g, ch(","), .insert); add(g, ch("."), .overwrite)
+        add(g, ch("m"), .addMarker)
+        // Tools
+        add(g, ch("v"), .tool(.selection)); add(g, ch("a"), .tool(.trackForward))
+        add(g, ch("a"), .shift, .tool(.trackBackward))
+        add(g, ch("b"), .tool(.ripple)); add(g, ch("n"), .tool(.rolling))
+        add(g, ch("y"), .tool(.slip)); add(g, ch("u"), .tool(.slide))
+        add(g, ch("c"), .tool(.razor)); add(g, ch("h"), .tool(.hand))
+        add(g, ch("z"), .tool(.zoom)); add(g, ch("t"), .tool(.type))
+        // Clipboard / history / file
+        add(g, ch("c"), .command, .copy); add(g, ch("x"), .command, .cut); add(g, ch("v"), .command, .paste)
+        add(g, ch("v"), [.command, .option], .pasteAttributes)
+        add(g, ch("z"), .command, .undo); add(g, ch("z"), [.command, .shift], .redo)
+        add(g, ch("i"), .command, .importMedia); add(g, ch("n"), .command, .newSequence)
+        add(g, ch("s"), .command, .save); add(g, ch("m"), .command, .export)
+        // Panels (Premiere set; 6 maps to Library, our closest to the audio-side panel)
+        let panels: [PanelID] = [.project, .sourceMonitor, .timeline, .programMonitor, .effectControls, .library, .effects]
+        for (i, p) in panels.enumerated() {
+            add(g, ch(Character(String(i + 1))), .shift, .focusPanel(p))
+        }
+        add(g, ch("`"), .maximizePanel)
+
+        // Timeline
+        add(t, .up, .previousEditPoint); add(t, .down, .nextEditPoint)
+        add(t, ch("k"), .command, .addEdit); add(t, ch("k"), [.command, .shift], .addEditAllTracks)
+        add(t, ch("q"), .rippleTrimPrevious); add(t, ch("w"), .rippleTrimNext); add(t, ch("e"), .extendEdit)
+        add(t, .delete, .delete); add(t, .delete, .shift, .rippleDelete)
+        add(t, ch("s"), .toggleSnapping)
+        add(t, ch("l"), .command, .link); add(t, ch("g"), .command, .group)
+        add(t, ch("f"), .matchFrame); add(t, ch("r"), .shift, .reverseMatchFrame)
+        add(t, ch("="), .zoomIn); add(t, ch("+"), .zoomIn); add(t, ch("-"), .zoomOut); add(t, ch("\\"), .zoomFit)
+        add(t, .function(9), .easyEase); add(t, .function(9), .shift, .easeIn)
+        add(t, .function(9), [.command, .shift], .easeOut)
+        add(t, ch("h"), [.command, .option], .toggleHoldInterpolation)
+        add(t, .left, .option, .previousKeyframe); add(t, .right, .option, .nextKeyframe)
+        add(t, .function(3), .shift, .toggleSpeedGraph); add(t, ch("k"), .option, .addKeyframe)
+        // Program monitor
+        add(.program, .up, .previousEditPoint); add(.program, .down, .nextEditPoint)
+        add(.program, ch("f"), .matchFrame); add(.program, ch("r"), .shift, .reverseMatchFrame)
+        // Project panel
+        add(.project, .delete, .deleteProjectItems)
+        return CommandMap(entries: e)
+    }()
+}

@@ -35,4 +35,4 @@ Slices 1-7 plus the follow-ups below are implemented in `Packages/SSExport` (53 
 - Review-2 fixes X1-X4: audio-shorter-than-video test (timeout guarded); unique names case-insensitive (reserved lowercased) and reserve the `.srt` too;
   a sidecar failure keeps the finished video and sets `ExportJobStatus.sidecarError`; SRT cues are clamped to >= 0 before the empty check.
   `AudioSettings.loudnessTarget: Int?` is a computed, non-Codable compatibility view of `loudness` (used by SSEditorUI).
-- Open: renderer `FrameSource` adapter, burn-in captions, 10-bit/HDR output (settings only).
+- Done (autopilot): `TimelineFrameSource` (compositor → Rec.709 BGRA/420v, injected `FrameProvider`) and `CaptionBurnIn`. Open: real FrameProvider (E-03/E-09), per-clip color pipeline in export, 10-bit/HDR output (settings only).

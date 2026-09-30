@@ -17,7 +17,7 @@ enum CompositorShaderSource {
         float rotCos, rotSin, opacity;
         uint mode;           // 0 = YCbCr bi-planar, 1 = RGB texture, 2 = solid
         uint linearize;      // 1 = apply inverse BT.709 OETF (no colour stage)
-        uint pad;
+        float cornerRadius;  // layer-local px (aspect-fitted layer, before transform scale)
     };
 
     constexpr sampler linearSampler(filter::linear, address::clamp_to_edge);
@@ -44,25 +44,42 @@ enum CompositorShaderSource {
         out.write(float4(sourceEncoded(u, ty, tc, uv), 1.0f), gid);
     }
 
-    struct VOut { float4 position [[position]]; float2 uv; };
+    struct VOut { float4 position [[position]]; float2 local; };
+
+    // Edge antialiasing (mask on the layer rect) is on for rounded or rotated layers only, so axis-aligned
+    // unrounded layers stay bit-exact. The quad is grown by 1 screen px then so edge pixels outside get covered.
+    inline bool edgeAA(constant CompositeUniforms& u) { return u.cornerRadius > 0.0f || u.rotSin != 0.0f; }
 
     vertex VOut compositeVertex(uint vid [[vertex_id]], constant CompositeUniforms& u [[buffer(0)]]) {
         float2 uv = float2(vid & 1, vid >> 1);
-        float2 p = ((uv - 0.5f) * u.size - u.anchor) * u.scale;
+        float2 local = (uv - 0.5f) * u.size;
+        if (edgeAA(u)) local += (uv * 2.0f - 1.0f) * (1.0f / max(u.scale, 1e-4f));
+        float2 p = (local - u.anchor) * u.scale;
         float2 r = float2(u.rotCos * p.x - u.rotSin * p.y, u.rotSin * p.x + u.rotCos * p.y);
         float2 px = u.canvas * 0.5f + u.position + r;
         VOut o;
         o.position = float4(px.x / u.canvas.x * 2.0f - 1.0f, 1.0f - px.y / u.canvas.y * 2.0f, 0.0f, 1.0f);
-        o.uv = uv;
+        o.local = local;
         return o;
     }
 
     fragment float4 compositeFragment(VOut in [[stage_in]], constant CompositeUniforms& u [[buffer(0)]],
                                       texture2d<float> ty [[texture(0)]], texture2d<float> tc [[texture(1)]]) {
-        float3 rgb = u.mode == 2 ? u.solid.rgb : sourceEncoded(u, ty, tc, in.uv);
+        float cover = 1.0f;
+        if (edgeAA(u)) {
+            float2 h = u.size * 0.5f;
+            float r = min(u.cornerRadius, min(h.x, h.y));
+            float2 q = abs(in.local) - h + r;
+            float d = length(max(q, 0.0f)) + min(max(q.x, q.y), 0.0f) - r;   // signed distance, layer px
+            float w = max(length(float2(dfdx(d), dfdy(d))), 1e-6f);          // layer px per screen px
+            cover = clamp(0.5f - d / w, 0.0f, 1.0f);
+        }
+        float2 uv = in.local / u.size + 0.5f;
+        float3 rgb = u.mode == 2 ? u.solid.rgb : sourceEncoded(u, ty, tc, uv);
         if (u.mode != 2 && u.linearize != 0) rgb = inverseOETF709(rgb);
         rgb = max(rgb, 0.0f);
-        return float4(rgb * u.opacity, u.opacity);   // premultiplied
+        float a = u.opacity * cover;
+        return float4(rgb * a, a);   // premultiplied
     }
     """
 }

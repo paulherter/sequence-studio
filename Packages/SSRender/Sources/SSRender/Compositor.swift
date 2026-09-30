@@ -22,9 +22,14 @@ public struct RenderLayer: @unchecked Sendable {
     /// (source-encoded -> working-linear). Non-nil = YCbCr->RGB into an intermediate, `ColorPipelineGPU.encode`
     /// (source-encoded -> working-linear, includes the output of the chain), then composite with no further transfer.
     public var colorPipeline: ColorPipeline?
+    /// Rounded-corner radius in layer-local px: measured on the aspect-fitted layer BEFORE the transform scale, so it
+    /// scales with the clip (Premiere-like). Clamped to half the shorter side. 0 = square corners.
+    public var cornerRadius: Double
 
-    public init(content: Content, transform: ClipTransform = .identity, colorPipeline: ColorPipeline? = nil) {
+    public init(content: Content, transform: ClipTransform = .identity, colorPipeline: ColorPipeline? = nil,
+                cornerRadius: Double = 0) {
         self.content = content; self.transform = transform; self.colorPipeline = colorPipeline
+        self.cornerRadius = cornerRadius
     }
 }
 
@@ -62,7 +67,7 @@ public final class Compositor: @unchecked Sendable {
         var rotCos: Float = 1, rotSin: Float = 0, opacity: Float = 1
         var mode: UInt32 = 0
         var linearize: UInt32 = 1
-        var pad: UInt32 = 0
+        var cornerRadius: Float = 0
     }
 
     public init(device: MTLDevice) throws {
@@ -163,7 +168,9 @@ public final class Compositor: @unchecked Sendable {
         return SIMD2(Float(w) * s, Float(h) * s)
     }
 
-    private func geometry(_ u: inout Uniforms, transform t: ClipTransform, canvas: SequenceFormat, size: SIMD2<Float>) {
+    private func geometry(_ u: inout Uniforms, transform t: ClipTransform, canvas: SequenceFormat, size: SIMD2<Float>,
+                          cornerRadius: Double = 0) {
+        u.cornerRadius = Float(max(0, cornerRadius))
         u.canvas = SIMD2(Float(canvas.width), Float(canvas.height))
         u.size = size
         u.position = SIMD2(Float(t.position.x), Float(t.position.y))
@@ -193,14 +200,14 @@ public final class Compositor: @unchecked Sendable {
             case .placeholder(let kind):
                 u.mode = 2; u.solid = Self.placeholderLinear(kind)
                 geometry(&u, transform: layer.transform, canvas: format,
-                         size: SIMD2(Float(format.width), Float(format.height)))
+                         size: SIMD2(Float(format.width), Float(format.height)), cornerRadius: layer.cornerRadius)
                 prepared.append(Prepared(u: u, tex0: dummy, tex1: dummy))
             case .frame(let pb, let hint):
                 guard let info = PixelFormats.info(for: CVPixelBufferGetPixelFormatType(pb)) else {
                     unsupportedFrameCount += 1
                     u.mode = 2; u.solid = Self.placeholderLinear(.damaged)
                     geometry(&u, transform: layer.transform, canvas: format,
-                             size: SIMD2(Float(format.width), Float(format.height)))
+                             size: SIMD2(Float(format.width), Float(format.height)), cornerRadius: layer.cornerRadius)
                     prepared.append(Prepared(u: u, tex0: dummy, tex1: dummy))
                     continue
                 }
@@ -211,7 +218,7 @@ public final class Compositor: @unchecked Sendable {
                     unsupportedFrameCount += 1
                     u.mode = 2; u.solid = Self.placeholderLinear(.damaged)
                     geometry(&u, transform: layer.transform, canvas: format,
-                             size: SIMD2(Float(format.width), Float(format.height)))
+                             size: SIMD2(Float(format.width), Float(format.height)), cornerRadius: layer.cornerRadius)
                     prepared.append(Prepared(u: u, tex0: dummy, tex1: dummy))
                     continue
                 }
@@ -219,7 +226,8 @@ public final class Compositor: @unchecked Sendable {
                 u.mode = info.layout == .bgra8 ? 1 : 0
                 u.m = PixelFormats.ycbcrToRGB(PixelFormats.matrix(tag: hint.matrix))
                 u.range = PixelFormats.rangeParams(info)
-                geometry(&u, transform: layer.transform, canvas: format, size: Self.fitSize(w, h, canvas: format.width, format.height))
+                geometry(&u, transform: layer.transform, canvas: format, size: Self.fitSize(w, h, canvas: format.width, format.height),
+                         cornerRadius: layer.cornerRadius)
                 var p = Prepared(u: u, tex0: t0, tex1: t1)
                 if let pipeline = layer.colorPipeline {
                     if let mid = acquireIntermediate(width: w, height: h) {

@@ -280,3 +280,47 @@ private func setup() -> (MTLDevice, MTLCommandQueue, Compositor)? {
     print("E-07 compositor 3x4K 420v layers: encode+GPU wall best \(String(format: "%.2f", best)) ms, GPU-only best \(String(format: "%.2f", bestGPU)) ms (budget 4 ms)")
     #expect(best.isFinite)
 }
+
+// MARK: Rounded corners / edge antialiasing
+
+@Test func roundedCornerMask() throws {
+    guard let (dev, q, comp) = setup() else { return }
+    let f = format(64, 64)
+    let t = makeTarget(dev, 64, 64)
+    let below = RenderLayer(content: .frame(makeBGRA(64, 64, (0, 255, 0, 255)), colorHint: hint()))
+    // Top layer: 32 px square at 16..48 (scale 0.5). Radius 20 layer px = 10 screen px.
+    func top(dx: Double = 0, radius: Double = 20, rotation: Double = 0) -> RenderLayer {
+        RenderLayer(content: .frame(makeBGRA(64, 64, (0, 0, 255, 255)), colorHint: hint()),
+                    transform: ClipTransform(position: Vec2(dx, 0), scale: Vec2(0.5, 0.5), rotation: rotation),
+                    cornerRadius: radius)
+    }
+    try renderAndWait(comp, [below, top()], f, t, queue: q)
+    near(pixel(t, 16, 16), [0, 1, 0], 1.0 / 255, "corner shows layer below")
+    near(pixel(t, 32, 32), [1, 0, 0], 1.0 / 255, "centre opaque")
+    near(pixel(t, 32, 16), [1, 0, 0], 1.0 / 255, "straight edge pixel inside")
+    near(pixel(t, 10, 32), [0, 1, 0], 1.0 / 255, "outside")
+    // Edge at x = 16.5: pixel 16 is half covered -> between, premultiplied blend over green.
+    try renderAndWait(comp, [below, top(dx: 0.5)], f, t, queue: q)
+    let e = pixel(t, 16, 32)
+    #expect(abs(e[0] - 0.5) < 0.06 && abs(e[1] - 0.5) < 0.06, "AA edge \(e)")
+    // Radius 0 and no rotation: no mask, hard edge as before.
+    try renderAndWait(comp, [below, top(radius: 0)], f, t, queue: q)
+    near(pixel(t, 16, 16), [1, 0, 0], 1.0 / 255, "square corner")
+}
+
+@Test func rotatedEdgeIsAntialiased() throws {
+    guard let (dev, q, comp) = setup() else { return }
+    let f = format(64, 64)
+    let t = makeTarget(dev, 64, 64)
+    let below = RenderLayer(content: .frame(makeBGRA(64, 64, (0, 255, 0, 255)), colorHint: hint()))
+    let rot = RenderLayer(content: .frame(makeBGRA(64, 64, (0, 0, 255, 255)), colorHint: hint()),
+                          transform: ClipTransform(scale: Vec2(0.5, 0.5), rotation: 45))
+    try renderAndWait(comp, [below, rot], f, t, queue: q)
+    var intermediate = 0
+    for y in 0..<64 { for x in 0..<64 {
+        let p = pixel(t, x, y)
+        if p[0] > 0.1 && p[0] < 0.9 { intermediate += 1 }
+    } }
+    #expect(intermediate > 20, "expected antialiased diagonal edge pixels, got \(intermediate)")
+    near(pixel(t, 32, 32), [1, 0, 0], 1.0 / 255, "centre")
+}
