@@ -199,6 +199,34 @@ private final class SessionTestClock: @unchecked Sendable {
         #expect(!r.session.isPlaying)
     }
 
+    @Test func stopPlaybackStaysStoppedEvenWhenTheEngineReportsLate() throws {
+        let r = try Rig()
+        r.session.playPause()
+        r.engine.simulatePlayback(advance: Time(3, 30))
+        r.session.stopPlayback()
+        #expect(!r.session.isPlaying && r.engine.rate.isPaused)
+        r.engine.simulatePlayback(advance: Time(5, 30))        // a late position report must not restart or move anything
+        #expect(!r.session.isPlaying && r.engine.rate.isPaused)
+        #expect(r.session.playhead == Time(3, 30))
+        r.session.stopPlayback()                                // idempotent
+        #expect(!r.session.isPlaying)
+    }
+
+    @Test func seekAndScrubWhilePlayingStopPlayback() throws {
+        let r = try Rig()
+        r.session.playPause()
+        r.session.stopPlayback()
+        r.session.seek(to: Time(30, 30))
+        #expect(!r.session.isPlaying && r.engine.rate.isPaused && r.session.playhead == Time(30, 30))
+        r.session.playPause()
+        #expect(r.session.isPlaying)
+        r.session.stopPlayback()
+        r.session.beginScrub()
+        r.session.scrub(to: Time(15, 30))
+        r.session.endScrub()
+        #expect(!r.session.isPlaying && r.session.playhead == Time(15, 30))
+    }
+
     @Test func transportCommands() throws {
         let r = try Rig()
         r.session.playPause()

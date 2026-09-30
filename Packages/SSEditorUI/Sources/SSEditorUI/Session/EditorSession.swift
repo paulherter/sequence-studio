@@ -295,7 +295,15 @@ public final class EditorSession {
         if end > .zero, playhead >= end { seek(to: .zero) }
     }
 
-    public func beginScrub() { engine.beginScrub() }
+    /// A click in the timeline or ruler: playback stops (and stays stopped until Play / Space / L).
+    public func stopPlayback() {
+        guard isPlaying || !engine.rate.isPaused else { return }
+        engine.pause()
+        isPlaying = false
+        notify(.transport)
+    }
+
+    public func beginScrub() { stopPlayback(); engine.beginScrub() }
     public func scrub(to t: Time) {
         let target = max(.zero, t.snapped(to: frameDuration))
         playhead = target

@@ -73,3 +73,6 @@
 - Dragging media into the timeline shows a live ghost of the clip at the drop position (move to place, release to commit, Esc or drag out to cancel), like Premiere — not just a "+" cursor.
 - Resizing panels/window must never break layouts.
 - S-Log3 footage currently shows only yellow (placeholder) — must decode and display.
+
+## [auto] Timeline track area fills the panel
+Extra panel height is water-filled over the tracks (video weight 3, audio 2) up to caps V1 200, A1 120, others 90 pt; user-resized tracks stay fixed. Only beyond the caps is there empty space. Chosen over a centre divider because it needs no new layout mode and hit testing keeps using one row list (`TimelineGeometry.viewportHeight`).

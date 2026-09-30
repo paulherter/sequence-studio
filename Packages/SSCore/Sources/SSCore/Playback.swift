@@ -58,6 +58,9 @@ public struct Shuttle: Sendable, Equatable {
 
     public init() {}
 
+    /// Playback was stopped by something other than K (a click in the timeline, the transport button).
+    public mutating func stopped() { rate = .zero }
+
     public mutating func press(_ key: ShuttleKey) -> ShuttleAction {
         switch key {
         case .k:

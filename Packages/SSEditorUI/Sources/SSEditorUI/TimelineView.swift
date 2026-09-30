@@ -52,8 +52,18 @@ public final class TimelineView: NSView {
     /// Active tool, snapping and linked selection.
     public var toolState: ToolState {
         get { interaction.toolState }
-        set { interaction.toolState = newValue }
+        set {
+            let changed = interaction.toolState.tool != newValue.tool
+            interaction.toolState = newValue
+            syncToolButtons()
+            if changed { invalidateCursors() }
+        }
     }
+    /// The user picked a tool with a tool column button (keys set `toolState` directly).
+    public var onToolChange: ((TimelineTool) -> Void)?
+    /// Any click inside the view (ruler, clips, empty space), before it is handled: the host stops playback here.
+    public var onPointerDown: (() -> Void)?
+    private var toolButtons: [(tool: TimelineTool, button: NSButton)] = []
 
     public static let minPointsPerSecond: Double = 0.02
     public static let maxPointsPerFrame: Double = 400
@@ -70,6 +80,7 @@ public final class TimelineView: NSView {
         self.timeline = timeline
         let fd = timeline.frameDuration
         self.geometry = TimelineGeometry(frameDuration: fd, pointsPerSecond: 40)
+        self.geometry.viewportHeight = frame.height
         self.interaction = TimelineInteraction(timeline: timeline, geometry: geometry)
         self.ruler = RulerView(geometry: geometry)
         super.init(frame: frame)
@@ -79,6 +90,7 @@ public final class TimelineView: NSView {
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         registerForDraggedTypes([.sequenceMediaIDs, .sequenceTextTemplate, .fileURL])
         addSubview(ruler)
+        buildToolButtons()
         layoutChildren()
         rebuildHeaders()
     }
@@ -97,6 +109,7 @@ public final class TimelineView: NSView {
         clampScroll()
         rebuildHeaders()
         syncChildren()
+        invalidateCursors()
         needsDisplay = true
     }
 
@@ -213,6 +226,7 @@ public final class TimelineView: NSView {
     }
 
     private func viewportChanged() {
+        invalidateCursors()
         syncChildren()
         needsDisplay = true
         onViewportChange?()
@@ -265,6 +279,7 @@ public final class TimelineView: NSView {
             timeline = preview
             rebuildHeaders()
             syncChildren()
+            invalidateCursors()
         }
         if interaction.selection != selection || interaction.captionSelection != captionSelection {
             selection = interaction.selection
@@ -277,6 +292,7 @@ public final class TimelineView: NSView {
     public override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         onFocusRequest?()
+        onPointerDown?()
         let p = convert(event.locationInWindow, from: nil)
         if event.clickCount == 2, case .caption(let id, _) = geometry.hitTest(p, in: timeline) {
             onEditCaptionText?(id)
@@ -396,13 +412,112 @@ public final class TimelineView: NSView {
 
     public override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
+        geometry.viewportHeight = newSize.height
         clampScroll()
         layoutChildren()
         syncChildren()
+        invalidateCursors()
+        needsDisplay = true
     }
 
     private func layoutChildren() {
         ruler.frame = CGRect(x: 0, y: 0, width: bounds.width, height: TimelineGeometry.rulerHeight)
+        layoutToolButtons()
+    }
+
+    // MARK: Tool column
+
+    private static let toolSymbols: [TimelineTool: (symbol: String, title: String)] = [
+        .selection: ("cursorarrow", "Selection"),
+        .trackSelectForward: ("arrow.right.to.line", "Track Select Forward"),
+        .rippleEdit: ("arrow.left.and.right.righttriangle.left.righttriangle.right", "Ripple Edit"),
+        .rollEdit: ("rectangle.split.2x1", "Rolling Edit"),
+        .razor: ("scissors", "Razor"),
+        .slip: ("arrow.left.and.right.square", "Slip"),
+        .slide: ("arrow.left.and.right.square.fill", "Slide"),
+        .hand: ("hand.raised", "Hand"),
+    ]
+    /// Order of the column, top to bottom (Premiere's order).
+    static let toolColumnOrder: [TimelineTool] = [.selection, .trackSelectForward, .rippleEdit, .rollEdit, .razor, .slip, .slide, .hand]
+    static let toolButtonSize: CGFloat = 28
+    static let toolButtonSpacing: CGFloat = 2
+
+    private func buildToolButtons() {
+        for tool in Self.toolColumnOrder {
+            let info = Self.toolSymbols[tool]!
+            let b = NSButton(frame: .zero)
+            b.setButtonType(.pushOnPushOff)
+            b.bezelStyle = .smallSquare
+            b.isBordered = false
+            b.imagePosition = .imageOnly
+            b.image = NSImage(systemSymbolName: info.symbol, accessibilityDescription: info.title)
+                ?? NSImage(systemSymbolName: "questionmark.square", accessibilityDescription: info.title)
+            b.imageScaling = .scaleProportionallyDown
+            b.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+            b.toolTip = "\(info.title) (\(String(tool.key).uppercased()))"
+            b.setAccessibilityLabel(info.title)
+            b.wantsLayer = true
+            b.layer?.cornerRadius = 5
+            b.focusRingType = .none
+            b.target = self
+            b.action = #selector(toolButtonClicked(_:))
+            b.tag = toolButtons.count
+            addSubview(b)
+            toolButtons.append((tool, b))
+        }
+        syncToolButtons()
+    }
+
+    @objc private func toolButtonClicked(_ sender: NSButton) {
+        guard toolButtons.indices.contains(sender.tag) else { return }
+        let tool = toolButtons[sender.tag].tool
+        var s = toolState
+        s.tool = tool
+        toolState = s
+        window?.makeFirstResponder(self)
+        onToolChange?(tool)
+    }
+
+    /// Highlights the active tool (selected = accent tint background).
+    private func syncToolButtons() {
+        for (tool, b) in toolButtons {
+            let on = tool == toolState.tool
+            b.state = on ? .on : .off
+            b.contentTintColor = on ? Theme.Colors.accent : Theme.Colors.label2
+            b.layer?.backgroundColor = (on ? Theme.Colors.accentTint : NSColor.clear).cgColor
+        }
+    }
+
+    private func layoutToolButtons() {
+        let step = Self.toolButtonSize + Self.toolButtonSpacing
+        var y = TimelineGeometry.rulerHeight + 4
+        for (_, b) in toolButtons {
+            let fits = y + Self.toolButtonSize <= bounds.height
+            b.isHidden = !fits
+            b.frame = CGRect(x: (TimelineGeometry.toolColumnWidth - Self.toolButtonSize) / 2, y: y,
+                             width: Self.toolButtonSize, height: Self.toolButtonSize)
+            y += step
+        }
+    }
+
+    // MARK: Cursors
+
+    private func invalidateCursors() { window?.invalidateCursorRects(for: self) }
+
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        invalidateCursors()
+    }
+
+    /// Cursor rects per tool (see `TimelineCursorMap`): trim cursors on clip edges, razor over the tracks, ...
+    public override func resetCursorRects() {
+        discardCursorRects()
+        let content = CGRect(x: TimelineGeometry.contentOriginX, y: TimelineGeometry.rulerHeight,
+                             width: max(bounds.width - TimelineGeometry.contentOriginX, 0),
+                             height: max(bounds.height - TimelineGeometry.rulerHeight, 0))
+        for r in TimelineCursorMap.regions(timeline: timeline, geometry: geometry, tool: toolState.tool, content: content) {
+            addCursorRect(r.rect, cursor: TimelineCursors.cursor(for: r.kind))
+        }
     }
 
     private func rebuildHeaders() {

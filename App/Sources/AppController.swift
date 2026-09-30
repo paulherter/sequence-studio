@@ -179,7 +179,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
                     audioWarned = true
                     shell.statusBar.flash("Audio output unavailable: playing without sound.", seconds: 6)
                 }
-            } else { audioWarned = false }
+            } else {
+                audioWarned = false
+                router.transportStopped()      // stopped by a click or the button: the next L starts at 1x
+            }
         }
         if change.contains(.project) || change.contains(.status) { updateChrome() }
     }
@@ -423,9 +426,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         if ke.modifiers.contains(.command) { return event }
         // Lists keep their arrow and delete keys.
         if window.firstResponder is NSTableView, [Key.up, .down, .left, .right, .delete].contains(ke.key) { return event }
+        // Consume every key the router knows, also auto-repeats and key ups it turns into no action: an unconsumed
+        // key down travels to NSWindow and plays the error beep.
+        let consumed = router.consumes(ke)
         let actions = router.handle(ke)
         scheduleRouterDeadline()
-        guard !actions.isEmpty else { return event }
+        guard !actions.isEmpty else { return consumed ? nil : event }
         run(actions)
         return nil
     }

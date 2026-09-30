@@ -39,6 +39,19 @@ public struct KeyRouter: Sendable {
         return out
     }
 
+    /// True when the host must swallow this event (return nil from the key monitor) so it never reaches the responder
+    /// chain, where an unhandled key down plays the error beep. Covers key downs with a binding even when `handle`
+    /// yields no action (auto-repeat of a non-repeatable command), and the key ups of shuttle keys.
+    public func consumes(_ event: KeyEvent) -> Bool {
+        switch event.phase {
+        case .down: return map.command(for: event.binding, focus: focus) != nil
+        case .up: return shuttleDown[event.key] != nil
+        }
+    }
+
+    /// Playback was stopped from outside the keyboard (a click, the transport button): the next L/J starts at 1x.
+    public mutating func transportStopped() { shuttle.stopped() }
+
     public mutating func handle(_ event: KeyEvent) -> [RouterAction] {
         var out = tick()
         switch event.phase {

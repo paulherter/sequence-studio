@@ -58,6 +58,8 @@ public struct ToolState: Sendable, Equatable {
 public enum TimelineEdit: Sendable, Equatable {
     case addTrack(Track)
     case move(Clip.ID, to: Time, track: Track.ID?)
+    /// Move with linked partners retargeted to their own tracks (mirrored track change).
+    case moveGroup(Clip.ID, to: Time, track: Track.ID?, partners: [Clip.ID: Track.ID])
     case moveInsert(Clip.ID, to: Time, track: Track.ID?)
     case lift([Clip.ID])
     case rippleDelete([Clip.ID])
@@ -75,6 +77,7 @@ public enum TimelineEdit: Sendable, Equatable {
         switch self {
         case .addTrack(let track): t.tracks.append(track)
         case let .move(id, start, track): try t.move(id, to: start, track: track)
+        case let .moveGroup(id, start, track, partners): try t.move(id, to: start, track: track, retarget: partners)
         case let .moveInsert(id, start, track): try t.moveInsert(id, to: start, track: track)
         case .lift(let ids): try t.lift(ids)
         case .rippleDelete(let ids): _ = try t.rippleDelete(ids)
