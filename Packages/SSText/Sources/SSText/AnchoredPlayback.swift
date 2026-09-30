@@ -78,3 +78,39 @@ public struct AnimationSet: Sendable, Hashable, Codable {
         return clipTime >= start ? (outValue ?? inValue) : (inValue ?? outValue)
     }
 }
+
+// MARK: - Retiming (authoring only)
+
+extension KeyframeTemplate {
+    /// Copy with template-local key times scaled by `newDuration / duration` (exact rational arithmetic, key ids,
+    /// values, shapes and anchor unchanged). For authoring/editing ("make this animation longer"), never used
+    /// by anchored playback: playing a template on a clip does not scale it (see `resolved(clipDuration:)`).
+    ///
+    /// Degenerate cases: a negative `newDuration` is treated as zero; with zero target all keys collapse to time 0
+    /// (per track the last key wins); a zero source duration has no scale, so key times stay as they are.
+    public func retimed(toDuration newDuration: Time) -> KeyframeTemplate {
+        let target = max(newDuration, .zero)
+        var copy = self
+        copy.duration = target
+        guard duration > .zero, target != duration else { return copy }
+        copy.tracks = tracks.map { track in
+            let keys = track.track.keys.map { k -> Keyframe<Double> in
+                var c = k
+                c.time = Self.scale(k.time, from: duration, to: target)
+                return c
+            }
+            return AnimationTrack(property: track.property, track: KeyframeTrack(keys: keys))
+        }
+        return copy
+    }
+
+    /// t * to / from as a reduced rational (Int128 intermediates; traps only if the result leaves Int64).
+    static func scale(_ t: Time, from: Time, to: Time) -> Time {
+        var num = Int128(t.value) * Int128(to.value) * Int128(from.timescale)
+        var den = Int128(t.timescale) * Int128(to.timescale) * Int128(from.value)
+        var a = num.magnitude, b = den.magnitude
+        while b != 0 { (a, b) = (b, a % b) }
+        if a > 1 { num /= Int128(a); den /= Int128(a) }
+        return Time(Int64(num), Int64(den))
+    }
+}

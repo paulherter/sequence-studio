@@ -17,16 +17,23 @@ Standalone package. Depends only on SSCore's stable `Time`/`TimeRange` (committe
 - Lines measured with CTLine typographic bounds (fallback fonts, emoji); per-line pitch.
 - Keyframes: SSText-local Fraction/Easing/Keyframe/KeyframeTrack removed. `AnimationTrack` = property + `SSCore.KeyframeTrack<Double>`, key times are template-local `Time` (0...duration), shapes via `SegmentShape` (overshoot = bezier, handle dy 1.56; hold = `.hold`). TextTemplate formatVersion 2; v1 files still decode (fraction * duration).
 
+## Revision 2 (2026-09-30)
+- Font resolution (resolved): an explicit face name (PostScript/full name that differs from the family name, e.g. "Helvetica-Bold") wins and `weight` is ignored; `weight` only applies to a bare family name ("Helvetica", ".AppleSystemUIFont"). Unknown names fall back to Core Text's substitute and count as family names.
+- Anchors: `KeyframeTemplate.anchor` = `.start` (in: key times from clip start) or `.end` (out: template 0...duration plays at clipDuration-duration...clipDuration). Never scaled. `value(of:clipTime:clipDuration:)` evaluates exactly; `resolved(clipDuration:)` returns clip-local tracks, clamped to 0...clipDuration (cut bezier segments approximated). New built-in "fade-out" (`.end`); pop-in/fade stay `.start`.
+- `AnimationSet(in:out:)`: in has priority; out starts at max(clip-outDuration, inDuration) and is cut by the clip end; if the in-animation fills the clip the out never plays. Out wins per property while playing, else the in value holds. Not yet part of `TextTemplate` (template still holds one `KeyframeTemplate`).
+- Format v3: `anchor` added; v1/v2 files decode as `.start` (fixtures in tests).
+- Retiming (resolved): `KeyframeTemplate.retimed(toDuration:)` scales key times exactly (rational, Int128 intermediates) for authoring only; anchored playback never calls it. Zero target collapses keys to t=0, zero source leaves times unchanged.
+
 ## Open questions
 (resolved items from the first pass removed; new ones below)
 - Word longer than maxWidth: Core Text breaks by character; a single glyph wider than maxWidth overflows.
 - Animation durations (pop-in 250ms, fade 200ms) and the built-in style values (sizes, fonts) are guesses; Paul to judge feel.
 - Style ref "default" aliases "classic" to match SSTranscribe `CaptionPreset.standard`; SSTranscribe is not a dependency.
 - Font files/embedded assets are not part of the template.
-- Weight always picks the face within the named font's family: "Helvetica-Bold" with `.regular` resolves to Helvetica Regular. Should an explicit PostScript face name win over `weight`?
 - `inkBounds` uses the full stroke width on every side (conservative; a centred CG stroke needs only half) and the full blur radius. Tighten once the renderer's stroke/blur model is fixed.
 - Classic preset shadow `offsetY` changed from -2 to +2: shadow offsets are in layout space (y down), so positive = down. Check SSTranscribe/renderer do not assume y-up offsets.
 - Line pitch now uses each line's own runs (emoji/CJK lines can be taller than the main font), so pitch is no longer strictly uniform for mixed text; leading = max(font leading, line leading).
 - Template keys carry deterministic index-based UUIDs for built-ins and migrated v1 tracks; user-edited tracks get random ids (fine for SSCore, but template equality then depends on ids).
-- Template times are absolute within the template (not normalized): retiming a template to another duration needs a scale helper (not written yet).
 - v1 files with duration 0 and keyframes read their fractions as seconds (degenerate case).
+- `TextTemplate` holds a single animation; an in+out pair (`AnimationSet`) has no on-disk home yet. Add `animationOut` to the template (format v4) once the UI needs both?
+- SwiftPM test runs on this machine occasionally stall inside fontd XPC (CoreText font lookup) when the machine is under load; rerunning passes.
