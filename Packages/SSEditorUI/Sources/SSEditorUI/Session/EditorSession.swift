@@ -379,9 +379,13 @@ public final class EditorSession {
     /// Q (`.head`) / W (`.tail`): ripple-trims the clip under the playhead so that edge lands on it.
     public func rippleTrimToPlayhead(_ edge: ClipEdge) {
         let at = playhead
-        attempt(edge == .head ? "Ripple Trim Previous Edit" : "Ripple Trim Next Edit") {
-            _ = try $0.rippleTrimToPlayhead(edge, at: at, tracks: nil)
+        var moved = Time.zero
+        let done = attempt(edge == .head ? "Ripple Trim Previous Edit" : "Ripple Trim Next Edit") {
+            moved = try $0.rippleTrimToPlayhead(edge, at: at, tracks: nil)
         }
+        // Head trim: the picture under the playhead slid back by the cut, so the playhead goes with it and lands on
+        // the new edit point (Premiere). A tail trim leaves the picture where it was.
+        if done, edge == .head, moved != .zero { seek(to: at - moved) }
     }
 
     /// Tracks a range edit applies to: the targeted tracks, else every unlocked track.

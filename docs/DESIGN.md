@@ -37,7 +37,8 @@ Dark appearance only (Final Cut style). Tokens belong in the app's UI layer (e.g
 | clipTitle (+edge) | #9C3F79 (#CF6AA9) | custom | text, graphics |
 | clipCaption (+edge) | #6A4DBD (#9C82E4) | custom | captions |
 | clipShade / onClip | black 22 % / #FFFFFF | custom | clip body under name strip / text on clips |
-| clipSelect | #FFD60A | `systemYellow` | selected clip border (2 pt) |
+| clipSelect | #FFFFFF | white | selected clip border (2 pt) |
+| snapLine | #FFD60A | `systemYellow` | snap indicator line |
 | playhead | white 92 % | custom | 1 pt line + small triangle |
 | keyframe | #D6D6D6 | custom | unselected keyframe |
 | marker / range / rangeEdge | #FF9F0A / white 7 % / white 55 % | `systemOrange` / custom | markers, In/Out band on ruler |

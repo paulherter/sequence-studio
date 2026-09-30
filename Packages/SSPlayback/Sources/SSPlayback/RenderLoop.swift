@@ -324,7 +324,7 @@ final class RenderLoop: @unchecked Sendable {
     struct TickTiming: Sendable { var ticks = 0; var total = Duration.zero; var presents = 0; var presentTotal = Duration.zero }
     let timing = Mutex(TickTiming())
 
-    private struct LayerBuild { var layers: [RenderLayer] = []; var missing = 0; var waiting = false; var misses: [(UUID, Int)] = [] }
+    private struct LayerBuild { var layers: [RenderLayer] = []; var missing = 0; var waiting = false; var misses: [(UUID, Int)] = []; var noFrame = 0 }
 
     private func tickLocked(_ g: inout GPU, drawable: CAMetalDrawable?) -> TickOutcome? {
         let now = clock.now()
@@ -355,6 +355,14 @@ final class RenderLoop: @unchecked Sendable {
         let requests = tl.videoLayers(at: t, sequences: { sequences[$0] }).filter { $0.generator == nil }
         var b = LayerBuild()
         for r in requests { b.layers.append(layer(for: r, scale: scale, build: &b)) }
+
+        // A layer with no picture at all yet (far seek into undecoded media): keep showing the last presented frame
+        // instead of a black placeholder; `incomplete` makes the next ticks retry until the decode lands.
+        if b.noFrame > 0 && lastTime != nil {
+            state.withLock { s in s.renderedGeneration = generation; s.incomplete = true }
+            prefetch(timeline: tl, at: t, rate: edge ? .zero : rate, scale: scale, misses: b.misses)
+            return TickOutcome(presented: false, time: t, stoppedAtEdge: edge)
+        }
 
         // Composite + present
         var presented = false
@@ -423,7 +431,7 @@ final class RenderLoop: @unchecked Sendable {
             b.missing += 1; b.waiting = true; b.misses.append((r.media, f))
             frame = cache.nearest(media: r.media, atOrBefore: key.pts, scale: scale)
         }
-        guard let frame else { return placeholder(.loading) }
+        guard let frame else { b.noFrame += 1; return placeholder(.loading) }
         // Until the decoder reported its info: native size and rotation from the demuxer (the buffer may be a reduced decode).
         let dims = CMVideoFormatDescriptionGetDimensions(d.formatDescription)
         let info = media.info(r.media) ?? VideoTrackInfo(

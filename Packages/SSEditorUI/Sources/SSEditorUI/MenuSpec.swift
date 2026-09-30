@@ -44,7 +44,7 @@ public enum EditorMenus {
     ]))
     /// Panels in the Window menu, in menu order: one checkable item each (check = visible in the workspace).
     public static let windowPanels: [PanelID] = [
-        .effectControls, .text, .programMonitor, .sourceMonitor, .library, .effects, .project, .timeline,
+        .effectControls, .text, .programMonitor, .sourceMonitor, .library, .effects, .project, .timeline, .audioMeter,
         .colorInspector, .scopes,
     ]
 

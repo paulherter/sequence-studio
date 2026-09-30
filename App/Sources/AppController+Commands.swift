@@ -98,7 +98,8 @@ extension AppController {
         case .slide: mapped = .slide
         case .razor: mapped = .razor
         case .hand: mapped = .hand
-        case .zoom, .type: mapped = nil
+        case .type: mapped = .type
+        case .zoom: mapped = nil
         }
         guard let mapped else { shell.statusBar.flash("\(EditorCommand.tool(t).title) is not available yet."); return }
         panels.timelineView.toolState.tool = mapped

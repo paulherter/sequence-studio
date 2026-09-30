@@ -153,6 +153,34 @@ private struct Rig {
         #expect(e.stats.droppedFrames == 0)       // a paused seek waiting for decode is not a drop
     }
 
+    @Test func farSeekHoldsLastFrameUntilNewMediaDecoded() async throws {
+        // Two media ids over one demuxer: the second has nothing in the cache, so its first tick has no frame at all.
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let demuxer = try await AVDemuxer(url: try await SharedClip.shared.get())
+        let a = UUID(), b = UUID()
+        let engine = try PlaybackEngine(device: device, media: StaticMediaResolver(demuxers: [a: demuxer, b: demuxer]),
+                                        clock: ManualClock())
+        func timeline(_ m: UUID) -> Timeline {
+            let c = Clip(name: "C", media: m, kind: .video, source: TimeRange(start: .zero, duration: fd * 60),
+                         start: .zero, mediaDuration: fd * 60)
+            return Timeline(name: "Seq", format: format, tracks: [Track(kind: .video, clips: [c])])
+        }
+        engine.setTimeline(timeline(a))
+        engine.seek(to: fd * 10)
+        await engine.waitForDecodes()
+        #expect(engine.tick())
+        let shown = try #require(engine.lastRenderedTexture)
+        #expect(readStamp(shown, device: device) == 10)
+
+        // The "far seek" lands on material that is not decoded: keep the picture, do not present a black placeholder.
+        engine.setTimeline(timeline(b))
+        #expect(engine.tick() == false)
+        #expect(readStamp(try #require(engine.lastRenderedTexture), device: device) == 10)
+        await engine.waitForDecodes()
+        #expect(engine.tick())
+        #expect(readStamp(try #require(engine.lastRenderedTexture), device: device) == 10)
+    }
+
     @Test func setTimelineAfterTrimRecompositesWithoutFlush() async throws {
         var rig = try await Rig.make(Rig.single)
         let e = rig.engine

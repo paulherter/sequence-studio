@@ -4,6 +4,11 @@ import SSCore
 /// Timeline tools (Premiere keys).
 public enum TimelineTool: Sendable, Hashable, CaseIterable {
     case selection, trackSelectForward, rippleEdit, rollEdit, slip, slide, razor, hand
+    /// Pen, shape and mask are column slots only (scope addition, later); `type` is the Type tool (behaviour: C2).
+    case pen, shape, mask, type
+
+    /// False for the slots that only reserve their place in the column.
+    public var isAvailable: Bool { self != .pen && self != .shape && self != .mask }
 
     public init?(key: Character) {
         switch Character(key.lowercased()) {
@@ -15,6 +20,7 @@ public enum TimelineTool: Sendable, Hashable, CaseIterable {
         case "u": self = .slide
         case "c": self = .razor
         case "h": self = .hand
+        case "t": self = .type
         default: return nil
         }
     }
@@ -29,6 +35,10 @@ public enum TimelineTool: Sendable, Hashable, CaseIterable {
         case .slide: "u"
         case .razor: "c"
         case .hand: "h"
+        case .pen: "p"
+        case .shape: "r"
+        case .mask: "o"
+        case .type: "t"
         }
     }
 }

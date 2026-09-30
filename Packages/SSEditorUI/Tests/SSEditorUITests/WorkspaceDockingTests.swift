@@ -66,34 +66,38 @@ import Testing
         checkValid(w)
     }
 
-    @Test func edgeSplitHalvesShareWithSameAxisParent() {
+    /// The timeline sits beside the audio meter: left column of the PC layout is [upper, [timeline | meter]].
+    private func timelineRow(_ w: Workspace) -> (left: [LayoutNode], fractions: [Double], row: [LayoutNode], rowFractions: [Double])? {
+        guard case .split(_, let c, _) = w.root, case .split(.vertical, let left, let f) = c[0],
+              case .split(.horizontal, let row, let rf) = left[1] else { return nil }
+        return (left, f, row, rf)
+    }
+
+    @Test func edgeSplitBelowTheTimelineLeavesTheMeterFullHeight() {
         var w = Workspace.editingPC
         #expect(dk(&w, .library, onto: .timeline, zone: .bottom))
-        guard case .split(_, let c, _) = w.root, case .split(.vertical, let left, let f) = c[0] else { Issue.record("shape"); return }
-        #expect(left.count == 3)
-        #expect(abs(f[0] - 0.55) < 1e-9 && abs(f[1] - 0.225) < 1e-9 && abs(f[2] - 0.225) < 1e-9)
-        #expect(left[2] == .tabs(panels: [.library], selected: .library))
+        guard let r = timelineRow(w), case .split(.vertical, let stack, let sf) = r.row[0] else { Issue.record("shape"); return }
+        #expect(r.fractions == [0.55, 0.45])
+        #expect(stack == [.tabs(panels: [.timeline], selected: .timeline), .tabs(panels: [.library], selected: .library)])
+        #expect(sf == [0.5, 0.5])
+        #expect(r.row[1] == .tabs(panels: [.audioMeter], selected: .audioMeter))
         checkValid(w)
     }
 
-    @Test func edgeSplitBeforeInsertsFirst() {
+    @Test func edgeSplitAboveTheTimelineInsertsFirst() {
         var w = Workspace.editingPC
         #expect(dk(&w, .library, onto: .timeline, zone: .top))
-        guard case .split(_, let c, _) = w.root, case .split(.vertical, let left, let f) = c[0] else { Issue.record("shape"); return }
-        #expect(left[1] == .tabs(panels: [.library], selected: .library))
-        #expect(left[2] == .tabs(panels: [.timeline], selected: .timeline))
-        #expect(abs(f[1] - 0.225) < 1e-9 && abs(f[2] - 0.225) < 1e-9)
+        guard let r = timelineRow(w), case .split(.vertical, let stack, _) = r.row[0] else { Issue.record("shape"); return }
+        #expect(stack == [.tabs(panels: [.library], selected: .library), .tabs(panels: [.timeline], selected: .timeline)])
     }
 
-    @Test func edgeSplitOtherAxisWraps() {
+    @Test func edgeSplitLeftOfTheTimelineSharesTheRowWithTheMeter() {
         var w = Workspace.editingPC
         #expect(dk(&w, .library, onto: .timeline, zone: .left))
-        guard case .split(_, let c, _) = w.root, case .split(.vertical, let left, let f) = c[0],
-              case .split(.horizontal, let pair, let pf) = left[1] else { Issue.record("shape"); return }
-        #expect(f == [0.55, 0.45])
-        #expect(pf == [0.5, 0.5])
-        #expect(pair[0] == .tabs(panels: [.library], selected: .library))
-        #expect(pair[1] == .tabs(panels: [.timeline], selected: .timeline))
+        guard let r = timelineRow(w) else { Issue.record("shape"); return }
+        #expect(r.row == [.tabs(panels: [.library], selected: .library), .tabs(panels: [.timeline], selected: .timeline),
+                          .tabs(panels: [.audioMeter], selected: .audioMeter)])
+        #expect(abs(r.rowFractions.reduce(0, +) - 1) < 1e-9)
         checkValid(w)
     }
 

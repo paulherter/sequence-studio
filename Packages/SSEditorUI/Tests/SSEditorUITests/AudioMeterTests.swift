@@ -105,3 +105,20 @@ import Testing
         #expect(rep.pixelsWide > 0)
     }
 }
+
+
+@Suite struct MeterFeedTests {
+    @Test func feedsOnlyNewBuffers() {
+        var feed = MeterFeed()
+        #expect(feed.peaks(for: nil) == nil)                               // no audio engine
+        #expect(feed.peaks(for: (sequence: 5, peaks: [0.5, 0.25])) == [0.5, 0.25])
+        #expect(feed.peaks(for: (sequence: 5, peaks: [0.5, 0.25])) == nil) // same buffer again: let the bars fall
+        #expect(feed.peaks(for: (sequence: 6, peaks: [0.1, 0.1])) == [0.1, 0.1])
+    }
+
+    @Test func aRestartedCounterIsANewBuffer() {
+        var feed = MeterFeed()
+        _ = feed.peaks(for: (sequence: 900, peaks: [1, 1]))
+        #expect(feed.peaks(for: (sequence: 1, peaks: [0.3, 0.3])) == [0.3, 0.3])
+    }
+}
