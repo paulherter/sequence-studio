@@ -22,6 +22,8 @@ Standalone package. Depends on SSCore (KeyframeTrack/Time only, read-only). AVFo
 - Channel weights default: mono/stereo 1.0; 6 channels = L R C LFE Ls Rs with LFE 0 and surrounds 1.41; other counts 1.0.
 - RNNoise input is scaled to int16 range internally (x32768); callers pass normal +-1.0 floats.
 
+- [auto] Integration fixes in SSPlayback (see ARCHITECTURE §7): per-track FX buses in the feeder with unity FX volume, latency alignment to max (`outputLatencySamples`), reverse = FX bypassed (dry, same latency) + reset on every seek, flush epoch + consumer fade (`RingBuffer(fadeFrames:)`), 48 kHz precondition. A denoiser, once created for a track, stays allocated while the track has a preset (mix 0 = dry) so the amount slider never changes the global latency; clip volume applies before the compressor in live playback (offline: after).
+
 ## Decisions (Paul)
 - Own 4-band compressor replaces the wideband placeholder and the AUMultibandCompressor mapping (`auParameters()` and the AudioToolbox dependency removed).
 - Denoiser strength is a wet/dry mix, default 0.5, on preset (`noiseReduction`) and chain (`denoiseMix`).

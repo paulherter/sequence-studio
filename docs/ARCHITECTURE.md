@@ -302,8 +302,17 @@ media's `SampleIndex` → cache lookup (miss: `nearest`, count drop, ask schedul
   `consumedFrames: Int64` (atomic, the clock source).
 - `RealtimeAudioFX`: fixed 48 kHz (`sampleRate`), `init(preset:volume:channelCount:maxFrames:denoiser:)`, `process(_:frameCount:timelineSample:)` in place,
   `setPreset/setDenoiseMix/setVolume/setBypass/reset` (thread-safe). `latencySamples` = 480 with denoiser (RNNoise), else 0; constant for its lifetime.
-- Clock: `position = anchor + direction × consumedFrames / sampleRate − latency`, where `latency` = TimePitch latency
+- Clock: `position = anchor + direction × (consumedFrames − M) / sampleRate − outputLatency` (M = `feeder.outputLatencySamples`, scaled by direction: reverse is `anchor − (consumed − M)/rate`, never `+ M`), where `latency` = TimePitch latency
   + output presentation latency, scaled by |rate|. All rational. Rate change / seek = new anchor (flush ring, 5 ms fade out/in).
+- Feeder FX (E-10 review fixes): one bus + one `RealtimeAudioFX` per audio track (`setTracks` / `setPreset(track:preset:)`, built off the
+  audio path; FX volume is unity, clip/track volume stays in the feeder and runs before the compressor). All tracks are delay-compensated to the
+  max FX latency (480 with a denoiser) -> `feeder.outputLatencySamples`; the clock subtracts it. Reverse: each bus is reversed, FX bypassed
+  (dry, same latency); every seek resets FX and delay lines. Nested audio mixes into the bus of the top-level track holding the nested clip
+  (gain = inner clip volume x `nestGain`). Mixer rate is fixed at 48 kHz (precondition).
+- Flush epoch: `seek` returns a generation; `feeder.flushed` = (generation, ring epoch issued by `flush()`); the consumer publishes
+  `ring.consumedAtEpoch` = (epoch, consumedFrames when it applied the flush). Re-base: `position = anchor + direction × (consumed − frames − M)/rate`; M changes only at a seek and is published with the flush (`flushed.latency`), never mid-play.
+  `RingBuffer(fadeFrames: 240)` adds the 5 ms fade on the consumer side: new audio fades in, the old tail (snapshot taken after each pop,
+  skipped if the consumer paused > 100 ms) fades out cross-faded; the tail is not counted as consumed. Default `fadeFrames` is 0.
 - Scrub audio (`ScrubAudio`): while scrubbing or stepping, play short grains (≈ 1 frame, min 40 ms) of source audio at the
   playhead in drag direction, 5 ms raised-cosine crossfades between grains, speed from drag velocity through TimePitch.
   Target: sounds like Premiere (Paul judges).
