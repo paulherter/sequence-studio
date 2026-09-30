@@ -25,3 +25,15 @@
 
 ## 2026-09-30 New package SSEditorUI
 - AppKit timeline, viewer, monitor panels, theme, workspace tree and command map live in a new package `SSEditorUI` (depends on SSCore, SSMedia, SSRender, SSPlayback) so UI logic is testable with `swift test` instead of building the app. `App` keeps the shell, lifecycle, EditorSession and menus. (Paul)
+
+## 2026-09-30 [auto] Library open questions (LIBRARY.md 1–10)
+1. Overlay detection is lazy: the preview provider probes alpha when it first makes a thumbnail and caches `hasAlpha` with the preview; the scan stays extension-only.
+2. Extension list stays as is; files the decoder can't open show as unsupported at probe time instead of being hidden.
+3. V1 ships not sandboxed (direct download, like Premiere). Bookmarks are still stored so moved folders resolve.
+4. Skipping hidden files, package contents and outside-pointing symlinks: OK.
+5. `FSEventsFolderWatcher` gets its manual check with the Library panel slice.
+6. Search matches the file name only (Premiere Media Browser); path/tag search after V1.
+7. Favorites keyed by folder id + relative path; a rename drops the favorite. Accepted.
+8. Preview cache gets an LRU cap of 2 GB, same pattern as SSProxy (lastAccess, evict oldest first).
+9. Preset export/import is after V1.
+10. Keep the 3 newest `.corrupt-*` backups per file, prune older ones on the next backup.

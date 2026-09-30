@@ -1,5 +1,35 @@
 # Status
 
+## Slice board (autopilot, merged 2026-09-30)
+One list across all work streams. Detail and history stay in the reference files: PHASE3 (color), PHASE4 (keyframes),
+PHASE5 (audio FX), PHASE7 (text), PHASE8 (captions), EXPORT, LIBRARY, PROXY, REVIEW-1. Phase 2 detail: section below.
+
+**Done**
+- Phase 1 SSCore; Phase 2 P2-01…04, E-01, E-02.
+- Color core (PHASE3 1–8): transfer/gamut/Bradford, `.cube` + tetrahedral, correction + tone map, pipeline, log2 saturation, Metal color chain, GPU scopes. HLG OOTF.
+- Keyframe core (PHASE4 1–8) + `Clip.animation`, file format v3.
+- SSAudioFX (PHASE5 1–6): gain/automation, presets, RNNoise + mix, own 4-band compressor, R128 metering, offline chain with resampling.
+- SSText (PHASE7 1–4) + anchored animations, template v3. SSTranscribe (PHASE8 1–4). SSLibrary (LIBRARY 1–5).
+- SSExport (EXPORT 1–7) + sidecar SRT. SSProxy (PROXY a–f) + auto-generation policy, LRU cap, color rule.
+- REVIEW-1 fixes #1, #2, #3, #7, #8, #9, #10.
+
+**In progress in other sessions (uncommitted, do not touch)**
+- Phase 2: E-03 VideoDecoder (SSMedia) + PHASE3 slice 6 SonyMetadata (SSMedia).
+- SSCore KeyframesEasing/Editing (likely REVIEW-1 #6). SSExport loudness normalisation + FrameSource. SSText retime helper.
+
+**Next (in order, blocked-by in brackets)**
+1. Phase 2 engine E-03…E-14, then shell/timeline/monitors/shortcuts U/T/M/K (section below). Critical path.
+2. REVIEW-1 #4 (Time decode validation), #5 (ripple trim pivot with J/L cuts); #6 if the running session doesn't land it.
+3. PHASE3 slice 9: `ColorCorrection` → SSCore (`Clip.color`), per-clip source override (Interpret Footage), SonyMetadata → `SourceColorSpace`; embedded camera LUT [SonyMetadata].
+4. Library open questions → `[auto]` decisions (DECISIONS.md); small SSLibrary follow-up (preview cache LRU cap, backup pruning).
+5. SSAudioFX realtime path for playback (no allocation in render, latency compensation) [E-10/E-11 API]; volume into `AudioSegment`.
+6. SSText rendering (rasterize layout + style into a texture for the compositor) [E-07].
+7. Integration [E-07/E-09]: color chain + scopes in compositor, keyframed transform in compositor (units: canvas px from centre), proxies in playback (PROXY §SSPlayback integration), SSExport `FrameSource` from the real renderer + caption burn-in.
+8. UI [U-04, T-02]: Effect Controls (graph editor, easing menu, summary rows), captions flow (Transcribe → edit → CC → Enter), Library panel, color UI + scopes, export dialog + queue.
+9. Phase 6 nesting + multiple sequences. 10. Phase 9: tab groups + drag-to-dock, workspaces, autosave/crash recovery, relink, performance.
+
+**Open (Paul, at milestones)**: HLG vs QuickTime (needs `TestMedia/iphone-hlg.mov`, missing); denoise / compressor voicing by ear; text animation feel; E-12 scrub audio by ear.
+
 ## Current: Phase 2 planned (slices below), next slice: E-03
 Engine interfaces: docs/ARCHITECTURE.md. One slice per fresh implementer context, in order unless marked parallel-safe (‖).
 Each slice: read CLAUDE.md, ARCHITECTURE.md (named section) and only the listed files; tests first where logic is pure;
