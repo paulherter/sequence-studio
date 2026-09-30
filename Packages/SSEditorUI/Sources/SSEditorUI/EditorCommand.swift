@@ -126,7 +126,8 @@ public enum EditorCommand: Sendable, Hashable {
         switch p {
         case .effectControls: "Effect Controls"
         case .text: "Text"
-        case .properties: "Properties"
+        case .colorInspector: "Color"
+        case .scopes: "Scopes"
         case .programMonitor: "Program"
         case .sourceMonitor: "Source"
         case .library: "Library"

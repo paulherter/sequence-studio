@@ -3,8 +3,8 @@ import SSCore
 import SSText
 
 extension NSPasteboard.PasteboardType {
-    /// A text template dragged from the Text panel: the `TextTemplateCatalog` entry id as a string.
-    static let sequenceTextTemplate = NSPasteboard.PasteboardType("com.sequencestudio.text-template")
+    /// A text template dragged from the Library: the `TextTemplateCatalog` entry id as a string.
+    public static let sequenceTextTemplate = NSPasteboard.PasteboardType("com.sequencestudio.text-template")
 }
 
 /// Simple list with an "Apply" button and double-click, used by the Text and Effects panels.
@@ -119,18 +119,6 @@ public class TemplateListPanelView: NSView, NSTableViewDataSource, NSTableViewDe
         item.setString(rows[row].id, forType: type)
         return item
     }
-}
-
-/// Text panel: title templates. Drag one onto the timeline, or double-click to place it at the playhead.
-@MainActor
-public final class TextPanelView: TemplateListPanelView {
-    public init() {
-        super.init(rows: TextTemplateCatalog.all.map {
-            Row(id: $0.id, title: $0.name, subtitle: "Title", symbol: "textformat")
-        }, buttonTitle: "Add to Timeline", hint: "Drag onto the timeline or double-click.", label: "Text templates")
-        dragType = .sequenceTextTemplate
-    }
-    @available(*, unavailable) public required init?(coder: NSCoder) { fatalError() }
 }
 
 /// Effects panel: the effects that exist so far. Applying one switches it on in Effect Controls.

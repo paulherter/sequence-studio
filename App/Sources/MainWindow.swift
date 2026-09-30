@@ -32,6 +32,10 @@ final class StatusBarView: NSView {
     private let message = NSTextField(labelWithString: "")
     private let detail = NSTextField(labelWithString: "")
     private var clearWork: DispatchWorkItem?
+    /// Background tasks (export queue): a small ring at the right end, visible while jobs exist; click opens the queue.
+    private let ring = NSProgressIndicator()
+    private let ringButton = NSButton(title: "", target: nil, action: nil)
+    var onTasksClicked: ((NSView) -> Void)?
 
     override var isFlipped: Bool { true }
 
@@ -47,12 +51,35 @@ final class StatusBarView: NSView {
         message.textColor = Theme.Colors.label2
         detail.textColor = Theme.Colors.label3
         detail.alignment = .right
+        ring.style = .spinning
+        ring.controlSize = .small
+        ring.isIndeterminate = false
+        ring.minValue = 0; ring.maxValue = 1
+        ringButton.isBordered = false
+        ringButton.title = ""
+        ringButton.toolTip = "Export queue"
+        ringButton.target = self
+        ringButton.action = #selector(tasksClicked)
+        ringButton.setAccessibilityLabel("Export queue")
+        ringButton.isHidden = true
+        ring.isHidden = true
+        addSubview(ring)
+        addSubview(ringButton)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Status")
     }
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
     func setDetail(_ s: String) { detail.stringValue = s }
+
+    /// `progress` nil hides the ring (no active jobs); 0...1 shows it.
+    func setTasks(progress: Double?) {
+        let visible = progress != nil
+        if let progress { ring.doubleValue = progress }
+        if ring.isHidden == visible { ring.isHidden = !visible; ringButton.isHidden = !visible; needsLayout = true }
+    }
+
+    @objc private func tasksClicked() { onTasksClicked?(ringButton) }
 
     /// Shows `text` for a few seconds.
     func flash(_ text: String, seconds: TimeInterval = 5) {
@@ -68,7 +95,10 @@ final class StatusBarView: NSView {
         let h: CGFloat = 14
         let y = (bounds.height - h) / 2
         message.frame = CGRect(x: Theme.Spacing.md, y: y, width: bounds.width * 0.5, height: h)
-        detail.frame = CGRect(x: bounds.width * 0.5, y: y, width: bounds.width * 0.5 - Theme.Spacing.md, height: h)
+        let ringW: CGFloat = ring.isHidden ? 0 : 20
+        detail.frame = CGRect(x: bounds.width * 0.5, y: y, width: bounds.width * 0.5 - Theme.Spacing.md - ringW, height: h)
+        ring.frame = CGRect(x: bounds.width - Theme.Spacing.md - 14, y: (bounds.height - 14) / 2, width: 14, height: 14)
+        ringButton.frame = ring.frame.insetBy(dx: -3, dy: -3)
     }
 
     override func draw(_ dirtyRect: NSRect) {

@@ -2,15 +2,14 @@ import AppKit
 import Observation
 import SSCore
 
-/// Transcript editor with toolbar (DESIGN.md 3a/3b). Real AppKit controls; state comes from `CaptionsPanelModel`.
+/// Transcript tab of the Text panel: Transcribe, language, editable transcript. Captions are created in the Captions tab.
+/// (Transcript editor with toolbar (DESIGN.md 3a/3b).) Real AppKit controls; state comes from `CaptionsPanelModel`.
 @MainActor
 public final class CaptionsPanelView: NSView, NSTextViewDelegate {
     public let model: CaptionsPanelModel
 
     private let transcribeButton = NSButton(title: "Transcribe", target: nil, action: nil)
     private let languagePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let presetPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let createButton = NSButton(title: "Create Captions", target: nil, action: nil)
     private let progress = NSProgressIndicator()
     private let statusLabel = NSTextField(labelWithString: "")
     private let scroll = NSScrollView()
@@ -36,22 +35,19 @@ public final class CaptionsPanelView: NSView, NSTextViewDelegate {
     // MARK: Layout
 
     private func build() {
-        for b in [transcribeButton, createButton] {
+        for b in [transcribeButton] {
             b.bezelStyle = .rounded
             b.controlSize = .small
             b.font = Theme.Fonts.small
             b.target = self
         }
         transcribeButton.action = #selector(transcribeClicked)
-        createButton.action = #selector(createClicked)
-        createButton.keyEquivalent = "\r"
-        for p in [languagePopUp, presetPopUp] {
+        for p in [languagePopUp] {
             p.controlSize = .small
             p.font = Theme.Fonts.small
             p.target = self
         }
         languagePopUp.action = #selector(languageChanged)
-        presetPopUp.action = #selector(presetChanged)
         progress.style = .bar
         progress.controlSize = .small
         progress.isIndeterminate = false
@@ -62,8 +58,6 @@ public final class CaptionsPanelView: NSView, NSTextViewDelegate {
 
         let top = NSStackView(views: [transcribeButton, languagePopUp])
         top.spacing = Theme.Spacing.sm
-        let bottom = NSStackView(views: [presetPopUp, NSView(), createButton])
-        bottom.spacing = Theme.Spacing.sm
         let status = NSStackView(views: [progress, statusLabel])
         status.spacing = Theme.Spacing.sm
 
@@ -84,7 +78,7 @@ public final class CaptionsPanelView: NSView, NSTextViewDelegate {
         scroll.drawsBackground = false
         scroll.borderType = .noBorder
 
-        let stack = NSStackView(views: [top, scroll, status, bottom])
+        let stack = NSStackView(views: [top, scroll, status])
         stack.orientation = .vertical
         stack.alignment = .leading
         stack.spacing = Theme.Spacing.sm
@@ -98,7 +92,6 @@ public final class CaptionsPanelView: NSView, NSTextViewDelegate {
             stack.bottomAnchor.constraint(equalTo: bottomAnchor),
             scroll.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -2 * Theme.Spacing.sm),
             status.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -2 * Theme.Spacing.sm),
-            bottom.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -2 * Theme.Spacing.sm),
             progress.widthAnchor.constraint(equalToConstant: 120),
         ])
     }
@@ -130,14 +123,10 @@ public final class CaptionsPanelView: NSView, NSTextViewDelegate {
             languagePopUp.lastItem?.representedObject = id
         }
         if let i = model.languages.firstIndex(of: model.language) { languagePopUp.selectItem(at: i) }
-        presetPopUp.removeAllItems()
-        presetPopUp.addItems(withTitles: model.presets.map(\.name))
-        if model.presets.indices.contains(model.selectedPresetIndex) { presetPopUp.selectItem(at: model.selectedPresetIndex) }
 
         transcribeButton.isEnabled = model.canTranscribe
         transcribeButton.title = model.transcript == nil ? "Transcribe" : "Re-transcribe"
         languagePopUp.isEnabled = model.canTranscribe
-        createButton.isEnabled = model.canCreateCaptions
         switch model.state {
         case .idle:
             progress.isHidden = true
@@ -192,11 +181,9 @@ public final class CaptionsPanelView: NSView, NSTextViewDelegate {
     // MARK: Actions
 
     @objc private func transcribeClicked() { model.transcribe() }
-    @objc private func createClicked() { model.createCaptions() }
     @objc private func languageChanged() {
         if let id = languagePopUp.selectedItem?.representedObject as? String { model.language = id }
     }
-    @objc private func presetChanged() { model.selectedPresetIndex = presetPopUp.indexOfSelectedItem }
 
     private func confirmOverwrite() {
         let alert = NSAlert()

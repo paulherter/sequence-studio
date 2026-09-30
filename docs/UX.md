@@ -15,7 +15,7 @@ Layout is stored as a tree (splits → tab groups → panels). Phase 2 ships two
 
 ```
 ┌─────────────────────────────────────┬──────────────────┬───────────────────┐
-│ [Effect Controls | Text | Properties]│ Program Monitor  │ Library           │
+│ [Effect Controls | Text | Color]│ Program Monitor  │ Library           │
 │  (wide tab group)                    │ (tall, 9:16)     │  folders · search │
 │                                      │ [Program|Source]  │  thumbnail grid   │
 │                                      │                  ├───────────────────┤
@@ -28,8 +28,9 @@ Layout is stored as a tree (splits → tab groups → panels). Phase 2 ships two
 └──┴──────────────────────────────────────────────────────┴───────────────────┘
 ```
 
-- Title bar: **Edit | Color** page switch (centre), panel show/hide toggles, workspace menu, **Export** (share icon), background-tasks button
-  (shows export progress as a ring; click → export queue popover). Import via Project / `Cmd+I`.
+- Title bar: **Import** (left), **Edit | Color** page switch (centre), **Export** (right). Nothing else (DESIGN screen 1). Panels are shown/hidden
+  from the **Window** menu (one checkable item per panel, Workspaces submenu, Maximize Panel); export progress is a ring at the right end of the
+  status bar (click → export queue popover). Settings: `Cmd+,` (General, Playback, Media, Keyboard).
 - **Two pages, one sequence:** **Edit** (the workspaces below) and **Color** (section 2, Color page). A page is a built-in workspace with its
   own panels, not a separate mode: same sequence, same playhead, same selection, same undo. Switch with the title-bar control or `Shift+6` / `Shift+7`
   (unverified against Premiere's map, see section 6).
@@ -60,11 +61,14 @@ Right side: keyframe timeline, After-Effects style:
   are untouched. Example: select both Position keys, drag up → whole move starts higher.
 
 ### Text (tab 2)
-Transcript and captions together. **Transcribe** button, editable transcript, **CC** button (see 4.5). Edits change text only, never media.
+Premiere's Text panel. **Transcript** tab: Transcribe, language, editable transcript of the selected clip (edits change text only, never media).
+**Captions** tab: caption list of the sequence, style preset, **Create Captions** (replaces the caption track, see 4.5).
+Text templates are not here: they live in the Library (Text Templates) and are dragged to the timeline.
 
-### Properties (tab 3)
-All text styling (font, size, color, stroke, background) for text layers and captions; caption style + animation preset
-apply to all captions at once. Transform, opacity and all keyframes stay in Effect Controls.
+### Properties (removed)
+There is no Properties panel. Text styling of a text clip is the **Text** section at the top of Effect Controls (text field, font, colour,
+stroke, background, shadow, animation); an audio clip gets an **Audio** section (track preset, noise reduction, compressor) above Volume.
+Transform, opacity and keyframes stay below in Effect Controls. Colour controls and Scopes are panels of the Color page.
 
 ### Program Monitor (top middle, tall)
 Sequence playback, timecode, zoom (**Fit**), playback **quality popup (Full / 1/2 / 1/4)**, transport, Mark In/Out, Add Marker.

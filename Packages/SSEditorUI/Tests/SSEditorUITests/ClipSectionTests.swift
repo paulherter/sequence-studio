@@ -13,17 +13,17 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
     return EditorSession(project: Project(name: "P", timelines: [t]))
 }
 
-@MainActor @Suite struct PropertiesWiringTests {
-    @Test func modeFollowsSelection() {
+@MainActor @Suite struct ClipSectionTests {
+    @Test func sectionFollowsSelection() {
         let video = Clip(name: "v", media: UUID(), kind: .video, source: TimeRange(start: .zero, duration: s(2)), start: .zero)
         let audio = Clip(name: "a", media: UUID(), kind: .audio, source: TimeRange(start: .zero, duration: s(2)), start: .zero)
         let text = Clip(name: "t", media: UUID(), kind: .video, source: TimeRange(start: .zero, duration: s(2)), start: .zero,
                         generator: GeneratorRef(kind: GeneratorRef.text, payload: Data()))
-        #expect(PropertiesMode.resolve(selectedClip: nil, captionSelectionCount: 0) == .none)
-        #expect(PropertiesMode.resolve(selectedClip: video, captionSelectionCount: 0) == .clip)
-        #expect(PropertiesMode.resolve(selectedClip: audio, captionSelectionCount: 0) == .audio)
-        #expect(PropertiesMode.resolve(selectedClip: text, captionSelectionCount: 0) == .text)
-        #expect(PropertiesMode.resolve(selectedClip: text, captionSelectionCount: 1) == .captions)
+        #expect(ClipSectionMode.resolve(nil) == .none)
+        #expect(ClipSectionMode.resolve(video) == .none)
+        #expect(ClipSectionMode.resolve(audio) == .audio)
+        #expect(ClipSectionMode.resolve(text) == .text)
+        #expect(ClipSectionMode.text.title == "Text" && ClipSectionMode.audio.title == "Audio")
     }
 
     @Test func captionsShiftOntoTimelineAndStayInsideClip() {

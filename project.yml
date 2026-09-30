@@ -23,6 +23,11 @@ targets:
     type: application
     platform: macOS
     sources: [App/Sources]
+    info:
+      path: App/Info.plist
+      properties:
+        CFBundleName: Sequence Studio
+        CFBundleDisplayName: Sequence Studio
     dependencies:
       - package: SSCore
       - package: SSMedia
@@ -34,6 +39,6 @@ targets:
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.paulherter.SequenceStudio
-        GENERATE_INFOPLIST_FILE: YES
+        GENERATE_INFOPLIST_FILE: NO
         CODE_SIGN_STYLE: Automatic
         CODE_SIGN_IDENTITY: "-"

@@ -205,6 +205,16 @@ public final class LibraryPanelModel {
             }
     }
 
+    /// Built-in text templates (drag to the timeline): shown under Text Templates and All Presets, filtered by the search.
+    public var visibleTextTemplates: [TextTemplateCatalog.Entry] {
+        guard case .presets(let kind) = selection, kind == nil || kind == .textTemplate else { return [] }
+        let tokens = Self.fold(query).split(whereSeparator: \.isWhitespace).map(String.init)
+        return TextTemplateCatalog.all.filter { e in
+            let name = Self.fold(e.name)
+            return tokens.allSatisfy { name.contains($0) }
+        }
+    }
+
     public func presetCount(_ kind: PresetKind?) -> Int { presets.filter { kind == nil || $0.kind == kind }.count }
 
     // MARK: Favorites

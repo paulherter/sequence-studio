@@ -10,12 +10,12 @@ import Testing
         #expect(top.count == 2 && f == [0.75, 0.25])
         guard case .split(.vertical, let left, _) = top[0],
               case .split(.horizontal, let upper, _) = left[0] else { Issue.record("left"); return }
-        #expect(upper[0] == .tabs(panels: [.effectControls, .text, .properties], selected: .effectControls))
+        #expect(upper[0] == .tabs(panels: [.effectControls, .text, .colorInspector], selected: .effectControls))
         #expect(upper[1] == .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor))
         #expect(left[1] == .tabs(panels: [.timeline], selected: .timeline))
         guard case .split(.vertical, let right, _) = top[1] else { Issue.record("right"); return }
         #expect(right[0] == .tabs(panels: [.library], selected: .library))
-        #expect(right[1] == .tabs(panels: [.effects, .project], selected: .effects))
+        #expect(right[1] == .tabs(panels: [.effects, .project, .scopes], selected: .effects))
         #expect(Set(w.allPanels) == Set(PanelID.allCases))
     }
 
@@ -37,8 +37,8 @@ import Testing
         guard case .split(.vertical, let left, _) = c[0],
               case .split(.horizontal, let upper, _) = left[0],
               case .split(.horizontal, let lower, _) = left[1] else { Issue.record("left"); return }
-        #expect(upper[0] == .tabs(panels: [.library, .effects], selected: .library))
-        #expect(upper[1] == .tabs(panels: [.effectControls, .text, .properties], selected: .effectControls))
+        #expect(upper[0] == .tabs(panels: [.library, .effects, .scopes], selected: .library))
+        #expect(upper[1] == .tabs(panels: [.effectControls, .text, .colorInspector], selected: .effectControls))
         #expect(lower[0] == .tabs(panels: [.project], selected: .project))
         #expect(lower[1] == .tabs(panels: [.timeline], selected: .timeline))
         #expect(Set(w.allPanels) == Set(PanelID.allCases))
@@ -82,13 +82,13 @@ import Testing
         var w = Workspace.editingPC
         w.hide(.effectControls)
         if case .split(_, let c, _)? = w.visibleRoot, case .split(_, let l, _) = c[0], case .split(_, let u, _) = l[0] {
-            #expect(u[0] == .tabs(panels: [.text, .properties], selected: .text))
+            #expect(u[0] == .tabs(panels: [.text], selected: .text))
         } else { Issue.record("shape") }
         w.show(.effectControls)
-        w.selectTab(.properties)
-        #expect(w.root.panels.count == 9)
+        w.selectTab(.colorInspector)
+        #expect(w.root.panels.count == PanelID.allCases.count)
         if case .split(_, let c, _) = w.root, case .split(_, let l, _) = c[0], case .split(_, let u, _) = l[0] {
-            #expect(u[0] == .tabs(panels: [.effectControls, .text, .properties], selected: .properties))
+            #expect(u[0] == .tabs(panels: [.effectControls, .text, .colorInspector], selected: .colorInspector))
         }
     }
 

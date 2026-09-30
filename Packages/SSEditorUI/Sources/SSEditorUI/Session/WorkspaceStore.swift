@@ -56,9 +56,12 @@ public struct WorkspaceStore: Codable, Sendable, Equatable {
 
     /// Missing or unreadable files give the defaults; a stored edit name that no longer exists falls back to the first built-in.
     public static func load(from url: URL = WorkspaceStore.defaultURL) -> WorkspaceStore {
-        guard let data = try? Data(contentsOf: url), var s = try? JSONDecoder().decode(WorkspaceStore.self, from: data) else {
+        guard let raw = try? Data(contentsOf: url),
+              var s = try? JSONDecoder().decode(WorkspaceStore.self, from: WorkspaceMigration.dropUnknownPanels(raw)) else {
             return WorkspaceStore()
         }
+        // A Color page saved before the Color inspector and Scopes were panels of it: start from the new layout.
+        if !s.colorWorkspace.allPanels.contains(.colorInspector) { s.colorWorkspace = Workspace.color }
         if s.library.workspace(named: s.editName) == nil { s.editName = Workspace.editingPC.name }
         return s
     }

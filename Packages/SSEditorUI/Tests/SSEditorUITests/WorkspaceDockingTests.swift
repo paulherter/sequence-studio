@@ -52,7 +52,7 @@ import Testing
     @Test func centerWithinSameGroupMovesToEnd() {
         var w = Workspace.editingPC
         #expect(dk(&w, .effectControls, onto: .text, zone: .center))
-        #expect(group(w, .text) == [.text, .properties, .effectControls])
+        #expect(group(w, .text) == [.text, .colorInspector, .effectControls])
         checkValid(w)
     }
 
@@ -62,7 +62,7 @@ import Testing
         var w = Workspace.editingPC
         #expect(dk(&w, .project, onto: .timeline, zone: zone))
         #expect(group(w, .project) == [.project])
-        #expect(group(w, .effects) == [.effects])
+        #expect(group(w, .effects) == [.effects, .scopes])
         checkValid(w)
     }
 
@@ -111,7 +111,7 @@ import Testing
         #expect(dk(&w, .library, onto: .programMonitor, zone: .center))
         guard case .split(.horizontal, let c, let f) = w.root else { Issue.record("root"); return }
         // right column (Library over Effects/Project) collapsed into the single Effects/Project group
-        #expect(c[1] == .tabs(panels: [.effects, .project], selected: .effects))
+        #expect(c[1] == .tabs(panels: [.effects, .project, .scopes], selected: .effects))
         #expect(f == [0.75, 0.25])
         checkValid(w)
     }
@@ -119,7 +119,7 @@ import Testing
     @Test func selectedTabAfterRemoval() {
         var w = Workspace.editingPC
         #expect(dk(&w, .effectControls, onto: .timeline, zone: .center))
-        #expect(groupNode(w, .text) == .tabs(panels: [.text, .properties], selected: .text))
+        #expect(groupNode(w, .text) == .tabs(panels: [.text, .colorInspector], selected: .text))
     }
 
     @Test func sameAxisFlatten() {
@@ -166,12 +166,12 @@ import Testing
     // MARK: reorder
     @Test func moveTab() {
         var w = Workspace.editingPC
-        #expect(mv(&w, .properties, toIndex: 0))
-        #expect(group(w, .text) == [.properties, .effectControls, .text])
-        #expect(mv(&w, .properties, toIndex: 99))
-        #expect(group(w, .text) == [.effectControls, .text, .properties])
+        #expect(mv(&w, .colorInspector, toIndex: 0))
+        #expect(group(w, .text) == [.colorInspector, .effectControls, .text])
+        #expect(mv(&w, .colorInspector, toIndex: 99))
+        #expect(group(w, .text) == [.effectControls, .text, .colorInspector])
         #expect(mv(&w, .text, toIndex: -5))
-        #expect(group(w, .text) == [.text, .effectControls, .properties])
+        #expect(group(w, .text) == [.text, .effectControls, .colorInspector])
         guard case .tabs(_, let sel) = groupNode(w, .text) else { return }
         #expect(sel == .effectControls)
         checkValid(w)
@@ -227,7 +227,7 @@ import Testing
         w.hide(.effects)
         #expect(lb(&lib) { $0.update(w) })
         #expect(lib.isModifiedBuiltIn("Editing – PC"))
-        #expect(lib.workspace(named: "Editing – PC")?.hidden == [.effects])
+        #expect(lib.workspace(named: "Editing – PC")?.hidden == [.effects, .colorInspector, .scopes])
         #expect(lib.names.count == 2)
         #expect(lb(&lib) { $0.resetBuiltIn("Editing – PC") })
         #expect(lib.workspace(named: "Editing – PC") == Workspace.editingPC)

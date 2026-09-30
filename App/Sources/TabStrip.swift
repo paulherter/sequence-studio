@@ -49,6 +49,7 @@ final class TabStrip: NSView {
         let h: CGFloat = 22
         for (_, b) in buttons {
             let w = b.intrinsicContentSize.width
+            b.isHidden = x + w > bounds.width   // a narrow group shows the tabs that fit
             b.frame = CGRect(x: x, y: (bounds.height - h) / 2, width: w, height: h)
             x += w + Theme.Spacing.xs
         }
@@ -116,6 +117,7 @@ final class PanelContainerView: NSView {
         super.init(frame: .zero)
         wantsLayer = true
         layer?.backgroundColor = Theme.Colors.panel.cgColor
+        layer?.masksToBounds = true          // a panel can never draw over its neighbours
         strip.onSelect = onSelect
         addSubview(strip)
         content.removeFromSuperview()

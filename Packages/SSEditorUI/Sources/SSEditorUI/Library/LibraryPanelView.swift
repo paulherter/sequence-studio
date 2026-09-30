@@ -1,5 +1,6 @@
 import AppKit
 import SSLibrary
+import SSText
 
 /// Re-runs `apply` whenever an @Observable property read inside it changes.
 @MainActor
@@ -76,6 +77,9 @@ public final class LibraryPanelView: NSView {
     private var nodes: [SidebarNode] = []
     private var items: [LibraryItem] = []
     private var presets: [PresetItem] = []
+    private var templates: [TextTemplateCatalog.Entry] = []
+    /// Double-click on a built-in text template: place it at the playhead.
+    public var onApplyTextTemplate: ((String) -> Void)?
     private var syncingSelection = false
     /// reloadData ends display of every cell; that must not cancel pending previews.
     private var reloading = false
@@ -186,10 +190,13 @@ public final class LibraryPanelView: NSView {
         }
         table.dataSource = self
         table.delegate = self
+        table.target = self
+        table.doubleAction = #selector(tableDoubleClicked)
         table.allowsMultipleSelection = true
         table.usesAlternatingRowBackgroundColors = true
         table.rowHeight = 28
         table.setDraggingSourceOperationMask(.copy, forLocal: false)
+        table.setDraggingSourceOperationMask(.copy, forLocal: true)
         table.menu = makeItemMenu()
         table.backgroundColor = .clear
         listScroll.documentView = table
@@ -244,6 +251,12 @@ public final class LibraryPanelView: NSView {
         refresh()
     }
 
+    @objc private func tableDoubleClicked() {
+        let r = table.clickedRow
+        guard model.isShowingPresets, templates.indices.contains(r) else { return }
+        onApplyTextTemplate?(templates[r].id)
+    }
+
     // MARK: Refresh (driven by observation)
 
     private func refresh() {
@@ -253,6 +266,7 @@ public final class LibraryPanelView: NSView {
         let presetMode = model.isShowingPresets
         items = model.items
         presets = model.visiblePresets
+        templates = model.visibleTextTemplates
         let offline = model.isSelectedFolderOffline
         let viewMode = model.viewMode
         let kinds = model.kindFilter
@@ -280,7 +294,7 @@ public final class LibraryPanelView: NSView {
         table.reloadData()
         reloading = false
 
-        let count = presetMode ? presets.count : items.count
+        let count = presetMode ? templates.count + presets.count : items.count
         emptyLabel.isHidden = count > 0
         emptyLabel.stringValue = offline ? "Folder is offline"
             : presetMode ? "No presets"
@@ -561,7 +575,7 @@ extension LibraryPanelView: NSCollectionViewDataSource, NSCollectionViewDelegate
 
 extension LibraryPanelView: NSTableViewDataSource, NSTableViewDelegate {
     public func numberOfRows(in tableView: NSTableView) -> Int {
-        model.isShowingPresets ? presets.count : items.count
+        model.isShowingPresets ? templates.count + presets.count : items.count
     }
 
     public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
@@ -595,8 +609,19 @@ extension LibraryPanelView: NSTableViewDataSource, NSTableViewDelegate {
             label.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
         ])
         if model.isShowingPresets {
-            guard row < presets.count else { return cell }
-            let p = presets[row]
+            if row < templates.count {
+                switch id {
+                case "name":
+                    label.stringValue = templates[row].name
+                    cell.imageView?.image = NSImage(systemSymbolName: "textformat", accessibilityDescription: nil)
+                case "kind": label.stringValue = "Text Template"
+                case "date": label.stringValue = "Built-in"
+                default: break
+                }
+                return cell
+            }
+            guard row - templates.count < presets.count else { return cell }
+            let p = presets[row - templates.count]
             switch id {
             case "name":
                 label.stringValue = p.name
@@ -635,7 +660,13 @@ extension LibraryPanelView: NSTableViewDataSource, NSTableViewDelegate {
     }
 
     public func tableView(_ tableView: NSTableView, pasteboardWriterForRow row: Int) -> (any NSPasteboardWriting)? {
-        guard !model.isShowingPresets, row < items.count else { return nil }
+        if model.isShowingPresets {
+            guard row < templates.count else { return nil }
+            let item = NSPasteboardItem()
+            item.setString(templates[row].id, forType: .sequenceTextTemplate)
+            return item
+        }
+        guard row < items.count else { return nil }
         return items[row].url as NSURL
     }
 }
