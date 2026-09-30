@@ -99,7 +99,7 @@ final class EditorPanels {
             return ids.compactMap { id in
                 guard let ref = session.project.media(id) else { return nil }
                 let total = ref.info?.duration ?? ref.duration
-                guard let d = marks[id]?.range.duration ?? total else { return nil }
+                guard let d = marks[id]?.range?.duration ?? total else { return nil }
                 return DropItem(name: ref.name, duration: d, hasVideo: ref.info?.video != nil || ref.info == nil,
                                 hasAudio: ref.info?.audio != nil)
             }
