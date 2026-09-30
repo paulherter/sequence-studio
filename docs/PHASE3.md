@@ -110,3 +110,17 @@ Slices 1–4 + review fixes (commits 7fad1ed…dfe44b8), 47 SSRender tests. Revi
 S-Gamut3.Cine→709 (matches Sony's matrix) and all 6 tetrahedral branches. `.cube` also accepts Resolve `LUT_*_INPUT_RANGE`;
 `LUT_IN/OUT_VIDEO_RANGE` are parsed and stored but not applied yet. Per pixel for Metal: `PreparedCorrection.apply`,
 `ColorPipeline.process`, `Rec709Output.encode`. Conversion-LUT input = range-expanded S-Log3 (Resolve convention, 18 % grey ≈ 0.406).
+
+## Done, part 2 (2026-09-30)
+
+Slices 5, 7, 8 + REVIEW-1 items 7–10 + GPU review hardening (753ac61…4833c72), 68 SSRender tests.
+- **Metal:** SwiftPM CLI neither compiles nor bundles `.metal` (no `Bundle.module` without a Package.swift change), so MSL
+  lives in `ColorShaderSource.swift` / `ScopeShaderSource.swift` and is compiled at runtime (`mathMode = .safe`). Relevant for E-07's planned `Shaders.metal`.
+- **Compositor entry (E-07):** `ColorPipelineGPU(device:)` once per device, then per layer
+  `try encode(_ pipeline:, source:, destination:, commandBuffer:)` (rgba16Float/32Float, same size, in place allowed; throws
+  `ColorPipelineGPUError` on caller mistakes before touching the command buffer). GPU vs CPU: ≤ 0.52 of the
+  1e-4·max(|y|,1e-3)+1e-6 bound on float32; 9.5e-4 rel. on half. 4K pass ≈ 3.0–3.4 ms.
+- **Scopes:** `ScopesGPU` + `ScopesReference` (mappings documented on `ScopeCounts`). 4K all scopes: 11.8 ms at stride 1,
+  0.8 ms at stride 4 → the live viewer should use stride 4.
+- HLG decode = inverse OETF → OOTF γ 1.2 → × 4.9224 (reference white = 1.0). After the 0.8 knee, HLG reference white
+  outputs ≈ 0.93: judge against QuickTime (open question 4).
