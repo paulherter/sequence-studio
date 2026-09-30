@@ -34,20 +34,15 @@ public struct CaptionPresetLibrary: Sendable {
         let outline = TextStyle(fontName: "Helvetica", size: 60, weight: .heavy, color: .white,
                                 stroke: TextStroke(color: .black, width: 6), alignment: .center, lineSpacing: 2)
         let popIn = KeyframeTemplate(tracks: [
-            KeyframeTrack(property: "scale", keyframes: [
-                Keyframe(time: .zero, value: 0.8, easing: .overshoot),
-                Keyframe(time: .one, value: 1.0),
+            AnimationTrack(property: "scale", keys: [
+                (.zero, 0.8, .overshoot), (Time(1, 4), 1.0, .linear),
             ]),
-            KeyframeTrack(property: "opacity", keyframes: [
-                Keyframe(time: .zero, value: 0, easing: .easeOut),
-                Keyframe(time: Fraction(1, 2), value: 1),
-                Keyframe(time: .one, value: 1),
+            AnimationTrack(property: "opacity", keys: [
+                (.zero, 0, .easeOut), (Time(1, 8), 1, .linear), (Time(1, 4), 1, .linear),
             ]),
         ], duration: Time(1, 4))
         let fade = KeyframeTemplate(tracks: [
-            KeyframeTrack(property: "opacity", keyframes: [
-                Keyframe(time: .zero, value: 0), Keyframe(time: .one, value: 1),
-            ]),
+            AnimationTrack(property: "opacity", keys: [(.zero, 0, .linear), (Time(1, 5), 1, .linear)]),
         ], duration: Time(1, 5))
         return CaptionPresetLibrary(
             styles: ["default": classic, "classic": classic, "bold-box": box, "outline": outline],

@@ -15,7 +15,8 @@ public enum TextTemplateError: Error, Equatable, CustomStringConvertible {
 }
 
 public struct TextTemplate: Sendable, Hashable, Codable {
-    public static let formatVersion = 1
+    /// 2: animation tracks use SSCore keyframes with template-local `Time`s (v1: normalized fractions + easing enum, still readable).
+    public static let formatVersion = 2
 
     public var name: String
     public var text: String

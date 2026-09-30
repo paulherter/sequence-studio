@@ -4,36 +4,45 @@ import SSCore
 @testable import SSText
 
 @Suite struct KeyframeTemplateTests {
-    @Test func fractionReducesAndClamps() {
-        #expect(Fraction(2, 4) == Fraction(1, 2))
-        #expect(Fraction(3, 2) == .one)
-        #expect(Fraction(-1, 2) == .zero)
-        #expect(Fraction(1, 0) == .zero)
-        #expect(Fraction(1, 4) < Fraction(1, 3))
-        #expect(abs(Fraction(1, 4).doubleValue - 0.25) < 1e-12)
-    }
-
-    @Test func easingEndpointsAndShape() {
-        for e in [Easing.linear, .easeIn, .easeOut, .easeInOut, .overshoot] {
-            #expect(abs(e.apply(0)) < 1e-9)
-            #expect(abs(e.apply(1) - 1) < 1e-9)
-        }
-        #expect(Easing.easeIn.apply(0.5) < 0.5)
-        #expect(Easing.easeOut.apply(0.5) > 0.5)
-        #expect(Easing.overshoot.apply(0.7) > 1)
-        #expect(Easing.hold.apply(0.99) == 0 && Easing.hold.apply(1) == 1)
-    }
-
-    @Test func trackSortsAndEvaluates() {
-        let t = KeyframeTrack(property: "opacity", keyframes: [
-            Keyframe(time: Fraction(1, 1), value: 1),
-            Keyframe(time: Fraction(0, 1), value: 0, easing: .linear),
+    @Test func trackSortsAndEvaluatesWithSSCoreKeyframes() {
+        let t = AnimationTrack(property: "opacity", keys: [
+            (Time(1, 1), 1, .linear), (.zero, 0, .linear),
         ])
-        #expect(t.keyframes.map(\.time) == [.zero, .one])
+        #expect(t.track.keys.map(\.time) == [.zero, Time(1, 1)])
         #expect(t.value(at: .zero) == 0)
-        #expect(abs(t.value(at: Fraction(1, 2))! - 0.5) < 1e-9)
-        #expect(t.value(at: .one) == 1)
-        #expect(KeyframeTrack(property: "x", keyframes: []).value(at: .zero) == nil)
+        #expect(abs(t.value(at: Time(1, 2))! - 0.5) < 1e-9)
+        #expect(t.value(at: Time(1, 1)) == 1)
+        #expect(t.value(at: Time(5, 1)) == 1)   // clamped after the last key
+        #expect(AnimationTrack(property: "x", keys: []).value(at: .zero) == nil)
+    }
+
+    @Test func shapesMapToSSCoreInterpolation() {
+        let over = AnimationTrack(property: "s", keys: [(.zero, 0, .overshoot), (Time(1, 1), 1, .linear)]).track.keys
+        #expect(over[0].interpolation == .bezier)
+        #expect(over[0].outHandle.dy > 1)                 // handle outside 0...1 = overshoot
+        let hold = AnimationTrack(property: "s", keys: [(.zero, 0, .hold), (Time(1, 1), 1, .linear)]).track.keys
+        #expect(hold[0].interpolation == .hold)
+        let lin = AnimationTrack(property: "s", keys: [(.zero, 0, .linear), (Time(1, 1), 1, .linear)]).track.keys
+        #expect(lin[0].interpolation == .linear)
+    }
+
+    @Test func holdKeepsStartValueUntilNextKey() {
+        let t = AnimationTrack(property: "s", keys: [(.zero, 2, .hold), (Time(1, 1), 7, .linear)])
+        #expect(t.value(at: Time(1, 2)) == 2)
+        #expect(t.value(at: Time(999, 1000)) == 2)
+        #expect(t.value(at: Time(1, 1)) == 7)
+    }
+
+    @Test func easingShapesBehaveLikeTheOldCurves() {
+        func mid(_ s: SegmentShape) -> Double {
+            AnimationTrack(property: "p", keys: [(.zero, 0, s), (Time(1, 1), 1, .linear)]).value(at: Time(1, 2))!
+        }
+        #expect(abs(mid(.linear) - 0.5) < 1e-9)
+        #expect(mid(.easeIn) < 0.5)
+        #expect(mid(.easeOut) > 0.5)
+        #expect(abs(mid(.easeInOut) - 0.5) < 1e-6)
+        // t^3 ease-in: cubic-bezier (1/3,0)(2/3,0) is exactly t^3.
+        #expect(abs(mid(.easeIn) - 0.125) < 1e-6)
     }
 
     @Test func templateLookupByProperty() {
@@ -41,26 +50,42 @@ import SSCore
         #expect(tpl.track(for: "scale") != nil)
         #expect(tpl.track(for: "opacity") != nil)
         #expect(tpl.track(for: "nope") == nil)
+        #expect(tpl.value(of: "nope", at: .zero) == nil)
     }
 
-    @Test func popInScaleAndOpacity() {
+    @Test func popInScaleOvershootsAndOpacityRises() {
         let tpl = CaptionPresetLibrary.builtIn.animation(for: "pop-in")
-        let scale = tpl.track(for: "scale")!, op = tpl.track(for: "opacity")!
-        #expect(abs(scale.value(at: .zero)! - 0.8) < 1e-9)
-        #expect(abs(scale.value(at: .one)! - 1.0) < 1e-9)
-        let peak = (1...99).map { scale.value(at: Fraction(Int64($0), 100))! }.max()!
-        #expect(peak > 1.0)  // overshoot
-        #expect(op.value(at: .zero) == 0)
-        #expect(op.value(at: .one) == 1)
-        #expect(tpl.duration > .zero && tpl.duration <= Time(1, 2))
+        let d = tpl.duration
+        #expect(d > .zero && d <= Time(1, 2))
+        #expect(abs(tpl.value(of: "scale", at: .zero)! - 0.8) < 1e-9)
+        #expect(abs(tpl.value(of: "scale", at: d)! - 1.0) < 1e-9)
+        let samples = (1...99).map { tpl.value(of: "scale", at: Time(d.value * Int64($0), d.timescale * 100))! }
+        #expect(samples.max()! > 1.0)                       // overshoot past the end value
+        #expect(samples.max()! < 1.2)                       // but not wildly
+        #expect(tpl.value(of: "scale", at: Time(d.value * 7, d.timescale * 10))! > 1.0)
+        #expect(tpl.value(of: "opacity", at: .zero) == 0)
+        #expect(tpl.value(of: "opacity", at: d) == 1)
+        let quarter = tpl.value(of: "opacity", at: Time(d.value, d.timescale * 8))!
+        #expect(quarter > 0 && quarter < 1)
+        #expect(tpl.value(of: "opacity", at: Time(d.value * 3, d.timescale * 4)) == 1)
     }
 
     @Test func noneAndFade() {
         let none = CaptionPresetLibrary.builtIn.animation(for: "none")
         #expect(none.tracks.isEmpty && none.duration == .zero)
+        #expect(none.value(of: "opacity", at: .zero) == nil)
         let fade = CaptionPresetLibrary.builtIn.animation(for: "fade")
         #expect(fade.track(for: "scale") == nil)
-        #expect(fade.track(for: "opacity")?.value(at: .zero) == 0)
+        #expect(fade.value(of: "opacity", at: .zero) == 0)
+        #expect(abs(fade.value(of: "opacity", at: Time(1, 10))! - 0.5) < 1e-9)
+        #expect(fade.value(of: "opacity", at: fade.duration) == 1)
+    }
+
+    @Test func builtInsAreDeterministic() throws {
+        let a = CaptionPresetLibrary.builtIn.animation(for: "pop-in")
+        let b = CaptionPresetLibrary.builtIn.animation(for: "pop-in")
+        #expect(a == b)
+        #expect(try JSONEncoder().encode(a).count > 0)
     }
 
     @Test func unknownRefsFallBackToDefaults() {
