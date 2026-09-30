@@ -44,3 +44,7 @@
 - Built-in layouts: PC = [left 0.75 | right 0.25]; left = top [EffectControls/Text/Properties 0.6 | Program/Source 0.4] over timeline (0.55/0.45); right = Library over Effects/Project. MacBook = [left 0.68 | Program/Source full height]; left = top [Library/Effects 0.4 | Effect Controls 0.6] over [Project 0.25 | timeline 0.75].
 - Hidden panels stay in the tree (show restores exact place); min fraction 0.05; maximize is a state, not a tree edit.
 - Timeline: ruler 22 pt; tracks V(n)…V1 then A1…A(n); `Track.height` ignored in favour of per-track overrides; trim handle = min(6 pt, clip width / 3); edges half-open; snap threshold 8 pt.
+
+## 2026-09-30 [auto] Project license: GPL-3.0-or-later
+- Reason: the project already borrows GPL-3.0 code (palmier-pro reference) and permits only GPL-3.0-compatible sources (GPL, MIT, BSD, Apache-2.0). GPL-3.0-or-later is the license that stays compatible with all of them.
+- LICENSE holds the canonical text from gnu.org; README and CONTRIBUTING state the terms.
