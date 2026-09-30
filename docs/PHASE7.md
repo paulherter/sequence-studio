@@ -37,3 +37,12 @@ Standalone package. Depends only on SSCore's stable `Time`/`TimeRange` (committe
 - v1 files with duration 0 and keyframes read their fractions as seconds (degenerate case).
 - `TextTemplate` holds a single animation; an in+out pair (`AnimationSet`) has no on-disk home yet. Add `animationOut` to the template (format v4) once the UI needs both?
 - SwiftPM test runs on this machine occasionally stall inside fontd XPC (CoreText font lookup) when the machine is under load; rerunning passes.
+
+## Text renderer (`TextRenderer.swift`, 2026-09-30)
+- API: `TextRenderer.render(text:style:maxWidth:scale:) -> TextRaster?` (nil for empty text). `TextRaster` = layout + `originX/Y` (top-left of `layout.inkBounds`, layout px, unscaled) + `pixelWidth/Height` (= ceil(inkBounds size x scale)) + 8-bit sRGB premultiplied `CGImage` + linear `CVPixelBuffer`.
+- Output spaces: `CGImage` is sRGB 8-bit premultiplied (UI/tests). `linearBuffer` is `kCVPixelFormatType_64RGBAHalf`, IOSurface-backed, Metal compatible, linear-light sRGB/Rec.709 primaries, premultiplied (matches the compositor's working space in ARCHITECTURE section 5). It is drawn directly into a linear CGContext (not converted from the 8-bit image), so there is no 8-bit quantisation; antialiased edges and shadow blur blend in linear light (physically correct, slightly different from the 8-bit image at soft edges).
+- Stroke (decided): outer stroke, as in Premiere. Drawn as a round-join stroke of 2w under the fill, so it extends exactly w beyond the glyph edge and never eats into the fill. With that model the existing `inkBounds` growth by the full stroke width is exact, not conservative, so `TextLayout.inkRect` is unchanged (no edit needed in TextLayout.swift). Blur stays the full radius (CG sigma = blur/2 reaches about the radius); still an upper bound for the shadow.
+- Shadow: cast by the whole group (background box + stroke + fill), so a box gets a box shadow. Offset y-down in layout space (the CG y-up flip is done in the renderer). Multiplied by `scale`.
+- Colours: style colours are sRGB; CG converts to the context space. Font smoothing (LCD) disabled, grayscale AA.
+- Layout flip: one CTM flip (y-down layout, origin = ink top-left); text matrix flipped back for Core Text.
+- Not done: per-glyph (vs per-line) stroke joins for overlapping glyphs at huge widths; background box is not clipped against maxWidth.

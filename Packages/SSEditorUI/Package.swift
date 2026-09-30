@@ -2,14 +2,21 @@
 import PackageDescription
 
 // DECISIONS: SSEditorUI will depend on SSCore, SSMedia, SSRender, SSPlayback.
-// For now only SSCore; add the others when a slice needs them (viewer/monitor panels).
+// So far SSCore, SSRender (scopes), SSExport, SSText, SSAudioFX, SSTranscribe, SSLibrary; add the others when a slice needs them.
 let package = Package(
     name: "SSEditorUI",
     platforms: [.macOS(.v26)],
     products: [.library(name: "SSEditorUI", targets: ["SSEditorUI"])],
-    dependencies: [.package(path: "../SSCore")],
+    dependencies: [
+        .package(path: "../SSCore"), .package(path: "../SSRender"), .package(path: "../SSExport"),
+        .package(path: "../SSText"), .package(path: "../SSAudioFX"), .package(path: "../SSTranscribe"),
+        .package(path: "../SSLibrary"),
+    ],
     targets: [
-        .target(name: "SSEditorUI", dependencies: ["SSCore"]),
-        .testTarget(name: "SSEditorUITests", dependencies: ["SSEditorUI"]),
+        .target(name: "SSEditorUI", dependencies: [
+            "SSCore", "SSExport", "SSText", "SSAudioFX", "SSTranscribe", "SSLibrary",
+            .product(name: "SSRender", package: "SSRender"),
+        ]),
+        .testTarget(name: "SSEditorUITests", dependencies: ["SSEditorUI", .product(name: "SSRender", package: "SSRender")]),
     ]
 )
