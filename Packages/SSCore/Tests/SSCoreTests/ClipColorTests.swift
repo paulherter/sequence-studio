@@ -127,7 +127,7 @@ import Testing
          "correction":{"temperature":10,"tint":-5,"exposure":1.5,"contrast":20,"highlights":-30,"shadows":15,"saturation":130},
          "conversionLUT":{"kind":"file","path":"/c.cube"},
          "creativeLUT":{"kind":"file","path":"/l.cube"},"creativeIntensity":0.4,
-         "bypassCorrection":true,"bypassConversionLUT":false,"bypassCreativeLUT":true}
+         "bypassCorrection":false,"bypassConversionLUT":false,"bypassCreativeLUT":true}
         """#
         let c = try JSONDecoder().decode(ClipColor.self, from: Data(json.utf8))
         #expect(c.source == .sLog3SGamut3Cine && !c.useEmbeddedLUT)
@@ -135,11 +135,28 @@ import Testing
         let e = c.primary
         #expect(e.basic.temperature == 10 && e.basic.tint == -5 && e.basic.exposure == 1.5 && e.basic.contrast == 20)
         #expect(e.basic.highlights == -30 && e.basic.shadows == 15 && e.basic.saturation == 130 && e.basic.whites == 0)
-        #expect(!e.isEnabled(.basicCorrection) && !e.isEnabled(.creative))
+        #expect(e.isEnabled(.basicCorrection))
+        #expect(!e.isEnabled(.creative))
         #expect(e.inputLUT == .file("/c.cube"))
         #expect(e.creative.look == .file("/l.cube") && abs(e.creative.intensity - 40) < 1e-4)
         let none = try JSONDecoder().decode(ClipColor.self, from: Data(#"{"conversionLUT":null}"#.utf8))
         #expect(none.primary.inputLUT == nil)
+    }
+
+    @Test func v10BypassedCorrectionWithDefaultLUTKeepsTheLUT() throws {
+        let c = try JSONDecoder().decode(ClipColor.self, from: Data(#"{"correction":{"exposure":1},"bypassCorrection":true}"#.utf8))
+        #expect(c.primary.inputLUT == .automatic && c.primary.isEnabled(.basicCorrection) && c.primary.basic.isNeutral)
+        // Bypassed LUT and bypassed correction: both stay off.
+        let off = try JSONDecoder().decode(ClipColor.self, from: Data(#"{"correction":{"exposure":1},"bypassCorrection":true,"bypassConversionLUT":true}"#.utf8))
+        #expect(off.primary.inputLUT == nil && !off.primary.isEnabled(.basicCorrection) && off.primary.basic.exposure == 1)
+    }
+
+    @Test func emptyingEffectsRestoresTheDefaultEffect() {
+        var c = ClipColor.default
+        c.effects = []
+        #expect(c.effects.count == 1 && c.primary.id == 1)
+        c.effects.removeAll()
+        #expect(c.effects.count == 1)
     }
 
     @Test func emptyObjectDecodesToDefaults() throws {

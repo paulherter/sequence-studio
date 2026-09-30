@@ -242,7 +242,9 @@ public struct ClipColor: Sendable, Hashable, Codable {
     public var source: SourceColorOverride?
     /// Per-clip toggle for the embedded camera LUT (used by an `.automatic` Input LUT).
     public var useEmbeddedLUT: Bool
-    public var effects: [ColorEffect]
+    public var effects: [ColorEffect] {
+        didSet { if effects.isEmpty { effects = ClipColor.defaultEffects } }   // `primary` needs one
+    }
 
     public static let defaultEffects: [ColorEffect] = [ColorEffect(id: 1, inputLUT: .automatic)]
 
@@ -339,6 +341,12 @@ public struct ClipColor: Sendable, Hashable, Codable {
                 case .wheels(let w): e.wheels = w; e.setEnabled(.wheels, s.enabled)
                 case .vignette(let v): e.vignette = v; e.setEnabled(.vignette, s.enabled)
                 }
+            }
+            // The Basic toggle now gates the Input LUT too: a bypassed Basic with a live LUT keeps the LUT (the bypassed
+            // slider values are dropped) so the picture does not change.
+            if !e.isEnabled(.basicCorrection), e.inputLUT != nil {
+                e.basic = BasicCorrection()
+                e.setEnabled(.basicCorrection, true)
             }
             effects.append(e)
             pool = rest
