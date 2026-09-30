@@ -47,7 +47,6 @@ public actor ProxyQueue {
     private struct Job {
         var info: ProxyJobInfo
         var fingerprint: SourceFingerprint
-        var timeRange: TimeRange?
         var task: Task<Void, Never>?
         var cancelRequested = false
     }
@@ -68,23 +67,28 @@ public actor ProxyQueue {
 
     /// Call once at launch: removes stale partials (no job can be running yet) and enforces the cache cap.
     public func start() {
-        if !jobs.values.contains(where: { $0.info.state == .running }) { cache.purgePartials() }
+        // Partials of jobs that already started (enqueue before start()) are kept.
+        let running = Set(jobs.values.filter { $0.info.state == .running }.map {
+            cache.partialURL(fingerprint: $0.fingerprint, kind: $0.info.kind)
+        })
+        cache.purgePartials(except: running)
         cache.enforceCap()
         startNext()
     }
 
     public func setConcurrency(_ n: Int) { concurrency = max(1, n); startNext() }
 
-    /// Queues a proxy; returns the existing job if the same (fingerprint, kind) is queued, running or already
-    /// cached. Throws if the source cannot be fingerprinted.
-    public func enqueue(_ source: URL, kind: ProxyKind, timeRange: TimeRange? = nil,
+    /// Queues a proxy of the whole file (no partial ranges: the cache key is (fingerprint, kind)). Returns the
+    /// existing job if the same (fingerprint, kind) is queued, running (not being cancelled) or already cached. Throws if the source cannot be fingerprinted.
+    public func enqueue(_ source: URL, kind: ProxyKind,
                         priority: ProxyJobPriority = .utility) async throws -> ProxyJobID {
         let fp = try fingerprinter(source)
         if let existing = order.first(where: {
             guard let j = jobs[$0] else { return false }
             guard j.fingerprint == fp, j.info.kind == kind else { return false }
             switch j.info.state {
-            case .queued, .running: return true
+            case .queued: return true
+            case .running: return !j.cancelRequested
             case .done(let r): return cache.lookup(fingerprint: r.fingerprint, kind: r.kind) != nil
             default: return false
             }
@@ -93,11 +97,11 @@ public actor ProxyQueue {
         var info = ProxyJobInfo(id: id, source: source, kind: kind, priority: priority, state: .queued, progress: 0)
         if let rec = cache.lookup(fingerprint: fp, kind: kind) {
             info.state = .done(rec); info.progress = 1
-            jobs[id] = Job(info: info, fingerprint: fp, timeRange: timeRange); order.append(id)
+            jobs[id] = Job(info: info, fingerprint: fp); order.append(id)
             publish(id)
             return id
         }
-        jobs[id] = Job(info: info, fingerprint: fp, timeRange: timeRange); order.append(id)
+        jobs[id] = Job(info: info, fingerprint: fp); order.append(id)
         publish(id)
         startNext()
         return id
@@ -171,8 +175,8 @@ public actor ProxyQueue {
         for id in candidates where running < concurrency {
             guard var j = jobs[id], j.info.state == .queued else { continue }
             j.info.state = .running
-            let (source, kind, fp, range) = (j.info.source, j.info.kind, j.fingerprint, j.timeRange)
-            j.task = Task(priority: j.info.priority.taskPriority) { [weak self] in await self?.run(id, source: source, kind: kind, fingerprint: fp, range: range) }
+            let (source, kind, fp) = (j.info.source, j.info.kind, j.fingerprint)
+            j.task = Task(priority: j.info.priority.taskPriority) { [weak self] in await self?.run(id, source: source, kind: kind, fingerprint: fp) }
             jobs[id] = j
             publish(id)
             running += 1
@@ -185,12 +189,12 @@ public actor ProxyQueue {
         jobs[id] = j; publish(id)
     }
 
-    private func run(_ id: ProxyJobID, source: URL, kind: ProxyKind, fingerprint: SourceFingerprint, range: TimeRange?) async {
+    private func run(_ id: ProxyJobID, source: URL, kind: ProxyKind, fingerprint: SourceFingerprint) async {
         let partial = cache.partialURL(fingerprint: fingerprint, kind: kind)
         try? FileManager.default.removeItem(at: partial)
         let result: Result<ProxyRecord, any Error>
         do {
-            let out = try await transcoder.transcode(source: source, kind: kind, destination: partial, timeRange: range) { [weak self] p in
+            let out = try await transcoder.transcode(source: source, kind: kind, destination: partial, timeRange: nil) { [weak self] p in
                 Task { await self?.setProgress(id, p) }
             }
             try Task.checkCancellation()

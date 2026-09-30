@@ -105,6 +105,36 @@ private func waitUntil(_ cond: @escaping @Sendable () async -> Bool) async -> Bo
         #expect(t.started.filter { $0 == "a.mov" }.count == 1 || t.started.count == 2)
     }
 
+    /// P4: enqueue must not dedupe to a running job whose cancel was already requested.
+    @Test func enqueueAfterCancelRequestStartsFreshJob() async throws {
+        let (q, t, _, urls, dir) = try setup()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let j1 = try await q.enqueue(urls[0], kind: .proxyHalf)
+        #expect(await waitUntil { await q.info(j1)?.state == .running })
+        await q.cancel(j1)
+        let j2 = try await q.enqueue(urls[0], kind: .proxyHalf)
+        #expect(j2 != j1)
+        #expect(await waitUntil { await q.info(j1)?.state == .cancelled })
+        #expect(await waitUntil { t.started.count == 2 })
+        t.release("a.mov")
+        #expect(await waitUntil { await q.info(j2)?.isDone == true })
+    }
+
+    /// P5: a job that already runs before start() keeps its partial; unrelated partials are purged.
+    @Test func startDoesNotPurgePartialOfRunningJob() async throws {
+        let (q, _, cache, urls, dir) = try setup()
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let j1 = try await q.enqueue(urls[0], kind: .proxyHalf)
+        #expect(await waitUntil { await q.info(j1)?.state == .running })
+        let fp = try SourceFingerprint.compute(for: urls[0])
+        let mine = cache.partialURL(fingerprint: fp, kind: .proxyHalf)
+        let stray = cache.directory.appendingPathComponent("stray.mov.partial")
+        try Data("x".utf8).write(to: mine); try Data("x".utf8).write(to: stray)
+        await q.start()
+        #expect(FileManager.default.fileExists(atPath: mine.path))
+        #expect(!FileManager.default.fileExists(atPath: stray.path))
+    }
+
     @Test func cachedWithoutJobReturnsDoneJob() async throws {
         let (q, _, cache, urls, dir) = try setup()
         defer { try? FileManager.default.removeItem(at: dir) }

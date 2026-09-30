@@ -38,8 +38,11 @@ public final class ProxyCache: Sendable {
     public var settings: ProxySettings { state.withLock { $0.settings } }
 
     public func updateSettings(_ change: (inout ProxySettings) -> Void) throws {
-        let s = state.withLock { st -> ProxySettings in change(&st.settings); return st.settings }
-        try JSONEncoder.proxy.encode(s).write(to: settingsURL, options: .atomic)
+        // Write under the lock so the file always matches the last in-memory state.
+        try state.withLock { st in
+            change(&st.settings)
+            try JSONEncoder.proxy.encode(st.settings).write(to: settingsURL, options: .atomic)
+        }
     }
 
     public static func fileName(for fingerprint: SourceFingerprint, kind: ProxyKind) -> String {
@@ -57,14 +60,20 @@ public final class ProxyCache: Sendable {
     /// A hit refreshes `lastAccess` (in memory; persisted with the next index write or `flushIndex()`).
     public func lookup(fingerprint: SourceFingerprint, kind: ProxyKind, now: Date = Date()) -> ProxyRecord? {
         let key = Key(id: fingerprint.id, kind: kind)
-        guard var r = state.withLock({ $0.records[key] }) else { return nil }
+        guard let r0 = state.withLock({ $0.records[key] }) else { return nil }
+        var r = r0
         if FileManager.default.fileExists(atPath: fileURL(for: r).path) {
             r.lastAccess = now
-            state.withLock { if $0.records[key] != nil { $0.records[key] = r } }
+            state.withLock { if $0.records[key] == r0 { $0.records[key] = r } }
             return r
         }
-        state.withLock { $0.records[key] = nil }
-        try? writeIndex()
+        // Drop only the record we examined; a concurrent commit may have replaced it meanwhile.
+        let dropped = state.withLock { s -> Bool in
+            guard s.records[key] == r0 else { return false }
+            s.records[key] = nil
+            return true
+        }
+        if dropped { try? writeIndex() }
         return nil
     }
 
@@ -81,8 +90,12 @@ public final class ProxyCache: Sendable {
     /// refers to a complete file.
     public func commit(partial: URL, record: ProxyRecord) throws {
         let dest = fileURL(for: record)
-        if FileManager.default.fileExists(atPath: dest.path) { try FileManager.default.removeItem(at: dest) }
-        try FileManager.default.moveItem(at: partial, to: dest)
+        // Atomic replace: the final name never disappears, so a concurrent lookup cannot see a missing file.
+        if FileManager.default.fileExists(atPath: dest.path) {
+            _ = try FileManager.default.replaceItemAt(dest, withItemAt: partial)
+        } else {
+            try FileManager.default.moveItem(at: partial, to: dest)
+        }
         let listeners = state.withLock { s -> [AsyncStream<ProxyRecord>.Continuation] in
             s.records[Key(id: record.fingerprint.id, kind: record.kind)] = record
             return Array(s.listeners.values)
@@ -134,10 +147,11 @@ public final class ProxyCache: Sendable {
 
     /// Deletes leftover `.partial` files (call at launch, when no job can be running). Returns the count.
     @discardableResult
-    public func purgePartials() -> Int {
+    public func purgePartials(except keep: Set<URL> = []) -> Int {
         let files = (try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)) ?? []
+        let keepPaths = Set(keep.map { $0.standardizedFileURL.path })
         var n = 0
-        for f in files where f.pathExtension == "partial" {
+        for f in files where f.pathExtension == "partial" && !keepPaths.contains(f.standardizedFileURL.path) {
             if (try? FileManager.default.removeItem(at: f)) != nil { n += 1 }
         }
         return n

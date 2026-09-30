@@ -8,6 +8,7 @@ public enum ProxyTranscodeError: Error, Equatable {
     case noVideoTrack
     case readerFailed(String)
     case writerFailed(String)
+    case invalidTime(String)
 }
 
 /// AVAssetReader (hardware decode via VideoToolbox) -> AVAssetWriter (ProRes) transcoder.
@@ -26,10 +27,7 @@ public struct ProxyTranscoder: ProxyTranscoding {
 
         let srcDims = ProxyDimensions(width: Int(natural.width.rounded()), height: Int(natural.height.rounded()))
         let outDims = srcDims.scaled(divisor: kind.scaleDivisor)
-        let cmRange: CMTimeRange = timeRange.map {
-            CMTimeRange(start: CMTime(value: $0.start.value, timescale: CMTimeScale($0.start.timescale)),
-                        duration: CMTime(value: $0.duration.value, timescale: CMTimeScale($0.duration.timescale)))
-        } ?? CMTimeRange(start: .zero, duration: fullDuration)
+        let cmRange = try Self.cmTimeRange(timeRange, fullDuration: fullDuration)
 
         try? FileManager.default.removeItem(at: destination)
         let reader = try AVAssetReader(asset: asset)
@@ -126,7 +124,28 @@ public struct ProxyTranscoder: ProxyTranscoding {
         }
         progress(1)
         let dur = cmRange.duration
-        return TranscodeOutput(dimensions: outDims, sourceDuration: Time(dur.value, Int64(dur.timescale)))
+        return TranscodeOutput(dimensions: outDims, sourceDuration: try Self.sourceDuration(dur))
+    }
+
+    /// Converts the requested range (or the full asset) to CoreMedia; throws on timescales above Int32.max and
+    /// on indefinite/invalid durations instead of trapping.
+    static func cmTimeRange(_ range: TimeRange?, fullDuration: CMTime) throws -> CMTimeRange {
+        func cm(_ t: Time) throws -> CMTime {
+            guard let scale = CMTimeScale(exactly: t.timescale) else {
+                throw ProxyTranscodeError.invalidTime("timescale \(t.timescale) exceeds Int32.max")
+            }
+            return CMTime(value: t.value, timescale: scale)
+        }
+        if let range { return CMTimeRange(start: try cm(range.start), duration: try cm(range.duration)) }
+        guard fullDuration.isNumeric, fullDuration.timescale > 0 else {
+            throw ProxyTranscodeError.invalidTime("source duration is indefinite")
+        }
+        return CMTimeRange(start: .zero, duration: fullDuration)
+    }
+
+    static func sourceDuration(_ d: CMTime) throws -> Time {
+        guard d.isNumeric, d.timescale > 0 else { throw ProxyTranscodeError.invalidTime("duration is not numeric") }
+        return Time(d.value, Int64(d.timescale))
     }
 
     static func qos(for p: TaskPriority) -> DispatchQoS.QoSClass {

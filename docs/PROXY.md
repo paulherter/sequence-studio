@@ -73,6 +73,6 @@ use the original.
 ## Not preserved / open
 - Source file has NO color tags (S-Log3 lives in the Sony NRT XML). The ProRes encoder tags the proxy BT.709: ignore it (color rule).
 - Tagged sources: their tags are copied to the proxy (code path present, not exercised by the Sony file); still never used for interpretation.
-- Start offset inside a cut (`timeRange` start != 0) is only used by tests.
+- Start offset inside a cut (`timeRange` start != 0) is only used by tests, on `ProxyTranscoding.transcode` directly. `ProxyQueue.enqueue` has no `timeRange` (REVIEW-2 P1): the cache key is (fingerprint, kind), so a partial proxy would be served for the whole file. Proxies are always whole-file; a ranged queue API would need the range in the key.
 - Files in use by a decoder are not tracked; only LRU order and the just-finished proxy protect against eviction. If a
   decoder holds an evicted file open, macOS keeps the inode alive until it closes.

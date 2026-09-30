@@ -1,3 +1,4 @@
+import CoreMedia
 import Foundation
 import SSCore
 import Testing
@@ -153,5 +154,65 @@ func writeFile(_ url: URL, bytes: Int, seed: UInt8 = 1) throws {
         let r = record()
         try cache.commit(partial: try stage(cache, r), record: r)
         #expect(await it.next() == r)
+    }
+}
+
+@Suite struct CacheConcurrencyTests {
+    private func record(_ fp: SourceFingerprint) -> ProxyRecord {
+        ProxyRecord(fingerprint: fp, kind: .proxyHalf, fileName: ProxyCache.fileName(for: fp, kind: .proxyHalf),
+                    dimensions: .init(width: 2, height: 2), createdAt: Date(), sourceDuration: Time(1, 1))
+    }
+
+    /// P2: lookup racing with a replacing commit must never drop the record the commit just stored.
+    @Test func lookupNeverDropsRecordReplacedByCommit() async throws {
+        let dir = try makeTempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let src = dir.appendingPathComponent("s.bin"); try writeFile(src, bytes: 200_000)
+        let fp = try SourceFingerprint.compute(for: src)
+        let cache = ProxyCache(directory: dir.appendingPathComponent("c"))
+        let rec = record(fp)
+        let first = cache.partialURL(fingerprint: fp, kind: .proxyHalf)
+        try Data("0".utf8).write(to: first)
+        try cache.commit(partial: first, record: rec)
+        for _ in 0..<300 {
+            let p = cache.partialURL(fingerprint: fp, kind: .proxyHalf)
+            try Data("1".utf8).write(to: p)
+            let reader = Task.detached { for _ in 0..<2000 { _ = cache.lookup(fingerprint: fp, kind: .proxyHalf) } }
+            try cache.commit(partial: p, record: rec)
+            await reader.value
+            #expect(cache.lookup(fingerprint: fp, kind: .proxyHalf) != nil)
+            if cache.lookup(fingerprint: fp, kind: .proxyHalf) == nil { break }
+        }
+    }
+
+    /// P3: concurrent updateSettings must leave disk equal to memory.
+    @Test func concurrentSettingsUpdatesEndConsistentOnDisk() async throws {
+        let dir = try makeTempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        for _ in 0..<50 {
+            let cache = ProxyCache(directory: dir.appendingPathComponent("c-\(UUID().uuidString)"))
+            await withTaskGroup(of: Void.self) { g in
+                for i in 1...16 {
+                    g.addTask { try? cache.updateSettings { $0.cacheCapBytes = Int64(i) } }
+                }
+            }
+            let onDisk = ProxyCache(directory: cache.directory).settings
+            #expect(onDisk == cache.settings)
+        }
+    }
+}
+
+@Suite struct TranscoderGuardTests {
+    /// P6: out-of-range timescales and indefinite durations throw instead of trapping.
+    @Test func cmConversionsThrowInsteadOfTrapping() throws {
+        let ok = try ProxyTranscoder.cmTimeRange(TimeRange(start: .zero, duration: Time(5, 1)), fullDuration: .invalid)
+        #expect(ok.duration == CMTime(value: 5, timescale: 1))
+        let huge = Time(1, Int64(Int32.max) + 1)
+        #expect(throws: ProxyTranscodeError.self) {
+            _ = try ProxyTranscoder.cmTimeRange(TimeRange(start: .zero, duration: huge), fullDuration: .invalid)
+        }
+        #expect(throws: ProxyTranscodeError.self) {
+            _ = try ProxyTranscoder.cmTimeRange(nil, fullDuration: .indefinite)
+        }
+        #expect(throws: ProxyTranscodeError.self) { _ = try ProxyTranscoder.sourceDuration(.indefinite) }
+        #expect(try ProxyTranscoder.sourceDuration(CMTime(value: 3, timescale: 2)) == Time(3, 2))
     }
 }
