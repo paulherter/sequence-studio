@@ -30,8 +30,12 @@ public enum PixelFormats {
                             cbcrFormat: bits == 8 ? .rg8Unorm : .rg16Unorm, compressed: c)
         }
         switch f {
-        case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange: return bi(8, false)
-        case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange: return bi(8, true)
+        case kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange,
+             kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange,
+             kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange: return bi(8, false)
+        case kCVPixelFormatType_420YpCbCr8BiPlanarFullRange,
+             kCVPixelFormatType_422YpCbCr8BiPlanarFullRange,
+             kCVPixelFormatType_444YpCbCr8BiPlanarFullRange: return bi(8, true)
         case kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange,   // x420
              kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange,   // x422
              kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange: return bi(10, false)
@@ -47,15 +51,17 @@ public enum PixelFormats {
         }
     }
 
-    /// Format to request from VideoToolbox (destination attributes) when `f` cannot be sampled (packed 10-bit
-    /// lossless variants): the plain bi-planar equivalent, costing memory bandwidth (ARCHITECTURE §5 risk).
+    /// Plain bi-planar equivalent of a lossless variant that cannot be sampled (packed 10-bit), same range
+    /// (`&xv*` = video, `&xf*` = full; CVPixelBuffer.h). The decoder requests the native uncompressed format up front
+    /// (`SSMedia.DecodePixelFormat`), so this is for diagnostics / other producers.
     public static func uncompressedEquivalent(of f: OSType) -> OSType? {
         switch f {
         case fourCC("&8v0"): return kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
         case fourCC("&8f0"): return kCVPixelFormatType_420YpCbCr8BiPlanarFullRange
         case fourCC("&xv0"): return kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange
         case fourCC("&xf0"): return kCVPixelFormatType_420YpCbCr10BiPlanarFullRange
-        case fourCC("&xv2"), fourCC("&xf2"): return kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
+        case fourCC("&xv2"): return kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange
+        case fourCC("&xf2"): return kCVPixelFormatType_422YpCbCr10BiPlanarFullRange
         default: return nil
         }
     }

@@ -119,3 +119,18 @@ private func makeDecoder(_ spec: TestClipSpec) async throws -> (VTVideoDecoder, 
     #expect(frames.count == 30)
     #expect(frames.map(\.pts) == d.index.entries[0...29].map(\.pts))
 }
+
+@Test func nativeUncompressedDecodeFormat() {
+    func info(_ chroma: String, _ bits: Int) -> VideoTrackInfo {
+        VideoTrackInfo(width: 16, height: 16, codec: "avc1", bitDepth: bits, chroma: chroma,
+                       nominalFrameDuration: Time(1, 25), isVariableFrameRate: false)
+    }
+    typealias F = DecodePixelFormat
+    #expect(F.nativeUncompressed(for: info("4:2:2", 10), fullRange: true) == kCVPixelFormatType_422YpCbCr10BiPlanarFullRange)
+    #expect(F.nativeUncompressed(for: info("4:2:2", 10), fullRange: false) == kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange)
+    #expect(F.nativeUncompressed(for: info("4:2:0", 10), fullRange: false) == kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+    #expect(F.nativeUncompressed(for: info("4:2:0", 8), fullRange: false) == kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+    #expect(F.nativeUncompressed(for: info("4:2:0", 8), fullRange: true) == kCVPixelFormatType_420YpCbCr8BiPlanarFullRange)
+    #expect(F.nativeUncompressed(for: info("4:4:4", 12), fullRange: false) == kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange)
+    #expect(F.nativeUncompressed(for: info("4:2:2", 8), fullRange: false) == kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange)
+}

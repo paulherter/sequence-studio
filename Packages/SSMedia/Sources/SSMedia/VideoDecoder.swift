@@ -37,6 +37,33 @@ public enum DecodeScale: Sendable, Hashable {
     var divisor: Int { self == .full ? 1 : self == .half ? 2 : 4 }
 }
 
+/// Pixel format requested from VideoToolbox. Left alone, VT hands out Apple's lossless-compressed variants
+/// (`&8v0`, `&xf0`, `&xf2` ...); the packed 10-bit ones cannot be sampled by Metal (CVMetalTextureCache), so the
+/// compositor drew Sony 4:2:2 10-bit and 4:2:0 10-bit as `.damaged`. We ask for the stream's native uncompressed
+/// bi-planar format instead (memory bandwidth cost: ARCHITECTURE §5 risk).
+public enum DecodePixelFormat {
+    /// Bi-planar Y + CbCr format matching the stream's chroma subsampling, bit depth (> 8 = 10-bit planes) and range.
+    public static func nativeUncompressed(for info: VideoTrackInfo, fullRange: Bool) -> OSType {
+        let ten = info.bitDepth > 8
+        switch info.chroma {
+        case "4:2:2":
+            return ten ? (fullRange ? kCVPixelFormatType_422YpCbCr10BiPlanarFullRange : kCVPixelFormatType_422YpCbCr10BiPlanarVideoRange)
+                : (fullRange ? kCVPixelFormatType_422YpCbCr8BiPlanarFullRange : kCVPixelFormatType_422YpCbCr8BiPlanarVideoRange)
+        case "4:4:4":
+            return ten ? (fullRange ? kCVPixelFormatType_444YpCbCr10BiPlanarFullRange : kCVPixelFormatType_444YpCbCr10BiPlanarVideoRange)
+                : (fullRange ? kCVPixelFormatType_444YpCbCr8BiPlanarFullRange : kCVPixelFormatType_444YpCbCr8BiPlanarVideoRange)
+        default:
+            return ten ? (fullRange ? kCVPixelFormatType_420YpCbCr10BiPlanarFullRange : kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange)
+                : (fullRange ? kCVPixelFormatType_420YpCbCr8BiPlanarFullRange : kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange)
+        }
+    }
+
+    /// `kCMFormatDescriptionExtension_FullRangeVideo` of the stream (absent = video range).
+    public static func isFullRange(_ format: CMFormatDescription) -> Bool {
+        (CMFormatDescriptionGetExtension(format, extensionKey: kCMFormatDescriptionExtension_FullRangeVideo) as? Bool) ?? false
+    }
+}
+
 /// VideoToolbox decoder over a `Demuxing`. Hardware first; there is no software retry (Sony H.264 4:2:2 has no
 /// software decoder, a failure is a clip error). Calls to `decode` must not overlap (one job per media).
 public final class VTVideoDecoder: VideoDecoding, @unchecked Sendable {
@@ -48,6 +75,7 @@ public final class VTVideoDecoder: VideoDecoding, @unchecked Sendable {
     private let demuxer: any Demuxing
     private let media: UUID
     private let scale: DecodeScale
+    private let pixelFormat: OSType
     private let presentationIndexOfOrdinal: [Int]
     private let lock = NSLock()
     private var session: VTDecompressionSession?
@@ -70,23 +98,32 @@ public final class VTVideoDecoder: VideoDecoding, @unchecked Sendable {
         let fd = demuxer.formatDescription
         info = try MediaImporter.videoInfo(format: fd, index: demuxer.index)
         let (w, h) = (info.width, info.height)
-        let (s, hw) = try Self.makeSession(format: fd, width: w, height: h, scale: scale)
+        pixelFormat = DecodePixelFormat.nativeUncompressed(for: info, fullRange: DecodePixelFormat.isFullRange(fd))
+        let (s, hw) = try Self.makeSession(format: fd, width: w, height: h, scale: scale, pixelFormat: pixelFormat)
         session = s; hardware = hw
     }
 
     deinit { if let session { VTDecompressionSessionInvalidate(session) } }
 
-    private static func makeSession(format: CMFormatDescription, width: Int, height: Int, scale: DecodeScale) throws -> (VTDecompressionSession, Bool) {
+    /// Requests `pixelFormat` (native uncompressed, see `DecodePixelFormat`); if VT refuses it, retries with VT's choice.
+    private static func makeSession(format: CMFormatDescription, width: Int, height: Int, scale: DecodeScale,
+                                    pixelFormat: OSType) throws -> (VTDecompressionSession, Bool) {
         let spec: [CFString: Any] = [kVTVideoDecoderSpecification_EnableHardwareAcceleratedVideoDecoder: true]
         var dest: [CFString: Any] = [kCVPixelBufferMetalCompatibilityKey: true,
-                                     kCVPixelBufferIOSurfacePropertiesKey: [:] as [String: Any]]
+                                     kCVPixelBufferIOSurfacePropertiesKey: [:] as [String: Any],
+                                     kCVPixelBufferPixelFormatTypeKey: pixelFormat]
         if scale != .full {
             dest[kCVPixelBufferWidthKey] = max(2, (width / scale.divisor) & ~1)
             dest[kCVPixelBufferHeightKey] = max(2, (height / scale.divisor) & ~1)
         }
         var s: VTDecompressionSession?
-        let st = VTDecompressionSessionCreate(allocator: nil, formatDescription: format, decoderSpecification: spec as CFDictionary,
+        var st = VTDecompressionSessionCreate(allocator: nil, formatDescription: format, decoderSpecification: spec as CFDictionary,
                                               imageBufferAttributes: dest as CFDictionary, outputCallback: nil, decompressionSessionOut: &s)
+        if st != noErr && st != kVTCouldNotFindVideoDecoderErr && st != kVTVideoDecoderUnsupportedDataFormatErr {
+            dest[kCVPixelBufferPixelFormatTypeKey] = nil
+            st = VTDecompressionSessionCreate(allocator: nil, formatDescription: format, decoderSpecification: spec as CFDictionary,
+                                              imageBufferAttributes: dest as CFDictionary, outputCallback: nil, decompressionSessionOut: &s)
+        }
         guard st == noErr, let s else {
             throw st == kVTCouldNotFindVideoDecoderErr || st == kVTVideoDecoderUnsupportedDataFormatErr
                 ? MediaError.unsupportedCodec(fourCC(CMFormatDescriptionGetMediaSubType(format)))
@@ -150,7 +187,8 @@ public final class VTVideoDecoder: VideoDecoding, @unchecked Sendable {
     private func currentSession() throws -> VTDecompressionSession {
         if let s = lock.withLock({ session }) { return s }
         let d = CMVideoFormatDescriptionGetDimensions(demuxer.formatDescription)
-        let (s, hw) = try Self.makeSession(format: demuxer.formatDescription, width: Int(d.width), height: Int(d.height), scale: scale)
+        let (s, hw) = try Self.makeSession(format: demuxer.formatDescription, width: Int(d.width), height: Int(d.height), scale: scale,
+                                           pixelFormat: pixelFormat)
         lock.withLock { session = s; hardware = hw }
         return s
     }
