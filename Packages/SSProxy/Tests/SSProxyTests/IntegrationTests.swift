@@ -10,9 +10,8 @@ private let sonyFile = URL(fileURLWithPath: NSHomeDirectory() + "/Documents/Vide
 private struct Probe {
     var fourCC: String, width: Int, height: Int, seconds: Double
     var primaries: String?, transfer: String?, matrix: String?
-    var timecodeTracks: Int, audioTracks: Int, audioChannels: Int
+    var audioTracks: Int, audioChannels: Int
     var frames: Int, firstPTS: Double, pts: [Int64]
-    var timecodeStart: Int32?
 }
 
 private func fourCC(_ c: FourCharCode) -> String {
@@ -29,18 +28,6 @@ private func probe(_ url: URL, range: CMTimeRange? = nil) async throws -> Probe 
     var ch = 0
     if let af = try await audio.first?.load(.formatDescriptions).first,
        let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(af) { ch = Int(asbd.pointee.mChannelsPerFrame) }
-    let tc = try await a.loadTracks(withMediaType: .timecode)
-    var tcStart: Int32?
-    if let t = tc.first {
-        let r = try AVAssetReader(asset: a)
-        let o = AVAssetReaderTrackOutput(track: t, outputSettings: nil)
-        r.add(o); r.startReading()
-        if let sb = o.copyNextSampleBuffer(), let bb = CMSampleBufferGetDataBuffer(sb) {
-            var raw: UInt32 = 0
-            CMBlockBufferCopyDataBytes(bb, atOffset: 0, dataLength: 4, destination: &raw)
-            tcStart = Int32(bitPattern: UInt32(bigEndian: raw))
-        }
-    }
     let r = try AVAssetReader(asset: a)
     if let range { r.timeRange = range }
     let o = AVAssetReaderTrackOutput(track: v, outputSettings: [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_422YpCbCr10])
@@ -57,8 +44,7 @@ private func probe(_ url: URL, range: CMTimeRange? = nil) async throws -> Probe 
                  primaries: ext[kCMFormatDescriptionExtension_ColorPrimaries as String] as? String,
                  transfer: ext[kCMFormatDescriptionExtension_TransferFunction as String] as? String,
                  matrix: ext[kCMFormatDescriptionExtension_YCbCrMatrix as String] as? String,
-                 timecodeTracks: tc.count, audioTracks: audio.count, audioChannels: ch, frames: n, firstPTS: first, pts: stamps.sorted(),
-                 timecodeStart: tcStart)
+                 audioTracks: audio.count, audioChannels: ch, frames: n, firstPTS: first, pts: stamps.sorted())
 }
 
 private func size(_ u: URL) -> Int64 {
@@ -75,7 +61,7 @@ private func size(_ u: URL) -> Int64 {
         }
         let dir = try makeTempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let src = try await probe(sonyFile, range: fiveCM)
-        print("SOURCE: \(src.fourCC) \(src.width)x\(src.height) frames=\(src.frames) primaries=\(String(describing: src.primaries)) tc=\(src.timecodeTracks)")
+        print("SOURCE: \(src.fourCC) \(src.width)x\(src.height) frames=\(src.frames) primaries=\(String(describing: src.primaries))")
         let transcoder = ProxyTranscoder()
         for kind in [ProxyKind.optimized, .proxyQuarter] {
             let out = dir.appendingPathComponent("\(kind.rawValue).mov")
@@ -102,9 +88,24 @@ private func size(_ u: URL) -> Int64 {
             #expect(zip(p.pts, src.pts).allSatisfy { abs($0 - $1) <= 1 })
             #expect(p.frames == src.frames)
             #expect(p.audioChannels == src.audioChannels && p.audioTracks == src.audioTracks)
-            #expect(p.timecodeTracks == src.timecodeTracks)
-            if src.timecodeStart != nil { #expect(p.timecodeStart == src.timecodeStart) }
         }
+    }
+
+    @Test func sonyIsLongGOPAndProxyIsNot() async throws {
+        guard FileManager.default.fileExists(atPath: sonyFile.path) else {
+            print("SKIPPED: \(sonyFile.path) not found"); return
+        }
+        let dir = try makeTempDir(); defer { try? FileManager.default.removeItem(at: dir) }
+        let prober = AVSourceSeekProber(), policy = ProxyPolicy()
+        let srcInfo = try await prober.probe(sonyFile)
+        print("SONY PROBE: \(srcInfo)")
+        #expect(policy.decide(srcInfo) == .needsProxy(.proxyHalf))
+        let out = dir.appendingPathComponent("half.mov")
+        _ = try await ProxyTranscoder().transcode(source: sonyFile, kind: .proxyHalf, destination: out,
+                                                  timeRange: TimeRange(start: .zero, duration: Time(2, 1))) { _ in }
+        let proxyInfo = try await prober.probe(out)
+        print("PROXY PROBE: \(proxyInfo)")
+        #expect(policy.decide(proxyInfo) == .skip(.intraOnlyCodec))
     }
 
     @Test func cancelLeavesNoFile() async throws {

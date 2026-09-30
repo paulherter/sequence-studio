@@ -14,10 +14,26 @@ public enum ProxyJobState: Sendable, Equatable {
     }
 }
 
+/// Scheduling priority of a job: decides start order and the priority of the transcode task.
+public enum ProxyJobPriority: Int, Sendable, Hashable, Comparable, Codable {
+    /// Automatic generation after import.
+    case background = 0
+    /// Explicitly requested by the user.
+    case utility = 1
+    case userInitiated = 2
+
+    public static func < (a: Self, b: Self) -> Bool { a.rawValue < b.rawValue }
+
+    var taskPriority: TaskPriority {
+        switch self { case .background: .background; case .utility: .utility; case .userInitiated: .userInitiated }
+    }
+}
+
 public struct ProxyJobInfo: Sendable, Equatable, Identifiable {
     public var id: ProxyJobID
     public var source: URL
     public var kind: ProxyKind
+    public var priority: ProxyJobPriority = .utility
     public var state: ProxyJobState
     /// 0...1
     public var progress: Double
@@ -50,11 +66,19 @@ public actor ProxyQueue {
         self.concurrency = max(1, concurrency); self.fingerprinter = fingerprinter
     }
 
+    /// Call once at launch: removes stale partials (no job can be running yet) and enforces the cache cap.
+    public func start() {
+        if !jobs.values.contains(where: { $0.info.state == .running }) { cache.purgePartials() }
+        cache.enforceCap()
+        startNext()
+    }
+
     public func setConcurrency(_ n: Int) { concurrency = max(1, n); startNext() }
 
     /// Queues a proxy; returns the existing job if the same (fingerprint, kind) is queued, running or already
     /// cached. Throws if the source cannot be fingerprinted.
-    public func enqueue(_ source: URL, kind: ProxyKind, timeRange: TimeRange? = nil) async throws -> ProxyJobID {
+    public func enqueue(_ source: URL, kind: ProxyKind, timeRange: TimeRange? = nil,
+                        priority: ProxyJobPriority = .utility) async throws -> ProxyJobID {
         let fp = try fingerprinter(source)
         if let existing = order.first(where: {
             guard let j = jobs[$0] else { return false }
@@ -66,7 +90,7 @@ public actor ProxyQueue {
             }
         }) { return existing }
         let id = ProxyJobID()
-        var info = ProxyJobInfo(id: id, source: source, kind: kind, state: .queued, progress: 0)
+        var info = ProxyJobInfo(id: id, source: source, kind: kind, priority: priority, state: .queued, progress: 0)
         if let rec = cache.lookup(fingerprint: fp, kind: kind) {
             info.state = .done(rec); info.progress = 1
             jobs[id] = Job(info: info, fingerprint: fp, timeRange: timeRange); order.append(id)
@@ -139,11 +163,16 @@ public actor ProxyQueue {
 
     private func startNext() {
         var running = jobs.values.filter { $0.info.state == .running }.count
-        for id in order where running < concurrency {
+        // Higher priority first; stable within a priority (FIFO).
+        let candidates = order.enumerated().sorted {
+            let (a, b) = (jobs[$0.element]?.info.priority ?? .background, jobs[$1.element]?.info.priority ?? .background)
+            return a != b ? a > b : $0.offset < $1.offset
+        }.map(\.element)
+        for id in candidates where running < concurrency {
             guard var j = jobs[id], j.info.state == .queued else { continue }
             j.info.state = .running
             let (source, kind, fp, range) = (j.info.source, j.info.kind, j.fingerprint, j.timeRange)
-            j.task = Task { [weak self] in await self?.run(id, source: source, kind: kind, fingerprint: fp, range: range) }
+            j.task = Task(priority: j.info.priority.taskPriority) { [weak self] in await self?.run(id, source: source, kind: kind, fingerprint: fp, range: range) }
             jobs[id] = j
             publish(id)
             running += 1
@@ -178,7 +207,9 @@ public actor ProxyQueue {
         guard var j = jobs[id] else { return }
         j.task = nil
         switch result {
-        case .success(let rec): j.info.state = .done(rec); j.info.progress = 1
+        case .success(let rec):
+            j.info.state = .done(rec); j.info.progress = 1
+            cache.enforceCap(protecting: [ProxyRecordID(rec)])
         case .failure(let e):
             j.info.state = (e is CancellationError || j.cancelRequested) ? .cancelled : .failed("\(e)")
         }

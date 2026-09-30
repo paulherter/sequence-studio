@@ -85,10 +85,49 @@ public struct ProxyRecord: Sendable, Hashable, Codable {
     public var dimensions: ProxyDimensions
     public var createdAt: Date
     public var sourceDuration: Time
+    /// Last time a lookup handed this proxy out (LRU eviction). Defaults to `createdAt`.
+    public var lastAccess: Date
 
     public init(fingerprint: SourceFingerprint, kind: ProxyKind, fileName: String,
-                dimensions: ProxyDimensions, createdAt: Date, sourceDuration: Time) {
+                dimensions: ProxyDimensions, createdAt: Date, sourceDuration: Time, lastAccess: Date? = nil) {
         self.fingerprint = fingerprint; self.kind = kind; self.fileName = fileName
         self.dimensions = dimensions; self.createdAt = createdAt; self.sourceDuration = sourceDuration
+        self.lastAccess = lastAccess ?? createdAt
     }
+
+    /// Identity ignores `lastAccess` (volatile usage bookkeeping).
+    public static func == (a: ProxyRecord, b: ProxyRecord) -> Bool {
+        a.fingerprint == b.fingerprint && a.kind == b.kind && a.fileName == b.fileName
+            && a.dimensions == b.dimensions && a.createdAt == b.createdAt && a.sourceDuration == b.sourceDuration
+    }
+    public func hash(into h: inout Hasher) { h.combine(fingerprint); h.combine(kind); h.combine(fileName) }
+
+    public init(from decoder: any Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        fingerprint = try c.decode(SourceFingerprint.self, forKey: .fingerprint)
+        kind = try c.decode(ProxyKind.self, forKey: .kind)
+        fileName = try c.decode(String.self, forKey: .fileName)
+        dimensions = try c.decode(ProxyDimensions.self, forKey: .dimensions)
+        createdAt = try c.decode(Date.self, forKey: .createdAt)
+        sourceDuration = try c.decode(Time.self, forKey: .sourceDuration)
+        lastAccess = try c.decodeIfPresent(Date.self, forKey: .lastAccess) ?? createdAt
+    }
+}
+
+/// User-facing proxy settings, persisted as `settings.json` inside the cache folder.
+public struct ProxySettings: Sendable, Hashable, Codable {
+    public static let defaultCacheCap: Int64 = 50_000_000_000
+    /// Maximum total size of the proxy cache (LRU eviction above it).
+    public var cacheCapBytes: Int64
+    /// Manual toggle like Premiere's "Use proxies": proxies also for playback (slow Macs). Paused frames stay original.
+    public var useProxiesForPlayback: Bool
+
+    public init(cacheCapBytes: Int64 = ProxySettings.defaultCacheCap, useProxiesForPlayback: Bool = false) {
+        self.cacheCapBytes = cacheCapBytes; self.useProxiesForPlayback = useProxiesForPlayback
+    }
+}
+
+/// What the playhead is doing when a decoder is requested.
+public enum ProxyUseContext: Sendable, Hashable {
+    case scrubbing, playback, paused
 }

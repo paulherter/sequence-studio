@@ -1,7 +1,16 @@
 import Foundation
 import Synchronization
 
+/// Color interpretation of a proxy. There is exactly one rule: always the ORIGINAL source's.
+public enum ProxyColorInterpretation: Sendable, Hashable {
+    /// Interpret color (log curve, primaries, matrix, sidecar metadata such as Sony S-Log3) from the original
+    /// source file. Never read color tags from the proxy: its BT.709 tag is an encoder default, not information.
+    case fromSource
+}
+
 public struct ProxyLookup: Sendable, Hashable {
+    /// Always `.fromSource`: see `ProxyColorInterpretation`.
+    public var colorInterpretation: ProxyColorInterpretation = .fromSource
     public var url: URL
     public var kind: ProxyKind
     public var dimensions: ProxyDimensions
@@ -33,6 +42,25 @@ public final class ProxyProvider: Sendable {
 
     /// Precomputes the fingerprint so `cachedLookup` works afterwards.
     public func warm(_ source: URL) async { _ = fingerprint(source, compute: true) }
+
+    /// Decoder file choice for the playhead state. Stat-only (see `cachedLookup`), so warm the source first.
+    /// Returns a proxy only for `.scrubbing`, or also for `.playback` when `settings.useProxiesForPlayback` is on.
+    /// `.paused` always returns nil (exact frames come from the original).
+    public func file(for source: URL, context: ProxyUseContext, settings: ProxySettings) -> ProxyLookup? {
+        guard Self.usesProxy(context: context, settings: settings) else { return nil }
+        return cachedLookup(for: source, preferring: Self.scrubPreference)
+    }
+
+    public static func usesProxy(context: ProxyUseContext, settings: ProxySettings) -> Bool {
+        switch context {
+        case .scrubbing: true
+        case .playback: settings.useProxiesForPlayback
+        case .paused: false
+        }
+    }
+
+    /// Half first (what auto-generation produces), then quarter, then full-res optimized.
+    public static let scrubPreference: [ProxyKind] = [.proxyHalf, .proxyQuarter, .optimized]
 
     /// Fires when any proxy becomes ready (the record's fingerprint identifies the source).
     public func readyEvents() -> AsyncStream<ProxyRecord> { cache.readyRecords() }

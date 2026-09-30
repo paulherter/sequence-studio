@@ -18,9 +18,8 @@ public struct ProxyTranscoder: ProxyTranscoding {
                           progress: @Sendable @escaping (Double) -> Void) async throws -> TranscodeOutput {
         try Task.checkCancellation()
         let asset = AVURLAsset(url: source)
-        let (videoTracks, audioTracks, timecodeTracks, fullDuration) = try await (
-            asset.loadTracks(withMediaType: .video), asset.loadTracks(withMediaType: .audio),
-            asset.loadTracks(withMediaType: .timecode), asset.load(.duration))
+        let (videoTracks, audioTracks, fullDuration) = try await (
+            asset.loadTracks(withMediaType: .video), asset.loadTracks(withMediaType: .audio), asset.load(.duration))
         guard let video = videoTracks.first else { throw ProxyTranscodeError.noVideoTrack }
         let (natural, transform, formats, timescale) = try await video.load(.naturalSize, .preferredTransform, .formatDescriptions, .naturalTimeScale)
         guard let format = formats.first else { throw ProxyTranscodeError.noVideoTrack }
@@ -58,7 +57,9 @@ public struct ProxyTranscoder: ProxyTranscoding {
         vIn.mediaTimeScale = timescale // keeps 29.97 etc. exact; the default would round PTS to 1/600 s
         writer.add(vIn)
 
-        var pumps: [Pump] = [Pump(input: vIn, output: vOut, tracksProgress: true)]
+        // Background work: the pump queue follows the priority of the calling task.
+        let qos = Self.qos(for: Task.currentPriority)
+        var pumps: [Pump] = [Pump(input: vIn, output: vOut, tracksProgress: true, qos: qos)]
 
         // Audio: decode to PCM, all channels kept.
         for track in audioTracks {
@@ -88,18 +89,7 @@ public struct ProxyTranscoder: ProxyTranscoding {
             aIn.expectsMediaDataInRealTime = false
             guard reader.canAdd(aOut), writer.canAdd(aIn) else { continue }
             reader.add(aOut); writer.add(aIn)
-            pumps.append(Pump(input: aIn, output: aOut, tracksProgress: false))
-        }
-
-        // Timecode: copy a source tmcd track and associate it with the video track.
-        if let tc = timecodeTracks.first, let tcf = try await tc.load(.formatDescriptions).first {
-            let tOut = AVAssetReaderTrackOutput(track: tc, outputSettings: nil)
-            let tIn = AVAssetWriterInput(mediaType: .timecode, outputSettings: nil, sourceFormatHint: tcf)
-            if reader.canAdd(tOut), writer.canAdd(tIn) {
-                reader.add(tOut); writer.add(tIn)
-                vIn.addTrackAssociation(withTrackOf: tIn, type: AVAssetTrack.AssociationType.timecode.rawValue)
-                pumps.append(Pump(input: tIn, output: tOut, tracksProgress: false))
-            }
+            pumps.append(Pump(input: aIn, output: aOut, tracksProgress: false, qos: qos))
         }
 
         guard reader.startReading() else { throw ProxyTranscodeError.readerFailed(reader.error?.localizedDescription ?? "?") }
@@ -139,6 +129,12 @@ public struct ProxyTranscoder: ProxyTranscoding {
         return TranscodeOutput(dimensions: outDims, sourceDuration: Time(dur.value, Int64(dur.timescale)))
     }
 
+    static func qos(for p: TaskPriority) -> DispatchQoS.QoSClass {
+        if p <= .background { return .background }
+        if p <= .utility { return .utility }
+        return .userInitiated
+    }
+
     /// Color tags from the source format description as an `AVVideoColorPropertiesKey` value (all three or none).
     static func colorProperties(from format: CMFormatDescription) -> [String: String]? {
         let ext = CMFormatDescriptionGetExtensions(format) as? [String: Any] ?? [:]
@@ -176,9 +172,10 @@ private final class Progress: @unchecked Sendable {
 
 private final class Pump: @unchecked Sendable {
     let input: AVAssetWriterInput, output: AVAssetReaderOutput, tracksProgress: Bool
-    let queue = DispatchQueue(label: "ssproxy.pump")
-    init(input: AVAssetWriterInput, output: AVAssetReaderOutput, tracksProgress: Bool) {
+    let queue: DispatchQueue
+    init(input: AVAssetWriterInput, output: AVAssetReaderOutput, tracksProgress: Bool, qos: DispatchQoS.QoSClass) {
         self.input = input; self.output = output; self.tracksProgress = tracksProgress
+        queue = DispatchQueue(label: "ssproxy.pump", qos: DispatchQoS(qosClass: qos, relativePriority: 0))
     }
 
     func run(job: Job, progress: Progress) async {

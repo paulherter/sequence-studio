@@ -12,11 +12,13 @@ public final class ProxyCache: Sendable {
     private struct State {
         var records: [Key: ProxyRecord] = [:]
         var listeners: [UUID: AsyncStream<ProxyRecord>.Continuation] = [:]
+        var settings = ProxySettings()
     }
 
     public let directory: URL
     private let state = Mutex(State())
     private var indexURL: URL { directory.appendingPathComponent("index.json") }
+    private var settingsURL: URL { directory.appendingPathComponent("settings.json") }
 
     public init(directory: URL = ProxyCache.defaultDirectory) {
         self.directory = directory
@@ -27,6 +29,17 @@ public final class ProxyCache: Sendable {
                 for r in list { s.records[Key(id: r.fingerprint.id, kind: r.kind)] = r }
             }
         }
+        if let data = try? Data(contentsOf: directory.appendingPathComponent("settings.json")),
+           let s = try? JSONDecoder.proxy.decode(ProxySettings.self, from: data) {
+            state.withLock { $0.settings = s }
+        }
+    }
+
+    public var settings: ProxySettings { state.withLock { $0.settings } }
+
+    public func updateSettings(_ change: (inout ProxySettings) -> Void) throws {
+        let s = state.withLock { st -> ProxySettings in change(&st.settings); return st.settings }
+        try JSONEncoder.proxy.encode(s).write(to: settingsURL, options: .atomic)
     }
 
     public static func fileName(for fingerprint: SourceFingerprint, kind: ProxyKind) -> String {
@@ -41,10 +54,15 @@ public final class ProxyCache: Sendable {
     }
 
     /// Returns the record only if its file still exists; otherwise drops the stale entry.
-    public func lookup(fingerprint: SourceFingerprint, kind: ProxyKind) -> ProxyRecord? {
+    /// A hit refreshes `lastAccess` (in memory; persisted with the next index write or `flushIndex()`).
+    public func lookup(fingerprint: SourceFingerprint, kind: ProxyKind, now: Date = Date()) -> ProxyRecord? {
         let key = Key(id: fingerprint.id, kind: kind)
-        guard let r = state.withLock({ $0.records[key] }) else { return nil }
-        if FileManager.default.fileExists(atPath: fileURL(for: r).path) { return r }
+        guard var r = state.withLock({ $0.records[key] }) else { return nil }
+        if FileManager.default.fileExists(atPath: fileURL(for: r).path) {
+            r.lastAccess = now
+            state.withLock { if $0.records[key] != nil { $0.records[key] = r } }
+            return r
+        }
         state.withLock { $0.records[key] = nil }
         try? writeIndex()
         return nil
@@ -53,8 +71,11 @@ public final class ProxyCache: Sendable {
     public func allRecords() -> [ProxyRecord] {
         let all = state.withLock { Array($0.records.values) }
         return all.filter { FileManager.default.fileExists(atPath: fileURL(for: $0).path) }
-            .sorted { $0.createdAt < $1.createdAt }
+            .sorted { ($0.createdAt, $0.fileName) < ($1.createdAt, $1.fileName) }
     }
+
+    /// Persists pending `lastAccess` updates.
+    public func flushIndex() { try? writeIndex() }
 
     /// Moves the finished partial file into place and indexes it. Atomic for readers: the final name only ever
     /// refers to a complete file.
@@ -87,16 +108,27 @@ public final class ProxyCache: Sendable {
         allRecords().reduce(0) { $0 + fileSize(fileURL(for: $1)) }
     }
 
-    /// Deletes oldest records until the total is at most `maxBytes`. Returns what was removed.
+    /// Deletes least-recently-used records until the total is at most `maxBytes`, never touching `protecting`
+    /// (e.g. the proxy that just finished). Returns what was removed.
     @discardableResult
-    public func evict(toFit maxBytes: Int64) -> [ProxyRecord] {
+    public func evict(toFit maxBytes: Int64, protecting: Set<ProxyRecordID> = []) -> [ProxyRecord] {
         var total = totalSize()
         var removed: [ProxyRecord] = []
-        for r in allRecords() where total > maxBytes {
+        let lru = allRecords().sorted { ($0.lastAccess, $0.fileName) < ($1.lastAccess, $1.fileName) }
+        for r in lru where total > maxBytes {
+            if protecting.contains(ProxyRecordID(r)) { continue }
             total -= fileSize(fileURL(for: r))
             remove(fingerprint: r.fingerprint, kind: r.kind)
             removed.append(r)
         }
+        return removed
+    }
+
+    /// LRU eviction down to `settings.cacheCapBytes`. Call after each finished job and once at launch.
+    @discardableResult
+    public func enforceCap(protecting: Set<ProxyRecordID> = []) -> [ProxyRecord] {
+        let removed = evict(toFit: settings.cacheCapBytes, protecting: protecting)
+        if removed.isEmpty { flushIndex() }
         return removed
     }
 
@@ -138,4 +170,12 @@ extension JSONEncoder {
 }
 extension JSONDecoder {
     static var proxy: JSONDecoder { let d = JSONDecoder(); d.dateDecodingStrategy = .iso8601; return d }
+}
+
+/// Identity of a cached proxy (source fingerprint + kind).
+public struct ProxyRecordID: Sendable, Hashable {
+    public var fingerprintID: String
+    public var kind: ProxyKind
+    public init(_ r: ProxyRecord) { fingerprintID = r.fingerprint.id; kind = r.kind }
+    public init(fingerprint: SourceFingerprint, kind: ProxyKind) { fingerprintID = fingerprint.id; self.kind = kind }
 }
