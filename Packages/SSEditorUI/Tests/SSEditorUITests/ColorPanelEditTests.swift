@@ -67,4 +67,18 @@ import SSCore
         let stub = try #require(session.engine as? StubProgramEngine)
         #expect(stub.timeline?.tracks[0].clips[0].color.correction.saturation == 50)
     }
+
+    @Test func resettingDefaultsIsNotAnUndoStep() throws {
+        let (session, panel, clip) = try rig()
+        let model = try #require(panel.colorModels[clip.id])
+        for s in ColorInspectorModel.Section.allCases { model.reset(s) }
+        model.resetAll()
+        #expect(!session.canUndo)
+        #expect(current(session, clip.id).color == .default)
+        // A real edit, then reset: back to the default, two steps.
+        model.gesture { model.conversionLUT = nil }
+        #expect(current(session, clip.id).color.conversionLUT == nil)
+        model.reset(.conversionLUT)
+        #expect(current(session, clip.id).color == .default)
+    }
 }

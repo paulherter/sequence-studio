@@ -172,7 +172,7 @@ public final class TimelineFrameSource: FrameSource {
             }
             if let f = try await provider.frame(media: l.media, at: l.sourceTime) {
                 return RenderLayer(content: .frame(f.buffer, colorHint: f.info), transform: l.transform,
-                                   colorPipeline: colorResolver?.pipeline(for: l.color, media: l.media), cornerRadius: l.cornerRadius)
+                                   colorPipeline: colorResolver?.pipelineBlocking(for: l.color, media: l.media), cornerRadius: l.cornerRadius)
             }
             return RenderLayer(content: .placeholder(.offline), transform: l.transform, cornerRadius: l.cornerRadius)
         }
