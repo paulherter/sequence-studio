@@ -449,6 +449,19 @@ private func click(_ i: inout TimelineInteraction, _ p: CGPoint, _ m: GestureMod
         #expect(i.mouseUp(CGPoint(x: X(70), y: yV1), modifiers: []) != nil)
     }
 
+    @Test func razorShiftClickInGapCutsAllTracksAtThatTime() throws {
+        let f = Fixture()
+        var i = f.interaction(.razor)
+        // Frame 15 on V2 (empty row): all other tracks are cut at 15, in one undo step.
+        let raw_c = click(&i, CGPoint(x: X(15), y: yV2), .shift)
+        let c = try #require(raw_c)
+        #expect(c.undoName == "Razor All Tracks")
+        #expect(c.timeline.tracks[0].clips.count == 4)
+        #expect(c.edits == [.addEdit(at: fd * 15, tracks: nil)])
+        var j = f.interaction(.razor)
+        #expect(click(&j, CGPoint(x: X(15), y: yV2)) == nil)       // without Shift an empty spot does nothing
+    }
+
     @Test func razorSnapsToPlayhead() throws {
         let f = Fixture()
         var i = f.interaction(.razor, snapping: true, playhead: fd * 71)

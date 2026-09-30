@@ -47,6 +47,8 @@ public struct TimelineInteraction: Sendable {
         var edge: ClipEdge = .tail
         var active = false
         var newTrack: Track?
+        var newTracks: [TrackKind: [Track]] = [:]
+        var stickyRow: Int?
         var baseSelection: Set<Clip.ID> = []
         var reduceTo: Set<Clip.ID>?
         var scrollOrigin = CGPoint.zero
@@ -189,6 +191,13 @@ public struct TimelineInteraction: Sendable {
             g.active = true
             gesture = g
             razorPreview(at: p, clip: id, modifiers: m)
+            return
+        case (.razor, .gap) where m.contains(.shift):
+            // Shift+click cuts all tracks at that time, also when the pointer is over an empty spot of one track.
+            g.kind = .razor
+            g.active = true
+            gesture = g
+            razorPreview(at: p, clip: nil, modifiers: m)
             return
         default:
             return
@@ -389,10 +398,14 @@ public struct TimelineInteraction: Sendable {
 
     // MARK: Move
 
-    private enum DropRow { case row(Int), newTrack }
+    /// Extra points the pointer may leave the previous target row before the target changes (no flicker at row edges).
+    public static let rowHysteresis: CGFloat = 6
 
     /// Row the pointer drags `kind` onto. Above the first row adds a video track, below the last an audio track.
-    private func dropRow(kind: TrackKind, y: CGFloat, rows: [TrackRow]) -> (index: Int, isNew: Bool) {
+    /// `sticky` (the row chosen last) is kept while the pointer stays within `rowHysteresis` of it.
+    private func dropRow(kind: TrackKind, y: CGFloat, rows: [TrackRow], sticky: Int? = nil) -> (index: Int, isNew: Bool) {
+        if let s = sticky, rows.indices.contains(s), rows[s].kind == kind,
+           y >= rows[s].y - Self.rowHysteresis, y < rows[s].maxY + Self.rowHysteresis { return (s, false) }
         if kind == .video, let first = rows.first, y < first.y { return (-1, true) }
         if kind == .audio, let last = rows.last, y >= last.maxY { return (rows.count, true) }
         let candidates = rows.indices.filter { rows[$0].kind == kind }
@@ -422,21 +435,23 @@ public struct TimelineInteraction: Sendable {
 
         let rows = geometry.rows(for: timeline)
         let anchorRow = rows.firstIndex { $0.track == trackID(of: anchorID) } ?? 0
-        let drop = dropRow(kind: anchor.kind, y: p.y, rows: rows)
-        var edits: [TimelineEdit] = []
-        var anchorTrack: Track.ID?
-        if drop.isNew {
-            let t = g.newTrack ?? Track(kind: anchor.kind)
-            g.newTrack = t
-            gesture = g
-            edits.append(.addTrack(t))
-            anchorTrack = t.id
-        } else if drop.index != anchorRow {
-            anchorTrack = rows[drop.index].track
-        }
-        let offset = drop.isNew ? 0 : drop.index - anchorRow
+        if g.stickyRow == nil { g.stickyRow = anchorRow }
+        let drop = dropRow(kind: anchor.kind, y: p.y, rows: rows, sticky: g.stickyRow)
+        if !drop.isNew { g.stickyRow = drop.index }
+        gesture = g
 
         if insert {
+            var edits: [TimelineEdit] = []
+            var anchorTrack: Track.ID?
+            if drop.isNew {
+                let t = g.newTrack ?? Track(kind: anchor.kind)
+                g.newTrack = t
+                gesture = g
+                edits.append(.addTrack(t))
+                anchorTrack = t.id
+            } else if drop.index != anchorRow {
+                anchorTrack = rows[drop.index].track
+            }
             if d != .zero || anchorTrack != nil {
                 edits.append(.moveInsert(anchorID, to: anchor.start + d, track: anchorTrack))
             } else { edits = [] }
@@ -444,21 +459,60 @@ public struct TimelineInteraction: Sendable {
             return
         }
 
-        let ordered = movers.compactMap(clip).sorted { d < .zero ? $0.start < $1.start : $0.start > $1.start }
+        // Track lanes per kind, bottom-up (index 0 = V1 / A1). A track change of k lanes applies to every moved clip of
+        // either kind: video up k = audio down k, because both indices grow away from the centre (Premiere mirrors).
+        var lists: [TrackKind: [Track.ID]] = [.video: [], .audio: []]
+        for t in timeline.tracks { lists[t.kind, default: []].append(t.id) }
+        func lane(of id: Clip.ID) -> (kind: TrackKind, index: Int)? {
+            guard let tid = trackID(of: id), let t = timeline.track(tid),
+                  let i = lists[t.kind]?.firstIndex(of: tid) else { return nil }
+            return (t.kind, i)
+        }
+        guard let anchorLane = lane(of: anchorID) else { return }
+        let targetLane = drop.isNew ? (lists[anchor.kind]?.count ?? 0)
+            : (lists[anchor.kind]?.firstIndex(of: rows[drop.index].track) ?? anchorLane.index)
+        let k = targetLane - anchorLane.index
+
+        var usedNew: [TrackKind: Int] = [:]
+        func destTrack(kind: TrackKind, index: Int) -> Track.ID {
+            let existing = lists[kind] ?? []
+            if index < existing.count { return existing[index] }
+            var fresh = g.newTracks[kind] ?? []
+            while existing.count + fresh.count <= index { fresh.append(Track(kind: kind)) }
+            g.newTracks[kind] = fresh
+            usedNew[kind] = max(usedNew[kind] ?? -1, index - existing.count)
+            return fresh[index - existing.count].id
+        }
+        func dest(of id: Clip.ID) -> Track.ID? {
+            guard let l = lane(of: id) else { return nil }
+            let target = id == anchorID ? targetLane : max(0, l.index + k)
+            let t = destTrack(kind: l.kind, index: target)
+            return t == trackID(of: id) ? nil : t
+        }
+
+        let ordered = movers.compactMap(clip).sorted { a, b in
+            let la = lane(of: a.id)?.index ?? 0, lb = lane(of: b.id)?.index ?? 0
+            if k != 0 && la != lb { return k > 0 ? la > lb : la < lb }
+            return d < .zero ? a.start < b.start : a.start > b.start
+        }
         var done = Set<Clip.ID>()
         var moves: [TimelineEdit] = []
         var groupCount = 0
         for c in ordered where !done.contains(c.id) {
-            done.formUnion(group(c.id, linked: true))
+            let grp = group(c.id, linked: true)
+            done.formUnion(grp)
             groupCount += 1
-            var dest: Track.ID?
-            if c.id == anchorID || group(c.id, linked: true).contains(anchorID) {
-                dest = c.id == anchorID ? anchorTrack : nil
-            } else if offset != 0, let own = rows.firstIndex(where: { $0.track == trackID(of: c.id) }) {
-                let r = own + offset
-                if rows.indices.contains(r), rows[r].kind == c.kind { dest = rows[r].track }
-            }
-            if d != .zero || dest != nil { moves.append(.move(c.id, to: c.start + d, track: dest)) }
+            let own = dest(of: c.id)
+            var partners: [Clip.ID: Track.ID] = [:]
+            for other in grp where other != c.id { if let t = dest(of: other) { partners[other] = t } }
+            guard d != .zero || own != nil || !partners.isEmpty else { continue }
+            moves.append(partners.isEmpty ? .move(c.id, to: c.start + d, track: own)
+                                          : .moveGroup(c.id, to: c.start + d, track: own, partners: partners))
+        }
+        gesture = g
+        var edits: [TimelineEdit] = []
+        for kind in [TrackKind.video, .audio] {
+            if let top = usedNew[kind] { edits += (g.newTracks[kind] ?? []).prefix(top + 1).map { .addTrack($0) } }
         }
         publish(moves.isEmpty ? [] : edits + moves, groupCount > 1 ? "Move Clips" : "Move Clip")
     }
@@ -538,7 +592,7 @@ public struct TimelineInteraction: Sendable {
 
     // MARK: Razor
 
-    private mutating func razorPreview(at p: CGPoint, clip id: Clip.ID, modifiers m: GestureModifiers) {
+    private mutating func razorPreview(at p: CGPoint, clip id: Clip.ID?, modifiers m: GestureModifiers) {
         var t = geometry.time(atX: p.x)
         snapTime = nil
         if toolState.snapping {
@@ -547,9 +601,9 @@ public struct TimelineInteraction: Sendable {
             t = r.time
             snapTime = r.hit?.time
         }
-        let own = trackID(of: id)
+        let own = id.flatMap { trackID(of: $0) }
         var tracks: [Track.ID]?
-        if !m.contains(.shift), let own {
+        if !m.contains(.shift), let id, let own {
             let partners = group(id, linked: linked(m)).compactMap(trackID(of:))
             let set = Set(partners + [own])
             tracks = [own] + timeline.tracks.map(\.id).filter { set.contains($0) && $0 != own }

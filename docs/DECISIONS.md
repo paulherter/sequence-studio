@@ -79,3 +79,6 @@
 - `PanelID.properties` removed; new `.colorInspector` and `.scopes` (Color page panels; Edit layouts hold them hidden). Saved layouts migrate (`WorkspaceMigration.dropUnknownPanels`); an old Color page is reset to the new layout.
 - Layout robustness: every panel has a minimum size (`PanelID.minSize`); split fractions are clamped to the minimums (`LayoutMetrics.clampedFractions`), the window minimum follows the visible layout, panels and splits clip to their bounds.
 - Settings window (`AppSettings`, UserDefaults). Autosave interval and audio output are read at launch; the audio output device is stored but not yet used by the engine.
+
+## [auto] Timeline track area fills the panel
+Extra panel height is water-filled over the tracks (video weight 3, audio 2) up to caps V1 200, A1 120, others 90 pt; user-resized tracks stay fixed. Only beyond the caps is there empty space. Chosen over a centre divider because it needs no new layout mode and hit testing keeps using one row list (`TimelineGeometry.viewportHeight`).

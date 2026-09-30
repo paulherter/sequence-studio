@@ -64,6 +64,9 @@ public struct TimelineGeometry: Sendable, Equatable {
     public var scrollY: CGFloat = 0
     /// User row heights. `Track.height` (a 48 pt model hint) is deliberately ignored.
     public var heightOverrides: [Track.ID: CGFloat] = [:]
+    /// Height of the track area's viewport (the whole view). When set and taller than the rows, the spare height is
+    /// shared out over the tracks (see `stretchedHeights`) so the panel has no dead space. 0 disables stretching.
+    public var viewportHeight: CGFloat = 0
 
     public init(frameDuration: Time, pointsPerSecond: Double) {
         precondition(pointsPerSecond > 0 && pointsPerSecond.isFinite)
@@ -115,6 +118,37 @@ public struct TimelineGeometry: Sendable, Equatable {
         }
     }
 
+    /// Largest height stretching may give a row: V1 200, A1 120, everything else 90.
+    public static func maxStretchHeight(kind: TrackKind, indexInKind: Int) -> CGFloat {
+        switch (kind, indexInKind) {
+        case (.video, 0): 200
+        case (.audio, 0): 120
+        default: 90
+        }
+    }
+
+    /// Spreads `extra` points over rows with water-filling: every row grows in proportion to its weight until it
+    /// reaches its cap; what a capped row cannot take goes to the others. Rows with `cap == base` stay fixed.
+    /// The result never exceeds a cap and sums to `base + min(extra, total headroom)`.
+    public static func stretchedHeights(base: [CGFloat], caps: [CGFloat], weights: [CGFloat], extra: CGFloat) -> [CGFloat] {
+        var h = base
+        var left = max(extra, 0)
+        var open = h.indices.filter { caps[$0] > h[$0] + 0.001 && weights[$0] > 0 }
+        while left > 0.001 && !open.isEmpty {
+            let total = open.reduce(CGFloat(0)) { $0 + weights[$1] }
+            var used: CGFloat = 0
+            for i in open {
+                let add = min(left * weights[i] / total, caps[i] - h[i])
+                h[i] += add
+                used += add
+            }
+            left -= used
+            open = open.filter { caps[$0] > h[$0] + 0.001 }
+            if used < 0.0001 { break }
+        }
+        return h
+    }
+
     /// Caption rows, directly under the ruler (above V tracks), in model order (first track on top).
     public func captionRows(for timeline: Timeline) -> [CaptionRow] {
         var y = Self.rulerHeight - scrollY
@@ -141,11 +175,21 @@ public struct TimelineGeometry: Sendable, Equatable {
             }
         }
         entries = video.reversed() + audio
+        let base = entries.map { t, _, idx in heightOverrides[t.id] ?? Self.defaultHeight(kind: t.kind, indexInKind: idx) }
+        var heights = base
+        let spare = viewportHeight - Self.rulerHeight - captionHeight(for: timeline) - base.reduce(0, +)
+        if viewportHeight > 0, spare > 0 {
+            let caps = entries.enumerated().map { i, e in
+                heightOverrides[e.0.id] != nil ? base[i] : Self.maxStretchHeight(kind: e.0.kind, indexInKind: e.2)
+            }
+            let weights = entries.map { CGFloat($0.0.kind == .video ? 3 : 2) }
+            heights = Self.stretchedHeights(base: base, caps: caps, weights: weights, extra: spare)
+        }
         var y = Self.rulerHeight - scrollY + captionHeight(for: timeline)
-        return entries.map { t, label, idx in
-            let h = heightOverrides[t.id] ?? Self.defaultHeight(kind: t.kind, indexInKind: idx)
-            defer { y += h }
-            return TrackRow(track: t.id, kind: t.kind, label: label, y: y, height: h)
+        return entries.enumerated().map { i, e in
+            let (t, label, _) = e
+            defer { y += heights[i] }
+            return TrackRow(track: t.id, kind: t.kind, label: label, y: y, height: heights[i])
         }
     }
 

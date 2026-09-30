@@ -67,6 +67,7 @@ final class EditorPanels {
             syncTimeline()          // a refused commit must snap the view back to the session's timeline
         }
         tv.onSelectionChange = { [weak self] clips, captions in self?.session.select(clips: clips, captions: captions) }
+        tv.onPointerDown = { [weak self] in self?.session.stopPlayback() }
         tv.onSeek = { [weak self] t in self?.session.seek(to: t) }
         tv.onScrubBegan = { [weak self] in self?.session.beginScrub() }
         tv.onScrub = { [weak self] t in self?.session.scrub(to: t) }

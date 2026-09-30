@@ -123,7 +123,7 @@ extension Timeline {
     /// cut or removed. Clamped so nothing starts before 0. Returns the applied delta.
     @discardableResult
     public mutating func move(_ id: Clip.ID, to start: Time, track target: Track.ID? = nil,
-                              mode: MoveMode = .overwrite) throws -> Time {
+                              retarget: [Clip.ID: Track.ID] = [:], mode: MoveMode = .overwrite) throws -> Time {
         let group = try linkedGroup(id)
         try requireUnlocked(group)
         var destinations = group.map(\.track)
@@ -133,9 +133,17 @@ extension Timeline {
             if tracks[ti].isLocked { throw EditError.trackLocked }
             destinations[0] = ti
         }
+        // Linked partners may move to their own tracks (Premiere mirrors a video track change on the audio side).
+        for (i, m) in group.enumerated() {
+            guard let partnerTarget = retarget[m.clip.id] else { continue }
+            guard let ti = tracks.firstIndex(where: { $0.id == partnerTarget }) else { throw EditError.clipNotFound }
+            guard tracks[ti].kind == m.clip.kind else { throw EditError.wrongTrackKind }
+            if tracks[ti].isLocked { throw EditError.trackLocked }
+            destinations[i] = ti
+        }
         var d = start - group[0].clip.start
         for m in group { d = max(d, .zero - m.clip.start) }
-        if d == .zero && destinations[0] == group[0].track { return .zero }
+        if d == .zero && destinations == group.map(\.track) { return .zero }
         var work = tracks
         for m in group { work[m.track].remove(m.clip.id) }
         var relinks: [UUID: UUID] = [:]
