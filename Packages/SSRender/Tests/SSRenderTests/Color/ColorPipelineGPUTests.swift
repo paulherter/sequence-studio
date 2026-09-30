@@ -89,6 +89,26 @@ import simd
         #expect(e <= 2e-3)
     }
 
+    @Test func videoRangeLUTsMatchCPU() throws {
+        guard let device = GPUTest.device, let queue = device.makeCommandQueue() else { return }
+        let gpu = try ColorPipelineGPU(device: device)
+        let w = 64, h = 64
+        let px = Self.randomPixels(count: w * h, seed: 13)
+        func flagged(_ l: CubeLUT, _ i: Bool, _ o: Bool) -> CubeLUT {
+            CubeLUT(kind: l.kind, size: l.size, domainMin: l.domainMin, domainMax: l.domainMax, table: l.table, inVideoRange: i, outVideoRange: o)
+        }
+        for (i, o) in [(true, false), (false, true), (true, true)] {
+            for lut in [flagged(Self.convLUT, i, o), flagged(Self.lut1D(64), i, o)] {
+                let p = ColorPipeline(source: .sLog3SGamut3Cine, conversionLUT: lut, creativeLUT: flagged(Self.creativeLUT, o, i), creativeIntensity: 0.7)
+                let s = GPUTest.makeTexture(device, width: w, height: h, format: .rgba32Float)
+                let d = GPUTest.makeTexture(device, width: w, height: h, format: .rgba32Float)
+                GPUTest.upload(s, px)
+                _ = GPUTest.run(queue) { gpu.encode(p, source: s, destination: d, commandBuffer: $0) }
+                #expect(Self.maxError(GPUTest.download(d), px.map { p.process($0) }) <= 1e-4)
+            }
+        }
+    }
+
     @Test func inPlaceMatchesOutOfPlace() throws {
         guard let device = GPUTest.device, let queue = device.makeCommandQueue() else { return }
         let gpu = try ColorPipelineGPU(device: device)

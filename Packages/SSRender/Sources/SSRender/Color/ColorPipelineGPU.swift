@@ -73,7 +73,8 @@ public final class ColorPipelineGPU: @unchecked Sendable {
 
     static let flagWB: UInt32 = 1, flagExposure: UInt32 = 2, flagTone: UInt32 = 4, flagSat: UInt32 = 8,
                flagConv: UInt32 = 16, flagConv1D: UInt32 = 32, flagCreative: UInt32 = 64,
-               flagCreative1D: UInt32 = 128, flagHDR: UInt32 = 256
+               flagCreative1D: UInt32 = 128, flagHDR: UInt32 = 256,
+               flagConvIn: UInt32 = 512, flagConvOut: UInt32 = 1024, flagCreIn: UInt32 = 2048, flagCreOut: UInt32 = 4096
 
     static func uniforms(for p: ColorPipeline) -> Uniforms {
         let c = p.prepared
@@ -87,10 +88,14 @@ public final class ColorPipelineGPU: @unchecked Sendable {
         var convSize: UInt32 = 0, creSize: UInt32 = 0
         if let l = p.conversionLUT {
             flags |= flagConv | (l.kind == .lut1D ? flagConv1D : 0)
+            if l.inVideoRange { flags |= flagConvIn }
+            if l.outVideoRange { flags |= flagConvOut }
             convMin = SIMD4(l.domainMin, 0); convMax = SIMD4(l.domainMax, 1); convSize = UInt32(l.size)
         }
         if let l = p.creativeLUT, p.creativeIntensity > 0 {
             flags |= flagCreative | (l.kind == .lut1D ? flagCreative1D : 0)
+            if l.inVideoRange { flags |= flagCreIn }
+            if l.outVideoRange { flags |= flagCreOut }
             creMin = SIMD4(l.domainMin, 0); creMax = SIMD4(l.domainMax, 1); creSize = UInt32(l.size)
         }
         let source: UInt32 = switch p.source { case .sLog3SGamut3Cine: 0; case .hlgBT2020: 1; case .rec709: 2 }

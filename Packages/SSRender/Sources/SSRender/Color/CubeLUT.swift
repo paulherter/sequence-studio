@@ -126,9 +126,13 @@ public struct CubeLUT: Sendable, Equatable {
     /// `LUT_IN_VIDEO_RANGE` / `LUT_OUT_VIDEO_RANGE` use the 10-bit convention (black 64, white 940, of 1023):
     /// in: `x = x·876/1023 + 64/1023` before the domain mapping; out: `y = (y − 64/1023)·1023/876`.
     public func lookup(_ rgb: SIMD3<Float>) -> SIMD3<Float> {
-        let t = simd_clamp((rgb - domainMin) / (domainMax - domainMin), SIMD3<Float>.zero, SIMD3<Float>.one)
+        var x = rgb
+        if inVideoRange { x = x * 876 / 1023 + SIMD3<Float>(repeating: 64 / 1023) }
+        let t = simd_clamp((x - domainMin) / (domainMax - domainMin), SIMD3<Float>.zero, SIMD3<Float>.one)
         let scale = Float(size - 1)
-        return kind == .lut3D ? tetrahedral(t * scale) : linear1D(t * scale)
+        var out = kind == .lut3D ? tetrahedral(t * scale) : linear1D(t * scale)
+        if outVideoRange { out = (out - SIMD3<Float>(repeating: 64 / 1023)) * 1023 / 876 }
+        return out
     }
 
     @inline(__always) private func linear1D(_ p: SIMD3<Float>) -> SIMD3<Float> {

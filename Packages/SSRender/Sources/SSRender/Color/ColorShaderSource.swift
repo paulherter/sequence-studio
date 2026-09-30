@@ -19,7 +19,8 @@ enum ColorShaderSource {
     };
 
     constant uint kWB = 1, kExposure = 2, kTone = 4, kSat = 8, kConv = 16, kConv1D = 32,
-                  kCreative = 64, kCreative1D = 128, kHDR = 256;
+                  kCreative = 64, kCreative1D = 128, kHDR = 256,
+                  kConvIn = 512, kConvOut = 1024, kCreIn = 2048, kCreOut = 4096;
     constant float kMinLuma = 1.0f / 65536.0f;
 
     // MARK: transfer functions (TransferFunctions.swift)
@@ -126,8 +127,12 @@ enum ColorShaderSource {
 
     // MARK: LUTs (CubeLUT.lookup)
 
-    float3 lookup3D(texture3d<float, access::read> t, uint n, float3 dmin, float3 dmax, float3 rgb) {
-        float3 tt = clamp((rgb - dmin) / (dmax - dmin), 0.0f, 1.0f);
+    // vr bit 0: LUT_IN_VIDEO_RANGE, bit 1: LUT_OUT_VIDEO_RANGE (10-bit: 64…940 of 1023).
+    float3 videoIn(float3 x, uint vr) { return (vr & 1u) ? x * 876.0f / 1023.0f + float3(64.0f / 1023.0f) : x; }
+    float3 videoOut(float3 y, uint vr) { return (vr & 2u) ? (y - float3(64.0f / 1023.0f)) * 1023.0f / 876.0f : y; }
+
+    float3 lookup3D(texture3d<float, access::read> t, uint n, float3 dmin, float3 dmax, float3 rgb, uint vr) {
+        float3 tt = clamp((videoIn(rgb, vr) - dmin) / (dmax - dmin), 0.0f, 1.0f);
         float3 p = tt * float(n - 1);
         uint ir = min(uint(p.x), n - 2), ig = min(uint(p.y), n - 2), ib = min(uint(p.z), n - 2);
         float fr = p.x - float(ir), fg = p.y - float(ig), fb = p.z - float(ib);
@@ -146,15 +151,15 @@ enum ColorShaderSource {
             else               { o1 = uint3(0,1,0); o2 = uint3(1,1,0); w0 = fg; w1 = fr; w2 = fb; }
         }
         float3 p1 = t.read(base + o1).rgb, p2 = t.read(base + o2).rgb;
-        return c000 + w0 * (p1 - c000) + w1 * (p2 - p1) + w2 * (c111 - p2);
+        return videoOut(c000 + w0 * (p1 - c000) + w1 * (p2 - p1) + w2 * (c111 - p2), vr);
     }
 
     float3 fetch1D(texture2d<float, access::read> t, uint i) {
         return t.read(uint2(i & 4095u, i >> 12)).rgb;
     }
 
-    float3 lookup1D(texture2d<float, access::read> t, uint n, float3 dmin, float3 dmax, float3 rgb) {
-        float3 tt = clamp((rgb - dmin) / (dmax - dmin), 0.0f, 1.0f);
+    float3 lookup1D(texture2d<float, access::read> t, uint n, float3 dmin, float3 dmax, float3 rgb, uint vr) {
+        float3 tt = clamp((videoIn(rgb, vr) - dmin) / (dmax - dmin), 0.0f, 1.0f);
         float3 p = tt * float(n - 1);
         float3 out;
         for (int ch = 0; ch < 3; ch++) {
@@ -163,7 +168,7 @@ enum ColorShaderSource {
             float a = fetch1D(t, i0)[ch], b = fetch1D(t, i0 + 1)[ch];
             out[ch] = a + (b - a) * f;
         }
-        return out;
+        return videoOut(out, vr);
     }
 
     // MARK: chain (ColorPipeline.process)
@@ -172,21 +177,23 @@ enum ColorShaderSource {
                         texture3d<float, access::read> conv3, texture2d<float, access::read> conv1,
                         texture3d<float, access::read> cre3, texture2d<float, access::read> cre1) {
         uint f = u.ints.x;
+        uint convVR = ((f & kConvIn) ? 1u : 0u) | ((f & kConvOut) ? 2u : 0u);
+        uint creVR = ((f & kCreIn) ? 1u : 0u) | ((f & kCreOut) ? 2u : 0u);
         int src = int(u.ints.y);  // 0 S-Log3, 1 HLG, 2 Rec.709
         float3 linear = applyCorrection(map3(enc, src), u);
         float3 display;
         if (f & kConv) {
             float3 e = map3(linear, src + 3);
-            display = (f & kConv1D) ? lookup1D(conv1, u.ints.z, u.convMin.xyz, u.convMax.xyz, e)
-                                    : lookup3D(conv3, u.ints.z, u.convMin.xyz, u.convMax.xyz, e);
+            display = (f & kConv1D) ? lookup1D(conv1, u.ints.z, u.convMin.xyz, u.convMax.xyz, e, convVR)
+                                    : lookup3D(conv3, u.ints.z, u.convMin.xyz, u.convMax.xyz, e, convVR);
         } else {
             float3 c = src == 2 ? linear : u.toRec709 * linear;
             if (f & kHDR) { c = toneMap(c, u.misc.y); }
             display = map3(max(c, float3(0.0f)), 5);
         }
         if (f & kCreative) {
-            float3 graded = (f & kCreative1D) ? lookup1D(cre1, u.ints.w, u.creMin.xyz, u.creMax.xyz, display)
-                                              : lookup3D(cre3, u.ints.w, u.creMin.xyz, u.creMax.xyz, display);
+            float3 graded = (f & kCreative1D) ? lookup1D(cre1, u.ints.w, u.creMin.xyz, u.creMax.xyz, display, creVR)
+                                              : lookup3D(cre3, u.ints.w, u.creMin.xyz, u.creMax.xyz, display, creVR);
             float k = u.misc.z;
             display = k >= 1.0f ? graded : display + (graded - display) * k;
         }

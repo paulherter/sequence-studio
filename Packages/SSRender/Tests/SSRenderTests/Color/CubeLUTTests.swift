@@ -116,6 +116,23 @@ func identityCube3D(_ n: Int, extra: String = "") -> String {
         #expect(l1.table[0] == SIMD3(0.1, 0.2, 0.3) && l1.table[1] == SIMD3(1, 1, 1))
     }
 
+    @Test func videoRangeIsApplied() throws {
+        let id = identityCube3D(17).split(separator: "\n", omittingEmptySubsequences: false)
+        func make(_ flags: String) throws -> CubeLUT {
+            try CubeLUT.parse(flags + id.joined(separator: "\n"))
+        }
+        let both = try make("LUT_IN_VIDEO_RANGE\nLUT_OUT_VIDEO_RANGE\n")
+        for p in [SIMD3<Float>(0, 0, 0), [1, 1, 1], [0.3, 0.6, 0.9], [0.5, 0.25, 0.75]] {
+            #expect(simd_length(both.lookup(p) - p) < 1e-5)
+        }
+        let inOnly = try make("LUT_IN_VIDEO_RANGE\n")
+        #expect(simd_length(inOnly.lookup(SIMD3<Float>.zero) - SIMD3(repeating: 64.0 / 1023)) < 1e-6)
+        #expect(simd_length(inOnly.lookup(SIMD3<Float>.one) - SIMD3(repeating: 940.0 / 1023)) < 1e-6)
+        let outOnly = try make("LUT_OUT_VIDEO_RANGE\n")
+        #expect(simd_length(outOnly.lookup(SIMD3(repeating: 64.0 / 1023)) - SIMD3<Float>.zero) < 1e-6)
+        #expect(simd_length(outOnly.lookup(SIMD3(repeating: 940.0 / 1023)) - SIMD3<Float>.one) < 1e-5)
+    }
+
     @Test func inputRangeAndVideoRangeHeaders() throws {
         let lut = try CubeLUT.parse("\u{FEFF}LUT_3D_INPUT_RANGE -0.5 2\nLUT_IN_VIDEO_RANGE\nLUT_OUT_VIDEO_RANGE\n" + identityCube3D(2))
         #expect(lut.domainMin == SIMD3(repeating: -0.5) && lut.domainMax == SIMD3(repeating: 2))
