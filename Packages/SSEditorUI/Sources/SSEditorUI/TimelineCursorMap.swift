@@ -28,7 +28,7 @@ public enum TimelineCursorMap {
         case .razor, .hand:
             let top = rows.first!.y, bottom = rows.last!.maxY
             add(CGRect(x: content.minX, y: top, width: content.width, height: bottom - top), tool == .razor ? .razor : .hand)
-        case .trackSelectForward:
+        case .trackSelectForward, .pen, .shape, .mask, .type:
             break
         case .selection, .rippleEdit, .rollEdit, .slip, .slide:
             for row in rows {

@@ -343,6 +343,29 @@ private final class SessionTestClock: @unchecked Sendable {
         #expect(r.session.undoName == "Ripple Trim Next Edit")
     }
 
+    @Test func rippleTrimHeadMovesPlayheadToTheNewEditPoint() throws {
+        let r = try Rig()
+        r.session.seek(to: s(3))                      // inside b [2,4)
+        r.session.rippleTrimToPlayhead(.head)         // b keeps its start, the part before 3 s is cut
+        #expect(r.timeline.tracks[0].clips[1].timeline == TimeRange(start: s(2), end: s(3)))
+        #expect(r.session.playhead == s(2))           // same picture as before, now at the edit point
+        #expect(r.engine.position == s(2))
+    }
+
+    @Test func rippleTrimTailKeepsThePlayhead() throws {
+        let r = try Rig()
+        r.session.seek(to: s(1))
+        r.session.rippleTrimToPlayhead(.tail)
+        #expect(r.session.playhead == s(1))
+    }
+
+    @Test func refusedRippleTrimLeavesThePlayhead() throws {
+        let r = try Rig()
+        r.session.seek(to: s(9))                      // past every clip
+        r.session.rippleTrimToPlayhead(.head)
+        #expect(r.session.playhead == s(9))
+    }
+
     @Test func addEditToAllTracksIgnoresSelection() throws {
         let r = try Rig()
         r.session.select(clips: [r.b.id])

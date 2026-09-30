@@ -26,8 +26,12 @@ final class EditorPanels {
     let colorView: ColorInspectorPanelView
     let scopesView: ScopesPanelView
     let effectsView = EffectsPanelView()
+    let meterView = AudioMeterPanelView(frame: .zero)
 
     private var placeholders: [PanelID: NSView] = [:]
+    private var follow = TimelineFollow()
+    private var pagingTimeline = false
+    private var wasPlaying = false
 
     /// A panel was clicked or received a command: move keyboard focus (and shortcut scope) there.
     var onFocus: ((PanelID) -> Void)?
@@ -54,6 +58,10 @@ final class EditorPanels {
         scopesView = ScopesPanelView(session: session)
         Task { [libraryModel] in await LibraryServices.start(libraryModel) }
         effectView.clipSections = clipSections
+        meterView.reading = { [weak session] in
+            guard let engine = session?.engine, let r = engine.meterReading else { return nil }
+            return (ObjectIdentifier(engine), r.sequence, r.peaks)
+        }
         wireTimeline()
         wireSidePanels()
         wireMonitor()
@@ -78,6 +86,11 @@ final class EditorPanels {
         tv.onScrub = { [weak self] t in self?.session.scrub(to: t) }
         tv.onScrubEnded = { [weak self] in self?.session.endScrub() }
         tv.onFocusRequest = { [weak self] in self?.onFocus?(.timeline) }
+        // Wheel, drag, zoom: the user owns the view until playback is started again. Our own page jumps do not count.
+        tv.onViewportChange = { [weak self] in
+            guard let self, !pagingTimeline else { return }
+            follow.userScrolled(whilePlaying: session.isPlaying)
+        }
         tv.onRejection = { [weak self] m in self?.onStatus?(m) }
         tv.onTrackToggle = { [weak self] id, toggle in self?.toggleTrack(id, toggle) }
         tv.onDropMedia = { [weak self] ids, time, track, insert in
@@ -251,6 +264,7 @@ final class EditorPanels {
         case .colorInspector: return colorView
         case .scopes: return scopesView
         case .effects: return effectsView
+        case .audioMeter: return meterView
         case .sourceMonitor:
             if let v = placeholders[p] { return v }
             let v = PlaceholderPanelView(title: EditorCommand.panelTitle(p), symbol: Self.symbol(p))
@@ -316,6 +330,13 @@ final class EditorPanels {
             timelineView.setSelection(session.selection)
             timelineView.setCaptionSelection(session.captionSelection)
         }
+        if session.isPlaying != wasPlaying {
+            wasPlaying = session.isPlaying
+            if wasPlaying {
+                let x = timelineView.geometry.x(for: session.playhead)
+                follow.playbackStarted(playheadVisible: x >= TimelineGeometry.contentOriginX && x <= timelineView.bounds.width)
+            }
+        }
         if change.contains(.playhead) || change.contains(.project) {
             timelineView.setPlayhead(session.playhead)
             monitorModel.currentTime = session.playhead
@@ -330,13 +351,16 @@ final class EditorPanels {
         scopesView.sync(change)
     }
 
-    /// Page auto-scroll: when the playhead leaves the visible area during playback, jump a page.
+    /// Page-wise follow during playback (`TimelineFollow`): the view jumps a page when the playhead reaches an edge,
+    /// unless the user scrolled since playback started.
     private func followPlayhead() {
         let tv = timelineView
         let x = tv.geometry.x(for: session.playhead)
-        if x > tv.bounds.width - 12 || x < TimelineGeometry.contentOriginX {
-            tv.scroll(toX: tv.geometry.scrollX + (x - TimelineGeometry.contentOriginX) - 24)
-        }
+        guard let target = follow.pageScroll(playheadX: x, scrollX: tv.geometry.scrollX,
+                                             viewLeft: TimelineGeometry.contentOriginX, viewRight: tv.bounds.width) else { return }
+        pagingTimeline = true
+        tv.scroll(toX: target)
+        pagingTimeline = false
     }
 }
 

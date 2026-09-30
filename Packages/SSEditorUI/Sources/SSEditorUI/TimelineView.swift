@@ -59,6 +59,8 @@ public final class TimelineView: NSView {
     /// Clip highlighted while an effect is dragged over it.
     public private(set) var effectDropTarget: Clip.ID?
     private var scrubbing: (began: Bool, active: Bool) = (false, false)
+    /// Edit point the playhead is stuck to while Shift-scrubbing (snap indicator), nil otherwise.
+    public private(set) var scrubSnapTime: Time?
     /// Active tool, snapping and linked selection.
     public var toolState: ToolState {
         get { interaction.toolState }
@@ -316,7 +318,7 @@ public final class TimelineView: NSView {
         }
         if geometry.hitTest(p, in: timeline) == .ruler {
             scrubbing = (false, true)
-            onSeek?(geometry.time(atX: p.x))
+            onSeek?(scrubTime(at: p, shift: event.modifierFlags.contains(.shift)))
             return
         }
         feedInteraction()
@@ -328,7 +330,7 @@ public final class TimelineView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         if scrubbing.active {
             if !scrubbing.began { scrubbing.began = true; onScrubBegan?() }
-            onScrub?(geometry.time(atX: p.x))
+            onScrub?(scrubTime(at: p, shift: event.modifierFlags.contains(.shift)))
             return
         }
         interaction.geometry = geometry
@@ -340,6 +342,7 @@ public final class TimelineView: NSView {
         if scrubbing.active {
             if scrubbing.began { onScrubEnded?() }
             scrubbing = (false, false)
+            setScrubSnap(nil)
             return
         }
         let p = convert(event.locationInWindow, from: nil)
@@ -349,6 +352,22 @@ public final class TimelineView: NSView {
         refreshFromInteraction()
         if wasRejected, let m = interaction.rejectionMessage { onRejection?(m) }
         if let commit { onCommit?(commit) }
+    }
+
+    /// Time under the pointer for a playhead drag. Shift sticks it to clip edges, markers and 0 and shows the snap line.
+    private func scrubTime(at p: CGPoint, shift: Bool) -> Time {
+        guard shift else { setScrubSnap(nil); return geometry.time(atX: p.x) }
+        let r = PlayheadSnap.resolve(geometry.unsnappedTime(atX: p.x), timeline: timeline, geometry: geometry)
+        setScrubSnap(r.hit?.time)
+        return r.time
+    }
+
+    private func setScrubSnap(_ t: Time?) {
+        guard t != scrubSnapTime else { return }
+        for time in [scrubSnapTime, t].compactMap({ $0 }) {
+            setNeedsDisplay(CGRect(x: geometry.x(for: time) - 2, y: TimelineGeometry.rulerHeight, width: 4, height: bounds.height))
+        }
+        scrubSnapTime = t
     }
 
     /// Right-click: selects the item under the pointer (see `TimelineInteraction.contextSelect`) before the menu opens.
@@ -478,9 +497,14 @@ public final class TimelineView: NSView {
         .slip: ("arrow.left.and.right.square", "Slip"),
         .slide: ("arrow.left.and.right.square.fill", "Slide"),
         .hand: ("hand.raised", "Hand"),
+        .pen: ("pencil.tip", "Pen"),
+        .shape: ("rectangle", "Shape"),
+        .mask: ("rectangle.dashed", "Mask"),
+        .type: ("character.cursor.ibeam", "Type"),
     ]
-    /// Order of the column, top to bottom (Premiere's order).
-    static let toolColumnOrder: [TimelineTool] = [.selection, .trackSelectForward, .rippleEdit, .rollEdit, .razor, .slip, .slide, .hand]
+    /// Order of the column, top to bottom (Paul's Premiere setup, FEEDBACK-4 item 27). Track Select, Ripple, Rolling
+    /// and Slide stay on their keys (A, B, N, U) and in the Tools menu; Pen, Shape and Mask are disabled slots.
+    static let toolColumnOrder: [TimelineTool] = [.selection, .razor, .slip, .pen, .shape, .mask, .hand, .type]
     static let toolButtonSize: CGFloat = 28
     static let toolButtonSpacing: CGFloat = 2
 
@@ -496,7 +520,8 @@ public final class TimelineView: NSView {
                 ?? NSImage(systemSymbolName: "questionmark.square", accessibilityDescription: info.title)
             b.imageScaling = .scaleProportionallyDown
             b.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
-            b.toolTip = "\(info.title) (\(String(tool.key).uppercased()))"
+            b.toolTip = tool.isAvailable ? "\(info.title) (\(String(tool.key).uppercased()))" : "\(info.title): later"
+            b.isEnabled = tool.isAvailable
             b.setAccessibilityLabel(info.title)
             b.wantsLayer = true
             b.layer?.cornerRadius = 5
@@ -525,7 +550,7 @@ public final class TimelineView: NSView {
         for (tool, b) in toolButtons {
             let on = tool == toolState.tool
             b.state = on ? .on : .off
-            b.contentTintColor = on ? Theme.Colors.accent : Theme.Colors.label2
+            b.contentTintColor = on ? Theme.Colors.accent : (tool.isAvailable ? Theme.Colors.label2 : Theme.Colors.label3)
             b.layer?.backgroundColor = (on ? Theme.Colors.accentTint : NSColor.clear).cgColor
         }
     }
@@ -603,8 +628,8 @@ public final class TimelineView: NSView {
         if !clip.isEmpty {
             NSGraphicsContext.saveGraphicsState()
             clip.clip()
-            drawCaptionLanes(clip: clip)
-            drawLanes(rows: rows, clip: clip)
+            drawCaptionLanes(clip: clip, visible: contentClip)
+            drawLanes(rows: rows, clip: clip, visible: contentClip)
             drawPlayheadLine(clip: clip)
             drawGestureOverlay(clip: clip)
             drawDropOverlay(clip: clip)
@@ -614,8 +639,10 @@ public final class TimelineView: NSView {
         drawCaptionHeaders(dirty: dirtyRect)
     }
 
-    private func drawCaptionLanes(clip: CGRect) {
-        let visibleX = CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height)
+    /// `clip` is the dirty part of the content area, `visible` the whole content area: clip names and waveforms are laid
+    /// out against `visible`, so a thin dirty rect (the playhead line) repaints them exactly as a full redraw would.
+    private func drawCaptionLanes(clip: CGRect, visible: CGRect) {
+        let visibleX = CGRect(x: visible.minX, y: 0, width: visible.width, height: bounds.height)
         for row in geometry.captionRows(for: timeline) {
             let laneRect = CGRect(x: clip.minX, y: row.y, width: clip.width, height: row.height)
             guard laneRect.intersects(clip), let track = timeline.captionTrack(row.track) else { continue }
@@ -649,8 +676,8 @@ public final class TimelineView: NSView {
         }
     }
 
-    private func drawLanes(rows: [TrackRow], clip: CGRect) {
-        let visibleX = CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height)
+    private func drawLanes(rows: [TrackRow], clip: CGRect, visible: CGRect) {
+        let visibleX = CGRect(x: visible.minX, y: 0, width: visible.width, height: bounds.height)
         for row in rows {
             let laneRect = CGRect(x: clip.minX, y: row.y, width: clip.width, height: row.height)
             guard laneRect.intersects(clip), let track = timeline.track(row.track) else { continue }
@@ -668,7 +695,8 @@ public final class TimelineView: NSView {
                 if track.kind == .audio, let wf = waveforms, let d = wf.data[c.media] {
                     ClipDrawing.drawWaveform(data: d, media: c.media, source: c.source,
                                              rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
-                                             visible: visibleX, cache: wf.cache)
+                                             visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height),
+                                             cache: wf.cache)   // pixel-mapped: only the dirty columns are needed
                 }
             }
         }
@@ -683,9 +711,9 @@ public final class TimelineView: NSView {
 
     /// Marquee rectangle and the snap line of the gesture in flight.
     private func drawGestureOverlay(clip: CGRect) {
-        if let t = interaction.snapTime {
+        if let t = interaction.snapTime ?? scrubSnapTime {
             let x = geometry.x(for: t).rounded()
-            Theme.Colors.clipSelect.setFill()
+            Theme.Colors.snapLine.setFill()
             CGRect(x: x - 0.5, y: clip.minY, width: 1, height: clip.height).fill()
         }
         if let m = interaction.marquee {
@@ -722,7 +750,7 @@ public final class TimelineView: NSView {
                 outline.stroke()
             }
             if let t = dropPreview.snapTime {
-                Theme.Colors.clipSelect.setFill()
+                Theme.Colors.snapLine.setFill()
                 CGRect(x: geometry.x(for: t).rounded() - 0.5, y: clip.minY, width: 1, height: clip.height).fill()
             }
             if dropPreview.insert, let first = dropPreview.ghosts.first, let row = rows.first(where: { $0.track == first.track }) {

@@ -132,6 +132,10 @@ final class RenderLoop: @unchecked Sendable {
         /// Last composite had a layer without its exact frame (still decoding): re-render until complete.
         var incomplete = false
         var lastTime: Time?
+        /// Since when the picture is held for a layer that has no frame yet (capped, see `holdLimit`).
+        var holdStart: (time: Time, since: ContinuousClock.Instant)?
+        /// Longest a far seek keeps the old picture while its decode is outstanding.
+        var holdLimit: Duration = .milliseconds(250)
         var pendingStep: (target: Time, start: ContinuousClock.Instant)?
         var stats = PlaybackStats()
         var presenter: Presenter?
@@ -237,6 +241,8 @@ final class RenderLoop: @unchecked Sendable {
         let mapping = Self.mapping(timeline)
         media.forgetOffline()
         state.withLock { s in
+            // A different sequence must not keep showing the previous one's last frame.
+            if s.timeline?.id != timeline.id { s.lastTime = nil; s.holdStart = nil }
             s.timeline = timeline; s.sequences = sequences; s.mediaIDs = ids; s.mapping = mapping
             s.generation &+= 1
             s.lastJobs = []
@@ -324,7 +330,7 @@ final class RenderLoop: @unchecked Sendable {
     struct TickTiming: Sendable { var ticks = 0; var total = Duration.zero; var presents = 0; var presentTotal = Duration.zero }
     let timing = Mutex(TickTiming())
 
-    private struct LayerBuild { var layers: [RenderLayer] = []; var missing = 0; var waiting = false; var misses: [(UUID, Int)] = [] }
+    private struct LayerBuild { var layers: [RenderLayer] = []; var missing = 0; var waiting = false; var misses: [(UUID, Int)] = []; var noFrame = 0 }
 
     private func tickLocked(_ g: inout GPU, drawable: CAMetalDrawable?) -> TickOutcome? {
         let now = clock.now()
@@ -355,6 +361,24 @@ final class RenderLoop: @unchecked Sendable {
         let requests = tl.videoLayers(at: t, sequences: { sequences[$0] }).filter { $0.generator == nil }
         var b = LayerBuild()
         for r in requests { b.layers.append(layer(for: r, scale: scale, build: &b)) }
+
+        // Every layer has no picture at all yet (far seek into undecoded media): keep showing the last presented frame
+        // instead of a black placeholder; `incomplete` makes the next ticks retry until the decode lands. Bounded: a
+        // decode that never lands falls through to the placeholder composite. One cold layer among others composites.
+        if b.noFrame > 0 && b.noFrame == b.layers.count && lastTime != nil {
+            let now = ContinuousClock.now
+            let hold = state.withLock { s -> Bool in
+                if s.holdStart?.time != t { s.holdStart = (t, now) }
+                return now - s.holdStart!.since < s.holdLimit
+            }
+            if hold {
+                state.withLock { s in s.renderedGeneration = generation; s.incomplete = true }
+                prefetch(timeline: tl, at: t, rate: edge ? .zero : rate, scale: scale, misses: b.misses)
+                return TickOutcome(presented: false, time: t, stoppedAtEdge: edge)
+            }
+        } else if b.noFrame == 0 {
+            state.withLock { $0.holdStart = nil }
+        }
 
         // Composite + present
         var presented = false
@@ -423,7 +447,7 @@ final class RenderLoop: @unchecked Sendable {
             b.missing += 1; b.waiting = true; b.misses.append((r.media, f))
             frame = cache.nearest(media: r.media, atOrBefore: key.pts, scale: scale)
         }
-        guard let frame else { return placeholder(.loading) }
+        guard let frame else { b.noFrame += 1; return placeholder(.loading) }
         // Until the decoder reported its info: native size and rotation from the demuxer (the buffer may be a reduced decode).
         let dims = CMVideoFormatDescriptionGetDimensions(d.formatDescription)
         let info = media.info(r.media) ?? VideoTrackInfo(
