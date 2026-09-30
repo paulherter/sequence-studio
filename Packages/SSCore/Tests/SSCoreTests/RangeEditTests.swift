@@ -42,7 +42,9 @@ private func spans(_ t: Track) -> [[Int64]] {
         var tl = timeline(try track([clip(0, 6, link: l)]), try track([clip(0, 6, kind: .audio, link: l)], kind: .audio))
         try tl.lift(r(2, 4), tracks: tl.tracks.map(\.id))
         for t in tl.tracks { #expect(spans(t) == [[0, 2], [4, 6]]) }
-        #expect(tl.tracks[0].clips.allSatisfy { $0.link == l })
+        #expect(tl.tracks[0].clips[0].link == l && tl.tracks[1].clips[0].link == l)   // left halves keep the link
+        let r = tl.tracks.map { $0.clips[1].link }                                   // right halves share a new one
+        #expect(r[0] != nil && r[0] == r[1] && r[0] != l)
     }
 }
 
@@ -207,8 +209,9 @@ private func spans(_ t: Track) -> [[Int64]] {
         let a = [clip(0, 4, kind: .audio), clip(4, 5, kind: .audio, link: l), clip(9, 3, kind: .audio)]
         var tl = timeline(try track(v), try track(a, kind: .audio))
         try tl.moveInsert(v[1].id, to: s(12))
-        #expect(spans(tl.tracks[0]) == [[0, 4], [4, 7], [7, 11], [12, 13]])
-        #expect(spans(tl.tracks[1]) == [[0, 4], [4, 7], [7, 12]])
+        // The union of the group closes by one amount on every track (V lacks room for 5, so 4).
+        #expect(spans(tl.tracks[0]) == [[0, 4], [4, 8], [8, 12]])
+        #expect(spans(tl.tracks[1]) == [[0, 4], [5, 8], [8, 13]])
         #expect(tl.tracks[1].clips[2].id == a[1].id && tl.tracks[1].clips[2].link == l)
     }
     @Test func lockedPartnerRefusesAndSyncLockedTrackShifts() throws {

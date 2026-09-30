@@ -51,6 +51,14 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   animation: try c.decodeIfPresent(ClipAnimation.self, forKey: .animation) ?? ClipAnimation())
     }
 
+    /// Moves a split-off right half onto a fresh link shared through `map` (old link to new link).
+    mutating func relink(_ map: inout [UUID: UUID]) {
+        guard let l = link else { return }
+        let n = map[l] ?? UUID()
+        map[l] = n
+        link = n
+    }
+
     /// Keeps the part of the clip inside `range` (timeline coordinates), source offset follows.
     func cropped(to range: TimeRange) -> Clip? {
         guard let r = timeline.intersection(range) else { return nil }
@@ -120,15 +128,29 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
 
     /// Places `clip`, replacing whatever it covers.
     public mutating func overwrite(_ clip: Clip) throws {
+        var relinks: [UUID: UUID] = [:]
+        try overwrite(clip, relinks: &relinks)
+    }
+
+    /// `overwrite` with a shared old-link to new-link map (see `clear(_:relinks:)`).
+    mutating func overwrite(_ clip: Clip, relinks: inout [UUID: UUID]) throws {
         try check(clip)
-        clear(clip.timeline)
+        clear(clip.timeline, relinks: &relinks)
         clips.append(clip)
         clips.sort { $0.start < $1.start }
     }
 
     /// Removes everything inside `hole` and leaves a gap. Straddling clips are cut; when a clip is
-    /// cut in two, only the left half keeps the identity.
+    /// cut in two, only the left half keeps the identity and link; the right half gets a new link
+    /// (see `relinks`).
     public mutating func clear(_ hole: TimeRange) {
+        var relinks: [UUID: UUID] = [:]
+        clear(hole, relinks: &relinks)
+    }
+
+    /// `clear` with a shared old-link to new-link map: right halves cut from one linked group, on this
+    /// or other tracks, get the same new link, so each side stays linked with its own partners.
+    mutating func clear(_ hole: TimeRange, relinks: inout [UUID: UUID]) {
         var out: [Clip] = []
         for c in clips {
             if !c.timeline.overlaps(hole) { out.append(c); continue }
@@ -138,7 +160,7 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
             }
             if hole.end < c.timeline.end,
                var right = c.cropped(to: TimeRange(start: hole.end, end: c.timeline.end)) {
-                if keepsLeft { right.id = UUID() }
+                if keepsLeft { right.id = UUID(); right.relink(&relinks) }
                 out.append(right)
             }
         }
@@ -155,13 +177,20 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
         clips.sort { $0.start < $1.start }
     }
 
-    /// Cuts the clip under `t` in two. No-op on edges and in gaps. The left half keeps the ID.
+    /// Cuts the clip under `t` in two. No-op on edges and in gaps. The left half keeps the ID and link.
     public mutating func split(at t: Time) throws {
+        var relinks: [UUID: UUID] = [:]
+        try split(at: t, relinks: &relinks)
+    }
+
+    /// `split` with a shared old-link to new-link map (see `clear(_:relinks:)`).
+    mutating func split(at t: Time, relinks: inout [UUID: UUID]) throws {
         guard let i = clips.firstIndex(where: { $0.timeline.contains(t) && $0.start < t }) else { return }
         let c = clips[i]
         clips[i] = c.cropped(to: TimeRange(start: c.start, end: t))!
         var right = c.cropped(to: TimeRange(start: t, end: c.timeline.end))!
         right.id = UUID()
+        right.relink(&relinks)
         clips.insert(right, at: i + 1)
     }
 

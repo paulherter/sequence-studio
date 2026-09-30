@@ -76,28 +76,27 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         return closed
     }
 
-    /// Removes the group and closes the gap. Every group track closes its own clip's duration from that
-    /// clip's end (so J/L-cut partners with an offset each close correctly); other ripple tracks close
-    /// by the longest of those, from the earliest group end. If any track lacks room, all close less.
+    /// Removes the group and closes the gap by ONE amount on every involved track, so later material
+    /// stays in sync (Premiere): the span of the group's union. Each track closes from its own member's
+    /// end (tracks without a member from the group's latest end). If any track lacks room, all close less.
     mutating func rippleDeleteOne(_ id: Clip.ID) throws -> Time {
         let group = try linkedGroup(id)
         let ids = Set(group.map(\.clip.id))
         let involved = try involvedTracks(group)
-        let maxU = group.map { $0.clip.timeline.duration }.max() ?? .zero
-        let firstEnd = group.map { $0.clip.timeline.end }.min() ?? .zero
-        var amount: [Int: Time] = [:], pivot: [Int: Time] = [:]
-        for i in involved { amount[i] = maxU; pivot[i] = firstEnd }
-        for m in group { amount[m.track] = m.clip.timeline.duration; pivot[m.track] = m.clip.timeline.end }
+        let minStart = group.map { $0.clip.start }.min() ?? .zero
+        let maxEnd = group.map { $0.clip.timeline.end }.max() ?? .zero
+        let span = maxEnd - minStart
+        var pivot: [Int: Time] = [:]
+        for i in involved { pivot[i] = maxEnd }
+        for m in group { pivot[m.track] = m.clip.timeline.end }
         var shortfall = Time.zero
         for i in involved {
-            if let room = tracks[i].leftRoom(pivot: pivot[i]!, excluding: ids) { shortfall = max(shortfall, amount[i]! - room) }
+            if let room = tracks[i].leftRoom(pivot: pivot[i]!, excluding: ids) { shortfall = max(shortfall, span - room) }
         }
         for m in group { tracks[m.track].remove(m.clip.id) }
-        for i in involved {
-            let d = max(amount[i]! - shortfall, .zero)
-            tracks[i].shift(from: pivot[i]!, by: .zero - d)
-        }
-        return max(maxU - shortfall, .zero)
+        let d = max(span - shortfall, .zero)
+        for i in involved { tracks[i].shift(from: pivot[i]!, by: .zero - d) }
+        return d
     }
 
     // MARK: Ripple trim
@@ -111,8 +110,11 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         let group = try linkedGroup(id)
         let involved = try involvedTracks(group)
         let primary = group[0].clip
-        let pivot = primary.timeline.end
         let ids = Set(group.map(\.clip.id))
+        // Each track shifts what follows its own member's original end; tracks without one, the primary's.
+        var pivot: [Int: Time] = [:]
+        for i in involved { pivot[i] = primary.timeline.end }
+        for m in group { pivot[m.track] = m.clip.timeline.end }
 
         var g = edge == .tail ? delta : -delta            // change of duration
         for m in group {
@@ -123,7 +125,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         }
         if g < .zero {
             for i in involved {
-                if let room = tracks[i].leftRoom(pivot: pivot, excluding: ids) { g = max(g, -room) }
+                if let room = tracks[i].leftRoom(pivot: pivot[i]!, excluding: ids) { g = max(g, -room) }
             }
         }
         if g == .zero { return .zero }
@@ -135,7 +137,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
             c.source.duration += g
             work[m.track].replace(c)
         }
-        for i in involved { work[i].shift(from: pivot, by: g, excluding: ids) }
+        for i in involved { work[i].shift(from: pivot[i]!, by: g, excluding: ids) }
         guard work.allSatisfy(\.isConsistent) else { throw EditError.collision }
         tracks = work
         return edge == .tail ? g : -g
@@ -159,14 +161,15 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
             guard p.clip.kind == work[i].kind else { throw EditError.wrongTrackKind }
             targets.insert(i)
         }
+        var relinks: [UUID: UUID] = [:]
         for i in work.indices where targets.contains(i) || work[i].followsRipple {
-            try work[i].split(at: t)
+            try work[i].split(at: t, relinks: &relinks)
             work[i].shift(from: t, by: d)
         }
         for p in placements {
             var c = p.clip; c.start = t + (p.clip.start - first)
             let i = work.firstIndex { $0.id == p.track }!
-            try work[i].overwrite(c)
+            try work[i].overwrite(c, relinks: &relinks)
         }
         tracks = work
     }

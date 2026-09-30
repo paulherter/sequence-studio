@@ -25,12 +25,13 @@ extension Timeline {
     public mutating func overwrite(_ placements: [(clip: Clip, track: Track.ID)], at t: Time) throws {
         guard let first = placements.map(\.clip.start).min() else { throw EditError.emptyClip }
         var work = tracks
+        var relinks: [UUID: UUID] = [:]
         for p in placements {
             guard let i = work.firstIndex(where: { $0.id == p.track }) else { throw EditError.clipNotFound }
             if work[i].isLocked { throw EditError.trackLocked }
             guard p.clip.kind == work[i].kind else { throw EditError.wrongTrackKind }
             var c = p.clip; c.start = t + (p.clip.start - first)
-            try work[i].overwrite(c)
+            try work[i].overwrite(c, relinks: &relinks)
         }
         tracks = work
     }

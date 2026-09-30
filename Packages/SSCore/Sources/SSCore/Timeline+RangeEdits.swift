@@ -21,7 +21,8 @@ extension Timeline {
     public mutating func lift(_ range: TimeRange, tracks ids: [Track.ID]) throws {
         guard !range.isEmpty else { return }
         let targets = try targetIndices(ids)
-        for i in targets { tracks[i].clear(range) }
+        var relinks: [UUID: UUID] = [:]
+        for i in targets { tracks[i].clear(range, relinks: &relinks) }
     }
 
     /// Extract: like `lift`, then closes the gap on the targeted tracks and every unlocked sync-locked
@@ -32,7 +33,8 @@ extension Timeline {
         guard !range.isEmpty else { return .zero }
         let targets = try targetIndices(ids)
         var work = tracks
-        for i in targets { work[i].clear(range) }
+        var relinks: [UUID: UUID] = [:]
+        for i in targets { work[i].clear(range, relinks: &relinks) }
         var involved = Set(targets)
         for i in work.indices where work[i].followsRipple { involved.insert(i) }
         var d = range.duration

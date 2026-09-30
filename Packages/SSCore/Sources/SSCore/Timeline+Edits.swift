@@ -137,10 +137,11 @@ extension Timeline {
         if d == .zero && destinations[0] == group[0].track { return .zero }
         var work = tracks
         for m in group { work[m.track].remove(m.clip.id) }
+        var relinks: [UUID: UUID] = [:]
         for (m, ti) in zip(group, destinations) {
             var c = m.clip
             c.start += d
-            try work[ti].overwrite(c)
+            try work[ti].overwrite(c, relinks: &relinks)
         }
         tracks = try commit(work)
         return d
