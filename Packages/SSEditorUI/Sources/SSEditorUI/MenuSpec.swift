@@ -42,9 +42,12 @@ public enum EditorMenus {
         .tool(.selection), .tool(.trackForward), .tool(.trackBackward), .tool(.ripple), .tool(.rolling),
         .tool(.slip), .tool(.slide), .tool(.razor), .tool(.hand), .tool(.zoom), .tool(.type),
     ]))
-    public static let window: MenuSpec = {
-        let panels: [PanelID] = [.project, .sourceMonitor, .timeline, .programMonitor, .effectControls, .library, .effects]
-        let items: [EditorCommand?] = panels.map { EditorCommand.focusPanel($0) } + [nil, .maximizePanel]
-        return MenuSpec(title: "Window", items: cmds(items))
-    }()
+    /// Panels in the Window menu, in menu order: one checkable item each (check = visible in the workspace).
+    public static let windowPanels: [PanelID] = [
+        .effectControls, .text, .programMonitor, .sourceMonitor, .library, .effects, .project, .timeline,
+        .colorInspector, .scopes,
+    ]
+
+    /// The panel items and the workspace list are added by the app (they carry state); the spec keeps the plain commands.
+    public static let window = MenuSpec(title: "Window", items: cmds([.maximizePanel]))
 }

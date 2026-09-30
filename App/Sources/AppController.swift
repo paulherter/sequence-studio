@@ -1,5 +1,6 @@
 import AppKit
 import Metal
+import Observation
 import SSCore
 import SSEditorUI
 import SSPlayback
@@ -14,6 +15,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     let engineNote: String?
     let commandMap = CommandMap.premiereDefault
     var store = WorkspaceStore.load()
+    var settings: AppSettings
+    private(set) lazy var settingsWindow = SettingsWindowController(controller: self)
     var maximizedPanel: PanelID?
     var focusedPanel: PanelID? = .timeline { didSet { router.focus = focusedPanel } }
     var router: KeyRouter
@@ -42,7 +45,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         } else {
             note = "No Metal device: the Program monitor stays blank."
         }
-        session = EditorSession(engine: engine, media: media)
+        let prefs = AppSettings.load()
+        settings = prefs
+        session = EditorSession(engine: engine, media: media,
+                                autosaveStore: AutosaveStore(policy: AutosavePolicy(interval: prefs.autosaveInterval)))
         engineNote = note
         router = KeyRouter(map: .premiereDefault, focus: .timeline, clock: { ProcessInfo.processInfo.systemUptime })
         super.init()
@@ -56,11 +62,15 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         NSApp.appearance = NSAppearance(named: .darkAqua)
         panels = EditorPanels(session: session)
         panels.onFocus = { [weak self] p in self?.focusedPanel = p }
-        panels.propertiesView.onAudioPresetChange = { [audioEngine] id, p in audioEngine.feeder.setPreset(track: id, preset: p) }
+        panels.clipSections.onAudioPresetChange = { [audioEngine] id, p in audioEngine.feeder.setPreset(track: id, preset: p) }
         panels.onStatus = { [weak self] m in self?.shell.statusBar.flash(m) }
         panels.onCommand = { [weak self] c in self?.execute(c) }
         panels.onNest = { [weak self] in self?.requestNest() }
+        panels.monitorModel.setQuality(settings.defaultQuality)
 
+        shell.statusBar.onTasksClicked = { [weak self] v in self?.toggleTasks(v) }
+        exports.queueModel.start()
+        watchExports()
         toolbar = EditorToolbar(controller: self)
         fillWorkspaceMenu(mainWorkspaceSubmenu)
         NSApp.mainMenu = MenuBuilder.build(target: self, map: commandMap)
@@ -82,7 +92,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 1600, height: 960),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable],
                          backing: .buffered, defer: false)
-        w.minSize = NSSize(width: 1000, height: 620)
+        w.contentMinSize = NSSize(width: 640, height: 400)   // refined per workspace in `applyWorkspace`
         w.appearance = NSAppearance(named: .darkAqua)
         w.backgroundColor = Theme.Colors.titlebar
         w.toolbar = toolbar.toolbar
@@ -122,7 +132,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             session.newProject(DemoProject.make())
             session.seek(to: DemoProject.playhead)
             session.select(clips: DemoProject.selection(in: session))
-        } else if env["SS_NO_RECOVERY"] != "1", env["SS_IMPORT"] == nil {
+        } else if env["SS_NO_RECOVERY"] != "1", env["SS_IMPORT"] == nil, settings.offerRecovery {
             offerRecovery()
         }
         if let list = env["SS_IMPORT"] { importAtLaunch(list.split(separator: ":").map { URL(fileURLWithPath: String($0)) }) }
@@ -207,8 +217,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         var w = store.current
         w.maximized = maximizedPanel
         shell.host.apply(w)
-        toolbar.sync(store: store, workspace: w)
+        toolbar.sync(store: store)
         fillWorkspaceMenu(mainWorkspaceSubmenu)
+        // The window never gets smaller than the layout's panels need.
+        let m = w.minimumContentSize
+        window?.contentMinSize = NSSize(width: max(CGFloat(m.width), 640),
+                                        height: max(CGFloat(m.height) + Theme.Metrics.statusBar, 400))
         if focusedPanel == .timeline { window?.makeFirstResponder(panels.timelineView) }
     }
 
@@ -245,13 +259,6 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             i.target = self
             menu.addItem(i)
         }
-    }
-
-    /// A fresh menu for the toolbar item (an NSMenu has one parent, so it cannot share the main menu's).
-    var workspaceMenu: NSMenu {
-        let m = NSMenu(title: "Workspaces")
-        fillWorkspaceMenu(m)
-        return m
     }
 
     @objc func selectWorkspace(_ sender: NSMenuItem) {
@@ -345,27 +352,41 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
 
     @objc func toolbarPage(_ sender: NSToolbarItemGroup) {
         store.setPage(sender.selectedIndex == 1 ? .color : .edit)
-        if store.page == .color {
-            store.colorWorkspace.selectTab(.properties)
-            panels.propertiesView.select(.color)
-        }
+        if store.page == .color { store.colorWorkspace.selectTab(.colorInspector) }
         maximizedPanel = nil
         scheduleWorkspaceSave()
         applyWorkspace()
     }
 
-    @objc func toolbarPanels(_ sender: NSToolbarItemGroup) {
-        mutateWorkspace { w in
-            for (i, p) in EditorToolbar.togglePanels.enumerated() where w.allPanels.contains(p) {
-                let want = sender.isSelected(at: i)
-                if want != w.isVisible(p) { want ? w.show(p) : w.hide(p) }
-            }
+    /// Keeps the status-bar ring in step with the export queue.
+    func watchExports() {
+        let m = exports.queueModel
+        shell.statusBar.setTasks(progress: m.hasActiveJobs ? m.overallProgress : nil)
+        withObservationTracking {
+            _ = m.jobs
+        } onChange: { [weak self] in
+            Task { @MainActor [weak self] in self?.watchExports() }
         }
     }
 
-    @objc func toolbarTasks(_ sender: Any?) {
-        guard let view = window.contentView else { return }
-        exports.showQueue(relativeTo: CGRect(x: view.bounds.maxX - 120, y: 0, width: 40, height: 1), of: view)
+    /// Status-bar ring: show or hide the export queue.
+    @objc func toggleTasks(_ sender: NSView) {
+        exports.showQueue(relativeTo: sender.bounds, of: sender)
+    }
+
+    @objc func showSettings(_ sender: Any?) { settingsWindow.show() }
+
+    /// Window menu panel item: a click toggles the panel (checkmark = visible); its keyboard shortcut shows and focuses it.
+    @objc func windowPanelItem(_ sender: NSMenuItem) {
+        guard let p = sender.representedObject as? PanelID else { return }
+        if NSApp.currentEvent?.type == .keyDown {
+            showPanel(p)
+        } else {
+            if maximizedPanel != nil { maximizedPanel = nil }
+            let wasVisible = store.current.isVisible(p)
+            mutateWorkspace { $0.toggle(p) }
+            if !wasVisible { focusedPanel = p }
+        }
     }
 
     // MARK: Menu
@@ -379,6 +400,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         switch item.action {
         case #selector(renameWorkspace(_:)), #selector(deleteWorkspace(_:)): return store.canRenameOrDeleteCurrent
         case #selector(resetLayout(_:)): return store.canResetCurrent
+        case #selector(windowPanelItem(_:)):
+            if let p = item.representedObject as? PanelID { item.state = store.current.isVisible(p) ? .on : .off }
+            // Shift+digit shortcuts must not fire while typing in a field (menus see key equivalents first).
+            if NSApp.currentEvent?.type == .keyDown, textResponder != nil || window?.firstResponder is NSTableView { return false }
+            return true
         default: break
         }
         guard let c = item.representedObject as? EditorCommand else { return true }

@@ -63,7 +63,8 @@ final class WorkspaceHostView: NSView {
             c.strip.onPress = { [weak self] p, button, event in self?.tabPressed(p, button, event) }
             return c
         case .split(let axis, let children, let fractions):
-            let split = DividerSplitView(path: path, fractions: fractions)
+            let split = DividerSplitView(path: path, fractions: fractions,
+                                         minLengths: LayoutMetrics.childMinimums(axis: axis, children: children).map { CGFloat($0) })
             split.isVertical = axis == .horizontal
             split.onUserResize = { [weak self] p, f in self?.onFractions?(p, f) }
             for (i, c) in children.enumerated() { split.addSubview(build(c, path: path + [i])) }
@@ -72,13 +73,15 @@ final class WorkspaceHostView: NSView {
     }
 }
 
-/// NSSplitView with a 1 pt black divider, no collapsing, a minimum pane size, and initial positions from fractions.
+/// NSSplitView with a 1 pt black divider, no collapsing, and a minimum length per pane (from the panels' minimum sizes).
+/// Panes are laid out from the user's desired fractions clamped to those minimums (`LayoutMetrics.clampedFractions`), both
+/// initially and on every resize, so shrinking the window or dragging a divider can never squeeze or overlap a panel;
+/// growing again restores the desired proportions.
 @MainActor
 final class DividerSplitView: NSSplitView, NSSplitViewDelegate {
-    static let minPane: CGFloat = 96
-
     let path: [Int]
-    private let fractions: [Double]
+    private var desired: [Double]
+    private let minLengths: [CGFloat]
     var onUserResize: (([Int], [Double]) -> Void)?
     private var appliedInitial = false
     private var applying = false
@@ -87,12 +90,14 @@ final class DividerSplitView: NSSplitView, NSSplitViewDelegate {
     override var dividerColor: NSColor { Theme.Colors.divider }
     override var isFlipped: Bool { true }
 
-    init(path: [Int], fractions: [Double]) {
-        self.path = path; self.fractions = fractions
+    init(path: [Int], fractions: [Double], minLengths: [CGFloat]) {
+        self.path = path; self.desired = fractions; self.minLengths = minLengths
         super.init(frame: .zero)
         dividerStyle = .thin
         delegate = self
         autoresizesSubviews = true
+        wantsLayer = true
+        layer?.masksToBounds = true
     }
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
@@ -100,33 +105,43 @@ final class DividerSplitView: NSSplitView, NSSplitViewDelegate {
 
     override func layout() {
         super.layout()
-        applyInitialFractions()
+        if !appliedInitial { arrange() }
     }
 
-    private func applyInitialFractions() {
-        guard !appliedInitial, length > 1, subviews.count == fractions.count, subviews.count > 1 else { return }
+    /// Frames for every pane from `desired` (clamped to the minimums); the last pane takes the rounding remainder.
+    private func arrange() {
+        let n = subviews.count
+        guard n > 1, n == desired.count, length > 1 else { return }
         appliedInitial = true
         applying = true
         defer { applying = false }
-        let available = length - dividerThickness * CGFloat(subviews.count - 1)
-        var cumulative = 0.0
-        for i in 0..<(subviews.count - 1) {
-            cumulative += fractions[i]
-            setPosition(CGFloat(cumulative) * available + CGFloat(i) * dividerThickness, ofDividerAt: i)
+        let gap = dividerThickness * CGFloat(n - 1)
+        let available = max(length - gap, 0)
+        let f = LayoutMetrics.clampedFractions(desired, length: Double(available), mins: minLengths.map(Double.init))
+        var pos: CGFloat = 0
+        for (i, v) in subviews.enumerated() {
+            let len = i == n - 1 ? max(length - pos, 0) : (CGFloat(f[i]) * available).rounded()
+            v.frame = isVertical ? CGRect(x: pos, y: 0, width: len, height: bounds.height)
+                                 : CGRect(x: 0, y: pos, width: bounds.width, height: len)
+            pos += len + dividerThickness
         }
+    }
+
+    func splitView(_ splitView: NSSplitView, resizeSubviewsWithOldSize oldSize: NSSize) {
+        if appliedInitial { arrange() } else { adjustSubviews() }
     }
 
     func splitView(_ splitView: NSSplitView, canCollapseSubview subview: NSView) -> Bool { false }
 
     func splitView(_ splitView: NSSplitView, constrainMinCoordinate proposed: CGFloat, ofSubviewAt i: Int) -> CGFloat {
         let origin = isVertical ? subviews[i].frame.minX : subviews[i].frame.minY
-        return max(proposed, origin + Self.minPane)
+        return max(proposed, origin + minLengths[i])
     }
 
     func splitView(_ splitView: NSSplitView, constrainMaxCoordinate proposed: CGFloat, ofSubviewAt i: Int) -> CGFloat {
         let next = subviews[i + 1].frame
         let end = isVertical ? next.maxX : next.maxY
-        return min(proposed, end - Self.minPane - dividerThickness)
+        return min(proposed, end - minLengths[i + 1] - dividerThickness)
     }
 
     func splitViewDidResizeSubviews(_ notification: Notification) {
@@ -135,6 +150,7 @@ final class DividerSplitView: NSSplitView, NSSplitViewDelegate {
         let lengths = subviews.map { isVertical ? $0.frame.width : $0.frame.height }
         let total = lengths.reduce(0, +)
         guard total > 0 else { return }
-        onUserResize?(path, lengths.map { Double($0 / total) })
+        desired = lengths.map { Double($0 / total) }
+        onUserResize?(path, desired)
     }
 }

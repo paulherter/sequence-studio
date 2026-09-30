@@ -19,8 +19,10 @@ final class EditorPanels {
     let effectView: EffectControlsView
     let libraryModel = LibraryServices.makeModel()
     let libraryView: LibraryPanelView
-    let propertiesView: PropertiesPanelView
-    let textView = TextPanelView()
+    let clipSections: ClipSectionsView
+    let textView: TextPanelView
+    let colorView: ColorInspectorPanelView
+    let scopesView: ScopesPanelView
     let effectsView = EffectsPanelView()
 
     private var placeholders: [PanelID: NSView] = [:]
@@ -42,8 +44,12 @@ final class EditorPanels {
         projectView = ProjectPanelView(model: projectModel)
         effectView = EffectControlsView(model: effectModel)
         libraryView = LibraryPanelView(model: libraryModel)
-        propertiesView = PropertiesPanelView(session: session)
+        clipSections = ClipSectionsView(session: session)
+        textView = TextPanelView(session: session)
+        colorView = ColorInspectorPanelView(session: session)
+        scopesView = ScopesPanelView(session: session)
         Task { [libraryModel] in await LibraryServices.start(libraryModel) }
+        effectView.clipSections = clipSections
         wireTimeline()
         wireSidePanels()
         wireMonitor()
@@ -92,8 +98,9 @@ final class EditorPanels {
     }
 
     private func wireSidePanels() {
-        propertiesView.onStatus = { [weak self] m in self?.onStatus?(m) }
-        textView.onApply = { [weak self] id in
+        textView.onStatus = { [weak self] m in self?.onStatus?(m) }
+        colorView.onChange = { [weak self] in self?.scopesView.scheduleRefresh() }
+        libraryView.onApplyTextTemplate = { [weak self] id in
             guard let self, let entry = TextTemplateCatalog.entry(id: id) else { return }
             session.addTextClip(template: entry.template)
         }
@@ -195,8 +202,9 @@ final class EditorPanels {
         case .project: return projectView
         case .effectControls: return effectView
         case .library: return libraryView
-        case .properties: return propertiesView
         case .text: return textView
+        case .colorInspector: return colorView
+        case .scopes: return scopesView
         case .effects: return effectsView
         case .sourceMonitor:
             if let v = placeholders[p] { return v }
@@ -264,7 +272,10 @@ final class EditorPanels {
         }
         // Every change re-reads the transport state, so the Play/Pause button can never lag behind the session.
         if monitorModel.isPlaying != session.isPlaying { monitorModel.isPlaying = session.isPlaying }
-        propertiesView.sync(change)
+        clipSections.sync(change)
+        textView.sync(change)
+        colorView.sync(change)
+        scopesView.sync(change)
     }
 
     /// Page auto-scroll: when the playhead leaves the visible area during playback, jump a page.

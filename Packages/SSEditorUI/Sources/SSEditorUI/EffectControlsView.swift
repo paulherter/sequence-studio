@@ -12,6 +12,17 @@ public final class EffectControlsView: NSView {
     /// Asked before the animate diamond deletes all keys of a property. Default: alert.
     public var confirmRemoval: @MainActor (EffectProperty) -> Bool = EffectControlsView.defaultConfirm
 
+    /// Text / Audio section above the property rows (Premiere); set by the app.
+    public var clipSections: ClipSectionsView? {
+        didSet {
+            oldValue?.removeFromSuperview()
+            guard let c = clipSections else { return }
+            content.addSubview(c)
+            c.onHeightChange = { [weak self] in self?.needsLayout = true }
+            needsLayout = true
+        }
+    }
+
     private let scroll = NSScrollView()
     private let content = FlippedView()
     private let lanes: EffectKeyframeLanesView
@@ -107,14 +118,16 @@ public final class EffectControlsView: NSView {
         super.layout()
         scroll.frame = bounds
         emptyLabel.frame = NSRect(x: 0, y: bounds.midY - 8, width: bounds.width, height: 16)
-        let total = rowViews.last.map { $0.0.y + $0.0.height } ?? 0
+        let topH = clipSections.map { $0.isHidden ? 0 : $0.preferredHeight(for: bounds.width) } ?? 0
+        clipSections?.frame = NSRect(x: 0, y: 0, width: bounds.width, height: topH)
+        let total = (rowViews.last.map { $0.0.y + $0.0.height } ?? 0) + topH
         content.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(total, bounds.height))
         let lw = min(Self.labelWidth, bounds.width)
         for (row, v) in rowViews {
             let isGraph = { if case .graph = row.kind { return true } else { return false } }()
-            v.frame = NSRect(x: 0, y: row.y, width: isGraph ? bounds.width : lw, height: row.height)
+            v.frame = NSRect(x: 0, y: row.y + topH, width: isGraph ? bounds.width : lw, height: row.height)
         }
-        lanes.frame = NSRect(x: lw, y: 0, width: max(bounds.width - lw, 0), height: content.frame.height)
+        lanes.frame = NSRect(x: lw, y: topH, width: max(bounds.width - lw, 0), height: max(content.frame.height - topH, 0))
         // Graph rows are laid out by themselves (they need the lane origin).
         for (row, v) in rowViews { if case .graph = row.kind { (v as? GraphRow)?.laneX = lw; v.needsLayout = true } }
         refresh()

@@ -73,3 +73,9 @@
 - Dragging media into the timeline shows a live ghost of the clip at the drop position (move to place, release to commit, Esc or drag out to cancel), like Premiere — not just a "+" cursor.
 - Resizing panels/window must never break layouts.
 - S-Log3 footage currently shows only yellow (placeholder) — must decode and display.
+
+## 2026-09-30 Implemented: shell per Paul's feedback
+- Toolbar is Import | Edit-Color | Export only. Window menu = Workspaces submenu + one checkmark item per panel (click toggles, shortcut shows/focuses) + Maximize. Export ring moved to the status bar.
+- `PanelID.properties` removed; new `.colorInspector` and `.scopes` (Color page panels; Edit layouts hold them hidden). Saved layouts migrate (`WorkspaceMigration.dropUnknownPanels`); an old Color page is reset to the new layout.
+- Layout robustness: every panel has a minimum size (`PanelID.minSize`); split fractions are clamped to the minimums (`LayoutMetrics.clampedFractions`), the window minimum follows the visible layout, panels and splits clip to their bounds.
+- Settings window (`AppSettings`, UserDefaults). Autosave interval and audio output are read at launch; the audio output device is stored but not yet used by the engine.

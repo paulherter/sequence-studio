@@ -1,0 +1,113 @@
+import Foundation
+
+/// Preferences of the Settings window, persisted in UserDefaults. Every read validates, so a hand-edited or stale value
+/// falls back to the default instead of reaching the app.
+public struct AppSettings: Sendable, Equatable {
+    // General
+    /// Seconds between autosaves of a changed project.
+    public var autosaveInterval: TimeInterval
+    /// Offer to restore the last autosave after an unclean quit.
+    public var offerRecovery: Bool
+    // Playback
+    public var defaultQuality: MonitorQuality
+    /// CoreAudio device UID; nil = system default output.
+    public var audioOutputUID: String?
+    // Media
+    /// Folder for proxies and render cache; nil = the default folder.
+    public var cacheFolder: URL?
+    /// Cache size cap in gigabytes.
+    public var cacheCapGB: Int
+
+    public static let autosaveChoices: [TimeInterval] = [60, 120, 300, 600, 900]
+    public static let cacheCapChoices = [10, 20, 50, 100, 250]
+    public static let standard = AppSettings(autosaveInterval: 300, offerRecovery: true, defaultQuality: .full,
+                                             audioOutputUID: nil, cacheFolder: nil, cacheCapGB: 50)
+
+    public init(autosaveInterval: TimeInterval, offerRecovery: Bool, defaultQuality: MonitorQuality,
+                audioOutputUID: String?, cacheFolder: URL?, cacheCapGB: Int) {
+        self.autosaveInterval = autosaveInterval; self.offerRecovery = offerRecovery
+        self.defaultQuality = defaultQuality; self.audioOutputUID = audioOutputUID
+        self.cacheFolder = cacheFolder; self.cacheCapGB = cacheCapGB
+    }
+
+    /// Default cache folder: ~/Library/Caches/Sequence Studio.
+    public static var defaultCacheFolder: URL {
+        (FileManager.default.urls(for: .cachesDirectory, in: .userDomainMask).first ?? FileManager.default.temporaryDirectory)
+            .appendingPathComponent("Sequence Studio", isDirectory: true)
+    }
+
+    public var effectiveCacheFolder: URL { cacheFolder ?? Self.defaultCacheFolder }
+
+    enum Key {
+        static let autosave = "settings.autosaveInterval"
+        static let recovery = "settings.offerRecovery"
+        static let quality = "settings.defaultQuality"
+        static let audio = "settings.audioOutputUID"
+        static let cache = "settings.cacheFolder"
+        static let cap = "settings.cacheCapGB"
+    }
+
+    public static func load(from d: UserDefaults = .standard) -> AppSettings {
+        var s = AppSettings.standard
+        if d.object(forKey: Key.autosave) != nil {
+            let v = d.double(forKey: Key.autosave)
+            if v.isFinite, v >= 30, v <= 3600 { s.autosaveInterval = v }
+        }
+        if d.object(forKey: Key.recovery) != nil { s.offerRecovery = d.bool(forKey: Key.recovery) }
+        if let q = d.string(forKey: Key.quality).flatMap(MonitorQuality.init(rawValue:)) { s.defaultQuality = q }
+        if let u = d.string(forKey: Key.audio), !u.isEmpty { s.audioOutputUID = u }
+        if let p = d.string(forKey: Key.cache), p.hasPrefix("/") { s.cacheFolder = URL(fileURLWithPath: p, isDirectory: true) }
+        if d.object(forKey: Key.cap) != nil {
+            let v = d.integer(forKey: Key.cap)
+            if v >= 1, v <= 10_000 { s.cacheCapGB = v }
+        }
+        return s
+    }
+
+    public func save(to d: UserDefaults = .standard) {
+        d.set(autosaveInterval, forKey: Key.autosave)
+        d.set(offerRecovery, forKey: Key.recovery)
+        d.set(defaultQuality.rawValue, forKey: Key.quality)
+        if let audioOutputUID { d.set(audioOutputUID, forKey: Key.audio) } else { d.removeObject(forKey: Key.audio) }
+        if let cacheFolder { d.set(cacheFolder.path, forKey: Key.cache) } else { d.removeObject(forKey: Key.cache) }
+        d.set(cacheCapGB, forKey: Key.cap)
+    }
+}
+
+/// Rows of the read-only Keyboard tab, built from the command map.
+public enum KeyboardListing {
+    public struct Row: Equatable, Sendable {
+        public var command: String
+        public var shortcut: String
+        public var scope: String
+    }
+
+    /// Display text of a binding, e.g. "⇧⌘Z" or "Space".
+    public static func text(for b: KeyBinding) -> String {
+        var s = ""
+        if b.modifiers.contains(.control) { s += "⌃" }
+        if b.modifiers.contains(.option) { s += "⌥" }
+        if b.modifiers.contains(.shift) { s += "⇧" }
+        if b.modifiers.contains(.command) { s += "⌘" }
+        switch b.key {
+        case .char(let c): s += String(c).uppercased()
+        case .space: s += "Space"
+        case .left: s += "←"
+        case .right: s += "→"
+        case .up: s += "↑"
+        case .down: s += "↓"
+        case .home: s += "Home"
+        case .end: s += "End"
+        case .delete: s += "⌫"
+        case .function(let n): s += "F\(n)"
+        }
+        return s
+    }
+
+    public static func rows(_ map: CommandMap) -> [Row] {
+        map.entries.map {
+            Row(command: $0.command.title, shortcut: text(for: $0.binding), scope: "\($0.scope)".capitalized)
+        }
+        .sorted { ($0.command, $0.shortcut) < ($1.command, $1.shortcut) }
+    }
+}

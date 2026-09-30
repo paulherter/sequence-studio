@@ -1,10 +1,31 @@
 import Foundation
 
 public enum PanelID: String, Sendable, Codable, Hashable, CaseIterable {
-    case effectControls, text, properties
+    case effectControls, text
     case programMonitor, sourceMonitor
     case library, effects, project
     case timeline
+    /// Color page panels (also available from the Window menu on the Edit page).
+    case colorInspector, scopes
+
+    /// Smallest size the panel is laid out at (width, height in points), below the tab strip.
+    /// Layouts never squeeze a panel under this; the window minimum is derived from it.
+    public var minSize: (width: Double, height: Double) {
+        switch self {
+        case .timeline: (320, 150)
+        case .programMonitor, .sourceMonitor: (380, 200)
+        case .effectControls: (300, 120)
+        case .text: (240, 140)
+        case .library: (200, 120)
+        case .effects: (180, 100)
+        case .project: (200, 100)
+        case .colorInspector: (260, 160)
+        case .scopes: (200, 120)
+        }
+    }
+
+    /// Height of a tab strip above every group (DESIGN: panel header).
+    public static let headerHeight = 30.0
 }
 
 public enum SplitAxis: String, Sendable, Codable, Hashable {
@@ -87,27 +108,30 @@ public struct Workspace: Sendable, Codable, Hashable {
 
     // MARK: Built-ins (docs/UX.md section 1)
 
-    /// Effect Controls | Text | Properties and Program | Source on top, timeline below; Library and Effects | Project on the right, full height.
+    /// Color inspector and Scopes belong to the Color page; Edit layouts hold them hidden so the Window menu can show them.
+    static let colorPanels: Set<PanelID> = [.colorInspector, .scopes]
+
+    /// Effect Controls | Text and Program | Source on top, timeline below; Library and Effects | Project on the right, full height.
     public static let editingPC = Workspace(name: "Editing – PC", root: .split(axis: .horizontal, children: [
         .split(axis: .vertical, children: [
             .split(axis: .horizontal, children: [
-                .tabs(panels: [.effectControls, .text, .properties], selected: .effectControls),
+                .tabs(panels: [.effectControls, .text, .colorInspector], selected: .effectControls),
                 .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor),
             ], fractions: [0.6, 0.4]),
             .tabs(panels: [.timeline], selected: .timeline),
         ], fractions: [0.55, 0.45]),
         .split(axis: .vertical, children: [
             .tabs(panels: [.library], selected: .library),
-            .tabs(panels: [.effects, .project], selected: .effects),
+            .tabs(panels: [.effects, .project, .scopes], selected: .effects),
         ], fractions: [0.55, 0.45]),
-    ], fractions: [0.75, 0.25]))
+    ], fractions: [0.75, 0.25]), hidden: Self.colorPanels)
 
     /// Program monitor full height on the right; Library | Effects and Effect Controls group in the middle; Project and timeline bottom left.
     public static let editingMacBook = Workspace(name: "Editing – MacBook", root: .split(axis: .horizontal, children: [
         .split(axis: .vertical, children: [
             .split(axis: .horizontal, children: [
-                .tabs(panels: [.library, .effects], selected: .library),
-                .tabs(panels: [.effectControls, .text, .properties], selected: .effectControls),
+                .tabs(panels: [.library, .effects, .scopes], selected: .library),
+                .tabs(panels: [.effectControls, .text, .colorInspector], selected: .effectControls),
             ], fractions: [0.4, 0.6]),
             .split(axis: .horizontal, children: [
                 .tabs(panels: [.project], selected: .project),
@@ -115,22 +139,24 @@ public struct Workspace: Sendable, Codable, Hashable {
             ], fractions: [0.25, 0.75]),
         ], fractions: [0.5, 0.5]),
         .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor),
-    ], fractions: [0.68, 0.32]))
+    ], fractions: [0.68, 0.32]), hidden: Self.colorPanels)
 
     public static let builtIns: [Workspace] = [editingPC, editingMacBook]
 
-    /// The Color page of the Edit | Color switch: big Program monitor, inspector on the right, timeline below.
-    /// Not in `builtIns` (it is a page, not an Edit layout); the other panels are in the tree but hidden so the toggles work.
+    /// The Color page of the Edit | Color switch: big Program monitor, Scopes and the Color inspector on the right,
+    /// timeline below. Not in `builtIns` (it is a page, not an Edit layout); the other panels are in the tree but
+    /// hidden so the Window menu can show them.
     public static let color = Workspace(name: "Color", root: .split(axis: .vertical, children: [
         .split(axis: .horizontal, children: [
             .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor),
-            .tabs(panels: [.effectControls, .text, .properties], selected: .effectControls),
-        ], fractions: [0.64, 0.36]),
+            .tabs(panels: [.scopes], selected: .scopes),
+            .tabs(panels: [.colorInspector, .effectControls, .text], selected: .colorInspector),
+        ], fractions: [0.5, 0.22, 0.28]),
         .split(axis: .horizontal, children: [
             .tabs(panels: [.timeline], selected: .timeline),
             .tabs(panels: [.project, .library, .effects], selected: .project),
         ], fractions: [0.75, 0.25]),
-    ], fractions: [0.62, 0.38]), hidden: [.sourceMonitor, .project, .library, .effects])
+    ], fractions: [0.62, 0.38]), hidden: [.sourceMonitor, .project, .library, .effects, .effectControls, .text])
 
     // MARK: Queries
 
@@ -170,12 +196,28 @@ public struct Workspace: Sendable, Codable, Hashable {
 
     /// Restores the panel at its previous position and selects it in its tab group.
     public mutating func show(_ p: PanelID) {
+        if !allPanels.contains(p) { addToTree(p) }
         guard allPanels.contains(p) else { return }
         hidden.remove(p)
         root = Self.selecting(p, in: root)
     }
 
     public mutating func toggle(_ p: PanelID) { isVisible(p) ? hide(p) : show(p) }
+
+    /// Adds a panel that this workspace does not contain as a tab next to a related panel (first group as a fallback).
+    mutating func addToTree(_ p: PanelID) {
+        guard !allPanels.contains(p) else { return }
+        let anchors: [PanelID] = [.effectControls, .library, .programMonitor, .project, .timeline]
+        guard let anchor = anchors.first(where: { allPanels.contains($0) }) ?? allPanels.first else { return }
+        root = Self.appending(p, toGroupWith: anchor, in: root)
+    }
+
+    private static func appending(_ p: PanelID, toGroupWith anchor: PanelID, in node: LayoutNode) -> LayoutNode {
+        switch node {
+        case .tabs(let panels, let sel): panels.contains(anchor) ? .tabs(panels: panels + [p], selected: sel) : node
+        case .split(let a, let c, let f): .split(axis: a, children: c.map { appending(p, toGroupWith: anchor, in: $0) }, fractions: f)
+        }
+    }
 
     /// Selects a tab (and shows the panel if it was hidden).
     public mutating func selectTab(_ p: PanelID) { show(p) }

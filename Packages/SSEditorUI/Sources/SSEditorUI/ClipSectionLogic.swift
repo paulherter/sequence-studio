@@ -3,16 +3,22 @@ import SSCore
 import SSText
 import SSTranscribe
 
-/// Which inspector the Properties panel shows for the current selection (docs/UX.md: Properties).
-public enum PropertiesMode: Equatable, Sendable {
-    case none, text, audio, captions, clip
+/// Which extra section Effect Controls shows above Motion (Premiere: Text for text clips, Audio for audio clips).
+public enum ClipSectionMode: Equatable, Sendable {
+    case none, text, audio
 
-    /// Caption selection wins, then a single clip by kind. Several clips: no inspector.
-    public static func resolve(selectedClip: Clip?, captionSelectionCount: Int) -> PropertiesMode {
-        if captionSelectionCount > 0 { return .captions }
-        guard let c = selectedClip else { return .none }
+    public static func resolve(_ clip: Clip?) -> ClipSectionMode {
+        guard let c = clip else { return .none }
         if c.generator?.kind == GeneratorRef.text { return .text }
-        return c.kind == .audio ? .audio : .clip
+        return c.kind == .audio ? .audio : .none
+    }
+
+    public var title: String {
+        switch self {
+        case .none: ""
+        case .text: "Text"
+        case .audio: "Audio"
+        }
     }
 }
 
@@ -30,7 +36,7 @@ public enum CaptionMapping {
     }
 }
 
-/// Text layer templates offered in the Text panel: the built-in caption styles as ready-made titles.
+/// Text layer templates offered in the Library (Text Templates): the built-in caption styles as ready-made titles.
 public enum TextTemplateCatalog {
     public struct Entry: Identifiable, Hashable, Sendable {
         public var id: String
