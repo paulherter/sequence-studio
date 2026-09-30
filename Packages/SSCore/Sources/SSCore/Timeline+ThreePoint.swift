@@ -44,7 +44,7 @@ extension Timeline {
     /// `.overwrite` replaces what is covered. `source` must be non-empty, start at or after 0 and end
     /// within `mediaDuration` when given, otherwise `.emptyClip`. No targets: `.clipNotFound`.
     public mutating func threePointEdit(source: TimeRange, media: UUID, name: String = "",
-                                        mediaDuration: Time? = nil, targets: [Track.ID], at t: Time,
+                                        mediaDuration: Time? = nil, isStill: Bool = false, targets: [Track.ID], at t: Time,
                                         mode: ThreePointMode) throws {
         guard !source.isEmpty, source.start >= .zero else { throw EditError.emptyClip }
         if let md = mediaDuration, source.end > md { throw EditError.emptyClip }
@@ -59,7 +59,7 @@ extension Timeline {
         for id in targets {
             let tr = track(id)!
             placements.append((Clip(name: name, media: media, kind: tr.kind, source: source, start: .zero,
-                                    link: link, mediaDuration: mediaDuration), id))
+                                    link: link, mediaDuration: mediaDuration, isStill: isStill), id))
         }
         switch mode {
         case .insert: try insert(placements, at: t)

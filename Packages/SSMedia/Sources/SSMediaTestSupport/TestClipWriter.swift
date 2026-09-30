@@ -23,6 +23,10 @@ public struct TestClipSpec: Sendable {
     /// Writes the moov atom before the mdat (`shouldOptimizeForNetworkUse`), so a truncated copy keeps a readable head.
     public var moovAtStart = false
 
+    /// Clockwise degrees (0/90/180/270) written as the video track's preferred transform (phone clips). Pixels stay
+    /// `width` x `height`; players turn the picture.
+    public var rotation = 0
+
     public static let audioSampleRate = 48_000
 
     public init() {}
@@ -74,6 +78,7 @@ public enum TestClipWriter {
         }
         let vIn = AVAssetWriterInput(mediaType: .video, outputSettings: videoSettings)
         vIn.expectsMediaDataInRealTime = false
+        if spec.rotation != 0 { vIn.transform = CGAffineTransform(rotationAngle: CGFloat(spec.rotation) * .pi / 180) }
         let adaptor = AVAssetWriterInputPixelBufferAdaptor(assetWriterInput: vIn, sourcePixelBufferAttributes: [
             kCVPixelBufferPixelFormatTypeKey as String: format,
             kCVPixelBufferWidthKey as String: spec.width, kCVPixelBufferHeightKey as String: spec.height,

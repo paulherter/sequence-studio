@@ -271,7 +271,8 @@ public final class ProjectPanelModel {
             var f = String(format: "%.2f", fps)
             while f.hasSuffix("0") { f.removeLast() }
             if f.hasSuffix(".") { f.removeLast() }
-            return "\(v.width)×\(v.height) \(f)\(v.isVariableFrameRate ? " VFR" : "") \(codecName(v.codec)) \(v.chroma) \(v.bitDepth)-bit"
+            if m.info?.isStill == true { return "\(v.displayWidth)×\(v.displayHeight) Still image" }
+            return "\(v.displayWidth)×\(v.displayHeight) \(f)\(v.isVariableFrameRate ? " VFR" : "") \(codecName(v.codec)) \(v.chroma) \(v.bitDepth)-bit"
         }
         if let a = m.info?.audio {
             var khz = String(format: "%.1f", Double(a.sampleRate) / 1000)

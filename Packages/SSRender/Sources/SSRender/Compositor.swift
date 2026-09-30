@@ -107,6 +107,8 @@ public final class Compositor: @unchecked Sendable {
         var mode: UInt32 = 0
         var linearize: UInt32 = 1
         var cornerRadius: Float = 0
+        /// Clockwise quarter turns of a source picture (0...3): the layer quad is upright, the texture lookup turns.
+        var quarter: UInt32 = 0
     }
 
     public init(device: MTLDevice) throws {
@@ -293,6 +295,8 @@ public final class Compositor: @unchecked Sendable {
             var u = Uniforms()
             switch layer.content {
             case .placeholder(let kind):
+                // "Loading" draws nothing: a frame that is not decoded yet must never cover the layers below.
+                if kind == .loading { return }
                 u.mode = 2; u.solid = Self.placeholderLinear(kind)
                 geometry(&u, transform: layer.transform, canvas: format,
                          size: SIMD2(Float(format.width), Float(format.height)), cornerRadius: layer.cornerRadius)
@@ -321,6 +325,8 @@ public final class Compositor: @unchecked Sendable {
                     return
                 }
                 let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
+                let quarter = UInt32((hint.rotation / 90) & 3)
+                let (dw, dh) = quarter & 1 == 1 ? (h, w) : (w, h)     // upright size after the turn
                 guard let t0 = planeTexture(pb, plane: 0, format: info.yFormat, retainer: retainer),
                       info.layout == .bgra8 || planeTexture(pb, plane: 1, format: info.cbcrFormat, retainer: retainer) != nil
                 else {
@@ -335,7 +341,8 @@ public final class Compositor: @unchecked Sendable {
                 u.mode = info.layout == .bgra8 ? 1 : 0
                 u.m = PixelFormats.ycbcrToRGB(PixelFormats.matrix(tag: hint.matrix))
                 u.range = PixelFormats.rangeParams(info)
-                geometry(&u, transform: layer.transform, canvas: format, size: Self.fitSize(w, h, canvas: format.width, format.height),
+                u.quarter = quarter
+                geometry(&u, transform: layer.transform, canvas: format, size: Self.fitSize(dw, dh, canvas: format.width, format.height),
                          cornerRadius: layer.cornerRadius)
                 var p = Prepared(u: u, tex0: t0, tex1: t1)
                 if let pipeline = layer.colorPipeline {

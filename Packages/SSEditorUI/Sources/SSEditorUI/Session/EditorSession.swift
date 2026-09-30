@@ -421,18 +421,23 @@ public final class EditorSession {
         let marks = project.sourceMarks
         let done = attempt(mode == .insert ? "Insert" : "Overwrite") { tl in
             if isEmpty, let v = refs[0].info?.video {
-                tl.format = SequenceFormat(width: v.width, height: v.height, frameDuration: v.nominalFrameDuration,
+                // Upright (display) size: a portrait phone clip makes a portrait sequence. A still keeps the frame rate.
+                let still = refs[0].info?.isStill == true
+                tl.format = SequenceFormat(width: v.displayWidth, height: v.displayHeight,
+                                           frameDuration: still ? tl.format.frameDuration : v.nominalFrameDuration,
                                            audioSampleRate: tl.format.audioSampleRate)
             }
             var at = requested.snapped(to: tl.frameDuration)   // after a format change: the new frame grid
             for ref in refs {
                 let total = ref.info?.duration ?? ref.duration ?? .zero
-                let source = marks[ref.id]?.range ?? TimeRange(start: .zero, duration: total)
+                let still = ref.info?.isStill == true
+                let source = still ? TimeRange(start: .zero, duration: total)      // stills: default length, no source marks
+                                   : marks[ref.id]?.range ?? TimeRange(start: .zero, duration: total)
                 var targets: [Track.ID] = []
                 if ref.info?.video != nil || ref.info == nil, let v = vTrack { targets.append(v) }
                 if ref.info?.audio != nil, let a = aTrack { targets.append(a) }
-                try tl.threePointEdit(source: source, media: ref.id, name: ref.name, mediaDuration: total,
-                                      targets: targets, at: at, mode: mode)
+                try tl.threePointEdit(source: source, media: ref.id, name: ref.name, mediaDuration: still ? nil : total,
+                                      isStill: still, targets: targets, at: at, mode: mode)
                 at += source.duration
             }
         }

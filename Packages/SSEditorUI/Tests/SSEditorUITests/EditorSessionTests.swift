@@ -401,6 +401,39 @@ private final class SessionTestClock: @unchecked Sendable {
         #expect(f.width == 3840 && f.height == 2160 && f.frameDuration == Time(1001, 30000))
     }
 
+    @Test func portraitPhoneClipMakesPortraitSequence() throws {
+        var p = EditorSession.makeUntitled()
+        let v = VideoTrackInfo(width: 1920, height: 1080, codec: "hvc1", bitDepth: 10, chroma: "4:2:0",
+                               nominalFrameDuration: Time(1, 30), isVariableFrameRate: false, rotation: 90)
+        let m = MediaRef(name: "phone", path: "/nonexistent/phone.mov", fingerprint: MediaFingerprint(size: 1),
+                         duration: s(4), info: MediaInfo(duration: s(4), video: v))
+        p.add(m)
+        let session = EditorSession(project: p, engine: StubProgramEngine(), autosaveStore: AutosaveStore(base: tempDir()))
+        #expect(session.placeMedia([m.id], mode: .overwrite))
+        let f = try #require(session.activeTimeline?.format)
+        #expect(f.width == 1080 && f.height == 1920 && f.frameDuration == Time(1, 30))
+        #expect(ProjectPanelModel.formatString(m).hasPrefix("1080×1920"))
+    }
+
+    @Test func stillImagePlacesWithDefaultLengthAndTrimsFreely() throws {
+        var p = EditorSession.makeUntitled()
+        let info = MediaInfo(duration: MediaInfo.defaultStillDuration,
+                             video: VideoTrackInfo(width: 4000, height: 3000, codec: "image", bitDepth: 8, chroma: "4:4:4",
+                                                   nominalFrameDuration: Time(1, 30), isVariableFrameRate: false), isStill: true)
+        let m = MediaRef(name: "photo.jpg", path: "/nonexistent/photo.jpg", fingerprint: MediaFingerprint(size: 1),
+                         duration: info.duration, info: info)
+        p.add(m)
+        p.timelines[0].format = SequenceFormat(width: 1920, height: 1080, frameDuration: Time(1001, 30000))
+        let session = EditorSession(project: p, engine: StubProgramEngine(), autosaveStore: AutosaveStore(base: tempDir()))
+        #expect(session.placeMedia([m.id], mode: .overwrite))
+        let t = try #require(session.activeTimeline)
+        let c = try #require(t.tracks.first { $0.kind == .video }?.clips.first)
+        #expect(c.isStill && c.timeline.duration == s(5) && c.mediaDuration == nil)
+        #expect(t.tracks.first { $0.kind == .audio }?.clips.isEmpty == true)
+        #expect(t.format.width == 4000 && t.format.frameDuration == Time(1001, 30000))   // size from the still, rate kept
+        #expect(ProjectPanelModel.formatString(m) == "4000×3000 Still image")
+    }
+
     @Test func secondClipKeepsTheSequenceFormat() throws {
         let r = try Rig()
         let m = mediaRef("A", w: 3840, h: 2160)

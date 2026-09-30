@@ -1,5 +1,5 @@
 /// MSL for the compositor, compiled at runtime (SwiftPM CLI does not bundle .metal; same pattern as ColorShaderSource).
-/// `CompositeUniforms` mirrors `Compositor.Uniforms` (144 bytes).
+/// `CompositeUniforms` mirrors `Compositor.Uniforms` (160 bytes).
 enum CompositorShaderSource {
     static let msl = """
     #include <metal_stdlib>
@@ -18,6 +18,7 @@ enum CompositorShaderSource {
         uint mode;           // 0 = YCbCr bi-planar, 1 = RGB texture, 2 = solid, 3 = premultiplied RGBA group image (linear)
         uint linearize;      // 1 = apply inverse BT.709 OETF (no colour stage)
         float cornerRadius;  // layer-local px (aspect-fitted layer, before transform scale)
+        uint quarter;        // clockwise quarter turns of the source picture (modes 0 and 1)
     };
 
     constexpr sampler linearSampler(filter::linear, address::clamp_to_edge);
@@ -75,15 +76,32 @@ enum CompositorShaderSource {
             cover = clamp(0.5f - d / w, 0.0f, 1.0f);
         }
         float2 uv = in.local / u.size + 0.5f;
+        if (u.mode != 3 && u.quarter != 0) {
+            // uv is in the upright picture; turn it back into the source texture (clockwise display turn).
+            if (u.quarter == 1) uv = float2(uv.y, 1.0f - uv.x);
+            else if (u.quarter == 2) uv = float2(1.0f - uv.x, 1.0f - uv.y);
+            else uv = float2(1.0f - uv.y, uv.x);
+        }
         if (u.mode == 3) {
             float4 g = ty.sample(linearSampler, uv);   // premultiplied, already working-linear
             float k = u.opacity * cover;
             return g * k;
         }
-        float3 rgb = u.mode == 2 ? u.solid.rgb : sourceEncoded(u, ty, tc, uv);
+        float texA = 1.0f;
+        float3 rgb;
+        if (u.mode == 2) {
+            rgb = u.solid.rgb;
+        } else if (u.mode == 1 && u.linearize != 0) {
+            // RGB texture (video BGRA or a still image): premultiplied alpha, un-premultiply before the transfer curve.
+            float4 c = ty.sample(linearSampler, uv);
+            texA = c.a;
+            rgb = texA > 0.0f ? c.rgb / texA : float3(0.0f);
+        } else {
+            rgb = sourceEncoded(u, ty, tc, uv);
+        }
         if (u.mode != 2 && u.linearize != 0) rgb = inverseOETF709(rgb);
         rgb = max(rgb, 0.0f);
-        float a = u.opacity * cover;
+        float a = u.opacity * cover * texA;
         return float4(rgb * a, a);   // premultiplied
     }
     """

@@ -148,6 +148,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             }
             session.placeMedia([m.id], at: .zero, mode: .overwrite)
             session.select(clips: [])
+            if let v = m.info?.video, let f = session.activeTimeline?.format {
+                NSLog("SS_IMPORT: \(m.name) native \(v.width)x\(v.height) rotation \(v.rotation) still \(m.info?.isStill == true) "
+                      + "-> display \(v.displayWidth)x\(v.displayHeight), sequence \(f.width)x\(f.height)")
+            }
         }
     }
 

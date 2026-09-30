@@ -10,25 +10,34 @@ import SSRender
 /// Opened media shared by the render thread and the decode threads: demuxer (for the `SampleIndex`), track info
 /// (colour hint, known once a decoder exists) and the damaged flag set by decode errors.
 final class MediaTable: Sendable {
-    private enum Entry: Sendable { case ready(any Demuxing), offline }
+    private enum Entry: Sendable { case ready(any Demuxing), still(StillFrame), offline }
     private struct State { var entries: [UUID: Entry] = [:]; var info: [UUID: VideoTrackInfo] = [:]; var damaged: [UUID: [ClosedRange<Int>]] = [:] }
     private let state = Mutex(State())
     let resolver: any MediaResolver
 
     init(resolver: any MediaResolver) { self.resolver = resolver }
 
-    /// Resolved once per media and remembered (offline too, until `forgetOffline`).
-    func demuxer(_ media: UUID) -> (any Demuxing)? {
-        if let e = state.withLock({ $0.entries[media] }) {
-            if case .ready(let d) = e { return d }
-            return nil
-        }
-        let e: Entry = (try? resolver.demuxer(for: media)).map(Entry.ready) ?? .offline
-        let stored = state.withLock { s in
+    /// Resolved once per media and remembered (offline too, until `forgetOffline`). A still image is asked first.
+    private func entry(_ media: UUID) -> Entry {
+        if let e = state.withLock({ $0.entries[media] }) { return e }
+        let e: Entry
+        if let still = try? resolver.stillFrame(for: media) { e = .still(still) }
+        else if let d = try? resolver.demuxer(for: media) { e = .ready(d) }
+        else { e = .offline }
+        return state.withLock { s in
             if let old = s.entries[media] { return old }
             s.entries[media] = e; return e
         }
-        if case .ready(let d) = stored { return d }
+    }
+
+    func demuxer(_ media: UUID) -> (any Demuxing)? {
+        if case .ready(let d) = entry(media) { return d }
+        return nil
+    }
+
+    /// The decoded picture when `media` is a still image.
+    func still(_ media: UUID) -> StillFrame? {
+        if case .still(let f) = entry(media) { return f }
         return nil
     }
 
@@ -38,15 +47,19 @@ final class MediaTable: Sendable {
         return nil
     }
 
+    /// True once resolved and unusable; a still counts as resolved (nothing to decode ahead).
     func isKnownOffline(_ media: UUID) -> Bool {
-        if case .offline? = state.withLock({ $0.entries[media] }) { return true }
-        return false
+        switch state.withLock({ $0.entries[media] }) {
+        case .offline?, .still?: return true
+        default: return false
+        }
     }
 
     func clearDamaged() { state.withLock { $0.damaged.removeAll() } }
 
+    /// Forgets offline and still entries (stills re-ask the caching resolver, so a relink shows the new picture).
     func forgetOffline() {
-        state.withLock { s in s.entries = s.entries.filter { if case .offline = $0.value { false } else { true } } }
+        state.withLock { s in s.entries = s.entries.filter { if case .ready = $0.value { true } else { false } } }
     }
 
     func setInfo(_ info: VideoTrackInfo, for media: UUID) { state.withLock { $0.info[media] = info } }
@@ -392,6 +405,11 @@ final class RenderLoop: @unchecked Sendable {
     private func layer(for r: LayerRequest, scale: DecodeScale, build b: inout LayerBuild) -> RenderLayer {
         func placeholder(_ k: PlaceholderKind) -> RenderLayer {
             RenderLayer(content: .placeholder(k), transform: r.transform, cornerRadius: r.cornerRadius)
+        }
+        if let still = media.still(r.media) {
+            return RenderLayer(content: .frame(still.buffer, colorHint: still.info), transform: r.transform,
+                               colorPipeline: media.resolver.colorResolver?.pipeline(for: r.color, media: r.media),
+                               cornerRadius: r.cornerRadius)
         }
         guard let d = media.demuxer(r.media) else { return placeholder(.offline) }
         let index = d.index

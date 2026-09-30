@@ -5,8 +5,21 @@ import SSCore
 public protocol Demuxing: Sendable {
     var index: SampleIndex { get }
     var formatDescription: CMFormatDescription { get }
+    /// Clockwise quarter turns (0, 90, 180, 270 degrees) the decoded picture needs to be upright (track preferred transform).
+    var rotation: Int { get }
     /// Compressed samples needed to decode presentation frames `range`, in decode order (from the GOP's sync sample).
     func samples(for range: ClosedRange<Int>) async throws -> [CMSampleBuffer]
+}
+
+public extension Demuxing {
+    var rotation: Int { 0 }
+}
+
+/// Clockwise rotation in degrees (0/90/180/270) of a track's preferred transform; other angles snap to the nearest quarter turn.
+public func quarterTurnRotation(of t: CGAffineTransform) -> Int {
+    let deg = atan2(Double(t.b), Double(t.a)) * 180 / .pi
+    let q = Int((deg / 90).rounded())
+    return ((q % 4) + 4) % 4 * 90
 }
 
 extension Time {
@@ -22,6 +35,7 @@ extension Time {
 public final class AVDemuxer: Demuxing, @unchecked Sendable {
     public let index: SampleIndex
     public let formatDescription: CMFormatDescription
+    public let rotation: Int
     private let asset: AVURLAsset
     private let track: AVAssetTrack
     /// Raw pts of the first presented frame (subtracted to build `index`).
@@ -54,6 +68,7 @@ public final class AVDemuxer: Demuxing, @unchecked Sendable {
         }
         self.index = SampleIndex(entries: entries)
         self.formatDescription = fd
+        self.rotation = quarterTurnRotation(of: (try? await track.load(.preferredTransform)) ?? .identity)
         self.asset = asset; self.track = track; self.origin = origin
         self.rawPTSByOrdinal = raw.map(\.pts)
     }

@@ -185,6 +185,7 @@ final class EditorPanels {
         viewer.autoresizingMask = [.width, .height]
         monitorView.viewerSlot.addSubview(viewer)
         session.engine.attach(viewer.metalLayer)
+        viewer.onResize = { [weak self] in self?.session.engine.redraw() }   // aspect-fit at every panel size
 
         monitorModel.onSeek = { [weak self] t in self?.session.seek(to: t) }
         monitorModel.onQualityChange = { [weak self] q in self?.session.engine.quality = q.decodeScale }

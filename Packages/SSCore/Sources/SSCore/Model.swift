@@ -66,6 +66,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var color: ClipColor = .default
     /// Label colour of this clip; nil = inherit from its media / sequence (then the type default).
     public var label: LabelColor?
+    /// Clip of a still image: free trims in both directions like a generator (the picture has no time axis).
+    public var isStill: Bool = false
 
     /// Media, nested sequence or generator.
     public var clipSource: ClipSource {
@@ -75,14 +77,16 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var isNested: Bool { sequence != nil }
     public var isGenerator: Bool { generator != nil }
     /// How far the head can still grow (source handle before `source.start`); nil = unbounded (generator).
-    var headHandle: Time? { isGenerator ? nil : source.start }
+    var headHandle: Time? { isGenerator || isStill ? nil : source.start }
 
     public var timeline: TimeRange { TimeRange(start: start, duration: source.duration) }
 
     public init(id: UUID = UUID(), name: String, media: UUID, kind: TrackKind,
                 source: TimeRange, start: Time, link: UUID? = nil, mediaDuration: Time? = nil,
                 animation: ClipAnimation = ClipAnimation(), sequence: Timeline.ID? = nil,
-                generator: GeneratorRef? = nil, color: ClipColor = .default, label: LabelColor? = nil) {
+                generator: GeneratorRef? = nil, color: ClipColor = .default, label: LabelColor? = nil,
+                isStill: Bool = false) {
+        self.isStill = isStill
         self.label = label
         self.color = color
         self.animation = animation
@@ -93,7 +97,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label
+        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, isStill
     }
 
     public init(from d: Decoder) throws {
@@ -107,7 +111,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   sequence: try c.decodeIfPresent(Timeline.ID.self, forKey: .sequence),
                   generator: try c.decodeIfPresent(GeneratorRef.self, forKey: .generator),
                   color: try c.decodeIfPresent(ClipColor.self, forKey: .color) ?? .default,
-                  label: try c.decodeIfPresent(LabelColor.self, forKey: .label))
+                  label: try c.decodeIfPresent(LabelColor.self, forKey: .label),
+                  isStill: try c.decodeIfPresent(Bool.self, forKey: .isStill) ?? false)
     }
 
     /// Moves a split-off right half onto a fresh link shared through `map` (old link to new link).
