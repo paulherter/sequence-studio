@@ -88,8 +88,8 @@ private func clip(_ n: Int, _ startFrame: Int64, _ frames: Int64, kind: TrackKin
         #expect(v.geometry.scrollX == 0 && v.geometry.scrollY == 0)
         v.scroll(byX: 1e9, y: 1e9)
         #expect(v.geometry.scrollX < 1e7)
-        // Content height 22+32+20+26+20 = 120, viewport 100 -> max 20.
-        #expect(v.geometry.scrollY == 20)
+        // Content height 22+32+32+26+26 = 138, viewport 100 -> max 38.
+        #expect(v.geometry.scrollY == 38)
     }
 
     @Test func playheadAndSelectionInput() {

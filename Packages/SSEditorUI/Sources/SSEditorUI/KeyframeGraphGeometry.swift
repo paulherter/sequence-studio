@@ -32,10 +32,17 @@ public struct GraphFit: Sendable, Equatable {
     public init(time: ClosedRange<Double>, value: ClosedRange<Double>) { self.time = time; self.value = value }
 
     /// Covers keys, sampled curve (so overshoot is visible) and all handle points, plus headroom.
-    public static func make(track: KeyframeTrack<Double>, mode: GraphMode, headroom: Double = 0.12) -> GraphFit {
+    /// `timeRange` (clip-local seconds, normally the clip's 0...duration) is always included, so the graph lines up
+    /// with the keyframe lanes and has no empty band; keys outside it widen the range.
+    public static func make(track: KeyframeTrack<Double>, mode: GraphMode, headroom: Double = 0.12,
+                            timeRange: ClosedRange<Double>? = nil) -> GraphFit {
         let keys = track.keys
         var t0 = keys.first.map { GraphMath.seconds($0.time) } ?? 0
         var t1 = keys.last.map { GraphMath.seconds($0.time) } ?? 1
+        if let r = timeRange {
+            t0 = keys.isEmpty ? r.lowerBound : min(t0, r.lowerBound)
+            t1 = keys.isEmpty ? r.upperBound : max(t1, r.upperBound)
+        }
         if t1 - t0 < 1e-6 { t0 -= 0.5; t1 += 0.5 }
 
         var ys: [Double] = []

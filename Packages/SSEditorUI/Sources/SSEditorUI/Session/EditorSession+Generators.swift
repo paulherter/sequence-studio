@@ -45,7 +45,7 @@ extension EditorSession {
         attempt("Create Captions") { _ = try $0.replaceCaptions(items) }
     }
 
-    /// Switches Rounded Corners on for the selected picture clips (radius only where it is still 0).
+    /// Applies Rounded Corners to the selected picture clips that do not have it yet.
     @discardableResult
     public func addRoundedCorners(radius: Double = 24) -> Bool {
         addRoundedCorners(to: selection, radius: radius)
@@ -59,8 +59,8 @@ extension EditorSession {
             var changed = false
             for id in ids {
                 guard var c = t.tracks.lazy.flatMap(\.clips).first(where: { $0.id == id }), c.kind != .audio,
-                      c.animation.cornerRadius.value == 0, !c.animation.cornerRadius.isAnimated else { continue }
-                c.animation.cornerRadius = AnimatedProperty(radius)
+                      c.roundedCorners == nil else { continue }
+                c.roundedCorners = .roundedCorners(radius: radius)
                 try t.replaceClip(c)
                 changed = true
             }

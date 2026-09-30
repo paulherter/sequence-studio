@@ -54,7 +54,7 @@ enum DemoProject {
                                mediaDuration: Time(60, 1)))
 
         var t = Timeline(name: "Main Sequence", format: SequenceFormat(width: 3840, height: 2160, frameDuration: fd),
-                         tracks: [v1, v2, a1, a2])
+                         tracks: [v1, v2, Track(kind: .video), Track(kind: .video), a1, a2, Track(kind: .audio), Track(kind: .audio)])
         t.addMarker(at: frames(150), name: "Cut to B-roll")
         t.addMarker(at: frames(480), name: "Music swell")
         t.inOut = TimeRange(start: frames(90), end: frames(540))

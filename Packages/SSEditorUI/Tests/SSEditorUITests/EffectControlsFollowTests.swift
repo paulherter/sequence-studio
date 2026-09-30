@@ -41,14 +41,14 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         let (session, model, v, _, _) = try rig()
         session.select(clips: [v.id])
         var edited = v
-        edited.animation.cornerRadius.value = 12
+        edited.roundedCorners = .roundedCorners(radius: 12)
         model.onEdit = { c, name, co in session.replaceClip(c, name: name, continuesGesture: co) }
         model.onEdit?(edited, "Radius", false)
-        #expect(model.clip?.animation.cornerRadius.value == 12)
+        #expect(model.clip?.roundedCorners?.parameters[ClipEffect.radiusKey]?.value == 12)
         session.undo()
-        #expect(model.clip?.animation.cornerRadius.value == 0)
+        #expect(model.clip?.roundedCorners == nil)
         session.redo()
-        #expect(model.clip?.animation.cornerRadius.value == 12)
+        #expect(model.clip?.roundedCorners?.parameters[ClipEffect.radiusKey]?.value == 12)
         session.seek(to: s(1))
         #expect(model.playhead == s(1))
     }

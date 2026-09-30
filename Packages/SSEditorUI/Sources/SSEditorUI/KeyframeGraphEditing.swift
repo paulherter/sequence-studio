@@ -129,6 +129,11 @@ public struct GraphGestureState: Sendable, Equatable {
     public let geometry: KeyframeGraphGeometry
     public let limits: GraphEditLimits
     public private(set) var moved = false
+    /// Axis a key drag is locked to, decided when the drag starts (the dominant direction of the first movement).
+    /// Value graph only; the speed graph edits time only. Shift while dragging frees both axes.
+    public enum Axis: Sendable, Equatable { case horizontal, vertical }
+    public private(set) var axis: Axis?
+    private var free = false
     /// Plain press on an already-selected key: a click without drag collapses the selection to it.
     private var collapseTo: UUID?
     private var selection: Set<UUID>
@@ -169,17 +174,23 @@ public struct GraphGestureState: Sendable, Equatable {
 
     public var current: Result { Result(selection: selection, track: base, marquee: nil, commit: false) }
 
-    public mutating func drag(to p: CGPoint) -> Result {
+    public mutating func drag(to p: CGPoint, free: Bool = false) -> Result {
+        self.free = free
         if !moved {
             guard hypot(p.x - origin.x, p.y - origin.y) >= Self.dragThreshold else { return current }
             moved = true
         }
         switch kind {
         case .key(let id):
-            let dxSecs = Double(p.x - origin.x) / geometry.pointsPerSecond
-            var t = KeyframeGraphEditing.moveKeys(base: base, selected: selection, anchor: id,
-                                                  deltaSeconds: dxSecs, limits: limits)
-            if geometry.mode == .value {
+            let dx = p.x - origin.x, dy = p.y - origin.y
+            if axis == nil { axis = abs(dx) >= abs(dy) ? .horizontal : .vertical }
+            let lock = geometry.mode == .value && !free ? axis : nil
+            var t = base
+            if lock != .vertical {
+                t = KeyframeGraphEditing.moveKeys(base: base, selected: selection, anchor: id,
+                                                  deltaSeconds: Double(dx) / geometry.pointsPerSecond, limits: limits)
+            }
+            if geometry.mode == .value, lock != .horizontal {
                 let dv = geometry.value(atY: p.y) - geometry.value(atY: origin.y)
                 t = KeyframeGraphEditing.offsetValues(base: t, selected: selection, delta: dv)
             }
@@ -203,7 +214,7 @@ public struct GraphGestureState: Sendable, Equatable {
 
     /// Finishes the gesture. `commit` is true only if the track differs from the base.
     public mutating func end(at p: CGPoint) -> Result {
-        var r = drag(to: p)
+        var r = drag(to: p, free: free)
         if !moved, let id = collapseTo { selection = [id] }
         r.selection = selection
         r.marquee = nil

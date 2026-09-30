@@ -16,6 +16,11 @@ public enum EffectSection: String, CaseIterable, Sendable, Hashable {
         }
     }
 
+    /// Kind of the applied effect behind this section; nil for the built-in clip properties (always present).
+    public var effectKind: String? {
+        self == .roundedCorners ? ClipEffect.roundedCornersKind : nil
+    }
+
     /// Animatable properties.
     public var properties: [EffectProperty] {
         switch self {
@@ -147,7 +152,9 @@ public final class EffectControlsModel {
     public private(set) var selection: Set<SummaryMember> = []
     public var expanded: Set<EffectProperty> = []
     public var collapsedSections: Set<EffectSection> = []
-    public var graphMode: GraphMode = .value
+    /// Section header last clicked: Delete removes its effect (when removable) if no keys are selected.
+    public var selectedSection: EffectSection?
+    public var graphMode: GraphMode = .speed
     public var easingLibrary = EasingLibrary()
 
     @ObservationIgnored public var onEdit: ((Clip, String, Bool) -> Void)?
@@ -165,8 +172,9 @@ public final class EffectControlsModel {
     /// Sets the clip shown. Never calls `onEdit`. A different clip resets selection; the same clip prunes
     /// selected keys that no longer exist.
     public func setClip(_ c: Clip?) {
-        if c?.id != clip?.id { selection = []; gestureBase = nil; gestureEmitted = false }
+        if c?.id != clip?.id { selection = []; selectedSection = nil; gestureBase = nil; gestureEmitted = false }
         clip = c
+        if let sec = selectedSection, !visibleSections.contains(sec) || sec.effectKind == nil { selectedSection = nil }
         pruneSelection()
     }
 
@@ -183,7 +191,10 @@ public final class EffectControlsModel {
 
     public var visibleSections: [EffectSection] {
         guard let clip else { return [] }
-        return clip.kind == .audio ? [.volume] : [.motion, .opacity, .roundedCorners]
+        if clip.kind == .audio { return [.volume] }
+        var out: [EffectSection] = [.motion, .opacity]
+        if clip.roundedCorners != nil { out.append(.roundedCorners) }
+        return out
     }
 
     public var duration: Time { clip?.source.duration ?? .zero }
@@ -202,11 +213,12 @@ public final class EffectControlsModel {
     public func scalarValue(_ p: EffectProperty) -> Double {
         guard let a = clip?.animation else { return 0 }
         let l = localPlayhead
+        if p == .cornerRadius { return Self.radius(of: clip)?.value(atLocal: l) ?? 0 }
         switch p {
         case .rotation: return a.rotation.value(atLocal: l)
         case .opacity: return a.opacity.value(atLocal: l)
         case .volume: return a.volume.value(atLocal: l)
-        case .cornerRadius: return a.cornerRadius.value(atLocal: l)
+        case .cornerRadius: return 0
         case .scale: return a.scale.value(atLocal: l).x
         case .position: return a.position.value(atLocal: l).x
         case .anchor: return a.anchor.value(atLocal: l).x
@@ -226,6 +238,11 @@ public final class EffectControlsModel {
 
     public func track(_ p: EffectProperty) -> PropertyTrack? { track(p, in: clip) }
 
+    /// Radius parameter of the applied Rounded Corners effect; nil when the effect is not applied.
+    static func radius(of c: Clip?) -> AnimatedProperty<Double>? {
+        c?.roundedCorners?.parameters[ClipEffect.radiusKey]
+    }
+
     private func track(_ p: EffectProperty, in c: Clip?) -> PropertyTrack? {
         guard let a = c?.animation else { return nil }
         switch p {
@@ -235,7 +252,7 @@ public final class EffectControlsModel {
         case .rotation: return .scalar(a.rotation.track)
         case .opacity: return .scalar(a.opacity.track)
         case .volume: return .scalar(a.volume.track)
-        case .cornerRadius: return .scalar(a.cornerRadius.track)
+        case .cornerRadius: return Self.radius(of: c).map { .scalar($0.track) }
         }
     }
 
@@ -385,10 +402,11 @@ public final class EffectControlsModel {
     // MARK: Selection
 
     private func pruneSelection() {
-        guard let a = clip?.animation else { selection = []; return }
+        guard let c = clip else { selection = []; return }
+        let tracks = Self.tracks(of: c)
         var alive = Set<SummaryMember>()
         for p in EffectProperty.allCases {
-            let ids = Set(Self.tracks(of: a)[p.id]?.keyIDs ?? [])
+            let ids = Set(tracks[p.id]?.keyIDs ?? [])
             alive.formUnion(selection.filter { $0.property == p.id && ids.contains($0.keyID) })
         }
         if alive != selection { selection = alive }
@@ -413,8 +431,8 @@ public final class EffectControlsModel {
     }
 
     public func summaryKeys(_ section: EffectSection) -> [SummaryKey] {
-        guard let a = clip?.animation else { return [] }
-        return KeyframeSummary(tracks: Self.tracks(of: a))
+        guard let c = clip else { return [] }
+        return KeyframeSummary(tracks: Self.tracks(of: c))
             .groups(of: Set(section.properties.map(\.id)))
     }
 
@@ -445,13 +463,14 @@ public final class EffectControlsModel {
 
     // MARK: Key edits on the selection
 
-    private static func tracks(of a: ClipAnimation) -> [PropertyID: PropertyTrack] {
+    static func tracks(of c: Clip) -> [PropertyID: PropertyTrack] {
+        let a = c.animation
         var out: [PropertyID: PropertyTrack] = [:]
         func put(_ p: EffectProperty, _ t: PropertyTrack) { if !t.keyIDs.isEmpty { out[p.id] = t } }
         put(.position, .vector(a.position.track)); put(.scale, .vector(a.scale.track))
         put(.anchor, .vector(a.anchor.track)); put(.rotation, .scalar(a.rotation.track))
         put(.opacity, .scalar(a.opacity.track)); put(.volume, .scalar(a.volume.track))
-        put(.cornerRadius, .scalar(a.cornerRadius.track))
+        if let r = radius(of: c) { put(.cornerRadius, .scalar(r.track)) }
         return out
     }
 
@@ -465,7 +484,7 @@ public final class EffectControlsModel {
             case .rotation: if case .scalar(let s)? = t { c.animation.rotation.track = s }
             case .opacity: if case .scalar(let s)? = t { c.animation.opacity.track = s }
             case .volume: if case .scalar(let s)? = t { c.animation.volume.track = s }
-            case .cornerRadius: if case .scalar(let s)? = t { c.animation.cornerRadius.track = s }
+            case .cornerRadius: if case .scalar(let s)? = t { Self.withRadius(&c) { $0.track = s } }
             }
         }
     }
@@ -475,7 +494,7 @@ public final class EffectControlsModel {
     @discardableResult
     public func moveSelection(by delta: Time) -> Time {
         guard let c = workingClip else { return .zero }
-        var s = KeyframeSummary(tracks: Self.tracks(of: c.animation))
+        var s = KeyframeSummary(tracks: Self.tracks(of: c))
         let members = selection.filter { s.tracks[$0.property]?.keyIDs.contains($0.keyID) ?? false }
         guard !members.isEmpty else { return .zero }
         let times = members.flatMap { m in (s.tracks[m.property]?.times ?? []).filter { $0.id == m.keyID }.map(\.time) }
@@ -490,7 +509,7 @@ public final class EffectControlsModel {
 
     public func applyEasing(_ curve: EasingCurve, side: EaseSide = .both) {
         guard let c = workingClip, !selection.isEmpty else { return }
-        var s = KeyframeSummary(tracks: Self.tracks(of: c.animation))
+        var s = KeyframeSummary(tracks: Self.tracks(of: c))
         s.apply(curve, to: selection, side: side)
         var out = c
         write(s.tracks, into: &out)
@@ -499,7 +518,7 @@ public final class EffectControlsModel {
 
     public func toggleHold() {
         guard let c = workingClip, !selection.isEmpty else { return }
-        var s = KeyframeSummary(tracks: Self.tracks(of: c.animation))
+        var s = KeyframeSummary(tracks: Self.tracks(of: c))
         s.toggleHold(selection)
         var out = c
         write(s.tracks, into: &out)
@@ -524,6 +543,113 @@ public final class EffectControlsModel {
         let shown = prop.value(atLocal: local)
         for id in ids { prop.track.remove(id) }
         if prop.track.isEmpty { prop.value = shown }
+    }
+
+    // MARK: Reset, enable, remove (Premiere: circular arrow, fx toggle, Delete)
+
+    /// Value a property returns to on reset (no keyframes).
+    public func defaultValue(_ p: EffectProperty) -> AnimatedProperty<Double>? {
+        switch p {
+        case .rotation: ClipAnimation().rotation
+        case .opacity: ClipAnimation().opacity
+        case .volume: ClipAnimation().volume
+        case .cornerRadius: ClipEffect.defaultParameters(for: ClipEffect.roundedCornersKind)[ClipEffect.radiusKey]
+        default: nil
+        }
+    }
+
+    /// True when the property has no keys and sits at its default (the reset button is dimmed then).
+    public func isDefault(_ p: EffectProperty) -> Bool {
+        guard let c = clip else { return true }
+        let d = ClipAnimation()
+        switch p {
+        case .position: return c.animation.position == d.position
+        case .scale: return c.animation.scale == d.scale
+        case .anchor: return c.animation.anchor == d.anchor
+        default:
+            guard let cur = Self.scalar(p, in: c), let def = defaultValue(p) else { return true }
+            return cur.value == def.value && !cur.isAnimated
+        }
+    }
+
+    private static func scalar(_ p: EffectProperty, in c: Clip) -> AnimatedProperty<Double>? {
+        switch p {
+        case .rotation: c.animation.rotation
+        case .opacity: c.animation.opacity
+        case .volume: c.animation.volume
+        case .cornerRadius: radius(of: c)
+        default: nil
+        }
+    }
+
+    private func resetInPlace(_ c: inout Clip, _ p: EffectProperty) {
+        let d = ClipAnimation()
+        switch p {
+        case .position: c.animation.position = d.position
+        case .scale: c.animation.scale = d.scale
+        case .anchor: c.animation.anchor = d.anchor
+        default:
+            guard let def = defaultValue(p) else { return }
+            withScalar(&c, p) { $0 = def }
+        }
+    }
+
+    /// Reset one property to its default and drop its keys: one undo step.
+    public func reset(_ p: EffectProperty) {
+        guard var c = clip else { return }
+        resetInPlace(&c, p)
+        selection = selection.filter { $0.property != p.id }
+        commit(c, "Reset \(p.title)")
+    }
+
+    /// Reset every property of a section (and re-enable its effect): one undo step.
+    public func resetSection(_ s: EffectSection) {
+        guard var c = clip else { return }
+        for p in s.properties { resetInPlace(&c, p) }
+        if let k = s.effectKind, var e = c.effect(ofKind: k), !e.enabled {
+            e.enabled = true
+            c.roundedCorners = e
+        }
+        let ids = Set(s.properties.map(\.id))
+        selection = selection.filter { !ids.contains($0.property) }
+        commit(c, "Reset \(s.title)")
+    }
+
+    public func isEffectEnabled(_ s: EffectSection) -> Bool {
+        guard let k = s.effectKind else { return true }
+        return clip?.effect(ofKind: k)?.enabled ?? false
+    }
+
+    /// fx toggle of an applied effect.
+    public func setEffectEnabled(_ s: EffectSection, _ on: Bool) {
+        guard let k = s.effectKind, var c = clip, var e = c.effect(ofKind: k), e.enabled != on else { return }
+        e.enabled = on
+        c.roundedCorners = e
+        commit(c, on ? "Enable \(s.title)" : "Disable \(s.title)")
+    }
+
+    public func canRemoveEffect(_ s: EffectSection) -> Bool {
+        guard let k = s.effectKind else { return false }
+        return clip?.effect(ofKind: k) != nil
+    }
+
+    /// Removes the applied effect with all its values and keys: one undo step.
+    @discardableResult
+    public func removeEffect(_ s: EffectSection) -> Bool {
+        guard canRemoveEffect(s), var c = clip else { return false }
+        c.roundedCorners = nil
+        let ids = Set(s.properties.map(\.id))
+        selection = selection.filter { !ids.contains($0.property) }
+        if selectedSection == s { selectedSection = nil }
+        expanded.subtract(s.properties)
+        commit(c, "Remove \(s.title)")
+        return true
+    }
+
+    /// Delete key: selected keys first, else the selected effect section.
+    public func deleteSelectionOrEffect() {
+        if !selection.isEmpty { deleteSelection() }
+        else if let s = selectedSection { removeEffect(s) }
     }
 
     // MARK: Easing library
@@ -570,9 +696,16 @@ public final class EffectControlsModel {
         case .rotation: body(&c.animation.rotation)
         case .opacity: body(&c.animation.opacity)
         case .volume: body(&c.animation.volume)
-        case .cornerRadius: body(&c.animation.cornerRadius)
+        case .cornerRadius: Self.withRadius(&c, body)
         default: break
         }
+    }
+
+    static func withRadius(_ c: inout Clip, _ body: (inout AnimatedProperty<Double>) -> Void) {
+        guard var e = c.roundedCorners, var r = e.parameters[ClipEffect.radiusKey] else { return }
+        body(&r)
+        e.parameters[ClipEffect.radiusKey] = r
+        c.roundedCorners = e
     }
 
     private func withVector(_ c: inout Clip, _ p: EffectProperty, _ body: (inout AnimatedProperty<Vec2>) -> Void) {

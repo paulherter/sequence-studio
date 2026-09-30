@@ -12,8 +12,12 @@ public final class KeyframeGraphView: NSView {
     public var playheadSeconds: Double? { didSet { needsDisplay = true } }
     public var frameDuration = Time(1, 30)
     public var minTime = Time.zero
-    public var maxTime: Time?
+    public var maxTime: Time? { didSet { if !isGesturing, maxTime != oldValue { refit(); needsDisplay = true } } }
     public var easingLibrary = EasingLibrary()
+    /// Plot margins. Effect Controls sets `left` so the plot starts exactly where the keyframe lanes start.
+    public var insets = GraphInsets() { didSet { needsDisplay = true } }
+    /// Width of the row's left (label) area, painted as panel instead of graph background.
+    public var leadingPanelWidth: CGFloat = 0 { didSet { needsDisplay = true } }
 
     /// One call per gesture (one undo step) with the complete new track.
     public var onEdit: ((KeyframeTrack<Double>) -> Void)?
@@ -41,8 +45,11 @@ public final class KeyframeGraphView: NSView {
     }
 
     private var shownTrack: KeyframeTrack<Double> { preview ?? track }
-    private func refit() { fit = GraphFit.make(track: track, mode: mode) }
-    private var geometry: KeyframeGraphGeometry { KeyframeGraphGeometry(size: bounds.size, fit: fit, mode: mode) }
+    private func refit() {
+        let range = maxTime.map { GraphMath.seconds(minTime)...max(GraphMath.seconds($0), GraphMath.seconds(minTime)) }
+        fit = GraphFit.make(track: track, mode: mode, timeRange: range)
+    }
+    private var geometry: KeyframeGraphGeometry { KeyframeGraphGeometry(size: bounds.size, insets: insets, fit: fit, mode: mode) }
     private var limits: GraphEditLimits { GraphEditLimits(frameDuration: frameDuration, minTime: minTime, maxTime: maxTime) }
 
     // MARK: Drawing
@@ -51,6 +58,10 @@ public final class KeyframeGraphView: NSView {
         let g = geometry
         Theme.Colors.lane.setFill()
         bounds.fill()
+        if leadingPanelWidth > 0 {
+            Theme.Colors.panel.setFill()
+            NSRect(x: 0, y: 0, width: min(leadingPanelWidth, bounds.width), height: bounds.height).fill()
+        }
 
         let plot = g.plot
         NSGraphicsContext.saveGraphicsState()
@@ -101,8 +112,8 @@ public final class KeyframeGraphView: NSView {
             }
         }
         // Keys
-        for (i, k) in t.keys.enumerated() {
-            drawGlyph(k.interpolation, at: g.keyPoint(track: t, index: i), selected: selectedKeyIDs.contains(k.id))
+        for (i, k) in KeyGlyph.glyphs(of: t).enumerated() {
+            drawGlyph(k.glyph, at: g.keyPoint(track: t, index: i), selected: selectedKeyIDs.contains(k.id))
         }
         NSGraphicsContext.restoreGraphicsState()
 
@@ -121,21 +132,9 @@ public final class KeyframeGraphView: NSView {
         }
     }
 
-    private func drawGlyph(_ kind: Interpolation, at c: CGPoint, selected: Bool) {
-        let r: CGFloat = 4.5
-        let path: NSBezierPath
-        switch kind {
-        case .linear:
-            path = NSBezierPath()
-            path.move(to: NSPoint(x: c.x, y: c.y - r - 1)); path.line(to: NSPoint(x: c.x + r + 1, y: c.y))
-            path.line(to: NSPoint(x: c.x, y: c.y + r + 1)); path.line(to: NSPoint(x: c.x - r - 1, y: c.y))
-            path.close()
-        case .bezier: path = NSBezierPath(ovalIn: NSRect(x: c.x - r, y: c.y - r, width: 2 * r, height: 2 * r))
-        case .hold: path = NSBezierPath(rect: NSRect(x: c.x - r + 0.5, y: c.y - r + 0.5, width: 2 * r - 1, height: 2 * r - 1))
-        }
-        (selected ? Theme.Colors.accent : Theme.Colors.keyframe).setFill()
-        path.fill()
-        Theme.black(0.55).setStroke(); path.lineWidth = 1; path.stroke()
+    private func drawGlyph(_ glyph: KeyGlyph, at c: CGPoint, selected: Bool) {
+        KeyGlyphDrawing.draw(glyph, at: c, half: 5.5, fill: selected ? Theme.Colors.accent : Theme.Colors.keyframe,
+                             edge: Theme.black(0.55))
     }
 
     // MARK: Mouse
@@ -152,7 +151,7 @@ public final class KeyframeGraphView: NSView {
     public override func mouseDragged(with event: NSEvent) {
         guard gesture != nil else { return }
         let p = convert(event.locationInWindow, from: nil)
-        if let r = gesture?.drag(to: p) { apply(r) }
+        if let r = gesture?.drag(to: p, free: event.modifierFlags.contains(.shift)) { apply(r) }
     }
 
     public override func mouseUp(with event: NSEvent) {

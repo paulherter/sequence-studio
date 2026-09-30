@@ -76,11 +76,11 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         let entry = try #require(TextTemplateCatalog.all.first)
         let id = try #require(session.addTextClip(template: entry.template))
         #expect(session.addRoundedCorners(radius: 12))
-        #expect(session.singleSelectedClip?.animation.cornerRadius.value == 12)
+        #expect(session.singleSelectedClip?.roundedCorners?.parameters[ClipEffect.radiusKey]?.value == 12)
         #expect(!session.addRoundedCorners(radius: 30))           // already on: nothing changes
-        #expect(session.singleSelectedClip?.animation.cornerRadius.value == 12)
+        #expect(session.singleSelectedClip?.roundedCorners?.parameters[ClipEffect.radiusKey]?.value == 12)
         session.undo()
-        #expect(session.activeTimeline?.tracks.flatMap(\.clips).first { $0.id == id }?.animation.cornerRadius.value == 0)
+        #expect(session.activeTimeline?.tracks.flatMap(\.clips).first { $0.id == id }?.roundedCorners == nil)
     }
 
     @Test func roundedCornersDroppedOnAnUnselectedClip() throws {
@@ -90,9 +90,9 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         session.select(clips: [], captions: [])
         #expect(!session.addRoundedCorners())                       // nothing selected
         #expect(session.addRoundedCorners(to: [id], radius: 10))
-        #expect(session.activeTimeline?.tracks.flatMap(\.clips).first { $0.id == id }?.animation.cornerRadius.value == 10)
+        #expect(session.activeTimeline?.tracks.flatMap(\.clips).first { $0.id == id }?.roundedCorners?.parameters[ClipEffect.radiusKey]?.value == 10)
         session.undo()
-        #expect(session.activeTimeline?.tracks.flatMap(\.clips).first { $0.id == id }?.animation.cornerRadius.value == 0)
+        #expect(session.activeTimeline?.tracks.flatMap(\.clips).first { $0.id == id }?.roundedCorners == nil)
     }
 
     @Test func createCaptionsReplacesTrackInOneStep() throws {

@@ -20,10 +20,13 @@ import SSCore
 
     func t(_ s: Int64) -> Time { Time(s, 1) }   // seconds
 
-    @Test func cornerRadiusWritesAnimation() {
+    @Test func cornerRadiusWritesAppliedEffect() {
         let (m, _) = makeModel()
+        #expect(!m.setValue(.cornerRadius, to: 24))          // not applied: nothing to edit
+        #expect(m.clip!.effects.isEmpty)
+        var c = m.clip!; c.roundedCorners = .roundedCorners(radius: 0); m.setClip(c)
         m.setValue(.cornerRadius, to: 24)
-        #expect(m.clip!.animation.cornerRadius.value(atLocal: .zero) == 24)
+        #expect(m.clip!.roundedCorners!.parameters[ClipEffect.radiusKey]!.value(atLocal: .zero) == 24)
         #expect(m.scalarValue(.cornerRadius) == 24)
         #expect(m.toggleStopwatch(.cornerRadius) == .added)
         #expect(m.isAnimated(.cornerRadius))
@@ -32,6 +35,8 @@ import SSCore
     // MARK: Sections
     @Test func sectionsByClipKind() {
         let (v, _) = makeModel()
+        #expect(v.visibleSections == [.motion, .opacity])       // effects only once applied
+        var c = v.clip!; c.roundedCorners = .roundedCorners(); v.setClip(c)
         #expect(v.visibleSections == [.motion, .opacity, .roundedCorners])
         let (a, _) = makeModel(kind: .audio)
         #expect(a.visibleSections == [.volume])
@@ -346,5 +351,76 @@ import SSCore
         #expect(EffectProperty.volume.native(fromDisplay: -60) == 0)
         #expect(abs(EffectProperty.volume.native(fromDisplay: 0) - 1) < 1e-9)
         #expect(EffectProperty.volume.display(0) == -60)
+    }
+}
+
+@MainActor @Suite struct EffectControlsResetTests {
+    func rig() -> (EffectControlsModel, EffectControlsModelTests.Log) {
+        var clip = Clip(name: "c", media: UUID(), kind: .video,
+                        source: TimeRange(start: .zero, duration: Time(10, 1)), start: Time(5, 1))
+        clip.roundedCorners = .roundedCorners(radius: 40)
+        let m = EffectControlsModel(); let log = EffectControlsModelTests.Log()
+        m.onEdit = { c, n, co in log.edits.append((c, n, co)) }
+        m.setClip(clip); m.playhead = Time(6, 1)
+        return (m, log)
+    }
+
+    @Test func graphModeDefaultsToSpeed() { #expect(EffectControlsModel().graphMode == .speed) }
+
+    @Test func resetPropertyIsOneStepAndDropsKeys() {
+        let (m, log) = rig()
+        m.setValue(.opacity, to: 0.4)
+        _ = m.toggleStopwatch(.opacity)
+        #expect(!m.isDefault(.opacity))
+        log.edits.removeAll()
+        m.reset(.opacity)
+        #expect(log.edits.count == 1 && log.edits[0].1 == "Reset Opacity")
+        #expect(m.clip!.animation.opacity == ClipAnimation().opacity)
+        #expect(m.isDefault(.opacity))
+        m.reset(.opacity)                                   // already default: no edit
+        #expect(log.edits.count == 1)
+    }
+
+    @Test func resetSectionResetsAllPropertiesAndReenablesEffect() {
+        let (m, log) = rig()
+        m.setValue(.rotation, to: 30)
+        m.setValue(.scale, to: 2)
+        log.edits.removeAll()
+        m.resetSection(.motion)
+        #expect(log.edits.count == 1)
+        #expect(m.clip!.animation.rotation.value == 0 && m.clip!.animation.scale.value == Vec2(1, 1))
+        m.setEffectEnabled(.roundedCorners, false)
+        m.resetSection(.roundedCorners)
+        #expect(m.clip!.roundedCorners!.enabled)
+        #expect(m.clip!.roundedCorners!.parameters[ClipEffect.radiusKey]!.value == 24)
+    }
+
+    @Test func toggleAndRemoveEffect() {
+        let (m, log) = rig()
+        m.setEffectEnabled(.roundedCorners, false)
+        #expect(!m.isEffectEnabled(.roundedCorners) && m.clip!.roundedCorners != nil)
+        #expect(m.clip!.effects(at: Time(6, 1)) == ClipEffects.none)
+        #expect(m.removeEffect(.roundedCorners))
+        #expect(m.clip!.effects.isEmpty && !m.visibleSections.contains(.roundedCorners))
+        #expect(!m.removeEffect(.motion))                   // built-in: not removable
+        #expect(log.edits.last?.1 == "Remove Rounded Corners")
+    }
+
+    @Test func deleteKeyRemovesSelectedEffectWhenNoKeysSelected() {
+        let (m, _) = rig()
+        m.selectedSection = .roundedCorners
+        m.deleteSelectionOrEffect()
+        #expect(m.clip!.effects.isEmpty)
+    }
+
+    @Test func selectedSectionClearsOnClipChangeOrWhenEffectGoes() {
+        let (m, _) = rig()
+        m.selectedSection = .roundedCorners
+        var c = m.clip!; c.roundedCorners = nil; m.setClip(c)            // effect gone
+        #expect(m.selectedSection == nil)
+        c.roundedCorners = .roundedCorners(); m.setClip(c)
+        m.selectedSection = .roundedCorners
+        var other = c; other.id = UUID(); m.setClip(other)                // different clip
+        #expect(m.selectedSection == nil)
     }
 }

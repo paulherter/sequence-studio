@@ -23,8 +23,8 @@ import SSCore
 
     @Test func videoClipShowsMotionAndOpacityFields() {
         let (_, v) = setup()
-        // position 2, scale 1, rotation 1, anchor 2, opacity 1, radius 1
-        #expect(scrubFields(v).count == 8)
+        // position 2, scale 1, rotation 1, anchor 2, opacity 1 (effects only once applied)
+        #expect(scrubFields(v).count == 7)
     }
 
     @Test func audioClipShowsOnlyVolume() {
@@ -63,7 +63,7 @@ import SSCore
         m.collapsedSections = [.motion]
         try? await Task.sleep(for: .milliseconds(50))    // observation re-arms on the main actor
         v.layoutSubtreeIfNeeded()
-        #expect(scrubFields(v).count == 2)
+        #expect(scrubFields(v).count == 1)
         m.collapsedSections = []; m.expanded = [.opacity]
         try? await Task.sleep(for: .milliseconds(50))
         var graphs = 0

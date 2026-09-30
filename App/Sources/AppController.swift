@@ -430,6 +430,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             item.title = session.redoName.map { "Redo \($0)" } ?? "Redo"
             return session.canRedo || textResponder != nil
         case .save: return true
+        case _ where (c == .delete || c == .rippleDelete) && effectControlsHasFocus:
+            return !panels.effectModel.selection.isEmpty || panels.effectModel.selectedSection.map(panels.effectModel.canRemoveEffect) == true
         default: return Self.isSupported(c)
         }
     }
@@ -449,8 +451,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             if let p = panels.panel(containing: window.contentView?.hitTest(event.locationInWindow)) { focusedPanel = p }
             return event
         }
-        // Typing: text fields and editors keep their keys.
-        if let tv = window.firstResponder as? NSTextView, tv.isEditable || tv.isFieldEditor { return event }
+        // Typing: only a text view that can really be edited keeps its keys. A selectable label's field editor
+        // (isFieldEditor but not editable) must not swallow Space/J/K/L: that was the "Space does nothing" regression.
+        if let tv = window.firstResponder as? NSTextView, tv.isEditable { return event }
         guard let ke = KeyMapping.keyEvent(from: event) else { return event }
         // Command shortcuts belong to the menus (key equivalents).
         if ke.modifiers.contains(.command) { return event }
@@ -462,9 +465,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         let actions = router.handle(ke)
         scheduleRouterDeadline()
         guard !actions.isEmpty else { return consumed ? nil : event }
+        if Self.keyLog { NSLog("SSKEY \(ke.key) -> \(actions)") }
         run(actions)
         return nil
     }
+
+    private static let keyLog = ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1"
 
     private func run(_ actions: [RouterAction]) {
         for a in actions {

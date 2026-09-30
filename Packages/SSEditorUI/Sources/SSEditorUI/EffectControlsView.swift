@@ -6,7 +6,7 @@ import SSCore
 /// property rows with scrub fields + animate diamond + key navigation on the left, keyframe lanes on the right,
 /// graph in place when a row is expanded. All state and edits live in `EffectControlsModel`.
 public final class EffectControlsView: NSView {
-    public static let labelWidth: CGFloat = 340
+    public static let labelWidth: CGFloat = 364
 
     public let model: EffectControlsModel
     /// Asked before the animate diamond deletes all keys of a property. Default: alert.
@@ -26,6 +26,8 @@ public final class EffectControlsView: NSView {
     private let scroll = NSScrollView()
     private let content = FlippedView()
     private let lanes: EffectKeyframeLanesView
+    private let ruler: KeyframeRulerView
+    private let timecodeLabel = NSTextField(labelWithString: "")
     private let emptyLabel = NSTextField(labelWithString: "No clip selected")
     private var rowViews: [(EffectRow, NSView)] = []
     private var signature: Signature?
@@ -33,6 +35,7 @@ public final class EffectControlsView: NSView {
     private struct Signature: Equatable {
         var clipID: UUID?
         var kind: TrackKind?
+        var sections: [EffectSection]
         var collapsed: Set<EffectSection>
         var expanded: Set<EffectProperty>
     }
@@ -40,6 +43,7 @@ public final class EffectControlsView: NSView {
     public init(model: EffectControlsModel) {
         self.model = model
         lanes = EffectKeyframeLanesView(model: model)
+        ruler = KeyframeRulerView(model: model)
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
         wantsLayer = true
         layer?.backgroundColor = Theme.Colors.panel.cgColor
@@ -54,6 +58,10 @@ public final class EffectControlsView: NSView {
         emptyLabel.alignment = .center
         addSubview(emptyLabel)
         content.addSubview(lanes)
+        addSubview(ruler)
+        timecodeLabel.font = Theme.Fonts.small
+        timecodeLabel.textColor = Theme.Colors.label
+        addSubview(timecodeLabel)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Effect Controls")
         rebuild()
@@ -61,12 +69,24 @@ public final class EffectControlsView: NSView {
     }
     public required init?(coder: NSCoder) { fatalError("init(coder:) is not supported") }
 
+    // MARK: Keys
+
+    public override var acceptsFirstResponder: Bool { true }
+
+    /// Delete / Forward Delete: removes the selected effect section (keys first when any are selected).
+    public override func keyDown(with event: NSEvent) {
+        switch event.keyCode {
+        case 51, 117: model.deleteSelectionOrEffect()
+        default: super.keyDown(with: event)
+        }
+    }
+
     // MARK: Observation
 
     private func observe() {
         withObservationTracking {
             _ = model.clip; _ = model.playhead; _ = model.selection; _ = model.expanded
-            _ = model.collapsedSections; _ = model.graphMode; _ = model.easingLibrary
+            _ = model.collapsedSections; _ = model.selectedSection; _ = model.graphMode; _ = model.easingLibrary
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.modelChanged()
@@ -76,7 +96,7 @@ public final class EffectControlsView: NSView {
     }
 
     private var currentSignature: Signature {
-        Signature(clipID: model.clip?.id, kind: model.clip?.kind,
+        Signature(clipID: model.clip?.id, kind: model.clip?.kind, sections: model.visibleSections,
                   collapsed: model.collapsedSections, expanded: model.expanded)
     }
 
@@ -112,16 +132,25 @@ public final class EffectControlsView: NSView {
     private func refresh() {
         for (_, v) in rowViews { (v as? RowUpdating)?.update() }
         lanes.needsDisplay = true
+        ruler.needsDisplay = true
+        if model.clip != nil {
+            let tc = TimecodeFormat(frameDuration: model.frameDuration)
+            timecodeLabel.stringValue = tc.string(for: model.playhead, frameDuration: model.frameDuration)
+        } else { timecodeLabel.stringValue = "" }
     }
 
     public override func layout() {
         super.layout()
-        scroll.frame = bounds
+        let rh = KeyframeRulerView.height
+        let lw0 = min(Self.labelWidth, bounds.width)
+        scroll.frame = NSRect(x: 0, y: rh, width: bounds.width, height: max(bounds.height - rh, 0))
+        ruler.frame = NSRect(x: lw0, y: 0, width: max(bounds.width - lw0, 0), height: rh)
+        timecodeLabel.frame = NSRect(x: 12, y: (rh - 14) / 2, width: max(lw0 - 24, 0), height: 14)
         emptyLabel.frame = NSRect(x: 0, y: bounds.midY - 8, width: bounds.width, height: 16)
         let topH = clipSections.map { $0.isHidden ? 0 : $0.preferredHeight(for: bounds.width) } ?? 0
         clipSections?.frame = NSRect(x: 0, y: 0, width: bounds.width, height: topH)
         let total = (rowViews.last.map { $0.0.y + $0.0.height } ?? 0) + topH
-        content.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(total, bounds.height))
+        content.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(total, scroll.frame.height))
         let lw = min(Self.labelWidth, bounds.width)
         for (row, v) in rowViews {
             let isGraph = { if case .graph = row.kind { return true } else { return false } }()
@@ -204,6 +233,9 @@ private final class SectionHeaderRow: RowBackground, RowUpdating {
     let model: EffectControlsModel
     private let chevron: ClosureButton
     private let title: NSTextField
+    private let fx: ClosureButton
+    private let reset: ClosureButton
+    private var lastSelected = false
 
     init(section: EffectSection, model: EffectControlsModel) {
         self.section = section; self.model = model
@@ -214,18 +246,66 @@ private final class SectionHeaderRow: RowBackground, RowUpdating {
             else { model.collapsedSections.insert(section) }
         }
         title = makeLabel(section.title, font: .systemFont(ofSize: 11, weight: .semibold), color: Theme.Colors.label)
+        fx = ClosureButton(symbol: "function", label: "Enable or disable \(section.title)") {
+            model.setEffectEnabled(section, !model.isEffectEnabled(section))
+        }
+        reset = ClosureButton(symbol: "arrow.counterclockwise", label: "Reset \(section.title)") { model.resetSection(section) }
         super.init(frame: .zero)
         fill = Theme.Colors.titlebar
-        addSubview(chevron); addSubview(title)
+        addSubview(chevron); addSubview(title); addSubview(reset)
+        if section.effectKind != nil { addSubview(fx) }
+        update()
     }
     required init?(coder: NSCoder) { fatalError() }
 
     override func layout() {
         super.layout()
+        let w = bounds.width
         chevron.frame = NSRect(x: 6, y: 0, width: 18, height: bounds.height)
-        title.frame = NSRect(x: 28, y: (bounds.height - 14) / 2, width: bounds.width - 36, height: 14)
+        reset.frame = NSRect(x: w - 24, y: 0, width: 18, height: bounds.height)
+        fx.frame = NSRect(x: w - 46, y: 0, width: 20, height: bounds.height)
+        title.frame = NSRect(x: 28, y: (bounds.height - 14) / 2, width: max(w - 80, 0), height: 14)
     }
-    func update() {}
+
+    override func mouseDown(with event: NSEvent) {
+        model.selectedSection = section
+        var v: NSView? = self
+        while let x = v, !(x is EffectControlsView) { v = x.superview }
+        if let owner = v { window?.makeFirstResponder(owner) }
+        super.mouseDown(with: event)
+    }
+
+    override func menu(for event: NSEvent) -> NSMenu? {
+        model.selectedSection = section
+        let m = NSMenu(title: section.title)
+        m.autoenablesItems = false
+        if section.effectKind != nil {
+            let on = model.isEffectEnabled(section)
+            m.addItem(item(on ? "Disable Effect" : "Enable Effect", #selector(toggleFX)))
+        }
+        m.addItem(item("Reset \(section.title)", #selector(doReset)))
+        if model.canRemoveEffect(section) {
+            m.addItem(.separator())
+            m.addItem(item("Remove Effect", #selector(doRemove)))
+        }
+        return m
+    }
+    private func item(_ t: String, _ a: Selector) -> NSMenuItem {
+        let i = NSMenuItem(title: t, action: a, keyEquivalent: ""); i.target = self; return i
+    }
+    @objc private func toggleFX() { model.setEffectEnabled(section, !model.isEffectEnabled(section)) }
+    @objc private func doReset() { model.resetSection(section) }
+    @objc private func doRemove() { model.removeEffect(section) }
+
+    func update() {
+        let on = model.isEffectEnabled(section)
+        fx.setSymbol("function", tint: on ? Theme.Colors.accent : Theme.Colors.label3)
+        fx.toolTip = on ? "Disable \(section.title)" : "Enable \(section.title)"
+        let selected = model.selectedSection == section && section.effectKind != nil
+        if selected != lastSelected { lastSelected = selected; fill = selected ? Theme.Colors.selection : Theme.Colors.titlebar; needsDisplay = true }
+        reset.isEnabled = section.properties.contains { !model.isDefault($0) } || !on
+        title.textColor = on ? Theme.Colors.label : Theme.Colors.label3
+    }
 }
 
 private final class PlaceholderRow: RowBackground, RowUpdating {
@@ -249,6 +329,7 @@ private final class PropertyRow: RowBackground, RowUpdating {
     private let name: NSTextField
     private var fields: [ScrubField] = []
     private let prev: ClosureButton, key: ClosureButton, next: ClosureButton
+    private let reset: ClosureButton
 
     init(property p: EffectProperty, model: EffectControlsModel, owner: EffectControlsView) {
         property = p; self.model = model; self.owner = owner
@@ -261,6 +342,7 @@ private final class PropertyRow: RowBackground, RowUpdating {
         prev = ClosureButton(symbol: "chevron.left", label: "Previous keyframe") { model.goToPreviousKey(p) }
         key = ClosureButton(symbol: "diamond", label: "Add or remove keyframe") { model.toggleKeyAtPlayhead(p) }
         next = ClosureButton(symbol: "chevron.right", label: "Next keyframe") { model.goToNextKey(p) }
+        reset = ClosureButton(symbol: "arrow.counterclockwise", label: "Reset \(p.title)") { model.reset(p) }
         super.init(frame: .zero)
         addSubview(chevron); addSubview(name)
         let comps: [EffectComponent] = p.kind == .vector ? [.x, .y] : [.all]
@@ -280,7 +362,7 @@ private final class PropertyRow: RowBackground, RowUpdating {
             }
             fields.append(f); addSubview(f)
         }
-        addSubview(prev); addSubview(key); addSubview(next)
+        addSubview(prev); addSubview(key); addSubview(next); addSubview(reset)
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -296,6 +378,7 @@ private final class PropertyRow: RowBackground, RowUpdating {
         }
         x = max(x, 278)
         for b in [prev, key, next] { b.frame = NSRect(x: x, y: 0, width: 18, height: h); x += 18 }
+        reset.frame = NSRect(x: bounds.width - 24, y: 0, width: 18, height: h)
     }
 
     func update() {
@@ -315,6 +398,7 @@ private final class PropertyRow: RowBackground, RowUpdating {
         next.isEnabled = model.nextKeyTime(p) != nil
         key.setSymbol(state == .onKey ? "diamond.fill" : "diamond",
                       tint: state == .onKey ? Theme.Colors.accent : Theme.Colors.label2)
+        reset.isEnabled = !model.isDefault(p)
         let inClip = model.playheadInClip
         key.isEnabled = inClip
         fields[0].alphaValue = 1
@@ -341,7 +425,6 @@ private final class GraphRow: NSView, RowUpdating {
         mode.target = self
         mode.action = #selector(modeChanged)
         mode.setAccessibilityLabel("Graph type")
-        addSubview(mode)
         let comps: [EffectComponent] = p.kind == .vector ? [.x, .y] : [.all]
         for c in comps {
             let g = KeyframeGraphView(frame: .zero)
@@ -351,12 +434,11 @@ private final class GraphRow: NSView, RowUpdating {
             g.onLibraryChange = { lib in model.easingLibrary = lib; model.onLibraryChange?(lib) }
             graphs.append((c, g)); addSubview(g)
         }
+        addSubview(mode)   // above the graphs: they span the label column too
     }
     required init?(coder: NSCoder) { fatalError() }
 
     override func draw(_ dirtyRect: NSRect) {
-        Theme.Colors.panel.setFill()
-        NSRect(x: 0, y: 0, width: min(laneX, bounds.width), height: bounds.height).fill()
         Theme.Colors.separator.setFill()
         NSRect(x: 0, y: bounds.maxY - 1, width: bounds.width, height: 1).fill()
     }
@@ -367,7 +449,11 @@ private final class GraphRow: NSView, RowUpdating {
         let n = CGFloat(graphs.count)
         let h = (bounds.height - 1) / max(n, 1)
         for (i, (_, g)) in graphs.enumerated() {
-            g.frame = NSRect(x: laneX, y: CGFloat(i) * h, width: max(bounds.width - laneX, 0), height: h)
+            // The graph spans the whole row: its plot starts where the keyframe lanes start (same 10 pt inset,
+            // so keys line up with the lanes above), its value axis labels sit in the label column.
+            g.frame = NSRect(x: 0, y: CGFloat(i) * h, width: bounds.width, height: h)
+            g.leadingPanelWidth = laneX
+            g.insets = GraphInsets(top: 12, left: laneX + 10, bottom: 12, right: 10)
         }
     }
 

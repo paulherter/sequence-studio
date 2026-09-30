@@ -41,6 +41,13 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         self.inOut = inOut; self.markers = markers; self.captionTracks = captionTracks
     }
 
+    /// Premiere-like default track set for a new sequence: `video` video tracks then `audio` audio tracks, the first
+    /// of each kind targeted. Empty tracks are allowed.
+    public static func defaultTracks(video: Int = 4, audio: Int = 4) -> [Track] {
+        (0..<max(video, 0)).map { Track(kind: .video, isTargeted: $0 == 0) }
+            + (0..<max(audio, 0)).map { Track(kind: .audio, isTargeted: $0 == 0) }
+    }
+
     public init(id: UUID = UUID(), name: String, frameDuration: Time, tracks: [Track] = []) {
         self.init(id: id, name: name, format: SequenceFormat(frameDuration: frameDuration), tracks: tracks)
     }

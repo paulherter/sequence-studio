@@ -55,8 +55,10 @@ extension AppController {
         case .addEditAllTracks: session.addEditAtPlayhead(allTracks: true)
         case .rippleTrimPrevious: session.rippleTrimToPlayhead(.head)
         case .rippleTrimNext: session.rippleTrimToPlayhead(.tail)
-        case .delete: session.deleteSelection(ripple: false)
-        case .rippleDelete: session.deleteSelection(ripple: true)
+        case .delete, .rippleDelete:
+            // Effect Controls owns Delete while it has focus: keys, then the selected effect. Never the timeline clips.
+            if effectControlsHasFocus { panels.effectModel.deleteSelectionOrEffect() }
+            else { session.deleteSelection(ripple: c == .rippleDelete) }
         case .toggleSnapping:
             panels.timelineView.toolState.snapping.toggle()
             shell.statusBar.flash(panels.timelineView.toolState.snapping ? "Snapping on" : "Snapping off", seconds: 2)
@@ -137,6 +139,14 @@ extension AppController {
             guard let self, let name else { return }
             session.nestSelection(name: name)
         }
+    }
+
+    /// Effect Controls is the focused panel, or something inside it is first responder.
+    var effectControlsHasFocus: Bool {
+        if focusedPanel == .effectControls { return true }
+        var v = window?.firstResponder as? NSView
+        while let x = v { if x === panels.effectView { return true }; v = x.superview }
+        return false
     }
 
     private func forwardToText(_ c: EditorCommand, _ tv: NSTextView) -> Bool {
