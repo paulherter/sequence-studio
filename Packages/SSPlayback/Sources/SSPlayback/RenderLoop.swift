@@ -11,7 +11,7 @@ import SSRender
 /// (colour hint, known once a decoder exists) and the damaged flag set by decode errors.
 final class MediaTable: Sendable {
     private enum Entry: Sendable { case ready(any Demuxing), offline }
-    private struct State { var entries: [UUID: Entry] = [:]; var info: [UUID: VideoTrackInfo] = [:]; var damaged: Set<UUID> = [] }
+    private struct State { var entries: [UUID: Entry] = [:]; var info: [UUID: VideoTrackInfo] = [:]; var damaged: [UUID: [ClosedRange<Int>]] = [:] }
     private let state = Mutex(State())
     let resolver: any MediaResolver
 
@@ -51,8 +51,11 @@ final class MediaTable: Sendable {
 
     func setInfo(_ info: VideoTrackInfo, for media: UUID) { state.withLock { $0.info[media] = info } }
     func info(_ media: UUID) -> VideoTrackInfo? { state.withLock { $0.info[media] } }
-    func markDamaged(_ media: UUID) { state.withLock { _ = $0.damaged.insert(media) } }
-    func isDamaged(_ media: UUID) -> Bool { state.withLock { $0.damaged.contains(media) } }
+    /// A failed decode job damages its frames (one GOP), not the whole media: earlier/later good GOPs keep playing.
+    func markDamaged(_ media: UUID, frames: ClosedRange<Int>) { state.withLock { $0.damaged[media, default: []].append(frames) } }
+    func isDamaged(_ media: UUID, frame: Int) -> Bool {
+        state.withLock { $0.damaged[media]?.contains { $0.contains(frame) } ?? false }
+    }
 }
 
 /// Counts `decode` calls (tests: "served from cache" = no decode) and forwards to the real decoder.
@@ -169,7 +172,7 @@ final class RenderLoop: @unchecked Sendable {
                 return CountingDecoder(inner: dec, counter: counter)
             },
             sink: { [weak self] _, frames in self?.store(frames, scale: scale) },
-            onError: { [weak self] job, _ in self?.decodeFailed(job.media) })
+            onError: { [weak self] job, _ in self?.decodeFailed(job) })
     }
 
     /// Every decoded frame of a job is kept (a random access decodes the whole GOP: stepping back through it is free).
@@ -177,8 +180,8 @@ final class RenderLoop: @unchecked Sendable {
         for f in frames { cache.insert(f, for: FrameKey(media: f.media, pts: f.pts, scale: scale)) }
     }
 
-    private func decodeFailed(_ id: UUID) {
-        media.markDamaged(id)
+    private func decodeFailed(_ job: Job) {
+        media.markDamaged(job.media, frames: job.frames)
         state.withLock { $0.generation &+= 1 }
     }
 
@@ -386,13 +389,13 @@ final class RenderLoop: @unchecked Sendable {
             RenderLayer(content: .placeholder(k), transform: r.transform, cornerRadius: r.cornerRadius)
         }
         guard let d = media.demuxer(r.media) else { return placeholder(.offline) }
-        if media.isDamaged(r.media) { return placeholder(.damaged) }
         let index = d.index
         guard index.count > 0 else { return placeholder(.damaged) }
         let f = Self.frameIndex(r.sourceTime, in: index)
         let key = FrameKey(media: r.media, pts: index.entries[f].pts, scale: scale)
         var frame = cache.frame(key)
         if frame == nil {
+            if media.isDamaged(r.media, frame: f) { return placeholder(.damaged) }
             b.missing += 1; b.waiting = true; b.misses.append((r.media, f))
             frame = cache.nearest(media: r.media, atOrBefore: key.pts, scale: scale)
         }
@@ -457,7 +460,7 @@ final class RenderLoop: @unchecked Sendable {
                           resolve: Bool = true) {
         let (ids, mapping) = state.withLock { ($0.mediaIDs, $0.mapping) }
         var indexes: [UUID: SampleIndex] = [:]
-        for id in ids where !media.isDamaged(id) {
+        for id in ids {
             if let d = resolve ? media.demuxer(id) : media.resolvedDemuxer(id) { indexes[id] = d.index }
         }
         let cache = self.cache
@@ -467,7 +470,7 @@ final class RenderLoop: @unchecked Sendable {
         }
         // Misses the planner does not see (nested sequences): their GOP goes first.
         var urgent: [Job] = []
-        for (m, f) in misses where !media.isDamaged(m) {
+        for (m, f) in misses where !media.isDamaged(m, frame: f) {
             guard let idx = media.resolvedDemuxer(m)?.index else { continue }
             let gop = idx.gop(containing: f)
             if !jobs.contains(where: { $0.media == m && $0.frames == gop }) && !urgent.contains(where: { $0.media == m && $0.frames == gop }) {

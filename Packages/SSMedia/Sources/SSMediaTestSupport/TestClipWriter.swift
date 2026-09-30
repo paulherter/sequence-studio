@@ -20,6 +20,9 @@ public struct TestClipSpec: Sendable {
     /// Stereo 48 kHz float LPCM with a full-scale 1-sample impulse (both channels) at each time. nil = no audio track.
     public var audioClicks: [CMTime]?
 
+    /// Writes the moov atom before the mdat (`shouldOptimizeForNetworkUse`), so a truncated copy keeps a readable head.
+    public var moovAtStart = false
+
     public static let audioSampleRate = 48_000
 
     public init() {}
@@ -47,6 +50,7 @@ public enum TestClipWriter {
 
         let writer = try AVAssetWriter(outputURL: url, fileType: .mov)
         let format: OSType
+        writer.shouldOptimizeForNetworkUse = spec.moovAtStart
         var compression: [String: Any] = [
             AVVideoAllowFrameReorderingKey: true,
             AVVideoMaxKeyFrameIntervalKey: 12,
