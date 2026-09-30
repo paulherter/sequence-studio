@@ -275,6 +275,7 @@ final class EditorPanels {
                 if projectModel.project != session.project { projectModel.setProject(session.project) }
             }
             timelineView.setOfflineMedia(Set(session.project.media.filter { session.media.isOffline($0.id) }.map(\.id)))
+            timelineView.setLabelResolver(session.project.labelResolver)
             projectModel.refreshOffline()
             let fd = t?.frameDuration ?? lastFrameDuration
             lastFrameDuration = fd

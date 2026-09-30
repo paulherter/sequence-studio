@@ -63,6 +63,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var generator: GeneratorRef?
     /// Static per-clip colour (source override, correction, LUTs). Default = automatic from media, neutral.
     public var color: ClipColor = .default
+    /// Label colour of this clip; nil = inherit from its media / sequence (then the type default).
+    public var label: LabelColor?
 
     /// Media, nested sequence or generator.
     public var clipSource: ClipSource {
@@ -79,7 +81,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public init(id: UUID = UUID(), name: String, media: UUID, kind: TrackKind,
                 source: TimeRange, start: Time, link: UUID? = nil, mediaDuration: Time? = nil,
                 animation: ClipAnimation = ClipAnimation(), sequence: Timeline.ID? = nil,
-                generator: GeneratorRef? = nil, color: ClipColor = .default) {
+                generator: GeneratorRef? = nil, color: ClipColor = .default, label: LabelColor? = nil) {
+        self.label = label
         self.color = color
         self.animation = animation
         self.sequence = sequence
@@ -89,7 +92,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color
+        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label
     }
 
     public init(from d: Decoder) throws {
@@ -102,7 +105,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   animation: try c.decodeIfPresent(ClipAnimation.self, forKey: .animation) ?? ClipAnimation(),
                   sequence: try c.decodeIfPresent(Timeline.ID.self, forKey: .sequence),
                   generator: try c.decodeIfPresent(GeneratorRef.self, forKey: .generator),
-                  color: try c.decodeIfPresent(ClipColor.self, forKey: .color) ?? .default)
+                  color: try c.decodeIfPresent(ClipColor.self, forKey: .color) ?? .default,
+                  label: try c.decodeIfPresent(LabelColor.self, forKey: .label))
     }
 
     /// Moves a split-off right half onto a fresh link shared through `map` (old link to new link).

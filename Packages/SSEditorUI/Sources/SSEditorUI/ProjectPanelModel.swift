@@ -11,7 +11,40 @@ public final class ProjectPanelModel {
     public typealias Probe = @Sendable (URL) async throws -> MediaRef
     public typealias EditHandler = (Project, String) -> Void
 
-    public enum Column: String, Sendable, CaseIterable { case name, format, duration }
+    /// Columns the Project panel can show. `name` is always shown, first.
+    public enum Column: String, Sendable, CaseIterable, Codable {
+        case name, label, frameRate, duration, resolution, codec, audio, inPoint, filePath, format
+
+        public var title: String {
+            switch self {
+            case .name: "Name"
+            case .label: "Label"
+            case .frameRate: "Frame Rate"
+            case .duration: "Duration"
+            case .resolution: "Resolution"
+            case .codec: "Codec"
+            case .audio: "Audio"
+            case .inPoint: "Source In"
+            case .filePath: "File Path"
+            case .format: "Format"
+            }
+        }
+        public var defaultWidth: CGFloat {
+            switch self {
+            case .name: 200
+            case .label: 80
+            case .frameRate: 90
+            case .duration: 90
+            case .resolution: 90
+            case .codec: 110
+            case .audio: 100
+            case .inPoint: 90
+            case .filePath: 260
+            case .format: 210
+            }
+        }
+        public var minWidth: CGFloat { self == .name ? 100 : 50 }
+    }
 
     public private(set) var project: Project
     /// Bin that receives imports and new bins.
@@ -100,8 +133,19 @@ public final class ProjectPanelModel {
 
     @discardableResult
     public func move(_ items: [BinItemRef], to dest: Bin.ID, at index: Int? = nil) -> Bool {
-        commit("Move") { $0.move(items, to: dest, at: index) }
+        // Dropping items on the bin they already sit in (no insertion position) is a no-op, not "move to the bottom".
+        if index == nil, let d = project.bin(dest), items.allSatisfy({ r in d.children.contains { $0.ref == r } }) { return false }
+        return commit("Move") { $0.move(items, to: dest, at: index) }
     }
+
+    /// Sets the label of the media items and sequences in `items` (nil = back to the type default): one undo step.
+    @discardableResult
+    public func setLabel(_ label: LabelColor?, for items: [BinItemRef]) -> Bool {
+        commit("Change Label") { $0.setLabel(label, for: items) }
+    }
+
+    /// Label colour shown for an item.
+    public func label(of ref: BinItemRef) -> LabelColor { project.label(of: ref) }
 
     /// Deletes bins (their content moves up) and media not used by any sequence. The root bin and sequences are kept.
     /// Returns false when nothing was deleted.
@@ -175,9 +219,10 @@ public final class ProjectPanelModel {
         func key(_ i: BinItem) -> String {
             switch (col, i) {
             case (.name, _): return project.displayName(of: i.ref)
-            case (.format, .media(let id)): return project.media(id).map(Self.formatString) ?? ""
             case (.duration, .media(let id)): return String(format: "%020.6f", project.media(id)?.duration.map(Self.seconds) ?? 0)
-            default: return ""
+            case (.frameRate, .media(let id)):
+                return String(format: "%020.6f", project.media(id)?.info?.video.map { 1 / Self.seconds($0.nominalFrameDuration) } ?? 0)
+            default: return cellText(col, i.ref)
             }
         }
         let keys = items.map(key)
