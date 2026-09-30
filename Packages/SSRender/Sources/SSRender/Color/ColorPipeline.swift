@@ -47,8 +47,9 @@ public struct ColorPipeline: Sendable {
     /// 0 = bypass, 1 = full.
     public var creativeIntensity: Float
 
-    private var prepared: PreparedCorrection
-    private var toRec709: simd_float3x3
+    /// Precomputed per clip; internal so `ColorPipelineGPU` uploads exactly the CPU values.
+    private(set) var prepared: PreparedCorrection
+    private(set) var toRec709: simd_float3x3
 
     public init(source: SourceColorSpace, correction: ColorCorrection = .neutral, toneMapping: ToneMapping = ToneMapping(),
                 conversionLUT: CubeLUT? = nil, creativeLUT: CubeLUT? = nil, creativeIntensity: Float = 1) {
