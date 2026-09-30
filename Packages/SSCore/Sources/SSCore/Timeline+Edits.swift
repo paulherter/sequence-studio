@@ -35,7 +35,7 @@ extension Timeline {
                 if let md = c.mediaDuration { limit(md - c.source.end) }
                 if let next = others.first(where: { $0.start >= c.timeline.end }) { limit(next.start - c.timeline.end) }
             } else {
-                limit(c.source.start)
+                if let h = c.headHandle { limit(h) }
                 limit(c.start)
                 let prevEnd = others.filter { $0.timeline.end <= c.start }.map { $0.timeline.end }.max() ?? .zero
                 limit(c.start - prevEnd)
@@ -73,7 +73,7 @@ extension Timeline {
         var d = delta
         for p in pairs {                                   // media first, then refuse emptying
             if d > .zero, let md = p.left.mediaDuration { d = min(d, md - p.left.source.end) }
-            if d < .zero { d = max(d, -p.right.source.start) }
+            if d < .zero, let h = p.right.headHandle { d = max(d, -h) }
         }
         for p in pairs {
             if d <= -p.left.source.duration || d >= p.right.source.duration { throw EditError.emptyClip }
@@ -101,6 +101,7 @@ extension Timeline {
         var d = delta
         for m in group {
             let c = m.clip
+            if c.isGenerator { d = .zero; continue }        // nothing to slip
             d = max(d, -c.source.start)
             if let md = c.mediaDuration { d = min(d, md - c.source.end) }
         }

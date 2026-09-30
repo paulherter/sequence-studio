@@ -41,9 +41,16 @@ public struct LayerRequest: Sendable, Hashable {
     public var cornerRadius: Double
     /// Enclosing nested clips, outermost first. Empty for layers of the top sequence.
     public var groups: [LayerGroup]
+    /// Set for a generator clip (text layer): there is no media to decode, render this instead.
+    public var generator: GeneratorRef?
+    /// `t - clip.start`: time since the clip's first frame (drives animations such as text in/out).
+    /// For a generator, `sourceTime` equals this.
+    public var localTime: Time
 
     public init(clip: Clip.ID, media: UUID, track: Track.ID, sourceTime: Time, transform: ClipTransform = .identity,
-                cornerRadius: Double = 0, groups: [LayerGroup] = []) {
+                cornerRadius: Double = 0, groups: [LayerGroup] = [], generator: GeneratorRef? = nil,
+                localTime: Time? = nil) {
+        self.generator = generator; self.localTime = localTime ?? sourceTime
         self.clip = clip; self.media = media; self.track = track; self.sourceTime = sourceTime
         self.transform = transform; self.cornerRadius = cornerRadius; self.groups = groups
     }
@@ -105,10 +112,11 @@ extension Timeline {
                 out += inner.videoLayers(at: c.source.start + (t - c.start), sequences: sequences,
                                          groups: groups + [g], visiting: visiting.union([seqID]))
             } else {
+                let local = t - c.start
                 out.append(LayerRequest(clip: c.id, media: c.media, track: track.id,
-                                        sourceTime: c.source.start + (t - c.start),
+                                        sourceTime: c.isGenerator ? local : c.source.start + local,
                                         transform: c.transform(at: t), cornerRadius: c.effects(at: t).cornerRadius,
-                                        groups: groups))
+                                        groups: groups, generator: c.generator, localTime: local))
             }
         }
         return out

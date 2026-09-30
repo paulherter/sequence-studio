@@ -124,7 +124,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         for m in group {
             let c = m.clip
             if g <= -c.source.duration { throw EditError.emptyClip }
-            let room: Time? = edge == .tail ? c.mediaDuration.map { $0 - c.source.end } : c.source.start
+            let room: Time? = edge == .tail ? c.mediaDuration.map { $0 - c.source.end } : c.headHandle
             if let room, g > room { g = room }
         }
         if g < .zero {

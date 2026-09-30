@@ -73,7 +73,7 @@ extension Timeline {
                 } else {
                     d = max(d, .zero - (c.start - (prev?.timeline.end ?? .zero)))
                 }
-                if let n = next, n.start == c.timeline.end { d = max(d, .zero - n.source.start) }
+                if let n = next, n.start == c.timeline.end, let h = n.headHandle { d = max(d, .zero - h) }
             } else if d > .zero {
                 if let n = next, n.start == c.timeline.end {
                     d = min(d, n.source.duration - frame)

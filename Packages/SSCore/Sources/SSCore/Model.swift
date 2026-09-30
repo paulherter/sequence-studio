@@ -17,6 +17,24 @@ public enum EditError: Error, Equatable {
 public enum ClipSource: Sendable, Hashable {
     case media(UUID)
     case sequence(Timeline.ID)
+    case generator(GeneratorRef)
+}
+
+/// A clip that renders itself instead of playing media (text layer, later shapes, solids, ...).
+/// SSCore treats `payload` as opaque bytes; the owner of `kind` (e.g. SSText for "text") encodes and decodes it.
+public struct GeneratorRef: Sendable, Hashable, Codable {
+    /// Which generator renders this clip, e.g. "text".
+    public var kind: String
+    /// Opaque, versioned content (e.g. an encoded text template).
+    public var payload: Data
+    /// Version of the payload's own format, owned by the generator.
+    public var payloadVersion: Int
+
+    public static let text = "text"
+
+    public init(kind: String, payload: Data, payloadVersion: Int = 1) {
+        self.kind = kind; self.payload = payload; self.payloadVersion = payloadVersion
+    }
 }
 
 public struct Clip: Sendable, Hashable, Codable, Identifiable {
@@ -39,24 +57,36 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     /// `media` never sees a nil), `source` is a range of the inner sequence's timeline, and
     /// `mediaDuration` is the inner sequence's duration when nested.
     public var sequence: Timeline.ID?
+    /// Set for a generator clip (text layer): it has no media. `media` is then the clip's own ID, `mediaDuration`
+    /// is nil and `source` is a free clip-local range: it may start below 0 after a head trim, so a generator
+    /// can grow in both directions (only the >= 1 frame rule and neighbours limit it). Video tracks only.
+    public var generator: GeneratorRef?
 
-    /// Media or nested sequence.
-    public var clipSource: ClipSource { sequence.map(ClipSource.sequence) ?? .media(media) }
+    /// Media, nested sequence or generator.
+    public var clipSource: ClipSource {
+        if let g = generator { return .generator(g) }
+        return sequence.map(ClipSource.sequence) ?? .media(media)
+    }
     public var isNested: Bool { sequence != nil }
+    public var isGenerator: Bool { generator != nil }
+    /// How far the head can still grow (source handle before `source.start`); nil = unbounded (generator).
+    var headHandle: Time? { isGenerator ? nil : source.start }
 
     public var timeline: TimeRange { TimeRange(start: start, duration: source.duration) }
 
     public init(id: UUID = UUID(), name: String, media: UUID, kind: TrackKind,
                 source: TimeRange, start: Time, link: UUID? = nil, mediaDuration: Time? = nil,
-                animation: ClipAnimation = ClipAnimation(), sequence: Timeline.ID? = nil) {
+                animation: ClipAnimation = ClipAnimation(), sequence: Timeline.ID? = nil,
+                generator: GeneratorRef? = nil) {
         self.animation = animation
         self.sequence = sequence
+        self.generator = generator
         self.id = id; self.name = name; self.media = media; self.kind = kind
         self.source = source; self.start = start; self.link = link; self.mediaDuration = mediaDuration
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence
+        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator
     }
 
     public init(from d: Decoder) throws {
@@ -67,7 +97,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   link: try c.decodeIfPresent(UUID.self, forKey: .link),
                   mediaDuration: try c.decodeIfPresent(Time.self, forKey: .mediaDuration),
                   animation: try c.decodeIfPresent(ClipAnimation.self, forKey: .animation) ?? ClipAnimation(),
-                  sequence: try c.decodeIfPresent(Timeline.ID.self, forKey: .sequence))
+                  sequence: try c.decodeIfPresent(Timeline.ID.self, forKey: .sequence),
+                  generator: try c.decodeIfPresent(GeneratorRef.self, forKey: .generator))
     }
 
     /// Moves a split-off right half onto a fresh link shared through `map` (old link to new link).
