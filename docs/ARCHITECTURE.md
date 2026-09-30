@@ -254,6 +254,8 @@ public actor DecodeScheduler {                             // runs jobs, one in 
     public func submit(_ jobs: [PrefetchPlanner.Job])      // replaces the pending queue
     public func cancelAll()
 }
+// Init (deviation, no FrameCache dependency): DecodeScheduler(maxConcurrent: 4, decoder: @Sendable (UUID) throws -> any VideoDecoding,
+//   sink: @Sendable (PrefetchPlanner.Job, [DecodedFrame]) -> Void, onError: (@Sendable (Job, Error) -> Void)? = nil). Failed jobs are not retried until resetFailures().
 
 @MainActor public final class PlaybackEngine {
     public init(device: MTLDevice, media: MediaResolver) throws
