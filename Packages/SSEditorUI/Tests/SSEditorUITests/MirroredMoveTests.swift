@@ -8,7 +8,7 @@ private let fd = Time(1, 24)
 
 /// 4 pt per frame. Rows (no captions): V2 y22..<42, V1 42..<74, A1 74..<100, A2 100..<120.
 private func X(_ f: Double) -> CGFloat { 162 + CGFloat(f) * 4 }
-private let yV2: CGFloat = 30, yV1: CGFloat = 58, yA1: CGFloat = 87, yA2: CGFloat = 110
+private let yV2: CGFloat = 38, yV1: CGFloat = 70, yA1: CGFloat = 99, yA2: CGFloat = 125
 
 @Suite struct MirroredTrackMoveTests {
     let link = UUID()

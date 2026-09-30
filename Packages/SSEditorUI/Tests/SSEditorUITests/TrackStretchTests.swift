@@ -40,6 +40,19 @@ private let fd = Time(1, 24)
         #expect(g.rows(for: t).last!.maxY < 1000)
     }
 
+    @Test func allTracksGrowEvenlyPerKind() {
+        var g = TimelineGeometry(frameDuration: fd, pointsPerSecond: 40)
+        let t = timeline(video: 4, audio: 4)
+        let small = g.rows(for: t).map(\.height)
+        #expect(small == [32, 32, 32, 32, 26, 26, 26, 26])
+        g.viewportHeight = 420
+        let rows = g.rows(for: t)
+        #expect(abs(rows.last!.maxY - 420) < 0.5)
+        #expect(Set(rows.filter { $0.kind == .video }.map { Int($0.height.rounded()) }).count == 1)
+        #expect(Set(rows.filter { $0.kind == .audio }.map { Int($0.height.rounded()) }).count == 1)
+        #expect(rows.allSatisfy { $0.height > (($0.kind == .video) ? 32 : 26) })
+    }
+
     @Test func smallPanelKeepsDefaultsAndScrolls() {
         var g = TimelineGeometry(frameDuration: fd, pointsPerSecond: 40)
         g.viewportHeight = 60

@@ -109,22 +109,14 @@ public struct TimelineGeometry: Sendable, Equatable {
 
     // MARK: Rows
 
-    /// Default row height by position within the kind: V1 32, A1 26, everything else 20.
+    /// Default row height, uniform per kind: video 32, audio 26.
     public static func defaultHeight(kind: TrackKind, indexInKind: Int) -> CGFloat {
-        switch (kind, indexInKind) {
-        case (.video, 0): Theme.Metrics.trackV1
-        case (.audio, 0): Theme.Metrics.trackA1
-        default: Theme.Metrics.trackOther
-        }
+        kind == .video ? Theme.Metrics.trackV1 : Theme.Metrics.trackA1
     }
 
-    /// Largest height stretching may give a row: V1 200, A1 120, everything else 90.
+    /// Largest height stretching may give a row, uniform per kind: video 120, audio 90.
     public static func maxStretchHeight(kind: TrackKind, indexInKind: Int) -> CGFloat {
-        switch (kind, indexInKind) {
-        case (.video, 0): 200
-        case (.audio, 0): 120
-        default: 90
-        }
+        kind == .video ? 120 : 90
     }
 
     /// Spreads `extra` points over rows with water-filling: every row grows in proportion to its weight until it

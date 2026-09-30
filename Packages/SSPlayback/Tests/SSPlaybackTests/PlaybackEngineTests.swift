@@ -159,6 +159,7 @@ private struct Rig {
         e.seek(to: fd * 10)
         await e.waitForDecodes()
         #expect(rig.tick() == 10)
+        await e.waitForDecodes()           // prefetch around the playhead settles: a stable baseline
         let cached = e.cacheCount
         #expect(cached > 0)
 
@@ -166,9 +167,10 @@ private struct Rig {
         let clipID = rig.timeline.tracks[0].clips[0].id
         try rig.timeline.rippleTrim(clipID, edge: .head, by: fd * 5)
         e.setTimeline(rig.timeline)
-        #expect(e.cacheCount == cached)
+        #expect(e.cacheCount >= cached)    // nothing flushed (new prefetch may add frames, never remove)
         #expect(rig.tick() == 15)          // invalidated: presents again at the same position
-        #expect(e.cacheCount == cached)
+        await e.waitForDecodes()
+        #expect(e.cacheCount >= cached)
     }
 
     @Test func stackedClipsCompositeBoth() async throws {
