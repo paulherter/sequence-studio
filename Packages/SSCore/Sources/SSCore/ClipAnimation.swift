@@ -58,12 +58,18 @@ public struct ClipAnimation: Sendable, Hashable, Codable {
     public var anchor = AnimatedProperty(Vec2.zero)
     /// Linear gain (1 = unity) for audio clips.
     public var volume = AnimatedProperty(1.0)
-    /// Rounded Corners effect: radius in sequence pixels of the clip's own frame (0 = square). Read clamped >= 0.
-    public var cornerRadius = AnimatedProperty(0.0)
+    /// Pre-v9 Rounded Corners radius, read only so `Clip` can migrate it into an explicit effect. Never written.
+    var legacyCornerRadius: AnimatedProperty<Double>?
 
     public init() {}
 
     private enum CodingKeys: String, CodingKey { case position, scale, rotation, opacity, anchor, volume, cornerRadius }
+    public func encode(to e: Encoder) throws {
+        var c = e.container(keyedBy: CodingKeys.self)
+        try c.encode(position, forKey: .position); try c.encode(scale, forKey: .scale)
+        try c.encode(rotation, forKey: .rotation); try c.encode(opacity, forKey: .opacity)
+        try c.encode(anchor, forKey: .anchor); try c.encode(volume, forKey: .volume)
+    }
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         position = try c.decodeIfPresent(AnimatedProperty<Vec2>.self, forKey: .position) ?? position
@@ -72,7 +78,7 @@ public struct ClipAnimation: Sendable, Hashable, Codable {
         opacity = try c.decodeIfPresent(AnimatedProperty<Double>.self, forKey: .opacity) ?? opacity
         anchor = try c.decodeIfPresent(AnimatedProperty<Vec2>.self, forKey: .anchor) ?? anchor
         volume = try c.decodeIfPresent(AnimatedProperty<Double>.self, forKey: .volume) ?? volume
-        cornerRadius = try c.decodeIfPresent(AnimatedProperty<Double>.self, forKey: .cornerRadius) ?? cornerRadius
+        legacyCornerRadius = try c.decodeIfPresent(AnimatedProperty<Double>.self, forKey: .cornerRadius)
     }
 
     func shifted(by delta: Time) -> ClipAnimation {
@@ -80,7 +86,6 @@ public struct ClipAnimation: Sendable, Hashable, Codable {
         a.position = position.shifted(by: delta); a.scale = scale.shifted(by: delta)
         a.rotation = rotation.shifted(by: delta); a.opacity = opacity.shifted(by: delta)
         a.anchor = anchor.shifted(by: delta); a.volume = volume.shifted(by: delta)
-        a.cornerRadius = cornerRadius.shifted(by: delta)
         return a
     }
 }
@@ -113,6 +118,7 @@ public struct ClipEffects: Sendable, Hashable {
 extension Clip {
     /// Effects at timeline time `t`.
     public func effects(at t: Time) -> ClipEffects {
-        ClipEffects(cornerRadius: max(animation.cornerRadius.value(atLocal: t - start), 0))
+        guard let e = roundedCorners, e.enabled, let r = e.parameters[ClipEffect.radiusKey] else { return .none }
+        return ClipEffects(cornerRadius: max(r.value(atLocal: t - start), 0))
     }
 }

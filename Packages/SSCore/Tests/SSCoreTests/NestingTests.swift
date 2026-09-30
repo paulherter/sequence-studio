@@ -173,12 +173,12 @@ private func tl(_ name: String, _ tracks: Track...) -> Timeline { Timeline(name:
         var nv = outer.tracks[0].clips[0]
         nv.animation.scale = AnimatedProperty(Vec2(0.5, 0.5))
         nv.animation.opacity = AnimatedProperty(0.5)
-        nv.animation.cornerRadius = AnimatedProperty(24.0)
+        nv.roundedCorners = .roundedCorners(radius: 24)
         outer.tracks[0].replace(nv)
         var inner = f.0.timeline(f.inner)!
         var iv = inner.tracks[0].clips[0]
         iv.animation.rotation = AnimatedProperty(90.0)
-        iv.animation.cornerRadius = AnimatedProperty(-5.0)   // clamped
+        iv.roundedCorners = .roundedCorners(radius: -5)   // clamped
         inner.tracks[0].replace(iv)
         f.0.timelines = [outer, inner]
         let l = f.0.videoLayers(at: s(21), in: f.outer)[0]

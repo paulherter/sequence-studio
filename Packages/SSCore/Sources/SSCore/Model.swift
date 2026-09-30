@@ -66,6 +66,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var color: ClipColor = .default
     /// Label colour of this clip; nil = inherit from its media / sequence (then the type default).
     public var label: LabelColor?
+    /// Explicitly applied effects (v9), in render order. Empty = none applied (nothing shows in Effect Controls).
+    public var effects: [ClipEffect] = []
 
     /// Media, nested sequence or generator.
     public var clipSource: ClipSource {
@@ -82,7 +84,9 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public init(id: UUID = UUID(), name: String, media: UUID, kind: TrackKind,
                 source: TimeRange, start: Time, link: UUID? = nil, mediaDuration: Time? = nil,
                 animation: ClipAnimation = ClipAnimation(), sequence: Timeline.ID? = nil,
-                generator: GeneratorRef? = nil, color: ClipColor = .default, label: LabelColor? = nil) {
+                generator: GeneratorRef? = nil, color: ClipColor = .default, label: LabelColor? = nil,
+                effects: [ClipEffect] = []) {
+        self.effects = effects
         self.label = label
         self.color = color
         self.animation = animation
@@ -93,7 +97,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label
+        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects
     }
 
     public init(from d: Decoder) throws {
@@ -107,7 +111,16 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   sequence: try c.decodeIfPresent(Timeline.ID.self, forKey: .sequence),
                   generator: try c.decodeIfPresent(GeneratorRef.self, forKey: .generator),
                   color: try c.decodeIfPresent(ClipColor.self, forKey: .color) ?? .default,
-                  label: try c.decodeIfPresent(LabelColor.self, forKey: .label))
+                  label: try c.decodeIfPresent(LabelColor.self, forKey: .label),
+                  effects: try c.decodeIfPresent([ClipEffect].self, forKey: .effects) ?? [])
+        // v8 -> v9: a radius that was not the default becomes an applied Rounded Corners effect.
+        if let legacy = animation.legacyCornerRadius {
+            animation.legacyCornerRadius = nil
+            if (legacy.value != 0 || legacy.isAnimated), roundedCorners == nil {
+                effects.append(ClipEffect(kind: ClipEffect.roundedCornersKind,
+                                          parameters: [ClipEffect.radiusKey: legacy]))
+            }
+        }
     }
 
     /// Moves a split-off right half onto a fresh link shared through `map` (old link to new link).
@@ -124,6 +137,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     mutating func shiftSourceStart(by d: Time) {
         source.start += d
         animation = animation.shifted(by: .zero - d)
+        effects = effects.map { $0.shifted(by: .zero - d) }
     }
 
     /// Keeps the part of the clip inside `range` (timeline coordinates), source offset follows.
@@ -133,6 +147,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
         c.source = TimeRange(start: source.start + (r.start - start), duration: r.duration)
         c.start = r.start
         c.animation = animation.shifted(by: start - r.start)   // keep keys on the same frames
+        c.effects = effects.map { $0.shifted(by: start - r.start) }
         return c
     }
 }

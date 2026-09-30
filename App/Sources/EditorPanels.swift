@@ -86,7 +86,7 @@ final class EditorPanels {
         tv.dropItemsProvider = { [weak self] source in self?.dropItems(for: source) ?? [] }
         tv.onDropEffect = { [weak self] id, clip in
             guard let self, id == EffectsPanelView.roundedCorners else { return }
-            if !session.addRoundedCorners(to: [clip]) { onStatus?("Rounded Corners need a video clip that has none yet.") }
+            if !session.addRoundedCorners(to: [clip]) { onStatus?("Rounded Corners need a video clip that does not have it yet.") }
         }
         tv.contextMenuProvider = { [weak self] p in self?.timelineMenu(at: p) }
     }
@@ -132,7 +132,7 @@ final class EditorPanels {
         }
         effectsView.onApply = { [weak self] id in
             guard let self, id == EffectsPanelView.roundedCorners else { return }
-            if !session.addRoundedCorners() { onStatus?("Select a video clip without rounded corners first.") }
+            if !session.addRoundedCorners() { onStatus?("Select a video clip without Rounded Corners first.") }
         }
     }
 

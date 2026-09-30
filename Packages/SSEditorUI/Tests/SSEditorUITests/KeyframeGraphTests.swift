@@ -250,7 +250,7 @@ private let limits = GraphEditLimits(frameDuration: fd)
         let p0 = g.keyPoint(track: t, index: 1)
         var s = begin(p0, track: t)
         let to = CGPoint(x: p0.x + CGFloat(0.5 * g.pointsPerSecond), y: p0.y - CGFloat(10 * g.pointsPerValue))
-        let mid = s.drag(to: to)
+        let mid = s.drag(to: to, free: true)                     // Shift: both axes
         #expect(!mid.commit)                                     // nothing committed while dragging
         let r = s.end(at: to)
         #expect(r.commit)
@@ -258,6 +258,47 @@ private let limits = GraphEditLimits(frameDuration: fd)
         #expect(b.time == Time(2, 1) + fd * 15)
         #expect(abs(b.value - 110) < 1e-6)
         #expect(r.selection == [idB])
+    }
+
+    @Test func mostlyHorizontalDragChangesOnlyTime() {
+        let t = track3(), g = geo(t)
+        let p0 = g.keyPoint(track: t, index: 1)
+        var s = begin(p0, track: t)
+        let to = CGPoint(x: p0.x + CGFloat(0.5 * g.pointsPerSecond), y: p0.y - 12)   // clearly more x than y
+        let r = s.end(at: to)
+        #expect(r.track.key(id: idB)!.value == 100)
+        #expect(r.track.key(id: idB)!.time == Time(2, 1) + fd * 15)
+        #expect(s.axis == .horizontal)
+    }
+
+    @Test func mostlyVerticalDragChangesOnlyValue() {
+        let t = track3(), g = geo(t)
+        let p0 = g.keyPoint(track: t, index: 1)
+        var s = begin(p0, track: t)
+        let to = CGPoint(x: p0.x + 8, y: p0.y - CGFloat(10 * g.pointsPerValue))
+        let r = s.end(at: to)
+        #expect(r.track.key(id: idB)!.time == Time(2, 1))
+        #expect(abs(r.track.key(id: idB)!.value - 110) < 1e-6)
+        #expect(s.axis == .vertical)
+    }
+
+    @Test func handleInfluenceStaysWithinTheSegment() {
+        let t = KeyframeTrack(keys: [key(idA, 0, 0, .bezier), key(idB, 2, 100), key(idC, 4, 50)])
+        let far = GraphDataPoint(seconds: 9, value: 0)                    // way past the next key
+        let out = KeyframeGraphEditing.dragHandle(base: t, keyID: idA, side: .outSide, to: far, mode: .value)
+        #expect(out.key(id: idA)!.outHandle.dx == 1)                      // 100 % of the segment, never beyond
+        let behind = GraphDataPoint(seconds: -3, value: 0)
+        let low = KeyframeGraphEditing.dragHandle(base: t, keyID: idA, side: .outSide, to: behind, mode: .value)
+        #expect(low.key(id: idA)!.outHandle.dx == KeyframeGraphEditing.minInfluence)
+    }
+
+    @Test func fitUsesClipRangeWhenGiven() {
+        let t = KeyframeTrack(keys: [key(idB, 2, 100), key(idC, 4, 50)])
+        let f = GraphFit.make(track: t, mode: .value, timeRange: 0...10)
+        #expect(f.time == 0...10)
+        let wide = GraphFit.make(track: t, mode: .value, timeRange: 3...3.5)   // keys outside widen it
+        #expect(wide.time == 2...4)
+        #expect(GraphFit.make(track: KeyframeTrack(), mode: .value, timeRange: 0...10).time == 0...10)
     }
 
     @Test func speedModeKeyDragMovesTimeOnly() {

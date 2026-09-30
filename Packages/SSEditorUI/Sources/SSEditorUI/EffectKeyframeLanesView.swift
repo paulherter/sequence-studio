@@ -62,13 +62,13 @@ public final class EffectKeyframeLanesView: NSView {
             switch row.kind {
             case .property(let p):
                 let sel = model.selectedKeyIDs(p)
-                for k in model.track(p)?.interpolations ?? [] {
-                    drawGlyph(k.interpolation, at: NSPoint(x: geo.x(for: k.time), y: cy),
+                for k in model.track(p)?.glyphs ?? [] {
+                    drawGlyph(k.glyph, at: NSPoint(x: geo.x(for: k.time), y: cy),
                               selected: sel.contains(k.id), summary: false)
                 }
             case .section(let s) where model.collapsedSections.contains(s):
                 for key in model.summaryKeys(s) {
-                    let shape = Self.summaryShape(key, model: model)
+                    let shape = Self.summaryGlyph(key, model: model)
                     drawGlyph(shape, at: NSPoint(x: geo.x(for: key.time), y: cy),
                               selected: model.isSelected(key), summary: true)
                 }
@@ -87,37 +87,22 @@ public final class EffectKeyframeLanesView: NSView {
         }
     }
 
-    /// Summary glyph: hold if every member is hold, circle if any member is eased, else diamond.
-    static func summaryShape(_ key: SummaryKey, model: EffectControlsModel) -> Interpolation {
-        var shapes: [Interpolation] = []
+    /// Summary glyph: per side hold if every member is hold, eased if any member is eased, else linear.
+    static func summaryGlyph(_ key: SummaryKey, model: EffectControlsModel) -> KeyGlyph {
+        var glyphs: [KeyGlyph] = []
         for m in key.members {
-            switch model.track(EffectProperty(rawValue: m.property.rawValue) ?? .opacity) {
-            case .scalar(let t)?: if let k = t.key(id: m.keyID) { shapes.append(k.interpolation) }
-            case .vector(let t)?: if let k = t.key(id: m.keyID) { shapes.append(k.interpolation) }
-            case nil: break
-            }
+            let t = model.track(EffectProperty(rawValue: m.property.rawValue) ?? .opacity)
+            if let g = t?.glyphs.first(where: { $0.id == m.keyID }) { glyphs.append(g.glyph) }
         }
-        if !shapes.isEmpty, shapes.allSatisfy({ $0 == .hold }) { return .hold }
-        return shapes.contains(.bezier) ? .bezier : .linear
+        return KeyGlyph.merged(glyphs)
     }
 
-    /// Diamond = linear, circle = eased (bezier), square = hold. Selected = accent.
-    private func drawGlyph(_ shape: Interpolation, at c: NSPoint, selected: Bool, summary: Bool) {
-        let h: CGFloat = summary ? 5.5 : 4.5
-        let path: NSBezierPath
-        switch shape {
-        case .linear:
-            path = NSBezierPath()
-            path.move(to: NSPoint(x: c.x, y: c.y - h)); path.line(to: NSPoint(x: c.x + h, y: c.y))
-            path.line(to: NSPoint(x: c.x, y: c.y + h)); path.line(to: NSPoint(x: c.x - h, y: c.y)); path.close()
-        case .bezier:
-            path = NSBezierPath(ovalIn: NSRect(x: c.x - h + 0.5, y: c.y - h + 0.5, width: 2 * h - 1, height: 2 * h - 1))
-        case .hold:
-            path = NSBezierPath(rect: NSRect(x: c.x - h + 1, y: c.y - h + 1, width: 2 * h - 2, height: 2 * h - 2))
-        }
-        (selected ? Theme.Colors.accent : (summary ? Theme.Colors.label2 : Theme.Colors.keyframe)).setFill()
-        path.fill()
-        Theme.Colors.divider.setStroke(); path.lineWidth = 1; path.stroke()
+    /// Premiere-style: diamond halves = linear, hourglass halves = eased, square halves = hold.
+    /// Left half = incoming, right half = outgoing. Selected = accent.
+    private func drawGlyph(_ glyph: KeyGlyph, at c: NSPoint, selected: Bool, summary: Bool) {
+        KeyGlyphDrawing.draw(glyph, at: c, half: summary ? 5.5 : 4.5,
+                             fill: selected ? Theme.Colors.accent : (summary ? Theme.Colors.label2 : Theme.Colors.keyframe),
+                             edge: Theme.Colors.divider)
     }
 
     // MARK: Hit testing
@@ -222,7 +207,7 @@ public final class EffectKeyframeLanesView: NSView {
 
     public override func keyDown(with event: NSEvent) {
         switch event.keyCode {
-        case 51, 117: model.deleteSelection()
+        case 51, 117: model.deleteSelectionOrEffect()
         default: super.keyDown(with: event)
         }
     }
@@ -299,11 +284,23 @@ public final class EffectKeyframeLanesView: NSView {
 }
 
 extension PropertyTrack {
-    /// Id, clip-local time and shape of every key (for drawing).
-    var interpolations: [(id: UUID, time: Time, interpolation: Interpolation)] {
+    /// Id, clip-local time and glyph of every key (for drawing).
+    var glyphs: [(id: UUID, time: Time, glyph: KeyGlyph)] {
         switch self {
-        case .scalar(let t): t.keys.map { ($0.id, $0.time, $0.interpolation) }
-        case .vector(let t): t.keys.map { ($0.id, $0.time, $0.interpolation) }
+        case .scalar(let t): KeyGlyph.glyphs(of: t)
+        case .vector(let t): KeyGlyph.glyphs(of: t)
+        }
+    }
+}
+
+enum KeyGlyphDrawing {
+    static func draw(_ glyph: KeyGlyph, at c: NSPoint, half h: CGFloat, fill: NSColor, edge: NSColor) {
+        for poly in glyph.polygons(at: c, h: h) {
+            let path = NSBezierPath()
+            for (i, p) in poly.enumerated() { i == 0 ? path.move(to: p) : path.line(to: p) }
+            path.close()
+            fill.setFill(); path.fill()
+            edge.setStroke(); path.lineWidth = 1; path.stroke()
         }
     }
 }
