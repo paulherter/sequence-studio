@@ -37,3 +37,10 @@
 8. Preview cache gets an LRU cap of 2 GB, same pattern as SSProxy (lastAccess, evict oldest first).
 9. Preset export/import is after V1.
 10. Keep the 3 newest `.corrupt-*` backups per file, prune older ones on the next backup.
+
+## 2026-09-30 [auto] SSEditorUI U-01/U-02/T-01
+- Theme: fixed sRGB constants (dark only), tabular digits everywhere.
+- Panels: effectControls, text, properties, programMonitor, sourceMonitor, library, effects, project, timeline (tool column + meter belong to timeline).
+- Built-in layouts: PC = [left 0.75 | right 0.25]; left = top [EffectControls/Text/Properties 0.6 | Program/Source 0.4] over timeline (0.55/0.45); right = Library over Effects/Project. MacBook = [left 0.68 | Program/Source full height]; left = top [Library/Effects 0.4 | Effect Controls 0.6] over [Project 0.25 | timeline 0.75].
+- Hidden panels stay in the tree (show restores exact place); min fraction 0.05; maximize is a state, not a tree edit.
+- Timeline: ruler 22 pt; tracks V(n)…V1 then A1…A(n); `Track.height` ignored in favour of per-track overrides; trim handle = min(6 pt, clip width / 3); edges half-open; snap threshold 8 pt.
