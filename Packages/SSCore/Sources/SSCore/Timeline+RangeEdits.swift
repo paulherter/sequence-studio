@@ -109,13 +109,13 @@ extension Timeline {
     /// Insert-move (Cmd-drag): takes the clip (and linked partners) out, closing the source gap like a
     /// ripple delete, and inserts it at `start`, pushing later clips on the destination and all
     /// sync-locked tracks right (a clip under the drop point is split). `start` is in the timeline as
-    /// it was before the edit; it is translated for the closed gap. Partners must start together with
-    /// the clip (else `.collision`); the clip may change track (same kind). Locked tracks refuse.
+    /// it was before the edit; it is translated for the closed gap. Linked partners keep their start/end offset (J/L cuts): the
+    /// earliest-starting member lands at `start`, the others at `start` plus their original offset.
+    /// The clip (as dragged) may change track (same kind). Locked tracks refuse.
     public mutating func moveInsert(_ id: Clip.ID, to start: Time, track target: Track.ID? = nil) throws {
         let group = try linkedGroup(id)
         if group.contains(where: { tracks[$0.track].isLocked }) { throw EditError.trackLocked }
         let primary = group[0].clip
-        guard group.allSatisfy({ $0.clip.start == primary.start }) else { throw EditError.collision }
         var destinations = group.map { tracks[$0.track].id }
         if let target {
             guard let ti = tracks.firstIndex(where: { $0.id == target }) else { throw EditError.clipNotFound }
@@ -126,7 +126,8 @@ extension Timeline {
         var work = self
         let closed = try work.rippleDeleteOne(id)
         var t = max(start, .zero)
-        let range = primary.timeline
+        let range = TimeRange(start: group.map { $0.clip.start }.min()!,
+                              end: group.map { $0.clip.timeline.end }.max()!)
         if t >= range.end { t = max(t - closed, .zero) }
         else if t > range.start { t = range.start }
         let placements = zip(group, destinations).map { (clip: $0.clip, track: $1) }

@@ -39,18 +39,28 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         return closed
     }
 
+    /// Removes the group and closes the gap. Every group track closes its own clip's duration from that
+    /// clip's end (so J/L-cut partners with an offset each close correctly); other ripple tracks close
+    /// by the longest of those, from the earliest group end. If any track lacks room, all close less.
     mutating func rippleDeleteOne(_ id: Clip.ID) throws -> Time {
         let group = try linkedGroup(id)
-        let range = group[0].clip.timeline
         let ids = Set(group.map(\.clip.id))
         let involved = try involvedTracks(group)
-        var d = range.duration
+        let maxU = group.map { $0.clip.timeline.duration }.max() ?? .zero
+        let firstEnd = group.map { $0.clip.timeline.end }.min() ?? .zero
+        var amount: [Int: Time] = [:], pivot: [Int: Time] = [:]
+        for i in involved { amount[i] = maxU; pivot[i] = firstEnd }
+        for m in group { amount[m.track] = m.clip.timeline.duration; pivot[m.track] = m.clip.timeline.end }
+        var shortfall = Time.zero
         for i in involved {
-            if let room = tracks[i].leftRoom(pivot: range.end, excluding: ids) { d = min(d, room) }
+            if let room = tracks[i].leftRoom(pivot: pivot[i]!, excluding: ids) { shortfall = max(shortfall, amount[i]! - room) }
         }
         for m in group { tracks[m.track].remove(m.clip.id) }
-        for i in involved { tracks[i].shift(from: range.end, by: -d) }
-        return d
+        for i in involved {
+            let d = max(amount[i]! - shortfall, .zero)
+            tracks[i].shift(from: pivot[i]!, by: .zero - d)
+        }
+        return max(maxU - shortfall, .zero)
     }
 
     // MARK: Ripple trim
@@ -97,9 +107,13 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     // MARK: Insert
 
     /// Insert edit: places clips (each on its target track), splits and pushes everything at or
-    /// after `at` later by the longest clip on all ripple tracks. Other tracks get a gap.
+    /// after `at` later by the span of the placements on all ripple tracks. Other tracks get a gap.
+    /// Placements keep their start offsets relative to the earliest placement start (J/L cuts): the
+    /// earliest lands at `at`, the others at `at` plus their offset. Span = earliest start to latest end.
     public mutating func insert(_ placements: [(clip: Clip, track: Track.ID)], at t: Time) throws {
-        guard let d = placements.map(\.clip.timeline.duration).max(), d > .zero else { throw EditError.emptyClip }
+        guard let first = placements.map(\.clip.start).min() else { throw EditError.emptyClip }
+        guard let d = placements.map({ ($0.clip.start - first) + $0.clip.timeline.duration }).max(), d > .zero
+        else { throw EditError.emptyClip }
         var work = tracks
         var targets = Set<Int>()
         for p in placements {
@@ -113,7 +127,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
             work[i].shift(from: t, by: d)
         }
         for p in placements {
-            var c = p.clip; c.start = t
+            var c = p.clip; c.start = t + (p.clip.start - first)
             let i = work.firstIndex { $0.id == p.track }!
             try work[i].overwrite(c)
         }

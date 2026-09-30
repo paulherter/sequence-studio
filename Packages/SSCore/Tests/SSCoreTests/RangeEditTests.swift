@@ -169,3 +169,63 @@ private func spans(_ t: Track) -> [[Int64]] {
         #expect(throws: EditError.trackLocked) { try lk.moveInsert(v[0].id, to: s(6)) }
     }
 }
+
+@Suite struct InsertMoveOffsetTests {
+    // J-cut: audio starts one second before its video. Video v1 4..8, audio a1 3..7.
+    private func jcut() throws -> (Timeline, [Clip], [Clip]) {
+        let l = UUID()
+        let v = [clip(0, 4), clip(4, 4, link: l), clip(8, 4)]
+        let a = [clip(0, 3, kind: .audio), clip(3, 4, kind: .audio, link: l), clip(7, 5, kind: .audio)]
+        return (timeline(try track(v), try track(a, kind: .audio)), v, a)
+    }
+    @Test func jCutMovedForwardKeepsOffset() throws {
+        var (tl, v, a) = try jcut()
+        try tl.moveInsert(v[1].id, to: s(12))
+        #expect(spans(tl.tracks[0]) == [[0, 4], [4, 8], [9, 13]])
+        #expect(spans(tl.tracks[1]) == [[0, 3], [3, 8], [8, 12]])
+        #expect(tl.tracks[0].clips[2].id == v[1].id && tl.tracks[1].clips[2].id == a[1].id)
+        #expect(tl.tracks[0].clips[2].link == tl.tracks[1].clips[2].link && tl.tracks[0].clips[2].link != nil)
+    }
+    @Test func jCutMovedBackwardKeepsOffset() throws {
+        var (tl, v, a) = try jcut()
+        try tl.moveInsert(a[1].id, to: s(0))       // drag by the audio partner
+        #expect(spans(tl.tracks[0]) == [[1, 5], [5, 9], [9, 13]])
+        #expect(spans(tl.tracks[1]) == [[0, 4], [5, 8], [8, 13]])
+        #expect(tl.tracks[0].clips[0].id == v[1].id && tl.tracks[1].clips[0].id == a[1].id)
+    }
+    @Test func jCutDroppedMidClipSplitsEveryTrack() throws {
+        var (tl, v, a) = try jcut()
+        try tl.moveInsert(v[1].id, to: s(2))
+        #expect(spans(tl.tracks[0]) == [[0, 2], [3, 7], [7, 9], [9, 13]])
+        #expect(spans(tl.tracks[1]) == [[0, 2], [2, 6], [7, 8], [8, 13]])
+        #expect(tl.tracks[0].clips[1].id == v[1].id && tl.tracks[1].clips[1].id == a[1].id)
+        #expect(tl.tracks.allSatisfy { $0.isConsistent })
+    }
+    @Test func lCutAudioEndsLater() throws {
+        let l = UUID()
+        let v = [clip(0, 4), clip(4, 4, link: l), clip(8, 4)]
+        let a = [clip(0, 4, kind: .audio), clip(4, 5, kind: .audio, link: l), clip(9, 3, kind: .audio)]
+        var tl = timeline(try track(v), try track(a, kind: .audio))
+        try tl.moveInsert(v[1].id, to: s(12))
+        #expect(spans(tl.tracks[0]) == [[0, 4], [4, 7], [7, 11], [12, 13]])
+        #expect(spans(tl.tracks[1]) == [[0, 4], [4, 7], [7, 12]])
+        #expect(tl.tracks[1].clips[2].id == a[1].id && tl.tracks[1].clips[2].link == l)
+    }
+    @Test func lockedPartnerRefusesAndSyncLockedTrackShifts() throws {
+        let (tl0, v, _) = try jcut()
+        var locked = tl0
+        locked.tracks[1].isLocked = true
+        let before = locked
+        #expect(throws: EditError.trackLocked) { try locked.moveInsert(v[1].id, to: s(12)) }
+        #expect(locked == before)
+        // sync-locked bystander after the group closes by 4, then is pushed by the 5 s span
+        var tl = tl0
+        tl.tracks.append(try track([clip(8, 4)]))
+        try tl.moveInsert(v[1].id, to: s(0))
+        #expect(spans(tl.tracks[2]) == [[9, 13]])
+        var tl2 = tl0
+        tl2.tracks.append(try track([clip(8, 4)]))
+        try tl2.moveInsert(v[1].id, to: s(12))
+        #expect(spans(tl2.tracks[2]) == [[4, 8]])
+    }
+}
