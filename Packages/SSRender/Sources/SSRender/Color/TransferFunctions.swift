@@ -40,8 +40,15 @@ public enum TransferFunctions {
     static let hlgB: Float = 0.28466892  // 1 - 4a
     static let hlgC: Float = 0.55991073  // 0.5 - a ln(4a)
 
-    /// Factor so that HLG signal 0.38 (BT.2408 grey) maps to scene linear 0.18.
-    public static let hlgScale: Float = 0.18 / (0.38 * 0.38 / 3)
+    /// BT.2100 system gamma for a 1000 nit display.
+    static let hlgGamma: Float = 1.2
+    /// BT.2100 luminance weights (BT.2020 primaries).
+    static let hlgLuma = SIMD3<Float>(0.2627, 0.6780, 0.0593)
+    /// Normalisation so HLG reference white (signal 0.75, display 203/1000 ≈ 0.2027 after the OOTF) maps to 1.0. Derived, not hardcoded.
+    public static let hlgScale: Float = {
+        let e = hlgInverseOETF(0.75)
+        return 1 / (e * powf(e, hlgGamma - 1))
+    }()
 
     /// BT.2100 inverse OETF: signal 0…1 -> scene light 0…1 (unscaled).
     public static func hlgInverseOETF(_ e: Float) -> Float {
@@ -57,10 +64,25 @@ public enum TransferFunctions {
         return hlgA * logf(12 * s - hlgB) + hlgC
     }
 
-    /// HLG signal -> scene linear in the working scale (grey 0.38 -> 0.18).
-    public static func hlgDecode(_ e: Float) -> Float { hlgInverseOETF(e) * hlgScale }
-    /// Inverse of `hlgDecode`.
-    public static func hlgEncode(_ y: Float) -> Float { hlgOETF(y / hlgScale) }
+    /// HLG signal (BT.2020 R'G'B') -> display-referred linear, reference white = 1.0 (peak ≈ 4.93).
+    /// BT.2100 inverse OETF per channel (scene E), then the luminance-based OOTF `Fd = Ys^(γ−1)·E`
+    /// (γ = 1.2, Ys = 0.2627R + 0.6780G + 0.0593B of E), times `hlgScale`. Non-separable: needs all three channels.
+    public static func hlgDecode(_ v: SIMD3<Float>) -> SIMD3<Float> {
+        let e = SIMD3(hlgInverseOETF(v.x), hlgInverseOETF(v.y), hlgInverseOETF(v.z))
+        let ys = simd_dot(hlgLuma, e)
+        let gain = ys > 0 ? powf(ys, hlgGamma - 1) : 0
+        return e * gain * hlgScale
+    }
+
+    /// Exact inverse of `hlgDecode`: undo the scale, `Ys = Yd^(1/γ)`, `E = Fd / Ys^(γ−1)`, then the OETF.
+    public static func hlgEncode(_ v: SIMD3<Float>) -> SIMD3<Float> {
+        let fd = v / hlgScale
+        let yd = simd_dot(hlgLuma, fd)
+        guard yd > 0 else { return SIMD3(hlgOETF(0), hlgOETF(0), hlgOETF(0)) }
+        let ys = powf(yd, 1 / hlgGamma)
+        let e = fd / powf(ys, hlgGamma - 1)
+        return SIMD3(hlgOETF(e.x), hlgOETF(e.y), hlgOETF(e.z))
+    }
 
     // MARK: BT.709
 
@@ -84,8 +106,6 @@ public enum TransferFunctions {
     }
     public static func slog3DecodeLegal(_ v: SIMD3<Float>) -> SIMD3<Float> { map(v, slog3DecodeLegal) }
     public static func slog3EncodeLegal(_ v: SIMD3<Float>) -> SIMD3<Float> { map(v, slog3EncodeLegal) }
-    public static func hlgDecode(_ v: SIMD3<Float>) -> SIMD3<Float> { map(v, hlgDecode) }
-    public static func hlgEncode(_ v: SIMD3<Float>) -> SIMD3<Float> { map(v, hlgEncode) }
     public static func bt709OETF(_ v: SIMD3<Float>) -> SIMD3<Float> { map(v, bt709OETF) }
     public static func bt709InverseOETF(_ v: SIMD3<Float>) -> SIMD3<Float> { map(v, bt709InverseOETF) }
 }

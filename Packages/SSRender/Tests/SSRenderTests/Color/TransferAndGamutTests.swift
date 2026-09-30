@@ -26,11 +26,22 @@ import simd
         #expect(abs(T.slog3Decode(e) - 0.01125) < 1e-5)
     }
 
-    @Test func hlgGreyAndReferenceWhite() {
-        #expect(abs(T.hlgDecode(0.38) - 0.18) < 1e-5)
-        let w = T.hlgDecode(0.75)
-        #expect(abs(w - 0.99) < 0.02)
-        #expect(abs(T.hlgScale - 3.74) < 0.01)
+    @Test func hlgReferenceWhiteGreyAndPeak() {
+        func grey(_ v: Float) -> Float { T.hlgDecode(SIMD3(repeating: v)).x }
+        #expect(abs(grey(0.75) - 1) < 1e-4)            // reference white (75 %) -> 1.0
+        #expect(abs(grey(0.38) - 26.0 / 203) < 2e-3)   // BT.2408 grey (26 nits of 203)
+        #expect(abs(grey(1) - 4.93) < 0.01)            // peak = 1000 / 203
+        #expect(abs(T.hlgScale - 1 / (powf(T.hlgInverseOETF(0.75), 1.2))) < 1e-4)
+        #expect(T.hlgDecode(.zero) == .zero)
+        #expect(T.hlgDecode(SIMD3(-0.1, 0, 0)) == .zero)
+    }
+
+    @Test func hlgOOTFIsLuminanceBased() {
+        // Coloured pixel: ratio of channels equals ratio of scene light E (hue-preserving).
+        let s = SIMD3<Float>(0.8, 0.5, 0.3)
+        let d = T.hlgDecode(s)
+        let e = SIMD3(T.hlgInverseOETF(s.x), T.hlgInverseOETF(s.y), T.hlgInverseOETF(s.z))
+        #expect(abs(d.x / d.y - e.x / e.y) < 1e-4 && abs(d.y / d.z - e.y / e.z) < 1e-4)
     }
 
     @Test func hlgContinuityAndRoundTrip() {
@@ -38,8 +49,15 @@ import simd
         #expect(abs(T.hlgInverseOETF(1) - 1) < 1e-4)
         var e: Float = 0
         while e <= 1 {
-            #expect(abs(T.hlgEncode(T.hlgDecode(e)) - e) < 1e-5)
+            let g = SIMD3<Float>(repeating: e)
+            #expect(simd_length(T.hlgEncode(T.hlgDecode(g)) - g) < 1e-5)
             e += 0.01
+        }
+        var rng = LCG(s: 77)
+        for _ in 0..<2000 {
+            let c = rng.rgb()
+            let r = T.hlgEncode(T.hlgDecode(c))
+            #expect(simd_length(r - c) < 1e-5, "\(c) -> \(r)")
         }
     }
 

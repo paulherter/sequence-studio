@@ -46,7 +46,8 @@ enum ColorShaderSource {
     constant float kHlgA = 0.17883277f;
     constant float kHlgB = 0.28466892f;
     constant float kHlgC = 0.55991073f;
-    constant float kHlgScale = 0.18f / (0.38f * 0.38f / 3.0f);
+    constant float kHlgGamma = 1.2f;
+    constant float3 kHlgLuma = float3(0.2627f, 0.6780f, 0.0593f);
 
     float hlgInverseOETF(float e) {
         e = max(e, 0.0f);
@@ -58,8 +59,25 @@ enum ColorShaderSource {
         if (s <= 1.0f / 12.0f) { return sqrt(3.0f * s); }
         return kHlgA * log(12.0f * s - kHlgB) + kHlgC;
     }
-    float hlgDecode(float e) { return hlgInverseOETF(e) * kHlgScale; }
-    float hlgEncode(float y) { return hlgOETF(y / kHlgScale); }
+    // Non-separable HLG OOTF (TransferFunctions.hlgDecode / hlgEncode). Scale is derived: 1 / E75^γ.
+    float hlgScale() {
+        float e = hlgInverseOETF(0.75f);
+        return 1.0f / (e * pow(e, kHlgGamma - 1.0f));
+    }
+    float3 hlgDecode3(float3 v) {
+        float3 e = float3(hlgInverseOETF(v.x), hlgInverseOETF(v.y), hlgInverseOETF(v.z));
+        float ys = dot(kHlgLuma, e);
+        float gain = ys > 0.0f ? pow(ys, kHlgGamma - 1.0f) : 0.0f;
+        return e * gain * hlgScale();
+    }
+    float3 hlgEncode3(float3 v) {
+        float3 fd = v / hlgScale();
+        float yd = dot(kHlgLuma, fd);
+        if (!(yd > 0.0f)) { return float3(hlgOETF(0.0f)); }
+        float ys = pow(yd, 1.0f / kHlgGamma);
+        float3 e = fd / pow(ys, kHlgGamma - 1.0f);
+        return float3(hlgOETF(e.x), hlgOETF(e.y), hlgOETF(e.z));
+    }
 
     constant float kBt709Alpha = 1.09929682680944f;
     constant float kBt709Beta = 0.018053968510807f;
@@ -76,10 +94,10 @@ enum ColorShaderSource {
     float3 map3(float3 v, int fn) {
         switch (fn) {
         case 0: return float3(slog3DecodeLegal(v.x), slog3DecodeLegal(v.y), slog3DecodeLegal(v.z));
-        case 1: return float3(hlgDecode(v.x), hlgDecode(v.y), hlgDecode(v.z));
+        case 1: return hlgDecode3(v);
         case 2: return float3(bt709InverseOETF(v.x), bt709InverseOETF(v.y), bt709InverseOETF(v.z));
         case 3: return float3(slog3EncodeLegal(v.x), slog3EncodeLegal(v.y), slog3EncodeLegal(v.z));
-        case 4: return float3(hlgEncode(v.x), hlgEncode(v.y), hlgEncode(v.z));
+        case 4: return hlgEncode3(v);
         case 5: return float3(bt709OETF(v.x), bt709OETF(v.y), bt709OETF(v.z));
         default: return v;
         }

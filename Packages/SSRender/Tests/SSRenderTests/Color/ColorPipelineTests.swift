@@ -27,9 +27,11 @@ import simd
         #expect(simd_length(o - SIMD3(repeating: 0.18)) < 1e-4)
     }
 
-    @Test func hlgGreyAutomaticGives018AndPeakBounded() {
+    @Test func hlgReferenceWhiteAndPeakBounded() {
         let p = ColorPipeline(source: .hlgBT2020)
-        #expect(simd_length(p.process(SIMD3(repeating: 0.38)) - SIMD3(repeating: 0.18)) < 1e-4)
+        #expect(abs(SourceColorSpace.hlgBT2020.decode(SIMD3(repeating: 0.75)).x - 1) < 1e-4)
+        #expect(simd_length(p.process(SIMD3(repeating: 0.75)) - SIMD3(repeating: p.toneMapping.mapMax(1))) < 1e-4)
+        #expect(simd_length(p.process(SIMD3(repeating: 0.38)) - SIMD3(repeating: 26.0 / 203)) < 2e-3)
         for s in [SIMD3<Float>(1, 1, 1), [1, 0, 0], [0, 1, 0], [0, 0, 1], [0.9, 1, 0.2]] {
             let w = p.process(s)
             #expect(max(w.x, w.y, w.z) <= 1 + 1e-6)
