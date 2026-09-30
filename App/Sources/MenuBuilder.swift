@@ -2,9 +2,10 @@ import AppKit
 import SSEditorUI
 
 /// Builds the main menu from `EditorMenus` (structure) and `CommandMap` (key equivalents).
-/// Only bindings with Command become real key equivalents. Plain keys (J K L, I O, Space, arrows...) are handled by
-/// `KeyRouter` from key events, because an NSMenu key equivalent without Command would also fire while typing in a
-/// text field and cannot see key-up for J/K/L; the menu shows them as a grey hint in the title instead.
+/// Every binding is a real key equivalent so macOS shows and right-aligns it. Plain keys (J K L, I O, Space, arrows...)
+/// are still handled by `KeyRouter` from key events (it needs key-up for J/K/L); the local key monitor consumes those
+/// events before the menu sees them. When the monitor lets one through (typing in a text field, list arrows) the
+/// item is disabled by `AppController.validateMenuItem`, so it cannot fire twice or steal typing.
 @MainActor
 enum MenuBuilder {
     static func build(target: AppController, map: CommandMap) -> NSMenu {
@@ -70,15 +71,9 @@ enum MenuBuilder {
         item.target = target
         item.representedObject = c
         guard let b = map.binding(for: c) else { return item }
-        if b.modifiers.contains(.command), let k = KeyMapping.keyEquivalent(for: b.key) {
+        if let k = KeyMapping.keyEquivalent(for: b.key) {
             item.keyEquivalent = k
-            item.keyEquivalentModifierMask = KeyMapping.modifierMask(b.modifiers)
-        } else {
-            let title = NSMutableAttributedString(string: c.title, attributes: [.font: NSFont.menuFont(ofSize: 0)])
-            title.append(NSAttributedString(string: "    " + KeyMapping.hint(for: b), attributes: [
-                .font: NSFont.menuFont(ofSize: 0), .foregroundColor: NSColor.tertiaryLabelColor,
-            ]))
-            item.attributedTitle = title
+            item.keyEquivalentModifierMask = KeyMapping.modifierMask(b.modifiers)   // [] for plain keys: macOS right-aligns them
         }
         return item
     }
