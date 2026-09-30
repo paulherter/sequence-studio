@@ -22,6 +22,8 @@ Checked and found correct:
 ## Findings (most severe first)
 
 ### 1. High: split/clear keep `link` on the right half, so one link group becomes four clips
+**Fixed in `0153c84`.** Split, clear, overwrite, move and insert share one old→new link map per edit. Tests: `LinkedEditTests`.
+
 `Packages/SSCore/Sources/SSCore/Model.swift:141` (`clear`), `Model.swift:164` (`split`). `Timeline.insert` (`Timeline.swift:~162`) goes through both.
 
 The right half gets a new `id` but keeps the original `link`. Only `addEdit` relinks the halves.
@@ -36,6 +38,8 @@ The right half gets a new `id` but keeps the original `link`. Only `addEdit` rel
 **Premiere:** each half stays linked only to its counterpart on the other track.
 
 ### 2. Med: ripple delete of a J/L-cut group moves later linked pairs out of sync
+**Fixed in `0153c84`.** All involved tracks close by one common amount, the group's span reduced by the largest collision shortfall. Test `lCutAudioEndsLater` was updated to the new behaviour.
+
 `Timeline.swift:89-101` (`rippleDeleteOne`).
 
 Each track in the group closes by its own clip's duration, with its own clip's end as the pivot.
@@ -48,6 +52,8 @@ Each track in the group closes by its own clip's duration, with its own clip's e
 **Premiere:** all sync-locked tracks ripple by the same amount, so later linked pairs stay aligned.
 
 ### 3. Med: trim head, roll and slide don't shift keyframes, so they drift on the timeline
+**Fixed in `120cabb`.** `Clip.shiftSourceStart(by:)` applies to head trim, ripple-trim head (which covers Q), roll and slide. Slip keeps keys clip-relative. Tests: `KeyframeEditFollowTests`.
+
 - `Timeline+Edits.swift:49` (trim head)
 - `Timeline+Edits.swift:86` (roll)
 - `Timeline+RangeEdits.swift:95` (slide)
@@ -61,6 +67,8 @@ These edits change `start` and `source.start` together but never call `animation
 **Premiere:** keyframes stay attached to the source frame.
 
 ### 4. Med: decoding `Time` bypasses normalization and validation
+**Fixed in `bf908f3`.** A custom `init(from:)` normalises and throws `DecodingError` for timescale ≤ 0. The encoded format is unchanged.
+
 `Time.swift:3-5`.
 
 `Time` uses the synthesized `Decodable`, which skips the gcd normalization and the `timescale > 0` precondition in `init`. Equality and hashing are synthesized member-wise, which contradicts the doc comment ("1/2 == 2/4").
@@ -74,6 +82,8 @@ Anything that depends on == breaks for a non-normalized value from a file: bound
 **Fix direction:** add a custom `init(from:)` that goes through `init(_:_:)` and throws on timescale ≤ 0.
 
 ### 5. Low/Med: ripple trim pivots every track on the primary clip's end, so J/L-cut trims collide
+**Fixed in `0153c84`.** Each track pivots on its own member's end.
+
 `Timeline.swift:114` and `Timeline.swift:138` (`rippleTrim`).
 
 **Scenario:**
@@ -86,6 +96,8 @@ Anything that depends on == breaks for a non-normalized value from a file: bound
 This finding was traced by hand, not run.
 
 ### 6. Low: `KeyframeSummary.toggleHold` destroys custom bezier out-handles
+**Fixed in `bf908f3`.** Handles are never touched. Turning hold off restores bezier if any adjacent handle is non-linear, and linear otherwise. The model has no stored "previous interpolation".
+
 `KeyframesEditing.swift:178-179`.
 
 It applies `EasingCurve.linear` or `.hold` with side `.out`. That overwrites `outHandle` as well as the interpolation.
