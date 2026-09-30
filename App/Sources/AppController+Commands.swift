@@ -66,9 +66,9 @@ extension AppController {
             shell.statusBar.flash(panels.timelineView.toolState.snapping ? "Snapping on" : "Snapping off", seconds: 2)
         case .undo: session.undo()
         case .redo: session.redo()
-        case .zoomIn: panels.timelineView.zoomIn()
-        case .zoomOut: panels.timelineView.zoomOut()
-        case .zoomFit: panels.timelineView.zoomToFit()
+        case .zoomIn: if effectControlsHasFocus { panels.effectModel.zoomIn() } else { panels.timelineView.zoomIn() }
+        case .zoomOut: if effectControlsHasFocus { panels.effectModel.zoomOut() } else { panels.timelineView.zoomOut() }
+        case .zoomFit: if effectControlsHasFocus { panels.effectModel.zoomToFit() } else { panels.timelineView.zoomToFit() }
         case .focusPanel(let p): showPanel(p)
         case .maximizePanel:
             if let p = focusedPanel { maximizedPanel = maximizedPanel == p ? nil : p; applyWorkspace() }

@@ -109,3 +109,9 @@ Premiere semantics: Scale 100 % = one upright source pixel per sequence pixel (a
 - Crop in Motion: later.
 - Timeline follows playback page-wise; manual scrolling wins until playback restarts.
 - Type tool (T) like Premiere: click in Program monitor → text clip on the top free video track at the playhead (5 s), type immediately; style in Effect Controls › Text.
+
+## 2026-10-01 Stream A: Effect Controls keyframe area (implementer choices, Paul to confirm by feel)
+- A value edit always applies at the playhead; selected keys only take it when the playhead sits on one of them (then all selected keys shift together). A key selected elsewhere never captures an edit. A key that was just moved is deselected.
+- Reset button on an animated property = value at the playhead (key created/replaced); "Reset All" (right-click) drops the keys.
+- Text/Audio section now sits below the Motion/Opacity/Volume rows. Divider min 324 pt / keyframe area min 160 pt, persisted in UserDefaults `effectControls.labelWidth`.
+- Zoom: pinch, Option/Cmd+scroll, +/-/\ (when Effect Controls has focus), horizontal scroll pans, bottom zoom bar (round handles, double-click = fit). Handle drags in the graph are axis-locked (vertical only when |dy| >= 1.5 |dx|), Shift frees both.

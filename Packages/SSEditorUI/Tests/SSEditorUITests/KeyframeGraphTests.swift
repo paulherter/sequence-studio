@@ -257,7 +257,7 @@ private let limits = GraphEditLimits(frameDuration: fd)
         let b = r.track.key(id: idB)!
         #expect(b.time == Time(2, 1) + fd * 15)
         #expect(abs(b.value - 110) < 1e-6)
-        #expect(r.selection == [idB])
+        #expect(r.selection.isEmpty)                             // a moved key is deselected
     }
 
     @Test func mostlyHorizontalDragChangesOnlyTime() {
@@ -327,7 +327,7 @@ private let limits = GraphEditLimits(frameDuration: fd)
         s = begin(pa, track: t, sel: [idA, idB])
         let to = CGPoint(x: pa.x + CGFloat(0.5 * g.pointsPerSecond), y: pa.y)
         let r = s.end(at: to)
-        #expect(r.selection == [idA, idB])
+        #expect(r.selection.isEmpty)
         #expect(r.track.key(id: idB)!.time > Time(2, 1) && r.track.key(id: idA)!.time > .zero)
     }
 
@@ -337,8 +337,9 @@ private let limits = GraphEditLimits(frameDuration: fd)
         let hp = g.handlePoint(track: t, keyID: idA, side: .outSide)!
         var s = begin(hp, track: t, sel: [idA])
         let to = CGPoint(x: hp.x + 30, y: hp.y - 20)
+        _ = s.drag(to: to, free: true)                           // Shift: both axes
         let r = s.end(at: to)
-        #expect(r.commit && r.selection == [idA])
+        #expect(r.commit && r.selection == [idA])                // a handle drag keeps the key selected
         let h = r.track.key(id: idA)!.outHandle
         #expect(h.dx > EaseHandle.linear.dx && h.dy > EaseHandle.linear.dy)
         #expect(r.track.key(id: idB) == t.key(id: idB))
@@ -359,5 +360,98 @@ private let limits = GraphEditLimits(frameDuration: fd)
         let spec = EasingMenuSpec(library: EasingLibrary(), side: .both, hasSelection: false)
         #expect(spec.entries.last == .saveCurve(enabled: false))
         #expect(spec.entries.allSatisfy { if case .curve(_, let e) = $0 { !e } else { true } })
+    }
+}
+
+@Suite struct GraphHandleAxisLockTests {
+    private func setup(mode: GraphMode) -> (KeyframeTrack<Double>, KeyframeGraphGeometry, CGPoint) {
+        let t = KeyframeTrack(keys: [key(idA, 0, 0, .bezier), key(idB, 4, 100)])
+        let g = geo(t, mode)
+        return (t, g, g.handlePoint(track: t, keyID: idA, side: .outSide)!)
+    }
+    private func begin(_ t: KeyframeTrack<Double>, _ g: KeyframeGraphGeometry, at p: CGPoint) -> GraphGestureState {
+        GraphGestureState(at: p, shift: false, geometry: g, track: t, selection: [idA], limits: limits)
+    }
+
+    @Test func decisionWaitsForMovementThenPrefersHorizontal() {
+        #expect(GraphAxisLock.decide(dx: 2, dy: 1) == nil)
+        #expect(GraphAxisLock.decide(dx: 8, dy: 6) == .horizontal)       // diagonal stays horizontal
+        #expect(GraphAxisLock.decide(dx: -8, dy: 1) == .horizontal)
+        #expect(GraphAxisLock.decide(dx: 3, dy: 12) == .vertical)        // clearly vertical only
+        #expect(GraphAxisLock.decide(dx: 6, dy: 7) == .horizontal)
+    }
+
+    @Test func horizontalDragKeepsTheSpeedAndOnlyChangesInfluence() {
+        let (t, g, hp) = setup(mode: .speed)
+        let before = GraphMath.handlePoint(track: t, keyID: idA, side: .outSide, mode: .speed)!
+        var s = begin(t, g, at: hp)
+        let to = CGPoint(x: hp.x + 40, y: hp.y + 9)                      // wobbly but mostly horizontal
+        _ = s.drag(to: to)
+        let r = s.end(at: to)
+        #expect(s.handleAxis == .horizontal)
+        let after = GraphMath.handlePoint(track: r.track, keyID: idA, side: .outSide, mode: .speed)!
+        #expect(abs(after.value - before.value) < 1e-6)                  // speed unchanged
+        #expect(after.seconds > before.seconds)                          // influence moved
+    }
+
+    @Test func verticalDragKeepsTheInfluence() {
+        let (t, g, hp) = setup(mode: .speed)
+        let before = GraphMath.handlePoint(track: t, keyID: idA, side: .outSide, mode: .speed)!
+        var s = begin(t, g, at: hp)
+        let to = CGPoint(x: hp.x + 2, y: hp.y - 40)
+        _ = s.drag(to: to)
+        let r = s.end(at: to)
+        #expect(s.handleAxis == .vertical)
+        let after = GraphMath.handlePoint(track: r.track, keyID: idA, side: .outSide, mode: .speed)!
+        #expect(abs(after.seconds - before.seconds) < 1e-6)
+        #expect(after.value > before.value)
+    }
+
+    @Test func handleDoesNotMoveBeforeTheAxisIsDecided() {
+        let (t, g, hp) = setup(mode: .speed)
+        var s = begin(t, g, at: hp)
+        let r = s.drag(to: CGPoint(x: hp.x + 3.5, y: hp.y + 0.5))        // past the click threshold, below the lock distance
+        #expect(r.track == t)
+    }
+
+    @Test func shiftFreesBothAxes() {
+        let (t, g, hp) = setup(mode: .speed)
+        var s = begin(t, g, at: hp)
+        let r = s.drag(to: CGPoint(x: hp.x + 30, y: hp.y - 30), free: true)
+        let before = GraphMath.handlePoint(track: t, keyID: idA, side: .outSide, mode: .speed)!
+        let after = GraphMath.handlePoint(track: r.track, keyID: idA, side: .outSide, mode: .speed)!
+        #expect(after.seconds > before.seconds && after.value != before.value)
+    }
+}
+
+@Suite struct GraphKeyMoveDeselectTests {
+    @Test func movedKeyIsDeselectedClickedKeyIsNot() {
+        let t = track3(), g = geo(t)
+        let p0 = g.keyPoint(track: t, index: 1)
+        var s = GraphGestureState(at: p0, shift: false, geometry: g, track: t, selection: [], limits: limits)
+        let to = CGPoint(x: p0.x + CGFloat(0.5 * g.pointsPerSecond), y: p0.y)
+        _ = s.drag(to: to)
+        let moved = s.end(at: to)
+        #expect(moved.commit && moved.selection.isEmpty)
+        var c = GraphGestureState(at: p0, shift: false, geometry: g, track: t, selection: [], limits: limits)
+        #expect(c.end(at: p0).selection == [idB])                        // a plain click still selects
+    }
+
+    @Test func zoomWindowSetsTheGraphTimeRange() {
+        let t = track3()
+        let f = GraphFit.make(track: t, mode: .speed, timeRange: 0...10, visibleTime: 1...3)
+        #expect(f.time == 1...3)
+        let g = KeyframeGraphGeometry(size: CGSize(width: 220, height: 100), insets: GraphInsets(top: 10, left: 10, bottom: 10, right: 10),
+                                      fit: f, mode: .speed)
+        #expect(abs(g.x(seconds: 1) - 10) < 1e-9 && abs(g.x(seconds: 3) - 210) < 1e-9)
+    }
+
+    @Test func axisLabelsAreOnlyTopAndBottom() {
+        let fit = GraphFit(time: 0...1, value: -5...25)
+        let l = GraphAxisLabels.labels(fit: fit)
+        #expect(l.count == 2 && l[0].value == 25 && l[1].value == -5)
+        #expect(GraphAxisLabels.format(0.5, scale: 100) == "50.0")
+        #expect(GraphAxisLabels.format(250) == "250")
+        #expect(GraphAxisLabels.format(0.254) == "0.25")
     }
 }

@@ -161,6 +161,15 @@ public final class EffectControlsModel {
     /// Jump the playhead (timeline time), e.g. for the prev/next key buttons.
     @ObservationIgnored public var onSeek: ((Time) -> Void)?
     @ObservationIgnored public var onLibraryChange: ((EasingLibrary) -> Void)?
+    /// Playhead scrubbing in the keyframe ruler: a press stops playback, a drag scrubs like the timeline ruler.
+    @ObservationIgnored public var onPointerDown: (() -> Void)?
+    @ObservationIgnored public var onScrubBegan: (() -> Void)?
+    @ObservationIgnored public var onScrub: ((Time) -> Void)?
+    @ObservationIgnored public var onScrubEnded: (() -> Void)?
+    @ObservationIgnored private var scrubBegan = false
+
+    /// Visible part of the clip in the keyframe area (nil = whole clip). Use `viewport`.
+    private var zoomState: KeyframeViewport?
 
     @ObservationIgnored private var gestureBase: Clip?
     @ObservationIgnored private var gestureEmitted = false
@@ -172,7 +181,9 @@ public final class EffectControlsModel {
     /// Sets the clip shown. Never calls `onEdit`. A different clip resets selection; the same clip prunes
     /// selected keys that no longer exist.
     public func setClip(_ c: Clip?) {
-        if c?.id != clip?.id { selection = []; selectedSection = nil; gestureBase = nil; gestureEmitted = false }
+        if c?.id != clip?.id { selection = []; selectedSection = nil; gestureBase = nil; gestureEmitted = false; zoomState = nil
+            if scrubBegan { scrubBegan = false; onScrubEnded?() }      // a lost mouse-up must not leave the scrub open
+        }
         clip = c
         if let sec = selectedSection, !visibleSections.contains(sec) || sec.effectKind == nil { selectedSection = nil }
         pruneSelection()
@@ -198,6 +209,80 @@ public final class EffectControlsModel {
     }
 
     public var duration: Time { clip?.source.duration ?? .zero }
+    var durationSeconds: Double { Double(duration.value) / Double(max(duration.timescale, 1)) }
+
+    // MARK: Zoom (keyframe area)
+
+    /// Smallest visible span: a few frames.
+    public var minViewportSpan: Double { 4 * Double(frameDuration.value) / Double(max(frameDuration.timescale, 1)) }
+
+    /// What the lanes, ruler, clip bar, graph and zoom bar show (clip-local seconds).
+    public var viewport: KeyframeViewport {
+        let d = durationSeconds
+        return zoomState?.clamped(duration: d, minSpan: minViewportSpan) ?? .full(duration: d)
+    }
+    public var isZoomed: Bool { !viewport.isFull(duration: durationSeconds) }
+
+    public func setViewport(_ v: KeyframeViewport) {
+        let c = v.clamped(duration: durationSeconds, minSpan: minViewportSpan)
+        zoomState = c.isFull(duration: durationSeconds) ? nil : c
+    }
+
+    /// `factor` > 1 zooms in. The anchor (clip-local seconds) stays where it is on screen; default: the playhead when
+    /// visible, else the window centre.
+    public func zoom(by factor: Double, around anchor: Double? = nil) {
+        let v = viewport
+        let ph = Double(localPlayhead.value) / Double(max(localPlayhead.timescale, 1))
+        let a = anchor ?? (v.range.contains(ph) ? ph : v.start + v.span / 2)
+        setViewport(v.zoomed(by: factor, around: a, duration: durationSeconds, minSpan: minViewportSpan))
+    }
+    public func zoomIn() { zoom(by: 1.6) }
+    public func zoomOut() { zoom(by: 1 / 1.6) }
+    public func zoomToFit() { zoomState = nil }
+    public func panViewport(bySeconds s: Double) {
+        setViewport(viewport.panned(by: s, duration: durationSeconds, minSpan: minViewportSpan))
+    }
+    private func revealPlayhead(_ t: Time) {
+        guard zoomState != nil, let c = clip else { return }
+        let local = t - c.start
+        setViewport(viewport.revealing(Double(local.value) / Double(local.timescale), duration: durationSeconds, minSpan: minViewportSpan))
+    }
+
+    /// Geometry of a lane-like view of the given width (same mapping everywhere).
+    public func laneGeometry(width: CGFloat) -> KeyframeLaneGeometry {
+        KeyframeLaneGeometry(width: width, duration: duration, viewport: zoomState == nil ? nil : viewport)
+    }
+
+    // MARK: Playhead scrubbing (ruler)
+
+    /// Clip-local times the playhead sticks to while Shift is held: every key of every property, plus the clip ends.
+    public func snapTargets() -> [Time] {
+        guard let c = clip else { return [] }
+        var out: [Time] = [.zero, c.source.duration]
+        for t in Self.tracks(of: c).values { out += t.times.map(\.time) }
+        return out
+    }
+
+    /// Timeline time for a ruler position (clip-local, frame-snapped). With `snap` the time sticks to keyframes
+    /// within `thresholdSeconds`.
+    public func scrubTarget(local: Time, snap: Bool, thresholdSeconds: Double) -> Time {
+        let l = snap ? KeyframeSnap.snapped(local, candidates: snapTargets(), thresholdSeconds: thresholdSeconds) : local
+        return (clip?.start ?? .zero) + l
+    }
+
+    public func scrubDown(to t: Time) {
+        scrubBegan = false
+        onPointerDown?()
+        onSeek?(t)
+    }
+    public func scrubDrag(to t: Time) {
+        if !scrubBegan { scrubBegan = true; onScrubBegan?() }
+        if let onScrub { onScrub(t) } else { onSeek?(t) }
+    }
+    public func scrubUp() {
+        if scrubBegan { onScrubEnded?() }
+        scrubBegan = false
+    }
     public var localPlayhead: Time { playhead - (clip?.start ?? .zero) }
     public var playheadInClip: Bool { clip != nil && localPlayhead >= .zero && localPlayhead <= duration }
 
@@ -351,8 +436,8 @@ public final class EffectControlsModel {
         return t + (clip?.start ?? .zero)
     }
 
-    public func goToPreviousKey(_ p: EffectProperty) { if let t = previousKeyTime(p) { onSeek?(t) } }
-    public func goToNextKey(_ p: EffectProperty) { if let t = nextKeyTime(p) { onSeek?(t) } }
+    public func goToPreviousKey(_ p: EffectProperty) { if let t = previousKeyTime(p) { revealPlayhead(t); onSeek?(t) } }
+    public func goToNextKey(_ p: EffectProperty) { if let t = nextKeyTime(p) { revealPlayhead(t); onSeek?(t) } }
 
     // MARK: Editing values
 
@@ -364,7 +449,7 @@ public final class EffectControlsModel {
         guard var c = workingClip else { return false }
         let local = localPlayhead
         let inRange = playheadInClip
-        let selected = Set(selection.filter { $0.property == p.id }.map(\.keyID))
+        let selected = selectedKeysAtPlayhead(p)
         var ok = false
         withScalar(&c, p) { prop in
             ok = Self.apply(&prop, new: v, local: local, inRange: inRange, selected: selected)
@@ -382,6 +467,16 @@ public final class EffectControlsModel {
         guard ok else { return false }
         commit(c, "Change \(p.title)")
         return true
+    }
+
+    /// Selected keys of `p` that an edit at the playhead applies to: only when the playhead sits on one of them
+    /// (then all selected keys shift together). A key selected elsewhere never captures the edit: the value at the
+    /// playhead always wins and creates a key there (Premiere).
+    private func selectedKeysAtPlayhead(_ p: EffectProperty) -> Set<UUID> {
+        let selected = selectedKeyIDs(p)
+        guard !selected.isEmpty, let t = track(p) else { return [] }
+        let l = localPlayhead
+        return t.times.contains { $0.time == l && selected.contains($0.id) } ? selected : []
     }
 
     private static func apply<V: KeyframeValue>(_ prop: inout AnimatedProperty<V>, new: V, local: Time,
@@ -507,6 +602,14 @@ public final class EffectControlsModel {
         return applied
     }
 
+    /// Ends a key drag: one undo step, and the moved keys are deselected, so a value change at the playhead
+    /// afterwards creates a new key instead of editing the moved one.
+    public func endKeyMove() {
+        let moved = gestureEmitted          // a drag that ended on the original frame changed nothing: keep the selection
+        endGesture()
+        if moved { clearSelection() }
+    }
+
     public func applyEasing(_ curve: EasingCurve, side: EaseSide = .both) {
         guard let c = workingClip, !selection.isEmpty else { return }
         var s = KeyframeSummary(tracks: Self.tracks(of: c))
@@ -594,12 +697,53 @@ public final class EffectControlsModel {
         }
     }
 
+    /// Reset button. Static property: back to its default. Animated property: only the value at the playhead goes
+    /// back to the default (a key is created or replaced there), the other keys stay. Returns false when nothing
+    /// could be done (animated and the playhead is outside the clip).
+    @discardableResult
+    public func reset(_ p: EffectProperty) -> Bool {
+        guard isAnimated(p) else { resetAll(p); return true }
+        return resetAtPlayhead(p)
+    }
+
+    /// Default value in place of the value at the playhead (key created or replaced).
+    @discardableResult
+    public func resetAtPlayhead(_ p: EffectProperty) -> Bool {
+        guard var c = workingClip, playheadInClip else { return false }
+        let d = ClipAnimation()
+        let local = localPlayhead
+        var ok = false
+        withVector(&c, p) { prop in
+            let def: Vec2 = p == .position ? d.position.value : p == .scale ? d.scale.value : d.anchor.value
+            ok = Self.apply(&prop, new: def, local: local, inRange: true, selected: [])
+        }
+        withScalar(&c, p) { prop in
+            guard let def = defaultValue(p)?.value else { return }
+            ok = Self.apply(&prop, new: def, local: local, inRange: true, selected: [])
+        }
+        guard ok else { return false }
+        commit(c, "Reset \(p.title)")
+        return true
+    }
+
     /// Reset one property to its default and drop its keys: one undo step.
-    public func reset(_ p: EffectProperty) {
+    public func resetAll(_ p: EffectProperty) {
         guard var c = clip else { return }
         resetInPlace(&c, p)
         selection = selection.filter { $0.property != p.id }
         commit(c, "Reset \(p.title)")
+    }
+
+    /// Reset button state: an animated property can reset at the playhead while its value there is not the default.
+    public func canResetAtPlayhead(_ p: EffectProperty) -> Bool {
+        guard isAnimated(p), playheadInClip else { return false }
+        let d = ClipAnimation()
+        switch p {
+        case .position: return vectorValue(p) != d.position.value
+        case .scale: return vectorValue(p) != d.scale.value
+        case .anchor: return vectorValue(p) != d.anchor.value
+        default: return defaultValue(p).map { scalarValue(p) != $0.value } ?? false
+        }
     }
 
     /// Reset every property of a section (and re-enable its effect): one undo step.
@@ -764,7 +908,7 @@ public struct EffectRow: Equatable, Sendable {
 }
 
 public enum EffectControlsLayout {
-    public static let graphComponentHeight: CGFloat = 120
+    public static let graphComponentHeight: CGFloat = 100
 
     /// Vector properties show one graph per component (X, Y).
     public static func graphHeight(_ p: EffectProperty) -> CGFloat {
@@ -798,29 +942,39 @@ public enum EffectControlsLayout {
 
 // MARK: - Lane geometry (pure)
 
-/// Maps clip-local time to x in the keyframe lane and back.
+/// Maps clip-local time to x in the keyframe lane and back. Without a viewport the whole clip is visible.
 public struct KeyframeLaneGeometry: Sendable, Equatable {
     public var width: CGFloat
     public var duration: Time
     public var inset: CGFloat
+    public var viewport: KeyframeViewport?
 
-    public init(width: CGFloat, duration: Time, inset: CGFloat = 10) {
-        self.width = width; self.duration = duration; self.inset = inset
+    public init(width: CGFloat, duration: Time, inset: CGFloat = 10, viewport: KeyframeViewport? = nil) {
+        self.width = width; self.duration = duration; self.inset = inset; self.viewport = viewport
     }
 
     private var usable: CGFloat { max(width - 2 * inset, 1) }
     private var durationSeconds: Double { Double(duration.value) / Double(duration.timescale) }
+    public var viewStart: Double { viewport?.start ?? 0 }
+    public var viewSpan: Double { viewport.map { max($0.span, 1e-9) } ?? durationSeconds }
+    public var pointsPerSecond: Double { viewSpan > 0 ? Double(usable) / viewSpan : 0 }
 
-    public func x(for local: Time) -> CGFloat {
-        guard durationSeconds > 0 else { return inset }
-        let s = Double(local.value) / Double(local.timescale)
-        return inset + CGFloat(s / durationSeconds) * usable
+    public func x(seconds s: Double) -> CGFloat {
+        guard viewSpan > 0 else { return inset }
+        return inset + CGFloat((s - viewStart) / viewSpan) * usable
+    }
+
+    public func x(for local: Time) -> CGFloat { x(seconds: Double(local.value) / Double(local.timescale)) }
+
+    /// Clip-local seconds at `x`, not clamped.
+    public func seconds(atX x: CGFloat) -> Double {
+        viewStart + Double((x - inset) / usable) * viewSpan
     }
 
     /// Nearest frame at `x`, clamped to 0...duration.
     public func time(at x: CGFloat, frameDuration: Time) -> Time {
         guard durationSeconds > 0 else { return .zero }
-        let s = Double((x - inset) / usable) * durationSeconds
+        let s = seconds(atX: x)
         let fd = Double(frameDuration.value) / Double(frameDuration.timescale)
         let t = Time.frames(Int64((s / fd).rounded()), frameDuration: frameDuration)
         return min(max(t, .zero), duration)

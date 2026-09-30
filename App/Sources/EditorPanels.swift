@@ -231,6 +231,11 @@ final class EditorPanels {
             self?.session.replaceClip(clip, name: name, continuesGesture: coalescing)
         }
         effectModel.onSeek = { [weak self] t in self?.session.seek(to: t) }
+        // Scrubbing the keyframe ruler behaves like the timeline ruler: a press stops playback, a drag scrubs.
+        effectModel.onPointerDown = { [weak self] in self?.session.stopPlayback() }
+        effectModel.onScrubBegan = { [weak self] in self?.session.beginScrub() }
+        effectModel.onScrub = { [weak self] t in self?.session.scrub(to: t) }
+        effectModel.onScrubEnded = { [weak self] in self?.session.endScrub() }
     }
 
     // MARK: Views

@@ -59,7 +59,8 @@ public struct KeyGlyph: Sendable, Hashable {
         let pts: [CGPoint]
         switch half {
         case .linear: pts = [CGPoint(x: 0, y: -h), CGPoint(x: h, y: 0), CGPoint(x: 0, y: h)]
-        case .eased: pts = [CGPoint(x: 0, y: 0), CGPoint(x: h, y: -h), CGPoint(x: h, y: h)]
+        // Right half of an hourglass: flat top and bottom, waist at the centre.
+        case .eased: pts = [CGPoint(x: 0, y: -h), CGPoint(x: h, y: -h), CGPoint(x: 0, y: 0), CGPoint(x: h, y: h), CGPoint(x: 0, y: h)]
         case .hold: pts = [CGPoint(x: 0, y: -h), CGPoint(x: h, y: -h), CGPoint(x: h, y: h), CGPoint(x: 0, y: h)]
         }
         return pts.map { CGPoint(x: $0.x * s, y: $0.y) }

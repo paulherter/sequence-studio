@@ -133,6 +133,9 @@ public struct GraphGestureState: Sendable, Equatable {
     /// Value graph only; the speed graph edits time only. Shift while dragging frees both axes.
     public enum Axis: Sendable, Equatable { case horizontal, vertical }
     public private(set) var axis: Axis?
+    /// Axis a handle drag is locked to (see `GraphAxisLock`): horizontal stays horizontal, vertical only when clearly
+    /// vertical. Undecided (nil) until the pointer has moved a few points; the handle waits until then.
+    public private(set) var handleAxis: Axis?
     private var free = false
     /// Plain press on an already-selected key: a click without drag collapses the selection to it.
     private var collapseTo: UUID?
@@ -197,8 +200,17 @@ public struct GraphGestureState: Sendable, Equatable {
             return Result(selection: selection, track: t, marquee: nil, commit: false)
         case .handle(let id, let side):
             guard let hp = geometry.handlePoint(track: base, keyID: id, side: side) else { return current }
+            var dx = p.x - origin.x, dy = p.y - origin.y
+            if !free {
+                if handleAxis == nil { handleAxis = GraphAxisLock.decide(dx: dx, dy: dy) }
+                switch handleAxis {
+                case .horizontal?: dy = 0
+                case .vertical?: dx = 0
+                case nil: return current
+                }
+            }
             // Keep the grab offset: the handle follows the pointer's movement, it does not jump under it.
-            let target = geometry.data(CGPoint(x: hp.x + p.x - origin.x, y: hp.y + p.y - origin.y))
+            let target = geometry.data(CGPoint(x: hp.x + dx, y: hp.y + dy))
             let t = KeyframeGraphEditing.dragHandle(base: base, keyID: id, side: side, to: target, mode: geometry.mode)
             return Result(selection: selection, track: t, marquee: nil, commit: false)
         case .marquee(let additive):
@@ -216,9 +228,11 @@ public struct GraphGestureState: Sendable, Equatable {
     public mutating func end(at p: CGPoint) -> Result {
         var r = drag(to: p, free: free)
         if !moved, let id = collapseTo { selection = [id] }
+        // A key that was just moved is deselected: a value change at the playhead afterwards makes a new key.
+        r.commit = moved && r.track != base
+        if r.commit, case .key = kind { selection = [] }
         r.selection = selection
         r.marquee = nil
-        r.commit = moved && r.track != base
         return r
     }
 }
