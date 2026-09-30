@@ -20,7 +20,7 @@ UI, renderer and sheet are out of scope; the real renderer plugs in later via `F
    waiting/running/done/failed/cancelled, progress stream, cancel, unique output file names per sequence.
 
 ## Status
-Slices 1-7 plus the follow-ups below are implemented in `Packages/SSExport` (47 tests).
+Slices 1-7 plus the follow-ups below are implemented in `Packages/SSExport` (53 tests).
 - Tests export real 64x112 files (H.264, HEVC, ProRes software path / `hardwareEncoding = false` where applicable).
 - `ExportWriter.export(video:audio:settings:to:progress:)` writes video + optional audio, interleaved; cancel = task cancel (partial file removed).
   Audio is fed non-blocking while video waits (and vice versa) and the audio input is finished as soon as its source ends;
@@ -32,4 +32,7 @@ Slices 1-7 plus the follow-ups below are implemented in `Packages/SSExport` (47 
   Needs a `RewindableAudioSource` (else `ExportError.loudnessNeedsRewindableSource`). Legacy `loudnessTarget` (Int) still decodes.
 - **ProRes 422 HQ master** (`ExportSettings.proRes422HQMaster`): `VideoCodec.prores422HQ` ('apch', MOV, Rec.709 1-1-1, no bitrate/profile/keyframe props),
   `AudioCodec.pcm` with `pcmBitDepth` (24 default), 48 kHz stereo. Social presets stay H.264/HEVC only.
+- Review-2 fixes X1-X4: audio-shorter-than-video test (timeout guarded); unique names case-insensitive (reserved lowercased) and reserve the `.srt` too;
+  a sidecar failure keeps the finished video and sets `ExportJobStatus.sidecarError`; SRT cues are clamped to >= 0 before the empty check.
+  `AudioSettings.loudnessTarget: Int?` is a computed, non-Codable compatibility view of `loudness` (used by SSEditorUI).
 - Open: renderer `FrameSource` adapter, burn-in captions, 10-bit/HDR output (settings only).

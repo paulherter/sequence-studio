@@ -38,6 +38,8 @@ public struct ExportJobStatus: Sendable, Equatable {
     public var outputURL: URL
     /// Set once the sidecar .srt has been written next to the video.
     public var sidecarURL: URL? = nil
+    /// Set when the video finished but the sidecar could not be written; the video is kept.
+    public var sidecarError: String? = nil
 }
 
 public actor ExportQueue {
@@ -45,8 +47,9 @@ public actor ExportQueue {
 
     private struct Entry { var job: ExportJob; var status: ExportJobStatus }
     private var entries: [Entry] = []
-    private var reserved = Set<URL>()
-    private var runningTask: Task<Void, Error>?
+    /// Lowercased paths (case-insensitive file systems): video and sidecar names.
+    private var reserved = Set<String>()
+    private var runningTask: Task<[SRTCue], Error>?
     private var runningID: UUID?
     private var cancelRequested = Set<UUID>()
     private var isRunning = false
@@ -72,8 +75,10 @@ public actor ExportQueue {
 
     @discardableResult
     public func enqueue(_ job: ExportJob) -> UUID {
-        let url = uniqueURL(directory: job.outputDirectory, name: job.name, ext: job.settings.fileExtension)
-        reserved.insert(url)
+        let sidecarExt = job.settings.captions == .sidecarSRT ? "srt" : nil
+        let url = uniqueURL(directory: job.outputDirectory, name: job.name, ext: job.settings.fileExtension, alsoExt: sidecarExt)
+        reserved.insert(Self.key(url))
+        if let e = sidecarExt { reserved.insert(Self.key(url.deletingPathExtension().appendingPathExtension(e))) }
         let st = ExportJobStatus(id: job.id, name: job.name, state: .waiting, progress: 0, outputURL: url)
         entries.append(Entry(job: job, status: st))
         publish(st)
@@ -85,7 +90,7 @@ public actor ExportQueue {
         switch entries[i].status.state {
         case .waiting:
             entries[i].status.state = .cancelled
-            reserved.remove(entries[i].status.outputURL)
+            unreserve(entries[i].status.outputURL, sidecar: entries[i].job.settings.captions == .sidecarSRT)
             publish(entries[i].status)
         case .running:
             cancelRequested.insert(id)
@@ -113,16 +118,12 @@ public actor ExportQueue {
         update(id) { $0.state = .running }
         runningID = id
         let queue = self
-        let task = Task<Void, Error> {
+        let task = Task<[SRTCue], Error> {
             let src = try await job.makeSources()
             try await ExportWriter.export(video: src.video, audio: src.audio, settings: job.settings, to: url) { p in
                 Task { await queue.setProgress(id, p) }
             }
-            if job.settings.captions == .sidecarSRT {
-                let srt = url.deletingPathExtension().appendingPathExtension("srt")
-                try SRTWriter.write(src.captions, range: job.settings.range, to: srt)
-                await queue.setSidecar(id, srt)
-            }
+            return src.captions
         }
         runningTask = task
         // Cancellation requested before the task was stored.
@@ -130,11 +131,21 @@ public actor ExportQueue {
         let result = await task.result
         runningTask = nil; runningID = nil
         switch result {
-        case .success:
+        case .success(let captions):
+            // The video is finished; a sidecar problem never deletes it.
+            if job.settings.captions == .sidecarSRT {
+                let srt = url.deletingPathExtension().appendingPathExtension("srt")
+                do {
+                    try SRTWriter.write(captions, range: job.settings.range, to: srt)
+                    update(id) { $0.sidecarURL = srt }
+                } catch {
+                    update(id) { $0.sidecarError = "\(error)" }
+                }
+            }
             update(id) { $0.progress = 1.0; $0.state = .done(url) }
         case .failure(let e):
             try? FileManager.default.removeItem(at: url)
-            reserved.remove(url)
+            unreserve(url, sidecar: job.settings.captions == .sidecarSRT)
             if e is CancellationError || cancelRequested.contains(id) {
                 update(id) { $0.state = .cancelled }
             } else {
@@ -144,7 +155,12 @@ public actor ExportQueue {
         cancelRequested.remove(id)
     }
 
-    private func setSidecar(_ id: UUID, _ url: URL) { update(id) { $0.sidecarURL = url } }
+    private static func key(_ u: URL) -> String { u.standardizedFileURL.path.lowercased() }
+
+    private func unreserve(_ url: URL, sidecar: Bool) {
+        reserved.remove(Self.key(url))
+        if sidecar { reserved.remove(Self.key(url.deletingPathExtension().appendingPathExtension("srt"))) }
+    }
 
     private func setProgress(_ id: UUID, _ p: Double) {
         // Late progress callbacks must not move a finished job or go backwards.
@@ -160,13 +176,16 @@ public actor ExportQueue {
 
     private func publish(_ s: ExportJobStatus) { for c in continuations.values { c.yield(s) } }
 
-    private func uniqueURL(directory: URL, name: String, ext: String) -> URL {
+    private func uniqueURL(directory: URL, name: String, ext: String, alsoExt: String?) -> URL {
         let base = Self.sanitize(name)
         var n = 1
         while true {
-            let file = n == 1 ? "\(base).\(ext)" : "\(base) \(n).\(ext)"
-            let url = directory.appendingPathComponent(file)
-            if !reserved.contains(url), !FileManager.default.fileExists(atPath: url.path) { return url }
+            let stem = n == 1 ? base : "\(base) \(n)"
+            let url = directory.appendingPathComponent("\(stem).\(ext)")
+            var candidates = [url]
+            if let e = alsoExt { candidates.append(directory.appendingPathComponent("\(stem).\(e)")) }
+            // fileExists is case-insensitive on APFS; `reserved` is lowercased for queued jobs.
+            if candidates.allSatisfy({ !reserved.contains(Self.key($0)) && !FileManager.default.fileExists(atPath: $0.path) }) { return url }
             n += 1
         }
     }

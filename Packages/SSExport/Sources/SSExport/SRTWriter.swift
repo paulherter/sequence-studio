@@ -49,7 +49,7 @@ public enum SRTWriter {
                 r = clipped
                 offset = window.start
             }
-            let start = milliseconds(r.start - offset), end = milliseconds(r.end - offset)
+            let start = max(0, milliseconds(r.start - offset)), end = max(0, milliseconds(r.end - offset))
             guard end > start else { continue }
             index += 1
             out += "\(index)\r\n\(timecode(r.start - offset)) --> \(timecode(r.end - offset))\r\n"

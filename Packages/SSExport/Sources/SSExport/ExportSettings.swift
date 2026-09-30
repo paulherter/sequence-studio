@@ -78,6 +78,16 @@ public struct AudioSettings: Sendable, Hashable, Codable {
     public var loudness: LoudnessNormalization? = nil
     public init() {}
 
+    /// Compatibility view of `loudness` as a whole-LUFS target (not encoded). Setting keeps an existing ceiling.
+    public var loudnessTarget: Int? {
+        get { loudness.map { Int($0.targetLUFS.rounded()) } }
+        set {
+            guard let t = newValue else { loudness = nil; return }
+            loudness = LoudnessNormalization(targetLUFS: Double(t),
+                                             truePeakCeilingDB: loudness?.truePeakCeilingDB ?? LoudnessNormalization().truePeakCeilingDB)
+        }
+    }
+
     private enum CodingKeys: String, CodingKey {
         case enabled, codec, sampleRate, channels, bitrate, pcmBitDepth, loudness
         case loudnessTarget   // legacy: Int LUFS, decode only
