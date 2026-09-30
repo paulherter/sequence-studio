@@ -63,11 +63,15 @@ public final class ViewerView: NSView {
     }
 
     public override func layout() { super.layout(); configureLayer() }
+    /// Resizing and re-parenting (Edit <-> Color, panel drags) update the drawable size at once, not at the next layout pass.
+    public override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); configureLayer() }
+    public override func viewDidMoveToSuperview() { super.viewDidMoveToSuperview(); configureLayer() }
     public override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); configureLayer() }
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil { driver?.stop(); driver = nil; return }
+        configureLayer()
         guard drivesLayer, driver == nil, let device, let ml = metalLayer, let queue = device.makeCommandQueue() else { return }
         configureLayer()
         let presenter = Presenter(device: device, layer: ml)

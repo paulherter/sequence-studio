@@ -205,8 +205,9 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
         guard fileExists(ref.path) else { throw MediaResolveError.offline(media, path: ref.path) }
         if let c = state.withLock({ $0.stills[media] }), c.path == ref.path { return c.frame }
         guard let buffer = try? StillImage.load(URL(fileURLWithPath: ref.path)) else { throw MediaResolveError.unreadable(media) }
-        let frame = StillFrame(buffer: buffer, info: StillImage.trackInfo(width: CVPixelBufferGetWidth(buffer),
-                                                                          height: CVPixelBufferGetHeight(buffer)))
+        // The picture counts with its real size (the buffer is capped at 8192 px), so Scale 1 is one file pixel.
+        let size = ref.info?.video.map { ($0.width, $0.height) } ?? (CVPixelBufferGetWidth(buffer), CVPixelBufferGetHeight(buffer))
+        let frame = StillFrame(buffer: buffer, info: StillImage.trackInfo(width: size.0, height: size.1))
         return state.withLock { s in
             guard s.refs[media]?.path == ref.path else { return frame }
             if let c = s.stills[media], c.path == ref.path { return c.frame }

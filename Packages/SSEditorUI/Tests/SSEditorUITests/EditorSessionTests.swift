@@ -434,6 +434,30 @@ private final class SessionTestClock: @unchecked Sendable {
         #expect(ProjectPanelModel.formatString(m) == "4000×3000 Still image")
     }
 
+    @Test func placedClipGetsFitScaleAndSetToFrameSizeRestoresIt() throws {
+        let r = try Rig()
+        let big = mediaRef("Big", audio: false, w: 3840, h: 2160)
+        r.session.perform("Import") { $0.add(big) }
+        let format = SequenceFormat(width: 1080, height: 1920, frameDuration: Time(1, 30))
+        r.session.perform("Seq") { p in p.timelines[0].format = format }
+        #expect(r.session.placeMedia([big.id], at: .zero, mode: .overwrite))
+        let c = try #require(r.timeline.tracks.first { $0.kind == .video }?.clips.first { $0.media == big.id })
+        #expect(abs(c.animation.scale.value.x - 0.28125) < 1e-12)           // 4K landscape in 1080 x 1920, fits whole
+        // User sets 100 %, then Set to Frame Size brings the fit value back in one undo step.
+        var edited = c
+        edited.animation.scale = AnimatedProperty(Vec2(1, 1))
+        r.session.replaceClip(edited, name: "Scale", continuesGesture: false)
+        r.session.select(clips: [c.id])
+        #expect(r.session.setToFrameSize())
+        let back = try #require(r.timeline.tracks.first { $0.kind == .video }?.clips.first { $0.id == c.id })
+        #expect(abs(back.animation.scale.value.x - 0.28125) < 1e-12)
+        #expect(r.session.undoName == "Set to Frame Size")
+        #expect(!r.session.setToFrameSize())                                 // already at the fit value: no new step
+        r.session.undo()
+        let undone = try #require(r.timeline.tracks.first { $0.kind == .video }?.clips.first { $0.id == c.id })
+        #expect(undone.animation.scale.value == Vec2(1, 1))
+    }
+
     @Test func secondClipKeepsTheSequenceFormat() throws {
         let r = try Rig()
         let m = mediaRef("A", w: 3840, h: 2160)

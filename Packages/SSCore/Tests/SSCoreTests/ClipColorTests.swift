@@ -100,7 +100,7 @@ import Testing
         "source":{"start":{"value":0,"timescale":1},"duration":{"value":2,"timescale":1}},"start":{"value":0,"timescale":1}}]}]}]}}
         """#
         let p = try ProjectFile.decode(Data(json.utf8), migrations: ProjectFile.migrations)
-        #expect(ProjectFile.currentVersion == 9)
+        #expect(ProjectFile.currentVersion == 10)
         let clip = try #require(p.timelines.first?.tracks.first?.clips.first)
         #expect(clip.color == .default)
     }

@@ -42,9 +42,10 @@ extension Timeline {
     /// the track). When targets include video and audio tracks, all new clips share one fresh link;
     /// a single kind gives unlinked clips. `.insert` ripples like `insert` (sync lock honoured),
     /// `.overwrite` replaces what is covered. `source` must be non-empty, start at or after 0 and end
-    /// within `mediaDuration` when given, otherwise `.emptyClip`. No targets: `.clipNotFound`.
+    /// within `mediaDuration` when given, otherwise `.emptyClip`. `initialScale` (video clips only) is the
+    /// Scale property of the new clips (see `SequenceFormat.fitScale`: Scale is relative to source pixels). No targets: `.clipNotFound`.
     public mutating func threePointEdit(source: TimeRange, media: UUID, name: String = "",
-                                        mediaDuration: Time? = nil, isStill: Bool = false, targets: [Track.ID], at t: Time,
+                                        mediaDuration: Time? = nil, isStill: Bool = false, initialScale: Double = 1, targets: [Track.ID], at t: Time,
                                         mode: ThreePointMode) throws {
         guard !source.isEmpty, source.start >= .zero else { throw EditError.emptyClip }
         if let md = mediaDuration, source.end > md { throw EditError.emptyClip }
@@ -58,8 +59,10 @@ extension Timeline {
         let link: UUID? = kinds.count > 1 ? UUID() : nil
         for id in targets {
             let tr = track(id)!
-            placements.append((Clip(name: name, media: media, kind: tr.kind, source: source, start: .zero,
-                                    link: link, mediaDuration: mediaDuration, isStill: isStill), id))
+            var clip = Clip(name: name, media: media, kind: tr.kind, source: source, start: .zero,
+                            link: link, mediaDuration: mediaDuration, isStill: isStill)
+            if tr.kind == .video, abs(initialScale - 1) > 1e-12 { clip.animation.scale = AnimatedProperty(Vec2(initialScale, initialScale)) }
+            placements.append((clip, id))
         }
         switch mode {
         case .insert: try insert(placements, at: t)

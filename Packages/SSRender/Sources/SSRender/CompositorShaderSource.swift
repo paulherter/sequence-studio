@@ -10,14 +10,14 @@ enum CompositorShaderSource {
         float4 solid;        // placeholder colour (working-linear)
         float4 range;        // yScale, yBias, cScale, cBias
         float2 canvas;       // sequence size, px
-        float2 size;         // aspect-fitted layer size, px (before transform scale)
+        float2 size;         // layer size, px (its own upright size, before transform scale)
         float2 position;     // offset from canvas centre, px, y down
         float2 anchor;       // offset from layer centre, px
         float2 scale;
         float rotCos, rotSin, opacity;
         uint mode;           // 0 = YCbCr bi-planar, 1 = RGB texture, 2 = solid, 3 = premultiplied RGBA group image (linear)
         uint linearize;      // 1 = apply inverse BT.709 OETF (no colour stage)
-        float cornerRadius;  // layer-local px (aspect-fitted layer, before transform scale)
+        float cornerRadius;  // layer-local px (before transform scale)
         uint quarter;        // clockwise quarter turns of the source picture (modes 0 and 1)
     };
 

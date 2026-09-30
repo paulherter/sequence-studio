@@ -409,7 +409,7 @@ final class RenderLoop: @unchecked Sendable {
         if let still = media.still(r.media) {
             return RenderLayer(content: .frame(still.buffer, colorHint: still.info), transform: r.transform,
                                colorPipeline: media.resolver.colorResolver?.pipeline(for: r.color, media: r.media),
-                               cornerRadius: r.cornerRadius)
+                               cornerRadius: r.cornerRadius, nativeSize: (still.info.width, still.info.height))
         }
         guard let d = media.demuxer(r.media) else { return placeholder(.offline) }
         let index = d.index
@@ -428,7 +428,7 @@ final class RenderLoop: @unchecked Sendable {
             codec: "", bitDepth: 8, chroma: "4:2:0", nominalFrameDuration: frame.duration, isVariableFrameRate: false)
         return RenderLayer(content: .frame(frame.pixelBuffer, colorHint: info), transform: r.transform,
                            colorPipeline: media.resolver.colorResolver?.pipeline(for: r.color, media: r.media),
-                           cornerRadius: r.cornerRadius)
+                           cornerRadius: r.cornerRadius, nativeSize: (info.width, info.height))
     }
 
     /// Frame showing `sourceTime`; before the first frame -> 0, at/after the end -> last. Requires a non-empty index.

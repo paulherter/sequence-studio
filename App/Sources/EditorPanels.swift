@@ -32,6 +32,8 @@ final class EditorPanels {
     var onStatus: ((String) -> Void)?
     var onCommand: ((EditorCommand) -> Void)?
     var onNest: (() -> Void)?
+    /// "Set to Frame Size" / "Scale to Frame Size" of the selected clips.
+    var onFrameSize: (() -> Void)?
 
     init(session: EditorSession) {
         self.session = session
@@ -173,6 +175,7 @@ final class EditorPanels {
             case .delete: self?.onCommand?(.delete)
             case .rippleDelete: self?.onCommand?(.rippleDelete)
             case .nest: self?.onNest?()
+            case .setToFrameSize, .scaleToFrameSize: self?.onFrameSize?()
             default: break
             }
         }

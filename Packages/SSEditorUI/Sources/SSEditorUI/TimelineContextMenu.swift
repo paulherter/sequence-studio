@@ -4,6 +4,7 @@ import SSCore
 /// What a context-menu item asks the host to do.
 public enum TimelineMenuAction: Sendable, Hashable, CaseIterable {
     case cut, copy, paste, delete, rippleDelete, enable, unlink, link, nest, rename, revealInProject, speed
+    case setToFrameSize, scaleToFrameSize
 }
 
 public struct TimelineMenuItem: Sendable, Equatable {
@@ -36,6 +37,8 @@ public enum TimelineContextMenu {
         let linkItem = links.isEmpty
             ? TimelineMenuItem(.link, "Link", enabled: canLink, key: "l")
             : TimelineMenuItem(.unlink, "Unlink", enabled: true, key: "l")
+        // Generators (text) have no picture size to fit.
+        let hasPictures = clips.contains { !$0.isGenerator && $0.kind == .video }
         return [
             TimelineMenuItem(.cut, "Cut", enabled: hasClips, key: "x"),
             TimelineMenuItem(.copy, "Copy", enabled: hasClips, key: "c"),
@@ -46,7 +49,9 @@ public enum TimelineContextMenu {
             TimelineMenuItem(.enable, "Enable", enabled: false, separatorBefore: true),
             linkItem,
             TimelineMenuItem(.nest, "Nest…", enabled: hasClips, separatorBefore: true),
-            TimelineMenuItem(.rename, "Rename…", enabled: clips.count == 1),
+            TimelineMenuItem(.setToFrameSize, "Set to Frame Size", enabled: hasPictures, separatorBefore: true),
+            TimelineMenuItem(.scaleToFrameSize, "Scale to Frame Size", enabled: hasPictures),
+            TimelineMenuItem(.rename, "Rename…", enabled: clips.count == 1, separatorBefore: true),
             TimelineMenuItem(.revealInProject, "Reveal in Project", enabled: hasClips),
             TimelineMenuItem(.speed, "Speed/Duration…", enabled: false, separatorBefore: true),
         ]

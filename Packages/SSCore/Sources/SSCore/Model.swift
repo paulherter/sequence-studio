@@ -115,8 +115,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   generator: try c.decodeIfPresent(GeneratorRef.self, forKey: .generator),
                   color: try c.decodeIfPresent(ClipColor.self, forKey: .color) ?? .default,
                   label: try c.decodeIfPresent(LabelColor.self, forKey: .label),
-                  effects: try c.decodeIfPresent([ClipEffect].self, forKey: .effects) ?? [],
-                  isStill: try c.decodeIfPresent(Bool.self, forKey: .isStill) ?? false)
+                  isStill: try c.decodeIfPresent(Bool.self, forKey: .isStill) ?? false,
+                  effects: try c.decodeIfPresent([ClipEffect].self, forKey: .effects) ?? [])
         // v8 -> v9: a radius that was not the default becomes an applied Rounded Corners effect.
         if let legacy = animation.legacyCornerRadius {
             animation.legacyCornerRadius = nil

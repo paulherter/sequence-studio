@@ -429,6 +429,9 @@ public final class EditorSession {
             }
             var at = requested.snapped(to: tl.frameDuration)   // after a format change: the new frame grid
             for ref in refs {
+                // Scale is relative to source pixels: a new clip is placed at the fit value ("Set to Frame Size"), so a
+                // clip of another size shows whole instead of cropped. 1 for the clip that set the sequence format.
+                let fit = ref.info?.video.map { tl.format.fitScale(width: $0.displayWidth, height: $0.displayHeight) } ?? 1
                 let total = ref.info?.duration ?? ref.duration ?? .zero
                 let still = ref.info?.isStill == true
                 let source = still ? TimeRange(start: .zero, duration: total)      // stills: default length, no source marks
@@ -437,7 +440,7 @@ public final class EditorSession {
                 if ref.info?.video != nil || ref.info == nil, let v = vTrack { targets.append(v) }
                 if ref.info?.audio != nil, let a = aTrack { targets.append(a) }
                 try tl.threePointEdit(source: source, media: ref.id, name: ref.name, mediaDuration: still ? nil : total,
-                                      isStill: still, targets: targets, at: at, mode: mode)
+                                      isStill: still, initialScale: fit, targets: targets, at: at, mode: mode)
                 at += source.duration
             }
         }
@@ -467,6 +470,24 @@ public final class EditorSession {
     public func setSequenceFormat(_ format: SequenceFormat) -> Bool {
         guard let id = activeTimelineID, activeTimeline?.format != format else { return false }
         do { try perform("Sequence Settings") { try $0.setFormat(format, of: id) } } catch {
+            setError(Self.message(for: error)); return false
+        }
+        return true
+    }
+
+    /// Premiere "Set to Frame Size" / "Scale to Frame Size": Scale of the selected picture clips (or `ids`) becomes the
+    /// value at which the whole picture fits the sequence frame (keyframes of Scale are removed, see
+    /// `Project.setToFrameSize`). Both menu items do this; there is no resampling to tell them apart. One undo step.
+    @discardableResult
+    public func setToFrameSize(_ ids: Set<Clip.ID>? = nil) -> Bool {
+        guard let tid = activeTimelineID else { return false }
+        let targets = ids ?? selection
+        guard !targets.isEmpty else { return false }
+        var trial = project
+        do {
+            guard try trial.setToFrameSize(targets, in: tid) > 0 else { return false }     // already at the fit value
+            try perform("Set to Frame Size") { $0 = trial }
+        } catch {
             setError(Self.message(for: error)); return false
         }
         return true

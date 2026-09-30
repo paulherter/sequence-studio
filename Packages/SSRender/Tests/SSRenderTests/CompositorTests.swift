@@ -159,6 +159,13 @@ private func setup() -> (MTLDevice, MTLCommandQueue, Compositor)? {
     near(pixel(t, 16, 27), expected(quads[2], kr: 0.299, kb: 0.114), 1.0 / 255, "601")
 }
 
+/// Scale is relative to the picture's own pixels; this is the "Set to Frame Size" value for the tests below.
+private func fitTransform(_ s: Double) -> ClipTransform {
+    var t = ClipTransform.identity
+    t.scale = Vec2(s, s)
+    return t
+}
+
 @Test func pillarAndLetterbox() throws {
     guard let (dev, q, comp) = setup() else { return }
     // 16:9 layer in a 9:16 canvas: fitted 108 x 60.75, letterboxed top/bottom.
@@ -166,7 +173,7 @@ private func setup() -> (MTLDevice, MTLCommandQueue, Compositor)? {
     let t = makeTarget(dev, 108, 192)
     let pb = makeYCbCr(192, 108, fmt: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, bits: 8,
                        quads: Array(repeating: Code(y: 180, cb: 100, cr: 160), count: 4))
-    try renderAndWait(comp, [RenderLayer(content: .frame(pb, colorHint: hint()))], f, t, queue: q)
+    try renderAndWait(comp, [RenderLayer(content: .frame(pb, colorHint: hint()), transform: fitTransform(0.5625))], f, t, queue: q)
     let want = expected(Code(y: 180, cb: 100, cr: 160))
     near(pixel(t, 54, 96), want, 1.0 / 255, "centre")
     near(pixel(t, 54, 70), want, 1.0 / 255, "inside top edge")   // fitted spans y 65.6 ... 126.4
@@ -178,7 +185,7 @@ private func setup() -> (MTLDevice, MTLCommandQueue, Compositor)? {
     let f2 = format(192, 108), t2 = makeTarget(dev, 192, 108)
     let pb2 = makeYCbCr(108, 192, fmt: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, bits: 8,
                         quads: Array(repeating: Code(y: 180, cb: 100, cr: 160), count: 4))
-    try renderAndWait(comp, [RenderLayer(content: .frame(pb2, colorHint: hint()))], f2, t2, queue: q)
+    try renderAndWait(comp, [RenderLayer(content: .frame(pb2, colorHint: hint()), transform: fitTransform(0.5625))], f2, t2, queue: q)
     near(pixel(t2, 96, 54), want, 1.0 / 255, "pillar centre")
     near(pixel(t2, 20, 54), [0, 0, 0], 1.0 / 255, "pillar left")
     near(pixel(t2, 172, 54), [0, 0, 0], 1.0 / 255, "pillar right")
@@ -446,7 +453,7 @@ private func group(_ children: [RenderNode], transform: ClipTransform = .identit
     let upper = makeYCbCr(192, 108, fmt: kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange, bits: 8,
                           quads: Array(repeating: Code(y: 180, cb: 100, cr: 160), count: 4))   // 16:9 in a 9:16 canvas
     try renderAndWait(comp, [RenderLayer(content: .frame(lower, colorHint: hint())),
-                             RenderLayer(content: .frame(upper, colorHint: hint()))], f, t, queue: q)
+                             RenderLayer(content: .frame(upper, colorHint: hint()), transform: fitTransform(0.5625))], f, t, queue: q)
     near(pixel(t, 54, 96), expected(Code(y: 180, cb: 100, cr: 160)), 1.0 / 255, "upper picture")
     near(pixel(t, 54, 40), [1, 0, 0], 1.0 / 255, "top bar shows lower")
     near(pixel(t, 54, 160), [1, 0, 0], 1.0 / 255, "bottom bar shows lower")
@@ -503,7 +510,35 @@ private func rotatedHint(_ r: Int) -> VideoTrackInfo {
     near(pixel(t2, 16, 9), expected(quads[3]), 1.0 / 255, "180 TL = native BR")
     near(pixel(t2, 48, 27), expected(quads[0]), 1.0 / 255, "180 BR = native TL")
     // Portrait clip in a landscape canvas: pillarboxed, not stretched (fitted width 36 * 36/64... = 20.25 of 64).
-    try renderAndWait(comp, [RenderLayer(content: .frame(native, colorHint: rotatedHint(90)))], f2, t2, queue: q)
+    try renderAndWait(comp, [RenderLayer(content: .frame(native, colorHint: rotatedHint(90)), transform: fitTransform(0.5625))], f2, t2, queue: q)
     near(pixel(t2, 4, 18), [0, 0, 0], 1.0 / 255, "pillar")
     near(pixel(t2, 28, 9), expected(quads[2]), 1.0 / 255, "upright picture left half top")
+}
+
+@Test func scaleOneIsSourcePixelsAndOnlyThePictureIsDrawn() throws {
+    guard let (dev, q, comp) = setup() else { return }
+    // 64 x 36 picture in a 128 x 72 canvas: scale 1 covers the centre 64 x 36 only, scale 2 fills the canvas.
+    let f = format(128, 72), t = makeTarget(dev, 128, 72)
+    let pb = makeBGRA(64, 36, (0, 0, 255, 255))
+    try renderAndWait(comp, [RenderLayer(content: .frame(pb, colorHint: hint()))], f, t, queue: q)
+    near(pixel(t, 64, 36), [1, 0, 0], 1.0 / 255, "centre")
+    near(pixel(t, 40, 36), [1, 0, 0], 1.0 / 255, "inside left")      // 32 ... 96
+    near(pixel(t, 20, 36), [0, 0, 0], 1.0 / 255, "outside left")
+    near(pixel(t, 64, 10), [0, 0, 0], 1.0 / 255, "outside top")
+    try renderAndWait(comp, [RenderLayer(content: .frame(pb, colorHint: hint()), transform: fitTransform(2))], f, t, queue: q)
+    near(pixel(t, 4, 4), [1, 0, 0], 1.0 / 255, "scale 2 fills")
+    near(pixel(t, 124, 68), [1, 0, 0], 1.0 / 255, "scale 2 fills corner")
+    // A 4K-like picture (256 x 144) in the 128 x 72 canvas fills it at 50 %.
+    let big = makeBGRA(256, 144, (0, 255, 0, 255))
+    try renderAndWait(comp, [RenderLayer(content: .frame(big, colorHint: hint()), transform: fitTransform(0.5))], f, t, queue: q)
+    near(pixel(t, 2, 2), [0, 1, 0], 1.0 / 255, "50 % fills")
+}
+
+@Test func reducedQualityBufferIsDrawnAtNativeSize() throws {
+    guard let (dev, q, comp) = setup() else { return }
+    let f = format(64, 36), t = makeTarget(dev, 64, 36)
+    let half = makeBGRA(32, 18, (0, 0, 255, 255))                        // decoded at half quality
+    try renderAndWait(comp, [RenderLayer(content: .frame(half, colorHint: hint()), nativeSize: (64, 36))], f, t, queue: q)
+    near(pixel(t, 2, 2), [1, 0, 0], 1.0 / 255, "fills at native size")
+    near(pixel(t, 61, 33), [1, 0, 0], 1.0 / 255, "fills corner")
 }
