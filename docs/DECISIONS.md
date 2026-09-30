@@ -14,3 +14,10 @@
 - 2026-09-30: V1 scope additions: scopes (waveform, vectorscope), export details (Show Details) incl. loudness normalisation and sidecar .srt, background export queue with progress. Text-based cutting in the transcript stays out. (Paul)
 - 2026-09-30: Color processing order, deliberately unlike Lumetri: the Color inspector is processed top to bottom as shown: Correction (WB, exposure… on the full log signal) → Conversion LUT (optional camera LUT; otherwise automatic color-managed conversion) → Creative LUT + intensity → curves, wheels, HSL, vignette → Rec.709 output. (Paul)
 - 2026-09-30: Engine route B: own VideoToolbox decode path (AVFoundation demux, own clock, frame cache), not AVComposition + custom compositor. Spike showed a tie on scrub; B wins on backward step/reverse and fits eased speed ramps, nesting and live edits. No second spike; its checks became Phase 2 acceptance criteria in PLAN.md. (Paul)
+
+## 2026-09-30 Ripple is timeline-wide (Premiere behaviour)
+- Ripple edits shift all tracks with sync lock on; locked tracks stay, edits on them throw. Type is `Timeline` (not `Sequence`, avoids `Swift.Sequence`).
+- Ripple that would collide on another track is limited, not cut through: ripple delete / shorten closes the gap only as far as every shifting track allows (returns the applied amount). Clips straddling the edit point on other tracks are never split or trimmed; extending just pushes whole clips at/after the old end. Cutting through other tracks = a separate extract op, not built yet.
+- Ripple head trim keeps the clip's start, later content shifts (Premiere).
+- `Clip.mediaDuration` (optional) bounds tail extension; head extension is bounded by source start 0.
+
