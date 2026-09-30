@@ -153,32 +153,77 @@ private struct Rig {
         #expect(e.stats.droppedFrames == 0)       // a paused seek waiting for decode is not a drop
     }
 
-    @Test func farSeekHoldsLastFrameUntilNewMediaDecoded() async throws {
-        // Two media ids over one demuxer: the second has nothing in the cache, so its first tick has no frame at all.
+    /// Two media ids over one demuxer: the second has nothing in the cache, so its first tick has no frame at all.
+    private func coldRig() async throws -> (engine: PlaybackEngine, device: MTLDevice, a: UUID, b: UUID) {
         let device = try #require(MTLCreateSystemDefaultDevice())
         let demuxer = try await AVDemuxer(url: try await SharedClip.shared.get())
         let a = UUID(), b = UUID()
         let engine = try PlaybackEngine(device: device, media: StaticMediaResolver(demuxers: [a: demuxer, b: demuxer]),
                                         clock: ManualClock())
-        func timeline(_ m: UUID) -> Timeline {
-            let c = Clip(name: "C", media: m, kind: .video, source: TimeRange(start: .zero, duration: fd * 60),
-                         start: .zero, mediaDuration: fd * 60)
-            return Timeline(name: "Seq", format: format, tracks: [Track(kind: .video, clips: [c])])
-        }
-        engine.setTimeline(timeline(a))
-        engine.seek(to: fd * 10)
-        await engine.waitForDecodes()
-        #expect(engine.tick())
-        let shown = try #require(engine.lastRenderedTexture)
-        #expect(readStamp(shown, device: device) == 10)
+        return (engine, device, a, b)
+    }
 
-        // The "far seek" lands on material that is not decoded: keep the picture, do not present a black placeholder.
-        engine.setTimeline(timeline(b))
-        #expect(engine.tick() == false)
-        #expect(readStamp(try #require(engine.lastRenderedTexture), device: device) == 10)
-        await engine.waitForDecodes()
-        #expect(engine.tick())
-        #expect(readStamp(try #require(engine.lastRenderedTexture), device: device) == 10)
+    private func clipTimeline(id: UUID, _ m: UUID) -> Timeline {
+        let c = Clip(name: "C", media: m, kind: .video, source: TimeRange(start: .zero, duration: fd * 60),
+                     start: .zero, mediaDuration: fd * 60)
+        return Timeline(id: id, name: "Seq", format: format, tracks: [Track(kind: .video, clips: [c])])
+    }
+
+    @Test func farSeekHoldsLastFrameUntilNewMediaDecoded() async throws {
+        let r = try await coldRig()
+        let id = UUID()
+        r.engine.setTimeline(clipTimeline(id: id, r.a))
+        r.engine.seek(to: fd * 10)
+        await r.engine.waitForDecodes()
+        #expect(r.engine.tick())
+        #expect(readStamp(try #require(r.engine.lastRenderedTexture), device: r.device) == 10)
+
+        // Same sequence, material that is not decoded: keep the picture, do not present a black placeholder.
+        r.engine.setTimeline(clipTimeline(id: id, r.b))
+        #expect(r.engine.tick() == false)
+        #expect(readStamp(try #require(r.engine.lastRenderedTexture), device: r.device) == 10)
+        await r.engine.waitForDecodes()
+        #expect(r.engine.tick())
+    }
+
+    @Test func differentSequenceDoesNotShowThePreviousFrame() async throws {
+        let r = try await coldRig()
+        r.engine.setTimeline(clipTimeline(id: UUID(), r.a))
+        r.engine.seek(to: fd * 10)
+        await r.engine.waitForDecodes()
+        #expect(r.engine.tick())
+        r.engine.setTimeline(clipTimeline(id: UUID(), r.b))   // another sequence: its first tick presents (placeholder)
+        #expect(r.engine.tick())
+    }
+
+    @Test func holdIsBoundedWhenADecodeNeverLands() async throws {
+        let r = try await coldRig()
+        let id = UUID()
+        r.engine.setTimeline(clipTimeline(id: id, r.a))
+        r.engine.seek(to: fd * 10)
+        await r.engine.waitForDecodes()
+        #expect(r.engine.tick())
+        r.engine.loop.state.withLock { $0.holdLimit = .zero }
+        r.engine.setTimeline(clipTimeline(id: id, r.b))
+        #expect(r.engine.tick())                               // limit reached: composite with the placeholder
+    }
+
+    @Test func oneColdLayerAmongOthersStillComposites() async throws {
+        let r = try await coldRig()
+        let id = UUID()
+        func two(_ top: UUID) -> Timeline {
+            var t = clipTimeline(id: id, r.a)
+            let c = Clip(name: "T", media: top, kind: .video, source: TimeRange(start: .zero, duration: fd * 60),
+                         start: .zero, mediaDuration: fd * 60)
+            t.tracks.append(Track(kind: .video, clips: [c]))
+            return t
+        }
+        r.engine.setTimeline(clipTimeline(id: id, r.a))
+        r.engine.seek(to: fd * 10)
+        await r.engine.waitForDecodes()
+        #expect(r.engine.tick())
+        r.engine.setTimeline(two(r.b))                         // V1 is warm, V2 is cold
+        #expect(r.engine.tick())
     }
 
     @Test func setTimelineAfterTrimRecompositesWithoutFlush() async throws {

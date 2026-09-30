@@ -108,17 +108,27 @@ import Testing
 
 
 @Suite struct MeterFeedTests {
+    private let o1 = NSObject(), o2 = NSObject()   // alive, so the identities differ
+    private var e1: ObjectIdentifier { ObjectIdentifier(o1) }
+    private var e2: ObjectIdentifier { ObjectIdentifier(o2) }
+
     @Test func feedsOnlyNewBuffers() {
         var feed = MeterFeed()
         #expect(feed.peaks(for: nil) == nil)                               // no audio engine
-        #expect(feed.peaks(for: (sequence: 5, peaks: [0.5, 0.25])) == [0.5, 0.25])
-        #expect(feed.peaks(for: (sequence: 5, peaks: [0.5, 0.25])) == nil) // same buffer again: let the bars fall
-        #expect(feed.peaks(for: (sequence: 6, peaks: [0.1, 0.1])) == [0.1, 0.1])
+        #expect(feed.peaks(for: (e1, 5, [0.5, 0.25])) == [0.5, 0.25])
+        #expect(feed.peaks(for: (e1, 5, [0.5, 0.25])) == nil)              // same buffer again: let the bars fall
+        #expect(feed.peaks(for: (e1, 6, [0.1, 0.1])) == [0.1, 0.1])
     }
 
     @Test func aRestartedCounterIsANewBuffer() {
         var feed = MeterFeed()
-        _ = feed.peaks(for: (sequence: 900, peaks: [1, 1]))
-        #expect(feed.peaks(for: (sequence: 1, peaks: [0.3, 0.3])) == [0.3, 0.3])
+        _ = feed.peaks(for: (e1, 900, [1, 1]))
+        #expect(feed.peaks(for: (e1, 1, [0.3, 0.3])) == [0.3, 0.3])
+    }
+
+    @Test func aNewEngineWithTheSameCounterIsNotSuppressed() {
+        var feed = MeterFeed()
+        _ = feed.peaks(for: (e1, 5, [1, 1]))
+        #expect(feed.peaks(for: (e2, 5, [0.2, 0.2])) == [0.2, 0.2])
     }
 }

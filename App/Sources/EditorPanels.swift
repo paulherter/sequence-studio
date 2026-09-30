@@ -58,7 +58,10 @@ final class EditorPanels {
         scopesView = ScopesPanelView(session: session)
         Task { [libraryModel] in await LibraryServices.start(libraryModel) }
         effectView.clipSections = clipSections
-        meterView.reading = { [weak session] in session?.engine.meterReading }
+        meterView.reading = { [weak session] in
+            guard let engine = session?.engine, let r = engine.meterReading else { return nil }
+            return (ObjectIdentifier(engine), r.sequence, r.peaks)
+        }
         wireTimeline()
         wireSidePanels()
         wireMonitor()

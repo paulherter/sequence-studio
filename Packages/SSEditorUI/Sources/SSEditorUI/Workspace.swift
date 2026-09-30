@@ -120,8 +120,11 @@ public struct Workspace: Sendable, Codable, Hashable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
-        root = try c.decode(LayoutNode.self, forKey: .root).sanitized?.programPreferred.withMeterBesideTimeline ?? Workspace.editingPC.root
+        let saved = try c.decode(LayoutNode.self, forKey: .root).sanitized?.programPreferred
+        root = saved?.withMeterBesideTimeline ?? Workspace.editingPC.root
         hidden = try c.decodeIfPresent(Set<PanelID>.self, forKey: .hidden) ?? []
+        // The Color page does not show the meter by default; a layout saved before the meter existed gets it hidden there.
+        if name == Workspace.color.name, let saved, !saved.panels.contains(.audioMeter) { hidden.insert(.audioMeter) }
         maximized = try c.decodeIfPresent(PanelID.self, forKey: .maximized)
     }
 

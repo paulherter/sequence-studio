@@ -46,6 +46,17 @@ import Testing
         #expect(again.root == back.root)
     }
 
+    @Test func oldSavedColorLayoutGetsTheMeterHidden() throws {
+        let old = LayoutNode.split(axis: .vertical, children: [
+            .tabs(panels: [.programMonitor], selected: .programMonitor),
+            .tabs(panels: [.timeline], selected: .timeline),
+        ], fractions: [0.5, 0.5])
+        let data = try JSONEncoder().encode(Workspace(name: Workspace.color.name, root: old))
+        let back = try JSONDecoder().decode(Workspace.self, from: data)
+        #expect(back.allPanels.contains(.audioMeter) && back.hidden.contains(.audioMeter))
+        #expect(!back.isVisible(.audioMeter))
+    }
+
     @Test func macBookStructure() {
         let w = Workspace.editingMacBook
         guard case .split(.horizontal, let c, _) = w.root else { Issue.record("root"); return }

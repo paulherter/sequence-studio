@@ -108,9 +108,11 @@ public final class AudioMeterView: NSView {
 
     private func startTimerIfNeeded() {
         guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        RunLoop.main.add(t, forMode: .common)   // keeps running while the user scrubs or drags
+        timer = t
     }
 
     private func tick() {
@@ -193,13 +195,16 @@ public final class AudioMeterView: NSView {
 
 /// Decides which engine meter readings reach the bars: a reading is fed once (by its buffer counter), so a stopped
 /// engine lets the bars fall instead of holding the last peak.
-public struct MeterFeed: Sendable, Equatable {
-    private var last: Int?
+public struct MeterFeed: Sendable {
+    private var last: (source: ObjectIdentifier, sequence: Int)?
     public init() {}
 
-    public mutating func peaks(for reading: (sequence: Int, peaks: [Float])?) -> [Float]? {
-        guard let reading, reading.sequence != last else { return nil }
-        last = reading.sequence
+    /// `source` identifies the engine the reading came from: a new engine restarts its buffer counter, so the same
+    /// sequence number from another source is a new buffer.
+    public mutating func peaks(for reading: (source: ObjectIdentifier, sequence: Int, peaks: [Float])?) -> [Float]? {
+        guard let reading else { return nil }
+        if let last, last.source == reading.source, last.sequence == reading.sequence { return nil }
+        last = (reading.source, reading.sequence)
         return reading.peaks
     }
 }
@@ -209,7 +214,7 @@ public struct MeterFeed: Sendable, Equatable {
 @MainActor
 public final class AudioMeterPanelView: NSView {
     public let meter = AudioMeterView(frame: .zero)
-    public var reading: (() -> (sequence: Int, peaks: [Float])?)?
+    public var reading: (() -> (source: ObjectIdentifier, sequence: Int, peaks: [Float])?)?
     private var feed = MeterFeed()
     private var timer: Timer?
 
@@ -239,9 +244,11 @@ public final class AudioMeterPanelView: NSView {
         super.viewDidMoveToWindow()
         timer?.invalidate(); timer = nil
         guard window != nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.poll() }
         }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
     }
 
     /// One poll (the timer calls this; tests too).
