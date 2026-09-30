@@ -26,23 +26,32 @@ public protocol AudioSource: Sendable {
     func nextChunk(maxFrames: Int) async throws -> AudioChunk?
 }
 
+/// An audio source that can be read again from the start (needed for two-pass processing).
+public protocol RewindableAudioSource: AudioSource {
+    func rewind() async throws
+}
+
 /// Generated sine tone (tests).
-public final class SineAudioSource: AudioSource, @unchecked Sendable {
+public final class SineAudioSource: RewindableAudioSource, @unchecked Sendable {
     public let sampleRate: Int
     public let channels: Int
     public let totalFrames: Int
     private let frequency: Int
+    private let amplitude: Float
     private let lock = NSLock()
     private var position = 0
 
-    public init(sampleRate: Int, channels: Int, duration: Time, frequency: Int = 440) {
-        self.sampleRate = sampleRate; self.channels = channels; self.frequency = frequency
+    public init(sampleRate: Int, channels: Int, duration: Time, frequency: Int = 440, amplitude: Float = 0.25) {
+        self.sampleRate = sampleRate; self.channels = channels; self.frequency = frequency; self.amplitude = amplitude
         self.totalFrames = Int((Int128(duration.value) * Int128(sampleRate)) / Int128(duration.timescale))
     }
 
     public func nextChunk(maxFrames: Int) async throws -> AudioChunk? {
         next(maxFrames)
     }
+
+    public func rewind() async throws { reset() }
+    private func reset() { lock.lock(); position = 0; lock.unlock() }
 
     private func next(_ maxFrames: Int) -> AudioChunk? {
         lock.lock(); defer { lock.unlock() }
@@ -52,7 +61,7 @@ public final class SineAudioSource: AudioSource, @unchecked Sendable {
         for i in 0..<n {
             // Phase from integer arithmetic: (position * frequency) mod sampleRate.
             let phase = Double((position + i) * frequency % sampleRate) / Double(sampleRate)
-            let v = Float(sin(2 * Double.pi * phase)) * 0.25
+            let v = Float(sin(2 * Double.pi * phase)) * amplitude
             for c in 0..<channels { out[i * channels + c] = v }
         }
         position += n

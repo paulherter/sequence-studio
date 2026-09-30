@@ -11,6 +11,8 @@ public enum ExportError: Error, Sendable, Equatable {
     case cannotAddAudioInput
     case writerFailed(String)
     case emptySource
+    /// Loudness normalisation is on but the audio source cannot be read twice.
+    case loudnessNeedsRewindableSource
 }
 
 /// Writes frames (and optionally audio) to an MP4/MOV with Rec.709 1-1-1 tags via AVAssetWriter.
@@ -70,6 +72,11 @@ public enum ExportWriter {
         let issues = settings.validate()
         guard issues.isEmpty else { throw ExportError.invalidSettings(issues) }
         guard video.frameCount > 0 else { throw ExportError.emptySource }
+        var audio = audio
+        if settings.audio.enabled, let l = settings.audio.loudness, let a = audio {
+            guard let r = a as? any RewindableAudioSource else { throw ExportError.loudnessNeedsRewindableSource }
+            audio = try await NormalizedAudioSource.make(r, settings: l)
+        }
 
         let fm = FileManager.default
         if fm.fileExists(atPath: url.path) { try fm.removeItem(at: url) }
@@ -119,6 +126,11 @@ public enum ExportWriter {
                 while !vInput.isReadyForMoreMediaData {
                     try Task.checkCancellation()
                     if writer.status == .failed { throw ExportError.writerFailed(writer.error?.localizedDescription ?? "failed") }
+                    // The writer may hold video back until audio is far enough ahead: feed audio as far as it accepts.
+                    if let aInput, let audio, !audioDone {
+                        audioFramesWritten = try await feedAudio(audio, aInput, writer, written: audioFramesWritten,
+                                                                 upTo: Int.max, blocking: false, done: &audioDone)
+                    }
                     try await Task.sleep(for: .milliseconds(2))
                 }
                 let pts = CMTime(value: CMTimeValue(fd.value) * CMTimeValue(i), timescale: fps)
@@ -129,20 +141,20 @@ public enum ExportWriter {
                 if let aInput, let audio, !audioDone {
                     let target = Int((Int128(i + 1) * Int128(fd.value) * Int128(aRate)) / Int128(fd.timescale))
                     audioFramesWritten = try await feedAudio(audio, aInput, writer, written: audioFramesWritten,
-                                                             upTo: i + 1 == total ? Int.max : target, done: &audioDone)
+                                                             upTo: target, blocking: false, done: &audioDone)
                 }
                 progress(Double(i + 1) / Double(total) * (aInput == nil ? 1 : 0.99))
             }
+            // Video is complete: finish it first so the writer stops waiting on video while audio drains.
+            vInput.markAsFinished()
             if let aInput, let audio, !audioDone {
-                audioFramesWritten = try await feedAudio(audio, aInput, writer, written: audioFramesWritten, upTo: Int.max, done: &audioDone)
+                audioFramesWritten = try await feedAudio(audio, aInput, writer, written: audioFramesWritten, upTo: Int.max, blocking: true, done: &audioDone)
             }
             try Task.checkCancellation()
         } catch {
             throw abort(error is CancellationError ? CancellationError() : error)
         }
 
-        vInput.markAsFinished()
-        aInput?.markAsFinished()
         await writer.finishWriting()
         guard writer.status == .completed else {
             let e = ExportError.writerFailed(writer.error?.localizedDescription ?? "finishWriting")
@@ -162,14 +174,17 @@ public enum ExportWriter {
     }
 
     /// Pull PCM from the source and append until `written >= upTo` frames or the source ends.
+    /// Non-blocking mode returns as soon as the input is not ready (the writer may be waiting for video; blocking
+    /// there would deadlock the interleaving). The caller feeds the rest later.
     private static func feedAudio(
         _ source: any AudioSource, _ input: AVAssetWriterInput, _ writer: AVAssetWriter,
-        written: Int, upTo: Int, done: inout Bool
+        written: Int, upTo: Int, blocking: Bool, done: inout Bool
     ) async throws -> Int {
         var written = written
         while written < upTo {
             try Task.checkCancellation()
-            guard let chunk = try await source.nextChunk(maxFrames: 4096) else { done = true; break }
+            if !blocking && !input.isReadyForMoreMediaData { break }
+            guard let chunk = try await source.nextChunk(maxFrames: 4096) else { done = true; input.markAsFinished(); break }
             while !input.isReadyForMoreMediaData {
                 try Task.checkCancellation()
                 if writer.status == .failed { throw ExportError.writerFailed(writer.error?.localizedDescription ?? "failed") }

@@ -46,15 +46,57 @@ public struct ColorSettings: Sendable, Hashable, Codable {
 
 public enum AudioCodec: String, Sendable, Codable { case aac }
 
+/// Two-pass loudness normalisation: one linear gain = target - measured integrated loudness,
+/// limited so the resulting true peak stays at or below `truePeakCeilingDB`.
+public struct LoudnessNormalization: Sendable, Hashable, Codable {
+    /// Target integrated loudness in LUFS.
+    public var targetLUFS: Double
+    /// Maximum true peak after gain in dBTP.
+    public var truePeakCeilingDB: Double
+    public init(targetLUFS: Double = -14, truePeakCeilingDB: Double = -1) {
+        self.targetLUFS = targetLUFS; self.truePeakCeilingDB = truePeakCeilingDB
+    }
+}
+
 public struct AudioSettings: Sendable, Hashable, Codable {
     public var enabled: Bool = true
     public var codec: AudioCodec = .aac
     public var sampleRate: Int = 48_000
     public var channels: Int = 2
     public var bitrate: Int = 192_000
-    /// Model only: target integrated loudness in LUFS (e.g. -14). nil = off.
-    public var loudnessTarget: Int? = nil
+    /// nil = no normalisation.
+    public var loudness: LoudnessNormalization? = nil
     public init() {}
+
+    private enum CodingKeys: String, CodingKey {
+        case enabled, codec, sampleRate, channels, bitrate, loudness
+        case loudnessTarget   // legacy: Int LUFS, decode only
+    }
+
+    /// Tolerant decoding: missing keys keep defaults; the legacy `loudnessTarget` (Int LUFS) maps to `loudness`.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        enabled = try c.decodeIfPresent(Bool.self, forKey: .enabled) ?? enabled
+        codec = try c.decodeIfPresent(AudioCodec.self, forKey: .codec) ?? codec
+        sampleRate = try c.decodeIfPresent(Int.self, forKey: .sampleRate) ?? sampleRate
+        channels = try c.decodeIfPresent(Int.self, forKey: .channels) ?? channels
+        bitrate = try c.decodeIfPresent(Int.self, forKey: .bitrate) ?? bitrate
+        if let l = try c.decodeIfPresent(LoudnessNormalization.self, forKey: .loudness) {
+            loudness = l
+        } else if let legacy = try c.decodeIfPresent(Int.self, forKey: .loudnessTarget) {
+            loudness = LoudnessNormalization(targetLUFS: Double(legacy))
+        }
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var c = encoder.container(keyedBy: CodingKeys.self)
+        try c.encode(enabled, forKey: .enabled)
+        try c.encode(codec, forKey: .codec)
+        try c.encode(sampleRate, forKey: .sampleRate)
+        try c.encode(channels, forKey: .channels)
+        try c.encode(bitrate, forKey: .bitrate)
+        try c.encodeIfPresent(loudness, forKey: .loudness)
+    }
 }
 
 public enum CaptionMode: String, Sendable, Codable { case none, burnIn, sidecarSRT }

@@ -21,7 +21,7 @@ import SSCore
         var s = ExportSettings()
         s.video.codec = .hevc
         s.video.bitrate = .averageAndMax(average: 8_000_000, max: 12_000_000)
-        s.audio.loudnessTarget = -14
+        s.audio.loudness = LoudnessNormalization(targetLUFS: -16, truePeakCeilingDB: -2)
         s.captions = .sidecarSRT
         s.range = .inOut(TimeRange(start: Time(1, 1), duration: Time(5, 1)))
         let data = try JSONEncoder().encode(s)
