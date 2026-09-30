@@ -1,22 +1,6 @@
 import Foundation
-import AudioToolbox
 
-/// AUMultibandCompressor parameter IDs (AudioUnitParameters.h), as plain constants.
-enum AUParam {
-    static let pregain = UInt32(kMultibandCompressorParam_Pregain), postgain = UInt32(kMultibandCompressorParam_Postgain)
-    static let crossover1 = UInt32(kMultibandCompressorParam_Crossover1)
-    static let crossover2 = UInt32(kMultibandCompressorParam_Crossover2)
-    static let crossover3 = UInt32(kMultibandCompressorParam_Crossover3)
-    static let threshold1 = UInt32(kMultibandCompressorParam_Threshold1), threshold2 = threshold1 + 1
-    static let threshold3 = threshold1 + 2, threshold4 = threshold1 + 3
-    static let headroom1 = UInt32(kMultibandCompressorParam_Headroom1), headroom2 = headroom1 + 1
-    static let headroom3 = headroom1 + 2, headroom4 = headroom1 + 3
-    static let attackTime = UInt32(kMultibandCompressorParam_AttackTime)
-    static let releaseTime = UInt32(kMultibandCompressorParam_ReleaseTime)
-    static let eq1 = UInt32(kMultibandCompressorParam_EQ1), eq2 = eq1 + 1, eq3 = eq1 + 2, eq4 = eq1 + 3
-}
-
-/// Four-band compressor. Maps onto Apple's AUMultibandCompressor (see `auParameters()`).
+/// Four-band compressor settings (Premiere-style Multiband Compressor), run by `MultibandCompressor`.
 public struct MultibandCompressorSettings: Sendable, Hashable, Codable {
     public struct Band: Sendable, Hashable, Codable {
         public var thresholdDB: Double
@@ -47,38 +31,6 @@ public struct MultibandCompressorSettings: Sendable, Hashable, Codable {
     public static let neutral = MultibandCompressorSettings(
         bypass: true, crossoversHz: [120, 700, 3000],
         bands: Array(repeating: Band(thresholdDB: 0, ratio: 1, attackMs: 10, releaseMs: 100), count: 4))
-
-    /// Reference range used to turn a ratio into the AU's "headroom" (dB). Approximation, see PHASE5.md.
-    static let headroomReferenceDB = 24.0
-
-    /// (parameterID, value) pairs for AUMultibandCompressor. Pure data; values clamped to the AU's ranges.
-    public func auParameters(sampleRate: Double = 48000) -> [(id: UInt32, value: Double)] {
-        func clamp(_ v: Double, _ lo: Double, _ hi: Double) -> Double { min(hi, max(lo, v.isNaN ? lo : v)) }
-        let b = bands.count == 4 ? bands : MultibandCompressorSettings.neutral.bands
-        let nyq = sampleRate / 2
-        var x = crossoversHz.count == 3 ? crossoversHz : MultibandCompressorSettings.neutral.crossoversHz
-        x = x.map { clamp($0, 20, nyq) }
-        // keep strictly ascending
-        for i in 1..<3 where x[i] <= x[i - 1] { x[i] = min(nyq, x[i - 1] * 1.05) }
-        var out: [(id: UInt32, value: Double)] = [
-            (AUParam.pregain, clamp(preGainDB, -40, 40)),
-            (AUParam.postgain, clamp(makeupGainDB, -40, 40)),
-            (AUParam.crossover1, x[0]), (AUParam.crossover2, x[1]), (AUParam.crossover3, x[2]),
-        ]
-        for i in 0..<4 {
-            out.append((AUParam.threshold1 + UInt32(i), clamp(b[i].thresholdDB, -100, 0)))
-        }
-        for i in 0..<4 {
-            let r = max(1, b[i].ratio)
-            out.append((AUParam.headroom1 + UInt32(i), clamp(Self.headroomReferenceDB * (1 - 1 / r), 0.1, 40)))
-        }
-        let attack = b.map(\.attackMs).reduce(0, +) / 4 / 1000
-        let release = b.map(\.releaseMs).reduce(0, +) / 4 / 1000
-        out.append((AUParam.attackTime, clamp(attack, 0.001, 0.2)))
-        out.append((AUParam.releaseTime, clamp(release, 0.01, 3)))
-        for i in 0..<4 { out.append((AUParam.eq1 + UInt32(i), clamp(b[i].gainDB, -20, 20))) }
-        return out
-    }
 }
 
 public struct TrackAudioPreset: Sendable, Hashable, Codable, Identifiable {
@@ -86,10 +38,10 @@ public struct TrackAudioPreset: Sendable, Hashable, Codable, Identifiable {
     public var name: String
     public var isBuiltIn: Bool
     public var compressor: MultibandCompressorSettings
-    /// 0 = off ... 1 = full RNNoise output.
+    /// Denoiser strength = wet/dry mix: 0 = denoiser off, 1 = fully denoised. Default 0.5.
     public var noiseReduction: Double
 
-    public init(id: String, name: String, isBuiltIn: Bool = false, compressor: MultibandCompressorSettings, noiseReduction: Double) {
+    public init(id: String, name: String, isBuiltIn: Bool = false, compressor: MultibandCompressorSettings, noiseReduction: Double = 0.5) {
         self.id = id; self.name = name; self.isBuiltIn = isBuiltIn
         self.compressor = compressor; self.noiseReduction = min(1, max(0, noiseReduction))
     }

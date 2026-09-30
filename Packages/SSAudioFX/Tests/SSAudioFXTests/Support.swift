@@ -47,3 +47,21 @@ enum Sig {
         (0..<channels).map { c in parts.flatMap { $0[c] } }
     }
 }
+
+extension Sig {
+    /// Amplitude of the sinusoidal component at `freq` (single-bin DFT; use whole periods for exactness).
+    static func amplitude(_ x: ArraySlice<Float>, freq: Double, rate: Int = 48000) -> Double {
+        var re = 0.0, im = 0.0
+        for (k, v) in x.enumerated() {
+            let w = 2 * Double.pi * freq * Double(k) / Double(rate)
+            re += Double(v) * cos(w); im += Double(v) * sin(w)
+        }
+        return 2 * (re * re + im * im).squareRoot() / Double(x.count)
+    }
+
+    static func db(_ a: Double) -> Double { 20 * log10(max(a, 1e-12)) }
+
+    static func mono(_ freq: Double, amplitudeDB: Double, seconds: Double, rate: Int = 48000) -> [Float] {
+        sine(freq: freq, amplitudeDB: amplitudeDB, seconds: seconds, rate: rate, channels: 1)[0]
+    }
+}

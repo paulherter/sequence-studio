@@ -11,4 +11,6 @@ after reading and checking it. Every reuse gets a line below: what, from where (
 | [openreel-video](https://github.com/Augani/openreel-video) | MIT | TypeScript (browser) | Concepts only (timeline interactions, caption styling). |
 
 ## Reused code
+| Source | License | Form | Use |
+|---|---|---|---|
 | RNNoise 0.1.1 (xiph/rnnoise, tarball v0.1.1) | BSD-3-Clause (Xiph.Org, Mozilla; license kept in `Packages/SSAudioFX/Sources/CRNNoise/COPYING`) | C, vendored unmodified (no `rnn_reader.c`, no training code) | Noise suppression in SSAudioFX. |
