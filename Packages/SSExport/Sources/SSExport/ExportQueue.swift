@@ -4,7 +4,11 @@ import SSCore
 public struct ExportSources: Sendable {
     public var video: any FrameSource
     public var audio: (any AudioSource)?
-    public init(video: any FrameSource, audio: (any AudioSource)? = nil) { self.video = video; self.audio = audio }
+    /// Cues on the sequence timeline; written as sidecar when `settings.captions == .sidecarSRT`.
+    public var captions: [SRTCue]
+    public init(video: any FrameSource, audio: (any AudioSource)? = nil, captions: [SRTCue] = []) {
+        self.video = video; self.audio = audio; self.captions = captions
+    }
 }
 
 /// One sequence to export. Sources are created lazily when the job starts.
@@ -32,6 +36,8 @@ public struct ExportJobStatus: Sendable, Equatable {
     public var state: ExportJobState
     public var progress: Double
     public var outputURL: URL
+    /// Set once the sidecar .srt has been written next to the video.
+    public var sidecarURL: URL? = nil
 }
 
 public actor ExportQueue {
@@ -112,6 +118,11 @@ public actor ExportQueue {
             try await ExportWriter.export(video: src.video, audio: src.audio, settings: job.settings, to: url) { p in
                 Task { await queue.setProgress(id, p) }
             }
+            if job.settings.captions == .sidecarSRT {
+                let srt = url.deletingPathExtension().appendingPathExtension("srt")
+                try SRTWriter.write(src.captions, range: job.settings.range, to: srt)
+                await queue.setSidecar(id, srt)
+            }
         }
         runningTask = task
         // Cancellation requested before the task was stored.
@@ -132,6 +143,8 @@ public actor ExportQueue {
         }
         cancelRequested.remove(id)
     }
+
+    private func setSidecar(_ id: UUID, _ url: URL) { update(id) { $0.sidecarURL = url } }
 
     private func setProgress(_ id: UUID, _ p: Double) {
         // Late progress callbacks must not move a finished job or go backwards.
