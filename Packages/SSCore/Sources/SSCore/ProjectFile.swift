@@ -8,11 +8,11 @@ public enum ProjectFileError: Error, Equatable {
 
 /// Package directory `Name.ssproj/` with `project.json` and `Autosave/`.
 public enum ProjectFile {
-    public static let currentVersion = 9
+    public static let currentVersion = 10
     public typealias JSONObject = [String: Any]
     /// Upgrades the top-level object from version N to N+1, keyed by N.
     public typealias Migrations = [Int: (JSONObject) throws -> JSONObject]
-    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7, 7: migrateV7toV8, 8: migrateV8toV9] }
+    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7, 7: migrateV7toV8, 8: migrateV8toV9, 9: migrateV9toV10] }
 
     /// v2: `Timeline.frameDuration` moved into `Timeline.format` (defaults 1920x1080, 48 kHz).
     /// Track flags, `inOut` and `markers` are optional on decode, so nothing else changes.
@@ -57,6 +57,22 @@ public enum ProjectFile {
     /// v9: `Clip.effects` (explicitly applied effects). `ClipAnimation.cornerRadius` is gone: `Clip` decoding turns a
     /// non-default radius into an applied Rounded Corners effect and drops a default one (= not applied).
     static func migrateV8toV9(_ obj: JSONObject) throws -> JSONObject { obj }
+
+    /// v10: Scale is relative to the picture's own pixels (100 % = one source pixel per sequence pixel) instead of the
+    /// aspect-fitted picture; `Clip.isStill`, `MediaInfo.isStill`, `VideoTrackInfo.rotation` are optional on decode.
+    /// Every picture clip's Scale is multiplied by its fit scale (`Project.migrateScaleToSourcePixels`) so nothing moves
+    /// on screen. A project that does not decode is passed on unchanged (the final decode then reports it).
+    static func migrateV9toV10(_ obj: JSONObject) throws -> JSONObject {
+        var o = obj
+        guard let projectObj = obj["project"],
+              let raw = try? JSONSerialization.data(withJSONObject: projectObj),
+              var project = try? decoder().decode(Project.self, from: raw) else { return obj }
+        project.migrateScaleToSourcePixels()
+        guard let data = try? encoder().encode(project),
+              let migrated = try? JSONSerialization.jsonObject(with: data) else { return obj }
+        o["project"] = migrated
+        return o
+    }
 
     static let fileName = "project.json"
     static let autosaveDir = "Autosave"

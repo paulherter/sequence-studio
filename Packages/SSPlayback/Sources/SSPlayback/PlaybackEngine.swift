@@ -86,6 +86,9 @@ import SSRender
         }
     }
 
+    /// Re-presents the current frame from the cache (the viewer was resized; the present path fits it to the new size).
+    public func redraw() { loop.invalidate() }
+
     public func play(_ rate: PlaybackRate = .init(1, 1)) {
         guard !rate.isPaused else { pause(); return }
         stopScrubAudio()                                   // the play path owns the output from here

@@ -34,6 +34,8 @@ final class EditorPanels {
     var onStatus: ((String) -> Void)?
     var onCommand: ((EditorCommand) -> Void)?
     var onNest: (() -> Void)?
+    /// "Set to Frame Size" / "Scale to Frame Size" of the selected clips.
+    var onFrameSize: (() -> Void)?
 
     init(session: EditorSession) {
         self.session = session
@@ -183,6 +185,7 @@ final class EditorPanels {
             case .delete: self?.onCommand?(.delete)
             case .rippleDelete: self?.onCommand?(.rippleDelete)
             case .nest: self?.onNest?()
+            case .setToFrameSize, .scaleToFrameSize: self?.onFrameSize?()
             default: break
             }
         }
@@ -195,6 +198,7 @@ final class EditorPanels {
         viewer.autoresizingMask = [.width, .height]
         monitorView.viewerSlot.addSubview(viewer)
         session.engine.attach(viewer.metalLayer)
+        viewer.onResize = { [weak self] in self?.session.engine.redraw() }   // aspect-fit at every panel size
 
         monitorModel.onSeek = { [weak self] t in self?.session.seek(to: t) }
         monitorModel.onQualityChange = { [weak self] q in self?.session.engine.quality = q.decodeScale }

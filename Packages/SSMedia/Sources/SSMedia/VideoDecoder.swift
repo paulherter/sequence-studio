@@ -96,7 +96,7 @@ public final class VTVideoDecoder: VideoDecoding, @unchecked Sendable {
         for (i, e) in entries.enumerated() where e.decodeOrdinal >= 0 && e.decodeOrdinal < entries.count { inv[e.decodeOrdinal] = i }
         presentationIndexOfOrdinal = inv
         let fd = demuxer.formatDescription
-        info = try MediaImporter.videoInfo(format: fd, index: demuxer.index)
+        info = try MediaImporter.videoInfo(format: fd, index: demuxer.index, rotation: demuxer.rotation)
         let (w, h) = (info.width, info.height)
         pixelFormat = DecodePixelFormat.nativeUncompressed(for: info, fullRange: DecodePixelFormat.isFullRange(fd))
         let (s, hw) = try Self.makeSession(format: fd, width: w, height: h, scale: scale, pixelFormat: pixelFormat)

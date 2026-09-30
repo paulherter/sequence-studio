@@ -452,6 +452,63 @@ private final class SessionTestClock: @unchecked Sendable {
         #expect(t2.track(created)?.clips.count == 1)
     }
 
+    @Test func portraitPhoneClipMakesPortraitSequence() throws {
+        var p = EditorSession.makeUntitled()
+        let v = VideoTrackInfo(width: 1920, height: 1080, codec: "hvc1", bitDepth: 10, chroma: "4:2:0",
+                               nominalFrameDuration: Time(1, 30), isVariableFrameRate: false, rotation: 90)
+        let m = MediaRef(name: "phone", path: "/nonexistent/phone.mov", fingerprint: MediaFingerprint(size: 1),
+                         duration: s(4), info: MediaInfo(duration: s(4), video: v))
+        p.add(m)
+        let session = EditorSession(project: p, engine: StubProgramEngine(), autosaveStore: AutosaveStore(base: tempDir()))
+        #expect(session.placeMedia([m.id], mode: .overwrite))
+        let f = try #require(session.activeTimeline?.format)
+        #expect(f.width == 1080 && f.height == 1920 && f.frameDuration == Time(1, 30))
+        #expect(ProjectPanelModel.formatString(m).hasPrefix("1080×1920"))
+    }
+
+    @Test func stillImagePlacesWithDefaultLengthAndTrimsFreely() throws {
+        var p = EditorSession.makeUntitled()
+        let info = MediaInfo(duration: MediaInfo.defaultStillDuration,
+                             video: VideoTrackInfo(width: 4000, height: 3000, codec: "image", bitDepth: 8, chroma: "4:4:4",
+                                                   nominalFrameDuration: Time(1, 30), isVariableFrameRate: false), isStill: true)
+        let m = MediaRef(name: "photo.jpg", path: "/nonexistent/photo.jpg", fingerprint: MediaFingerprint(size: 1),
+                         duration: info.duration, info: info)
+        p.add(m)
+        p.timelines[0].format = SequenceFormat(width: 1920, height: 1080, frameDuration: Time(1001, 30000))
+        let session = EditorSession(project: p, engine: StubProgramEngine(), autosaveStore: AutosaveStore(base: tempDir()))
+        #expect(session.placeMedia([m.id], mode: .overwrite))
+        let t = try #require(session.activeTimeline)
+        let c = try #require(t.tracks.first { $0.kind == .video }?.clips.first)
+        #expect(c.isStill && c.timeline.duration == s(5) && c.mediaDuration == nil)
+        #expect(t.tracks.first { $0.kind == .audio }?.clips.isEmpty == true)
+        #expect(t.format.width == 4000 && t.format.frameDuration == Time(1001, 30000))   // size from the still, rate kept
+        #expect(ProjectPanelModel.formatString(m) == "4000×3000 Still image")
+    }
+
+    @Test func placedClipGetsFitScaleAndSetToFrameSizeRestoresIt() throws {
+        let r = try Rig()
+        let big = mediaRef("Big", audio: false, w: 3840, h: 2160)
+        r.session.perform("Import") { $0.add(big) }
+        let format = SequenceFormat(width: 1080, height: 1920, frameDuration: Time(1, 30))
+        r.session.perform("Seq") { p in p.timelines[0].format = format }
+        #expect(r.session.placeMedia([big.id], at: .zero, mode: .overwrite))
+        let c = try #require(r.timeline.tracks.first { $0.kind == .video }?.clips.first { $0.media == big.id })
+        #expect(abs(c.animation.scale.value.x - 0.28125) < 1e-12)           // 4K landscape in 1080 x 1920, fits whole
+        // User sets 100 %, then Set to Frame Size brings the fit value back in one undo step.
+        var edited = c
+        edited.animation.scale = AnimatedProperty(Vec2(1, 1))
+        r.session.replaceClip(edited, name: "Scale", continuesGesture: false)
+        r.session.select(clips: [c.id])
+        #expect(r.session.setToFrameSize())
+        let back = try #require(r.timeline.tracks.first { $0.kind == .video }?.clips.first { $0.id == c.id })
+        #expect(abs(back.animation.scale.value.x - 0.28125) < 1e-12)
+        #expect(r.session.undoName == "Set to Frame Size")
+        #expect(!r.session.setToFrameSize())                                 // already at the fit value: no new step
+        r.session.undo()
+        let undone = try #require(r.timeline.tracks.first { $0.kind == .video }?.clips.first { $0.id == c.id })
+        #expect(undone.animation.scale.value == Vec2(1, 1))
+    }
+
     @Test func secondClipKeepsTheSequenceFormat() throws {
         let r = try Rig()
         let m = mediaRef("A", w: 3840, h: 2160)

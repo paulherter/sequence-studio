@@ -9,8 +9,9 @@ public enum PlaceholderKind: Sendable { case offline, damaged, loading }
 /// One layer of one display frame, built by the caller from `LayerRequest` + frame cache.
 /// `transform` is the already evaluated `LayerRequest.transform`: position = offset from the canvas centre in
 /// sequence px (y down), scale linear x/y, rotation in degrees (positive = clockwise on screen), anchor = offset from
-/// the layer's (aspect-fitted) centre in sequence px, opacity 0...1. The layer is scaled/rotated about the anchor,
-/// and the anchor lands on `canvas centre + position`.
+/// the layer's centre in sequence px, opacity 0...1. The layer is drawn at its own (upright) pixel size, one source pixel
+/// per sequence pixel at scale 1 (Premiere: 100 % = source pixels; "Set to Frame Size" writes the fit value into the
+/// scale), scaled/rotated about the anchor; the anchor lands on `canvas centre + position`.
 public struct RenderLayer: @unchecked Sendable {
     public enum Content: @unchecked Sendable {
         case frame(CVPixelBuffer, colorHint: VideoTrackInfo)
@@ -25,20 +26,24 @@ public struct RenderLayer: @unchecked Sendable {
     /// (source-encoded -> working-linear). Non-nil = YCbCr->RGB into an intermediate, `ColorPipelineGPU.encode`
     /// (source-encoded -> working-linear, includes the output of the chain), then composite with no further transfer.
     public var colorPipeline: ColorPipeline?
-    /// Rounded-corner radius in layer-local px: measured on the aspect-fitted layer BEFORE the transform scale, so it
-    /// scales with the clip (Premiere-like). Clamped to half the shorter side. 0 = square corners.
+    /// Rounded-corner radius in px of the layer as if it were aspect-fitted into the canvas, applied BEFORE the transform
+    /// scale, so it scales with the clip (Premiere-like). Clamped to half the shorter side. 0 = square corners.
     public var cornerRadius: Double
+    /// Pixel size of the picture before rotation (the track's native size). A decode at reduced quality hands over a
+    /// smaller buffer that must still be drawn at the native size: scale 1 = one native pixel per sequence pixel.
+    /// nil = the buffer's own size.
+    public var nativeSize: (width: Int, height: Int)?
 
     public init(content: Content, transform: ClipTransform = .identity, colorPipeline: ColorPipeline? = nil,
-                cornerRadius: Double = 0) {
+                cornerRadius: Double = 0, nativeSize: (width: Int, height: Int)? = nil) {
         self.content = content; self.transform = transform; self.colorPipeline = colorPipeline
-        self.cornerRadius = cornerRadius
+        self.cornerRadius = cornerRadius; self.nativeSize = nativeSize
     }
 }
 
 /// Tree form of a display frame: a leaf layer, or a nested-sequence group whose children are composited offscreen
-/// (transparent background, `format` size, rgba16Float premultiplied) and then drawn like a layer, aspect-fitted into
-/// the parent canvas, with the group's `transform` (anchor/scale/rotation/position in the parent's px),
+/// (transparent background, `format` size, rgba16Float premultiplied) and then drawn like a layer at its own size
+/// (scale 1 = one inner px per parent px), with the group's `transform` (anchor/scale/rotation/position in the parent's px),
 /// `opacity` (applied once to the whole image) and `cornerRadius` (in the group image's own px, before the scale).
 public indirect enum RenderNode: @unchecked Sendable {
     case layer(RenderLayer)
@@ -107,6 +112,8 @@ public final class Compositor: @unchecked Sendable {
         var mode: UInt32 = 0
         var linearize: UInt32 = 1
         var cornerRadius: Float = 0
+        /// Clockwise quarter turns of a source picture (0...3): the layer quad is upright, the texture lookup turns.
+        var quarter: UInt32 = 0
     }
 
     public init(device: MTLDevice) throws {
@@ -201,6 +208,13 @@ public final class Compositor: @unchecked Sendable {
         return SIMD4(lin(d.x), lin(d.y), lin(d.z), 1)
     }
 
+    /// Corner radii are given in px of the layer fitted into the canvas (what they meant before Scale became relative to
+    /// source pixels); the layer is now drawn at its own size, so the radius is converted: native / fitted.
+    static func radiusFactor(_ w: Int, _ h: Int, canvas: SequenceFormat) -> Double {
+        let fit = fitSize(w, h, canvas: canvas.width, canvas.height)
+        return fit.x > 0 ? Double(Float(w) / fit.x) : 1
+    }
+
     /// Aspect-fit size of `w x h` into the canvas.
     static func fitSize(_ w: Int, _ h: Int, canvas cw: Int, _ ch: Int) -> SIMD2<Float> {
         let s = min(Float(cw) / Float(w), Float(ch) / Float(h))
@@ -264,8 +278,8 @@ public final class Compositor: @unchecked Sendable {
                            clear: MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0))
                 var u = Uniforms()
                 u.mode = 3
-                geometry(&u, transform: transform, canvas: format,
-                         size: Self.fitSize(gf.width, gf.height, canvas: format.width, format.height), cornerRadius: radius)
+                geometry(&u, transform: transform, canvas: format, size: SIMD2(Float(gf.width), Float(gf.height)),
+                         cornerRadius: radius * Self.radiusFactor(gf.width, gf.height, canvas: format))
                 u.opacity = Float(min(1, max(0, transform.opacity * opacity)))
                 prepared.append(Prepared(u: u, tex0: tex, tex1: dummy))
             }
@@ -293,6 +307,8 @@ public final class Compositor: @unchecked Sendable {
             var u = Uniforms()
             switch layer.content {
             case .placeholder(let kind):
+                // "Loading" draws nothing: a frame that is not decoded yet must never cover the layers below.
+                if kind == .loading { return }
                 u.mode = 2; u.solid = Self.placeholderLinear(kind)
                 geometry(&u, transform: layer.transform, canvas: format,
                          size: SIMD2(Float(format.width), Float(format.height)), cornerRadius: layer.cornerRadius)
@@ -321,6 +337,9 @@ public final class Compositor: @unchecked Sendable {
                     return
                 }
                 let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
+                let quarter = UInt32((hint.rotation / 90) & 3)
+                let (nw, nh) = layer.nativeSize ?? (w, h)
+                let (dw, dh) = quarter & 1 == 1 ? (nh, nw) : (nw, nh)     // upright size after the turn
                 guard let t0 = planeTexture(pb, plane: 0, format: info.yFormat, retainer: retainer),
                       info.layout == .bgra8 || planeTexture(pb, plane: 1, format: info.cbcrFormat, retainer: retainer) != nil
                 else {
@@ -335,8 +354,9 @@ public final class Compositor: @unchecked Sendable {
                 u.mode = info.layout == .bgra8 ? 1 : 0
                 u.m = PixelFormats.ycbcrToRGB(PixelFormats.matrix(tag: hint.matrix))
                 u.range = PixelFormats.rangeParams(info)
-                geometry(&u, transform: layer.transform, canvas: format, size: Self.fitSize(w, h, canvas: format.width, format.height),
-                         cornerRadius: layer.cornerRadius)
+                u.quarter = quarter
+                geometry(&u, transform: layer.transform, canvas: format, size: SIMD2(Float(dw), Float(dh)),
+                         cornerRadius: layer.cornerRadius * Self.radiusFactor(dw, dh, canvas: format))
                 var p = Prepared(u: u, tex0: t0, tex1: t1)
                 if let pipeline = layer.colorPipeline {
                     if let mid = acquireIntermediate(width: w, height: h) {

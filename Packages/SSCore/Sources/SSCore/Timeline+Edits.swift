@@ -101,7 +101,7 @@ extension Timeline {
         var d = delta
         for m in group {
             let c = m.clip
-            if c.isGenerator { d = .zero; continue }        // nothing to slip
+            if c.isGenerator || c.isStill { d = .zero; continue }        // nothing to slip
             d = max(d, -c.source.start)
             if let md = c.mediaDuration { d = min(d, md - c.source.end) }
         }

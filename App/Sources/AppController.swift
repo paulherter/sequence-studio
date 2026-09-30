@@ -68,6 +68,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         panels.onStatus = { [weak self] m in self?.shell.statusBar.flash(m) }
         panels.onCommand = { [weak self] c in self?.execute(c) }
         panels.onNest = { [weak self] in self?.requestNest() }
+        panels.onFrameSize = { [weak self] in self?.session.setToFrameSize() }
         panels.monitorModel.setQuality(settings.defaultQuality)
 
         shell.statusBar.onTasksClicked = { [weak self] v in self?.toggleTasks(v) }
@@ -151,6 +152,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             }
             session.placeMedia([m.id], at: .zero, mode: .overwrite)
             session.select(clips: [])
+            if let v = m.info?.video, let f = session.activeTimeline?.format {
+                NSLog("SS_IMPORT: \(m.name) native \(v.width)x\(v.height) rotation \(v.rotation) still \(m.info?.isStill == true) "
+                      + "-> display \(v.displayWidth)x\(v.displayHeight), sequence \(f.width)x\(f.height), scale \(session.activeTimeline?.tracks.flatMap(\.clips).first { $0.media == m.id }?.animation.scale.value.x ?? -1)")
+            }
         }
     }
 

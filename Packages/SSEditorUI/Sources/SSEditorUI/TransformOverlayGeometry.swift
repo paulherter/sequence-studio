@@ -66,11 +66,15 @@ public struct TransformOverlayGeometry: Sendable, Equatable {
     public var viewRect: CGRect
     /// Width / height of the media. The layer is aspect-fitted into the sequence.
     public var mediaAspect: Double
+    /// Upright source size in px. Set = Scale is relative to source pixels (Premiere: the layer is drawn at this size at
+    /// scale 1, see `SequenceFormat.fitScale`); nil = the layer is aspect-fitted at scale 1 (legacy, tests).
+    public var mediaPixelSize: CGSize?
     public var transform: ClipTransform
 
-    public init(sequenceSize: CGSize, viewRect: CGRect, mediaAspect: Double, transform: ClipTransform) {
+    public init(sequenceSize: CGSize, viewRect: CGRect, mediaAspect: Double, transform: ClipTransform,
+                mediaPixelSize: CGSize? = nil) {
         self.sequenceSize = sequenceSize; self.viewRect = viewRect
-        self.mediaAspect = mediaAspect; self.transform = transform
+        self.mediaAspect = mediaAspect; self.transform = transform; self.mediaPixelSize = mediaPixelSize
     }
 
     // MARK: Spaces
@@ -79,6 +83,7 @@ public struct TransformOverlayGeometry: Sendable, Equatable {
 
     /// Aspect-fitted layer size in sequence px (scale 1).
     public var fittedSize: CGSize {
+        if let m = mediaPixelSize, m.width > 0, m.height > 0 { return m }
         guard sequenceSize.width > 0, sequenceSize.height > 0, mediaAspect > 0 else { return .zero }
         let seqAspect = Double(sequenceSize.width / sequenceSize.height)
         if mediaAspect >= seqAspect {

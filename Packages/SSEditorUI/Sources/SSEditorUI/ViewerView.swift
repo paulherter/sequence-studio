@@ -25,6 +25,11 @@ public final class ViewerView: NSView {
         get { state.withLock { $0.provider } }
         set { state.withLock { $0.provider = newValue } }
     }
+    /// Called on the main thread whenever the drawable size changed (the owner re-presents the current frame so the
+    /// picture is redrawn, aspect-fitted, at the new size instead of the old drawable being stretched).
+    public var onResize: (() -> Void)?
+    private var lastDrawableSize: CGSize = .zero
+
     public var zoom: ViewerZoom {
         get { state.withLock { $0.zoom } }
         set { state.withLock { $0.zoom = newValue } }
@@ -48,18 +53,25 @@ public final class ViewerView: NSView {
         guard let ml = metalLayer else { return }
         let scale = window?.backingScaleFactor ?? NSScreen.main?.backingScaleFactor ?? 2
         ml.contentsScale = scale
-        ml.drawableSize = CGSize(width: max(1, (bounds.width * scale).rounded()),
-                                 height: max(1, (bounds.height * scale).rounded()))
+        // Until the new size is presented the layer shows the old drawable: never stretch it (aspect-fit, not resize).
+        ml.contentsGravity = .resizeAspect
+        let size = CGSize(width: max(1, (bounds.width * scale).rounded()), height: max(1, (bounds.height * scale).rounded()))
+        ml.drawableSize = size
+        if size != lastDrawableSize { lastDrawableSize = size; onResize?() }
         ml.presentsWithTransaction = false
         ml.backgroundColor = Theme.Colors.viewer.cgColor
     }
 
     public override func layout() { super.layout(); configureLayer() }
+    /// Resizing and re-parenting (Edit <-> Color, panel drags) update the drawable size at once, not at the next layout pass.
+    public override func setFrameSize(_ newSize: NSSize) { super.setFrameSize(newSize); configureLayer() }
+    public override func viewDidMoveToSuperview() { super.viewDidMoveToSuperview(); configureLayer() }
     public override func viewDidChangeBackingProperties() { super.viewDidChangeBackingProperties(); configureLayer() }
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         if window == nil { driver?.stop(); driver = nil; return }
+        configureLayer()
         guard drivesLayer, driver == nil, let device, let ml = metalLayer, let queue = device.makeCommandQueue() else { return }
         configureLayer()
         let presenter = Presenter(device: device, layer: ml)
