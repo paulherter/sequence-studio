@@ -31,3 +31,5 @@ Colour works better now, but the panel is still confusing for a Premiere user ("
 16. Bug: dragging the playhead over a clip's name strip erases the name; it comes back only after another redraw (dirty-rect/overdraw issue in TimelineView/ClipDrawing).
 17. Snapping with Shift while dragging the playhead: in the timeline it sticks to clip edges/edit points (and shows the snap), in the keyframe area it sticks to keyframes (Premiere).
 Goal restated by Paul: not identical to Premiere, but better — nicer UI, above all a faster workflow; adopt Premiere's smart details.
+18. Scrubbing the playhead in Effect Controls while playing must stop playback, exactly like the timeline ruler.
+19. Effect Controls split: the divider between the left (properties) and right (keyframes) area shows even with no clip selected — hide it (empty state) then; when a clip is selected the divider must be draggable (min/max widths, persisted), like Premiere.
