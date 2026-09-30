@@ -84,15 +84,7 @@ public enum TextLayout {
         return TextLayoutResult(lines: lines, bounds: bounds, backgroundRect: bg)
     }
 
-    static func makeFont(_ style: TextStyle) -> CTFont {
-        var font = CTFontCreateWithName(style.fontName as CFString, CGFloat(style.size), nil)
-        // Weights >= semibold map to the bold trait (family-wide weight axes are a later refinement).
-        if style.weight >= .semibold,
-           let bold = CTFontCreateCopyWithSymbolicTraits(font, CGFloat(style.size), nil, .boldTrait, .boldTrait) {
-            font = bold
-        }
-        return font
-    }
+    static func makeFont(_ style: TextStyle) -> CTFont { FontResolver.font(for: style) }
 
     private static func wrapParagraph(_ para: String, font: CTFont, maxWidth: Double) -> [(String, Double)] {
         let attr = NSAttributedString(string: para, attributes: [NSAttributedString.Key(kCTFontAttributeName as String): font])
