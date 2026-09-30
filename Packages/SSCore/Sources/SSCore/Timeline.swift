@@ -122,15 +122,15 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
 
     // MARK: Helpers
 
-    private struct Member { var track: Int; var clip: Clip }
+    struct Member { var track: Int; var clip: Clip }
 
-    private func find(_ id: Clip.ID) -> Member? {
+    func find(_ id: Clip.ID) -> Member? {
         for (i, t) in tracks.enumerated() { if let c = t.clip(id) { return Member(track: i, clip: c) } }
         return nil
     }
 
     /// The clip first, then every clip sharing its link.
-    private func linkedGroup(_ id: Clip.ID) throws -> [Member] {
+    func linkedGroup(_ id: Clip.ID) throws -> [Member] {
         guard let m = find(id) else { throw EditError.clipNotFound }
         var out = [m]
         if let link = m.clip.link {

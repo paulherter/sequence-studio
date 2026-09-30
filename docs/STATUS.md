@@ -1,8 +1,8 @@
 # Status
 
 ## Current: Phase 1 started (SSCore, tests first)
-Done in Phase 1: `Time`/`TimeRange`, `Clip`, `Track` (overwrite / insert / split / remove / ripple delete), `Timeline` with **sequence-wide ripple** (31 tests green): `rippleDelete`, `rippleTrim` (head/tail), `insert`. Tracks have `isLocked` and `syncLock`; ripple shifts every unlocked sync-locked track, locked tracks never move and an edit on a locked track throws. Linked A/V partners are deleted/trimmed together.
-Next in Phase 1: plain trim, roll, slip, move (also timeline-aware for links); snapping logic; undo (snapshot history); project file (Codable + versioning). One slice per session.
+Done in Phase 1: `Time`/`TimeRange`, `Clip`, `Track` (overwrite / insert / split / remove / ripple delete), `Timeline` with **sequence-wide ripple** (31 tests green): `rippleDelete`, `rippleTrim` (head/tail), `insert`; plain `trim`, `roll`, `slip`, `move` (overwrite) in Timeline+Edits.swift, all link-aware (54 tests green). Tracks have `isLocked` and `syncLock`; ripple shifts every unlocked sync-locked track, locked tracks never move and an edit on a locked track throws. Linked A/V partners are deleted/trimmed together.
+Next in Phase 1: snapping logic; undo (snapshot history); project file (Codable + versioning). One slice per session.
 
 ## Phase 0 (done) — engine route B decided
 Done: XcodeGen project (`project.yml`, empty SwiftUI app), six packages in `Packages/` (SSCore, SSMedia, SSRender, SSPlayback, SSExport, SSTranscribe, each with one placeholder test), `scripts/build.sh`, `scripts/test.sh [Package]` (errors only), decode/scrub spike in `Tools/DecodeSpike`.
