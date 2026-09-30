@@ -60,4 +60,17 @@ import SSCore
             #expect(out.resolved(clipDuration: clip)[0].track.keys.first?.time == clip - out.duration)
         }
     }
+
+    @Test func extremeRetimeNeverTraps() {
+        let big = Int64.max - 1
+        // Huge ratio: key times far beyond Int64 clamp to Int64.max seconds.
+        let t = KeyframeTemplate(tracks: [AnimationTrack(property: "opacity", keys: [(Time(1, 1), 1.0, .linear)])],
+                                 duration: Time(1, 1_000_000_000))
+        let r = t.retimed(toDuration: Time(big, 1))
+        #expect(r.track(for: "opacity")!.track.keys[0].time == Time(Int64.max, 1))
+        // Coprime huge scales: approximated, finite, positive.
+        let r2 = KeyframeTemplate(tracks: [AnimationTrack(property: "opacity", keys: [(Time(big, 3), 1.0, .linear)])],
+                                  duration: Time(big, 7)).retimed(toDuration: Time(big - 2, 11))
+        #expect(r2.track(for: "opacity")!.track.keys[0].time > .zero)
+    }
 }

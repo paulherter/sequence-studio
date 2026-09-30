@@ -102,6 +102,10 @@ import SSCore
         // Monotonic hand-over: never jumps up again after the in-animation ended.
         let samples = (0...30).map { v(Time(Int64($0), 100), short) }
         #expect(samples.allSatisfy { $0 >= 0 && $0 <= 1 })
+        // In ends at 0.2 s (sample 20); from there the value must never rise (a jump up would fail this).
+        let after = Array(samples[20...])
+        #expect(after.first == 1)
+        #expect(zip(after, after.dropFirst()).allSatisfy { $1 <= $0 + 1e-12 })
     }
 
     @Test func combinedNormalizesAnchorsAndHandlesMissingSides() {

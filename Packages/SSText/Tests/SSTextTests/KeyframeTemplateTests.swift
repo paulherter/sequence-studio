@@ -112,4 +112,15 @@ import SSCore
         let data = try JSONEncoder().encode(tpl)
         #expect(try JSONDecoder().decode(KeyframeTemplate.self, from: data) == tpl)
     }
+
+    @Test func legacyMigrationOverflowThrowsTypedError() throws {
+        func json(duration: String, num: Int64) -> Data {
+            Data(#"{"duration":\#(duration),"tracks":[{"property":"opacity","keyframes":[{"time":{"numerator":\#(num),"denominator":1},"value":1,"easing":"linear"}]}]}"#.utf8)
+        }
+        #expect(throws: KeyframeTemplateError.timeOverflow) {
+            _ = try JSONDecoder().decode(KeyframeTemplate.self, from: json(duration: #"{"value":4611686018427387904,"timescale":1}"#, num: 4))
+        }
+        let ok = try JSONDecoder().decode(KeyframeTemplate.self, from: json(duration: #"{"value":1,"timescale":4}"#, num: 1))
+        #expect(ok.duration == Time(1, 4))
+    }
 }

@@ -82,7 +82,7 @@ public struct AnimationSet: Sendable, Hashable, Codable {
 // MARK: - Retiming (authoring only)
 
 extension KeyframeTemplate {
-    /// Copy with template-local key times scaled by `newDuration / duration` (exact rational arithmetic, key ids,
+    /// Copy with template-local key times scaled by `newDuration / duration` (exact rational arithmetic; results beyond Int64 are approximated/clamped, never trap; key ids,
     /// values, shapes and anchor unchanged). For authoring/editing ("make this animation longer"), never used
     /// by anchored playback: playing a template on a clip does not scale it (see `resolved(clipDuration:)`).
     ///
@@ -104,13 +104,26 @@ extension KeyframeTemplate {
         return copy
     }
 
-    /// t * to / from as a reduced rational (Int128 intermediates; traps only if the result leaves Int64).
+    /// t * to / from as a reduced rational, exact whenever the Int128 intermediates do not overflow and the reduced
+    /// result fits Int64. Otherwise (pathological inputs only) it falls back to a Double ratio at nanosecond
+    /// resolution, and a value beyond +-Int64.max seconds is clamped. Never traps.
     static func scale(_ t: Time, from: Time, to: Time) -> Time {
-        var num = Int128(t.value) * Int128(to.value) * Int128(from.timescale)
-        var den = Int128(t.timescale) * Int128(to.timescale) * Int128(from.value)
-        var a = num.magnitude, b = den.magnitude
-        while b != 0 { (a, b) = (b, a % b) }
-        if a > 1 { num /= Int128(a); den /= Int128(a) }
-        return Time(Int64(num), Int64(den))
+        let n1 = Int128(t.value) * Int128(to.value)                        // < 2^126
+        let d1 = Int128(t.timescale) * Int128(to.timescale)
+        let (n2, o1) = n1.multipliedReportingOverflow(by: Int128(from.timescale))
+        let (d2, o2) = d1.multipliedReportingOverflow(by: Int128(from.value))
+        if !o1 && !o2 {
+            var num = n2, den = d2
+            var a = num.magnitude, b = den.magnitude
+            while b != 0 { (a, b) = (b, a % b) }
+            if a > 1 { num /= Int128(a); den /= Int128(a) }
+            if let n = Int64(exactly: num), let d = Int64(exactly: den) { return Time(n, d) }
+        }
+        let r = Double(t.value) / Double(t.timescale) * (Double(to.value) / Double(to.timescale))
+            / (Double(from.value) / Double(from.timescale))
+        let limit = Double(Int64.max) / 2
+        if !(abs(r) < limit) { return Time(r < 0 ? -Int64.max : Int64.max, 1) }
+        if abs(r) < limit / 1e9 { return Time(Int64((r * 1e9).rounded()), 1_000_000_000) }
+        return Time(Int64(r.rounded()), 1)
     }
 }

@@ -115,6 +115,12 @@ public enum TextLayout {
 
     static func makeFont(_ style: TextStyle) -> CTFont { FontResolver.font(for: style) }
 
+    private static func trimTrailingWhitespace(_ s: String) -> String {
+        var end = s.endIndex
+        while end > s.startIndex, s[s.index(before: end)].isWhitespace { end = s.index(before: end) }
+        return String(s[..<end])
+    }
+
     private struct Measured {
         var text: String
         var width: Double
@@ -136,7 +142,8 @@ public enum TextLayout {
             let full = CTLineGetTypographicBounds(line, &a, &d, &l)
             let w = max(0, full - CTLineGetTrailingWhitespaceWidth(line))
             let piece = ns.substring(with: NSRange(location: start, length: count))
-            out.append(Measured(text: piece.trimmingCharacters(in: .whitespaces), width: w, ascent: a, descent: d, leading: l))
+            // Leading whitespace is significant (drawn and measured); only the wrap-causing trailing run is dropped.
+            out.append(Measured(text: trimTrailingWhitespace(piece), width: w, ascent: a, descent: d, leading: l))
             start += count
         }
         return out

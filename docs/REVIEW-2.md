@@ -10,9 +10,9 @@ Status column: open until a fix commit names the finding.
 - **X4 Low** `SRTWriter.swift:52-55`: fully negative cue passes the drop check and prints `00:00:00,000 --> 00:00:00,000`. Fix: clamp before the `end > start` check.
 
 ## SSText
-- **T1 Med** `TextLayout.swift:137-139`: leading whitespace counts in width but `Measured.text` is trimmed both sides → centre/right alignment off by the space width. Fix: trim trailing only, or subtract leading width.
-- **T2 Test** `AnchorTests.swift` `combinedInOutDoNotCross`: claims monotonic, only checks 0...1. Fix: assert non-increasing after the in-animation.
-- **T3 Low** `AnchoredPlayback.swift:114`, `KeyframeTemplate.swift:129`: Int64 overflow traps on extreme retime/migration. Fix: checked arithmetic, throw in migration.
+- **T1 Med** `TextLayout.swift:137-139`: leading whitespace counts in width but `Measured.text` is trimmed both sides → centre/right alignment off by the space width. Fix: trim trailing only, or subtract leading width. — fixed
+- **T2 Test** `AnchorTests.swift` `combinedInOutDoNotCross`: claims monotonic, only checks 0...1. Fix: assert non-increasing after the in-animation. — fixed
+- **T3 Low** `AnchoredPlayback.swift:114`, `KeyframeTemplate.swift:129`: Int64 overflow traps on extreme retime/migration. Fix: checked arithmetic, throw in migration. — fixed
 
 ## SSProxy
 - **P1 Med (latent)** `ProxyQueue.swift:80-100`, `ProxyCache.swift:45`: cache key ignores `timeRange`; a 5 s partial proxy is served for the whole file. Fix: key includes range, or drop `timeRange` from public `enqueue`. — fixed

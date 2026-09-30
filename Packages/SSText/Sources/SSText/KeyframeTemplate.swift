@@ -96,7 +96,7 @@ public struct KeyframeTemplate: Sendable, Hashable, Codable {
             tracks = v2
         } else {
             let legacy = try c.decode([LegacyTrack].self, forKey: .tracks)
-            tracks = legacy.map { $0.migrated(duration: dur) }
+            tracks = try legacy.map { try $0.migrated(duration: dur) }
         }
     }
 
@@ -106,6 +106,12 @@ public struct KeyframeTemplate: Sendable, Hashable, Codable {
         try c.encode(duration, forKey: .duration)
         try c.encode(anchor, forKey: .anchor)
     }
+}
+
+/// Errors from decoding old template formats.
+public enum KeyframeTemplateError: Error, Equatable, Sendable {
+    /// A v1 key time (duration * fraction) does not fit the Int64 rational.
+    case timeOverflow
 }
 
 // MARK: - Format v1 (normalized Fraction times + Easing enum)
@@ -121,13 +127,15 @@ private struct LegacyTrack: Decodable {
     let keyframes: [Key]
 
     /// time = duration * fraction; with a zero duration the fraction is read as seconds (nothing else is meaningful).
-    func migrated(duration: Time) -> AnimationTrack {
-        let keys = keyframes.map { k -> (time: Time, value: Double, shape: SegmentShape) in
+    /// Throws `KeyframeTemplateError.timeOverflow` if a key time does not fit Int64 after the multiplication.
+    func migrated(duration: Time) throws -> AnimationTrack {
+        let keys = try keyframes.map { k -> (time: Time, value: Double, shape: SegmentShape) in
             let d = max(k.time.denominator, 1)
-            let t = duration == .zero
-                ? Time(k.time.numerator, d)
-                : Time(duration.value * k.time.numerator, duration.timescale * d)
-            return (t, k.value, k.easing)
+            if duration == .zero { return (Time(k.time.numerator, d), k.value, k.easing) }
+            let (v, o1) = duration.value.multipliedReportingOverflow(by: k.time.numerator)
+            let (s, o2) = duration.timescale.multipliedReportingOverflow(by: d)
+            guard !o1, !o2 else { throw KeyframeTemplateError.timeOverflow }
+            return (Time(v, s), k.value, k.easing)
         }
         return AnimationTrack(property: property, keys: keys)
     }

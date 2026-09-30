@@ -9,6 +9,23 @@ import CoreText
         TextStyle(fontName: "Helvetica", size: 32, alignment: a, lineSpacing: spacing)
     }
 
+    /// Width of the string as Core Text draws it (leading spaces included).
+    func drawnWidth(_ text: String) -> Double {
+        let attr = NSAttributedString(string: text, attributes: [NSAttributedString.Key(kCTFontAttributeName as String): TextLayout.makeFont(style())])
+        return CTLineGetTypographicBounds(CTLineCreateWithAttributedString(attr), nil, nil, nil)
+    }
+
+    @Test func leadingWhitespaceIsKeptAndAlignmentUsesIt() {
+        let r = TextLayout.layout(text: "  Hi  ", style: style(.center), maxWidth: 400)
+        let l = r.lines[0]
+        #expect(l.text == "  Hi")                                   // leading kept, trailing dropped
+        #expect(abs(l.width - drawnWidth("  Hi")) < 0.01)            // width covers the glyph run incl. spaces
+        #expect(abs(l.x - (400 - l.width) / 2) < 0.01)               // centred on that width
+        let right = TextLayout.layout(text: "  Hi", style: style(.right), maxWidth: 400).lines[0]
+        #expect(abs(right.x + right.width - 400) < 0.01)
+        #expect(right.width > TextLayout.layout(text: "Hi", style: style(.right), maxWidth: 400).lines[0].width)
+    }
+
     @Test func emptyTextHasNoLines() {
         let r = TextLayout.layout(text: "", style: style(), maxWidth: 400)
         #expect(r.lines.isEmpty)
