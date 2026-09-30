@@ -3,9 +3,10 @@ import CoreText
 
 /// Resolves a `TextStyle` (font name + weight) to a concrete Core Text font.
 ///
-/// The style's weight always selects the face within the named font's family: the name picks the family,
-/// `weight` picks the face (so "Helvetica-Bold" with `.regular` resolves to Helvetica Regular).
-/// Order: variable-font weight axis / weight trait first, then the nearest available face of the family.
+/// An explicit face name (PostScript or full name that differs from the family name, e.g. "Helvetica-Bold")
+/// wins: the style's weight is ignored. Only a bare family name ("Helvetica", ".AppleSystemUIFont") lets
+/// `weight` pick the face. Unknown names fall back to Core Text's substitute and are treated as family names.
+/// Order (family mode): variable-font weight axis / weight trait first, then the nearest available face of the family.
 public enum FontResolver {
     /// Core Text weight trait (`kCTFontWeightTrait`, about -1...1) for a `FontWeight`.
     public static func traitValue(for weight: FontWeight) -> Double {
@@ -35,6 +36,7 @@ public enum FontResolver {
     public static func font(for style: TextStyle) -> CTFont {
         let size = CGFloat(style.size)
         let base = CTFontCreateWithName(style.fontName as CFString, size, nil)
+        if isExplicitFace(style.fontName, resolved: base) { return base }
         let target = traitValue(for: style.weight)
 
         var best = base
@@ -63,5 +65,16 @@ public enum FontResolver {
             }
         }
         return best
+    }
+
+    /// True if `name` denotes one specific face: it matches the resolved font's PostScript or full name
+    /// (case-insensitive) and is not just the family name (for Helvetica Regular all three coincide: family wins).
+    static func isExplicitFace(_ name: String, resolved font: CTFont) -> Bool {
+        let n = name.lowercased()
+        let family = (CTFontCopyFamilyName(font) as String).lowercased()
+        if n == family { return false }
+        let ps = (CTFontCopyPostScriptName(font) as String).lowercased()
+        let full = (CTFontCopyFullName(font) as String).lowercased()
+        return n == ps || n == full
     }
 }

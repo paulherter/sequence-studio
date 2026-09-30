@@ -52,4 +52,30 @@ import CoreText
         let f = FontResolver.font(for: TextStyle(fontName: "NoSuchFont-XYZ", size: 20, weight: .bold))
         #expect(CTFontGetSize(f) == 20)
     }
+
+    // Explicit face / PostScript names win over the style weight; weight only applies to a bare family name.
+    @Test func explicitFaceNameWinsOverWeight() {
+        let regular = trait("Helvetica", .regular), bold = trait("Helvetica-Bold", .regular)
+        #expect(bold > regular)
+        #expect(trait("Helvetica-Bold", .thin) == bold)
+        #expect(trait("Helvetica-Bold", .black) == bold)
+        let f = FontResolver.font(for: TextStyle(fontName: "Helvetica-Bold", size: 30, weight: .regular))
+        #expect(CTFontCopyPostScriptName(f) as String == "Helvetica-Bold")
+        let l = FontResolver.font(for: TextStyle(fontName: "Helvetica-Light", size: 30, weight: .black))
+        #expect(CTFontCopyPostScriptName(l) as String == "Helvetica-Light")
+    }
+
+    @Test func familyNameWithWeightResolvesThatWeight() {
+        let f = FontResolver.font(for: TextStyle(fontName: "Helvetica", size: 30, weight: .bold))
+        #expect(CTFontCopyPostScriptName(f) as String == "Helvetica-Bold")
+        let r = FontResolver.font(for: TextStyle(fontName: "Helvetica", size: 30, weight: .regular))
+        #expect(CTFontCopyPostScriptName(r) as String == "Helvetica")
+        // Family name is matched case-insensitively.
+        #expect(trait("helvetica", .bold) == trait("Helvetica-Bold", .regular))
+    }
+
+    @Test func explicitFaceOfOtherFamiliesAlsoWins() {
+        #expect(trait("Georgia-Bold", .thin) == trait("Georgia", .bold))
+        #expect(trait("Georgia", .thin) == trait("Georgia", .regular))
+    }
 }
