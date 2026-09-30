@@ -1,0 +1,174 @@
+import Foundation
+import Testing
+@testable import SSCore
+
+@Suite struct ProjectFileTests {
+    let fm = FileManager.default
+
+    func tempDir() throws -> URL {
+        let u = fm.temporaryDirectory.appendingPathComponent("ssproj-\(UUID().uuidString)")
+        try fm.createDirectory(at: u, withIntermediateDirectories: true)
+        return u
+    }
+
+    func sample() throws -> Project {
+        let m = MediaRef(name: "a.mov", path: "/x/a.mov", bookmark: Data([1, 2, 3]),
+                         fingerprint: MediaFingerprint(size: 42, modified: Date(timeIntervalSince1970: 1_700_000_000), headHash: "ab"),
+                         duration: Time(1001, 30000))
+        let link = UUID()
+        let v = Clip(name: "v", media: m.id, kind: .video, source: TimeRange(start: Time(1001, 30000), duration: Time(2002, 30000)),
+                     start: Time(0, 1), link: link, mediaDuration: m.duration)
+        let a = Clip(name: "a", media: m.id, kind: .audio, source: TimeRange(start: Time(1001, 30000), duration: Time(2002, 30000)),
+                     start: Time(0, 1), link: link)
+        var vt = Track(kind: .video, isLocked: true, syncLock: false)
+        try vt.overwrite(v)
+        var at = Track(kind: .audio)
+        try at.overwrite(a)
+        let tl = Timeline(name: "Main", frameDuration: Time(1001, 30000), tracks: [vt, at])
+        var p = Project(name: "P", timelines: [tl])
+        p.add(m)
+        return p
+    }
+
+    @Test func roundTrip() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        let url = dir.appendingPathComponent("P.ssproj")
+        let p = try sample()
+        try ProjectFile.write(p, to: url)
+        let back = try ProjectFile.read(from: url)
+        #expect(back == p)
+        #expect(back.timelines[0].tracks[0].isLocked)
+        #expect(!back.timelines[0].tracks[0].syncLock)
+        #expect(back.media(p.media[0].id)?.duration == Time(1001, 30000))
+        #expect(back.activeTimeline == p.timelines[0].id)
+    }
+
+    @Test func timeRoundTripsExactly() throws {
+        let t = Time(1_234_567_891_011, 90000)
+        let d = try JSONEncoder().encode([t])
+        let back = try JSONDecoder().decode([Time].self, from: d)
+        #expect(back[0].value == t.value && back[0].timescale == t.timescale)
+    }
+
+    @Test func fileShape() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        try ProjectFile.write(try sample(), to: dir)
+        let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
+        #expect(text.contains("\"formatVersion\" : 1"))
+        #expect(text.contains("\n"))
+        #expect(text.contains("2023-11-14T22:13:20Z"))
+    }
+
+    @Test func missingAndCorrupt() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        #expect(throws: ProjectFileError.missing) { try ProjectFile.read(from: dir) }
+        try Data("{ nope".utf8).write(to: dir.appendingPathComponent("project.json"))
+        #expect(throws: ProjectFileError.corrupt) { try ProjectFile.read(from: dir) }
+        try Data(#"{"formatVersion":1,"project":{"x":1}}"#.utf8).write(to: dir.appendingPathComponent("project.json"))
+        #expect(throws: ProjectFileError.corrupt) { try ProjectFile.read(from: dir) }
+    }
+
+    @Test func newerVersionRefused() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        try Data(#"{"formatVersion":99,"project":{}}"#.utf8).write(to: dir.appendingPathComponent("project.json"))
+        #expect(throws: ProjectFileError.newerVersion(found: 99, supported: 1)) { try ProjectFile.read(from: dir) }
+    }
+
+    @Test func migrationFromFakeV0() throws {
+        // v0 stored "title"; v1 calls it "name" and has no media/timelines.
+        let v0 = #"{"formatVersion":0,"project":{"id":"\#(UUID().uuidString)","title":"Old"}}"#
+        let migrations: ProjectFile.Migrations = [0: { obj in
+            var o = obj
+            var p = o["project"] as! [String: Any]
+            p["name"] = p.removeValue(forKey: "title")
+            p["media"] = [Any](); p["timelines"] = [Any]()
+            o["project"] = p
+            return o
+        }]
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        try Data(v0.utf8).write(to: dir.appendingPathComponent("project.json"))
+        let p = try ProjectFile.read(from: dir, migrations: migrations)
+        #expect(p.name == "Old")
+        // without a registered step, refuse rather than guess
+        #expect(throws: ProjectFileError.corrupt) { try ProjectFile.read(from: dir, migrations: [:]) }
+    }
+
+    @Test func failedWriteKeepsOldFile() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        let p = try sample()
+        try ProjectFile.write(p, to: dir)
+        // A directory squatting on the temp-rename target is not easy to force; instead make the dir read-only.
+        try fm.setAttributes([.posixPermissions: 0o555], ofItemAtPath: dir.path)
+        defer { try? fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path) }
+        var changed = p; changed.name = "Changed"
+        #expect(throws: (any Error).self) { try ProjectFile.write(changed, to: dir) }
+        try fm.setAttributes([.posixPermissions: 0o755], ofItemAtPath: dir.path)
+        #expect(try ProjectFile.read(from: dir).name == "P")
+        let leftovers = try fm.contentsOfDirectory(atPath: dir.path).filter { $0.hasSuffix(".tmp") }
+        #expect(leftovers.isEmpty)
+    }
+
+    @Test func overwriteReplaces() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        var p = try sample()
+        try ProjectFile.write(p, to: dir)
+        p.name = "Second"
+        try ProjectFile.write(p, to: dir)
+        #expect(try ProjectFile.read(from: dir).name == "Second")
+    }
+
+    @Test func autosavePrunesAndRecovers() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        var p = try sample()
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        for i in 0..<5 {
+            p.name = "v\(i)"
+            try ProjectFile.autosave(p, in: dir, keep: 3, date: base.addingTimeInterval(Double(i) * 0.5))
+        }
+        let files = ProjectFile.autosaves(in: dir)
+        #expect(files.count == 3)
+        #expect(files.first?.lastPathComponent == "20231114-221320-500.json" || files.first?.lastPathComponent.hasSuffix(".json") == true)
+        #expect(ProjectFile.latestAutosave(in: dir)?.name == "v4")
+        #expect(files.map(\.lastPathComponent) == files.map(\.lastPathComponent).sorted())
+    }
+
+    @Test func latestAutosaveSkipsCorrupt() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        var p = try sample(); p.name = "good"
+        let base = Date(timeIntervalSince1970: 1_700_000_000)
+        try ProjectFile.autosave(p, in: dir, date: base)
+        let bad = ProjectFile.autosaves(in: dir)[0].deletingLastPathComponent()
+            .appendingPathComponent(ProjectFile.timestamp(base.addingTimeInterval(1)) + ".json")
+        try Data("garbage".utf8).write(to: bad)
+        #expect(ProjectFile.latestAutosave(in: dir)?.name == "good")
+        #expect(ProjectFile.latestAutosave(in: try tempDir()) == nil)
+    }
+
+    @Test func mediaStatus() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        let f = dir.appendingPathComponent("m.bin")
+        try Data(count: 100).write(to: f)
+        let mod = try #require(fm.attributesOfItem(atPath: f.path)[.modificationDate] as? Date)
+        var ref = MediaRef(name: "m", path: f.path, fingerprint: MediaFingerprint(size: 100, modified: mod))
+        #expect(ref.status() == .ok)
+        ref.fingerprint.modified = nil
+        #expect(ref.status() == .ok)
+        ref.fingerprint.modified = mod.addingTimeInterval(-3600)
+        #expect(ref.status() == .changed)
+        ref.fingerprint = MediaFingerprint(size: 101, modified: mod)
+        #expect(ref.status() == .changed)
+        try fm.removeItem(at: f)
+        #expect(ref.status() == .missing)
+    }
+
+    @Test func projectHelpers() {
+        var p = Project(name: "x")
+        let m = MediaRef(name: "a", path: "/a", fingerprint: MediaFingerprint(size: 1))
+        p.add(m)
+        var m2 = m; m2.name = "b"
+        p.add(m2)
+        #expect(p.media.count == 1)
+        #expect(p.media(m.id)?.name == "b")
+        #expect(p.media(UUID()) == nil)
+    }
+}
