@@ -71,4 +71,27 @@ private let fd = Time(1, 24)
         #expect(p.ghosts.map(\.track) == [a1.id, v1.id])
         #expect(p.ghosts[1].range.start == fd * 10)
     }
+
+    @Test func audioMirrorsUpperVideoTrackAndMissingOneIsAGhostOnANewTrack() {
+        let v1 = Track(kind: .video, isTargeted: true), v2 = Track(kind: .video), v3 = Track(kind: .video)
+        let a1 = Track(kind: .audio, isTargeted: true), a2 = Track(kind: .audio)
+        let t = Timeline(name: "t", frameDuration: fd, tracks: [v1, v2, v3, a1, a2])
+        let g = TimelineGeometry(frameDuration: fd, pointsPerFrame: 10)
+        var p = DropPreview()
+        p.begin(items: [DropItem(name: "m", duration: fd * 24, hasVideo: true, hasAudio: true)])
+        p.update(point: pointOn(v2.id, frame: 10, t, g), insert: false, timeline: t, geometry: g, snapping: false, playhead: .zero)
+        #expect(p.ghosts.map(\.track) == [v2.id, a2.id])
+        p.update(point: pointOn(v3.id, frame: 10, t, g), insert: false, timeline: t, geometry: g, snapping: false, playhead: .zero)
+        #expect(p.ghosts.count == 2 && p.ghosts[1].newTrackOrdinal == 2 && p.ghosts[1].kind == .audio)
+        #expect(p.commitTarget?.track == v3.id)
+    }
+
+    @Test func audioOnlyDropOnAudioTrackStaysThere() {
+        let (t, g, _, a1) = fixture()
+        var p = DropPreview()
+        p.begin(items: [DropItem(name: "a", duration: fd * 10, hasVideo: false, hasAudio: true)])
+        p.update(point: pointOn(a1.id, frame: 0, t, g), insert: false, timeline: t, geometry: g, snapping: false, playhead: .zero)
+        #expect(p.ghosts.map(\.track) == [a1.id])
+        #expect(p.commitTarget?.track == a1.id)
+    }
 }

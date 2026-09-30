@@ -28,6 +28,9 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     public var captionTracks: [CaptionTrack]
     /// Label colour of the sequence in the Project panel and of its nested clips; nil = default.
     public var label: LabelColor?
+    /// False only for an auto-created sequence nobody configured: the first clip placed into it may adopt that clip's
+    /// format. Sequence Settings and New Sequence lock it (Premiere). Files without the key decode as locked.
+    public var formatLocked: Bool
 
     public var frameDuration: Time {
         get { format.frameDuration }
@@ -35,8 +38,10 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     }
 
     public init(id: UUID = UUID(), name: String, format: SequenceFormat, tracks: [Track] = [],
-                inOut: TimeRange? = nil, markers: [Marker] = [], captionTracks: [CaptionTrack] = [], label: LabelColor? = nil) {
+                inOut: TimeRange? = nil, markers: [Marker] = [], captionTracks: [CaptionTrack] = [], label: LabelColor? = nil,
+                formatLocked: Bool = true) {
         self.label = label
+        self.formatLocked = formatLocked
         self.id = id; self.name = name; self.format = format; self.tracks = tracks
         self.inOut = inOut; self.markers = markers; self.captionTracks = captionTracks
     }
@@ -52,7 +57,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         self.init(id: id, name: name, format: SequenceFormat(frameDuration: frameDuration), tracks: tracks)
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, format, tracks, inOut, markers, captionTracks, label }
+    private enum CodingKeys: String, CodingKey { case id, name, format, tracks, inOut, markers, captionTracks, label, formatLocked }
 
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -64,6 +69,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         markers = try c.decodeIfPresent([Marker].self, forKey: .markers) ?? []
         captionTracks = try c.decodeIfPresent([CaptionTrack].self, forKey: .captionTracks) ?? []
         label = try c.decodeIfPresent(LabelColor.self, forKey: .label)
+        formatLocked = try c.decodeIfPresent(Bool.self, forKey: .formatLocked) ?? true
     }
 
     public func track(_ id: Track.ID) -> Track? { tracks.first { $0.id == id } }

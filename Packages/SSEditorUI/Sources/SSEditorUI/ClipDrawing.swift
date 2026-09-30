@@ -1,6 +1,7 @@
 import AppKit
 import CoreText
 import SSCore
+import SSMedia
 
 /// One muted colour per clip type (docs/DESIGN.md). The model only knows video and audio clips today;
 /// nest / title / caption arrive with their slices, the colours are ready.
@@ -130,6 +131,26 @@ public enum ClipDrawing {
             CTLineDraw(line(for: name), cg)
             cg.restoreGState()
         }
+    }
+
+    /// Waveform of an audio clip over its body (below the name strip when the clip is tall).
+    /// `rect` is the clip's full rectangle, `visible` the horizontal range being drawn, `source` the clip's source range.
+    public static func drawWaveform(data: WaveformData, media: UUID, source: TimeRange, rect: CGRect, visible: CGRect,
+                                    cache: WaveformCache?) {
+        guard let cg = NSGraphicsContext.current?.cgContext, rect.width >= 1 else { return }
+        let body = rect.insetBy(dx: 0, dy: 1)
+        let top = body.height >= bodyMinHeight ? body.minY + nameStripHeight : body.minY
+        let wave = CGRect(x: body.minX, y: top + 1, width: body.width, height: body.maxY - top - 2)
+        guard wave.height >= 4 else { return }
+        let from = max(Int((visible.minX - wave.minX).rounded(.down)), 0)
+        let to = min(Int((visible.maxX - wave.minX).rounded(.up)), Int(wave.width.rounded()))
+        guard to > from else { return }
+        let style = WaveformStyle()
+        let columns = WaveformPath.columns(.init(data: data, source: source, clipWidth: wave.width, visibleColumns: from..<to,
+                                                 style: style, cache: cache.map { ($0, media) }))
+        cg.setFillColor(Theme.white(0.55).cgColor)
+        cg.addPath(WaveformPath.path(columns: columns, rect: wave, style: style, firstColumn: from))
+        cg.fillPath()
     }
 
     /// Dark bars with a grip line at both ends: where trimming will grab (T-04).

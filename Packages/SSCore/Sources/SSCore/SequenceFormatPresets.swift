@@ -53,6 +53,7 @@ extension Project {
         guard format.isValid else { throw EditError.invalidFormat }
         guard let i = timelines.firstIndex(where: { $0.id == id }) else { throw EditError.timelineNotFound }
         timelines[i].format = format
+        timelines[i].formatLocked = true
     }
 }
 

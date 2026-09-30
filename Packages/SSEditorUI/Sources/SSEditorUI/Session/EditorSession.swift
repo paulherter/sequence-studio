@@ -91,7 +91,7 @@ public final class EditorSession {
     /// Empty project with one 29.97 fps HD sequence (V1-V4, A1-A4).
     public static func makeUntitled() -> Project {
         let t = Timeline(name: "Sequence 01", format: SequenceFormat(frameDuration: Time(1001, 30000)),
-                         tracks: Timeline.defaultTracks())
+                         tracks: Timeline.defaultTracks(), formatLocked: false)
         return Project(name: "Untitled", timelines: [t])
     }
 
@@ -403,24 +403,22 @@ public final class EditorSession {
         attempt("Extract") { _ = try $0.extract(io, tracks: ids) }
     }
 
-    /// Places media items one after another starting at `time` (default: the playhead): video on `videoTrack` (else the
-    /// targeted or first video track), audio linked on the targeted or first audio track. Source marks from the
-    /// Project panel are honoured. Into a sequence without clips the first item sets the sequence format
-    /// (size and frame rate). Returns false when nothing could be placed (unknown ID, refused edit).
+    /// Places media items one after another starting at `time` (default: the playhead): video on `track` (else the
+    /// targeted or first video track), linked audio on the mirrored audio track (V2 -> A2, created when missing,
+    /// see `Timeline.dropTargets`). Source marks from the Project panel are honoured. Into an empty sequence that was
+    /// never configured (`formatLocked == false`) the first item sets the sequence format (size and frame rate).
+    /// Returns false when nothing could be placed (unknown ID, refused edit).
     @discardableResult
     public func placeMedia(_ ids: [MediaRef.ID], at time: Time? = nil, videoTrack: Track.ID? = nil,
                            mode: ThreePointMode = .overwrite) -> Bool {
         guard let t = activeTimeline else { return false }
         let refs = ids.compactMap { project.media($0) }.filter { ($0.info?.duration ?? $0.duration) != nil }
         guard !refs.isEmpty else { return false }
-        let isEmpty = t.tracks.allSatisfy { $0.clips.isEmpty }
-        let vTrack = videoTrack.flatMap { id in t.track(id).flatMap { $0.kind == .video ? id : nil } }
-            ?? t.tracks.first { $0.kind == .video && $0.isTargeted }?.id ?? t.tracks.first { $0.kind == .video }?.id
-        let aTrack = t.tracks.first { $0.kind == .audio && $0.isTargeted }?.id ?? t.tracks.first { $0.kind == .audio }?.id
+        let adopts = !t.formatLocked && t.tracks.allSatisfy { $0.clips.isEmpty }
         let requested = time ?? playhead
         let marks = project.sourceMarks
         let done = attempt(mode == .insert ? "Insert" : "Overwrite") { tl in
-            if isEmpty, let v = refs[0].info?.video {
+            if adopts, let v = refs[0].info?.video {
                 tl.format = SequenceFormat(width: v.width, height: v.height, frameDuration: v.nominalFrameDuration,
                                            audioSampleRate: tl.format.audioSampleRate)
             }
@@ -428,9 +426,11 @@ public final class EditorSession {
             for ref in refs {
                 let total = ref.info?.duration ?? ref.duration ?? .zero
                 let source = marks[ref.id]?.range ?? TimeRange(start: .zero, duration: total)
+                let hasVideo = ref.info?.video != nil || ref.info == nil
+                let d = tl.dropTargets(pointer: videoTrack, hasVideo: hasVideo, hasAudio: ref.info?.audio != nil)
                 var targets: [Track.ID] = []
-                if ref.info?.video != nil || ref.info == nil, let v = vTrack { targets.append(v) }
-                if ref.info?.audio != nil, let a = aTrack { targets.append(a) }
+                if let v = d.video { targets.append(v) }
+                if let a = d.audio { targets.append(a) } else if let n = d.newAudioOrdinal { targets.append(tl.ensureAudioTrack(atOrdinal: n)) }
                 try tl.threePointEdit(source: source, media: ref.id, name: ref.name, mediaDuration: total,
                                       targets: targets, at: at, mode: mode)
                 at += source.duration

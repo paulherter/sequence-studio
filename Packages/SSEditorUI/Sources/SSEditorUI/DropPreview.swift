@@ -15,7 +15,10 @@ public struct DropItem: Sendable, Hashable {
 
 /// A ghost clip: where the dropped item would land.
 public struct DropGhost: Sendable, Hashable {
+    /// Track the clip lands on; a random stand-in when `newTrackOrdinal` is set (the track does not exist yet).
     public var track: Track.ID
+    /// Zero-based audio track ordinal of an audio track the drop would create (drawn below the last audio row).
+    public var newTrackOrdinal: Int?
     public var range: TimeRange
     public var kind: TrackKind
     public var name: String
@@ -32,6 +35,8 @@ public struct DropPreview: Sendable {
     public private(set) var start: Time = .zero
     /// Video track under the pointer (nil = host default: targeted or first).
     public private(set) var videoTrack: Track.ID?
+    /// Track of any kind under the pointer.
+    public private(set) var pointerTrack: Track.ID?
     public private(set) var ghosts: [DropGhost] = []
     /// Time the start or end snapped to (snap line), nil when free.
     public private(set) var snapTime: Time?
@@ -67,33 +72,34 @@ public struct DropPreview: Sendable {
             snapTime = r.hit?.time
         }
         start = max(t, .zero)
-        videoTrack = Self.videoTrack(at: point, timeline: timeline, geometry: geometry)
+        pointerTrack = Self.track(at: point, timeline: timeline, geometry: geometry)
+        videoTrack = pointerTrack.flatMap { timeline.track($0)?.kind == .video ? $0 : nil }
         ghosts = layout(timeline: timeline)
     }
 
-    /// The video track under the pointer; nil over audio tracks or empty space.
-    static func videoTrack(at p: CGPoint, timeline: Timeline, geometry: TimelineGeometry) -> Track.ID? {
-        let id: Track.ID?
+    /// The track (any kind) under the pointer; nil over the ruler or empty space.
+    static func track(at p: CGPoint, timeline: Timeline, geometry: TimelineGeometry) -> Track.ID? {
         switch geometry.hitTest(p, in: timeline) {
-        case .clip(let cid, _): id = timeline.tracks.first { $0.clips.contains { $0.id == cid } }?.id
-        case .gap(let t, _): id = t
-        case .header(let t): id = t
-        default: id = nil
+        case .clip(let cid, _): timeline.tracks.first { $0.clips.contains { $0.id == cid } }?.id
+        case .gap(let t, _): t
+        case .header(let t): t
+        default: nil
         }
-        return id.flatMap { timeline.track($0)?.kind == .video ? $0 : nil }
     }
 
-    /// Same target rules as `EditorSession.placeMedia`: video on the pointer's track (else targeted, else first),
-    /// audio on the targeted or first audio track.
+    /// Same target rules as `EditorSession.placeMedia` (`Timeline.dropTargets`): video on the pointer's track (else
+    /// targeted, else first), audio on the mirrored audio track V(n) -> A(n); a missing one is drawn as a new track.
     private func layout(timeline t: Timeline) -> [DropGhost] {
-        let v = videoTrack ?? t.tracks.first { $0.kind == .video && $0.isTargeted }?.id ?? t.tracks.first { $0.kind == .video }?.id
-        let a = t.tracks.first { $0.kind == .audio && $0.isTargeted }?.id ?? t.tracks.first { $0.kind == .audio }?.id
         var at = start
         var out: [DropGhost] = []
         for item in items {
             let r = TimeRange(start: at, duration: item.duration)
-            if item.hasVideo, let v { out.append(DropGhost(track: v, range: r, kind: .video, name: item.name)) }
-            if item.hasAudio, let a { out.append(DropGhost(track: a, range: r, kind: .audio, name: item.name)) }
+            let d = t.dropTargets(pointer: pointerTrack, hasVideo: item.hasVideo, hasAudio: item.hasAudio)
+            if let v = d.video { out.append(DropGhost(track: v, range: r, kind: .video, name: item.name)) }
+            if let a = d.audio { out.append(DropGhost(track: a, range: r, kind: .audio, name: item.name)) }
+            else if let n = d.newAudioOrdinal {
+                out.append(DropGhost(track: UUID(), newTrackOrdinal: n, range: r, kind: .audio, name: item.name))
+            }
             at += item.duration
         }
         return out
@@ -101,6 +107,9 @@ public struct DropPreview: Sendable {
 
     /// What a release commits: start time and video track, or nil when nothing is previewed.
     public var commitTarget: (time: Time, track: Track.ID?, insert: Bool)? {
-        isActive && !ghosts.isEmpty ? (start, videoTrack, insert) : nil
+        guard isActive, !ghosts.isEmpty else { return nil }
+        // Audio-only drops keep the audio track under the pointer; everything else is placed from the video track.
+        let audioOnly = !items.contains { $0.hasVideo }
+        return (start, audioOnly ? pointerTrack : videoTrack, insert)
     }
 }
