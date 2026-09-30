@@ -1,9 +1,12 @@
 # Status
 
-## Current: Phase 0 done — engine route B decided
+## Current: Phase 1 started (SSCore, tests first)
+Done in Phase 1: `Time`/`TimeRange` (rational, exact, Int128 compare), `Clip`, `Track` with overwrite / insert / split / remove / ripple delete (17 tests green).
+Next in Phase 1: trim (head/tail), ripple trim, roll, slip, move; Sequence (tracks, frame rate) + linked A/V edits; snapping logic; undo (snapshot history); project file (Codable + versioning). One slice per session.
+
+## Phase 0 (done) — engine route B decided
 Done: XcodeGen project (`project.yml`, empty SwiftUI app), six packages in `Packages/` (SSCore, SSMedia, SSRender, SSPlayback, SSExport, SSTranscribe, each with one placeholder test), `scripts/build.sh`, `scripts/test.sh [Package]` (errors only), decode/scrub spike in `Tools/DecodeSpike`.
 Engine: Route B (own VideoToolbox path), see DECISIONS.md; Phase 2 acceptance criteria + risk items in PLAN.md.
-Next: Phase 1 (SSCore headless, tests first). Phase 0 setup files (App/, Packages/, Tools/, scripts/, project.yml) are not committed yet.
 
 ## UI design (2026-09-30, done: Paul approved)
 Canvas artifact "Sequence Studio UI": https://claude.ai/artifact/6mArdzhxkp4P9abYXJHP63 (private).
