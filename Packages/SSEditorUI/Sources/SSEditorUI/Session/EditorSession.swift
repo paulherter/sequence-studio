@@ -313,6 +313,7 @@ public final class EditorSession {
     public func endScrub() { engine.endScrub() }
 
     public func playPause() {
+        if ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1" { NSLog("SSKEY session.playPause isPlaying=\(isPlaying) rate=\(engine.rate)") }
         if isPlaying || !engine.rate.isPaused { engine.pause(); isPlaying = false } else { restartIfAtEnd(); engine.play(.forward); isPlaying = true }
         notify(.transport)
     }
@@ -479,6 +480,14 @@ public final class EditorSession {
         let at = playhead
         let start = t.inOut.map(\.start).flatMap { $0 < at ? $0 : nil } ?? .zero
         attempt("Mark Out") { $0.inOut = TimeRange(start: start, end: at) }
+    }
+
+    /// X: In/Out around the clip under the playhead on the targeted tracks (all tracks when none is targeted).
+    public func markClip() {
+        guard let t = activeTimeline else { return }
+        let targeted = t.tracks.filter(\.isTargeted).map(\.id)
+        guard let range = t.markClipRange(at: playhead, tracks: targeted.isEmpty ? nil : targeted) else { return }
+        attempt("Mark Clip") { $0.inOut = range }
     }
 
     public func clearInOut() {

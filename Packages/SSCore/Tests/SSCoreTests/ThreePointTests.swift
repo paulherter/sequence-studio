@@ -55,6 +55,16 @@ private func spans(_ t: Track) -> [[Int64]] {
     }
 }
 
+@Suite struct MarkClipRangeTests {
+    @Test func rangeOfClipUnderPlayheadOnGivenTracks() throws {
+        let tl = timeline(try track([clip(0, 4), clip(6, 4)]), try track([clip(2, 6, kind: .audio)], kind: .audio))
+        #expect(tl.markClipRange(at: s(7), tracks: [tl.tracks[0].id]) == r(6, 10))
+        #expect(tl.markClipRange(at: s(5), tracks: [tl.tracks[0].id]) == nil)          // gap
+        #expect(tl.markClipRange(at: s(3), tracks: nil) == r(0, 8))                    // union over all tracks
+        #expect(tl.markClipRange(at: s(3), tracks: [tl.tracks[0].id]) == r(0, 4))
+    }
+}
+
 @Suite struct ThreePointTests {
     @Test func overwriteLinkedAV() throws {
         var tl = timeline(try track([clip(0, 10)]), try track([], kind: .audio))

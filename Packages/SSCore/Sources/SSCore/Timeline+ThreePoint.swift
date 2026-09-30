@@ -106,6 +106,20 @@ extension Timeline {
         return created
     }
 
+    // MARK: Mark Clip (X)
+
+    /// Range to mark for "Mark Clip": the union of the clips under `t` on the given tracks (`nil` = all tracks).
+    /// `nil` when no clip is under `t`.
+    public func markClipRange(at t: Time, tracks ids: [Track.ID]?) -> TimeRange? {
+        var result: TimeRange?
+        for tr in tracks where ids?.contains(tr.id) ?? true {
+            guard let c = tr.clips.first(where: { $0.timeline.contains(t) }) else { continue }
+            let r = c.timeline
+            result = result.map { TimeRange(start: min($0.start, r.start), end: max($0.end, r.end)) } ?? r
+        }
+        return result
+    }
+
     // MARK: Q / W
 
     /// Q (`.head`) / W (`.tail`): ripple-trims the clip under `t` on each given track (`nil` = all

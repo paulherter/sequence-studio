@@ -86,6 +86,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         launchDocument()
         SnapshotDriver.runIfRequested(self)
         PlayTestDriver.runIfRequested(self)
+        PlayTestDriver.runKeyTestIfRequested(self)
     }
 
     private func buildWindow() {
@@ -396,6 +397,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
 
     @objc func menuCommand(_ sender: NSMenuItem) {
         guard let c = sender.representedObject as? EditorCommand else { return }
+        if Self.keyLog { NSLog("SSKEY menuCommand \(c) event=\(String(describing: NSApp.currentEvent?.type.rawValue))") }
+        // A plain-key item (Space, J, X ...) is fired by the key monitor / KeyRouter. The same key down also reaches the
+        // menu's key equivalent: running it again toggled Play twice (play, then pause at once). Clicks still run.
+        if NSApp.currentEvent?.type == .keyDown, !sender.keyEquivalent.isEmpty,
+           !sender.keyEquivalentModifierMask.contains(.command) { return }
         execute(c)
     }
 
