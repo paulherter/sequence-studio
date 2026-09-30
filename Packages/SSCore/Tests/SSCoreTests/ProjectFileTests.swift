@@ -77,7 +77,7 @@ import Testing
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try ProjectFile.write(try sample(), to: dir)
         let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
-        #expect(text.contains("\"formatVersion\" : 3"))
+        #expect(text.contains("\"formatVersion\" : 4"))
         #expect(text.contains("\n"))
         #expect(text.contains("2023-11-14T22:13:20Z"))
     }
@@ -129,7 +129,7 @@ import Testing
     @Test func newerVersionRefused() throws {
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try Data(#"{"formatVersion":99,"project":{}}"#.utf8).write(to: dir.appendingPathComponent("project.json"))
-        #expect(throws: ProjectFileError.newerVersion(found: 99, supported: 3)) { try ProjectFile.read(from: dir) }
+        #expect(throws: ProjectFileError.newerVersion(found: 99, supported: 4)) { try ProjectFile.read(from: dir) }
     }
 
     @Test func migrationFromFakeV0() throws {
@@ -142,7 +142,7 @@ import Testing
             p["media"] = [Any](); p["timelines"] = [Any]()
             o["project"] = p
             return o
-        }, 1: ProjectFile.migrateV1toV2, 2: ProjectFile.migrateV2toV3]
+        }, 1: ProjectFile.migrateV1toV2, 2: ProjectFile.migrateV2toV3, 3: ProjectFile.migrateV3toV4]
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try Data(v0.utf8).write(to: dir.appendingPathComponent("project.json"))
         let p = try ProjectFile.read(from: dir, migrations: migrations)
@@ -246,6 +246,41 @@ import Testing
         #expect(back.timelines[0].tracks[0].clips[0].animation.rotation.track.keys.count == 2)
     }
 
+    @Test func binsAndMarksRoundTrip() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        var p = try sample()
+        let mid = p.media[0].id
+        let b = p.newBin(name: "Day 1")!
+        p.move([.media(mid)], to: b)
+        p.setSourceIn(Time(1001, 30000), for: mid)
+        p.setSourceOut(Time(3003, 30000), for: mid)
+        try ProjectFile.write(p, to: dir)
+        let back = try ProjectFile.read(from: dir)
+        #expect(back == p)
+        #expect(back.bin(b)?.mediaIDs == [mid])
+        #expect(back.sourceMarks(for: mid).markOut == Time(3003, 30000))
+        let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
+        #expect(text.contains(mid.uuidString))
+    }
+
+    @Test func v3FileLoadsWithEverythingInRootBin() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        let pid = UUID(), tid = UUID(), mid = UUID()
+        let json = #"""
+        {"formatVersion":3,"project":{"id":"\#(pid)","name":"Old","activeTimeline":"\#(tid)",
+        "media":[{"id":"\#(mid)","name":"a.mov","path":"/x/a.mov","fingerprint":{"size":1}}],
+        "timelines":[{"id":"\#(tid)","name":"T","format":{"width":1920,"height":1080,"frameDuration":{"value":1,"timescale":30},"audioSampleRate":48000},"tracks":[]}]}}
+        """#
+        try Data(json.utf8).write(to: dir.appendingPathComponent("project.json"))
+        let p = try ProjectFile.read(from: dir)
+        #expect(p.rootBin.mediaIDs == [mid])
+        #expect(p.rootBin.contains(.sequence(tid)))
+        #expect(p.rootBin.children.count == 2)
+        #expect(p.sourceMarks.isEmpty)
+        try ProjectFile.write(p, to: dir)
+        #expect(try ProjectFile.read(from: dir) == p)
+    }
+
     @Test func v2FileLoadsWithStaticDefaults() throws {
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         let pid = UUID(), tid = UUID(), cid = UUID(), mid = UUID()
@@ -264,6 +299,6 @@ import Testing
         #expect(c.animation.position.track.isEmpty)
         try ProjectFile.write(p, to: dir)
         let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
-        #expect(text.contains("\"formatVersion\" : 3"))
+        #expect(text.contains("\"formatVersion\" : 4"))
     }
 }
