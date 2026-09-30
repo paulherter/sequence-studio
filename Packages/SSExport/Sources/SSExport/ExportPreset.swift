@@ -11,13 +11,13 @@ public struct ExportPreset: Sendable, Hashable, Identifiable {
     public let platform: SocialPlatform
     public let codec: VideoCodec
     public var id: String { "\(platform.rawValue)-\(codec.rawValue)" }
-    public var name: String { "\(platform.displayName) (\(codec == .h264 ? "H.264" : "HEVC"))" }
+    public var name: String { "\(platform.displayName) (\(codec == .h264 ? "H.264" : codec == .hevc ? "HEVC" : "ProRes 422 HQ"))" }
 
     public static func preset(_ platform: SocialPlatform, _ codec: VideoCodec) -> ExportPreset {
         ExportPreset(platform: platform, codec: codec)
     }
     public static let all: [ExportPreset] = SocialPlatform.allCases.flatMap { p in
-        VideoCodec.allCases.map { ExportPreset(platform: p, codec: $0) }
+        [VideoCodec.h264, .hevc].map { ExportPreset(platform: p, codec: $0) }
     }
     public static let `default` = ExportPreset(platform: .tiktok, codec: .h264)
 
@@ -35,6 +35,7 @@ public struct ExportPreset: Sendable, Hashable, Identifiable {
         case (.tiktok, .hevc): avg = 8_000_000
         case (.reels, .hevc): avg = 7_000_000
         case (.shorts, .hevc): avg = 10_000_000
+        case (_, .prores422HQ): avg = 12_000_000   // unused; social presets are H.264/HEVC only
         }
         s.video.bitrate = .averageAndMax(average: avg, max: avg * 3 / 2)
         s.video.keyframeInterval = 60

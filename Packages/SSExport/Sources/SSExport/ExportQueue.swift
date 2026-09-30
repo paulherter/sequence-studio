@@ -72,7 +72,7 @@ public actor ExportQueue {
 
     @discardableResult
     public func enqueue(_ job: ExportJob) -> UUID {
-        let url = uniqueURL(directory: job.outputDirectory, name: job.name, ext: "mp4")
+        let url = uniqueURL(directory: job.outputDirectory, name: job.name, ext: job.settings.fileExtension)
         reserved.insert(url)
         let st = ExportJobStatus(id: job.id, name: job.name, state: .waiting, progress: 0, outputURL: url)
         entries.append(Entry(job: job, status: st))

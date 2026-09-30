@@ -19,6 +19,20 @@ public enum ExportError: Error, Sendable, Equatable {
 public enum ExportWriter {
     public static func videoOutputSettings(_ s: ExportSettings) -> [String: Any] {
         let v = s.video
+        let colour: [String: Any] = [
+            AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
+            AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
+            AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
+        ]
+        if v.codec == .prores422HQ {
+            // Intra-frame: no bitrate, profile, keyframe or reordering properties.
+            return [
+                AVVideoCodecKey: AVVideoCodecType.proRes422HQ,
+                AVVideoWidthKey: v.width,
+                AVVideoHeightKey: v.height,
+                AVVideoColorPropertiesKey: colour,
+            ]
+        }
         var comp: [String: Any] = [
             AVVideoAverageBitRateKey: v.bitrate.averageBitsPerSecond,
             AVVideoMaxKeyFrameIntervalKey: v.keyframeInterval,
@@ -40,11 +54,7 @@ public enum ExportWriter {
             AVVideoCodecKey: v.codec == .h264 ? AVVideoCodecType.h264 : AVVideoCodecType.hevc,
             AVVideoWidthKey: v.width,
             AVVideoHeightKey: v.height,
-            AVVideoColorPropertiesKey: [
-                AVVideoColorPrimariesKey: AVVideoColorPrimaries_ITU_R_709_2,
-                AVVideoTransferFunctionKey: AVVideoTransferFunction_ITU_R_709_2,
-                AVVideoYCbCrMatrixKey: AVVideoYCbCrMatrix_ITU_R_709_2,
-            ],
+            AVVideoColorPropertiesKey: colour,
             AVVideoCompressionPropertiesKey: comp,
         ]
         if !v.hardwareEncoding {
@@ -80,7 +90,7 @@ public enum ExportWriter {
 
         let fm = FileManager.default
         if fm.fileExists(atPath: url.path) { try fm.removeItem(at: url) }
-        let fileType: AVFileType = url.pathExtension.lowercased() == "mov" ? .mov : .mp4
+        let fileType: AVFileType = (url.pathExtension.lowercased() == "mov" || settings.video.codec.isMastering) ? .mov : .mp4
         let writer = try AVAssetWriter(outputURL: url, fileType: fileType)
 
         let vInput = AVAssetWriterInput(mediaType: .video, outputSettings: videoOutputSettings(settings))
@@ -165,7 +175,18 @@ public enum ExportWriter {
     }
 
     static func audioOutputSettings(_ a: AudioSettings) -> [String: Any] {
-        [
+        if a.codec == .pcm {
+            return [
+                AVFormatIDKey: kAudioFormatLinearPCM,
+                AVSampleRateKey: a.sampleRate,
+                AVNumberOfChannelsKey: a.channels,
+                AVLinearPCMBitDepthKey: a.pcmBitDepth,
+                AVLinearPCMIsFloatKey: false,
+                AVLinearPCMIsBigEndianKey: false,
+                AVLinearPCMIsNonInterleaved: false,
+            ]
+        }
+        return [
             AVFormatIDKey: kAudioFormatMPEG4AAC,
             AVSampleRateKey: a.sampleRate,
             AVNumberOfChannelsKey: a.channels,

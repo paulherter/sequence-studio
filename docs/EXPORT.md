@@ -20,9 +20,16 @@ UI, renderer and sheet are out of scope; the real renderer plugs in later via `F
    waiting/running/done/failed/cancelled, progress stream, cancel, unique output file names per sequence.
 
 ## Status
-All 7 slices implemented in `Packages/SSExport` (28 tests). Slices 2+3 share one commit.
-- Tests export real 64x112 files (H.264 and HEVC both encode at that size, software path, `hardwareEncoding = false`).
-- SSPlayback/SSRender dependencies kept (they compile); nothing from them is used yet.
-- `ExportWriter.export(video:audio:settings:to:progress:)` writes video + optional AAC, interleaved; cancel = task cancel (partial file removed).
-- `ExportQueue` actor: `enqueue`, `runAll`, `cancel`, `status`, `updates()` stream. Unique names: `Name.mp4`, `Name 2.mp4`, ... (checks disk + reserved names).
-- Open: renderer `FrameSource` adapter, sidecar SRT / burn-in (model only), loudness normalisation (model only), 10-bit/HDR output.
+Slices 1-7 plus the follow-ups below are implemented in `Packages/SSExport` (47 tests).
+- Tests export real 64x112 files (H.264, HEVC, ProRes software path / `hardwareEncoding = false` where applicable).
+- `ExportWriter.export(video:audio:settings:to:progress:)` writes video + optional audio, interleaved; cancel = task cancel (partial file removed).
+  Audio is fed non-blocking while video waits (and vice versa) and the audio input is finished as soon as its source ends;
+  otherwise AVAssetWriter's interleaving deadlocks for longer clips.
+- `ExportQueue` actor: `enqueue`, `runAll`, `cancel`, `status`, `updates()`. Unique names `Name.<ext>`, `Name 2.<ext>`, ...; extension from `ExportSettings.fileExtension` (mov for mastering codecs, else mp4).
+- **Sidecar SRT** (`SRTWriter`, commit ca266dd): from SSTranscribe captions, rational timecodes, range offset/clip, CRLF, UTF-8; queue writes it next to the video (`ExportJobStatus.sidecarURL`).
+- **Loudness normalisation** (`LoudnessNormalizer`, `NormalizedAudioSource`): `AudioSettings.loudness: LoudnessNormalization?` (default -14 LUFS / -1 dBTP, both editable).
+  Pass 1 measures integrated LUFS + true peak (SSAudioFX `LoudnessMeter`), pass 2 applies one linear gain = target - measured, reduced so true peak <= ceiling.
+  Needs a `RewindableAudioSource` (else `ExportError.loudnessNeedsRewindableSource`). Legacy `loudnessTarget` (Int) still decodes.
+- **ProRes 422 HQ master** (`ExportSettings.proRes422HQMaster`): `VideoCodec.prores422HQ` ('apch', MOV, Rec.709 1-1-1, no bitrate/profile/keyframe props),
+  `AudioCodec.pcm` with `pcmBitDepth` (24 default), 48 kHz stereo. Social presets stay H.264/HEVC only.
+- Open: renderer `FrameSource` adapter, burn-in captions, 10-bit/HDR output (settings only).
