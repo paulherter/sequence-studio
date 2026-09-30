@@ -36,6 +36,12 @@ Always follow PLAN.md, docs/UX.md, docs/DESIGN.md, docs/ARCHITECTURE.md.
 Decide yourself instead of asking. Default = how Premiere Pro behaves, unless PLAN/UX/DESIGN/DECISIONS say otherwise.
 Record every non-trivial choice in docs/DECISIONS.md, prefixed `[auto]`. Paul reviews those later in one go.
 
+## Waiting instead of stopping
+This session runs under `/loop` (self-paced). If nothing is free to take (other sessions busy, waiting on a package),
+don't end the loop: schedule the next wakeup (~10 min) and check `git status` / `git log` again then.
+A package counts as free once it has no uncommitted changes and no commit for 10 minutes.
+End the loop only for the stop reasons below.
+
 ## Stop only when
 - a milestone needs Paul's hands and eyes: (a) after the E-14 benchmark: playback test, (b) timeline usable: cutting feel,
   (c) color: comparison with QuickTime, (d) captions flow end to end. Before stopping, keep doing other work
