@@ -41,27 +41,6 @@ public enum LUTRef: Sendable, Hashable, Codable {
     }
 }
 
-// MARK: - Sections (Lumetri-like, modular)
-
-/// Kinds of colour sections in a clip's ordered stack.
-public enum ColorSectionKind: String, Sendable, Hashable, Codable, CaseIterable {
-    case basicCorrection, inputLUT, creative, curves, wheels, vignette
-
-    public var title: String {
-        switch self {
-        case .inputLUT: "Input LUT"
-        case .basicCorrection: "Basic Correction"
-        case .creative: "Creative"
-        case .curves: "Curves"
-        case .wheels: "Color Wheels"
-        case .vignette: "Vignette"
-        }
-    }
-
-    /// Kinds the "+" menu offers. The Input LUT block exists exactly once per clip (it is the conversion step).
-    public static let addable: [ColorSectionKind] = [.basicCorrection, .creative, .curves, .wheels, .vignette]
-}
-
 /// Puck position of a colour wheel: hue in degrees (0 = red, same angle as the wheel control) and amount 0…1.
 public struct WheelValue: Sendable, Hashable, Codable {
     public var hue: Float
@@ -145,132 +124,174 @@ public struct Vignette: Sendable, Hashable, Codable {
     public var isNeutral: Bool { amount == 0 }
 }
 
-/// Parameters of one section.
-public enum ColorSectionParams: Sendable, Hashable, Codable {
-    /// nil = none (built-in automatic conversion); `.automatic` = the media's embedded camera LUT when enabled.
-    case inputLUT(LUTRef?)
-    case basic(BasicCorrection)
-    case creative(CreativeLook)
-    case curves(RGBCurves)
-    case wheels(ColorWheels)
-    case vignette(Vignette)
+// MARK: - Colour effects (fixed Lumetri-like sections, v12)
 
-    public var kind: ColorSectionKind {
+/// The fixed sections of one Colour effect, in panel and processing order (Basic Correction includes the Input LUT).
+public enum ColorSectionKind: String, Sendable, Hashable, Codable, CaseIterable {
+    case basicCorrection, creative, curves, wheels, hslSecondary, vignette
+
+    public var title: String {
         switch self {
-        case .inputLUT: .inputLUT
-        case .basic: .basicCorrection
-        case .creative: .creative
-        case .curves: .curves
-        case .wheels: .wheels
-        case .vignette: .vignette
+        case .basicCorrection: "Basic Correction"
+        case .creative: "Creative"
+        case .curves: "Curves"
+        case .wheels: "Color Wheels & Match"
+        case .hslSecondary: "HSL Secondary"
+        case .vignette: "Vignette"
         }
     }
 
-    public static func defaults(for kind: ColorSectionKind) -> ColorSectionParams {
-        switch kind {
-        case .inputLUT: .inputLUT(.automatic)
-        case .basicCorrection: .basic(BasicCorrection())
-        case .creative: .creative(CreativeLook())
-        case .curves: .curves(RGBCurves())
-        case .wheels: .wheels(ColorWheels())
-        case .vignette: .vignette(Vignette())
-        }
-    }
+    /// HSL Secondary is a placeholder (no maths yet); its toggle and body are disabled in the panel.
+    public var isImplemented: Bool { self != .hslSecondary }
 }
 
-/// One entry of the stack. `id` is unique within a clip's stack (stable across edits and reorders).
-public struct ColorSection: Sendable, Hashable, Codable, Identifiable {
+/// One "Colour" effect (Premiere: one Lumetri Color). Fixed sections, each with its own enable toggle.
+/// Processing order inside one effect: Basic Correction sliders -> Input LUT -> Creative -> Curves -> Wheels -> Vignette.
+/// In the first effect the sliders work on the source signal and the Input LUT is the conversion step; later effects
+/// work on display-referred Rec.709 and their Input LUT is an ordinary look (with intensity).
+public struct ColorEffect: Sendable, Hashable, Codable, Identifiable {
     public var id: Int
-    public var enabled: Bool
-    public var params: ColorSectionParams
-    public var kind: ColorSectionKind { params.kind }
+    public var basic = BasicCorrection()
+    /// Input LUT inside Basic Correction. nil = none (built-in conversion in the first effect). `.automatic` = the
+    /// media's embedded camera LUT (first effect only).
+    public var inputLUT: LUTRef?
+    /// 0…100; only used by the Input LUT of a later effect (the conversion LUT of the first effect runs at full strength).
+    public var inputLUTIntensity: Float = 100
+    public var creative = CreativeLook()
+    public var curves = RGBCurves()
+    public var wheels = ColorWheels()
+    public var vignette = Vignette()
+    /// Sections whose toggle is off (canonical order, so the JSON is stable).
+    public private(set) var disabled: [ColorSectionKind] = []
 
-    public init(id: Int, enabled: Bool = true, params: ColorSectionParams) {
-        self.id = id; self.enabled = enabled; self.params = params
+    public init(id: Int, inputLUT: LUTRef? = nil) { self.id = id; self.inputLUT = inputLUT }
+
+    public func isEnabled(_ k: ColorSectionKind) -> Bool { !disabled.contains(k) }
+
+    public mutating func setEnabled(_ k: ColorSectionKind, _ on: Bool) {
+        var set = Set(disabled)
+        if on { set.remove(k) } else { set.insert(k) }
+        disabled = ColorSectionKind.allCases.filter(set.contains)
     }
 
-    /// Has no effect on the picture (neutral parameters). The Input LUT is neutral when it is "none" or "automatic"
-    /// (automatic only acts for S-Log3 media with an embedded look; the caller decides that).
-    public var isNeutral: Bool {
-        switch params {
-        case .inputLUT(let l): l == nil || l == .automatic
-        case .basic(let b): b.isNeutral
-        case .creative(let c): c.isNeutral
-        case .curves(let c): c.isNeutral
-        case .wheels(let w): w.isNeutral
-        case .vignette(let v): v.isNeutral
+    /// The Input LUT does nothing when it is none or automatic (automatic only acts for S-Log3 media with an embedded
+    /// look; the caller decides that).
+    public var inputLUTIsNeutral: Bool { inputLUT == nil || inputLUT == .automatic }
+
+    /// Has no effect on the picture (neutral parameters), ignoring the toggle.
+    public func isNeutral(_ k: ColorSectionKind) -> Bool {
+        switch k {
+        case .basicCorrection: basic.isNeutral && inputLUTIsNeutral
+        case .creative: creative.isNeutral
+        case .curves: curves.isNeutral
+        case .wheels: wheels.isNeutral
+        case .hslSecondary: true
+        case .vignette: vignette.isNeutral
         }
+    }
+
+    /// Resets one section to its defaults (keeps the toggle). The first effect's Input LUT returns to `.automatic`.
+    public mutating func reset(_ k: ColorSectionKind, isPrimary: Bool) {
+        switch k {
+        case .basicCorrection: basic = BasicCorrection(); inputLUT = isPrimary ? .automatic : nil; inputLUTIntensity = 100
+        case .creative: creative = CreativeLook()
+        case .curves: curves = RGBCurves()
+        case .wheels: wheels = ColorWheels()
+        case .hslSecondary: break
+        case .vignette: vignette = Vignette()
+        }
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, basic, inputLUT, inputLUTIntensity, creative, curves, wheels, vignette, disabled
+    }
+
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        id = try c.decodeIfPresent(Int.self, forKey: .id) ?? 1
+        basic = try c.decodeIfPresent(BasicCorrection.self, forKey: .basic) ?? BasicCorrection()
+        // Absent key = none; an explicit "none" is JSON null.
+        inputLUT = c.contains(.inputLUT) ? try c.decodeIfPresent(LUTRef.self, forKey: .inputLUT) : nil
+        inputLUTIntensity = try c.decodeIfPresent(Float.self, forKey: .inputLUTIntensity) ?? 100
+        creative = try c.decodeIfPresent(CreativeLook.self, forKey: .creative) ?? CreativeLook()
+        curves = try c.decodeIfPresent(RGBCurves.self, forKey: .curves) ?? RGBCurves()
+        wheels = try c.decodeIfPresent(ColorWheels.self, forKey: .wheels) ?? ColorWheels()
+        vignette = try c.decodeIfPresent(Vignette.self, forKey: .vignette) ?? Vignette()
+        let off = Set(try c.decodeIfPresent([ColorSectionKind].self, forKey: .disabled) ?? [])
+        disabled = ColorSectionKind.allCases.filter(off.contains)
+    }
+
+    public func encode(to e: Encoder) throws {
+        var c = e.container(keyedBy: CodingKeys.self)
+        try c.encode(id, forKey: .id)
+        try c.encode(basic, forKey: .basic)
+        try c.encode(inputLUT, forKey: .inputLUT)   // nil encodes as null = "none"
+        try c.encode(inputLUTIntensity, forKey: .inputLUTIntensity)
+        try c.encode(creative, forKey: .creative)
+        try c.encode(curves, forKey: .curves)
+        try c.encode(wheels, forKey: .wheels)
+        try c.encode(vignette, forKey: .vignette)
+        if !disabled.isEmpty { try c.encode(disabled, forKey: .disabled) }
     }
 }
 
-/// Static (keyframe-free) per-clip colour settings: the source interpretation plus an ordered stack of sections.
-/// Processing order is the list order (DECISIONS 2026-10-01). The single Input LUT section is the conversion step
-/// (camera LUT or the built-in automatic conversion): blocks above it work on the source signal, blocks below it on
-/// display-referred Rec.709.
+/// Static (keyframe-free) per-clip colour settings: the source interpretation plus one or more Colour effects applied
+/// in order (a clip can hold several, like stacking Lumetri Color effects in Premiere; always at least one).
 public struct ClipColor: Sendable, Hashable, Codable {
     /// nil = from media (`MediaInfo.colorSpace`).
     public var source: SourceColorOverride?
     /// Per-clip toggle for the embedded camera LUT (used by an `.automatic` Input LUT).
     public var useEmbeddedLUT: Bool
-    public var sections: [ColorSection]
+    public var effects: [ColorEffect]
 
-    /// Default stack: Basic Correction, then the Input LUT directly beneath it.
-    public static let defaultSections: [ColorSection] = [
-        ColorSection(id: 1, params: .defaults(for: .basicCorrection)),
-        ColorSection(id: 2, params: .defaults(for: .inputLUT)),
-    ]
+    public static let defaultEffects: [ColorEffect] = [ColorEffect(id: 1, inputLUT: .automatic)]
 
     public init(source: SourceColorOverride? = nil, useEmbeddedLUT: Bool = true,
-                sections: [ColorSection] = ClipColor.defaultSections) {
-        self.source = source; self.useEmbeddedLUT = useEmbeddedLUT; self.sections = sections
+                effects: [ColorEffect] = ClipColor.defaultEffects) {
+        self.source = source; self.useEmbeddedLUT = useEmbeddedLUT
+        self.effects = effects.isEmpty ? ClipColor.defaultEffects : effects
     }
 
     public static let `default` = ClipColor()
     public var isDefault: Bool { self == .default }
 
-    /// True when the picture is unchanged: every enabled section is neutral (for a Rec.709 source an automatic or
-    /// empty Input LUT is neutral; for other sources the conversion always does something).
+    /// The first effect: its Input LUT is the conversion step.
+    public var primary: ColorEffect { effects[0] }
+
+    /// True when the picture is unchanged: every enabled section of every effect is neutral. A non-Rec.709 source
+    /// always needs the conversion, so it is never identity.
     public func isIdentity(rec709Source: Bool) -> Bool {
-        sections.allSatisfy {
-            // A non-Rec.709 source always needs the conversion, even when the Input LUT block is disabled.
-            if $0.kind == .inputLUT, !rec709Source { return false }
-            return !$0.enabled || $0.isNeutral
+        if !rec709Source { return false }
+        return effects.allSatisfy { e in
+            ColorSectionKind.allCases.allSatisfy { !e.isEnabled($0) || e.isNeutral($0) }
         }
     }
 
-    public func section(_ id: Int) -> ColorSection? { sections.first { $0.id == id } }
+    public func effect(_ id: Int) -> ColorEffect? { effects.first { $0.id == id } }
 
-    /// Adds a default section of `kind` (at the end unless `index` is given); returns its id. The Input LUT exists once.
+    /// Appends a default Colour effect; returns its id.
     @discardableResult
-    public mutating func addSection(_ kind: ColorSectionKind, at index: Int? = nil) -> Int? {
-        if kind == .inputLUT, sections.contains(where: { $0.kind == .inputLUT }) { return nil }
-        let id = (sections.map(\.id).max() ?? 0) + 1
-        let s = ColorSection(id: id, params: .defaults(for: kind))
-        sections.insert(s, at: min(max(index ?? sections.count, 0), sections.count))
+    public mutating func addEffect() -> Int {
+        let id = (effects.map(\.id).max() ?? 0) + 1
+        effects.append(ColorEffect(id: id))
         return id
     }
 
-    /// The Input LUT cannot be removed (disable it instead).
-    public mutating func removeSection(_ id: Int) {
-        sections.removeAll { $0.id == id && $0.kind != .inputLUT }
+    /// Removes an effect; the last one cannot be removed (reset it instead).
+    public mutating func removeEffect(_ id: Int) {
+        guard effects.count > 1 else { return }
+        effects.removeAll { $0.id == id }
     }
 
-    /// Moves a section so it ends up at `destination` (index in the list after removal).
-    public mutating func moveSection(_ id: Int, to destination: Int) {
-        guard let i = sections.firstIndex(where: { $0.id == id }) else { return }
-        let s = sections.remove(at: i)
-        sections.insert(s, at: min(max(destination, 0), sections.count))
+    /// Resets one section of an effect to its defaults (keeps its toggle).
+    public mutating func resetSection(_ k: ColorSectionKind, in id: Int) {
+        guard let i = effects.firstIndex(where: { $0.id == id }) else { return }
+        effects[i].reset(k, isPrimary: i == 0)
     }
 
-    /// Resets a section's parameters to the defaults of its kind (keeps id, position and enabled state).
-    public mutating func resetSection(_ id: Int) {
-        guard let i = sections.firstIndex(where: { $0.id == id }) else { return }
-        sections[i].params = .defaults(for: sections[i].kind)
-    }
+    // MARK: Codable (v12; v11 `sections` and v10 `correction` / LUT fields are migrated on decode)
 
-    // MARK: Codable (v11; v10 `correction` / LUT fields are migrated on decode)
-
-    private enum CodingKeys: String, CodingKey { case source, useEmbeddedLUT, sections }
+    private enum CodingKeys: String, CodingKey { case source, useEmbeddedLUT, effects, sections }
     private enum LegacyKeys: String, CodingKey {
         case correction, conversionLUT, creativeLUT, creativeIntensity
         case bypassCorrection, bypassConversionLUT, bypassCreativeLUT
@@ -280,23 +301,54 @@ public struct ClipColor: Sendable, Hashable, Codable {
         let c = try d.container(keyedBy: CodingKeys.self)
         let source = try c.decodeIfPresent(ColorSpaceID.self, forKey: .source)
         let embedded = try c.decodeIfPresent(Bool.self, forKey: .useEmbeddedLUT) ?? true
-        if var sections = try c.decodeIfPresent([ColorSection].self, forKey: .sections) {
-            // Invariant: exactly one Input LUT (keep the first).
-            var seenLUT = false
-            sections.removeAll { if $0.kind == .inputLUT { defer { seenLUT = true }; return seenLUT }; return false }
-            if !sections.contains(where: { $0.kind == .inputLUT }) {
-                sections.append(ColorSection(id: (sections.map(\.id).max() ?? 0) + 1, params: .defaults(for: .inputLUT)))
-            }
-            self.init(source: source, useEmbeddedLUT: embedded, sections: sections)
+        if let effects = try c.decodeIfPresent([ColorEffect].self, forKey: .effects) {
+            self.init(source: source, useEmbeddedLUT: embedded, effects: effects)
+        } else if let sections = try c.decodeIfPresent([V11Section].self, forKey: .sections) {
+            self.init(source: source, useEmbeddedLUT: embedded, effects: Self.migrate(v11: sections))
         } else {
-            self.init(source: source, useEmbeddedLUT: embedded, sections: try Self.migratedSections(d))
+            self.init(source: source, useEmbeddedLUT: embedded, effects: Self.migrate(v11: try Self.legacySections(d)))
         }
     }
 
-    /// v10 -> v11: the single correction + conversion LUT + creative LUT become blocks in the old order (Basic
-    /// Correction, Input LUT, Creative). A bypassed legacy slot becomes a disabled block. The maths changed (see
-    /// SSRender), so the look is close, not bit-identical.
-    static func migratedSections(_ d: Decoder) throws -> [ColorSection] {
+    /// v11 -> v12: the ordered block list maps into the fixed sections. The first block of each kind fills the first
+    /// Colour effect; further blocks of a kind fill a second effect, then a third, and so on. The Input LUT moves into
+    /// Basic Correction (a bypassed LUT becomes "none"). The block order is lost: inside one effect it is fixed.
+    static func migrate(v11 sections: [V11Section]) -> [ColorEffect] {
+        var pool = sections
+        var effects: [ColorEffect] = []
+        while !pool.isEmpty {
+            var e = ColorEffect(id: effects.count + 1, inputLUT: effects.isEmpty ? .automatic : nil)
+            var taken = Set<String>()
+            var rest: [V11Section] = []
+            for s in pool {
+                let slot: String
+                switch s.params {
+                case .inputLUT: slot = "lut"
+                case .basic: slot = "basic"
+                case .creative: slot = "creative"
+                case .curves: slot = "curves"
+                case .wheels: slot = "wheels"
+                case .vignette: slot = "vignette"
+                }
+                guard taken.insert(slot).inserted else { rest.append(s); continue }
+                switch s.params {
+                case .inputLUT(let r): e.inputLUT = s.enabled ? r : nil
+                case .basic(let b): e.basic = b; e.setEnabled(.basicCorrection, s.enabled)
+                case .creative(let k): e.creative = k; e.setEnabled(.creative, s.enabled)
+                case .curves(let k): e.curves = k; e.setEnabled(.curves, s.enabled)
+                case .wheels(let w): e.wheels = w; e.setEnabled(.wheels, s.enabled)
+                case .vignette(let v): e.vignette = v; e.setEnabled(.vignette, s.enabled)
+                }
+            }
+            effects.append(e)
+            pool = rest
+        }
+        return effects
+    }
+
+    /// v10 single correction + conversion LUT + creative LUT as v11-style blocks in the old order (Basic Correction,
+    /// Input LUT, Creative). A bypassed legacy slot becomes a disabled block.
+    private static func legacySections(_ d: Decoder) throws -> [V11Section] {
         let c = try d.container(keyedBy: LegacyKeys.self)
         var b = BasicCorrection()
         if let old = try c.decodeIfPresent(LegacyCorrection.self, forKey: .correction) {
@@ -307,14 +359,14 @@ public struct ClipColor: Sendable, Hashable, Codable {
         // An absent key = default (.automatic); an explicit "none" is stored as JSON null.
         let conv: LUTRef? = c.contains(.conversionLUT) ? try c.decodeIfPresent(LUTRef.self, forKey: .conversionLUT) : .automatic
         let bypassConv = try c.decodeIfPresent(Bool.self, forKey: .bypassConversionLUT) ?? false
-        var out = [ColorSection(id: 1, enabled: !bypassBasic, params: .basic(b)),
-                   ColorSection(id: 2, enabled: !bypassConv, params: .inputLUT(conv))]
+        var out = [V11Section(id: 1, enabled: !bypassBasic, params: .basic(b)),
+                   V11Section(id: 2, enabled: !bypassConv, params: .inputLUT(conv))]
         if let look = try c.decodeIfPresent(LUTRef.self, forKey: .creativeLUT), look != .automatic {
             var cl = CreativeLook()
             cl.look = look
             cl.intensity = Float(min(max(try c.decodeIfPresent(Double.self, forKey: .creativeIntensity) ?? 1, 0), 1)) * 100
             let bypass = try c.decodeIfPresent(Bool.self, forKey: .bypassCreativeLUT) ?? false
-            out.append(ColorSection(id: 3, enabled: !bypass, params: .creative(cl)))
+            out.append(V11Section(id: 3, enabled: !bypass, params: .creative(cl)))
         }
         return out
     }
@@ -323,8 +375,26 @@ public struct ClipColor: Sendable, Hashable, Codable {
         var c = e.container(keyedBy: CodingKeys.self)
         try c.encodeIfPresent(source, forKey: .source)
         try c.encode(useEmbeddedLUT, forKey: .useEmbeddedLUT)
-        try c.encode(sections, forKey: .sections)
+        try c.encode(effects, forKey: .effects)
     }
+}
+
+// MARK: - Legacy (decode only)
+
+/// A v11 block. Shape matches the v11 encoding (its params were a synthesised enum).
+struct V11Section: Decodable {
+    var id: Int
+    var enabled: Bool
+    var params: V11Params
+}
+
+enum V11Params: Decodable {
+    case inputLUT(LUTRef?)
+    case basic(BasicCorrection)
+    case creative(CreativeLook)
+    case curves(RGBCurves)
+    case wheels(ColorWheels)
+    case vignette(Vignette)
 }
 
 /// The v10 correction object (decode only).

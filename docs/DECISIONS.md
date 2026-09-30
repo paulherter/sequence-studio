@@ -109,3 +109,8 @@ Premiere semantics: Scale 100 % = one upright source pixel per sequence pixel (a
 - Crop in Motion: later.
 - Timeline follows playback page-wise; manual scrolling wins until playback restarts.
 - Type tool (T) like Premiere: click in Program monitor → text clip on the top free video track at the playhead (5 s), type immediately; style in Effect Controls › Text.
+
+## 2026-10-01 Colour panel rebuilt as fixed sections (project v12)
+- `ClipColor.effects: [ColorEffect]` replaces the v11 block list. One effect = fixed sections with toggles; processing order inside an effect is Basic Correction sliders, Input LUT, Creative, Curves, Wheels, Vignette. The first effect's Input LUT is the conversion step (full strength, sliders before it work on the source signal); later effects are display-referred and their Input LUT is a normal look with intensity.
+- The Basic Correction toggle also switches the Input LUT off (the first effect then falls back to the built-in conversion, log footage stays viewable).
+- v11 migration: first block of each kind fills effect 1, further blocks become effect 2, 3, ...; block order is not kept; a bypassed Input LUT becomes "none". A bypassed Basic Correction now also bypasses its LUT.

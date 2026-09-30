@@ -142,14 +142,10 @@ public final class LayerColorResolver: Sendable {
 
     private func fileStamps(_ c: ClipColor) -> [LUTRef: LUTStamp] {
         var out: [LUTRef: LUTStamp] = [:]
-        for sec in c.sections {
-            let ref: LUTRef?
-            switch sec.params {
-            case .inputLUT(let r): ref = r
-            case .creative(let k): ref = k.look
-            default: ref = nil
+        for e in c.effects {
+            for ref in [e.inputLUT, e.creative.look] {
+                if let ref, case .file = ref, let st = lutProvider?.stamp(for: ref) { out[ref] = st }
             }
-            if let ref, case .file = ref, let st = lutProvider?.stamp(for: ref) { out[ref] = st }
         }
         return out
     }
