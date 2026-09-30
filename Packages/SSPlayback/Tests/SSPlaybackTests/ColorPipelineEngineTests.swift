@@ -19,6 +19,21 @@ private struct ColorResolver: MediaResolver {
     func audio(for media: UUID) throws -> any AudioSource { try base.audio(for: media) }
 }
 
+/// One generated clip for all tests here: separate encodes are not bit-identical, which made the comparisons flaky.
+private actor SharedColorClip {
+    static let shared = SharedColorClip()
+    private var url: URL?
+    func get() async throws -> URL {
+        if let url { return url }
+        var spec = TestClipSpec()
+        spec.frameCount = 20
+        spec.frameDuration = TestClipSpec.fps(30)
+        let u = try await TestClipWriter.write(spec)
+        url = u
+        return u
+    }
+}
+
 /// Mean RGB of an rgba16Float texture.
 private func meanRGB(_ texture: MTLTexture, device: MTLDevice) -> SIMD3<Double>? {
     let w = texture.width, h = texture.height, bpr = w * 8
@@ -39,10 +54,7 @@ private func meanRGB(_ texture: MTLTexture, device: MTLDevice) -> SIMD3<Double>?
     /// Renders frame 10 of a generated clip whose media is tagged `space`, with `clipColor` on the clip.
     func render(space: ColorSpaceID, clipColor: ClipColor = .default, withResolver: Bool = true) async throws -> SIMD3<Double> {
         let device = try #require(MTLCreateSystemDefaultDevice())
-        var spec = TestClipSpec()
-        spec.frameCount = 20
-        spec.frameDuration = TestClipSpec.fps(30)
-        let url = try await TestClipWriter.write(spec)
+        let url = try await SharedColorClip.shared.get()
         let media = UUID()
         let info = MediaInfo(duration: fd * 20, detectedColorSpace: space)
         let resolver = withResolver ? LayerColorResolver(lutProvider: nil) { $0 == media ? info : nil } : nil
