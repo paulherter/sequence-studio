@@ -29,6 +29,10 @@ public struct CubeLUT: Sendable, Equatable {
     public init(title: String = "", kind: Kind, size: Int, domainMin: SIMD3<Float> = .zero,
                 domainMax: SIMD3<Float> = .one, table: [SIMD3<Float>],
                 inVideoRange: Bool = false, outVideoRange: Bool = false) {
+        // Programmer error, not user data (`parse` reports typed errors for files): lookups index `table` unchecked.
+        precondition(size >= 2, "CubeLUT size must be >= 2")
+        precondition(table.count == (kind == .lut3D ? size * size * size : size),
+                     "CubeLUT table has \(table.count) entries, expected \(kind == .lut3D ? size * size * size : size)")
         self.inVideoRange = inVideoRange; self.outVideoRange = outVideoRange
         self.title = title; self.kind = kind; self.size = size
         self.domainMin = domainMin; self.domainMax = domainMax; self.table = table

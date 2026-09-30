@@ -13,16 +13,24 @@ enum GPUTest {
         return device.makeTexture(descriptor: d)!
     }
 
-    static func upload(_ tex: MTLTexture, _ px: [SIMD3<Float>]) {
+    static func upload(_ tex: MTLTexture, _ px: [SIMD3<Float>], alpha: [Float]? = nil) {
         let n = px.count
         if tex.pixelFormat == .rgba32Float {
-            let data = px.map { SIMD4<Float>($0, 1) }
+            let data = px.enumerated().map { SIMD4<Float>($1, alpha?[$0] ?? 1) }
             data.withUnsafeBytes { tex.replace(region: MTLRegionMake2D(0, 0, tex.width, tex.height), mipmapLevel: 0, withBytes: $0.baseAddress!, bytesPerRow: tex.width * 16) }
         } else {
-            let data = px.map { SIMD4<Float16>(Float16($0.x), Float16($0.y), Float16($0.z), 1) }
+            let data = px.enumerated().map { SIMD4<Float16>(Float16($1.x), Float16($1.y), Float16($1.z), Float16(alpha?[$0] ?? 1)) }
             data.withUnsafeBytes { tex.replace(region: MTLRegionMake2D(0, 0, tex.width, tex.height), mipmapLevel: 0, withBytes: $0.baseAddress!, bytesPerRow: tex.width * 8) }
         }
         precondition(n == tex.width * tex.height)
+    }
+
+    static func downloadAlpha(_ tex: MTLTexture) -> [Float] {
+        let n = tex.width * tex.height
+        var data = [SIMD4<Float>](repeating: .zero, count: n)
+        precondition(tex.pixelFormat == .rgba32Float)
+        data.withUnsafeMutableBytes { tex.getBytes($0.baseAddress!, bytesPerRow: tex.width * 16, from: MTLRegionMake2D(0, 0, tex.width, tex.height), mipmapLevel: 0) }
+        return data.map { $0.w }
     }
 
     static func download(_ tex: MTLTexture) -> [SIMD3<Float>] {

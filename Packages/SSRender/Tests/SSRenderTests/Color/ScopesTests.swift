@@ -3,7 +3,7 @@ import Metal
 import simd
 @testable import SSRender
 
-@Suite struct ScopesTests {
+@Suite(.enabled(if: GPUTest.device != nil, "no Metal device")) struct ScopesTests {
     static func run(_ px: [SIMD3<Float>], width: Int, height: Int, layout: ScopeLayout = ScopeLayout(), stride: Int = 1,
                     format: MTLPixelFormat = .rgba32Float) throws -> (gpu: ScopeCounts, cpu: ScopeCounts, res: ScopeResources, queue: MTLCommandQueue)? {
         guard let device = GPUTest.device, let queue = device.makeCommandQueue() else { return nil }

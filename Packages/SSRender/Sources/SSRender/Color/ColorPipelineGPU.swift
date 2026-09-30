@@ -6,7 +6,11 @@ public enum ColorPipelineGPUError: Error, Sendable {
     case shaderCompilation(String)
     case missingFunction(String)
     case textureAllocation
-    case unsupportedTextureFormat
+    case unsupportedTextureFormat(MTLPixelFormat)
+    case textureSizeMismatch
+    case missingTextureUsage(String)
+    case invalidLUT
+    case encoderUnavailable
 }
 
 /// GPU colour chain: one compute pass per layer, source-encoded -> working-linear.
@@ -112,12 +116,29 @@ public final class ColorPipelineGPU: @unchecked Sendable {
     /// Number of LUT textures currently cached (for tests).
     var cachedLUTCount: Int { lock.lock(); defer { lock.unlock() }; return lutCache.count }
 
-    private func texture(for lut: CubeLUT) -> MTLTexture? {
-        let key = lut.table.withUnsafeBufferPointer {
+    /// Whether the LUT currently has a cached texture (for tests).
+    func isCached(_ lut: CubeLUT) -> Bool {
+        let key = Self.key(lut)
+        lock.lock(); defer { lock.unlock() }
+        return lutCache[key] != nil
+    }
+
+    private static func key(_ lut: CubeLUT) -> LUTKey {
+        lut.table.withUnsafeBufferPointer {
             LUTKey(base: UInt(bitPattern: $0.baseAddress), count: $0.count, size: lut.size, is3D: lut.kind == .lut3D)
         }
+    }
+
+    private func texture(for lut: CubeLUT) throws -> MTLTexture {
+        let expected = lut.kind == .lut3D ? lut.size * lut.size * lut.size : lut.size
+        guard lut.size >= 2, lut.table.count == expected else { throw ColorPipelineGPUError.invalidLUT }
+        let key = Self.key(lut)
         lock.lock(); defer { lock.unlock() }
-        if let e = lutCache[key] { return e.texture }
+        if let e = lutCache[key] {
+            // LRU: move to the end (<= 16 entries, so the linear remove is cheap).
+            if lutOrder.last != key, let i = lutOrder.firstIndex(of: key) { lutOrder.remove(at: i); lutOrder.append(key) }
+            return e.texture
+        }
         let rgba = lut.table.map { SIMD4<Float>($0, 1) }
         let desc = MTLTextureDescriptor()
         desc.pixelFormat = .rgba32Float
@@ -143,7 +164,7 @@ public final class ColorPipelineGPU: @unchecked Sendable {
                 tex?.replace(region: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0, withBytes: $0.baseAddress!, bytesPerRow: w * 16)
             }
         }
-        guard let tex else { return nil }
+        guard let tex else { throw ColorPipelineGPUError.textureAllocation }
         if lutOrder.count >= Self.maxCachedLUTs, let old = lutOrder.first {
             lutOrder.removeFirst(); lutCache[old] = nil
         }
@@ -154,38 +175,50 @@ public final class ColorPipelineGPU: @unchecked Sendable {
 
     // MARK: Encode
 
-    /// Encodes one compute pass: `source` (source-encoded, rgba16Float/32Float, range-expanded 0…1) -> `destination`
-    /// (working-linear). Both must be the same size; destination needs `.shaderWrite`, source `.shaderRead`.
-    /// `source === destination` is supported (in place; the texture then needs `.shaderRead | .shaderWrite`).
-    /// Alpha is passed through unchanged.
+    /// Encodes one compute pass: `source` (source-encoded, range-expanded 0…1) -> `destination` (working-linear).
+    /// Alpha is passed through unchanged. `source === destination` is supported (in place).
+    ///
+    /// Throws on caller mistakes (checked every call; all checks are O(1) property reads):
+    /// size mismatch, pixel format other than rgba16Float/rgba32Float, `destination` without `.shaderWrite`,
+    /// `source` without `.shaderRead` (in place: the texture needs both), LUT with a wrong entry count, no encoder.
     public func encode(_ pipeline: ColorPipeline, source: MTLTexture, destination: MTLTexture,
-                       commandBuffer: MTLCommandBuffer) {
-        guard source.width == destination.width, source.height == destination.height,
-              let enc = commandBuffer.makeComputeCommandEncoder() else { return }
-        var u = Self.uniforms(for: pipeline)
-        let inPlace = source === destination
-        enc.setComputePipelineState(inPlace ? pipelineInPlace : self.pipeline)
-        if inPlace {
-            enc.setTexture(source, index: 0)
-        } else {
-            enc.setTexture(source, index: 0)
-            enc.setTexture(destination, index: 1)
+                       commandBuffer: MTLCommandBuffer) throws {
+        guard source.width == destination.width, source.height == destination.height else {
+            throw ColorPipelineGPUError.textureSizeMismatch
         }
-        let luts = [(pipeline.conversionLUT, u.ints.x & Self.flagConv != 0, 2),
-                    (pipeline.creativeLUT, u.ints.x & Self.flagCreative != 0, 4)]
-        for (lut, active, index) in luts {
+        for t in [source, destination] where t.pixelFormat != .rgba16Float && t.pixelFormat != .rgba32Float {
+            throw ColorPipelineGPUError.unsupportedTextureFormat(t.pixelFormat)
+        }
+        let inPlace = source === destination
+        guard source.usage.contains(.shaderRead) else { throw ColorPipelineGPUError.missingTextureUsage("source needs .shaderRead") }
+        guard destination.usage.contains(.shaderWrite) else {
+            throw ColorPipelineGPUError.missingTextureUsage("destination needs .shaderWrite")
+        }
+        var u = Self.uniforms(for: pipeline)
+        // Resolve LUT textures before creating the encoder so a throw leaves the command buffer untouched.
+        var lutTextures: [(MTLTexture, MTLTexture)] = []
+        for (lut, flag) in [(pipeline.conversionLUT, Self.flagConv), (pipeline.creativeLUT, Self.flagCreative)] {
             var t3: MTLTexture = dummy3D, t1: MTLTexture = dummy2D
-            if active, let lut, let tex = texture(for: lut) {
+            if u.ints.x & flag != 0, let lut {
+                let tex = try texture(for: lut)
                 if lut.kind == .lut3D { t3 = tex } else { t1 = tex }
             }
-            enc.setTexture(t3, index: index)
-            enc.setTexture(t1, index: index + 1)
+            lutTextures.append((t3, t1))
+        }
+        guard let enc = commandBuffer.makeComputeCommandEncoder() else { throw ColorPipelineGPUError.encoderUnavailable }
+        let state = inPlace ? pipelineInPlace : self.pipeline
+        enc.setComputePipelineState(state)
+        enc.setTexture(source, index: 0)
+        if !inPlace { enc.setTexture(destination, index: 1) }
+        for (i, (t3, t1)) in lutTextures.enumerated() {
+            enc.setTexture(t3, index: 2 + 2 * i)
+            enc.setTexture(t1, index: 3 + 2 * i)
         }
         enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-        let w = self.pipeline.threadExecutionWidth
-        let h = max(1, self.pipeline.maxTotalThreadsPerThreadgroup / w)
+        let w = state.threadExecutionWidth
+        let h = max(1, min(8, state.maxTotalThreadsPerThreadgroup / w))
         enc.dispatchThreads(MTLSize(width: destination.width, height: destination.height, depth: 1),
-                            threadsPerThreadgroup: MTLSize(width: w, height: min(h, 8), depth: 1))
+                            threadsPerThreadgroup: MTLSize(width: w, height: h, depth: 1))
         enc.endEncoding()
     }
 }
