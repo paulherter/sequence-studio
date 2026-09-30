@@ -8,6 +8,6 @@ let package = Package(
     dependencies: [.package(path: "../SSCore"),.package(path: "../SSMedia"),.package(path: "../SSRender"),.package(path: "../SSAudioFX")],
     targets: [
         .target(name: "SSPlayback", dependencies: ["SSCore","SSMedia","SSRender","SSAudioFX"]),
-        .testTarget(name: "SSPlaybackTests", dependencies: ["SSPlayback","SSAudioFX"]),
+        .testTarget(name: "SSPlaybackTests", dependencies: ["SSPlayback","SSAudioFX","SSMedia"]),
     ]
 )

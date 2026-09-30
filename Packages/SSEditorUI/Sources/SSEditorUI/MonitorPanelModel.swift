@@ -1,14 +1,17 @@
 import Foundation
 import Observation
 import SSCore
+import SSMedia
 
 public enum MonitorMode: Sendable, Hashable { case program, source }
 
-/// Playback quality. Mirrors `DecodeScale`; the host maps it.
+/// Playback quality. Maps 1:1 to SSMedia `DecodeScale` (`decodeScale` / `init(_:)`).
 public enum MonitorQuality: String, Sendable, Hashable, CaseIterable {
     case full, half, quarter
     public var divisor: Int { switch self { case .full: 1; case .half: 2; case .quarter: 4 } }
     public var title: String { switch self { case .full: "Full"; case .half: "1/2"; case .quarter: "1/4" } }
+    public var decodeScale: DecodeScale { switch self { case .full: .full; case .half: .half; case .quarter: .quarter } }
+    public init(_ scale: DecodeScale) { switch scale { case .full: self = .full; case .half: self = .half; case .quarter: self = .quarter } }
 }
 
 public enum MonitorZoom: Sendable, Hashable {

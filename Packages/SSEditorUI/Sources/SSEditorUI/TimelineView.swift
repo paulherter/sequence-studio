@@ -10,6 +10,7 @@ import SSCore
 public final class TimelineView: NSView {
     public private(set) var timeline: Timeline
     public private(set) var selection: Set<Clip.ID> = []
+    public private(set) var captionSelection: Set<CaptionItem.ID> = []
     public private(set) var playhead: Time = .zero
     public private(set) var offlineMedia: Set<UUID> = []
     public private(set) var geometry: TimelineGeometry
@@ -18,6 +19,10 @@ public final class TimelineView: NSView {
     public var clipStyle: (Clip) -> ClipStyle = { ClipStyle(kind: $0.kind) }
     /// Header control clicks (callbacks only in T-02).
     public var onTrackToggle: ((Track.ID, TrackToggle) -> Void)?
+    /// Double-click on a caption item: the host opens its text editor.
+    public var onEditCaptionText: ((CaptionItem.ID) -> Void)?
+    /// Builds the right-click menu for a point in view coordinates (see `TimelineContextMenu`). Nil = no menu.
+    public var contextMenuProvider: ((CGPoint) -> NSMenu?)?
     /// Fired after scroll or zoom changed, so a host can sync scrollers and a zoom slider.
     public var onViewportChange: (() -> Void)?
 
@@ -52,6 +57,7 @@ public final class TimelineView: NSView {
         timeline = t
         geometry.frameDuration = t.frameDuration
         selection.formIntersection(Set(t.tracks.flatMap { $0.clips.map(\.id) }))
+        captionSelection.formIntersection(Set(t.captionTracks.flatMap { $0.items.map(\.id) }))
         clampScroll()
         rebuildHeaders()
         syncChildren()
@@ -61,6 +67,12 @@ public final class TimelineView: NSView {
     public func setSelection(_ ids: Set<Clip.ID>) {
         guard ids != selection else { return }
         selection = ids
+        needsDisplay = true
+    }
+
+    public func setCaptionSelection(_ ids: Set<CaptionItem.ID>) {
+        guard ids != captionSelection else { return }
+        captionSelection = ids
         needsDisplay = true
     }
 
@@ -91,7 +103,11 @@ public final class TimelineView: NSView {
     }
 
     /// End of the last clip (zero for an empty timeline).
-    public var contentEnd: Time { timeline.tracks.compactMap { $0.clips.last?.timeline.end }.max() ?? .zero }
+    public var contentEnd: Time {
+        let clips = timeline.tracks.compactMap { $0.clips.last?.timeline.end }
+        let captions = timeline.captionTracks.compactMap { $0.items.last?.range.end }
+        return (clips + captions).max() ?? .zero
+    }
 
     private var contentViewportWidth: CGFloat { max(bounds.width - TimelineGeometry.contentOriginX, 1) }
 
@@ -186,6 +202,18 @@ public final class TimelineView: NSView {
         setZoom(pointsPerSecond: geometry.pointsPerSecond * (1 + Double(event.magnification)), anchorX: anchor)
     }
 
+    public override func mouseDown(with event: NSEvent) {
+        if event.clickCount == 2 {
+            let p = convert(event.locationInWindow, from: nil)
+            if case .caption(let id, _) = geometry.hitTest(p, in: timeline) { onEditCaptionText?(id); return }
+        }
+        super.mouseDown(with: event)
+    }
+
+    public override func menu(for event: NSEvent) -> NSMenu? {
+        contextMenuProvider?(convert(event.locationInWindow, from: nil))
+    }
+
     public override func keyDown(with event: NSEvent) {
         switch event.charactersIgnoringModifiers {
         case "+", "=": zoomIn()
@@ -249,11 +277,48 @@ public final class TimelineView: NSView {
         if !clip.isEmpty {
             NSGraphicsContext.saveGraphicsState()
             clip.clip()
+            drawCaptionLanes(clip: clip)
             drawLanes(rows: rows, clip: clip)
             drawPlayheadLine(clip: clip)
             NSGraphicsContext.restoreGraphicsState()
         }
         drawToolColumn(dirty: dirtyRect)
+        drawCaptionHeaders(dirty: dirtyRect)
+    }
+
+    private func drawCaptionLanes(clip: CGRect) {
+        let visibleX = CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height)
+        for row in geometry.captionRows(for: timeline) {
+            let laneRect = CGRect(x: clip.minX, y: row.y, width: clip.width, height: row.height)
+            guard laneRect.intersects(clip), let track = timeline.captionTrack(row.track) else { continue }
+            Theme.Colors.lane.setFill()
+            laneRect.fill()
+            Theme.Colors.separator.setFill()
+            CGRect(x: clip.minX, y: row.maxY - 1, width: clip.width, height: 1).fill()
+            for item in track.items {
+                let x0 = geometry.x(for: item.range.start), x1 = geometry.x(for: item.range.end)
+                if x1 < clip.minX { continue }
+                if x0 > clip.maxX { break }
+                ClipDrawing.draw(name: CaptionDrawing.preview(item), rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
+                                 visible: visibleX, style: .caption, isSelected: captionSelection.contains(item.id),
+                                 isOffline: false)
+            }
+        }
+    }
+
+    private func drawCaptionHeaders(dirty: CGRect) {
+        let attrs: [NSAttributedString.Key: Any] = [.font: Theme.Fonts.small, .foregroundColor: Theme.Colors.label2]
+        for row in geometry.captionRows(for: timeline) {
+            let r = CGRect(x: TimelineGeometry.toolColumnWidth, y: row.y, width: TimelineGeometry.headerWidth, height: row.height)
+            guard r.maxY > TimelineGeometry.rulerHeight, r.intersects(dirty) else { continue }
+            Theme.Colors.titlebar.setFill()
+            r.fill()
+            Theme.Colors.separator.setFill()
+            CGRect(x: r.minX, y: r.maxY - 1, width: r.width, height: 1).fill()
+            let name = timeline.captionTrack(row.track)?.name ?? ""
+            NSAttributedString(string: name.isEmpty ? row.label : name, attributes: attrs)
+                .draw(at: CGPoint(x: r.minX + 8, y: r.minY + (r.height - 13) / 2))
+        }
     }
 
     private func drawLanes(rows: [TrackRow], clip: CGRect) {

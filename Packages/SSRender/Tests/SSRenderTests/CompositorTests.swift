@@ -95,6 +95,14 @@ private func renderAndWait(_ comp: Compositor, _ layers: [RenderLayer], _ f: Seq
     #expect(cb.error == nil)
 }
 
+private func renderAndWait(_ comp: Compositor, _ nodes: [RenderNode], _ f: SequenceFormat, _ t: MTLTexture,
+                           queue: MTLCommandQueue) throws {
+    let cb = queue.makeCommandBuffer()!
+    try comp.render(nodes: nodes, format: f, into: t, commandBuffer: cb)
+    cb.commit(); cb.waitUntilCompleted()
+    #expect(cb.error == nil)
+}
+
 private func pixel(_ t: MTLTexture, _ x: Int, _ y: Int) -> [Double] {
     var px = [Float16](repeating: 0, count: 4)
     t.getBytes(&px, bytesPerRow: 8, from: MTLRegionMake2D(x, y, 1, 1), mipmapLevel: 0)
@@ -232,7 +240,7 @@ private func setup() -> (MTLDevice, MTLCommandQueue, Compositor)? {
 @Test func emptyLayersAreBlack() throws {
     guard let (dev, q, comp) = setup() else { return }
     let t = makeTarget(dev, 8, 8)
-    try renderAndWait(comp, [], format(8, 8), t, queue: q)
+    try renderAndWait(comp, [RenderLayer](), format(8, 8), t, queue: q)
     near(pixel(t, 4, 4), [0, 0, 0])
 }
 
@@ -323,4 +331,102 @@ private func setup() -> (MTLDevice, MTLCommandQueue, Compositor)? {
     } }
     #expect(intermediate > 20, "expected antialiased diagonal edge pixels, got \(intermediate)")
     near(pixel(t, 32, 32), [1, 0, 0], 1.0 / 255, "centre")
+}
+
+// MARK: Nested sequence groups
+
+private func solid(_ bgra: (UInt8, UInt8, UInt8, UInt8), transform: ClipTransform = .identity) -> RenderLayer {
+    RenderLayer(content: .frame(makeBGRA(64, 64, bgra), colorHint: hint()), transform: transform)
+}
+private let blue: (UInt8, UInt8, UInt8, UInt8) = (255, 0, 0, 255)
+private let green: (UInt8, UInt8, UInt8, UInt8) = (0, 255, 0, 255)
+private let red: (UInt8, UInt8, UInt8, UInt8) = (0, 0, 255, 255)
+
+private func group(_ children: [RenderNode], transform: ClipTransform = .identity, opacity: Double = 1,
+                   cornerRadius: Double = 0) -> RenderNode {
+    .group(format: format(64, 64), transform: transform, opacity: opacity, cornerRadius: cornerRadius, children: children)
+}
+
+@Test func nestedGroupOpacityAppliesToWholeImage() throws {
+    guard let (dev, q, comp) = setup() else { return }
+    let f = format(64, 64), t = makeTarget(dev, 64, 64)
+    let half = ClipTransform(scale: Vec2(0.5, 0.5))
+    // Two overlapping opaque inner layers (red full-size, blue scaled to 16..48) under one group opacity of 0.5.
+    let nodes: [RenderNode] = [
+        .layer(solid(green)),
+        group([.layer(solid(red)), .layer(solid(blue, transform: half))], opacity: 0.5),
+    ]
+    try renderAndWait(comp, nodes, f, t, queue: q)
+    near(pixel(t, 32, 32), [0, 0.5, 0.5], 2.0 / 255, "overlap: blue covers red, then one 0.5 over green")
+    near(pixel(t, 4, 32), [0.5, 0.5, 0], 2.0 / 255, "red only")
+}
+
+@Test func groupOutsideInnerContentIsTransparent() throws {
+    guard let (dev, q, comp) = setup() else { return }
+    let f = format(64, 64), t = makeTarget(dev, 64, 64)
+    let half = ClipTransform(scale: Vec2(0.5, 0.5))
+    try renderAndWait(comp, [.layer(solid(green)), group([.layer(solid(blue, transform: half))], opacity: 0.5)], f, t, queue: q)
+    near(pixel(t, 32, 32), [0, 0.5, 0.5], 2.0 / 255, "inside")
+    near(pixel(t, 4, 4), [0, 1, 0], 1.0 / 255, "outside inner layer shows below untouched")
+}
+
+@Test func twoLevelNesting() throws {
+    guard let (dev, q, comp) = setup() else { return }
+    let f = format(64, 64), t = makeTarget(dev, 64, 64)
+    let half = ClipTransform(scale: Vec2(0.5, 0.5))
+    let outer = group([group([.layer(solid(red))], transform: half)], transform: half)
+    try renderAndWait(comp, [.layer(solid(green)), outer], f, t, queue: q)
+    near(pixel(t, 32, 32), [1, 0, 0], 1.0 / 255, "centre")
+    near(pixel(t, 26, 26), [1, 0, 0], 1.0 / 255, "inside 24..40")
+    near(pixel(t, 20, 32), [0, 1, 0], 1.0 / 255, "outside 24..40")
+}
+
+@Test func groupCornerRadiusClipsInnerContent() throws {
+    guard let (dev, q, comp) = setup() else { return }
+    let f = format(64, 64), t = makeTarget(dev, 64, 64)
+    try renderAndWait(comp, [.layer(solid(green)), group([.layer(solid(red))], cornerRadius: 32)], f, t, queue: q)
+    near(pixel(t, 32, 32), [1, 0, 0], 1.0 / 255, "centre")
+    near(pixel(t, 1, 1), [0, 1, 0], 1.0 / 255, "clipped corner shows below")
+    near(pixel(t, 32, 1), [1, 0, 0], 2.0 / 255, "edge midpoint inside")
+}
+
+@Test func pooledGroupTexturesDoNotAlias() throws {
+    guard let (dev, q, comp) = setup() else { return }
+    let f = format(64, 64), t = makeTarget(dev, 64, 64)
+    let left = ClipTransform(position: Vec2(-16, 0), scale: Vec2(0.5, 0.5))
+    let right = ClipTransform(position: Vec2(16, 0), scale: Vec2(0.5, 0.5))
+    func frame(_ a: (UInt8, UInt8, UInt8, UInt8), _ b: (UInt8, UInt8, UInt8, UInt8)) -> [RenderNode] {
+        [group([.layer(solid(a))], transform: left), group([group([.layer(solid(b))])], transform: right)]
+    }
+    try renderAndWait(comp, frame(red, blue), f, t, queue: q)
+    near(pixel(t, 16, 32), [1, 0, 0], 1.0 / 255, "left red")
+    near(pixel(t, 48, 32), [0, 0, 1], 1.0 / 255, "right blue")
+    // Second frame reuses pooled textures from the first: no stale content, siblings stay distinct.
+    try renderAndWait(comp, frame(blue, green), f, t, queue: q)
+    near(pixel(t, 16, 32), [0, 0, 1], 1.0 / 255, "left now blue")
+    near(pixel(t, 48, 32), [0, 1, 0], 1.0 / 255, "right now green")
+}
+
+@Test func renderTreeFromLayerRequests() {
+    func req(_ groups: [LayerGroup]) -> LayerRequest {
+        LayerRequest(clip: Clip.ID(), media: UUID(), track: Track.ID(), sourceTime: Time(0, 1), groups: groups)
+    }
+    let fmt = format(64, 64)
+    func g(_ o: Double) -> LayerGroup {
+        LayerGroup(clip: Clip.ID(), track: Track.ID(), sequence: Timeline.ID(), format: fmt,
+                   transform: ClipTransform(opacity: o), cornerRadius: 5)
+    }
+    let gA = g(0.5), gB = g(0.25), gInner = g(1)
+    let layers = (0..<6).map { _ in solid(red) }
+    let reqs = [req([]), req([gA, gInner]), req([gA, gInner]), req([gA]), req([gB]), req([])]
+    let tree = RenderNode.tree(requests: reqs, layers: layers)
+    #expect(tree.count == 4)   // layer, groupA, groupB, layer
+    guard case .group(_, let tA, let oA, let rA, let kids) = tree[1] else { Issue.record("expected group"); return }
+    #expect(oA == 0.5 && tA.opacity == 1 && rA == 5)
+    #expect(kids.count == 2)
+    guard case .group(_, _, _, _, let inner) = kids[0] else { Issue.record("expected inner group"); return }
+    #expect(inner.count == 2)
+    guard case .layer = kids[1] else { Issue.record("expected layer"); return }
+    guard case .group(_, _, let oB, _, let bk) = tree[2] else { Issue.record("expected group B"); return }
+    #expect(oB == 0.25 && bk.count == 1)
 }

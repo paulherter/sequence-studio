@@ -67,6 +67,9 @@ public enum TimelineEdit: Sendable, Equatable {
     case slip(Clip.ID, by: Time)
     case slide(Clip.ID, by: Time)
     case addEdit(at: Time, tracks: [Track.ID]?)
+    case moveCaption(CaptionItem.ID, to: Time)
+    case trimCaption(CaptionItem.ID, edge: ClipEdge, to: Time)
+    case deleteCaption(CaptionItem.ID)
 
     public func apply(to t: inout Timeline) throws {
         switch self {
@@ -81,6 +84,9 @@ public enum TimelineEdit: Sendable, Equatable {
         case let .slip(id, d): try t.slip(id, by: d)
         case let .slide(id, d): try t.slide(id, by: d)
         case let .addEdit(at, ids): _ = try t.addEdit(at: at, tracks: ids)
+        case let .moveCaption(id, start): try t.moveCaption(id, to: start)
+        case let .trimCaption(id, edge, time): try t.trimCaption(id, edge: edge, to: time)
+        case .deleteCaption(let id): try t.deleteCaption(id)
         }
     }
 
@@ -98,4 +104,6 @@ public struct TimelineCommit: Sendable, Equatable {
     public var edits: [TimelineEdit]
     public var undoName: String
     public var selection: Set<Clip.ID>
+    /// Selected caption items after the gesture.
+    public var captionSelection: Set<CaptionItem.ID> = []
 }

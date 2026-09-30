@@ -6,7 +6,9 @@ cd "$(dirname "$0")/../Packages" || exit 1
 pkgs=("$@"); [ ${#pkgs[@]} -eq 0 ] && pkgs=(SS*)
 rc=0
 for p in "${pkgs[@]}"; do
-  out=$(cd "$p" && /usr/bin/swift test 2>&1); s=$?
+  # SSMedia runs serially: its AVAssetReader/Writer tests block cooperative-pool threads and deadlock when run in parallel.
+  extra=(); [ "$p" = SSMedia ] && extra=(--no-parallel)
+  out=$(cd "$p" && /usr/bin/swift test "${extra[@]}" 2>&1); s=$?
   if [ $s -ne 0 ]; then
     rc=$s; echo "== $p FAILED"
     echo "$out" | grep -E "error:|✘|Fatal error|failed" | cut -c1-200 | sort -u | head -30

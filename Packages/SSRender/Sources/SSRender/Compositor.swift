@@ -33,6 +33,42 @@ public struct RenderLayer: @unchecked Sendable {
     }
 }
 
+/// Tree form of a display frame: a leaf layer, or a nested-sequence group whose children are composited offscreen
+/// (transparent background, `format` size, rgba16Float premultiplied) and then drawn like a layer, aspect-fitted into
+/// the parent canvas, with the group's `transform` (anchor/scale/rotation/position in the parent's px),
+/// `opacity` (applied once to the whole image) and `cornerRadius` (in the group image's own px, before the scale).
+public indirect enum RenderNode: @unchecked Sendable {
+    case layer(RenderLayer)
+    case group(format: SequenceFormat, transform: ClipTransform, opacity: Double, cornerRadius: Double, children: [RenderNode])
+
+    /// Builds the tree from flat `LayerRequest`s (bottom -> top) and their prepared layers (`layers[i]` belongs to
+    /// `requests[i]`). Consecutive layers sharing the same `groups` prefix (same nested clip) form one group,
+    /// recursively. The group node's `opacity` is the nested clip's `transform.opacity`; its `transform.opacity` is 1.
+    public static func tree(requests: [LayerRequest], layers: [RenderLayer]) -> [RenderNode] {
+        precondition(requests.count == layers.count, "requests and layers must match")
+        return build(Array(zip(requests, layers)), depth: 0)
+    }
+
+    private static func build(_ items: [(LayerRequest, RenderLayer)], depth: Int) -> [RenderNode] {
+        var out: [RenderNode] = []
+        var i = 0
+        while i < items.count {
+            let (req, layer) = items[i]
+            guard req.groups.count > depth else { out.append(.layer(layer)); i += 1; continue }
+            let g = req.groups[depth]
+            var j = i + 1
+            while j < items.count, items[j].0.groups.count > depth, items[j].0.groups[depth].clip == g.clip { j += 1 }
+            var t = g.transform
+            let opacity = t.opacity
+            t.opacity = 1
+            out.append(.group(format: g.format, transform: t, opacity: opacity, cornerRadius: g.cornerRadius,
+                              children: build(Array(items[i..<j]), depth: depth + 1)))
+            i = j
+        }
+        return out
+    }
+}
+
 public enum CompositorError: Error, Sendable {
     case shaderCompilation(String)
     case missingFunction(String)
@@ -138,7 +174,7 @@ public final class Compositor: @unchecked Sendable {
         }
         queueLock.unlock()
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
-        d.usage = [.shaderRead, .shaderWrite]
+        d.usage = [.shaderRead, .shaderWrite, .renderTarget]
         d.storageMode = .private
         return device.makeTexture(descriptor: d)
     }
@@ -187,14 +223,70 @@ public final class Compositor: @unchecked Sendable {
     /// `.renderTarget` usage. The caller commits `commandBuffer`; resources are retained until it completes.
     public func render(_ layers: [RenderLayer], format: SequenceFormat, into target: MTLTexture,
                        commandBuffer: MTLCommandBuffer) throws {
+        try render(nodes: layers.map { .layer($0) }, format: format, into: target, commandBuffer: commandBuffer)
+    }
+
+    /// Tree variant: groups are composited recursively into pooled offscreen textures that stay reserved until the
+    /// command buffer completes (so no in-flight texture is ever reused), then returned to the pool.
+    public func render(nodes: [RenderNode], format: SequenceFormat, into target: MTLTexture,
+                       commandBuffer: MTLCommandBuffer) throws {
         guard target.pixelFormat == .rgba16Float else { throw CompositorError.invalidTarget("pixel format must be rgba16Float") }
         guard target.usage.contains(.renderTarget) else { throw CompositorError.invalidTarget("needs .renderTarget usage") }
         guard target.width == format.width, target.height == format.height else {
             throw CompositorError.invalidTarget("size \(target.width)x\(target.height) != sequence \(format.width)x\(format.height)")
         }
         let retainer = Retainer()
+        try encode(nodes, format: format, into: target, commandBuffer: commandBuffer, retainer: retainer,
+                   clear: MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1))
+        let pooled = retainer.pooled
+        commandBuffer.addCompletedHandler { [weak self] _ in
+            self?.release(pooled)
+            _ = retainer
+        }
+    }
+
+    private func encode(_ nodes: [RenderNode], format: SequenceFormat, into target: MTLTexture, commandBuffer: MTLCommandBuffer,
+                        retainer: Retainer, clear: MTLClearColor) throws {
         var prepared: [Prepared] = []
-        for layer in layers {
+        for node in nodes {
+            switch node {
+            case .layer(let layer):
+                prepareLayer(layer, format: format, commandBuffer: commandBuffer, retainer: retainer, into: &prepared)
+            case .group(let gf, let transform, let opacity, let radius, let children):
+                guard let tex = acquireIntermediate(width: gf.width, height: gf.height) else {
+                    throw CompositorError.resourceAllocation
+                }
+                retainer.pooled.append(tex)
+                try encode(children, format: gf, into: tex, commandBuffer: commandBuffer, retainer: retainer,
+                           clear: MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0))
+                var u = Uniforms()
+                u.mode = 3
+                geometry(&u, transform: transform, canvas: format,
+                         size: Self.fitSize(gf.width, gf.height, canvas: format.width, format.height), cornerRadius: radius)
+                u.opacity = Float(min(1, max(0, transform.opacity * opacity)))
+                prepared.append(Prepared(u: u, tex0: tex, tex1: dummy))
+            }
+        }
+        let pass = MTLRenderPassDescriptor()
+        pass.colorAttachments[0].texture = target
+        pass.colorAttachments[0].loadAction = .clear
+        pass.colorAttachments[0].storeAction = .store
+        pass.colorAttachments[0].clearColor = clear
+        guard let enc = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { throw CompositorError.resourceAllocation }
+        enc.setRenderPipelineState(renderPipeline)
+        enc.setCullMode(.none)
+        for var p in prepared {
+            enc.setVertexBytes(&p.u, length: MemoryLayout<Uniforms>.stride, index: 0)
+            enc.setFragmentBytes(&p.u, length: MemoryLayout<Uniforms>.stride, index: 0)
+            enc.setFragmentTexture(p.tex0, index: 0)
+            enc.setFragmentTexture(p.tex1, index: 1)
+            enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+        }
+        enc.endEncoding()
+    }
+
+    private func prepareLayer(_ layer: RenderLayer, format: SequenceFormat, commandBuffer: MTLCommandBuffer,
+                              retainer: Retainer, into prepared: inout [Prepared]) {
             var u = Uniforms()
             switch layer.content {
             case .placeholder(let kind):
@@ -209,7 +301,7 @@ public final class Compositor: @unchecked Sendable {
                     geometry(&u, transform: layer.transform, canvas: format,
                              size: SIMD2(Float(format.width), Float(format.height)), cornerRadius: layer.cornerRadius)
                     prepared.append(Prepared(u: u, tex0: dummy, tex1: dummy))
-                    continue
+                    return
                 }
                 let w = CVPixelBufferGetWidth(pb), h = CVPixelBufferGetHeight(pb)
                 guard let t0 = planeTexture(pb, plane: 0, format: info.yFormat, retainer: retainer),
@@ -220,7 +312,7 @@ public final class Compositor: @unchecked Sendable {
                     geometry(&u, transform: layer.transform, canvas: format,
                              size: SIMD2(Float(format.width), Float(format.height)), cornerRadius: layer.cornerRadius)
                     prepared.append(Prepared(u: u, tex0: dummy, tex1: dummy))
-                    continue
+                    return
                 }
                 let t1 = info.layout == .bgra8 ? dummy : CVMetalTextureGetTexture(retainer.textures.last!)!
                 u.mode = info.layout == .bgra8 ? 1 : 0
@@ -249,27 +341,5 @@ public final class Compositor: @unchecked Sendable {
                 }
                 prepared.append(p)
             }
-        }
-        let pass = MTLRenderPassDescriptor()
-        pass.colorAttachments[0].texture = target
-        pass.colorAttachments[0].loadAction = .clear
-        pass.colorAttachments[0].storeAction = .store
-        pass.colorAttachments[0].clearColor = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 1)
-        guard let enc = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { throw CompositorError.resourceAllocation }
-        enc.setRenderPipelineState(renderPipeline)
-        enc.setCullMode(.none)
-        for var p in prepared {
-            enc.setVertexBytes(&p.u, length: MemoryLayout<Uniforms>.stride, index: 0)
-            enc.setFragmentBytes(&p.u, length: MemoryLayout<Uniforms>.stride, index: 0)
-            enc.setFragmentTexture(p.tex0, index: 0)
-            enc.setFragmentTexture(p.tex1, index: 1)
-            enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
-        }
-        enc.endEncoding()
-        let pooled = retainer.pooled
-        commandBuffer.addCompletedHandler { [weak self] _ in
-            self?.release(pooled)
-            _ = retainer
-        }
     }
 }

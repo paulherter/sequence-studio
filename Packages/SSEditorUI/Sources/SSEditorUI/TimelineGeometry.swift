@@ -9,6 +9,11 @@ public enum TimelineHit: Sendable, Hashable {
     case toolColumn
     case header(Track.ID)
     case clip(Clip.ID, zone: ClipZone)
+    /// A caption item on a caption track (same zones as clips: edges trim).
+    case caption(CaptionItem.ID, zone: ClipZone)
+    /// Empty space on a caption track.
+    case captionGap(CaptionTrack.ID, Time)
+    case captionHeader(CaptionTrack.ID)
     /// Empty space on a track; `Time` is the frame-snapped time under the pointer (never negative).
     case gap(Track.ID, Time)
     /// Below the last track row.
@@ -26,6 +31,16 @@ public struct TrackRow: Sendable, Hashable {
     public var maxY: CGFloat { y + height }
 }
 
+/// One laid-out caption track row (above the video rows).
+public struct CaptionRow: Sendable, Hashable {
+    public var track: CaptionTrack.ID
+    /// "C1", "C2", ...
+    public var label: String
+    public var y: CGFloat
+    public var height: CGFloat
+    public var maxY: CGFloat { y + height }
+}
+
 /// Timeline view geometry. Model time is rational (`Time`); `CGFloat` only appears at the view edge.
 ///
 /// View coordinates: origin top-left, y down. Columns: tool column `0..<38`, track headers `38..<162`, content from 162.
@@ -36,6 +51,7 @@ public struct TimelineGeometry: Sendable, Equatable {
     public static let toolColumnWidth = Theme.Metrics.toolColumn
     public static let headerWidth = Theme.Metrics.trackHeader
     public static let contentOriginX = toolColumnWidth + headerWidth
+    public static let captionRowHeight: CGFloat = 22
     public static let maxTrimHandleWidth: CGFloat = 6
     public static let defaultSnapThresholdPoints: CGFloat = 8
     /// Resolution of un-snapped times and thresholds (1 microsecond).
@@ -99,6 +115,21 @@ public struct TimelineGeometry: Sendable, Equatable {
         }
     }
 
+    /// Caption rows, directly under the ruler (above V tracks), in model order (first track on top).
+    public func captionRows(for timeline: Timeline) -> [CaptionRow] {
+        var y = Self.rulerHeight - scrollY
+        return timeline.captionTracks.enumerated().map { i, t in
+            defer { y += Self.captionRowHeight }
+            return CaptionRow(track: t.id, label: "C\(i + 1)", y: y, height: Self.captionRowHeight)
+        }
+    }
+
+    /// Total height of all caption rows.
+    public func captionHeight(for timeline: Timeline) -> CGFloat {
+        CGFloat(timeline.captionTracks.count) * Self.captionRowHeight
+    }
+
+    /// Media track rows; they start below the caption rows.
     public func rows(for timeline: Timeline) -> [TrackRow] {
         var entries: [(Track, String, Int)] = []   // track, label, indexInKind
         var v = 0, a = 0
@@ -110,7 +141,7 @@ public struct TimelineGeometry: Sendable, Equatable {
             }
         }
         entries = video.reversed() + audio
-        var y = Self.rulerHeight - scrollY
+        var y = Self.rulerHeight - scrollY + captionHeight(for: timeline)
         return entries.map { t, label, idx in
             let h = heightOverrides[t.id] ?? Self.defaultHeight(kind: t.kind, indexInKind: idx)
             defer { y += h }
@@ -120,7 +151,7 @@ public struct TimelineGeometry: Sendable, Equatable {
 
     /// Total content height (ruler plus all rows, ignoring scroll).
     public func contentHeight(for timeline: Timeline) -> CGFloat {
-        rows(for: timeline).reduce(Self.rulerHeight) { $0 + $1.height }
+        rows(for: timeline).reduce(Self.rulerHeight + captionHeight(for: timeline)) { $0 + $1.height }
     }
 
     // MARK: Trim handles
@@ -137,6 +168,18 @@ public struct TimelineGeometry: Sendable, Equatable {
     public func hitTest(_ point: CGPoint, in timeline: Timeline) -> TimelineHit {
         if point.y < Self.rulerHeight { return point.x < Self.toolColumnWidth ? .toolColumn : .ruler }
         if point.x < Self.toolColumnWidth { return .toolColumn }
+        if let crow = captionRows(for: timeline).first(where: { point.y >= $0.y && point.y < $0.maxY }),
+           let ctrack = timeline.captionTrack(crow.track) {
+            if point.x < Self.contentOriginX { return .captionHeader(ctrack.id) }
+            for item in ctrack.items {
+                let x0 = x(for: item.range.start), x1 = x(for: item.range.end)
+                guard point.x >= x0 && point.x < x1 else { continue }
+                let h = Self.trimHandleWidth(forClipWidth: x1 - x0)
+                let zone: ClipZone = point.x < x0 + h ? .head : (point.x >= x1 - h ? .tail : .body)
+                return .caption(item.id, zone: zone)
+            }
+            return .captionGap(ctrack.id, max(time(atX: point.x), .zero))
+        }
         guard let row = rows(for: timeline).first(where: { point.y >= $0.y && point.y < $0.maxY }),
               let track = timeline.track(row.track) else { return .none }
         if point.x < Self.contentOriginX { return .header(track.id) }

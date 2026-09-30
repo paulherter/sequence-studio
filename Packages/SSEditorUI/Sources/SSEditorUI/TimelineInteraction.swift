@@ -18,6 +18,8 @@ public struct TimelineInteraction: Sendable {
     public var markers: [Time] = []
 
     public private(set) var selection: Set<Clip.ID> = []
+    /// Selected caption items (separate from clips; a click on one kind clears the other).
+    public private(set) var captionSelection: Set<CaptionItem.ID> = []
     /// What the view should draw: `timeline` with the in-flight gesture applied.
     public private(set) var preview: Timeline
     /// Edits of the in-flight gesture.
@@ -29,16 +31,19 @@ public struct TimelineInteraction: Sendable {
     public private(set) var marquee: CGRect?
     /// The last drag position was refused by SSCore (locked track, collision...). Nothing will be committed.
     public private(set) var isRejected = false
+    /// Why the last command (nest, ...) was refused; nil otherwise. Cleared by the next mouse down / cancel.
+    public private(set) var rejectionMessage: String?
 
     /// Pixels the pointer must travel before a press becomes a drag.
     public static let dragThreshold: CGFloat = 3
 
     private struct Gesture {
-        enum Kind { case click, marquee, move, trim, rippleTrim, roll, slip, slide, razor, hand }
+        enum Kind { case click, marquee, move, captionMove, captionTrim, trim, rippleTrim, roll, slip, slide, razor, hand }
         var kind: Kind
         var downPoint: CGPoint
         var downTime: Time
         var clip: Clip.ID?
+        var caption: CaptionItem.ID?
         var edge: ClipEdge = .tail
         var active = false
         var newTrack: Track?
@@ -60,9 +65,23 @@ public struct TimelineInteraction: Sendable {
         cancel()
         let alive = Set(timeline.tracks.flatMap(\.clips).map(\.id))
         selection.formIntersection(alive)
+        let aliveCaptions = Set(timeline.captionTracks.flatMap(\.items).map(\.id))
+        captionSelection.formIntersection(aliveCaptions)
     }
 
     public mutating func setSelection(_ ids: Set<Clip.ID>) { selection = ids }
+    public mutating func setCaptionSelection(_ ids: Set<CaptionItem.ID>) { captionSelection = ids }
+
+    /// Caption item under a view point (for double-click to edit text), nil elsewhere.
+    public func captionItem(at p: CGPoint) -> CaptionItem.ID? {
+        if case .caption(let id, _) = geometry.hitTest(p, in: timeline) { return id }
+        return nil
+    }
+
+    private func captionItem(_ id: CaptionItem.ID) -> CaptionItem? {
+        for t in timeline.captionTracks { if let i = t.item(id) { return i } }
+        return nil
+    }
 
     public mutating func cancel() {
         gesture = nil
@@ -72,6 +91,7 @@ public struct TimelineInteraction: Sendable {
         snapTime = nil
         marquee = nil
         isRejected = false
+        rejectionMessage = nil
     }
 
     // MARK: Lookup helpers
@@ -121,8 +141,21 @@ public struct TimelineInteraction: Sendable {
         }
 
         switch (tool, hit) {
+        case (.selection, .caption(let id, let zone)):
+            g.caption = id
+            g.kind = zone == .body ? .captionMove : .captionTrim
+            g.edge = zone == .head ? .head : .tail
+            selection = []
+            if m.contains(.shift) && zone == .body {
+                if captionSelection.contains(id) { captionSelection.remove(id) } else { captionSelection.insert(id) }
+            } else if !captionSelection.contains(id) { captionSelection = [id] }
+        case (.selection, .captionGap), (.selection, .captionHeader):
+            if !m.contains(.shift) { selection = []; captionSelection = [] }
+            g.kind = .marquee
+            g.baseSelection = selection
         case (.selection, .clip(let id, let zone)):
             g.clip = id
+            if !m.contains(.shift) { captionSelection = [] }
             let grp = group(id, linked: linked(m))
             if zone != .body {
                 g.kind = .trim
@@ -135,7 +168,7 @@ public struct TimelineInteraction: Sendable {
                 if selection.contains(id) { g.reduceTo = grp } else { selection = grp }
             }
         case (.selection, .gap), (.selection, .none):
-            if !m.contains(.shift) { selection = [] }
+            if !m.contains(.shift) { selection = []; captionSelection = [] }
             g.kind = .marquee
             g.baseSelection = selection
         case (.trackSelectForward, .clip(let id, _)):
@@ -177,6 +210,8 @@ public struct TimelineInteraction: Sendable {
             geometry.scrollY = max(0, g.scrollOrigin.y - (p.y - g.downPoint.y))
         case .marquee: updateMarquee(to: p, modifiers: m)
         case .move: updateMove(p, modifiers: m)
+        case .captionMove: updateCaptionMove(p)
+        case .captionTrim: updateCaptionTrim(p)
         case .trim, .rippleTrim: updateTrim(p)
         case .roll: updateRoll(p)
         case .slip: updateSlip(p)
@@ -200,10 +235,12 @@ public struct TimelineInteraction: Sendable {
         }
         if !g.active, let r = g.reduceTo { selection = r }
         guard g.active, !isRejected, !pendingEdits.isEmpty, let name = pendingUndoName, preview != timeline else { return nil }
-        let commit = TimelineCommit(timeline: preview, edits: pendingEdits, undoName: name, selection: selection)
+        let commit = TimelineCommit(timeline: preview, edits: pendingEdits, undoName: name, selection: selection,
+                                    captionSelection: captionSelection)
         timeline = preview
         let alive = Set(timeline.tracks.flatMap(\.clips).map(\.id))
         selection.formIntersection(alive)
+        captionSelection.formIntersection(Set(timeline.captionTracks.flatMap(\.items).map(\.id)))
         return commit
     }
 
@@ -211,16 +248,89 @@ public struct TimelineInteraction: Sendable {
 
     /// Delete (lift, leaves a gap) or Shift+Delete (ripple). One commit; selection is cleared.
     public mutating func deleteSelection(ripple: Bool) -> TimelineCommit? {
-        guard gesture == nil, !selection.isEmpty else { return nil }
-        let ids = Array(selection)
-        let edits: [TimelineEdit] = [ripple ? .rippleDelete(ids) : .lift(ids)]
+        guard gesture == nil, !selection.isEmpty || !captionSelection.isEmpty else { return nil }
+        var edits: [TimelineEdit] = []
+        if !selection.isEmpty { let ids = Array(selection); edits.append(ripple ? .rippleDelete(ids) : .lift(ids)) }
+        edits += captionSelection.sorted { $0.uuidString < $1.uuidString }.map { .deleteCaption($0) }
         guard let out = try? TimelineEdit.apply(edits, to: timeline) else { return nil }
-        let commit = TimelineCommit(timeline: out, edits: edits, undoName: ripple ? "Ripple Delete" : "Delete",
+        let commit = TimelineCommit(timeline: out, edits: edits, undoName: ripple && !selection.isEmpty ? "Ripple Delete" : "Delete",
                                     selection: [])
         timeline = out
         preview = out
         selection = []
+        captionSelection = []
         return commit
+    }
+
+    // MARK: Context menu
+
+    /// Right-click: a clip or caption under the pointer that is not selected becomes the selection (its linked
+    /// group for clips); a click on a selected item keeps the selection; empty space keeps everything.
+    public mutating func contextSelect(at p: CGPoint, modifiers m: GestureModifiers = []) {
+        guard gesture == nil else { return }
+        switch geometry.hitTest(p, in: timeline) {
+        case .clip(let id, _):
+            captionSelection = []
+            if !selection.contains(id) { selection = group(id, linked: linked(m)) }
+        case .caption(let id, _):
+            selection = []
+            if !captionSelection.contains(id) { captionSelection = [id] }
+        default: break
+        }
+    }
+
+    // MARK: Nest
+
+    /// Result of `nest(name:in:)`: the edited project, the commit for the outer timeline and the new sequence.
+    public struct NestResult: Sendable, Equatable {
+        public var project: Project
+        public var commit: TimelineCommit
+        public var sequence: Timeline.ID
+    }
+
+    /// Premiere "Nest": replaces the selected clips with one nested clip (`Project.nest`). Needs the whole project
+    /// because a new sequence is added. An empty or blank name uses "Nested Sequence NN". Nothing selected, or an
+    /// SSCore error (locked track, collision...), returns nil and sets `isRejected` + `rejectionMessage`.
+    /// The commit's `edits` are empty: a nest is not replayable as a timeline edit, undo with `project` snapshots.
+    public mutating func nest(name: String, in project: Project) -> NestResult? {
+        guard gesture == nil else { return nil }
+        rejectionMessage = nil
+        isRejected = false
+        guard !selection.isEmpty else { return reject("Select clips to nest.") }
+        let trimmed = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        var p = project
+        let seq: Timeline.ID
+        do {
+            seq = try p.nest(clips: Array(selection), in: timeline.id, name: trimmed.isEmpty ? nil : trimmed)
+        } catch {
+            return reject(Self.message(for: error))
+        }
+        guard let out = p.timeline(timeline.id) else { return reject("Sequence not found.") }
+        let newClips = Set(out.tracks.flatMap(\.clips).filter { $0.sequence == seq }.map(\.id))
+        let commit = TimelineCommit(timeline: out, edits: [], undoName: "Nest", selection: newClips)
+        timeline = out
+        preview = out
+        selection = newClips
+        captionSelection = []
+        return NestResult(project: p, commit: commit, sequence: seq)
+    }
+
+    private mutating func reject(_ message: String) -> NestResult? {
+        isRejected = true
+        rejectionMessage = message
+        return nil
+    }
+
+    static func message(for error: Error) -> String {
+        switch error as? EditError {
+        case .trackLocked: "A selected clip is on a locked track."
+        case .collision: "Another clip is in the way on the target track."
+        case .nestingCycle: "A sequence cannot contain itself."
+        case .clipNotFound, .timelineNotFound: "The selected clips no longer exist."
+        case .emptyClip: "Nothing to nest."
+        case .wrongTrackKind: "Clips do not fit that track."
+        case nil: "Nest failed."
+        }
     }
 
     // MARK: Selection tools
@@ -351,6 +461,28 @@ public struct TimelineInteraction: Sendable {
             if d != .zero || dest != nil { moves.append(.move(c.id, to: c.start + d, track: dest)) }
         }
         publish(moves.isEmpty ? [] : edits + moves, groupCount > 1 ? "Move Clips" : "Move Clip")
+    }
+
+    // MARK: Captions
+
+    private mutating func updateCaptionMove(_ p: CGPoint) {
+        guard let g = gesture, let id = g.caption, let item = captionItem(id) else { return }
+        var d = travel(p, g)
+        snapTime = nil
+        if toolState.snapping {
+            let r = snapMove(start: item.range.start + d, duration: item.range.duration, to: snapPoints(excluding: []),
+                             threshold: geometry.snapThreshold(), frameDuration: geometry.frameDuration)
+            d += r.delta
+            snapTime = r.hit?.time
+        }
+        publish(d == .zero ? [] : [.moveCaption(id, to: max(item.range.start + d, .zero))], "Move Caption")
+    }
+
+    private mutating func updateCaptionTrim(_ p: CGPoint) {
+        guard let g = gesture, let id = g.caption, let item = captionItem(id) else { return }
+        let edgeTime = g.edge == .head ? item.range.start : item.range.end
+        let d = snappedDelta(travel(p, g), from: edgeTime, excluding: [])
+        publish(d == .zero ? [] : [.trimCaption(id, edge: g.edge, to: edgeTime + d)], "Trim Caption")
     }
 
     // MARK: Trim / ripple / roll / slip / slide

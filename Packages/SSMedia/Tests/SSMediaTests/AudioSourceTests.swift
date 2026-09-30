@@ -34,7 +34,7 @@ private func clickPositions(_ a: [Float], base: Int64 = 0, threshold: Float = 0.
         // One sequential pass over 3 s in odd-sized reads (crosses 1 s block seams).
         var found: [Int64] = []
         var pos: Int64 = 0
-        while true {
+        for _ in 0..<100 {                            // bounded: 3 s is ~21 reads
             let a = try readAll(src, from: pos, count: 7_001, channel: 0)
             if a.isEmpty { break }
             found += clickPositions(a, base: pos)
@@ -88,7 +88,10 @@ private func clickPositions(_ a: [Float], base: Int64 = 0, threshold: Float = 0.
         let url = try await TestClipWriter.write(spec)
         let src = try await AssetAudioSource.open(url: url, sampleRate: 48_000)
         var pos: Int64 = 0
-        while try readAll(src, from: pos, count: 4_800, channel: 0).count == 4_800 { pos += 4_800 }   // evicts early blocks
+        for _ in 0..<200 {                             // bounded: 8 s is ~80 reads
+            guard try readAll(src, from: pos, count: 4_800, channel: 0).count == 4_800 else { break }
+            pos += 4_800                               // evicts early blocks
+        }
         let a = try readAll(src, from: 59_990, count: 20, channel: 0)
         #expect(a.count == 20)
         #expect(clickPositions(a, base: 59_990) == [60_000])
@@ -103,5 +106,35 @@ private func clickPositions(_ a: [Float], base: Int64 = 0, threshold: Float = 0.
         #expect(try readAll(src, from: 127_990, count: 100, channel: 0).count == 10)
         #expect(try readAll(src, from: 200_000, count: 100, channel: 0).isEmpty)
         #expect(try readAll(src, from: 127_990, count: 100, channel: 0).count == 10)
+    }
+
+    @Test func readingPastTheEndReturnsZeroAndTerminates() async throws {
+        var spec = TestClipSpec()
+        spec.frameCount = 60                           // 2 s
+        spec.audioClicks = [CMTime(value: 1, timescale: 2)]
+        let url = try await TestClipWriter.write(spec)
+        for rate in [48_000, 96_000] {                 // 96 kHz exercises the resampler tail
+            let src = try await AssetAudioSource.open(url: url, sampleRate: rate)
+            var pos: Int64 = 0
+            var reads = 0
+            // Drain in fixed reads; a read of 0 is the end of the stream and must end the loop.
+            while reads < 1_000 {
+                let n = try readAll(src, from: pos, count: 4_096, channel: 0).count
+                reads += 1
+                if n == 0 { break }
+                pos += Int64(n)
+            }
+            #expect(reads < 1_000, "drain did not terminate at \(rate) Hz")
+            #expect(abs(pos - Int64(2 * rate)) <= Int64(rate / 10), "length \(pos) at \(rate) Hz")
+            // Past the end stays 0, repeatedly, on both channels, and a read back inside still works.
+            for _ in 0..<3 {
+                #expect(try readAll(src, from: pos, count: 100, channel: 0).isEmpty)
+                #expect(try readAll(src, from: pos + 10_000, count: 100, channel: 1).isEmpty)
+            }
+            #expect(try readAll(src, from: 0, count: 100, channel: 0).count == 100)
+        }
+        let mem = MemoryAudioSource(mono: [1, 2, 3])
+        #expect(try readAll(mem, from: 3, count: 8, channel: 0).isEmpty)
+        #expect(try readAll(mem, from: 1_000, count: 8, channel: 1).isEmpty)
     }
 }

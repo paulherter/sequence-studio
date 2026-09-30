@@ -15,7 +15,7 @@ enum CompositorShaderSource {
         float2 anchor;       // offset from layer centre, px
         float2 scale;
         float rotCos, rotSin, opacity;
-        uint mode;           // 0 = YCbCr bi-planar, 1 = RGB texture, 2 = solid
+        uint mode;           // 0 = YCbCr bi-planar, 1 = RGB texture, 2 = solid, 3 = premultiplied RGBA group image (linear)
         uint linearize;      // 1 = apply inverse BT.709 OETF (no colour stage)
         float cornerRadius;  // layer-local px (aspect-fitted layer, before transform scale)
     };
@@ -75,6 +75,11 @@ enum CompositorShaderSource {
             cover = clamp(0.5f - d / w, 0.0f, 1.0f);
         }
         float2 uv = in.local / u.size + 0.5f;
+        if (u.mode == 3) {
+            float4 g = ty.sample(linearSampler, uv);   // premultiplied, already working-linear
+            float k = u.opacity * cover;
+            return g * k;
+        }
         float3 rgb = u.mode == 2 ? u.solid.rgb : sourceEncoded(u, ty, tc, uv);
         if (u.mode != 2 && u.linearize != 0) rgb = inverseOETF709(rgb);
         rgb = max(rgb, 0.0f);
