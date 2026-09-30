@@ -1,7 +1,7 @@
 # Sequence Studio
 
 Native macOS video editor (Premiere replacement). Plan: `PLAN.md`. Progress + open decisions: `docs/STATUS.md`.
-Decisions log: `docs/DECISIONS.md`. Borrowed code: `docs/THIRD_PARTY.md`.
+Decisions log: `docs/DECISIONS.md`. Engine interfaces: `docs/ARCHITECTURE.md`. Borrowed code: `docs/THIRD_PARTY.md`.
 Never deviate from PLAN.md silently: propose to Paul, record approved changes in docs/DECISIONS.md.
 
 ## Token budget (Claude Max, limits are tight — this matters)
