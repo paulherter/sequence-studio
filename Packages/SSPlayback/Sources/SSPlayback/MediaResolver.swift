@@ -1,11 +1,18 @@
 import Foundation
 import SSMedia
+import SSRender
 
 /// Gives the engine access to a media's demuxer (video) and audio source. Called off the main actor; implementations
 /// should hand out already opened objects (opening an asset may block).
 public protocol MediaResolver: Sendable {
     func demuxer(for media: UUID) throws -> any Demuxing
     func audio(for media: UUID) throws -> any AudioSource
+    /// Per-layer colour pipelines (S-Log3 etc.). nil = every layer is treated as plain Rec.709.
+    var colorResolver: LayerColorResolver? { get }
+}
+
+public extension MediaResolver {
+    var colorResolver: LayerColorResolver? { nil }
 }
 
 public enum MediaResolverError: Error, Sendable, Equatable { case unknownMedia(UUID) }

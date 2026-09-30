@@ -2,7 +2,9 @@ import AppKit
 import SSCore
 
 /// Color inspector panel of the Color page: the colour controls of the selected picture clip.
-/// Not persisted yet: per-clip state lives in a side store until `ColorCorrection` is part of the project model (PHASE3 slice 9).
+/// Edits `Clip.color` through `session.replaceClip` (one undo step per gesture); the Program monitor follows because the
+/// session pushes the timeline to the engine after every edit. The per-clip model only holds UI state (wheels, bypass
+/// restore) and is reloaded from the clip on every session change.
 @MainActor
 public final class ColorInspectorPanelView: NSView {
     public let session: EditorSession
@@ -41,9 +43,14 @@ public final class ColorInspectorPanelView: NSView {
         clipID = clip.flatMap { $0.kind == .audio ? nil : $0.id }
         if let id = clipID, views[id] == nil {
             let model = ColorInspectorModel()
-            model.onChange = { [weak self] _ in self?.onChange?() }
+            model.onGestureBegan = { [weak self] in self?.beginGesture() }
+            model.onGestureEnded = { [weak self] in self?.endGesture() }
+            model.onChange = { [weak self] _ in self?.commit(id) }
             colorModels[id] = model
             views[id] = InspectorScroll(content: ColorInspectorView(model: model))
+        }
+        if let clip, let id = clipID, let model = colorModels[id] {
+            model.load(clip.color, mediaID: clip.media, info: session.media.info(of: clip.media))
         }
         let page = clipID.flatMap { views[$0] }
         if shown !== page {
@@ -53,6 +60,30 @@ public final class ColorInspectorPanelView: NSView {
         }
         emptyLabel.isHidden = page != nil
         needsLayout = true
+    }
+
+    private var gestureDepth = 0
+    private var gestureHasEdit = false
+
+    private func beginGesture() {
+        if gestureDepth == 0 { gestureHasEdit = false }
+        gestureDepth += 1
+    }
+
+    private func endGesture() { gestureDepth = max(gestureDepth - 1, 0) }
+
+    /// Writes the model's settings to the clip. Edits of one gesture merge into one undo step; unchanged values
+    /// (wheels, which are not stored yet) do not create a step.
+    private func commit(_ id: Clip.ID) {
+        guard let model = colorModels[id], var clip = session.activeTimeline?.tracks.lazy.flatMap(\.clips).first(where: { $0.id == id })
+        else { return }
+        let color = model.clipColor()
+        guard color != clip.color else { return }
+        clip.color = color
+        let continuing = gestureDepth > 0 && gestureHasEdit
+        if gestureDepth > 0 { gestureHasEdit = true }
+        session.replaceClip(clip, name: "Color", continuesGesture: continuing)
+        onChange?()
     }
 
     public override func layout() {

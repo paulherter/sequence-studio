@@ -157,6 +157,8 @@ final class RenderLoop: @unchecked Sendable {
         state = Mutex(RenderState())
         let s = makeScheduler(.full)
         state.withLock { $0.scheduler = s; $0.schedulerScale = .full }
+        // A background colour build finished: redraw with the new pipeline.
+        resolver.colorResolver?.setOnWarmed { [weak self] in self?.invalidate() }
     }
 
     // MARK: Decode side
@@ -203,6 +205,7 @@ final class RenderLoop: @unchecked Sendable {
 
     /// Suspends until every posted submission reached the scheduler and nothing is queued or decoding.
     func waitForDecodes() async {
+        await media.resolver.colorResolver?.waitUntilIdle()
         while true {
             let chain = submitChain.withLock { $0 }
             await chain?.value
@@ -224,6 +227,8 @@ final class RenderLoop: @unchecked Sendable {
             s.generation &+= 1
             s.lastJobs = []
         }
+        // Colour pipelines (LUT reads) are built off the render thread, now, so the first frame rarely waits.
+        if let colors = media.resolver.colorResolver { colors.warm(Self.colorLayers(timeline, sequences: sequences)) }
         // Edits may have fixed a damaged/relinked media: forget damage marks and failed jobs.
         media.clearDamaged()
         if let s = state.withLock({ $0.scheduler }) { post(reset: s) }
@@ -404,6 +409,7 @@ final class RenderLoop: @unchecked Sendable {
             width: CVPixelBufferGetWidth(frame.pixelBuffer), height: CVPixelBufferGetHeight(frame.pixelBuffer),
             codec: "", bitDepth: 8, chroma: "4:2:0", nominalFrameDuration: frame.duration, isVariableFrameRate: false)
         return RenderLayer(content: .frame(frame.pixelBuffer, colorHint: info), transform: r.transform,
+                           colorPipeline: media.resolver.colorResolver?.pipeline(for: r.color, media: r.media),
                            cornerRadius: r.cornerRadius)
     }
 
@@ -490,6 +496,22 @@ final class RenderLoop: @unchecked Sendable {
     }
 
     // MARK: Timeline helpers
+
+    /// Every (clip colour, media) of the picture clips, nested sequences included.
+    static func colorLayers(_ tl: Timeline, sequences: [Timeline.ID: Timeline]) -> [(color: ClipColor, media: UUID)] {
+        var out: [(color: ClipColor, media: UUID)] = []
+        var visited = Set<Timeline.ID>()
+        func walk(_ t: Timeline) {
+            guard visited.insert(t.id).inserted else { return }
+            for track in t.tracks where track.kind == .video {
+                for c in track.clips where !c.isGenerator {
+                    if let s = c.sequence { if let inner = sequences[s] { walk(inner) } } else { out.append((c.color, c.media)) }
+                }
+            }
+        }
+        walk(tl)
+        return out
+    }
 
     static func mediaIDs(_ tl: Timeline, sequences: [Timeline.ID: Timeline]) -> [UUID] {
         var out = Set<UUID>()
