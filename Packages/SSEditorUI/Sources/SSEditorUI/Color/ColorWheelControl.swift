@@ -12,6 +12,8 @@ public final class ColorWheelControl: NSControl {
     /// -1…1.
     public var master: Double = 0 { didSet { if master != oldValue { needsDisplay = true } } }
     public var title: String = "" { didSet { needsDisplay = true } }
+    /// false hides the luminance slider (tint wheels).
+    public var showsMaster = true { didSet { needsDisplay = true } }
 
     public var onBegin: ((Part) -> Void)?
     public var onChange: ((Part) -> Void)?
@@ -43,7 +45,7 @@ public final class ColorWheelControl: NSControl {
 
     private var discRect: NSRect {
         let labelH: CGFloat = title.isEmpty ? 0 : 16
-        let availW = bounds.width - Self.sliderWidth - Self.gap
+        let availW = bounds.width - (showsMaster ? Self.sliderWidth + Self.gap : 0)
         let d = max(0, min(availW, bounds.height - labelH))
         return NSRect(x: (availW - d) / 2, y: labelH + (bounds.height - labelH - d) / 2, width: d, height: d)
     }
@@ -97,7 +99,7 @@ public final class ColorWheelControl: NSControl {
         puckPath.lineWidth = 1.5
         puckPath.stroke()
 
-        drawSlider()
+        if showsMaster { drawSlider() }
     }
 
     private func drawSlider() {
@@ -161,7 +163,7 @@ public final class ColorWheelControl: NSControl {
     public override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         window?.makeFirstResponder(self)
-        let inSlider = sliderRect.insetBy(dx: -4, dy: -4).contains(p)
+        let inSlider = showsMaster && sliderRect.insetBy(dx: -4, dy: -4).contains(p)
         let (dx, dy) = local(p)
         let inDisc = hypot(dx, dy) <= radius + Double(Self.puck)
         guard inSlider || inDisc else { return }

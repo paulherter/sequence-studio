@@ -1,5 +1,6 @@
 import Testing
 import simd
+import SSCore
 @testable import SSRender
 
 @Suite struct ColorPipelineTests {
@@ -41,8 +42,7 @@ import simd
     }
 
     @Test func identityConversionLUTReturnsSourceEncoded() {
-        var p = ColorPipeline(source: .sLog3SGamut3Cine)
-        p.conversionLUT = identityLUT3D()
+        let p = ColorPipeline(source: .sLog3SGamut3Cine, conversionLUT: identityLUT3D())
         for v: Float in [0.05, 0.3, 0.488, 0.7, 0.9] {
             let o = Rec709Output.encode(p.process(SIMD3(v, v * 0.8, v * 0.6)))
             #expect(simd_length(o - SIMD3(v, v * 0.8, v * 0.6)) < 1e-5, "v=\(v) o=\(o)")
@@ -54,39 +54,63 @@ import simd
         var t: [SIMD3<Float>] = []
         let n = 17
         for b in 0..<n { for g in 0..<n { for r in 0..<n { t.append(SIMD3<Float>(1, 1, 1) - SIMD3(Float(r), Float(g), Float(b)) / Float(n - 1)) } } }
-        var p = ColorPipeline(source: .sLog3SGamut3Cine)
-        p.conversionLUT = CubeLUT(kind: .lut3D, size: n, table: t)
+        let p = ColorPipeline(source: .sLog3SGamut3Cine, conversionLUT: CubeLUT(kind: .lut3D, size: n, table: t))
         let v: Float = 0.5
         let o = Rec709Output.encode(p.process(SIMD3(repeating: v)))
         #expect(abs(o.x - (1 - v)) < 1e-5)
     }
 
-    @Test func correctionAppliesBeforeConversion() {
-        var p = ColorPipeline(source: .rec709)
-        p.correction.exposure = 1
+    @Test func exposureIsLinearGainBeforeAndAfterTheConversion() {
+        var b = BasicCorrection(); b.exposure = 1
         let lin = TransferFunctions.bt709InverseOETF(0.3)
-        let o = p.process(SIMD3(repeating: 0.3))
-        #expect(abs(o.x - 2 * lin) < 1e-5)
+        for ops in [[ColorOp.basic(b), .conversion(nil)], [.conversion(nil), .basic(b)]] {
+            let o = ColorPipeline(source: .rec709, ops: ops).process(SIMD3(repeating: 0.3))
+            #expect(abs(o.x - 2 * lin) < 1e-5)
+        }
     }
 
-    @Test func creativeIntensity() {
-        var t: [SIMD3<Float>] = []
-        let n = 2
-        for _ in 0..<(n * n * n) { t.append(SIMD3(1, 0, 0)) }  // constant red
-        var p = ColorPipeline(source: .rec709)
-        p.creativeLUT = CubeLUT(kind: .lut3D, size: n, table: t)
+    @Test func conversionIsInsertedWhenMissingAndOnlyTheFirstCounts() {
+        var b = BasicCorrection(); b.exposure = 1
+        let p = ColorPipeline(source: .rec709, ops: [.basic(b)])
+        #expect(p.stages.count == 2)
+        let twice = ColorPipeline(source: .rec709, ops: [.conversion(nil), .conversion(Self.constant(0.5))])
+        #expect(twice.stages.count == 1)
+    }
+
+    static func constant(_ v: Float) -> CubeLUT {
+        CubeLUT(kind: .lut3D, size: 2, table: Array(repeating: SIMD3<Float>(repeating: v), count: 8))
+    }
+
+    @Test func lookIntensity() {
+        let red = CubeLUT(kind: .lut3D, size: 2, table: Array(repeating: SIMD3<Float>(1, 0, 0), count: 8))
         let s = SIMD3<Float>(0.2, 0.4, 0.6)
-        p.creativeIntensity = 0
-        #expect(simd_length(Rec709Output.encode(p.process(s)) - s) < 1e-5)
-        p.creativeIntensity = 1
-        #expect(simd_length(Rec709Output.encode(p.process(s)) - SIMD3(1, 0, 0)) < 1e-5)
-        p.creativeIntensity = 0.5
-        #expect(simd_length(Rec709Output.encode(p.process(s)) - (s + SIMD3(1, 0, 0)) / 2) < 1e-5)
+        func out(_ k: Float) -> SIMD3<Float> {
+            Rec709Output.encode(ColorPipeline(source: .rec709, conversionLUT: nil, look: red, lookIntensity: k).process(s))
+        }
+        #expect(simd_length(out(0) - s) < 1e-5)
+        #expect(simd_length(out(1) - SIMD3(1, 0, 0)) < 1e-5)
+        #expect(simd_length(out(0.5) - (s + SIMD3(1, 0, 0)) / 2) < 1e-5)
+    }
+
+    @Test func lookBeforeTheConversionActsOnTheSourceSignalLikeAfterIt() {
+        // For a Rec.709 source both positions see the same picture signal.
+        let lut = GPULike.lut(9) { SIMD3($0.y, $0.z * 0.8 + 0.1, 1 - $0.x * 0.7) }
+        let a = ColorPipeline(source: .rec709, ops: [.look(lut, intensity: 0.7), .conversion(nil)])
+        let b = ColorPipeline(source: .rec709, ops: [.conversion(nil), .look(lut, intensity: 0.7)])
+        for s in [SIMD3<Float>(0.2, 0.4, 0.6), [0.9, 0.1, 0.5]] { #expect(simd_length(a.process(s) - b.process(s)) < 1e-5) }
     }
 
     @Test func outputClampsAndTags() {
         #expect(Rec709Output.encode(SIMD3(2, -1, 0.5)).x == 1)
         #expect(Rec709Output.encode(SIMD3(2, -1, 0.5)).y == 0)
         #expect(Rec709Output.colorPrimaries == 1 && Rec709Output.transferFunction == 1 && Rec709Output.yCbCrMatrix == 1)
+    }
+}
+
+enum GPULike {
+    static func lut(_ n: Int, _ f: (SIMD3<Float>) -> SIMD3<Float>) -> CubeLUT {
+        var t: [SIMD3<Float>] = []
+        for b in 0..<n { for g in 0..<n { for r in 0..<n { t.append(f(SIMD3(Float(r), Float(g), Float(b)) / Float(n - 1))) } } }
+        return CubeLUT(kind: .lut3D, size: n, table: t)
     }
 }

@@ -37,13 +37,14 @@ private final class MutableProvider: LUTProvider, @unchecked Sendable {
         #expect(r.pipeline(for: .default, media: rec709ID) == nil)
         #expect(r.pipeline(for: .default, media: UUID()) == nil)          // unknown media = Rec.709
         #expect(r.cachedCount == 0)                                       // no work, no cache
-        var c = ClipColor.default; c.bypassCorrection = true; c.correction.exposure = 1
-        #expect(r.pipelineBlocking(for: c, media: rec709ID) == nil)       // bypassed correction is identity
+        var c = ClipColor.default
+        c.sections[0].params = .basic({ var b = BasicCorrection(); b.exposure = 1; return b }()); c.sections[0].enabled = false
+        #expect(r.pipelineBlocking(for: c, media: rec709ID) == nil)       // disabled correction is identity
     }
 
     @Test func lookupNeverBuildsOnTheCallingThread() async {
         let p = MutableProvider()
-        var c = ClipColor.default; c.conversionLUT = .file("/x.cube")
+        var c = ClipColor.default; c.sections[1].params = .inputLUT(.file("/x.cube"))
         p.set(.file("/x.cube"), constantLUT(0.5, title: "x"))
         let r = make(provider: p)
         #expect(r.pipeline(for: c, media: slogID) == nil)                 // miss: identity until warm
@@ -59,11 +60,11 @@ private final class MutableProvider: LUTProvider, @unchecked Sendable {
         await r.waitUntilIdle()
         #expect(warmed.withLock { $0 } == 1)
         #expect(r.pipeline(for: .default, media: slogID)?.source == .sLog3SGamut3Cine)
-        var c = ClipColor.default; c.correction.tint = 10
+        var c = ClipColor.default; c.sections[0].params = .basic({ var b = BasicCorrection(); b.tint = 10; return b }())
         let during = r.pipeline(for: c, media: slogID)                    // not built yet: previous pipeline
-        #expect(during?.source == .sLog3SGamut3Cine && during?.correction.tint == 0)
+        #expect(during?.source == .sLog3SGamut3Cine && during?.ops.count == 1)
         await r.waitUntilIdle()
-        #expect(r.pipeline(for: c, media: slogID)?.correction.tint == 10)
+        #expect(r.pipeline(for: c, media: slogID)?.ops.count == 2)
     }
 
     @Test func blockingBuildCachesForLookups() {
@@ -90,7 +91,10 @@ private final class MutableProvider: LUTProvider, @unchecked Sendable {
     @Test func editedFileLUTIsReloadedOnWarm() async {
         let p = MutableProvider()
         let ref = LUTRef.file("/a.cube")
-        var c = ClipColor.default; c.creativeLUT = ref
+        var c = ClipColor.default
+        let cid = c.addSection(.creative)!
+        var k = CreativeLook(); k.look = ref
+        c.sections[c.sections.firstIndex { $0.id == cid }!].params = .creative(k)
         p.set(ref, constantLUT(0.1, title: "v1"), stamp: LUTStamp(modified: Date(timeIntervalSince1970: 1), size: 10))
         let r = make(provider: p)
         #expect(r.pipelineBlocking(for: c, media: slogID)?.creativeLUT?.title == "v1")

@@ -46,9 +46,9 @@ final class StubProvider: LUTProvider, @unchecked Sendable {
         #expect(simd_length(off.process(px) - expected) > 1e-3)   // automatic conversion instead
 
         // Explicit "no LUT" and bypass behave like off; media without an embedded LUT too.
-        c = .default; c.conversionLUT = nil
+        c = .default; c.sections[1].params = .inputLUT(nil)
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: p).conversionLUT == nil)
-        c = .default; c.bypassConversionLUT = true
+        c = .default; c.sections[1].enabled = false
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: p).conversionLUT == nil)
         #expect(ColorPipeline.from(clipColor: .default, mediaID: media, mediaInfo: slogNoLUT, lutProvider: p).conversionLUT == nil)
         // No provider: nothing to load.
@@ -60,7 +60,7 @@ final class StubProvider: LUTProvider, @unchecked Sendable {
         c.source = .rec709
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: provider()).conversionLUT == nil)
         // An explicit .embedded reference is honoured regardless.
-        c.conversionLUT = .embedded(media)
+        c.sections[1].params = .inputLUT(.embedded(media))
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: provider()).conversionLUT != nil)
     }
 
@@ -69,36 +69,65 @@ final class StubProvider: LUTProvider, @unchecked Sendable {
         p.table[.file("/c.cube")] = constantLUT(0.3, title: "conv")
         p.table[.file("/k.cube")] = constantLUT(0.9, title: "look")
         var c = ClipColor.default
-        c.conversionLUT = .file("/c.cube")
-        c.creativeLUT = .file("/k.cube")
-        c.creativeIntensity = 0.5
+        c.sections[1].params = .inputLUT(.file("/c.cube"))
+        var k = CreativeLook(); k.look = .file("/k.cube"); k.intensity = 50
+        let cid = c.addSection(.creative)!
+        c.sections[c.sections.firstIndex { $0.id == cid }!].params = .creative(k)
         let pipe = ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: p)
         #expect(pipe.conversionLUT?.title == "conv" && pipe.creativeLUT?.title == "look")
         #expect(pipe.creativeIntensity == 0.5)
         let out = pipe.process([0.4, 0.4, 0.4])
         #expect(simd_length(out - TransferFunctions.bt709InverseOETF(SIMD3<Float>(repeating: 0.6))) < 1e-5)
 
-        c.creativeIntensity = 7
+        k.intensity = 700
+        c.sections[2].params = .creative(k)
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: p).creativeIntensity == 1)
-        c.bypassCreativeLUT = true
+        c.sections[2].enabled = false
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: p).creativeLUT == nil)
         // Missing file: no LUT, no crash.
-        c.bypassCreativeLUT = false; c.creativeLUT = .file("/missing.cube")
+        c.sections[2].enabled = true
+        k.look = .file("/missing.cube"); c.sections[2].params = .creative(k)
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: p).creativeLUT == nil)
     }
 
-    @Test func correctionRoundTripsIntoThePipeline() {
+    @Test func sectionOrderIsProcessingOrder() {
+        var b = BasicCorrection(); b.exposure = 1
         var c = ClipColor.default
-        c.correction.exposure = 1; c.correction.saturation = 80; c.correction.contrast = 25
+        c.sections[0].params = .basic(b)
+        func kinds(_ c: ClipColor) -> [String] {
+            ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: nil, lutProvider: nil).ops.map {
+                switch $0 { case .conversion: "conv"; case .basic: "basic"; case .creative: "creative"; case .look: "look"
+                case .curves: "curves"; case .wheels: "wheels"; case .vignette: "vignette" }
+            }
+        }
+        #expect(kinds(c) == ["basic", "conv"])
+        c.moveSection(1, to: 1)                       // Basic Correction now after the Input LUT
+        #expect(kinds(c) == ["conv", "basic"])
+        let v = c.addSection(.vignette)!, w = c.addSection(.wheels)!
+        var vg = Vignette(); vg.amount = -2
+        c.sections[c.sections.firstIndex { $0.id == v }!].params = .vignette(vg)
+        c.sections[c.sections.firstIndex { $0.id == w }!].enabled = true
+        #expect(kinds(c) == ["conv", "basic", "vignette"], "neutral blocks (the wheels) are skipped")
+    }
+
+    @Test func disabledInputLUTStillConvertsAutomatically() {
+        var c = ClipColor.default
+        c.sections[1].params = .inputLUT(.file("/c.cube")); c.sections[1].enabled = false
+        let p = StubProvider(); p.table[.file("/c.cube")] = constantLUT(0.3, title: "conv")
+        let pipe = ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slogNoLUT, lutProvider: p)
+        #expect(pipe.conversionLUT == nil && pipe.stages.count == 1)
+    }
+
+    @Test func correctionBlocksMatchDirectPipeline() {
+        var b = BasicCorrection(); b.exposure = 1; b.saturation = 80; b.contrast = 25; b.whites = 15
+        var c = ClipColor.default
+        c.sections[0].params = .basic(b)
         let pipe = ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: nil, lutProvider: nil)
-        #expect(pipe.correction == c.correction)
-        let direct = ColorPipeline(source: .rec709, correction: c.correction)
+        let direct = ColorPipeline(source: .rec709, ops: [.basic(b), .conversion(nil)])
         let px = SIMD3<Float>(0.3, 0.5, 0.2)
         #expect(simd_length(pipe.process(px) - direct.process(px)) < 1e-7)
-
-        c.bypassCorrection = true
-        let bypassed = ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: nil, lutProvider: nil)
-        #expect(bypassed.correction.isNeutral)
+        c.sections[0].enabled = false
+        #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: nil, lutProvider: nil).isIdentity)
     }
 
     @Test func cachingProviderLoadsOncePerRefAndRetriesFailures() {

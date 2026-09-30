@@ -8,11 +8,11 @@ public enum ProjectFileError: Error, Equatable {
 
 /// Package directory `Name.ssproj/` with `project.json` and `Autosave/`.
 public enum ProjectFile {
-    public static let currentVersion = 9
+    public static let currentVersion = 11
     public typealias JSONObject = [String: Any]
     /// Upgrades the top-level object from version N to N+1, keyed by N.
     public typealias Migrations = [Int: (JSONObject) throws -> JSONObject]
-    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7, 7: migrateV7toV8, 8: migrateV8toV9] }
+    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7, 7: migrateV7toV8, 8: migrateV8toV9, 9: migrateV9toV10, 10: migrateV10toV11] }
 
     /// v2: `Timeline.frameDuration` moved into `Timeline.format` (defaults 1920x1080, 48 kHz).
     /// Track flags, `inOut` and `markers` are optional on decode, so nothing else changes.
@@ -57,6 +57,13 @@ public enum ProjectFile {
     /// v9: `Clip.effects` (explicitly applied effects). `ClipAnimation.cornerRadius` is gone: `Clip` decoding turns a
     /// non-default radius into an applied Rounded Corners effect and drops a default one (= not applied).
     static func migrateV8toV9(_ obj: JSONObject) throws -> JSONObject { obj }
+
+    /// v10: reserved for the "scale relative to source pixels" change (other branch); identity here until merged.
+    static func migrateV9toV10(_ obj: JSONObject) throws -> JSONObject { obj }
+
+    /// v11: `Clip.color` is an ordered list of colour blocks (Lumetri-like). `ClipColor` decoding maps the v10 single
+    /// correction / conversion LUT / creative LUT fields into blocks in the old order: identity on the JSON object.
+    static func migrateV10toV11(_ obj: JSONObject) throws -> JSONObject { obj }
 
     static let fileName = "project.json"
     static let autosaveDir = "Autosave"

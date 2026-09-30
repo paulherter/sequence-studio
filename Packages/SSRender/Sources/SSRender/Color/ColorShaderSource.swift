@@ -8,20 +8,21 @@ enum ColorShaderSource {
     #include <metal_stdlib>
     using namespace metal;
 
-    struct ColorUniforms {
-        float3x3 wb;
-        float3x3 toRec709;
-        float4 luma;
-        float4 convMin, convMax, creMin, creMax;
-        float4 tone;   // exposureScale, contrastScale, highlights, shadows
-        float4 misc;   // saturation, knee, creativeIntensity, unused
-        uint4 ints;    // flags, source, convSize, creSize
+    struct ColorHeader {
+        uint4 ints;   // section count, start domain (0 source-encoded, 1 source-linear, 2 display), end domain (1, 2, 3 = working-linear), source (0 S-Log3, 1 HLG, 2 Rec.709)
     };
 
-    constant uint kWB = 1, kExposure = 2, kTone = 4, kSat = 8, kConv = 16, kConv1D = 32,
-                  kCreative = 64, kCreative1D = 128, kHDR = 256,
-                  kConvIn = 512, kConvOut = 1024, kCreIn = 2048, kCreOut = 4096;
+    // One block of the chain (layout mirrors ColorPipelineGPU.Sec).
+    struct Sec {
+        uint4 head;   // kind, pre, flags, extra
+        float4 a, b, c, d;
+        float3x3 m;
+    };
+
+    constant uint kConversion = 0, kBasic = 1, kCreative = 2, kLook = 3, kCurves = 4, kWheels = 5, kVignette = 6;
+    constant uint kLutPresent = 1, kLut1D = 2, kLutIn = 4, kLutOut = 8;
     constant float kMinLuma = 1.0f / 65536.0f;
+    constant uint kCurveCount = 64;
 
     // MARK: transfer functions (TransferFunctions.swift)
 
@@ -103,34 +104,110 @@ enum ColorShaderSource {
         }
     }
 
-    // MARK: correction (PreparedCorrection.apply)
+    // MARK: tone maths (ColorStages.swift)
 
-    float smooth3(float x) {
-        float t = min(max(x / 3.0f, 0.0f), 1.0f);
+    float smoothS(float a, float b, float x) {
+        float t = clamp((x - a) / (b - a), 0.0f, 1.0f);
         return t * t * (3.0f - 2.0f * t);
     }
 
-    float3 applyCorrection(float3 c, constant ColorUniforms &u) {
-        uint f = u.ints.x;
-        if (f & kWB) { c = u.wb * c; }
-        if (f & kExposure) { c *= u.tone.x; }
-        if (f & kTone) {
-            float y = dot(u.luma.xyz, c);
-            float yc = max(y, kMinLuma);
-            float l = log2(yc / 0.18f);
-            l *= u.tone.y;
-            l += u.tone.z * smooth3(l);
-            l += u.tone.w * smooth3(-l);
-            c *= 0.18f * exp2(l) / yc;
+    float skinWeight(float3 t) {
+        if (!(t.x >= t.y && t.y >= t.z && t.x > t.z)) { return 0.0f; }
+        float f = (t.y - t.z) / (t.x - t.z);
+        return smoothS(0.10f, 0.30f, f) * (1.0f - smoothS(0.70f, 0.95f, f));
+    }
+
+    float3 satVib(float3 t, float sat, float vib, float3 luma) {
+        float s = sat;
+        if (vib != 0.0f) {
+            float mx = max(t.x, max(t.y, t.z)), mn = min(t.x, min(t.y, t.z));
+            float sv = mx > 1e-4f ? clamp((mx - mn) / mx, 0.0f, 1.0f) : 0.0f;
+            if (vib > 0.0f) { s *= 1.0f + vib * (1.0f - sv) * (1.0f - 0.5f * skinWeight(t)); }
+            else { s *= 1.0f + vib * (0.3f + 0.7f * sv); }
         }
-        if (f & kSat) {
-            float y = dot(u.luma.xyz, c);
-            if (y > kMinLuma) {
-                float3 r = max(c, float3(kMinLuma)) / y;
-                c = y * float3(pow(r.x, u.misc.x), pow(r.y, u.misc.x), pow(r.z, u.misc.x));
+        if (s == 1.0f) { return t; }
+        float y = dot(luma, t);
+        return float3(y) + (t - float3(y)) * s;
+    }
+
+    // flags: 1 WB, 2 exposure, 4 contrast, 8 shadows, 16 levels, 32 saturation/vibrance, 64 highlights
+    float3 basicStage(float3 c, constant Sec &s, bool pre) {
+        uint f = s.head.z;
+        float3 x = c;
+        if ((f & 3u) != 0u) {
+            float3 lin = pre ? x : map3(x, 2);
+            if (f & 1u) { lin = s.m * lin; }
+            if (f & 2u) { lin *= s.a.x; }
+            x = pre ? lin : map3(lin, 5);
+        }
+        if ((f & 124u) != 0u) {
+            float3 t = pre ? map3(x, 5) : x;
+            if (f & 4u) { t = float3(0.45f) + (t - float3(0.45f)) * s.a.y; }
+            if (f & 8u) {
+                float y = dot(s.c.xyz, t);
+                t *= 1.0f + s.a.w * (1.0f - smoothS(0.0f, 0.6f, y));
             }
+            if (f & 64u) {
+                float y = dot(s.c.xyz, t);
+                t += float3(s.a.z * smoothS(0.3f, 1.0f, y));
+            }
+            if (f & 16u) { t = (t - float3(s.b.x)) / (s.b.y - s.b.x); }
+            t = satVib(t, s.b.z, s.b.w, s.c.xyz);
+            x = pre ? map3(t, 2) : t;
         }
-        return c;
+        return x;
+    }
+
+    float3 creativeStage(float3 c, constant Sec &s, bool pre) {
+        float3 t = pre ? map3(c, 5) : c;
+        float fade = s.a.x;
+        if (fade != 0.0f) { t = t * (1.0f - fade) + float3(fade * 0.85f); }
+        if (s.head.z & 1u) {
+            float bal = s.a.w;
+            float y = dot(s.d.xyz, t);
+            float ms = 1.0f - smoothS(0.15f + 0.25f * bal, 0.65f + 0.25f * bal, y);
+            float mh = smoothS(0.35f + 0.25f * bal, 0.85f + 0.25f * bal, y);
+            t += ms * s.b.xyz + mh * s.c.xyz;
+        }
+        t = satVib(t, s.a.y, s.a.z, s.d.xyz);
+        return pre ? map3(t, 2) : t;
+    }
+
+    float3 wheelsStage(float3 c, constant Sec &s, bool pre) {
+        float3 t = pre ? map3(c, 5) : c;
+        t += (1.0f - smoothS(0.0f, 0.5f, dot(s.d.xyz, t))) * s.a.xyz;
+        if (s.head.z & 1u) {
+            float y = dot(s.d.xyz, t);
+            float wm = smoothS(0.0f, 0.5f, y) * (1.0f - smoothS(0.5f, 1.0f, y));
+            float3 p = float3(pow(max(t.x, 0.0f), s.b.x), pow(max(t.y, 0.0f), s.b.y), pow(max(t.z, 0.0f), s.b.z));
+            t += (p - t) * wm;
+        }
+        t *= float3(1.0f) + smoothS(0.35f, 1.15f, dot(s.d.xyz, t)) * s.c.xyz;
+        t = satVib(t, s.a.w, 0.0f, s.d.xyz);
+        return pre ? map3(t, 2) : t;
+    }
+
+    float3 vignetteStage(float3 c, constant Sec &s, bool pre, float2 uv, float aspect) {
+        float px = (uv.x - 0.5f) * 2.0f * (1.0f + (aspect - 1.0f) * s.b.x), py = (uv.y - 0.5f) * 2.0f;
+        float n = s.a.w;
+        float e = n > 2.0001f ? pow(pow(fabs(px), n) + pow(fabs(py), n), 1.0f / n) : sqrt(px * px + py * py);
+        float m = smoothS(s.a.y, s.a.y + s.a.z, e);
+        return pre ? c * exp2(s.a.x * m) : c * exp2(0.45f * s.a.x * m);
+    }
+
+    float3 curvesStage(float3 c, constant Sec &s, bool pre, constant float4 *table) {
+        float3 t = pre ? map3(c, 5) : c;
+        uint base = s.head.w * kCurveCount;
+        float3 o = t;
+        for (int ch = 0; ch < 3; ch++) {
+            float x = clamp(t[ch], 0.0f, 1.0f);
+            float p = x * float(kCurveCount - 1);
+            uint i = min(uint(p), kCurveCount - 2);
+            float f = p - float(i);
+            float v0 = table[base + i][ch], v1 = table[base + i + 1][ch];
+            o[ch] = v0 + (v1 - v0) * f + (t[ch] - x);
+        }
+        return pre ? map3(o, 2) : o;
     }
 
     // MARK: tone mapping
@@ -191,56 +268,79 @@ enum ColorShaderSource {
 
     // MARK: chain (ColorPipeline.process)
 
-    float3 processPixel(float3 enc, constant ColorUniforms &u,
-                        texture3d<float, access::read> conv3, texture2d<float, access::read> conv1,
-                        texture3d<float, access::read> cre3, texture2d<float, access::read> cre1) {
-        uint f = u.ints.x;
-        uint convVR = ((f & kConvIn) ? 1u : 0u) | ((f & kConvOut) ? 2u : 0u);
-        uint creVR = ((f & kCreIn) ? 1u : 0u) | ((f & kCreOut) ? 2u : 0u);
-        int src = int(u.ints.y);  // 0 S-Log3, 1 HLG, 2 Rec.709
-        float3 linear = applyCorrection(map3(enc, src), u);
-        float3 display;
-        if (f & kConv) {
-            float3 e = map3(linear, src + 3);
-            display = (f & kConv1D) ? lookup1D(conv1, u.ints.z, u.convMin.xyz, u.convMax.xyz, e, convVR)
-                                    : lookup3D(conv3, u.ints.z, u.convMin.xyz, u.convMax.xyz, e, convVR);
-        } else {
-            float3 c = src == 2 ? linear : u.toRec709 * linear;
-            if (f & kHDR) { c = toneMap(c, u.misc.y); }
-            display = map3(max(c, float3(0.0f)), 5);
+    float3 lookupLUT(uint flags, uint size, float4 dmin, float4 dmax, float3 x,
+                     texture3d<float, access::read> t3, texture2d<float, access::read> t1) {
+        uint vr = (flags >> 2) & 3u;
+        return (flags & kLut1D) ? lookup1D(t1, size, dmin.xyz, dmax.xyz, x, vr)
+                                : lookup3D(t3, size, dmin.xyz, dmax.xyz, x, vr);
+    }
+
+    float3 processPixel(float3 px, constant ColorHeader &h, constant Sec *secs, constant float4 *curves,
+                        texture3d<float, access::read> lut3, texture2d<float, access::read> lut1,
+                        float2 uv, float aspect) {
+        int src = int(h.ints.w);  // 0 S-Log3, 1 HLG, 2 Rec.709
+        float3 c = h.ints.y == 0u ? map3(px, src) : px;
+        for (uint i = 0; i < h.ints.x; i++) {
+            constant Sec &s = secs[i];
+            bool pre = s.head.y != 0u;
+            switch (s.head.x) {
+            case 0: {  // conversion
+                if (s.head.z & kLutPresent) {
+                    float3 e = map3(c, src + 3);
+                    c = lookupLUT(s.head.z, s.head.w, s.a, s.b, e, lut3, lut1);
+                } else {
+                    float3 d = src == 2 ? c : s.m * c;
+                    if (src != 2) { d = toneMap(d, s.c.x); }
+                    c = map3(max(d, float3(0.0f)), 5);
+                }
+                break;
+            }
+            case 1: c = basicStage(c, s, pre); break;
+            case 2: c = creativeStage(c, s, pre); break;
+            case 3: {
+                float3 t = pre ? map3(c, 5) : c;
+                float3 graded = lookupLUT(s.head.z, s.head.w, s.a, s.b, t, lut3, lut1);
+                float k = s.c.x;
+                t = k >= 1.0f ? graded : t + (graded - t) * k;
+                c = pre ? map3(t, 2) : t;
+                break;
+            }
+            case 4: c = curvesStage(c, s, pre, curves); break;
+            case 5: c = wheelsStage(c, s, pre); break;
+            case 6: c = vignetteStage(c, s, pre, uv, aspect); break;
+            default: break;
+            }
         }
-        if (f & kCreative) {
-            float3 graded = (f & kCreative1D) ? lookup1D(cre1, u.ints.w, u.creMin.xyz, u.creMax.xyz, display, creVR)
-                                              : lookup3D(cre3, u.ints.w, u.creMin.xyz, u.creMax.xyz, display, creVR);
-            float k = u.misc.z;
-            display = k >= 1.0f ? graded : display + (graded - display) * k;
-        }
-        return map3(display, 2);
+        return h.ints.z == 3u ? map3(c, 2) : c;
     }
 
     kernel void colorChain(texture2d<float, access::read> src [[texture(0)]],
                            texture2d<float, access::write> dst [[texture(1)]],
-                           texture3d<float, access::read> conv3 [[texture(2)]],
-                           texture2d<float, access::read> conv1 [[texture(3)]],
-                           texture3d<float, access::read> cre3 [[texture(4)]],
-                           texture2d<float, access::read> cre1 [[texture(5)]],
-                           constant ColorUniforms &u [[buffer(0)]],
+                           texture3d<float, access::read> lut3 [[texture(2)]],
+                           texture2d<float, access::read> lut1 [[texture(3)]],
+                           constant ColorHeader &h [[buffer(0)]],
+                           constant Sec *secs [[buffer(1)]],
+                           constant float4 *curves [[buffer(2)]],
                            uint2 gid [[thread_position_in_grid]]) {
         if (gid.x >= dst.get_width() || gid.y >= dst.get_height()) { return; }
         float4 px = src.read(gid);
-        dst.write(float4(processPixel(px.rgb, u, conv3, conv1, cre3, cre1), px.a), gid);
+        float2 uv = (float2(gid) + 0.5f) / float2(dst.get_width(), dst.get_height());
+        float aspect = float(dst.get_width()) / float(dst.get_height());
+        dst.write(float4(processPixel(px.rgb, h, secs, curves, lut3, lut1, uv, aspect), px.a), gid);
     }
 
     kernel void colorChainInPlace(texture2d<float, access::read_write> img [[texture(0)]],
-                                  texture3d<float, access::read> conv3 [[texture(2)]],
-                                  texture2d<float, access::read> conv1 [[texture(3)]],
-                                  texture3d<float, access::read> cre3 [[texture(4)]],
-                                  texture2d<float, access::read> cre1 [[texture(5)]],
-                                  constant ColorUniforms &u [[buffer(0)]],
+                                  texture3d<float, access::read> lut3 [[texture(2)]],
+                                  texture2d<float, access::read> lut1 [[texture(3)]],
+                                  constant ColorHeader &h [[buffer(0)]],
+                                  constant Sec *secs [[buffer(1)]],
+                                  constant float4 *curves [[buffer(2)]],
                                   uint2 gid [[thread_position_in_grid]]) {
         if (gid.x >= img.get_width() || gid.y >= img.get_height()) { return; }
         float4 px = img.read(gid);
-        img.write(float4(processPixel(px.rgb, u, conv3, conv1, cre3, cre1), px.a), gid);
+        float2 uv = (float2(gid) + 0.5f) / float2(img.get_width(), img.get_height());
+        float aspect = float(img.get_width()) / float(img.get_height());
+        img.write(float4(processPixel(px.rgb, h, secs, curves, lut3, lut1, uv, aspect), px.a), gid);
     }
     """#
 }

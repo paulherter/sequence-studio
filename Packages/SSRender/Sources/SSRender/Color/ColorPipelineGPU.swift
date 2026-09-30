@@ -63,52 +63,117 @@ public final class ColorPipelineGPU: @unchecked Sendable {
         dummy3D = t3; dummy2D = t2
     }
 
-    // MARK: Uniforms (layout mirrors MSL `ColorUniforms`)
+    // MARK: Uniforms (layout mirrors MSL `ColorHeader` / `Sec`)
 
-    struct Uniforms {
-        var wb: simd_float3x3
-        var toRec709: simd_float3x3
-        var luma: SIMD4<Float>
-        var convMin: SIMD4<Float>, convMax: SIMD4<Float>, creMin: SIMD4<Float>, creMax: SIMD4<Float>
-        var tone: SIMD4<Float>
-        var misc: SIMD4<Float>
-        var ints: SIMD4<UInt32>
+    struct Header {
+        var ints: SIMD4<UInt32>   // count, start domain, end domain, source
     }
 
-    static let flagWB: UInt32 = 1, flagExposure: UInt32 = 2, flagTone: UInt32 = 4, flagSat: UInt32 = 8,
-               flagConv: UInt32 = 16, flagConv1D: UInt32 = 32, flagCreative: UInt32 = 64,
-               flagCreative1D: UInt32 = 128, flagHDR: UInt32 = 256,
-               flagConvIn: UInt32 = 512, flagConvOut: UInt32 = 1024, flagCreIn: UInt32 = 2048, flagCreOut: UInt32 = 4096
+    struct Sec {
+        var head: SIMD4<UInt32> = .zero   // kind, pre, flags, extra
+        var a = SIMD4<Float>.zero, b = SIMD4<Float>.zero, c = SIMD4<Float>.zero, d = SIMD4<Float>.zero
+        var m = matrix_identity_float3x3
+    }
 
-    static func uniforms(for p: ColorPipeline) -> Uniforms {
-        let c = p.prepared
-        var flags: UInt32 = 0
-        if c.hasWB { flags |= flagWB }
-        if c.hasExposure { flags |= flagExposure }
-        if c.hasTone { flags |= flagTone }
-        if c.hasSaturation { flags |= flagSat }
-        if p.source.isHDR { flags |= flagHDR }
-        var convMin = SIMD4<Float>.zero, convMax = SIMD4<Float>.one, creMin = SIMD4<Float>.zero, creMax = SIMD4<Float>.one
-        var convSize: UInt32 = 0, creSize: UInt32 = 0
-        if let l = p.conversionLUT {
-            flags |= flagConv | (l.kind == .lut1D ? flagConv1D : 0)
-            if l.inVideoRange { flags |= flagConvIn }
-            if l.outVideoRange { flags |= flagConvOut }
-            convMin = SIMD4(l.domainMin, 0); convMax = SIMD4(l.domainMax, 1); convSize = UInt32(l.size)
-        }
-        if let l = p.creativeLUT, p.creativeIntensity > 0 {
-            flags |= flagCreative | (l.kind == .lut1D ? flagCreative1D : 0)
-            if l.inVideoRange { flags |= flagCreIn }
-            if l.outVideoRange { flags |= flagCreOut }
-            creMin = SIMD4(l.domainMin, 0); creMax = SIMD4(l.domainMax, 1); creSize = UInt32(l.size)
-        }
+    /// One compute dispatch: up to `maxSections` blocks with at most one LUT and `maxCurves` curve tables.
+    struct Pass {
+        var header: Header
+        var sections: [Sec] = []
+        var curves: [SIMD4<Float>] = []
+        var lut: CubeLUT?
+    }
+
+    static let maxSections = 8
+    static let maxCurves = 3   // 3 x 64 x 16 B stays below the 4 KB setBytes limit
+
+    static let kindConversion: UInt32 = 0, kindBasic: UInt32 = 1, kindCreative: UInt32 = 2, kindLook: UInt32 = 3,
+               kindCurves: UInt32 = 4, kindWheels: UInt32 = 5, kindVignette: UInt32 = 6
+    static let lutPresent: UInt32 = 1, lut1D: UInt32 = 2, lutIn: UInt32 = 4, lutOut: UInt32 = 8
+
+    private static func lutFields(_ s: inout Sec, _ l: CubeLUT) {
+        var f = lutPresent | (l.kind == .lut1D ? lut1D : 0)
+        if l.inVideoRange { f |= lutIn }
+        if l.outVideoRange { f |= lutOut }
+        s.head.z = f
+        s.head.w = UInt32(l.size)
+        s.a = SIMD4(l.domainMin, 0); s.b = SIMD4(l.domainMax, 1)
+    }
+
+    /// Splits the compiled chain into passes. Between passes the texture holds the running signal: source-linear light
+    /// before the conversion, the display tone signal after it; the last pass ends in working-linear.
+    static func passes(for p: ColorPipeline) -> [Pass] {
         let source: UInt32 = switch p.source { case .sLog3SGamut3Cine: 0; case .hlgBT2020: 1; case .rec709: 2 }
-        return Uniforms(
-            wb: c.wb, toRec709: p.toRec709, luma: SIMD4(c.luma, 0),
-            convMin: convMin, convMax: convMax, creMin: creMin, creMax: creMax,
-            tone: SIMD4(c.exposureScale, c.contrastScale, c.highlights, c.shadows),
-            misc: SIMD4(c.saturation, p.toneMapping.knee, p.creativeIntensity, 0),
-            ints: SIMD4(flags, source, convSize, creSize))
+        var passes: [Pass] = []
+        var domain: UInt32 = 0   // 0 source-encoded, 1 source-linear, 2 display
+        var cur = Pass(header: Header(ints: SIMD4(0, domain, 0, source)))
+        func close(last: Bool) {
+            cur.header.ints.x = UInt32(cur.sections.count)
+            cur.header.ints.z = last ? 3 : domain == 0 ? 1 : domain
+            passes.append(cur)
+            let next: UInt32 = domain == 0 ? 1 : domain
+            cur = Pass(header: Header(ints: SIMD4(0, next, 0, source)))
+            domain = next
+        }
+        for st in p.stages {
+            var sec = Sec()
+            sec.head.y = st.pre ? 1 : 0
+            var needsLUT: CubeLUT?
+            var curvesRows: [SIMD4<Float>] = []
+            switch st.kind {
+            case .conversion(let lut):
+                sec.head.x = kindConversion
+                sec.m = p.toRec709
+                sec.c = SIMD4(p.toneMapping.knee, 0, 0, 0)
+                if let lut { lutFields(&sec, lut); needsLUT = lut }
+            case .basic(let b):
+                sec.head.x = kindBasic
+                var f: UInt32 = 0
+                if b.hasWB { f |= 1 }
+                if b.hasExposure { f |= 2 }
+                if b.hasContrast { f |= 4 }
+                if b.hasShadows { f |= 8 }
+                if b.hasHighlights { f |= 64 }
+                if b.hasLevels { f |= 16 }
+                if b.saturation != 1 || b.vibrance != 0 { f |= 32 }
+                sec.head.z = f
+                sec.a = SIMD4(b.exposureScale, b.contrastK, b.highlights, b.shadows)
+                sec.b = SIMD4(b.blackPoint, b.whitePoint, b.saturation, b.vibrance)
+                sec.c = SIMD4(b.luma, 0)
+                sec.m = b.wb
+            case .creative(let c):
+                sec.head.x = kindCreative
+                sec.head.z = c.hasTint ? 1 : 0
+                sec.a = SIMD4(c.fade, c.saturation, c.vibrance, c.balance)
+                sec.b = SIMD4(c.shadowTint, 0); sec.c = SIMD4(c.highlightTint, 0); sec.d = SIMD4(c.luma, 0)
+            case .look(let lut, let k):
+                sec.head.x = kindLook
+                lutFields(&sec, lut)
+                sec.c = SIMD4(k, 0, 0, 0)
+                needsLUT = lut
+            case .curves(let t):
+                sec.head.x = kindCurves
+                curvesRows = t.table.map { SIMD4($0, 0) }
+            case .wheels(let w):
+                sec.head.x = kindWheels
+                sec.head.z = w.hasGamma ? 1 : 0
+                sec.a = SIMD4(w.lift, w.saturation); sec.b = SIMD4(w.gammaExponent, 0); sec.c = SIMD4(w.gain, 0)
+                sec.d = SIMD4(w.luma, 0)
+            case .vignette(let v):
+                sec.head.x = kindVignette
+                sec.a = SIMD4(v.amount, v.start, v.feather, v.exponent); sec.b = SIMD4(v.aspectMix, 0, 0, 0)
+            }
+            let curveCount = cur.curves.count / CurveTable.count
+            if cur.sections.count >= maxSections || (needsLUT != nil && cur.lut != nil)
+                || (!curvesRows.isEmpty && curveCount >= maxCurves) {
+                close(last: false)
+            }
+            if !curvesRows.isEmpty { sec.head.w = UInt32(cur.curves.count / CurveTable.count); cur.curves += curvesRows }
+            if let needsLUT { cur.lut = needsLUT }
+            cur.sections.append(sec)
+            if case .conversion = st.kind { domain = 2 }
+        }
+        close(last: true)
+        return passes
     }
 
     // MARK: LUT textures
@@ -194,31 +259,37 @@ public final class ColorPipelineGPU: @unchecked Sendable {
         guard destination.usage.contains(.shaderWrite) else {
             throw ColorPipelineGPUError.missingTextureUsage("destination needs .shaderWrite")
         }
-        var u = Self.uniforms(for: pipeline)
-        // Resolve LUT textures before creating the encoder so a throw leaves the command buffer untouched.
+        let passes = Self.passes(for: pipeline)
+        // Resolve LUT textures before creating any encoder so a throw leaves the command buffer untouched.
         var lutTextures: [(MTLTexture, MTLTexture)] = []
-        for (lut, flag) in [(pipeline.conversionLUT, Self.flagConv), (pipeline.creativeLUT, Self.flagCreative)] {
+        for pass in passes {
             var t3: MTLTexture = dummy3D, t1: MTLTexture = dummy2D
-            if u.ints.x & flag != 0, let lut {
+            if let lut = pass.lut {
                 let tex = try texture(for: lut)
                 if lut.kind == .lut3D { t3 = tex } else { t1 = tex }
             }
             lutTextures.append((t3, t1))
         }
-        guard let enc = commandBuffer.makeComputeCommandEncoder() else { throw ColorPipelineGPUError.encoderUnavailable }
-        let state = inPlace ? pipelineInPlace : self.pipeline
-        enc.setComputePipelineState(state)
-        enc.setTexture(source, index: 0)
-        if !inPlace { enc.setTexture(destination, index: 1) }
-        for (i, (t3, t1)) in lutTextures.enumerated() {
-            enc.setTexture(t3, index: 2 + 2 * i)
-            enc.setTexture(t1, index: 3 + 2 * i)
+        for (i, pass) in passes.enumerated() {
+            // The first pass reads `source`; later passes work in place on `destination`.
+            let inPlacePass = i > 0 || inPlace
+            guard let enc = commandBuffer.makeComputeCommandEncoder() else { throw ColorPipelineGPUError.encoderUnavailable }
+            let state = inPlacePass ? pipelineInPlace : self.pipeline
+            enc.setComputePipelineState(state)
+            if inPlacePass { enc.setTexture(destination, index: 0) } else { enc.setTexture(source, index: 0); enc.setTexture(destination, index: 1) }
+            enc.setTexture(lutTextures[i].0, index: 2)
+            enc.setTexture(lutTextures[i].1, index: 3)
+            var h = pass.header
+            enc.setBytes(&h, length: MemoryLayout<Header>.stride, index: 0)
+            var secs = pass.sections
+            enc.setBytes(&secs, length: MemoryLayout<Sec>.stride * secs.count, index: 1)
+            var curves = pass.curves.isEmpty ? [SIMD4<Float>.zero] : pass.curves
+            enc.setBytes(&curves, length: MemoryLayout<SIMD4<Float>>.stride * curves.count, index: 2)
+            let w = state.threadExecutionWidth
+            let hh = max(1, min(8, state.maxTotalThreadsPerThreadgroup / w))
+            enc.dispatchThreads(MTLSize(width: destination.width, height: destination.height, depth: 1),
+                                threadsPerThreadgroup: MTLSize(width: w, height: hh, depth: 1))
+            enc.endEncoding()
         }
-        enc.setBytes(&u, length: MemoryLayout<Uniforms>.stride, index: 0)
-        let w = state.threadExecutionWidth
-        let h = max(1, min(8, state.maxTotalThreadsPerThreadgroup / w))
-        enc.dispatchThreads(MTLSize(width: destination.width, height: destination.height, depth: 1),
-                            threadsPerThreadgroup: MTLSize(width: w, height: h, depth: 1))
-        enc.endEncoding()
     }
 }

@@ -101,7 +101,7 @@ public final class LayerColorResolver: Sendable {
 
     private static func needsPipeline(_ color: ClipColor, _ media: UUID, _ info: MediaInfo?) -> (Key, MediaInfo?)? {
         // Default settings on Rec.709 media: nothing to do (automatic embedded LUT applies to S-Log3 only).
-        if color.isDefault, (info?.colorSpace ?? .rec709) == .rec709 { return nil }
+        if color.isIdentity(rec709Source: (color.source ?? info?.colorSpace ?? .rec709) == .rec709) { return nil }
         return (Key(color: color, media: media, space: info?.detectedColorSpace, embeddedLUT: info?.embeddedLUTName), info)
     }
 
@@ -128,7 +128,7 @@ public final class LayerColorResolver: Sendable {
         let built = ColorPipeline.from(clipColor: color, mediaID: media, mediaInfo: info, lutProvider: recorder)
         let result: ColorPipeline? = Self.isIdentity(built) ? nil : built
         if Self.logging {
-            let what = result.map { "\($0.source) conversionLUT=\($0.conversionLUT?.title ?? "none") creative=\($0.creativeLUT?.title ?? "none")" }
+            let what = result.map { "\($0.source) ops=\($0.ops.count)" }
             NSLog("COLOR: media=\(media) pipeline=\(what ?? "identity")\(recorder.failed ? " (LUT failed)" : "")")
         }
         state.withLock { s in
@@ -142,15 +142,20 @@ public final class LayerColorResolver: Sendable {
 
     private func fileStamps(_ c: ClipColor) -> [LUTRef: LUTStamp] {
         var out: [LUTRef: LUTStamp] = [:]
-        for ref in [c.conversionLUT, c.creativeLUT] {
+        for sec in c.sections {
+            let ref: LUTRef?
+            switch sec.params {
+            case .inputLUT(let r): ref = r
+            case .creative(let k): ref = k.look
+            default: ref = nil
+            }
             if let ref, case .file = ref, let st = lutProvider?.stamp(for: ref) { out[ref] = st }
         }
         return out
     }
 
     static func isIdentity(_ p: ColorPipeline) -> Bool {
-        p.source == .rec709 && p.correction.isNeutral && p.conversionLUT == nil
-            && (p.creativeLUT == nil || p.creativeIntensity <= 0)
+        p.isIdentity
     }
 }
 
