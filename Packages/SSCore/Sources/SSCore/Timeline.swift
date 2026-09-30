@@ -39,7 +39,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         return closed
     }
 
-    private mutating func rippleDeleteOne(_ id: Clip.ID) throws -> Time {
+    mutating func rippleDeleteOne(_ id: Clip.ID) throws -> Time {
         let group = try linkedGroup(id)
         let range = group[0].clip.timeline
         let ids = Set(group.map(\.clip.id))

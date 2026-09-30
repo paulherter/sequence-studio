@@ -67,7 +67,14 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
     /// Places `clip`, replacing whatever it covers.
     public mutating func overwrite(_ clip: Clip) throws {
         try check(clip)
-        let hole = clip.timeline
+        clear(clip.timeline)
+        clips.append(clip)
+        clips.sort { $0.start < $1.start }
+    }
+
+    /// Removes everything inside `hole` and leaves a gap. Straddling clips are cut; when a clip is
+    /// cut in two, only the left half keeps the identity.
+    public mutating func clear(_ hole: TimeRange) {
         var out: [Clip] = []
         for c in clips {
             if !c.timeline.overlaps(hole) { out.append(c); continue }
@@ -77,11 +84,10 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
             }
             if hole.end < c.timeline.end,
                var right = c.cropped(to: TimeRange(start: hole.end, end: c.timeline.end)) {
-                if keepsLeft { right.id = UUID() }   // split: only one half keeps the identity
+                if keepsLeft { right.id = UUID() }
                 out.append(right)
             }
         }
-        out.append(clip)
         clips = out.sorted { $0.start < $1.start }
     }
 
