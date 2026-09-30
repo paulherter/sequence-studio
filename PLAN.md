@@ -12,7 +12,8 @@ Final-Cut-like look. Built first for a short-form (9:16) workflow, later open so
 ## Interaction principles
 - One window: Project/Bins, Source Monitor, Program Monitor, Timeline, Effect Controls.
 - Premiere keyboard shortcuts (J/K/L, I/O, V, C, Q/W, B ripple, N roll, Y slip, S snapping, `,` `.` insert/overwrite).
-- Everything keyframe-based, no nodes. Drag & drop everywhere. Minimal menus.
+- Everything keyframe-based, no nodes. Effect Controls works like After Effects: summary keyframes on collapsed rows,
+  easing templates via right-click, relative multi-keyframe editing (see docs/UX.md). Drag & drop everywhere. Minimal menus.
 - Layout: see "Panels" below.
 
 ## What it must feel like (Paul's priorities)
@@ -38,10 +39,12 @@ Final-Cut-like look. Built first for a short-form (9:16) workflow, later open so
 6. Keyframes: position, scale, rotation, opacity with easing; keyframe editor in Effect Controls.
 7. Effect: rounded corners.
 8. Nested sequences.
-9. Text layers, keyframable, user templates to drag in.
+9. Text layers, keyframable, user templates to drag in. Library panel: disk folders (thumbnails, search, favorites, audio preview) plus own presets
+   (text templates, animated text templates in own format, effect/easing/caption presets). Late in V1, with text templates.
 10. Captions: on-device German transcription, transcript editor, caption style preset + animation preset applied to all captions.
 11. Export: H.264/HEVC (ProRes optional), social presets.
 12. Undo/redo, autosave, robust project format.
+13. Export several sequences of a project in one go (queue).
 
 Later: Magic Mask (Vision segmentation / SAM 2 via Core ML), proxies, more codecs/effects/audio tools.
 Non-goals: AI editing, auto-edits, cross-platform.
@@ -74,9 +77,9 @@ Key decisions:
 
 ## Panels
 Layout is stored as a tree (splits → tab groups → panels) from day one, so any later docking mode needs no rewrite.
-- Phase 2: fixed layout with resizable splits, show/hide panels.
-- Phase 9: tab groups with drag-to-dock (Premiere-style), saved workspaces, per-screen-setup workspaces
-  (e.g. laptop vs. external display) selectable from a menu. Floating windows optional afterwards.
+- Phase 2: two built-in workspaces (Editing – PC, Editing – MacBook) switchable from a menu; resizable splits, show/hide panels.
+  Default layout and panel contents: docs/UX.md.
+- Phase 9: tab groups with drag-to-dock (Premiere-style), custom saved workspaces, per-screen-setup workspaces. Floating windows optional afterwards.
 
 ## Phases
 0. Setup + spike: XcodeGen, build/test scripts, agents. Spike measures decode + scrub on M1 Max with Sony S-Log3 and iPhone HLG → engine decision.
