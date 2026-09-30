@@ -28,3 +28,11 @@ Scope: new files in `Packages/SSCore` only (`Keyframes*.swift`, `Tests/SSCoreTes
 - Does a key's bezier `outHandle` need *separate* in/out influence for Vec2 components (x/y separated like AE "Separate Dimensions")? Not modelled; Position is one track with a shared curve.
 - Project-file integration (how clip properties reference tracks, schema version bump) is out of scope here; needs the model owner.
 - Rotation > 360° / Scale as linked Vec2: modelled as plain `Double` / `Vec2`, no wrap logic.
+
+### Open questions found during implementation (simplest option taken)
+- Overshoot (progress outside 0...1) on a curved spatial path is clamped to the path ends; straight segments (zero tangents) overshoot like a scalar lerp.
+- `.in` easing (Shift+F9) on a key upgrades a linear left neighbour to bezier, otherwise the in-handle has no visible effect. This touches a non-selected key.
+- Summary/track moves clamp only against non-selected neighbours, not against time 0 or the clip bounds; the caller must clamp to the clip range.
+- Vec2 "value graph" returns the vector per sample (no per-component split); speed graph returns the magnitude.
+- Pasting a property that has no track yet creates one. Dictionary `[PropertyID: ...]` encodes as a key/value array in JSON (struct key).
+- Speed/influence conversion uses the segment's scalar `valueDelta` (for Vec2 pass the path length).
