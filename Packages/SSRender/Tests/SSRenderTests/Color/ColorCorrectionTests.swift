@@ -96,9 +96,35 @@ struct SystemRandomNumberGeneratorFixed {
         #expect(simd_length(s.apply(hiPx, gamut: .rec709) - hiPx) < 1e-6)
         #expect(simd_length(s.apply(grey, gamut: .rec709) - grey) < 1e-6)
         #expect(s.apply(shadowPx, gamut: .rec709).x > 0.05)
-        // tiny luminance untouched
+        // below the floor the gain is constant (linear extension), shadows lift it
         let tiny = SIMD3<Float>(repeating: 1e-6)
-        #expect(simd_length(s.apply(tiny, gamut: .rec709) - tiny) == 0)
+        let lifted = s.apply(tiny, gamut: .rec709)
+        #expect(lifted.x >= tiny.x && lifted.x.isFinite)
+    }
+
+    @Test func toneCurveIsMonotonicThroughBlackAndFloor() {
+        var ys: [Float] = [-0.01, -1e-4, -1e-7, 0]
+        let n = 3000
+        for i in 0...n { ys.append(powf(10, -8 + 9.6 * Float(i) / Float(n))) }  // 1e-8 … 40
+        let floor = PreparedCorrection.minLuma
+        ys.append(contentsOf: [floor * 0.999, floor, floor * 1.001]); ys.sort()
+        let luma = Gamut.rec709.lumaRow
+        let vals: [Float] = [-100, 0, 100]
+        var worstJump: Float = 0
+        for c in vals { for h in vals { for s in vals {
+            var cc = ColorCorrection(); cc.contrast = c; cc.highlights = h; cc.shadows = s
+            let p = cc.prepared(for: .rec709)
+            var prev: Float = -Float.infinity
+            for y in ys {
+                let o = simd_dot(luma, p.apply(SIMD3(repeating: y)))
+                #expect(o >= prev - 2e-7 * max(abs(o), abs(prev)) - 1e-30, "c=\(c) h=\(h) s=\(s) y=\(y): \(o) < \(prev)")
+                prev = o
+            }
+            let lo = simd_dot(luma, p.apply(SIMD3(repeating: floor * 0.9999))), hi = simd_dot(luma, p.apply(SIMD3(repeating: floor * 1.0001)))
+            worstJump = max(worstJump, abs(hi - lo) / max(hi, lo, 1e-30))
+        } } }
+        #expect(worstJump < 6e-4)  // local slope of the curve is <= ~1.5
+        print("tone monotonic sweep: \(ys.count) samples x 27 combos OK, worst relative output change across a 2e-4 input step at the floor \(worstJump)")
     }
 
     @Test func temperatureDirection() {

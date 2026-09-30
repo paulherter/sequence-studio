@@ -75,14 +75,15 @@ public struct PreparedCorrection: Sendable {
         if hasWB { c = wb * c }
         if hasExposure { c *= exposureScale }
         if hasTone {
+            // Gain curve G = 0.18·2^f(l) / Y on l = log2(max(Y, floor)/0.18). Below the floor (incl. Y <= 0) the gain is
+            // constant (linear extension): continuous and monotonic through black.
             let y = simd_dot(luma, c)
-            if y > Self.minLuma {
-                var l = log2f(y / 0.18)
-                l *= contrastScale
-                l += highlights * Self.smoothstep(l)
-                l += shadows * Self.smoothstep(-l)
-                c *= 0.18 * exp2f(l) / y
-            }
+            let yc = max(y, Self.minLuma)
+            var l = log2f(yc / 0.18)
+            l *= contrastScale
+            l += highlights * Self.smoothstep(l)
+            l += shadows * Self.smoothstep(-l)
+            c *= 0.18 * exp2f(l) / yc
         }
         if hasSaturation {
             // Perceptual (log2 ratio to luminance): Y * (max(rgb, 2^-16) / Y)^s. Never negative.

@@ -97,13 +97,12 @@ enum ColorShaderSource {
         if (f & kExposure) { c *= u.tone.x; }
         if (f & kTone) {
             float y = dot(u.luma.xyz, c);
-            if (y > kMinLuma) {
-                float l = log2(y / 0.18f);
-                l *= u.tone.y;
-                l += u.tone.z * smooth3(l);
-                l += u.tone.w * smooth3(-l);
-                c *= 0.18f * exp2(l) / y;
-            }
+            float yc = max(y, kMinLuma);
+            float l = log2(yc / 0.18f);
+            l *= u.tone.y;
+            l += u.tone.z * smooth3(l);
+            l += u.tone.w * smooth3(-l);
+            c *= 0.18f * exp2(l) / yc;
         }
         if (f & kSat) {
             float y = dot(u.luma.xyz, c);
