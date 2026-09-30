@@ -1,7 +1,37 @@
+import Foundation
 import Testing
 @testable import SSCore
 
 @Suite struct TimeTests {
+    private func decodeTime(_ json: String) throws -> Time {
+        try JSONDecoder().decode(Time.self, from: Data(json.utf8))
+    }
+
+    @Test func decodingNormalizesLikeTheInit() throws {
+        let t = try decodeTime(#"{"value":2,"timescale":60}"#)
+        #expect(t == Time(1, 30))
+        #expect(t.value == 1 && t.timescale == 30)
+        #expect(Set([t, Time(1, 30)]).count == 1)
+    }
+
+    @Test func decodingRejectsNonPositiveTimescale() {
+        for ts in ["0", "-30"] {
+            #expect(throws: DecodingError.self) { try decodeTime(#"{"value":1,"timescale":\#(ts)}"#) }
+        }
+    }
+
+    @Test func encodingFormatIsUnchanged() throws {
+        let e = JSONEncoder(); e.outputFormatting = [.sortedKeys]
+        #expect(String(decoding: try e.encode(Time(1001, 30000)), as: UTF8.self) == #"{"timescale":30000,"value":1001}"#)
+    }
+
+    @Test func extremeValuesNormalizeWithoutTrapping() {
+        #expect(Time(Int64.min, 2).value == Int64.min / 2)
+        #expect(Time(Int64.min, 1) == Time(Int64.min, 1))
+        #expect(Time(Int64.min, Int64.max).timescale == Int64.max)
+        #expect(Time(-6, 4) == Time(-3, 2))
+    }
+
     @Test func equalityIsValueBasedAcrossTimescales() {
         #expect(Time(1, 2) == Time(2, 4))
         #expect(Time(1001, 30000) != Time(1, 30))

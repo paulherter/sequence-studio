@@ -175,12 +175,18 @@ public struct KeyframeSummary: Sendable, Hashable, Codable {
         let allHold = sel.allSatisfy { p, ids in
             tracks[p]?.holdState(ids) ?? true
         }
-        let curve = allHold ? EasingCurve.linear : EasingCurve.hold
-        for (p, ids) in sel { tracks[p]?.apply(curve, to: ids, side: .out) }
+        for (p, ids) in sel { tracks[p]?.setHold(ids, !allHold) }
     }
 }
 
 extension PropertyTrack {
+    mutating func setHold(_ ids: Set<UUID>, _ hold: Bool) {
+        switch self {
+        case .scalar(var t): t.setHold(ids, hold); self = .scalar(t)
+        case .vector(var t): t.setHold(ids, hold); self = .vector(t)
+        }
+    }
+
     /// True if every given key is hold (and at least no key is non-hold).
     func holdState(_ ids: Set<UUID>) -> Bool {
         switch self {

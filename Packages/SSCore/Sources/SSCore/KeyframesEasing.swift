@@ -75,11 +75,23 @@ extension KeyframeTrack {
         for id in ids { update(id) { curve.apply(to: &$0, side: side) } }
     }
 
-    /// If all given keys are hold, they become linear; otherwise all become hold.
+    /// If all given keys are hold, they leave hold; otherwise all become hold.
     public mutating func toggleHold(_ ids: Set<UUID>) {
         let sel = keys.filter { ids.contains($0.id) }
         guard !sel.isEmpty else { return }
-        let target: Interpolation = sel.allSatisfy { $0.interpolation == .hold } ? .linear : .hold
-        for k in sel { update(k.id) { $0.interpolation = target } }
+        setHold(ids, !sel.allSatisfy { $0.interpolation == .hold })
+    }
+
+    /// Hold only changes the interpolation; the bezier handles stay stored. Leaving hold restores
+    /// bezier when the segment's handles (own out, next key's in) are non-default, else linear.
+    public mutating func setHold(_ ids: Set<UUID>, _ hold: Bool) {
+        for i in keys.indices where ids.contains(keys[i].id) {
+            if hold {
+                keys[i].interpolation = .hold
+            } else if keys[i].interpolation == .hold {
+                let next = i + 1 < keys.count ? keys[i + 1].inHandle : EaseHandle.linear
+                keys[i].interpolation = (keys[i].outHandle != .linear || next != .linear) ? .bezier : .linear
+            }
+        }
     }
 }

@@ -18,6 +18,21 @@ public struct Time: Sendable, Comparable, Hashable, Codable {
         }
     }
 
+    /// Same shape as the synthesized coding (`value`, `timescale`), but decoded values go through the
+    /// normalizing init so equality and hashing hold, and a non-positive timescale is rejected.
+    private enum CodingKeys: String, CodingKey { case value, timescale }
+
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        let value = try c.decode(Int64.self, forKey: .value)
+        let timescale = try c.decode(Int64.self, forKey: .timescale)
+        guard timescale > 0 else {
+            throw DecodingError.dataCorruptedError(forKey: .timescale, in: c,
+                debugDescription: "timescale must be positive, got \(timescale)")
+        }
+        self.init(value, timescale)
+    }
+
     public init(seconds: Int64) { self.init(seconds, 1) }
 
     public static func frames(_ n: Int64, frameDuration: Time) -> Time { frameDuration * n }

@@ -102,3 +102,33 @@ import Testing
     let tr = KeyframeTrack(keys: [kfKey(0, 0), kfKey(3, 9)])
     #expect(tr.value(at: kfT(1)) == 3)
 }
+
+private func kfBezierKey(_ s: Int64, _ v: Double) -> Keyframe<Double> {
+    var k = kfKey(s, v, .bezier)
+    k.outHandle = EaseHandle(dx: 0.7, dy: 0.1); k.inHandle = EaseHandle(dx: 0.2, dy: 0.9)
+    return k
+}
+
+@Test func kfToggleHoldKeepsBezierHandlesOnTrack() {
+    let ks = [kfBezierKey(0, 0), kfBezierKey(2, 5)]
+    var tr = KeyframeTrack(keys: ks)
+    let ids = Set(ks.map(\.id))
+    tr.toggleHold(ids)
+    #expect(tr.keys.allSatisfy { $0.interpolation == .hold })
+    #expect(tr.keys.map(\.outHandle) == ks.map(\.outHandle) && tr.keys.map(\.inHandle) == ks.map(\.inHandle))
+    tr.toggleHold(ids)
+    #expect(tr.keys == ks)
+}
+
+@Test func kfToggleHoldKeepsBezierHandlesOnSummary() {
+    let ks = [kfBezierKey(0, 0), kfBezierKey(2, 5)]
+    let p = PropertyID("opacity")
+    var s = KeyframeSummary(tracks: [p: .scalar(KeyframeTrack(keys: ks))])
+    let sel = s.members(at: kfT(0))
+    s.toggleHold(sel)
+    guard case .scalar(let held) = s.tracks[p] else { return }
+    #expect(held.keys[0].interpolation == .hold && held.keys[0].outHandle == ks[0].outHandle)
+    s.toggleHold(sel)
+    guard case .scalar(let back) = s.tracks[p] else { return }
+    #expect(back.keys == ks)
+}

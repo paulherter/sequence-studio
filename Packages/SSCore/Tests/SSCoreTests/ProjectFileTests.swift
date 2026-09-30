@@ -50,6 +50,29 @@ import Testing
         #expect(back[0].value == t.value && back[0].timescale == t.timescale)
     }
 
+    @Test func nonNormalizedTimeInFileLoadsNormalizedAndRoundTrips() throws {
+        let p = try sample()
+        let data = try ProjectFile.encode(p)
+        func rewrite(_ v: Any) -> Any {
+            if var d = v as? [String: Any] {
+                if d["value"] as? Int == 1001, d["timescale"] as? Int == 30000, d.count == 2 {
+                    return ["value": 2002, "timescale": 60000]
+                }
+                for (k, x) in d { d[k] = rewrite(x) }
+                return d
+            }
+            if let a = v as? [Any] { return a.map(rewrite) }
+            return v
+        }
+        let raw = try JSONSerialization.jsonObject(with: data)
+        let altered = try JSONSerialization.data(withJSONObject: rewrite(raw))
+        #expect(altered != data)
+        let loaded = try ProjectFile.decode(altered, migrations: ProjectFile.migrations)
+        #expect(loaded == p)
+        let again = try ProjectFile.decode(try ProjectFile.encode(loaded), migrations: ProjectFile.migrations)
+        #expect(again == p)
+    }
+
     @Test func fileShape() throws {
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try ProjectFile.write(try sample(), to: dir)
