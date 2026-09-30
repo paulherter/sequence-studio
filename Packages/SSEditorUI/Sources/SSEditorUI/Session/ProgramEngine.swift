@@ -33,9 +33,13 @@ public protocol ProgramEngine: AnyObject {
     var lastRenderedTexture: MTLTexture? { get }
     /// True when audio output could not start (playback continues on the host clock).
     var audioUnavailable: Bool { get }
+    /// Re-presents the current frame at the viewer's current size (no decode).
+    func redraw()
 }
 
 extension ProgramEngine {
+    /// Default: nothing to redraw (stand-ins).
+    public func redraw() {}
     public var lastRenderedTexture: MTLTexture? { nil }
     public var audioUnavailable: Bool { false }
 }

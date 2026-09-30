@@ -1,5 +1,5 @@
 /// MSL for the compositor, compiled at runtime (SwiftPM CLI does not bundle .metal; same pattern as ColorShaderSource).
-/// `CompositeUniforms` mirrors `Compositor.Uniforms` (144 bytes).
+/// `CompositeUniforms` mirrors `Compositor.Uniforms` (160 bytes).
 enum CompositorShaderSource {
     static let msl = """
     #include <metal_stdlib>
@@ -10,14 +10,15 @@ enum CompositorShaderSource {
         float4 solid;        // placeholder colour (working-linear)
         float4 range;        // yScale, yBias, cScale, cBias
         float2 canvas;       // sequence size, px
-        float2 size;         // aspect-fitted layer size, px (before transform scale)
+        float2 size;         // layer size, px (its own upright size, before transform scale)
         float2 position;     // offset from canvas centre, px, y down
         float2 anchor;       // offset from layer centre, px
         float2 scale;
         float rotCos, rotSin, opacity;
         uint mode;           // 0 = YCbCr bi-planar, 1 = RGB texture, 2 = solid, 3 = premultiplied RGBA group image (linear)
         uint linearize;      // 1 = apply inverse BT.709 OETF (no colour stage)
-        float cornerRadius;  // layer-local px (aspect-fitted layer, before transform scale)
+        float cornerRadius;  // layer-local px (before transform scale)
+        uint quarter;        // clockwise quarter turns of the source picture (modes 0 and 1)
     };
 
     constexpr sampler linearSampler(filter::linear, address::clamp_to_edge);
@@ -41,6 +42,12 @@ enum CompositorShaderSource {
                              constant CompositeUniforms& u [[buffer(0)]], uint2 gid [[thread_position_in_grid]]) {
         if (gid.x >= out.get_width() || gid.y >= out.get_height()) return;
         float2 uv = (float2(gid) + 0.5f) / float2(out.get_width(), out.get_height());
+        if (u.mode == 1) {
+            // RGB source with alpha (still image): keep alpha, colour un-premultiplied for the colour stage.
+            float4 c = ty.sample(linearSampler, uv);
+            out.write(float4(c.a > 0.0f ? c.rgb / c.a : float3(0.0f), c.a), gid);
+            return;
+        }
         out.write(float4(sourceEncoded(u, ty, tc, uv), 1.0f), gid);
     }
 
@@ -75,15 +82,37 @@ enum CompositorShaderSource {
             cover = clamp(0.5f - d / w, 0.0f, 1.0f);
         }
         float2 uv = in.local / u.size + 0.5f;
+        if (u.mode != 3 && u.quarter != 0) {
+            // uv is in the upright picture; turn it back into the source texture (clockwise display turn).
+            if (u.quarter == 1) uv = float2(uv.y, 1.0f - uv.x);
+            else if (u.quarter == 2) uv = float2(1.0f - uv.x, 1.0f - uv.y);
+            else uv = float2(1.0f - uv.y, uv.x);
+        }
         if (u.mode == 3) {
             float4 g = ty.sample(linearSampler, uv);   // premultiplied, already working-linear
             float k = u.opacity * cover;
             return g * k;
         }
-        float3 rgb = u.mode == 2 ? u.solid.rgb : sourceEncoded(u, ty, tc, uv);
+        float texA = 1.0f;
+        float3 rgb;
+        if (u.mode == 2) {
+            rgb = u.solid.rgb;
+        } else if (u.mode == 1 && u.linearize != 0) {
+            // RGB texture (video BGRA or a still image): premultiplied alpha, un-premultiply before the transfer curve.
+            float4 c = ty.sample(linearSampler, uv);
+            texA = c.a;
+            rgb = texA > 0.0f ? c.rgb / texA : float3(0.0f);
+        } else if (u.mode == 1) {
+            // Colour-stage output (linear rgb, straight alpha).
+            float4 c = ty.sample(linearSampler, uv);
+            texA = c.a;
+            rgb = c.rgb;
+        } else {
+            rgb = sourceEncoded(u, ty, tc, uv);
+        }
         if (u.mode != 2 && u.linearize != 0) rgb = inverseOETF709(rgb);
         rgb = max(rgb, 0.0f);
-        float a = u.opacity * cover;
+        float a = u.opacity * cover * texA;
         return float4(rgb * a, a);   // premultiplied
     }
     """

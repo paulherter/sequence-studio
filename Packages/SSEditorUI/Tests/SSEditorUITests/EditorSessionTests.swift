@@ -57,6 +57,18 @@ private final class SessionTestClock: @unchecked Sendable {
     var timeline: Timeline { session.activeTimeline! }
 }
 
+@MainActor @Suite struct MarkClipTests {
+    @Test func marksClipUnderPlayhead() throws {
+        let r = try Rig()
+        let clip = r.t.tracks.flatMap(\.clips).first!
+        r.session.seek(to: clip.start + r.timeline.frameDuration)
+        r.session.markClip()
+        #expect(r.timeline.inOut != nil)
+        #expect(r.timeline.inOut!.start <= clip.start && r.timeline.inOut!.end >= clip.timeline.end)
+        #expect(r.session.undoName == "Mark Clip")
+    }
+}
+
 @MainActor @Suite struct EditorSessionTests {
     // MARK: Engine and undo
 
@@ -399,6 +411,102 @@ private final class SessionTestClock: @unchecked Sendable {
         #expect(session.placeMedia([m.id], mode: .overwrite))
         let f = try #require(session.activeTimeline?.format)
         #expect(f.width == 3840 && f.height == 2160 && f.frameDuration == Time(1001, 30000))
+    }
+
+    @Test func configuredSequenceKeepsItsFormatWhenEmptyAgain() throws {
+        var p = EditorSession.makeUntitled()
+        let m = mediaRef("A", w: 3840, h: 2160, fd: Time(1001, 30000))
+        p.add(m)
+        let session = EditorSession(project: p, engine: StubProgramEngine(), autosaveStore: AutosaveStore(base: tempDir()))
+        let vertical = SequenceFormat(width: 1080, height: 1920, frameDuration: Time(1, 25))
+        #expect(session.setSequenceFormat(vertical))
+        #expect(session.placeMedia([m.id], mode: .overwrite))
+        #expect(session.activeTimeline?.format == vertical)
+        // New Sequence is configured as well.
+        let id = session.addSequence(format: SequenceFormat(width: 640, height: 360, frameDuration: Time(1, 24)))
+        #expect(session.placeMedia([m.id], mode: .overwrite))
+        #expect(session.project.timelines.first { $0.id == id }?.format.width == 640)
+    }
+
+    @Test func dropOnV2PlacesLinkedAudioOnA2AndCreatesMissingTracks() throws {
+        var p = EditorSession.makeUntitled()
+        let m = mediaRef("A")
+        p.add(m)
+        let session = EditorSession(project: p, engine: StubProgramEngine(), autosaveStore: AutosaveStore(base: tempDir()))
+        let t0 = try #require(session.activeTimeline)
+        let v = t0.tracks.filter { $0.kind == .video }, a = t0.tracks.filter { $0.kind == .audio }
+        #expect(session.placeMedia([m.id], at: .zero, videoTrack: v[1].id, mode: .overwrite))
+        let t1 = try #require(session.activeTimeline)
+        #expect(t1.track(v[1].id)?.clips.count == 1)
+        #expect(t1.track(a[1].id)?.clips.count == 1)
+        #expect(t1.track(a[0].id)?.clips.isEmpty == true)
+        // A drop on V4 with only three audio tracks would create A5 when missing; here A4 exists.
+        #expect(session.placeMedia([m.id], at: s(10), videoTrack: v[3].id, mode: .overwrite))
+        #expect(session.activeTimeline?.track(a[3].id)?.clips.count == 1)
+        // Fewer audio tracks than video tracks: the missing mirrored track is created.
+        try session.performTimeline("Remove") { $0.tracks.removeAll { $0.id == a[3].id } }
+        #expect(session.placeMedia([m.id], at: s(20), videoTrack: v[3].id, mode: .overwrite))
+        let t2 = try #require(session.activeTimeline)
+        #expect(t2.tracks.filter { $0.kind == .audio }.count == 4)
+        let created = try #require(t2.audioTrack(atOrdinal: 3))
+        #expect(t2.track(created)?.clips.count == 1)
+    }
+
+    @Test func portraitPhoneClipMakesPortraitSequence() throws {
+        var p = EditorSession.makeUntitled()
+        let v = VideoTrackInfo(width: 1920, height: 1080, codec: "hvc1", bitDepth: 10, chroma: "4:2:0",
+                               nominalFrameDuration: Time(1, 30), isVariableFrameRate: false, rotation: 90)
+        let m = MediaRef(name: "phone", path: "/nonexistent/phone.mov", fingerprint: MediaFingerprint(size: 1),
+                         duration: s(4), info: MediaInfo(duration: s(4), video: v))
+        p.add(m)
+        let session = EditorSession(project: p, engine: StubProgramEngine(), autosaveStore: AutosaveStore(base: tempDir()))
+        #expect(session.placeMedia([m.id], mode: .overwrite))
+        let f = try #require(session.activeTimeline?.format)
+        #expect(f.width == 1080 && f.height == 1920 && f.frameDuration == Time(1, 30))
+        #expect(ProjectPanelModel.formatString(m).hasPrefix("1080×1920"))
+    }
+
+    @Test func stillImagePlacesWithDefaultLengthAndTrimsFreely() throws {
+        var p = EditorSession.makeUntitled()
+        let info = MediaInfo(duration: MediaInfo.defaultStillDuration,
+                             video: VideoTrackInfo(width: 4000, height: 3000, codec: "image", bitDepth: 8, chroma: "4:4:4",
+                                                   nominalFrameDuration: Time(1, 30), isVariableFrameRate: false), isStill: true)
+        let m = MediaRef(name: "photo.jpg", path: "/nonexistent/photo.jpg", fingerprint: MediaFingerprint(size: 1),
+                         duration: info.duration, info: info)
+        p.add(m)
+        p.timelines[0].format = SequenceFormat(width: 1920, height: 1080, frameDuration: Time(1001, 30000))
+        let session = EditorSession(project: p, engine: StubProgramEngine(), autosaveStore: AutosaveStore(base: tempDir()))
+        #expect(session.placeMedia([m.id], mode: .overwrite))
+        let t = try #require(session.activeTimeline)
+        let c = try #require(t.tracks.first { $0.kind == .video }?.clips.first)
+        #expect(c.isStill && c.timeline.duration == s(5) && c.mediaDuration == nil)
+        #expect(t.tracks.first { $0.kind == .audio }?.clips.isEmpty == true)
+        #expect(t.format.width == 4000 && t.format.frameDuration == Time(1001, 30000))   // size from the still, rate kept
+        #expect(ProjectPanelModel.formatString(m) == "4000×3000 Still image")
+    }
+
+    @Test func placedClipGetsFitScaleAndSetToFrameSizeRestoresIt() throws {
+        let r = try Rig()
+        let big = mediaRef("Big", audio: false, w: 3840, h: 2160)
+        r.session.perform("Import") { $0.add(big) }
+        let format = SequenceFormat(width: 1080, height: 1920, frameDuration: Time(1, 30))
+        r.session.perform("Seq") { p in p.timelines[0].format = format }
+        #expect(r.session.placeMedia([big.id], at: .zero, mode: .overwrite))
+        let c = try #require(r.timeline.tracks.first { $0.kind == .video }?.clips.first { $0.media == big.id })
+        #expect(abs(c.animation.scale.value.x - 0.28125) < 1e-12)           // 4K landscape in 1080 x 1920, fits whole
+        // User sets 100 %, then Set to Frame Size brings the fit value back in one undo step.
+        var edited = c
+        edited.animation.scale = AnimatedProperty(Vec2(1, 1))
+        r.session.replaceClip(edited, name: "Scale", continuesGesture: false)
+        r.session.select(clips: [c.id])
+        #expect(r.session.setToFrameSize())
+        let back = try #require(r.timeline.tracks.first { $0.kind == .video }?.clips.first { $0.id == c.id })
+        #expect(abs(back.animation.scale.value.x - 0.28125) < 1e-12)
+        #expect(r.session.undoName == "Set to Frame Size")
+        #expect(!r.session.setToFrameSize())                                 // already at the fit value: no new step
+        r.session.undo()
+        let undone = try #require(r.timeline.tracks.first { $0.kind == .video }?.clips.first { $0.id == c.id })
+        #expect(undone.animation.scale.value == Vec2(1, 1))
     }
 
     @Test func secondClipKeepsTheSequenceFormat() throws {

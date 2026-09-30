@@ -6,6 +6,7 @@ import SSCore
 
 public enum MediaImporter {
     public static func probe(_ url: URL) async throws -> (MediaRef, MediaInfo) {
+        if StillImage.isStill(url) { return try probeStill(url) }
         let asset = AVURLAsset(url: url)
         guard let duration = try? await asset.load(.duration), let dur = Time(duration) else { throw MediaError.unreadable }
         let vTrack = try? await asset.loadTracks(withMediaType: .video).first
@@ -15,7 +16,7 @@ public enum MediaImporter {
         var video: VideoTrackInfo?
         if let vTrack {
             let demux = try await AVDemuxer(url: url)
-            video = try videoInfo(format: demux.formatDescription, index: demux.index)
+            video = try videoInfo(format: demux.formatDescription, index: demux.index, rotation: demux.rotation)
         }
         var audio: AudioTrackInfo?
         if let aTrack, let fd = try? await aTrack.load(.formatDescriptions).first,
@@ -33,6 +34,18 @@ public enum MediaImporter {
             }
         }
 
+        return makeRef(url, duration: dur, info: info)
+    }
+
+    /// Still image: size from ImageIO, default length `MediaInfo.defaultStillDuration`, no audio.
+    static func probeStill(_ url: URL) throws -> (MediaRef, MediaInfo) {
+        guard let size = try? StillImage.size(of: url) else { throw MediaError.unreadable }
+        let info = MediaInfo(duration: MediaInfo.defaultStillDuration,
+                             video: StillImage.trackInfo(width: size.width, height: size.height), isStill: true)
+        return makeRef(url, duration: info.duration, info: info)
+    }
+
+    private static func makeRef(_ url: URL, duration dur: Time, info: MediaInfo) -> (MediaRef, MediaInfo) {
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0
         let fp = MediaFingerprint(size: size, modified: attrs?[.modificationDate] as? Date, headHash: headHash(url))
@@ -43,7 +56,7 @@ public enum MediaImporter {
         return (ref, info)
     }
 
-    static func videoInfo(format fd: CMFormatDescription, index: SampleIndex) throws -> VideoTrackInfo {
+    static func videoInfo(format fd: CMFormatDescription, index: SampleIndex, rotation: Int = 0) throws -> VideoTrackInfo {
         let dims = CMVideoFormatDescriptionGetDimensions(fd)
         let sub = CMFormatDescriptionGetMediaSubType(fd)
         let ext = CMFormatDescriptionGetExtensions(fd) as? [String: Any] ?? [:]
@@ -63,7 +76,7 @@ public enum MediaImporter {
                               nominalFrameDuration: nominal, isVariableFrameRate: vfr,
                               colorPrimaries: tag(kCMFormatDescriptionExtension_ColorPrimaries),
                               transfer: tag(kCMFormatDescriptionExtension_TransferFunction),
-                              matrix: tag(kCMFormatDescriptionExtension_YCbCrMatrix))
+                              matrix: tag(kCMFormatDescriptionExtension_YCbCrMatrix), rotation: rotation)
     }
 
     static func chromaAndDepth(subType: FourCharCode, extensions ext: [String: Any]) -> (String, Int) {

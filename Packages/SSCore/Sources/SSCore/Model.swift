@@ -66,6 +66,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var color: ClipColor = .default
     /// Label colour of this clip; nil = inherit from its media / sequence (then the type default).
     public var label: LabelColor?
+    /// Clip of a still image: free trims in both directions like a generator (the picture has no time axis).
+    public var isStill: Bool = false
     /// Explicitly applied effects (v9), in render order. Empty = none applied (nothing shows in Effect Controls).
     public var effects: [ClipEffect] = []
 
@@ -77,7 +79,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var isNested: Bool { sequence != nil }
     public var isGenerator: Bool { generator != nil }
     /// How far the head can still grow (source handle before `source.start`); nil = unbounded (generator).
-    var headHandle: Time? { isGenerator ? nil : source.start }
+    var headHandle: Time? { isGenerator || isStill ? nil : source.start }
 
     public var timeline: TimeRange { TimeRange(start: start, duration: source.duration) }
 
@@ -85,7 +87,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                 source: TimeRange, start: Time, link: UUID? = nil, mediaDuration: Time? = nil,
                 animation: ClipAnimation = ClipAnimation(), sequence: Timeline.ID? = nil,
                 generator: GeneratorRef? = nil, color: ClipColor = .default, label: LabelColor? = nil,
-                effects: [ClipEffect] = []) {
+                isStill: Bool = false, effects: [ClipEffect] = []) {
+        self.isStill = isStill
         self.effects = effects
         self.label = label
         self.color = color
@@ -97,7 +100,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects
+        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill
     }
 
     public init(from d: Decoder) throws {
@@ -112,6 +115,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   generator: try c.decodeIfPresent(GeneratorRef.self, forKey: .generator),
                   color: try c.decodeIfPresent(ClipColor.self, forKey: .color) ?? .default,
                   label: try c.decodeIfPresent(LabelColor.self, forKey: .label),
+                  isStill: try c.decodeIfPresent(Bool.self, forKey: .isStill) ?? false,
                   effects: try c.decodeIfPresent([ClipEffect].self, forKey: .effects) ?? [])
         // v8 -> v9: a radius that was not the default becomes an applied Rounded Corners effect.
         if let legacy = animation.legacyCornerRadius {

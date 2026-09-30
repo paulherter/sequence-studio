@@ -1,0 +1,75 @@
+{
+  "fill": {
+    "linear-gradient": [
+      "srgb:0.13725,0.13725,0.15686,1.00000",
+      "srgb:0.03137,0.03137,0.03922,1.00000"
+    ],
+    "orientation": {
+      "start": {
+        "x": 0.5,
+        "y": 0
+      },
+      "stop": {
+        "x": 0.5,
+        "y": 1
+      }
+    }
+  },
+  "groups": [
+    {
+      "name": "playhead",
+      "layers": [
+        {
+          "image-name": "4-playhead-rim.svg",
+          "name": "4-playhead-rim",
+          "glass": false
+        },
+        {
+          "image-name": "3-playhead.svg",
+          "name": "3-playhead",
+          "glass": true
+        },
+        {
+          "image-name": "2-playhead-gap.svg",
+          "name": "2-playhead-gap",
+          "glass": false
+        }
+      ],
+      "lighting": "combined",
+      "specular": true,
+      "shadow": {
+        "kind": "neutral",
+        "opacity": 1
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      }
+    },
+    {
+      "name": "track",
+      "layers": [
+        {
+          "image-name": "1-video-track.svg",
+          "name": "1-video-track",
+          "glass": true
+        }
+      ],
+      "lighting": "individual",
+      "specular": true,
+      "shadow": {
+        "kind": "layer-color",
+        "opacity": 0.5
+      },
+      "translucency": {
+        "enabled": false,
+        "value": 0
+      }
+    }
+  ],
+  "supported-platforms": {
+    "squares": [
+      "macOS"
+    ]
+  }
+}

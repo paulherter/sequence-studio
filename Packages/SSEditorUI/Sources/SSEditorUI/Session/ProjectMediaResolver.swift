@@ -1,3 +1,4 @@
+import CoreVideo
 import Foundation
 import SSCore
 import SSMedia
@@ -32,6 +33,8 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
         /// Media without a usable audio track (or whose audio failed): not retried.
         var noAudio: Set<UUID> = []
         var sampleRate = 48_000
+        /// Decoded still images (path they were read from), decoded once.
+        var stills: [UUID: (path: String, frame: StillFrame)] = [:]
         /// One open in flight per media, shared by `prepare` and the blocking lookups (never two live demuxers).
         var videoOpen: [UUID: (path: String, task: Task<(any Demuxing)?, Never>)] = [:]
         var audioOpen: [UUID: (path: String, rate: Int, task: Task<(any AudioSource)?, Never>)] = [:]
@@ -80,7 +83,7 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
             let new = Dictionary(uniqueKeysWithValues: media.map { ($0.id, $0) })
             for id in Set(s.refs.keys).union(s.demuxers.keys).union(s.videoOpen.keys).union(s.audioOpen.keys)
             where new[id] == nil || new[id]?.path != s.refs[id]?.path {
-                s.demuxers[id] = nil; s.audio[id] = nil; s.noAudio.remove(id)
+                s.demuxers[id] = nil; s.audio[id] = nil; s.noAudio.remove(id); s.stills[id] = nil
                 s.videoOpen[id] = nil; s.audioOpen[id] = nil
             }
             if new.contains(where: { $0.value.path != s.refs[$0.key]?.path }) {
@@ -161,6 +164,7 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
             for id in ids {
                 group.addTask { [self] in
                     guard let ref = state.withLock({ $0.refs[id] }), fileExists(ref.path) else { return nil }
+                    if ref.info?.isStill == true { return (try? stillFrame(for: id)) != nil ? id : nil }
                     var ready = cachedVideo(id) != nil
                     if !ready, let o = videoOpen(id) {
                         ready = finishVideo(id, path: o.path, await o.task.value) != nil
@@ -192,6 +196,24 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
             if state.withLock({ $0.refs[media]?.path }) == o.path { throw MediaResolveError.unreadable(media) }
         }
         throw MediaResolveError.unreadable(media)
+    }
+
+    /// The decoded picture of a still-image item (ImageIO, once per path). nil = not a still.
+    public func stillFrame(for media: UUID) throws -> StillFrame? {
+        let ref = state.withLock { $0.refs[media] }
+        guard let ref, ref.info?.isStill == true else { return nil }
+        guard fileExists(ref.path) else { throw MediaResolveError.offline(media, path: ref.path) }
+        if let c = state.withLock({ $0.stills[media] }), c.path == ref.path { return c.frame }
+        guard let buffer = try? StillImage.load(URL(fileURLWithPath: ref.path)) else { throw MediaResolveError.unreadable(media) }
+        // The picture counts with its real size (the buffer is capped at 8192 px), so Scale 1 is one file pixel.
+        let size = ref.info?.video.map { ($0.width, $0.height) } ?? (CVPixelBufferGetWidth(buffer), CVPixelBufferGetHeight(buffer))
+        let frame = StillFrame(buffer: buffer, info: StillImage.trackInfo(width: size.0, height: size.1))
+        return state.withLock { s in
+            guard s.refs[media]?.path == ref.path else { return frame }
+            if let c = s.stills[media], c.path == ref.path { return c.frame }
+            s.stills[media] = (ref.path, frame)
+            return frame
+        }
     }
 
     public func audio(for media: UUID) throws -> any AudioSource {

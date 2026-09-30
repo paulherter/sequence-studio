@@ -91,7 +91,7 @@ public final class EditorSession {
     /// Empty project with one 29.97 fps HD sequence (V1-V4, A1-A4).
     public static func makeUntitled() -> Project {
         let t = Timeline(name: "Sequence 01", format: SequenceFormat(frameDuration: Time(1001, 30000)),
-                         tracks: Timeline.defaultTracks())
+                         tracks: Timeline.defaultTracks(), formatLocked: false)
         return Project(name: "Untitled", timelines: [t])
     }
 
@@ -313,6 +313,7 @@ public final class EditorSession {
     public func endScrub() { engine.endScrub() }
 
     public func playPause() {
+        if ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1" { NSLog("SSKEY session.playPause isPlaying=\(isPlaying) rate=\(engine.rate)") }
         if isPlaying || !engine.rate.isPaused { engine.pause(); isPlaying = false } else { restartIfAtEnd(); engine.play(.forward); isPlaying = true }
         notify(.transport)
     }
@@ -403,36 +404,44 @@ public final class EditorSession {
         attempt("Extract") { _ = try $0.extract(io, tracks: ids) }
     }
 
-    /// Places media items one after another starting at `time` (default: the playhead): video on `videoTrack` (else the
-    /// targeted or first video track), audio linked on the targeted or first audio track. Source marks from the
-    /// Project panel are honoured. Into a sequence without clips the first item sets the sequence format
-    /// (size and frame rate). Returns false when nothing could be placed (unknown ID, refused edit).
+    /// Places media items one after another starting at `time` (default: the playhead): video on `track` (else the
+    /// targeted or first video track), linked audio on the mirrored audio track (V2 -> A2, created when missing,
+    /// see `Timeline.dropTargets`). Source marks from the Project panel are honoured. Into an empty sequence that was
+    /// never configured (`formatLocked == false`) the first item sets the sequence format (size and frame rate).
+    /// Returns false when nothing could be placed (unknown ID, refused edit).
     @discardableResult
     public func placeMedia(_ ids: [MediaRef.ID], at time: Time? = nil, videoTrack: Track.ID? = nil,
                            mode: ThreePointMode = .overwrite) -> Bool {
         guard let t = activeTimeline else { return false }
         let refs = ids.compactMap { project.media($0) }.filter { ($0.info?.duration ?? $0.duration) != nil }
         guard !refs.isEmpty else { return false }
-        let isEmpty = t.tracks.allSatisfy { $0.clips.isEmpty }
-        let vTrack = videoTrack.flatMap { id in t.track(id).flatMap { $0.kind == .video ? id : nil } }
-            ?? t.tracks.first { $0.kind == .video && $0.isTargeted }?.id ?? t.tracks.first { $0.kind == .video }?.id
-        let aTrack = t.tracks.first { $0.kind == .audio && $0.isTargeted }?.id ?? t.tracks.first { $0.kind == .audio }?.id
+        let adopts = !t.formatLocked && t.tracks.allSatisfy { $0.clips.isEmpty }
         let requested = time ?? playhead
         let marks = project.sourceMarks
         let done = attempt(mode == .insert ? "Insert" : "Overwrite") { tl in
-            if isEmpty, let v = refs[0].info?.video {
-                tl.format = SequenceFormat(width: v.width, height: v.height, frameDuration: v.nominalFrameDuration,
+            if adopts, let v = refs[0].info?.video {
+                // Upright (display) size: a portrait phone clip makes a portrait sequence. A still keeps the frame rate.
+                let still = refs[0].info?.isStill == true
+                tl.format = SequenceFormat(width: v.displayWidth, height: v.displayHeight,
+                                           frameDuration: still ? tl.format.frameDuration : v.nominalFrameDuration,
                                            audioSampleRate: tl.format.audioSampleRate)
             }
             var at = requested.snapped(to: tl.frameDuration)   // after a format change: the new frame grid
             for ref in refs {
+                // Scale is relative to source pixels: a new clip is placed at the fit value ("Set to Frame Size"), so a
+                // clip of another size shows whole instead of cropped. 1 for the clip that set the sequence format.
+                let fit = ref.info?.video.map { tl.format.fitScale(width: $0.displayWidth, height: $0.displayHeight) } ?? 1
                 let total = ref.info?.duration ?? ref.duration ?? .zero
-                let source = marks[ref.id]?.range ?? TimeRange(start: .zero, duration: total)
+                let still = ref.info?.isStill == true
+                let source = still ? TimeRange(start: .zero, duration: total)      // stills: default length, no source marks
+                                   : marks[ref.id]?.range ?? TimeRange(start: .zero, duration: total)
+                let hasVideo = ref.info?.video != nil || ref.info == nil
+                let d = tl.dropTargets(pointer: videoTrack, hasVideo: hasVideo, hasAudio: ref.info?.audio != nil)
                 var targets: [Track.ID] = []
-                if ref.info?.video != nil || ref.info == nil, let v = vTrack { targets.append(v) }
-                if ref.info?.audio != nil, let a = aTrack { targets.append(a) }
-                try tl.threePointEdit(source: source, media: ref.id, name: ref.name, mediaDuration: total,
-                                      targets: targets, at: at, mode: mode)
+                if let v = d.video { targets.append(v) }
+                if let a = d.audio { targets.append(a) } else if let n = d.newAudioOrdinal { targets.append(tl.ensureAudioTrack(atOrdinal: n)) }
+                try tl.threePointEdit(source: source, media: ref.id, name: ref.name, mediaDuration: still ? nil : total,
+                                      isStill: still, initialScale: fit, targets: targets, at: at, mode: mode)
                 at += source.duration
             }
         }
@@ -467,6 +476,24 @@ public final class EditorSession {
         return true
     }
 
+    /// Premiere "Set to Frame Size" / "Scale to Frame Size": Scale of the selected picture clips (or `ids`) becomes the
+    /// value at which the whole picture fits the sequence frame (keyframes of Scale are removed, see
+    /// `Project.setToFrameSize`). Both menu items do this; there is no resampling to tell them apart. One undo step.
+    @discardableResult
+    public func setToFrameSize(_ ids: Set<Clip.ID>? = nil) -> Bool {
+        guard let tid = activeTimelineID else { return false }
+        let targets = ids ?? selection
+        guard !targets.isEmpty else { return false }
+        var trial = project
+        do {
+            guard try trial.setToFrameSize(targets, in: tid) > 0 else { return false }     // already at the fit value
+            try perform("Set to Frame Size") { $0 = trial }
+        } catch {
+            setError(Self.message(for: error)); return false
+        }
+        return true
+    }
+
     public func markIn() {
         guard let t = activeTimeline else { return }
         let at = playhead
@@ -479,6 +506,14 @@ public final class EditorSession {
         let at = playhead
         let start = t.inOut.map(\.start).flatMap { $0 < at ? $0 : nil } ?? .zero
         attempt("Mark Out") { $0.inOut = TimeRange(start: start, end: at) }
+    }
+
+    /// X: In/Out around the clip under the playhead on the targeted tracks (all tracks when none is targeted).
+    public func markClip() {
+        guard let t = activeTimeline else { return }
+        let targeted = t.tracks.filter(\.isTargeted).map(\.id)
+        guard let range = t.markClipRange(at: playhead, tracks: targeted.isEmpty ? nil : targeted) else { return }
+        attempt("Mark Clip") { $0.inOut = range }
     }
 
     public func clearInOut() {

@@ -28,6 +28,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     var toolbar: EditorToolbar!
     let mainWorkspaceSubmenu = NSMenu(title: "Workspace")
     var keyMonitor: Any?
+    /// Set once quitting started (Save alert, then teardown): the key monitor must not touch views any more.
+    var isTerminating = false
     var saveWorkspaceWork: DispatchWorkItem?
     var deadlineWork: DispatchWorkItem?
     let exports = ExportCoordinator()
@@ -66,6 +68,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         panels.onStatus = { [weak self] m in self?.shell.statusBar.flash(m) }
         panels.onCommand = { [weak self] c in self?.execute(c) }
         panels.onNest = { [weak self] in self?.requestNest() }
+        panels.onFrameSize = { [weak self] in self?.session.setToFrameSize() }
         panels.monitorModel.setQuality(settings.defaultQuality)
 
         shell.statusBar.onTasksClicked = { [weak self] v in self?.toggleTasks(v) }
@@ -86,6 +89,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         launchDocument()
         SnapshotDriver.runIfRequested(self)
         PlayTestDriver.runIfRequested(self)
+        PlayTestDriver.runKeyTestIfRequested(self)
     }
 
     private func buildWindow() {
@@ -148,13 +152,19 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             }
             session.placeMedia([m.id], at: .zero, mode: .overwrite)
             session.select(clips: [])
+            if let v = m.info?.video, let f = session.activeTimeline?.format {
+                NSLog("SS_IMPORT: \(m.name) native \(v.width)x\(v.height) rotation \(v.rotation) still \(m.info?.isStill == true) "
+                      + "-> display \(v.displayWidth)x\(v.displayHeight), sequence \(f.width)x\(f.height), scale \(session.activeTimeline?.tracks.flatMap(\.clips).first { $0.media == m.id }?.animation.scale.value.x ?? -1)")
+            }
         }
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard session.isDirty else { return .terminateNow }
+        guard session.isDirty else { removeKeyMonitor(); return .terminateNow }
+        // The Save alert runs a modal loop: the monitor stays installed but `handle` bails out while it is up.
+        isTerminating = true
         let alert = NSAlert()
         alert.messageText = "Save changes to “\(session.displayName)”?"
         alert.informativeText = "Your changes will be lost if you don’t save them."
@@ -165,15 +175,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         case .alertFirstButtonReturn:
             Task {
                 let ok = await saveDocument()
+                if ok { removeKeyMonitor() } else { isTerminating = false }
                 NSApp.reply(toApplicationShouldTerminate: ok)
             }
             return .terminateLater
-        case .alertSecondButtonReturn: return .terminateNow
-        default: return .terminateCancel
+        case .alertSecondButtonReturn: removeKeyMonitor(); return .terminateNow
+        default: isTerminating = false; return .terminateCancel
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        removeKeyMonitor()
         session.close()
         try? store.save()
     }
@@ -396,6 +408,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
 
     @objc func menuCommand(_ sender: NSMenuItem) {
         guard let c = sender.representedObject as? EditorCommand else { return }
+        if Self.keyLog { NSLog("SSKEY menuCommand \(c) event=\(String(describing: NSApp.currentEvent?.type.rawValue))") }
+        // A plain-key item (Space, J, X ...) is fired by the key monitor / KeyRouter. The same key down also reaches the
+        // menu's key equivalent: running it again toggled Play twice (play, then pause at once). Clicks still run.
+        if NSApp.currentEvent?.type == .keyDown, !sender.keyEquivalent.isEmpty,
+           !sender.keyEquivalentModifierMask.contains(.command) { return }
         execute(c)
     }
 
@@ -440,9 +457,20 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         }
     }
 
+    /// Also ends the router deadline timer; safe to call twice.
+    func removeKeyMonitor() {
+        isTerminating = true
+        if let m = keyMonitor { NSEvent.removeMonitor(m) }
+        keyMonitor = nil
+        deadlineWork?.cancel(); deadlineWork = nil
+    }
+
     /// Returns nil when the event was consumed.
     private func handle(_ event: NSEvent) -> NSEvent? {
-        guard event.window === window, window.attachedSheet == nil else { return event }
+        // Nothing while quitting or while any modal (Save alert, open/save panel) runs: its window is not ours and
+        // the panels may be mid-teardown (crash: objc_retain on a freed first responder during applicationShouldTerminate).
+        guard !isTerminating, NSApp.modalWindow == nil, NSApp.keyWindow?.sheetParent == nil,
+              let window, event.window === window, window.attachedSheet == nil, panels != nil else { return event }
         if event.type == .leftMouseDown {
             if let p = panels.panel(containing: window.contentView?.hitTest(event.locationInWindow)) { focusedPanel = p }
             return event

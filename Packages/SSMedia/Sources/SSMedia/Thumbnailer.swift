@@ -152,6 +152,10 @@ public actor Thumbnailer {
     }
 
     private static func generate(url: URL, time: CMTime, height: Int, exact: Bool) async throws -> CGImage {
+        if StillImage.isStill(url) {
+            do { return try StillImage.cgImage(of: url, maxPixel: height > 0 ? height * 4 : nil, fitHeight: height) }
+            catch { throw ThumbnailError.generationFailed("image: \(error)") }
+        }
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .video).first else { throw ThumbnailError.noVideoTrack }
         let gen = AVAssetImageGenerator(asset: asset)

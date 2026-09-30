@@ -32,6 +32,9 @@ public actor DecoderFrameProvider: FrameProvider {
     private let scale: DecodeScale
     private var entries: [UUID: Entry] = [:]
     private var failed: Set<UUID> = []
+    /// Still-image media (decoded once by the resolver) and media known not to be stills.
+    private var stills: [UUID: StillFrame] = [:]
+    private var notStill: Set<UUID> = []
 
     public init(resolver: any MediaResolver, scale: DecodeScale = .full) {
         self.resolver = resolver; self.scale = scale
@@ -59,7 +62,16 @@ public actor DecoderFrameProvider: FrameProvider {
         }
     }
 
+    private func still(for media: UUID) -> StillFrame? {
+        if let s = stills[media] { return s }
+        if notStill.contains(media) || failed.contains(media) { return nil }
+        if let s = try? resolver.stillFrame(for: media) { stills[media] = s; return s }
+        notStill.insert(media)
+        return nil
+    }
+
     public func frame(media: UUID, at sourceTime: Time) async throws -> ProvidedFrame? {
+        if let s = still(for: media) { return ProvidedFrame(buffer: s.buffer, info: s.info) }
         guard let e = entry(for: media) else { return nil }
         try Task.checkCancellation()
         let all = e.index.entries
