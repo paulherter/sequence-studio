@@ -124,3 +124,6 @@ Slices 5, 7, 8 + REVIEW-1 items 7–10 + GPU review hardening (753ac61…4833c72
   0.8 ms at stride 4 → the live viewer should use stride 4.
 - HLG decode = inverse OETF → OOTF γ 1.2 → × 4.9224 (reference white = 1.0). After the 0.8 knee, HLG reference white
   outputs ≈ 0.93: judge against QuickTime (open question 4).
+- Slice 6 (1c811d7): `SonyMetadata.read(forClip:)` — sidecar `<clip>M01.XML` first, then the embedded `xml ` box, which is
+  top-level in most ZV-E1 files but inside `moov` in C2157 (64-bit mdat). The embedded XML ends with a NUL (stripped before parsing).
+  All 8 real clips → s-log3-cine / s-gamut3-cine in 0.3–1.5 ms. Slice 9 stays on hold until Phase 4's clip model lands.
