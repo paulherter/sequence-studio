@@ -47,6 +47,7 @@ public final class TimelineFrameSource: FrameSource {
     public init(timeline: Timeline, sequences: [Timeline.ID: Timeline] = [:], provider: any FrameProvider, width: Int, height: Int,
                 frameDuration: Time, frameCount: Int, startTime: Time = .zero,
                 pixelFormat: ExportPixelFormat = .bgra8, captions: CaptionBurnIn? = nil,
+                colorResolver: LayerColorResolver? = nil,
                 device: MTLDevice? = MTLCreateSystemDefaultDevice()) throws {
         guard let device, let queue = device.makeCommandQueue() else { throw TimelineFrameSourceError.noMetalDevice }
         guard width > 0, height > 0, timeline.format.width > 0, timeline.format.height > 0 else {
@@ -56,7 +57,8 @@ public final class TimelineFrameSource: FrameSource {
         self.frameCount = frameCount; self.frameDuration = frameDuration; self.startTime = startTime
         self.width = width; self.height = height; self.pixelFormat = pixelFormat
         renderer = try Renderer(timeline: timeline, sequences: sequences, provider: provider, width: width, height: height,
-                                format: pixelFormat, captions: captions, device: device, queue: queue)
+                                format: pixelFormat, captions: captions, colorResolver: colorResolver,
+                                device: device, queue: queue)
     }
 
     public func frame(at index: Int) async throws -> CVPixelBuffer {
@@ -75,6 +77,7 @@ public final class TimelineFrameSource: FrameSource {
         let width: Int, height: Int
         let format: ExportPixelFormat
         let captions: CaptionBurnIn?
+        let colorResolver: LayerColorResolver?
         let device: MTLDevice
         let queue: MTLCommandQueue
         let compositor: Compositor
@@ -84,12 +87,12 @@ public final class TimelineFrameSource: FrameSource {
         var freeWorking: [MTLTexture] = []
 
         init(timeline: Timeline, sequences: [Timeline.ID: Timeline], provider: any FrameProvider, width: Int, height: Int, format: ExportPixelFormat,
-             captions: CaptionBurnIn?, device: MTLDevice, queue: MTLCommandQueue) throws {
+             captions: CaptionBurnIn?, colorResolver: LayerColorResolver?, device: MTLDevice, queue: MTLCommandQueue) throws {
             self.timeline = timeline; self.sequences = sequences; self.provider = provider
             var durations: [Clip.ID: Time] = [:]
             for tl in [timeline] + Array(sequences.values) { for t in tl.tracks { for c in t.clips { durations[c.id] = c.source.duration } } }
             clipDurations = durations; self.width = width; self.height = height
-            self.format = format; self.captions = captions; self.device = device; self.queue = queue
+            self.format = format; self.captions = captions; self.colorResolver = colorResolver; self.device = device; self.queue = queue
             compositor = try Compositor(device: device)
             let lib = try device.makeLibrary(source: ExportShaderSource.msl, options: nil)
             func pipe(_ n: String) throws -> MTLComputePipelineState {
@@ -168,7 +171,8 @@ public final class TimelineFrameSource: FrameSource {
                 return RenderLayer(content: .placeholder(.offline), transform: l.transform, cornerRadius: l.cornerRadius)
             }
             if let f = try await provider.frame(media: l.media, at: l.sourceTime) {
-                return RenderLayer(content: .frame(f.buffer, colorHint: f.info), transform: l.transform, cornerRadius: l.cornerRadius)
+                return RenderLayer(content: .frame(f.buffer, colorHint: f.info), transform: l.transform,
+                                   colorPipeline: colorResolver?.pipeline(for: l.color, media: l.media), cornerRadius: l.cornerRadius)
             }
             return RenderLayer(content: .placeholder(.offline), transform: l.transform, cornerRadius: l.cornerRadius)
         }

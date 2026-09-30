@@ -1,4 +1,6 @@
+import Foundation
 import Testing
+import SSCore
 import SSRender
 @testable import SSEditorUI
 
@@ -13,7 +15,7 @@ import SSRender
         let m = ColorInspectorModel()
         #expect(m.correction == .neutral)
         #expect(m.state.correction.isNeutral)
-        #expect(m.state.conversionLUT == nil && m.state.creativeLUT == nil)
+        #expect(m.state.conversionLUT == .automatic && m.state.creativeLUT == nil)
         #expect(m.state.source == .rec709)
     }
 
@@ -87,7 +89,7 @@ import SSRender
         #expect(m.creativeLUT == nil && m.creativeIntensity == 1 && !m.isBypassed(.creativeLUT))
         m.set(.shadows, 5)
         m.resetAll()
-        #expect(m.source == .rec709 && m.correction == .neutral && m.conversionLUT == nil)
+        #expect(m.source == .rec709 && m.correction == .neutral && m.conversionLUT == .automatic)
     }
 
     @Test func gestureCallbacksWrapReset() {
@@ -133,5 +135,48 @@ import SSRender
         m.onChange = { last = $0 }
         m.source = .sLog3SGamut3Cine
         #expect(last?.source == .sLog3SGamut3Cine)
+    }
+
+    @Test func loadAndClipColorRoundTrip() {
+        let media = UUID()
+        var c = ClipColor.default
+        c.source = .hlgBT2020
+        c.correction.exposure = 1.5
+        c.conversionLUT = .file("/tmp/a.cube")
+        c.creativeLUT = .file("/tmp/b.cube")
+        c.creativeIntensity = 0.5
+        c.bypassCreativeLUT = true
+        c.useEmbeddedLUT = false
+        let m = ColorInspectorModel()
+        var fired = 0
+        m.onChange = { _ in fired += 1 }
+        m.load(c, mediaID: media, info: MediaInfo(duration: Time(1, 1), detectedColorSpace: .sLog3SGamut3Cine, embeddedLUTName: "Look"))
+        #expect(fired == 0)                                   // loading is silent
+        #expect(m.clipColor() == c)
+        #expect(m.detectedSource == .sLog3SGamut3Cine && m.embeddedLUTName == "Look")
+        #expect(m.conversionLUT?.name == "a.cube" && m.isBypassed(.creativeLUT))
+    }
+
+    @Test func automaticSourceFollowsMediaAndOverrideIsExplicit() {
+        let m = ColorInspectorModel()
+        m.load(.default, mediaID: UUID(), info: MediaInfo(duration: Time(1, 1), detectedColorSpace: .sLog3SGamut3Cine))
+        #expect(m.source == .sLog3SGamut3Cine && m.clipColor().source == nil)
+        m.setSourceOverride(.rec709)
+        #expect(m.source == .rec709 && m.clipColor().source == .rec709)
+        m.setSourceOverride(nil)
+        #expect(m.clipColor().source == nil)
+    }
+
+    @Test func conversionChoicesMapToLUTRefs() {
+        let media = UUID()
+        let m = ColorInspectorModel()
+        m.load(.default, mediaID: media, info: MediaInfo(duration: Time(1, 1), embeddedLUTName: "Look"))
+        #expect(m.clipColor().conversionLUT == .automatic)
+        m.conversionLUT = .embedded(name: "Look")
+        #expect(m.clipColor().conversionLUT == .embedded(media))
+        m.conversionLUT = nil
+        #expect(m.clipColor().conversionLUT == nil)
+        m.conversionLUT = .file("/x/y.cube")
+        #expect(m.clipColor().conversionLUT == .file("/x/y.cube"))
     }
 }

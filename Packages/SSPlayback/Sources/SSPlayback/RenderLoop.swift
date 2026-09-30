@@ -404,6 +404,7 @@ final class RenderLoop: @unchecked Sendable {
             width: CVPixelBufferGetWidth(frame.pixelBuffer), height: CVPixelBufferGetHeight(frame.pixelBuffer),
             codec: "", bitDepth: 8, chroma: "4:2:0", nominalFrameDuration: frame.duration, isVariableFrameRate: false)
         return RenderLayer(content: .frame(frame.pixelBuffer, colorHint: info), transform: r.transform,
+                           colorPipeline: media.resolver.colorResolver?.pipeline(for: r.color, media: r.media),
                            cornerRadius: r.cornerRadius)
     }
 

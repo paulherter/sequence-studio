@@ -38,7 +38,8 @@ public enum ExportSourceBuilder {
         let video = try TimelineFrameSource(timeline: timeline, sequences: sequences, provider: provider,
                                             width: settings.video.width, height: settings.video.height,
                                             frameDuration: settings.video.frameDuration, frameCount: frames,
-                                            startTime: range.start, pixelFormat: pixelFormat)
+                                            startTime: range.start, pixelFormat: pixelFormat,
+                                            colorResolver: resolver.colorResolver)
         let hasAudio = settings.audio.enabled && timeline.tracks.contains { $0.kind == .audio && !$0.clips.isEmpty }
         let audio: (any AudioSource)? = hasAudio
             ? TimelineAudioSource(timeline: timeline, sequences: sequences, range: range, presets: presets, resolver: resolver)

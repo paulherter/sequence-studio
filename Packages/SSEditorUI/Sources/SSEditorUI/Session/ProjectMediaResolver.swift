@@ -2,6 +2,7 @@ import Foundation
 import SSCore
 import SSMedia
 import SSPlayback
+import SSRender
 import Synchronization
 
 public enum MediaResolveError: Error, Equatable, Sendable {
@@ -39,6 +40,10 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
     private let makeDemuxer: DemuxerFactory
     private let makeAudio: AudioFactory
     private let fileExists: @Sendable (String) -> Bool
+    private let lutProvider: CachingLUTProvider
+    /// Per-layer colour pipelines for playback and export: S-Log3 / HLG conversion, the clip's correction and LUTs.
+    /// Media infos and the embedded LUT (read from the clip file, cached) come from this resolver's refs.
+    public let colorResolver: LayerColorResolver?
 
     public static func openDemuxer(_ url: URL) async throws -> any Demuxing { try await AVDemuxer(url: url) }
     public static func openAudio(_ url: URL, _ sampleRate: Int) async throws -> any AudioSource {
@@ -53,7 +58,20 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
         makeDemuxer = demuxer ?? { try await Self.openDemuxer($0) }
         makeAudio = audio ?? { try await Self.openAudio($0, $1) }
         self.fileExists = fileExists
+        let owner = WeakOwner()
+        let provider = CachingLUTProvider(embedded: { id in
+            guard let path = owner.value?.path(of: id) else { return nil }
+            return (try? EmbeddedMeta.lut(inClip: URL(fileURLWithPath: path)))?.data
+        })
+        lutProvider = provider
+        colorResolver = LayerColorResolver(lutProvider: provider) { owner.value?.info(of: $0) }
+        owner.value = self
     }
+
+    private final class WeakOwner: @unchecked Sendable { weak var value: ProjectMediaResolver? }
+
+    func path(of id: UUID) -> String? { state.withLock { $0.refs[id]?.path } }
+    func info(of id: UUID) -> MediaInfo? { state.withLock { $0.refs[id]?.info } }
 
     /// Replaces the known media. Cached and in-flight sources of items whose path changed (relink) or that are gone
     /// are dropped; a sample-rate change drops all audio. An open that finishes for an old path or rate is discarded.
@@ -64,6 +82,9 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
             where new[id] == nil || new[id]?.path != s.refs[id]?.path {
                 s.demuxers[id] = nil; s.audio[id] = nil; s.noAudio.remove(id)
                 s.videoOpen[id] = nil; s.audioOpen[id] = nil
+            }
+            if new.contains(where: { $0.value.path != s.refs[$0.key]?.path }) {
+                lutProvider.removeAll(); colorResolver?.invalidate()
             }
             s.refs = new
             if let sampleRate, sampleRate != s.sampleRate {

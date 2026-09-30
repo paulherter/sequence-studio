@@ -149,3 +149,5 @@ Native decoded formats: Sony `x422` (10-bit 4:2:2, VT hands out the Apple-compre
 - Sony: long-GOP (GOP≈27) H.264 High 4:2:2 10-bit L5.1, 140 Mbit/s, LPCM audio.
 - 124 of the 210 clips in ~/Documents/Videos are ProRes (`apcs`, 1080×1920) — likely exports.
 
+
+- Colour wiring (slice 9 follow-up, done): `LayerColorResolver` (SSRender) caches `ColorPipeline` per (clip colour, media info), nil = identity Rec.709 fast path. `MediaResolver.colorResolver` (default nil; `ProjectMediaResolver` supplies it, embedded LUT via `EmbeddedMeta.lut(inClip:)`) feeds `RenderLayer.colorPipeline` in `RenderLoop` and `TimelineFrameSource`. Color inspector edits `Clip.color` via `session.replaceClip` (one undo step per gesture). Wheels are still UI-only (ColorCorrection has no wheel parameters). `SS_COLOR_LOG=1` logs newly built pipelines.

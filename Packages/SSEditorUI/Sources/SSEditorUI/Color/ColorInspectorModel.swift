@@ -59,6 +59,15 @@ public final class ColorInspectorModel {
         public var id: String
         public var name: String
         public init(id: String, name: String) { self.id = id; self.name = name }
+
+        /// Conversion slot: built-in conversion, or the embedded camera LUT when the clip is S-Log3.
+        public static let automatic = LUTChoice(id: "automatic", name: "Automatic")
+        /// Conversion slot: the LUT embedded in the clip's media.
+        public static func embedded(name: String) -> LUTChoice { LUTChoice(id: "embedded", name: "Embedded: \(name)") }
+        public static func file(_ path: String) -> LUTChoice {
+            LUTChoice(id: "file:" + path, name: (path as NSString).lastPathComponent)
+        }
+        var filePath: String? { id.hasPrefix("file:") ? String(id.dropFirst(5)) : nil }
     }
 
     /// What the renderer needs. Bypassed sections are already neutralised.
@@ -70,9 +79,24 @@ public final class ColorInspectorModel {
         public var creativeIntensity: Float
     }
 
-    public var source: SourceColorSpace = .rec709 { didSet { if source != oldValue { notify() } } }
+    /// Explicit "Interpret footage as" override; nil = Automatic (what the media says).
+    public private(set) var sourceOverride: ColorSpaceID? { didSet { if sourceOverride != oldValue { notify() } } }
+    /// What the media says (`MediaInfo.colorSpace`); the effective source when there is no override.
+    public private(set) var detectedSource: ColorSpaceID = .rec709
+    /// Effective source. Setting it is an explicit override.
+    public var source: SourceColorSpace {
+        get { SourceColorSpace(sourceOverride ?? detectedSource) }
+        set { sourceOverride = ColorSpaceID(newValue) }
+    }
+    public func setSourceOverride(_ id: ColorSpaceID?) { sourceOverride = id }
+    /// Name of the camera look LUT embedded in the clip's media, if any.
+    public private(set) var embeddedLUTName: String?
+    public private(set) var mediaID: UUID?
+    /// Clip settings the inspector does not edit (e.g. `useEmbeddedLUT`) are carried over from here.
+    private var base = ClipColor.default
+    private var loading = false
     public private(set) var correction = ColorCorrection.neutral
-    public var conversionLUT: LUTChoice? { didSet { if conversionLUT != oldValue { notify() } } }
+    public var conversionLUT: LUTChoice? = .automatic { didSet { if conversionLUT != oldValue { notify() } } }
     public var creativeLUT: LUTChoice? { didSet { if creativeLUT != oldValue { notify() } } }
     /// 0…1.
     public var creativeIntensity: Float = 1 {
@@ -102,7 +126,7 @@ public final class ColorInspectorModel {
               creativeIntensity: creativeIntensity)
     }
 
-    private func notify() { onChange?(state) }
+    private func notify() { if !loading { onChange?(state) } }
 
     // MARK: Correction
 
@@ -148,7 +172,7 @@ public final class ColorInspectorModel {
     public func reset(_ s: Section) {
         gesture {
             switch s {
-            case .source: source = .rec709
+            case .source: sourceOverride = nil
             case .correction:
                 correction = .neutral
                 wheels = [:]
@@ -156,7 +180,7 @@ public final class ColorInspectorModel {
                 notify()
             case .conversionLUT:
                 bypassed.remove(.conversionLUT)
-                conversionLUT = nil
+                conversionLUT = .automatic
                 notify()
             case .creativeLUT:
                 bypassed.remove(.creativeLUT)
@@ -202,4 +226,64 @@ public final class ColorInspectorModel {
     }
 
     public func resetWheel(_ id: WheelID) { gesture { wheels[id] = WheelState(); notify() } }
+
+    // MARK: Clip.color bridge
+
+    /// Shows `color` (no callbacks fire). `info` = the clip's media, for the detected source and the embedded LUT.
+    public func load(_ color: ClipColor, mediaID: UUID?, info: MediaInfo?) {
+        loading = true
+        defer { loading = false }
+        base = color
+        self.mediaID = mediaID
+        detectedSource = info?.colorSpace ?? .rec709
+        embeddedLUTName = info?.embeddedLUTName
+        sourceOverride = color.source
+        correction = color.correction
+        conversionLUT = color.conversionLUT.map(choice)
+        creativeLUT = color.creativeLUT.flatMap { $0 == .automatic ? nil : choice($0) }
+        creativeIntensity = Float(color.creativeIntensity)
+        var b: Set<Section> = []
+        if color.bypassCorrection { b.insert(.correction) }
+        if color.bypassConversionLUT { b.insert(.conversionLUT) }
+        if color.bypassCreativeLUT { b.insert(.creativeLUT) }
+        bypassed = b
+    }
+
+    /// The clip settings the controls currently describe (values kept under a bypass, the flag is stored separately).
+    public func clipColor() -> ClipColor {
+        var c = base
+        c.source = sourceOverride
+        c.correction = correction
+        c.conversionLUT = conversionLUT.flatMap(ref)
+        c.creativeLUT = creativeLUT.flatMap(ref)
+        c.creativeIntensity = Double(creativeIntensity)
+        c.bypassCorrection = isBypassed(.correction)
+        c.bypassConversionLUT = isBypassed(.conversionLUT)
+        c.bypassCreativeLUT = isBypassed(.creativeLUT)
+        return c
+    }
+
+    private func choice(_ r: LUTRef) -> LUTChoice {
+        switch r {
+        case .automatic: .automatic
+        case .embedded: .embedded(name: embeddedLUTName ?? "Camera LUT")
+        case .file(let p): .file(p)
+        }
+    }
+
+    private func ref(_ c: LUTChoice) -> LUTRef? {
+        if c.id == LUTChoice.automatic.id { return .automatic }
+        if c.id == "embedded" { return mediaID.map { .embedded($0) } }
+        return c.filePath.map { .file($0) }
+    }
+}
+
+extension ColorSpaceID {
+    init(_ s: SourceColorSpace) {
+        switch s {
+        case .rec709: self = .rec709
+        case .sLog3SGamut3Cine: self = .sLog3SGamut3Cine
+        case .hlgBT2020: self = .hlgBT2020
+        }
+    }
 }
