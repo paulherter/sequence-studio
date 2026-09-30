@@ -1,6 +1,6 @@
 # Phase 4 — Keyframe core (SSCore)
 
-Scope: new files in `Packages/SSCore` only (`Keyframes*.swift`, `Tests/SSCoreTests/Keyframe*Tests.swift`). No existing SSCore API changes. Value types, rational `Time`, no AppKit/AVFoundation. Tests first.
+Scope: `Packages/SSCore`. Originally new files only; integration (see Decisions from Paul) now changes Clip/ProjectFile/Evaluation. Value types, rational `Time`, no AppKit/AVFoundation. Tests first.
 
 ## Model
 - `KeyframeValue` protocol: `Sendable, Hashable, Codable`; `lerp`, `+`, `-`. Conformers: `Double`, `Vec2` (x, y).
@@ -24,14 +24,19 @@ Scope: new files in `Packages/SSCore` only (`Keyframes*.swift`, `Tests/SSCoreTes
 - Copy/paste: paste at playhead aligns the earliest copied key; pasting onto a different property type is rejected (returns false).
 - Hold on the **out** side only; `Cmd+Opt+H` toggles hold on the selected keys' out side.
 
+## Decisions from Paul (resolved)
+1. Easing never modifies unselected keys. AE model: each key owns in/out handles; a segment uses the left key's out handle and the right key's in handle regardless of the left key's `.linear`/`.bezier` (a linear out-handle plus an eased in-handle already eases). `.hold` on the left key still wins. The "upgrade left neighbour to bezier" behaviour is removed.
+2. Position is one linked `Vec2` (no separate dimensions). Rotation is unbounded degrees (no wrapping). Scale is never wrapped and clamped to >= 0 at read time in `Clip.transform(at:)` (no upper limit). Opacity is clamped to 0...1 there, volume >= 0 in `Clip.volume(at:)`.
+3. Project integration done: `Clip.animation: ClipAnimation` with `AnimatedProperty<V>` (static `value` fallback + `KeyframeTrack`) for position, scale (Vec2), rotation, opacity, anchor and volume. Keyframe times are clip-local (0 = `Clip.start`); `cropped(to:)` (split/trim/clear) shifts keys so they stay on the same frames. `Timeline.videoLayers` fills `LayerRequest.transform`. File format v3 (`migrateV2toV3`, identity: old clips decode to static defaults, no keyframes). Undo = snapshots keep working since everything is value types in `Clip`.
+
 ## Open questions (for Paul)
-- Does a key's bezier `outHandle` need *separate* in/out influence for Vec2 components (x/y separated like AE "Separate Dimensions")? Not modelled; Position is one track with a shared curve.
-- Project-file integration (how clip properties reference tracks, schema version bump) is out of scope here; needs the model owner.
-- Rotation > 360° / Scale as linked Vec2: modelled as plain `Double` / `Vec2`, no wrap logic.
+- Units of position/anchor: default `Vec2.zero` is meant as offset from canvas centre / anchor at clip centre, in canvas pixels. Renderer (SSRender) must agree; not wired yet.
+- Scale is stored as linked `Vec2` (x, y), default (1, 1), so non-uniform scale is possible; UI may show a single linked value. Say if it should be a plain `Double`.
+- Volume is linear gain (1 = unity), stored on every clip but only meaningful for audio; `AudioSegment` does not carry it yet (audio engine should call `Clip.volume(at:)`).
+- Trimming a clip's left edge shifts keys (same frames); keys that fall outside the remaining range are kept (clamped evaluation), not deleted.
 
 ### Open questions found during implementation (simplest option taken)
 - Overshoot (progress outside 0...1) on a curved spatial path is clamped to the path ends; straight segments (zero tangents) overshoot like a scalar lerp.
-- `.in` easing (Shift+F9) on a key upgrades a linear left neighbour to bezier, otherwise the in-handle has no visible effect. This touches a non-selected key.
 - Summary/track moves clamp only against non-selected neighbours, not against time 0 or the clip bounds; the caller must clamp to the clip range.
 - Vec2 "value graph" returns the vector per sample (no per-component split); speed graph returns the magnitude.
 - Pasting a property that has no track yet creates one. Dictionary `[PropertyID: ...]` encodes as a key/value array in JSON (struct key).

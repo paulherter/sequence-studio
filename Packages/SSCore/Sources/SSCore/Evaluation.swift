@@ -5,9 +5,12 @@ public struct LayerRequest: Sendable, Hashable {
     public var clip: Clip.ID, media: UUID, track: Track.ID
     /// `clip.source.start + (t - clip.start)`
     public var sourceTime: Time
+    /// Evaluated (clamped) transform of the clip at this instant.
+    public var transform: ClipTransform
 
-    public init(clip: Clip.ID, media: UUID, track: Track.ID, sourceTime: Time) {
+    public init(clip: Clip.ID, media: UUID, track: Track.ID, sourceTime: Time, transform: ClipTransform = .identity) {
         self.clip = clip; self.media = media; self.track = track; self.sourceTime = sourceTime
+        self.transform = transform
     }
 }
 
@@ -29,7 +32,8 @@ extension Timeline {
             guard track.kind == .video, track.isVisible,
                   let c = track.clips.first(where: { $0.timeline.contains(t) }) else { return nil }
             return LayerRequest(clip: c.id, media: c.media, track: track.id,
-                                sourceTime: c.source.start + (t - c.start))
+                                sourceTime: c.source.start + (t - c.start),
+                                transform: c.transform(at: t))
         }
     }
 

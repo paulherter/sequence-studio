@@ -24,13 +24,31 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var link: UUID?
     /// Length of the whole media, when known. `nil` = unbounded (only the start of the media limits trims).
     public var mediaDuration: Time?
+    /// Animatable transform, opacity and volume (keyframe times are clip-local, relative to `start`).
+    public var animation: ClipAnimation
 
     public var timeline: TimeRange { TimeRange(start: start, duration: source.duration) }
 
     public init(id: UUID = UUID(), name: String, media: UUID, kind: TrackKind,
-                source: TimeRange, start: Time, link: UUID? = nil, mediaDuration: Time? = nil) {
+                source: TimeRange, start: Time, link: UUID? = nil, mediaDuration: Time? = nil,
+                animation: ClipAnimation = ClipAnimation()) {
+        self.animation = animation
         self.id = id; self.name = name; self.media = media; self.kind = kind
         self.source = source; self.start = start; self.link = link; self.mediaDuration = mediaDuration
+    }
+
+    private enum CodingKeys: String, CodingKey {
+        case id, name, media, kind, source, start, link, mediaDuration, animation
+    }
+
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(UUID.self, forKey: .id), name: try c.decode(String.self, forKey: .name),
+                  media: try c.decode(UUID.self, forKey: .media), kind: try c.decode(TrackKind.self, forKey: .kind),
+                  source: try c.decode(TimeRange.self, forKey: .source), start: try c.decode(Time.self, forKey: .start),
+                  link: try c.decodeIfPresent(UUID.self, forKey: .link),
+                  mediaDuration: try c.decodeIfPresent(Time.self, forKey: .mediaDuration),
+                  animation: try c.decodeIfPresent(ClipAnimation.self, forKey: .animation) ?? ClipAnimation())
     }
 
     /// Keeps the part of the clip inside `range` (timeline coordinates), source offset follows.
@@ -39,6 +57,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
         var c = self
         c.source = TimeRange(start: source.start + (r.start - start), duration: r.duration)
         c.start = r.start
+        c.animation = animation.shifted(by: start - r.start)   // keep keys on the same frames
         return c
     }
 }

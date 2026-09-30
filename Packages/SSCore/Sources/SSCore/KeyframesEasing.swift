@@ -69,16 +69,10 @@ public struct EasingLibrary: Sendable, Hashable, Codable {
 }
 
 extension KeyframeTrack {
-    /// Applies the curve to the given keys (ids not in the track are ignored).
-    /// For `.in`, a linear left neighbour becomes bezier so the in-handle takes effect.
+    /// Applies the curve to the given keys only (ids not in the track are ignored). Unselected keys are
+    /// never modified: a segment uses the left key's out side and the right key's in side.
     public mutating func apply(_ curve: EasingCurve, to ids: Set<UUID>, side: EaseSide = .both) {
-        for id in ids {
-            guard let i = index(of: id) else { continue }
-            update(id) { curve.apply(to: &$0, side: side) }
-            if side == .in, curve.interpolation == .bezier, i > 0, keys[i - 1].interpolation == .linear {
-                keys[i - 1].interpolation = .bezier
-            }
-        }
+        for id in ids { update(id) { curve.apply(to: &$0, side: side) } }
     }
 
     /// If all given keys are hold, they become linear; otherwise all become hold.

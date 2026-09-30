@@ -8,11 +8,11 @@ public enum ProjectFileError: Error, Equatable {
 
 /// Package directory `Name.ssproj/` with `project.json` and `Autosave/`.
 public enum ProjectFile {
-    public static let currentVersion = 2
+    public static let currentVersion = 3
     public typealias JSONObject = [String: Any]
     /// Upgrades the top-level object from version N to N+1, keyed by N.
     public typealias Migrations = [Int: (JSONObject) throws -> JSONObject]
-    public static var migrations: Migrations { [1: migrateV1toV2] }
+    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3] }
 
     /// v2: `Timeline.frameDuration` moved into `Timeline.format` (defaults 1920x1080, 48 kHz).
     /// Track flags, `inOut` and `markers` are optional on decode, so nothing else changes.
@@ -28,6 +28,11 @@ public enum ProjectFile {
         o["project"] = p
         return o
     }
+
+    /// v3: clips gain `animation` (animatable transform, opacity and volume with static fallbacks).
+    /// A v2 clip has no animation key; `Clip` decodes that as all-default static properties and no keyframes,
+    /// so the object passes through unchanged.
+    static func migrateV2toV3(_ obj: JSONObject) throws -> JSONObject { obj }
 
     static let fileName = "project.json"
     static let autosaveDir = "Autosave"

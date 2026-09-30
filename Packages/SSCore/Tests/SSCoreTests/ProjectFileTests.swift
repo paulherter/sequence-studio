@@ -54,7 +54,7 @@ import Testing
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try ProjectFile.write(try sample(), to: dir)
         let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
-        #expect(text.contains("\"formatVersion\" : 2"))
+        #expect(text.contains("\"formatVersion\" : 3"))
         #expect(text.contains("\n"))
         #expect(text.contains("2023-11-14T22:13:20Z"))
     }
@@ -99,14 +99,14 @@ import Testing
         #expect(throws: ProjectFileError.missing) { try ProjectFile.read(from: dir) }
         try Data("{ nope".utf8).write(to: dir.appendingPathComponent("project.json"))
         #expect(throws: ProjectFileError.corrupt) { try ProjectFile.read(from: dir) }
-        try Data(#"{"formatVersion":2,"project":{"x":1}}"#.utf8).write(to: dir.appendingPathComponent("project.json"))
+        try Data(#"{"formatVersion":3,"project":{"x":1}}"#.utf8).write(to: dir.appendingPathComponent("project.json"))
         #expect(throws: ProjectFileError.corrupt) { try ProjectFile.read(from: dir) }
     }
 
     @Test func newerVersionRefused() throws {
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try Data(#"{"formatVersion":99,"project":{}}"#.utf8).write(to: dir.appendingPathComponent("project.json"))
-        #expect(throws: ProjectFileError.newerVersion(found: 99, supported: 2)) { try ProjectFile.read(from: dir) }
+        #expect(throws: ProjectFileError.newerVersion(found: 99, supported: 3)) { try ProjectFile.read(from: dir) }
     }
 
     @Test func migrationFromFakeV0() throws {
@@ -119,13 +119,13 @@ import Testing
             p["media"] = [Any](); p["timelines"] = [Any]()
             o["project"] = p
             return o
-        }, 1: ProjectFile.migrateV1toV2]
+        }, 1: ProjectFile.migrateV1toV2, 2: ProjectFile.migrateV2toV3]
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try Data(v0.utf8).write(to: dir.appendingPathComponent("project.json"))
         let p = try ProjectFile.read(from: dir, migrations: migrations)
         #expect(p.name == "Old")
         // without a registered step, refuse rather than guess
-        #expect(throws: ProjectFileError.corrupt) { try ProjectFile.read(from: dir, migrations: [1: ProjectFile.migrateV1toV2]) }
+        #expect(throws: ProjectFileError.corrupt) { try ProjectFile.read(from: dir, migrations: [1: ProjectFile.migrateV1toV2, 2: ProjectFile.migrateV2toV3]) }
     }
 
     @Test func failedWriteKeepsOldFile() throws {
@@ -205,5 +205,42 @@ import Testing
         #expect(p.media.count == 1)
         #expect(p.media(m.id)?.name == "b")
         #expect(p.media(UUID()) == nil)
+    }
+
+    @Test func animationRoundTripsInProjectFile() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        var p = try sample()
+        var c = p.timelines[0].tracks[0].clips[0]
+        c.animation.rotation.track = KeyframeTrack(keys: [
+            Keyframe(time: Time(0, 1), value: 0.0), Keyframe(time: Time(1001, 30000), value: 720.0)])
+        c.animation.scale.value = Vec2(2, 2)
+        c.animation.position.track = KeyframeTrack(keys: [
+            Keyframe(time: Time(0, 1), value: Vec2(1, 2), outTangent: Vec2(5, 0)), Keyframe(time: Time(1, 1), value: Vec2(9, 9))])
+        p.timelines[0].tracks[0].replace(c)
+        try ProjectFile.write(p, to: dir)
+        let back = try ProjectFile.read(from: dir)
+        #expect(back == p)
+        #expect(back.timelines[0].tracks[0].clips[0].animation.rotation.track.keys.count == 2)
+    }
+
+    @Test func v2FileLoadsWithStaticDefaults() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        let pid = UUID(), tid = UUID(), cid = UUID(), mid = UUID()
+        let json = #"""
+        {"formatVersion":2,"project":{"id":"\#(pid)","name":"Old","media":[],"activeTimeline":"\#(tid)",
+        "timelines":[{"id":"\#(tid)","name":"T","format":{"width":1920,"height":1080,"frameDuration":{"value":1,"timescale":30},"audioSampleRate":48000},
+        "tracks":[{"id":"\#(UUID())","kind":"video","clips":[{"id":"\#(cid)","name":"c","media":"\#(mid)","kind":"video",
+        "source":{"start":{"value":0,"timescale":1},"duration":{"value":4,"timescale":1}},"start":{"value":0,"timescale":1}}]}]}]}}
+        """#
+        try Data(json.utf8).write(to: dir.appendingPathComponent("project.json"))
+        let p = try ProjectFile.read(from: dir)
+        let c = p.timelines[0].tracks[0].clips[0]
+        #expect(c.id == cid)
+        #expect(c.animation == ClipAnimation())
+        #expect(c.transform(at: Time(1, 1)) == ClipTransform.identity)
+        #expect(c.animation.position.track.isEmpty)
+        try ProjectFile.write(p, to: dir)
+        let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
+        #expect(text.contains("\"formatVersion\" : 3"))
     }
 }

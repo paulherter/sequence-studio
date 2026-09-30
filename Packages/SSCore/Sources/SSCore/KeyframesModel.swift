@@ -200,13 +200,12 @@ public struct KeyframeTrack<V: KeyframeValue>: Sendable, Hashable, Codable {
 
     /// Value of one segment at normalised time `tn` in 0...1.
     static func segmentValue(_ a: Keyframe<V>, _ b: Keyframe<V>, _ tn: Double) -> V {
-        switch a.interpolation {
-        case .hold: return a.value
-        case .linear: return V.interpolate(from: a, to: b, progress: tn)
-        case .bezier:
-            let p = KeyframeMath.bezierProgress(tn, out: a.outHandle, in: b.inHandle)
-            return V.interpolate(from: a, to: b, progress: p)
-        }
+        // Each key owns its handles: the curve uses a's out side and b's in side, whatever a's shape.
+        // Hold on the left key still wins.
+        if a.interpolation == .hold { return a.value }
+        if a.outHandle == .linear && b.inHandle == .linear { return V.interpolate(from: a, to: b, progress: tn) }
+        let p = KeyframeMath.bezierProgress(tn, out: a.outHandle, in: b.inHandle)
+        return V.interpolate(from: a, to: b, progress: p)
     }
 
     /// Value at `t`; clamped before the first / after the last key. `nil` if empty.

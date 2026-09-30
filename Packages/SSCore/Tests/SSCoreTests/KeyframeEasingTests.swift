@@ -53,7 +53,7 @@ import Testing
     #expect(tr.keys[1].inHandle == EasingCurve.easeInOut.inHandle)
     #expect(tr.keys[1].outHandle == ks[1].outHandle)
     #expect(tr.keys[1].interpolation == .linear)
-    #expect(tr.keys[0].interpolation == .bezier) // left segment must be bezier for the in-handle to matter
+    #expect(tr.keys[0] == ks[0]) // unselected left neighbour is untouched
     tr.apply(.easeInOut, to: [ks[0].id], side: .out)
     #expect(tr.keys[0].outHandle == EasingCurve.easeInOut.outHandle)
     #expect(tr.keys[0].inHandle == ks[0].inHandle)
@@ -67,4 +67,38 @@ import Testing
     #expect(tr.keys.allSatisfy { $0.interpolation == .hold })
     tr.toggleHold(ids)            // all hold -> linear
     #expect(tr.keys.allSatisfy { $0.interpolation == .linear })
+}
+
+@Test func kfEaseNeverTouchesUnselectedKeys() {
+    let ks = [kfKey(0, 0), kfKey(2, 5), kfKey(4, 9), kfKey(6, 1)]
+    for side in [EaseSide.in, .out, .both] {
+        var tr = KeyframeTrack(keys: ks)
+        tr.apply(.easeInOut, to: [ks[1].id], side: side)
+        #expect(tr.keys[0] == ks[0] && tr.keys[2] == ks[2] && tr.keys[3] == ks[3])
+        let enc = JSONEncoder(); enc.outputFormatting = .sortedKeys
+        for i in [0, 2, 3] { #expect(try! enc.encode(tr.keys[i]) == enc.encode(ks[i])) }
+    }
+}
+
+@Test func kfLinearLeftKeyWithEasedRightInHandleEases() {
+    // Left key stays .linear with linear out-handle; only the right key's in-handle is eased.
+    let ks = [kfKey(0, 0), kfKey(2, 10)]
+    var tr = KeyframeTrack(keys: ks)
+    tr.apply(.easeInOut, to: [ks[1].id], side: .in)
+    #expect(tr.keys[0].interpolation == .linear)
+    let v = tr.value(at: Time(1, 2))!          // quarter of the segment: linear would be 2.5
+    #expect(v > 2.5 - 1e-9 + 0.1)              // in-handle flattens the end, so the start catches up
+    #expect(tr.value(at: kfT(1))! > 5)
+    #expect(tr.value(at: kfT(0)) == 0 && tr.value(at: kfT(2)) == 10)
+}
+
+@Test func kfHoldOnLeftStillWinsOverRightInHandle() {
+    var b = kfKey(2, 10); b.inHandle = EaseHandle(dx: 0.5, dy: 0)
+    let tr = KeyframeTrack(keys: [kfKey(0, 3, .hold), b])
+    #expect(tr.value(at: kfT(1)) == 3)
+}
+
+@Test func kfLinearHandlesStayExactlyLinear() {
+    let tr = KeyframeTrack(keys: [kfKey(0, 0), kfKey(3, 9)])
+    #expect(tr.value(at: kfT(1)) == 3)
 }
