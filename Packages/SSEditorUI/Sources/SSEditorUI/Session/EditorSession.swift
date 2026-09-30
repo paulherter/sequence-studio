@@ -274,16 +274,25 @@ public final class EditorSession {
     /// Only while playing: when paused the session's playhead is the truth and the engine's last presented frame
     /// may still lag behind a fast scrub. Playback stops at the end of the sequence.
     private func enginePositionChanged(_ t: Time) {
-        guard isPlaying, t != playhead else { return }
+        guard isPlaying else { return }
         let end = activeTimeline?.duration ?? .zero
-        if end > .zero, t >= end, engine.rate.isForward {
+        // Stop at the sequence end: the last presented frame is one frame before `end`, and the engine may have stopped itself.
+        let atEnd = end > .zero && (t + frameDuration >= end) && engine.rate.isForward
+        if atEnd || engine.rate.isPaused {
             engine.pause(); isPlaying = false
-            playhead = end
+            if atEnd { playhead = end }
             notify([.playhead, .transport])
             return
         }
+        guard t != playhead else { return }
         playhead = t
         notify(.playhead)
+    }
+
+    /// Play from the end of the sequence restarts at the start.
+    private func restartIfAtEnd() {
+        let end = activeTimeline?.duration ?? .zero
+        if end > .zero, playhead >= end { seek(to: .zero) }
     }
 
     public func beginScrub() { engine.beginScrub() }
@@ -296,14 +305,14 @@ public final class EditorSession {
     public func endScrub() { engine.endScrub() }
 
     public func playPause() {
-        if isPlaying || !engine.rate.isPaused { engine.pause(); isPlaying = false } else { engine.play(.forward); isPlaying = true }
+        if isPlaying || !engine.rate.isPaused { engine.pause(); isPlaying = false } else { restartIfAtEnd(); engine.play(.forward); isPlaying = true }
         notify(.transport)
     }
 
     public func apply(shuttle action: ShuttleAction) {
         switch action {
         case .setRate(let r):
-            if r.isPaused { engine.pause(); isPlaying = false } else { engine.play(r); isPlaying = true }
+            if r.isPaused { engine.pause(); isPlaying = false } else { if r.isForward { restartIfAtEnd() }; engine.play(r); isPlaying = true }
             notify(.transport)
         case .step(let n): stepFrames(n)
         case .none: break
