@@ -41,7 +41,7 @@ public final class EffectKeyframeLanesView: NSView {
     public override var acceptsFirstResponder: Bool { true }
     public override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    var geometry: KeyframeLaneGeometry { KeyframeLaneGeometry(width: bounds.width, duration: model.duration) }
+    var geometry: KeyframeLaneGeometry { model.laneGeometry(width: bounds.width) }
 
     // MARK: Drawing
 
@@ -100,7 +100,7 @@ public final class EffectKeyframeLanesView: NSView {
     /// Premiere-style: diamond halves = linear, hourglass halves = eased, square halves = hold.
     /// Left half = incoming, right half = outgoing. Selected = accent.
     private func drawGlyph(_ glyph: KeyGlyph, at c: NSPoint, selected: Bool, summary: Bool) {
-        KeyGlyphDrawing.draw(glyph, at: c, half: summary ? 5.5 : 4.5,
+        KeyGlyphDrawing.draw(glyph, at: c, half: summary ? 6.5 : 6,
                              fill: selected ? Theme.Colors.accent : (summary ? Theme.Colors.label2 : Theme.Colors.keyframe),
                              edge: Theme.Colors.divider)
     }
@@ -184,7 +184,7 @@ public final class EffectKeyframeLanesView: NSView {
     public override func mouseUp(with event: NSEvent) {
         defer { drag = nil; marquee = nil; needsDisplay = true }
         guard case .keys(_, _, let started, let h, let shift, let was)? = drag else { return }
-        if started { model.endGesture() }
+        if started { model.endKeyMove() }       // one undo step; the moved keys are deselected
         else if was && !shift { select(h, extend: false) }   // plain click on a selected key collapses the selection to it
     }
 
@@ -205,7 +205,23 @@ public final class EffectKeyframeLanesView: NSView {
         model.selectKeys(in: lo ... hi, properties: props, extend: true)
     }
 
+    // MARK: Zoom
+
+    public override func magnify(with event: NSEvent) {
+        let x = convert(event.locationInWindow, from: nil).x
+        model.zoom(by: KeyframeZoomInput.magnifyFactor(event.magnification), around: geometry.seconds(atX: x))
+    }
+
+    public override func scrollWheel(with event: NSEvent) {
+        switch KeyframeZoomInput.scroll(event) {
+        case .zoom(let f): model.zoom(by: f, around: geometry.seconds(atX: convert(event.locationInWindow, from: nil).x))
+        case .pan(let pts): model.panViewport(bySeconds: -Double(pts) / max(geometry.pointsPerSecond, 1e-6))
+        case .none: super.scrollWheel(with: event)
+        }
+    }
+
     public override func keyDown(with event: NSEvent) {
+        if KeyframeZoomInput.key(event, model: model) { return }
         switch event.keyCode {
         case 51, 117: model.deleteSelectionOrEffect()
         default: super.keyDown(with: event)
@@ -294,13 +310,13 @@ extension PropertyTrack {
 }
 
 enum KeyGlyphDrawing {
-    static func draw(_ glyph: KeyGlyph, at c: NSPoint, half h: CGFloat, fill: NSColor, edge: NSColor) {
+    static func draw(_ glyph: KeyGlyph, at c: NSPoint, half h: CGFloat, fill: NSColor, edge: NSColor, lineWidth: CGFloat = 1.5) {
         for poly in glyph.polygons(at: c, h: h) {
             let path = NSBezierPath()
             for (i, p) in poly.enumerated() { i == 0 ? path.move(to: p) : path.line(to: p) }
             path.close()
             fill.setFill(); path.fill()
-            edge.setStroke(); path.lineWidth = 1; path.stroke()
+            edge.setStroke(); path.lineWidth = lineWidth; path.lineJoinStyle = .round; path.stroke()
         }
     }
 }

@@ -2,11 +2,16 @@ import AppKit
 import Observation
 import SSCore
 
-/// Effect Controls panel (DESIGN.md screen 2): sections Motion / Opacity / Rounded Corners / Volume,
-/// property rows with scrub fields + animate diamond + key navigation on the left, keyframe lanes on the right,
-/// graph in place when a row is expanded. All state and edits live in `EffectControlsModel`.
+/// Effect Controls panel (DESIGN.md screen 2, Premiere layout): sections Motion / Opacity / Rounded Corners / Volume,
+/// then the Text or Audio section. Property rows with scrub fields + animate diamond + key navigation on the left,
+/// keyframe lanes on the right, separated by a draggable divider (width persisted). Ruler, clip bar and playhead sit at the
+/// top of the keyframe area, timecode and the zoom bar at the bottom. An expanded row shows its speed graph directly under
+/// it. All state and edits live in `EffectControlsModel`.
 public final class EffectControlsView: NSView {
-    public static let labelWidth: CGFloat = 364
+    /// Width of the properties column (left of the divider).
+    public private(set) var labelWidth: CGFloat = EffectControlsSplit.load()
+    /// Receives the new width when a divider drag ends; default: UserDefaults.
+    public var persistLabelWidth: (CGFloat) -> Void = { EffectControlsSplit.save($0) }
 
     public let model: EffectControlsModel
     /// Asked before the animate diamond deletes all keys of a property. Default: alert.
@@ -27,6 +32,9 @@ public final class EffectControlsView: NSView {
     private let content = FlippedView()
     private let lanes: EffectKeyframeLanesView
     private let ruler: KeyframeRulerView
+    private let zoomBar: KeyframeZoomBar
+    private let divider = EffectControlsDivider()
+    private var dividerStartWidth: CGFloat = 0
     private let timecodeLabel = NSTextField(labelWithString: "")
     private let emptyLabel = NSTextField(labelWithString: "No clip selected")
     private var rowViews: [(EffectRow, NSView)] = []
@@ -44,6 +52,7 @@ public final class EffectControlsView: NSView {
         self.model = model
         lanes = EffectKeyframeLanesView(model: model)
         ruler = KeyframeRulerView(model: model)
+        zoomBar = KeyframeZoomBar(model: model)
         super.init(frame: NSRect(x: 0, y: 0, width: 640, height: 400))
         wantsLayer = true
         layer?.backgroundColor = Theme.Colors.panel.cgColor
@@ -51,6 +60,7 @@ public final class EffectControlsView: NSView {
         scroll.drawsBackground = false
         scroll.borderType = .noBorder
         scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay      // the lanes must keep the ruler's width
         scroll.documentView = content
         addSubview(scroll)
         emptyLabel.font = Theme.Fonts.small
@@ -59,8 +69,19 @@ public final class EffectControlsView: NSView {
         addSubview(emptyLabel)
         content.addSubview(lanes)
         addSubview(ruler)
+        addSubview(zoomBar)
+        addSubview(divider)
+        divider.onBegin = { [weak self] in self?.dividerStartWidth = self?.labelWidth ?? 0 }
+        divider.onDrag = { [weak self] dx in
+            guard let self else { return }
+            setLabelWidth(dividerStartWidth + dx)
+        }
+        divider.onEnd = { [weak self] in
+            guard let self else { return }
+            persistLabelWidth(labelWidth)
+        }
         timecodeLabel.font = Theme.Fonts.small
-        timecodeLabel.textColor = Theme.Colors.label
+        timecodeLabel.textColor = Theme.Colors.accent
         addSubview(timecodeLabel)
         setAccessibilityRole(.group)
         setAccessibilityLabel("Effect Controls")
@@ -75,6 +96,7 @@ public final class EffectControlsView: NSView {
 
     /// Delete / Forward Delete: removes the selected effect section (keys first when any are selected).
     public override func keyDown(with event: NSEvent) {
+        if KeyframeZoomInput.key(event, model: model) { return }
         switch event.keyCode {
         case 51, 117: model.deleteSelectionOrEffect()
         default: super.keyDown(with: event)
@@ -87,6 +109,7 @@ public final class EffectControlsView: NSView {
         withObservationTracking {
             _ = model.clip; _ = model.playhead; _ = model.selection; _ = model.expanded
             _ = model.collapsedSections; _ = model.selectedSection; _ = model.graphMode; _ = model.easingLibrary
+            _ = model.viewport
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.modelChanged()
@@ -111,6 +134,8 @@ public final class EffectControlsView: NSView {
         rowViews = []
         signature = currentSignature
         emptyLabel.isHidden = model.clip != nil
+        // Nothing selected: no ruler, zoom bar or divider, just the empty state.
+        for v in [ruler, zoomBar, divider, lanes, timecodeLabel] as [NSView] { v.isHidden = model.clip == nil }
         let rows = EffectControlsLayout.rows(sections: model.visibleSections, collapsed: model.collapsedSections,
                                              expanded: model.expanded)
         for row in rows {
@@ -139,24 +164,35 @@ public final class EffectControlsView: NSView {
         } else { timecodeLabel.stringValue = "" }
     }
 
+    /// Sets the divider position (clamped to the min/max widths) and lays out again.
+    public func setLabelWidth(_ w: CGFloat) {
+        let c = EffectControlsSplit.clamp(w, total: bounds.width)
+        guard c != labelWidth else { return }
+        labelWidth = c
+        needsLayout = true
+    }
+
     public override func layout() {
         super.layout()
-        let rh = KeyframeRulerView.height
-        let lw0 = min(Self.labelWidth, bounds.width)
-        scroll.frame = NSRect(x: 0, y: rh, width: bounds.width, height: max(bounds.height - rh, 0))
-        ruler.frame = NSRect(x: lw0, y: 0, width: max(bounds.width - lw0, 0), height: rh)
-        timecodeLabel.frame = NSRect(x: 12, y: (rh - 14) / 2, width: max(lw0 - 24, 0), height: 14)
+        let rh = KeyframeRulerView.height, bh = KeyframeZoomBar.height
+        let lw = EffectControlsSplit.clamp(labelWidth, total: bounds.width)
+        let lanesW = max(bounds.width - lw, 0)
+        ruler.frame = NSRect(x: lw, y: 0, width: lanesW, height: rh)
+        scroll.frame = NSRect(x: 0, y: rh, width: bounds.width, height: max(bounds.height - rh - bh, 0))
+        zoomBar.frame = NSRect(x: lw, y: bounds.height - bh, width: lanesW, height: bh)
+        timecodeLabel.frame = NSRect(x: 12, y: bounds.height - bh + (bh - 14) / 2, width: max(lw - 24, 0), height: 14)
+        divider.frame = NSRect(x: lw - 3, y: 0, width: 7, height: bounds.height)
         emptyLabel.frame = NSRect(x: 0, y: bounds.midY - 8, width: bounds.width, height: 16)
-        let topH = clipSections.map { $0.isHidden ? 0 : $0.preferredHeight(for: bounds.width) } ?? 0
-        clipSections?.frame = NSRect(x: 0, y: 0, width: bounds.width, height: topH)
-        let total = (rowViews.last.map { $0.0.y + $0.0.height } ?? 0) + topH
-        content.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(total, scroll.frame.height))
-        let lw = min(Self.labelWidth, bounds.width)
+        // Text / Audio section sits below the rows: Motion and Opacity come first.
+        let rowsH = rowViews.last.map { $0.0.y + $0.0.height } ?? 0
+        let secH = clipSections.map { $0.isHidden ? 0 : $0.preferredHeight(for: bounds.width) } ?? 0
+        clipSections?.frame = NSRect(x: 0, y: rowsH, width: bounds.width, height: secH)
+        content.frame = NSRect(x: 0, y: 0, width: bounds.width, height: max(rowsH + secH, scroll.frame.height))
         for (row, v) in rowViews {
             let isGraph = { if case .graph = row.kind { return true } else { return false } }()
-            v.frame = NSRect(x: 0, y: row.y + topH, width: isGraph ? bounds.width : lw, height: row.height)
+            v.frame = NSRect(x: 0, y: row.y, width: isGraph ? bounds.width : lw, height: row.height)
         }
-        lanes.frame = NSRect(x: lw, y: topH, width: max(bounds.width - lw, 0), height: max(content.frame.height - topH, 0))
+        lanes.frame = NSRect(x: lw, y: 0, width: lanesW, height: rowsH)
         // Graph rows are laid out by themselves (they need the lane origin).
         for (row, v) in rowViews { if case .graph = row.kind { (v as? GraphRow)?.laneX = lw; v.needsLayout = true } }
         refresh()
@@ -344,6 +380,7 @@ private final class PropertyRow: RowBackground, RowUpdating {
         next = ClosureButton(symbol: "chevron.right", label: "Next keyframe") { model.goToNextKey(p) }
         reset = ClosureButton(symbol: "arrow.counterclockwise", label: "Reset \(p.title)") { model.reset(p) }
         super.init(frame: .zero)
+        reset.toolTip = "Reset \(p.title) (value at the playhead when animated; right-click for Reset All)"
         addSubview(chevron); addSubview(name)
         let comps: [EffectComponent] = p.kind == .vector ? [.x, .y] : [.all]
         for (i, c) in comps.enumerated() {
@@ -370,16 +407,35 @@ private final class PropertyRow: RowBackground, RowUpdating {
         super.layout()
         let h = bounds.height, fh = Theme.Metrics.controlHeight, y = (h - fh) / 2
         chevron.frame = NSRect(x: 6, y: 0, width: 18, height: h)
-        name.frame = NSRect(x: 28, y: (h - 14) / 2, width: 92, height: 14)
-        var x: CGFloat = 124
+        name.frame = NSRect(x: 28, y: (h - 14) / 2, width: 72, height: 14)
+        var x: CGFloat = 104
         for (i, f) in fields.enumerated() {
-            let w: CGFloat = i == 0 ? 82 : 64
+            let w: CGFloat = i == 0 ? 72 : 60
             f.frame = NSRect(x: x, y: y, width: w, height: fh); x += w + 4
         }
-        x = max(x, 278)
+        // Key navigation (previous, add/remove, next) sits left of the reset arrow, like Premiere.
+        x = max(x, bounds.width - 24 - 54 - 4)
         for b in [prev, key, next] { b.frame = NSRect(x: x, y: 0, width: 18, height: h); x += 18 }
         reset.frame = NSRect(x: bounds.width - 24, y: 0, width: 18, height: h)
     }
+
+    // Right-click: reset at the playhead and, separately, reset all (drops the keyframes).
+    override func menu(for event: NSEvent) -> NSMenu? {
+        let m = NSMenu(title: property.title)
+        m.autoenablesItems = false
+        let animated = model.isAnimated(property)
+        if animated {
+            let here = NSMenuItem(title: "Reset Value at Playhead", action: #selector(resetHere), keyEquivalent: "")
+            here.target = self; here.isEnabled = model.playheadInClip
+            m.addItem(here)
+        }
+        let all = NSMenuItem(title: animated ? "Reset All (Remove Keyframes)" : "Reset", action: #selector(resetEverything), keyEquivalent: "")
+        all.target = self; all.isEnabled = !model.isDefault(property)
+        m.addItem(all)
+        return m
+    }
+    @objc private func resetHere() { model.resetAtPlayhead(property) }
+    @objc private func resetEverything() { model.resetAll(property) }
 
     func update() {
         let p = property
@@ -398,7 +454,7 @@ private final class PropertyRow: RowBackground, RowUpdating {
         next.isEnabled = model.nextKeyTime(p) != nil
         key.setSymbol(state == .onKey ? "diamond.fill" : "diamond",
                       tint: state == .onKey ? Theme.Colors.accent : Theme.Colors.label2)
-        reset.isEnabled = !model.isDefault(p)
+        reset.isEnabled = animated ? (model.canResetAtPlayhead(p) || !model.isDefault(p)) : !model.isDefault(p)
         let inClip = model.playheadInClip
         key.isEnabled = inClip
         fields[0].alphaValue = 1
@@ -409,32 +465,32 @@ private final class PropertyRow: RowBackground, RowUpdating {
     }
 }
 
+/// Speed graph directly under its property row (Premiere): the keys are the glyphs in the row above, the graph only shows
+/// the curve with small key markers and the handles of selected keys. The value graph is one context-menu click away.
 private final class GraphRow: NSView, RowUpdating {
     let property: EffectProperty
     let model: EffectControlsModel
-    var laneX: CGFloat = EffectControlsView.labelWidth
+    var laneX: CGFloat = EffectControlsSplit.defaultWidth
     private var graphs: [(EffectComponent, KeyframeGraphView)] = []
-    private let mode = NSSegmentedControl(labels: ["Value", "Speed"], trackingMode: .selectOne, target: nil, action: nil)
 
     override var isFlipped: Bool { true }
 
     init(property p: EffectProperty, model: EffectControlsModel) {
         property = p; self.model = model
         super.init(frame: .zero)
-        mode.controlSize = .small
-        mode.target = self
-        mode.action = #selector(modeChanged)
-        mode.setAccessibilityLabel("Graph type")
         let comps: [EffectComponent] = p.kind == .vector ? [.x, .y] : [.all]
         for c in comps {
             let g = KeyframeGraphView(frame: .zero)
             g.setAccessibilityLabel(comps.count == 2 ? "\(p.title) \(c == .x ? "X" : "Y") graph" : "\(p.title) graph")
+            g.displayScale = p == .scale || p == .opacity ? 100 : 1
             g.onEdit = { t in model.applyGraphEdit(p, component: c, track: t) }
             g.onSelectionChange = { ids in model.setSelection(for: p, ids: ids) }
             g.onLibraryChange = { lib in model.easingLibrary = lib; model.onLibraryChange?(lib) }
+            g.onModeChange = { model.graphMode = $0 }
+            g.onZoom = { f, anchor in model.zoom(by: f, around: anchor) }
+            g.onPan = { model.panViewport(bySeconds: $0) }
             graphs.append((c, g)); addSubview(g)
         }
-        addSubview(mode)   // above the graphs: they span the label column too
     }
     required init?(coder: NSCoder) { fatalError() }
 
@@ -445,23 +501,20 @@ private final class GraphRow: NSView, RowUpdating {
 
     override func layout() {
         super.layout()
-        mode.frame = NSRect(x: 28, y: 6, width: 110, height: 18)
         let n = CGFloat(graphs.count)
         let h = (bounds.height - 1) / max(n, 1)
         for (i, (_, g)) in graphs.enumerated() {
             // The graph spans the whole row: its plot starts where the keyframe lanes start (same 10 pt inset,
-            // so keys line up with the lanes above), its value axis labels sit in the label column.
+            // so the curve lines up with the keys above), its two value labels sit in the label column.
             g.frame = NSRect(x: 0, y: CGFloat(i) * h, width: bounds.width, height: h)
             g.leadingPanelWidth = laneX
-            g.insets = GraphInsets(top: 12, left: laneX + 10, bottom: 12, right: 10)
+            g.insets = GraphInsets(top: 14, left: laneX + 10, bottom: 14, right: 10)
         }
     }
 
-    @objc private func modeChanged() { model.graphMode = mode.selectedSegment == 1 ? .speed : .value }
-
     func update() {
-        mode.selectedSegment = model.graphMode == .speed ? 1 : 0
         let local = model.localPlayhead
+        let vp = model.viewport
         for (c, g) in graphs {
             let t = model.graphTrack(property, component: c)
             if g.track != t { g.track = t }
@@ -471,6 +524,7 @@ private final class GraphRow: NSView, RowUpdating {
             g.playheadSeconds = Double(local.value) / Double(local.timescale)
             g.frameDuration = model.frameDuration
             g.maxTime = model.duration
+            g.visibleTime = vp.range
             g.easingLibrary = model.easingLibrary
         }
     }

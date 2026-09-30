@@ -373,11 +373,11 @@ import SSCore
         _ = m.toggleStopwatch(.opacity)
         #expect(!m.isDefault(.opacity))
         log.edits.removeAll()
-        m.reset(.opacity)
+        m.resetAll(.opacity)
         #expect(log.edits.count == 1 && log.edits[0].1 == "Reset Opacity")
         #expect(m.clip!.animation.opacity == ClipAnimation().opacity)
         #expect(m.isDefault(.opacity))
-        m.reset(.opacity)                                   // already default: no edit
+        m.resetAll(.opacity)                                // already default: no edit
         #expect(log.edits.count == 1)
     }
 

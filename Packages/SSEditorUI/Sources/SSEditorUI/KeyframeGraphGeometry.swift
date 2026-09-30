@@ -34,8 +34,10 @@ public struct GraphFit: Sendable, Equatable {
     /// Covers keys, sampled curve (so overshoot is visible) and all handle points, plus headroom.
     /// `timeRange` (clip-local seconds, normally the clip's 0...duration) is always included, so the graph lines up
     /// with the keyframe lanes and has no empty band; keys outside it widen the range.
+    /// `visibleTime` (the keyframe area's zoom window) overrides the time range, so the graph shows exactly the span
+    /// the lanes and ruler show; the value range still covers the whole curve.
     public static func make(track: KeyframeTrack<Double>, mode: GraphMode, headroom: Double = 0.12,
-                            timeRange: ClosedRange<Double>? = nil) -> GraphFit {
+                            timeRange: ClosedRange<Double>? = nil, visibleTime: ClosedRange<Double>? = nil) -> GraphFit {
         let keys = track.keys
         var t0 = keys.first.map { GraphMath.seconds($0.time) } ?? 0
         var t1 = keys.last.map { GraphMath.seconds($0.time) } ?? 1
@@ -64,7 +66,9 @@ public struct GraphFit: Sendable, Equatable {
         var lo = ys.min() ?? 0, hi = ys.max() ?? 1
         if hi - lo < 1e-9 { lo -= 1; hi += 1 }
         let pad = (hi - lo) * headroom
-        return GraphFit(time: t0...t1, value: (lo - pad)...(hi + pad))
+        var time = t0...t1
+        if let v = visibleTime, v.upperBound - v.lowerBound > 1e-9 { time = v }
+        return GraphFit(time: time, value: (lo - pad)...(hi + pad))
     }
 }
 
