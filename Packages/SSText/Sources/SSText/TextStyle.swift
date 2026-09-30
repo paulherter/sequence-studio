@@ -44,6 +44,7 @@ public struct TextBackground: Sendable, Hashable, Codable {
 
 public struct TextShadow: Sendable, Hashable, Codable {
     public var color: RGBAColor
+    /// Offset in layout space (sequence pixels, y down): positive `offsetY` moves the shadow down.
     public var offsetX: Double, offsetY: Double, blur: Double
     public init(color: RGBAColor, offsetX: Double, offsetY: Double, blur: Double) {
         self.color = color; self.offsetX = offsetX; self.offsetY = offsetY; self.blur = max(0, blur)

@@ -124,3 +124,67 @@ import Foundation
         #expect(r.lines.count == 1 && r.lines[0].width > 0)
     }
 }
+
+@Suite struct InkBoundsTests {
+    func plain() -> TextStyle { TextStyle(fontName: "Helvetica", size: 32, alignment: .left) }
+
+    @Test func plainStyleInkEqualsBounds() {
+        let r = TextLayout.layout(text: "Hello\nWorld", style: plain(), maxWidth: nil)
+        #expect(r.inkBounds == r.bounds)
+        #expect(r.lines.allSatisfy { $0.inkBounds == $0.rect })
+    }
+
+    @Test func strokeGrowsInkOnAllSides() {
+        var s = plain(); s.stroke = TextStroke(color: .black, width: 6)
+        let r = TextLayout.layout(text: "Hello", style: s, maxWidth: nil)
+        #expect(abs(r.inkBounds.x - (r.bounds.x - 6)) < 1e-9)
+        #expect(abs(r.inkBounds.y - (r.bounds.y - 6)) < 1e-9)
+        #expect(abs(r.inkBounds.maxX - (r.bounds.maxX + 6)) < 1e-9)
+        #expect(abs(r.inkBounds.maxY - (r.bounds.maxY + 6)) < 1e-9)
+        #expect(r.lines[0].inkBounds == r.inkBounds)
+    }
+
+    @Test func shadowExtendsTowardsOffsetPlusBlur() {
+        var s = plain(); s.shadow = TextShadow(color: .black, offsetX: 4, offsetY: 10, blur: 5)
+        let r = TextLayout.layout(text: "Hello", style: s, maxWidth: nil)
+        // Down/right: offset + blur; up/left: original edge still counts, shadow only adds (blur - offset) if positive.
+        #expect(abs(r.inkBounds.maxY - (r.bounds.maxY + 15)) < 1e-9)
+        #expect(abs(r.inkBounds.maxX - (r.bounds.maxX + 9)) < 1e-9)
+        #expect(abs(r.inkBounds.y - r.bounds.y) < 1e-9)      // blur 5 < offsetY 10: nothing above
+        #expect(abs(r.inkBounds.x - (r.bounds.x - 1)) < 1e-9) // blur 5 > offsetX 4
+    }
+
+    @Test func negativeOffsetShadowGoesUp() {
+        var s = plain(); s.shadow = TextShadow(color: .black, offsetX: 0, offsetY: -8, blur: 2)
+        let r = TextLayout.layout(text: "Hello", style: s, maxWidth: nil)
+        #expect(abs(r.inkBounds.y - (r.bounds.y - 10)) < 1e-9)
+    }
+
+    @Test func strokeAndShadowCombineAndBackgroundIsIncluded() {
+        var s = plain()
+        s.stroke = TextStroke(color: .black, width: 2)
+        s.shadow = TextShadow(color: .black, offsetX: 0, offsetY: 3, blur: 4)
+        s.background = TextBackground(color: .black, padding: BoxPadding(horizontal: 10, vertical: 6))
+        let r = TextLayout.layout(text: "Hello", style: s, maxWidth: nil)
+        let bg = r.backgroundRect!
+        #expect(abs(r.inkBounds.x - (bg.x - 2 - 4)) < 1e-9)   // stroke 2, then blur 4 (offsetX 0)
+        #expect(abs(r.inkBounds.maxY - (bg.maxY + 2 + 3 + 4)) < 1e-9)
+        #expect(r.inkBounds.width >= r.bounds.width && r.inkBounds.height >= r.bounds.height)
+    }
+
+    @Test func perLineInkBoundsAreInsideResultInk() {
+        var s = plain(); s.stroke = TextStroke(color: .black, width: 3)
+        s.shadow = TextShadow(color: .black, offsetX: 2, offsetY: 2, blur: 3)
+        let r = TextLayout.layout(text: "a\nbb\nccc", style: s, maxWidth: nil)
+        for l in r.lines {
+            #expect(l.inkBounds.x >= r.inkBounds.x - 1e-9 && l.inkBounds.maxX <= r.inkBounds.maxX + 1e-9)
+            #expect(l.inkBounds.y >= r.inkBounds.y - 1e-9 && l.inkBounds.maxY <= r.inkBounds.maxY + 1e-9)
+            #expect(l.inkBounds.width > l.rect.width && l.inkBounds.height > l.rect.height)
+        }
+    }
+
+    @Test func emptyTextHasZeroInk() {
+        var s = plain(); s.stroke = TextStroke(color: .black, width: 3)
+        #expect(TextLayout.layout(text: "", style: s, maxWidth: nil).inkBounds == .zero)
+    }
+}

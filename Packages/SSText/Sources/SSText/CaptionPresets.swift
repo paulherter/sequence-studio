@@ -25,7 +25,7 @@ public struct CaptionPresetLibrary: Sendable {
 
     public static let builtIn: CaptionPresetLibrary = {
         let classic = TextStyle(fontName: "Helvetica", size: 56, weight: .semibold, color: .white,
-                                shadow: TextShadow(color: RGBAColor(red: 0, green: 0, blue: 0, alpha: 0.6), offsetX: 0, offsetY: -2, blur: 6),
+                                shadow: TextShadow(color: RGBAColor(red: 0, green: 0, blue: 0, alpha: 0.6), offsetX: 0, offsetY: 2, blur: 6),
                                 alignment: .center, lineSpacing: 4)
         let box = TextStyle(fontName: "Helvetica", size: 52, weight: .bold, color: .white,
                             background: TextBackground(color: RGBAColor(red: 0, green: 0, blue: 0, alpha: 0.75),
