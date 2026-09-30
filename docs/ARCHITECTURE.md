@@ -30,13 +30,19 @@ Principles:
 
 ## 2. Module placement
 
-| Module | Phase 2 contents |
+| Module (Package.swift deps) | Contents |
 |---|---|
-| SSCore | `SequenceFormat`, track flags, In/Out, markers, `Timeline.videoLayers(at:)` / `audioSegments(in:)`, three-point edit, add edit, `PlaybackRate`, `Shuttle` |
-| SSMedia | `MediaInfo` probe/import, `SampleIndex`, `Demuxer`, `VideoDecoding` + `VTVideoDecoder`, `AudioSource` (PCM blocks), thumbnails. Test target `SSMediaTestSupport` (synthetic clips) |
-| SSRender | `Compositor` (Metal, YCbCr → linear half float, stacking, placeholder), `Presenter` (texture → drawable, fit) |
-| SSPlayback | `PlaybackClock` + `HostClock`/`AudioClock`/`ManualClock`, `FrameCache`, `PrefetchPlanner`, `DecodeScheduler`, `AudioEngine`, `ScrubAudio`, `PlaybackEngine`, `PlaybackStats` |
-| SSEditorUI *(proposed, see STATUS open decisions)* | Theme, workspace layout tree, timeline view + geometry, viewer view, monitor panels, command map. Testable with `swift test`. |
+| SSCore (none) | `SequenceFormat`, track flags, In/Out, markers, `Timeline.videoLayers(at:)` / `audioSegments(in:)`, three-point edit, add edit, `PlaybackRate`, `Shuttle`, `Bin`/`rootBin`, `SourceMarks`, `Recovery` (autosave), project file v4 |
+| SSMedia (SSCore) | `MediaInfo` probe/import, `SampleIndex`, `Demuxer`, `VideoDecoding` + `VTVideoDecoder`, `AudioSource`/`AssetAudioSource`/`MemoryAudioSource`, `Relink` (`MediaLocator`). Test target `SSMediaTestSupport` (synthetic clips) |
+| SSRender (SSCore) | `Compositor` (Metal, YCbCr → linear half float, stacking, placeholder), `Presenter` (texture → drawable, fit) |
+| SSPlayback (SSCore, SSMedia, SSRender) | `PlaybackClock` + `HostClock`/`ManualClock`, `RingBuffer`, `AudioFeeder` landed; `FrameCache`, `PrefetchPlanner`, `DecodeScheduler`, `AudioClock`, `AudioEngine`, `ScrubAudio`, `PlaybackEngine`, `PlaybackStats` not yet on main |
+| SSAudioFX (SSCore, CRNNoise) | `RealtimeAudioFX` (48 kHz track preset/volume/denoise chain), `OfflineAudioFX`, loudness, presets |
+| SSText (SSCore) | Text/caption layout |
+| SSTranscribe (SSCore) | Transcription |
+| SSLibrary (none) | Media/asset library |
+| SSProxy (SSCore) | Proxy generation |
+| SSExport (SSCore, SSRender, SSPlayback, SSTranscribe, SSAudioFX) | Export writer, settings, frame source |
+| SSEditorUI (SSCore) | Theme, workspace layout tree, timeline view + geometry, viewer view, monitor panels, command map. Testable with `swift test`. |
 | App | SwiftUI shell, window/toolbar, menus, `EditorSession` wiring |
 | Tools/EngineBench | Release-build executable that measures the Phase 2 acceptance criteria |
 
@@ -80,7 +86,20 @@ public struct Shuttle: Sendable, Equatable {
 }
 ```
 
-Project file: bump `ProjectFile.currentVersion` to 2 with a migration (v1 `frameDuration` → `format` with 1920×1080 / 48 kHz defaults).
+Project file: `ProjectFile.currentVersion` = 4. Migrations keyed by source version: v1→v2 (`frameDuration` → `format`, 1920×1080 / 48 kHz defaults),
+v2→v3 (clip `animation`, pass-through), v3→v4 (`rootBin`, `sourceMarks`, optional on decode, pass-through).
+
+Landed since (SSCore):
+```swift
+public struct Bin: Sendable, Hashable, Codable, Identifiable { id, name, children: [BinItem]; bin(_:), allRefs, contains(_:), parent(of:), mediaIDs }
+public enum BinItem { /* bin / media / timeline */ }   public enum BinItemRef { /* id-only handle */ }
+// Project: rootBin: Bin (default "Root", id = project id), sourceMarks: [MediaRef.ID: SourceMarks]
+// Project bin ops (mutating): normalizeBins(), newBin(name:in:), renameBin(_:to:), move(_:to:at:), deleteBin(_:), sortBin(_:by:ascending:), displayName(of:)
+public struct SourceMarks: Sendable, Hashable, Codable { public var markIn: Time?, markOut: Time?; var range: TimeRange? }
+// Project: sourceMarks(for:), setSourceIn/Out(_:for:), clearSourceIn/Out(for:), clearSourceMarks(for:)
+// Recovery.swift: AutosavePolicy(interval 300 s, keep 10, maxAge 7 d), AutosaveStore(base:policy:writer) write/versions(for:)/prune/read,
+//   SessionMarker (begin/end/info, crash detection by pid), RecoveryScanner.scan() -> [RecoveryCandidate], recover(_:), dismiss(_:)
+```
 
 ## 4. SSMedia
 
@@ -97,6 +116,17 @@ public struct VideoTrackInfo: Sendable, Hashable, Codable {
 public struct AudioTrackInfo: Sendable, Hashable, Codable { public var sampleRate: Int, channels: Int, codec: String }
 
 public enum MediaImporter { public static func probe(_ url: URL) async throws -> (MediaRef, MediaInfo) }
+
+/// Relink (Relink.swift). Pure logic + file system, no AV.
+public struct MediaLocator: Sendable {                    // init(projectFolder:searchFolders:maxDepth: 6, durationProbe:)
+    public func locate(_ ref: MediaRef) -> LocateResult   // bookmark → original path → project neighbour → fingerprint; resolved only when certain
+    public static func fingerprint(of url: URL) -> MediaFingerprint?
+    public static func applying(_ url: URL, to ref: MediaRef) -> MediaRef    // name/path/bookmark/fingerprint refreshed, id kept
+    public static func relinkOthers(chosen: MediaRef, to: URL, others: [MediaRef]) -> (refs: [MediaRef], report: RelinkReport)
+}
+// LocateMethod { bookmark, originalPath, projectNeighbour, fingerprint }; LocateResult { resolved: (url, method)?, candidates: [RelinkCandidate] (ranked) }
+// RelinkReport { relinked: [UUID: URL], fingerprintMismatch: [UUID], missing: [UUID] }
+// No Thumbnailer on main yet.
 
 /// Presentation-ordered frame table of one video track. Pure value, built once per media, testable with synthetic tables.
 public struct SampleIndex: Sendable {
@@ -135,11 +165,13 @@ public enum DecodeScale: Sendable, Hashable { case full, half, quarter }   // VT
 
 public enum MediaError: Error, Sendable { case unreadable, unsupportedCodec(String), decodeFailed(OSStatus), truncated }
 
-/// Timeline-rate PCM access: Float32, non-interleaved, stereo, `SequenceFormat.audioSampleRate`. Reads in blocks.
+/// Timeline-rate PCM access: Float32, non-interleaved, stereo (channel 0/1), at the rate the source was opened with (48 kHz).
+/// Returns frames written (fewer only at end of media, 0 past it); caller zero-fills. Blocking: feeder thread only.
 public protocol AudioSource: Sendable {
     func read(from sourceFrame: Int64, count: Int, into buffer: UnsafeMutablePointer<Float>, channel: Int) throws -> Int
 }
-public final class AssetAudioSource: AudioSource { public init(url: URL, sampleRate: Int) throws }  // AVAssetReader + converter, 1 s block cache
+public final class MemoryAudioSource: AudioSource { public init(left: [Float], right: [Float]); public convenience init(mono: [Float]) }  // tests, generated audio
+public final class AssetAudioSource: AudioSource { public let sampleRate: Int; public static func open(url: URL, sampleRate: Int) async throws -> AssetAudioSource }  // AVAssetReader + converter
 ```
 
 Decoding strategy:
@@ -172,6 +204,9 @@ public final class Presenter: @unchecked Sendable {
 public enum ViewerZoom: Sendable, Hashable { case fit, percent(Int) }
 ```
 
+Pending merge (branch-only, not on main): `Compositor.render(_:format:into:commandBuffer:) throws` (throws instead of trapping) and
+`RenderLayer` gains `transform` and `colorPipeline` (Phase 3/4 fields the note above anticipated).
+
 YCbCr → RGB uses the matrix from the clip's tags (709 default for untagged). Colour management (S-Log3, HLG, ColorSync
 viewer) is Phase 3; Phase 2 output is "tagged Rec.709, gamma as decoded" so later work replaces a stage, not the plumbing.
 Risk: Metal sampling of Apple lossless-compressed pixel formats (`&xf2`, `&8v0`). If `CVMetalTextureCache` rejects them,
@@ -185,12 +220,16 @@ public protocol PlaybackClock: Sendable {
     func now() -> Time
     var rate: PlaybackRate { get }
     func start(at position: Time, rate: PlaybackRate)
-    func stop() -> Time                                    // returns position where it stopped
+    @discardableResult func stop() -> Time                 // holds (rate 0), returns position where it stopped
+    func setRate(_ rate: PlaybackRate)                     // keeps position, atomic re-anchor
+    func seek(to position: Time)                           // keeps rate, atomic re-anchor
 }
-public final class HostClock: PlaybackClock { }            // mach_continuous_time, rational (ns timescale)
-public final class ManualClock: PlaybackClock { public func advance(by: Time) }  // tests
-public final class AudioClock: PlaybackClock { }           // derived from AudioEngine consumed frames, see §7
+// Model: anchor (position, elapsed) + rate; now() = anchor + (elapsed - anchorElapsed) × rate, exact rational, continuous across re-anchors.
+public final class HostClock: PlaybackClock { public init() }   // mach_continuous_time, rational (ns timescale)
+public final class ManualClock: PlaybackClock { public init(position: Time = .zero, rate: PlaybackRate = .zero); public func advance(by: Time) }  // tests
+public final class AudioClock: PlaybackClock { }           // planned, not on main: derived from RingBuffer.consumedFrames, see §7
 
+/// (FrameCache: pending merge, branch worktree-agent-af1484b4a26699528: adds a default budget and low-water eviction; signature below is the pre-branch contract.)
 /// Byte-budgeted cache of decoded frames. Thread-safe (Synchronization.Mutex); lookups never block on decoding.
 public struct FrameKey: Sendable, Hashable { public var media: UUID; public var pts: Time; public var scale: DecodeScale }
 public protocol CacheCost: Sendable { var byteCost: Int { get } }
@@ -250,9 +289,19 @@ media's `SampleIndex` → cache lookup (miss: `nearest`, count drop, ask schedul
 
 - Graph: `AVAudioSourceNode` (our mixer) → `AVAudioUnitTimePitch` (rate = |speed|, pitch preserved) → `mainMixerNode` → output.
   Tap on the source node output for the timeline audio meter (peak/RMS per channel).
+- Landed (main): `AudioFeeder`, `RingBuffer` in SSPlayback; `AudioSource`/`AssetAudioSource`/`MemoryAudioSource` in SSMedia; `RealtimeAudioFX` in SSAudioFX.
+  `AudioEngine`, `AudioClock`, `ScrubAudio` and the AVAudioEngine graph are not on main yet.
 - `AudioFeeder` (own thread) mixes `timeline.audioSegments` from `AudioSource`s into a lock-free SPSC ring buffer at
   timeline rate, **in play direction** (reverse = blocks read backwards and reversed). Render block only copies from the ring,
   never locks, never allocates. Underrun = silence + counter.
+- `AudioFeeder(timeline:ring:sampleRate: 48_000, blockFrames: 1024, resolver:)` (resolver: `(UUID) throws -> any AudioSource`): `setTimeline`, `start()`/`stop()`,
+  `fill(maxBlocks:)` (one pass on the feeder thread, also used by tests), `mix(...)`, `invalidateSources()`, `position`, `failedReads` (failed segments render silence).
+  `seek(to: frame, reverse:)` is callable from any thread: it only sets position/direction and bumps a generation. The feeder thread sees the new
+  generation, flushes the ring itself (ring keeps a single producer) and drops blocks mixed under an older generation. In reverse, `frame` is the exclusive upper end.
+- `RingBuffer(capacity:)` SPSC stereo Float: `push(left:right:count:)`, `pop(...)` (underrun = silence + `underrunCount`), `flush()`, `availableToRead/Write`,
+  `consumedFrames: Int64` (atomic, the clock source).
+- `RealtimeAudioFX`: fixed 48 kHz (`sampleRate`), `init(preset:volume:channelCount:maxFrames:denoiser:)`, `process(_:frameCount:timelineSample:)` in place,
+  `setPreset/setDenoiseMix/setVolume/setBypass/reset` (thread-safe). `latencySamples` = 480 with denoiser (RNNoise), else 0; constant for its lifetime.
 - Clock: `position = anchor + direction × consumedFrames / sampleRate − latency`, where `latency` = TimePitch latency
   + output presentation latency, scaled by |rate|. All rational. Rate change / seek = new anchor (flush ring, 5 ms fade out/in).
 - Scrub audio (`ScrubAudio`): while scrubbing or stepping, play short grains (≈ 1 frame, min 40 ms) of source audio at the
