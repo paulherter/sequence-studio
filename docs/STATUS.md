@@ -1,15 +1,16 @@
 # Status
 
-## Current: Phase 0 — setup done, spike measured, engine route NOT decided
+## Current: Phase 0 done — engine route B decided
 Done: XcodeGen project (`project.yml`, empty SwiftUI app), six packages in `Packages/` (SSCore, SSMedia, SSRender, SSPlayback, SSExport, SSTranscribe, each with one placeholder test), `scripts/build.sh`, `scripts/test.sh [Package]` (errors only), decode/scrub spike in `Tools/DecodeSpike`.
-Next: Paul decides the engine route from the numbers below, then Phase 0b (UX plan, `docs/UX.md`).
+Engine: Route B (own VideoToolbox path), see DECISIONS.md; Phase 2 acceptance criteria + risk items in PLAN.md.
+Next: Phase 1 (SSCore headless, tests first). Phase 0 setup files (App/, Packages/, Tools/, scripts/, project.yml) are not committed yet.
 
 ## UI design (2026-09-30, done: Paul approved)
 Canvas artifact "Sequence Studio UI": https://claude.ai/artifact/6mArdzhxkp4P9abYXJHP63 (private).
 Tokens + screens: 1 workspace 9:16, 2 Effect Controls speed graph + easing menu, 3a/3b captions, 4a export, 4b export details,
 4c export queue, 5 quick color + Scopes tab, 6 Color page (Edit | Color switch). UX.md, PLAN.md and DECISIONS.md updated to match.
 Direction: Final Cut / Compositor look with AppKit controls, Premiere handling but never Premiere's glyphs; scrubbable values (no sliders); compact tracks; one color per clip type; one radius/spacing scale (tokens.css in the canvas).
-Done. Handoff: docs/DESIGN.md. The artifact is the copy of record (canvas sources were only in the session scratchpad). Next: Phase 0 engine-route decision (below).
+Done. Handoff: docs/DESIGN.md. The artifact is the copy of record (canvas sources were only in the session scratchpad).
 
 ## Environment gotcha
 `swift` on PATH is the swiftly shim (6.3.3) and links against the CLT SDK (MacOSX27.0.sdk) → "tapi error: malformed file". Use `/usr/bin/swift` (Xcode toolchain). The scripts already do. Package tools-version is 6.2 (needed for `.macOS(.v26)`).
@@ -33,7 +34,7 @@ Scrub latency (20 random targets, then 30 adjacent single-frame steps; time from
 
 Native decoded formats: Sony `x422` (10-bit 4:2:2, VT hands out the Apple-compressed `&xf2` variant), P1000065 `x420`, iPhone IMG_1281 `420v` (compressed `&8v0` from VT).
 
-### What the numbers say (no decision)
+### What the numbers say
 - Hardware decode works on this M1 Max for all three, **including H.264 4:2:2 10-bit** (Sony). That clip has no software fallback through VideoToolbox: hardware only, ~9× realtime for one stream.
 - Both routes land within noise of each other on random-access scrub (Sony ~95 ms both; cost is GOP depth × per-frame decode). Route A's 1-frame step is fast because AVPlayer keeps decoding forward; B would need the same (keep the session, decode next sample) plus a frame cache to match.
 - Route A reader tops out below raw VT on the Sony clip (166–212 vs 266 fps) — irrelevant for one stream at 30 fps, may matter for stacked 4K layers.
@@ -49,4 +50,4 @@ Native decoded formats: Sony `x422` (10-bit 4:2:2, VT hands out the Apple-compre
 - 124 of the 210 clips in ~/Documents/Videos are ProRes (`apcs`, 1080×1920) — likely exports.
 
 ## Open decisions
-- Engine route (A hybrid vs B own VT path): Paul, after reading the numbers above.
+- None.
