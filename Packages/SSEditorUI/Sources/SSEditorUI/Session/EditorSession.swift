@@ -88,10 +88,10 @@ public final class EditorSession {
 
     deinit { autosaveTask?.cancel() }
 
-    /// Empty project with one 29.97 fps HD sequence (V1, V2, A1, A2).
+    /// Empty project with one 29.97 fps HD sequence (V1-V4, A1-A4).
     public static func makeUntitled() -> Project {
         let t = Timeline(name: "Sequence 01", format: SequenceFormat(frameDuration: Time(1001, 30000)),
-                         tracks: [Track(kind: .video), Track(kind: .video), Track(kind: .audio), Track(kind: .audio)])
+                         tracks: Timeline.defaultTracks())
         return Project(name: "Untitled", timelines: [t])
     }
 
@@ -448,7 +448,7 @@ public final class EditorSession {
         while names.contains(String(format: "Sequence %02d", n)) { n += 1 }
         let trimmed = name?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
         let t = Timeline(name: trimmed.isEmpty ? String(format: "Sequence %02d", n) : trimmed, format: format,
-                         tracks: [Track(kind: .video), Track(kind: .video), Track(kind: .audio), Track(kind: .audio)])
+                         tracks: Timeline.defaultTracks())
         perform("New Sequence") { p in
             p.timelines.append(t)
             p.normalizeBins()

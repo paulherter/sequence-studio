@@ -56,8 +56,8 @@ struct ToolColumnViewTests {
     }
 
     @Test func tracksFillThePanel() {
-        let v = makeView(height: 300)
+        let v = makeView(height: 220)
         let rows = v.geometry.rows(for: v.timeline)
-        #expect(abs(rows.last!.maxY - 300) < 0.5)
+        #expect(abs(rows.last!.maxY - 220) < 0.5)
     }
 }
