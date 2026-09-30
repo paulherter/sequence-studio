@@ -15,8 +15,9 @@ public enum TextTemplateError: Error, Equatable, CustomStringConvertible {
 }
 
 public struct TextTemplate: Sendable, Hashable, Codable {
+    /// 3: animations carry an `anchor` (start/end; older files read as start).
     /// 2: animation tracks use SSCore keyframes with template-local `Time`s (v1: normalized fractions + easing enum, still readable).
-    public static let formatVersion = 2
+    public static let formatVersion = 3
 
     public var name: String
     public var text: String

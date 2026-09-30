@@ -44,9 +44,12 @@ public struct CaptionPresetLibrary: Sendable {
         let fade = KeyframeTemplate(tracks: [
             AnimationTrack(property: "opacity", keys: [(.zero, 0, .linear), (Time(1, 5), 1, .linear)]),
         ], duration: Time(1, 5))
+        let fadeOut = KeyframeTemplate(tracks: [
+            AnimationTrack(property: "opacity", keys: [(.zero, 1, .linear), (Time(1, 5), 0, .linear)]),
+        ], duration: Time(1, 5), anchor: .end)
         return CaptionPresetLibrary(
             styles: ["default": classic, "classic": classic, "bold-box": box, "outline": outline],
-            animations: ["none": .none, "fade": fade, "pop-in": popIn],
+            animations: ["none": .none, "fade": fade, "fade-out": fadeOut, "pop-in": popIn],
             defaultStyleID: "default", defaultAnimationID: "none")
     }()
 }

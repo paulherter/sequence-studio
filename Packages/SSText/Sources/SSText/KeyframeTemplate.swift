@@ -55,27 +55,43 @@ public struct AnimationTrack: Sendable, Hashable, Codable {
     public func value(at t: Time) -> Double? { track.value(at: t) }
 }
 
+/// What a template's local time 0 is measured from when it is played on a clip.
+public enum AnimationAnchor: String, Sendable, Hashable, Codable {
+    /// In-animation: template-local time t plays at clip time t.
+    case start
+    /// Out-animation: template-local 0...duration plays at clip time (clipDuration - duration)...clipDuration.
+    case end
+}
+
 /// Reusable animation: property tracks over template-local time plus a default playback length.
 ///
-/// On-disk shape (TextTemplate format v2): `{"duration": Time, "tracks": [{"property", "track": {"keys": [...]}}]}`.
+/// `anchor` decides how the template is placed on a clip (see `AnimationAnchor`, `resolved(clipDuration:)`);
+/// durations are never scaled to the clip.
+///
+/// On-disk shape (TextTemplate format v3): `{"anchor": "start"|"end", "duration": Time, "tracks": [{"property", "track": {"keys": [...]}}]}`.
+/// `anchor` is absent in v1/v2 files and then reads as `.start`.
 /// Decoding also reads the v1 shape (normalized `Fraction` times, `easing` enum), converting key times to
 /// `duration * fraction` and easings to SSCore handles.
 public struct KeyframeTemplate: Sendable, Hashable, Codable {
     public var tracks: [AnimationTrack]
     /// Default playback length of the animation (rational timeline time).
     public var duration: Time
-    public init(tracks: [AnimationTrack], duration: Time) { self.tracks = tracks; self.duration = duration }
+    public var anchor: AnimationAnchor
+    public init(tracks: [AnimationTrack], duration: Time, anchor: AnimationAnchor = .start) {
+        self.tracks = tracks; self.duration = duration; self.anchor = anchor
+    }
     public static let none = KeyframeTemplate(tracks: [], duration: .zero)
     public func track(for property: String) -> AnimationTrack? { tracks.first { $0.property == property } }
     /// Value of `property` at template-local time `t`; nil if the property has no keys.
     public func value(of property: String, at t: Time) -> Double? { track(for: property)?.value(at: t) }
 
-    private enum CodingKeys: String, CodingKey { case tracks, duration }
+    private enum CodingKeys: String, CodingKey { case tracks, duration, anchor }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         let dur = try c.decode(Time.self, forKey: .duration)
         duration = dur
+        anchor = try c.decodeIfPresent(AnimationAnchor.self, forKey: .anchor) ?? .start
         if let v2 = try? c.decode([AnimationTrack].self, forKey: .tracks) {
             tracks = v2
         } else {
@@ -88,6 +104,7 @@ public struct KeyframeTemplate: Sendable, Hashable, Codable {
         var c = encoder.container(keyedBy: CodingKeys.self)
         try c.encode(tracks, forKey: .tracks)
         try c.encode(duration, forKey: .duration)
+        try c.encode(anchor, forKey: .anchor)
     }
 }
 

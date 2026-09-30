@@ -18,10 +18,10 @@ import SSCore
         }
     }
 
-    @Test func writesFormatVersionTwo() throws {
+    @Test func writesCurrentFormatVersion() throws {
         let json = try JSONSerialization.jsonObject(with: sample().encoded()) as! [String: Any]
-        #expect(json["formatVersion"] as? Int == 2)
-        #expect(TextTemplate.formatVersion == 2)
+        #expect(json["formatVersion"] as? Int == 3)
+        #expect(TextTemplate.formatVersion == 3)
     }
 
     static let v1JSON = """
@@ -56,7 +56,7 @@ import SSCore
         // Re-saving writes v2 and round-trips.
         let resaved = try t.encoded()
         let json = try JSONSerialization.jsonObject(with: resaved) as! [String: Any]
-        #expect(json["formatVersion"] as? Int == 2)
+        #expect(json["formatVersion"] as? Int == 3)
         #expect(try TextTemplate.decode(from: resaved) == t)
     }
 
@@ -77,12 +77,12 @@ import SSCore
 
     @Test func newerVersionThrowsTypedError() throws {
         // Future file with a structure this version cannot parse: must still report the version.
-        let json = #"{"formatVersion": 3, "name": 5, "layers": []}"#
+        let json = #"{"formatVersion": 4, "name": 5, "layers": []}"#
         do {
             _ = try TextTemplate.decode(from: Data(json.utf8))
             Issue.record("expected throw")
         } catch let e as TextTemplateError {
-            #expect(e == .unsupportedVersion(found: 3, supported: 2))
+            #expect(e == .unsupportedVersion(found: 4, supported: 3))
         }
     }
 
@@ -109,7 +109,7 @@ import SSCore
     }
 
     @Test func errorHasReadableDescription() {
-        let d = TextTemplateError.unsupportedVersion(found: 3, supported: 2).description
-        #expect(d.contains("3") && d.contains("2"))
+        let d = TextTemplateError.unsupportedVersion(found: 4, supported: 3).description
+        #expect(d.contains("4") && d.contains("3"))
     }
 }
