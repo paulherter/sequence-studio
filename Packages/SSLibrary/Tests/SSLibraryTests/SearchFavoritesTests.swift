@@ -89,3 +89,34 @@ import Testing
         #expect(files.contains { $0.hasPrefix("f.json.corrupt-") })
     }
 }
+
+@Suite struct CorruptBackupPruningTests {
+    private func backups(_ dir: TempDir, _ name: String) throws -> [String] {
+        try FileManager.default.contentsOfDirectory(atPath: dir.url.path).filter { $0.hasPrefix("\(name).corrupt-") }
+    }
+
+    @Test func keepsOnlyThreeNewestBackups() throws {
+        let dir = try TempDir(); defer { dir.remove() }
+        let url = dir.url.appendingPathComponent("f.json")
+        for i in 1...5 {
+            try Data("bad\(i)".utf8).write(to: url)
+            try JSONFileIO.backupCorrupt(url)
+        }
+        let names = try backups(dir, "f.json")
+        #expect(names.count == 3)
+        let contents = try names.map { String(decoding: try Data(contentsOf: dir.url.appendingPathComponent($0)), as: UTF8.self) }
+        #expect(Set(contents) == ["bad3", "bad4", "bad5"])
+    }
+
+    @Test func otherFileNamesAreUntouched() throws {
+        let dir = try TempDir(); defer { dir.remove() }
+        for i in 0..<5 { try dir.write("g.json.corrupt-\(100 + i)") }
+        let url = dir.url.appendingPathComponent("f.json")
+        for _ in 1...5 {
+            try Data("bad".utf8).write(to: url)
+            try JSONFileIO.backupCorrupt(url)
+        }
+        #expect(try backups(dir, "g.json").count == 5)
+        #expect(try backups(dir, "f.json").count == 3)
+    }
+}

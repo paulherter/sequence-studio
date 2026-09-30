@@ -69,8 +69,13 @@ public protocol PreviewProvider: Sendable {
 /// Derives cache file locations: `<caches>/Sequence Studio/Previews/<kind>/<key>.<ext>`.
 public struct PreviewCache: Sendable {
     public let root: URL
+    /// Maximum total size of all cached files in bytes.
+    public let byteCap: Int64
 
-    public init(cachesDirectory: URL) {
+    public static let defaultByteCap: Int64 = 2 * 1024 * 1024 * 1024
+
+    public init(cachesDirectory: URL, byteCap: Int64 = PreviewCache.defaultByteCap) {
+        self.byteCap = byteCap
         root = cachesDirectory.appendingPathComponent("Sequence Studio", isDirectory: true)
             .appendingPathComponent("Previews", isDirectory: true)
     }
@@ -82,6 +87,56 @@ public struct PreviewCache: Sendable {
     public func fileURL(for request: PreviewRequest) -> URL {
         root.appendingPathComponent(request.kind.rawValue, isDirectory: true)
             .appendingPathComponent("\(request.cacheKey).\(request.kind.fileExtension)")
+    }
+
+    // LRU bookkeeping: the last access time is the file's modification date (no index file).
+    // Cache files are write-once, so the mtime is free to carry "last used"; `touch` bumps it.
+
+    private struct CachedFile { var url: URL; var size: Int64; var accessed: Date }
+
+    private func cachedFiles() -> [CachedFile] {
+        let keys: [URLResourceKey] = [.fileSizeKey, .contentModificationDateKey, .isRegularFileKey]
+        guard let e = FileManager.default.enumerator(at: root, includingPropertiesForKeys: keys) else { return [] }
+        var out: [CachedFile] = []
+        for case let url as URL in e {
+            if url.lastPathComponent.hasPrefix(".tmp-") { continue }  // in-flight generation
+            guard let v = try? url.resourceValues(forKeys: Set(keys)), v.isRegularFile == true else { continue }
+            out.append(CachedFile(url: url, size: Int64(v.fileSize ?? 0), accessed: v.contentModificationDate ?? .distantPast))
+        }
+        return out
+    }
+
+    public func totalSize() -> Int64 { cachedFiles().reduce(0) { $0 + $1.size } }
+
+    /// Marks `url` as just used. Files outside the cache root are ignored.
+    public func touch(_ url: URL) {
+        guard isInsideRoot(url) else { return }
+        try? FileManager.default.setAttributes([.modificationDate: Date()], ofItemAtPath: url.path)
+    }
+
+    private func isInsideRoot(_ url: URL) -> Bool {
+        let base = root.standardizedFileURL.resolvingSymlinksInPath().path
+        return url.standardizedFileURL.resolvingSymlinksInPath().path.hasPrefix(base + "/")
+    }
+
+    /// Removes least recently used files until `total + additionalBytes <= byteCap`. Protected files are never removed.
+    /// Returns the removed URLs (oldest first).
+    @discardableResult
+    public func evict(toFit additionalBytes: Int64 = 0, protecting: Set<URL> = []) -> [URL] {
+        let protectedPaths = Set(protecting.map { $0.standardizedFileURL.resolvingSymlinksInPath().path })
+        var files = cachedFiles()
+        var total = files.reduce(0) { $0 + $1.size } + additionalBytes
+        guard total > byteCap else { return [] }
+        files.sort { $0.accessed < $1.accessed }
+        var removed: [URL] = []
+        for f in files where total > byteCap {
+            if protectedPaths.contains(f.url.standardizedFileURL.resolvingSymlinksInPath().path) { continue }
+            if (try? FileManager.default.removeItem(at: f.url)) != nil {
+                total -= f.size
+                removed.append(f.url)
+            }
+        }
+        return removed
     }
 }
 
@@ -122,6 +177,7 @@ public actor PreviewCoordinator {
         let destination = cache.fileURL(for: request)
         if FileManager.default.fileExists(atPath: destination.path) {
             knownFiles[slot, default: [:]][content, default: []].insert(destination)
+            cache.touch(destination)
             return destination
         }
 
@@ -175,6 +231,10 @@ public actor PreviewCoordinator {
     private func finish(key: String, id: UUID, request: PreviewRequest?, destination: URL?) {
         guard let f = flights[key], f.id == id else { return }
         flights[key] = nil
+        if let destination, !f.superseded {
+            cache.touch(destination)
+            cache.evict(protecting: [destination])
+        }
         if let request, let destination, !f.superseded {
             knownFiles[f.slot, default: [:]][request.contentHash.key, default: []].insert(destination)
         }

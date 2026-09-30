@@ -18,6 +18,6 @@ Preset payloads are opaque versioned JSON (`Data`) tagged by kind, so SSLibrary 
 5. `FSEventsFolderWatcher` (CoreServices) is implemented but untested (only the fake is unit tested); needs a manual check. Default latency 1 s.
 6. Search matches the file name only, not folder path or metadata/tags. Add path or tag search?
 7. Entry id = folder id + relative path, so a move/rename inside the folder drops its favorite. Acceptable, or track by file id?
-8. Preview cache files have no size cap or eviction (only stale versions of the same entry are removed). Need an LRU limit? Preview format (png/waveform binary) is decided by the provider implementation.
+8. RESOLVED: preview cache is LRU-capped at 2 GB (DECISIONS, Library open questions #8).
 9. Preset payloads are opaque; migration of old `payloadVersion`s is the owning feature's job. Should the store offer export/import of presets (file or share)?
-10. Corrupt files are moved to `<name>.corrupt-<timestamp>`; backups are never pruned.
+10. RESOLVED: only the 3 newest `<name>.corrupt-*` backups are kept (DECISIONS, Library open questions #10).

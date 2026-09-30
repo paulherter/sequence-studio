@@ -187,3 +187,95 @@ func waitUntil(_ condition: @Sendable () async -> Bool) async {
         #expect(await coordinator.inFlightCount == 0)
     }
 }
+
+@Suite struct PreviewCacheLRUTests {
+    private func makeCache(_ dir: TempDir, cap: Int64) -> PreviewCache {
+        PreviewCache(cachesDirectory: dir.url, byteCap: cap)
+    }
+    private func file(_ dir: TempDir, _ cache: PreviewCache, _ name: String, bytes: Int, age: TimeInterval) throws -> URL {
+        let rel = cache.root.path.dropFirst(dir.url.path.count + 1) + "/thumbnail/\(name)"
+        return try dir.write(String(rel), bytes: bytes, modified: Date().addingTimeInterval(-age))
+    }
+
+    @Test func defaultCapIsTwoGB() throws {
+        let dir = try TempDir(); defer { dir.remove() }
+        #expect(PreviewCache(cachesDirectory: dir.url).byteCap == 2 * 1024 * 1024 * 1024)
+    }
+
+    @Test func evictsOldestFirstDownToCap() throws {
+        let dir = try TempDir(); defer { dir.remove() }
+        let cache = makeCache(dir, cap: 250)
+        let a = try file(dir, cache, "a", bytes: 100, age: 400)
+        let b = try file(dir, cache, "b", bytes: 100, age: 300)
+        let c = try file(dir, cache, "c", bytes: 100, age: 200)
+        let d = try file(dir, cache, "d", bytes: 100, age: 100)
+        #expect(cache.totalSize() == 400)
+        let removed = cache.evict()
+        #expect(removed.map(\.lastPathComponent) == ["a", "b"])
+        #expect(cache.totalSize() == 200)
+        #expect(!FileManager.default.fileExists(atPath: a.path))
+        #expect(!FileManager.default.fileExists(atPath: b.path))
+        #expect(FileManager.default.fileExists(atPath: c.path) && FileManager.default.fileExists(atPath: d.path))
+    }
+
+    @Test func noEvictionUnderCapAndAdditionalBytesCount() throws {
+        let dir = try TempDir(); defer { dir.remove() }
+        let cache = makeCache(dir, cap: 250)
+        _ = try file(dir, cache, "a", bytes: 100, age: 20)
+        _ = try file(dir, cache, "b", bytes: 100, age: 10)
+        #expect(cache.evict().isEmpty)
+        #expect(cache.evict(toFit: 100).map(\.lastPathComponent) == ["a"])
+    }
+
+    @Test func protectedFileIsNeverRemoved() throws {
+        let dir = try TempDir(); defer { dir.remove() }
+        let cache = makeCache(dir, cap: 100)
+        let a = try file(dir, cache, "a", bytes: 100, age: 400)
+        let b = try file(dir, cache, "b", bytes: 100, age: 300)
+        let removed = cache.evict(protecting: [a])
+        #expect(removed.map(\.lastPathComponent) == ["b"])
+        #expect(FileManager.default.fileExists(atPath: a.path))
+        #expect(!FileManager.default.fileExists(atPath: b.path))
+    }
+
+    @Test func touchRefreshesLRUOrder() throws {
+        let dir = try TempDir(); defer { dir.remove() }
+        let cache = makeCache(dir, cap: 100)
+        let a = try file(dir, cache, "a", bytes: 100, age: 400)
+        _ = try file(dir, cache, "b", bytes: 100, age: 300)
+        cache.touch(a)
+        #expect(cache.evict().map(\.lastPathComponent) == ["b"])
+        #expect(FileManager.default.fileExists(atPath: a.path))
+    }
+
+    @Test func filesOutsideRootAreNeverTouchedOrEvicted() throws {
+        let dir = try TempDir(); defer { dir.remove() }
+        let cache = makeCache(dir, cap: 10)
+        let old = Date().addingTimeInterval(-1000)
+        let outside = try dir.write("elsewhere/x.png", bytes: 500, modified: old)
+        _ = try file(dir, cache, "a", bytes: 100, age: 50)
+        cache.touch(outside)
+        let mtime = try FileManager.default.attributesOfItem(atPath: outside.path)[.modificationDate] as? Date
+        #expect(mtime == old)
+        _ = cache.evict()
+        #expect(FileManager.default.fileExists(atPath: outside.path))
+    }
+
+    @Test func coordinatorHitRefreshesAndGenerateEvictsProtectingNewFile() async throws {
+        let dir = try TempDir(); defer { dir.remove() }
+        let cache = makeCache(dir, cap: 10)  // provider writes 7 bytes: a second file forces eviction
+        let coordinator = PreviewCoordinator(cache: cache, provider: FakeProvider())
+        func req(_ n: Int64) -> PreviewRequest {
+            PreviewRequest(entryID: LibraryEntryID(folderID: UUID(), relativePath: "e\(n)"), kind: .thumbnail, pixelWidth: 10, pixelHeight: 10,
+                           contentHash: ContentHash(path: "/m\(n)", modified: Date(timeIntervalSince1970: 1), size: n))
+        }
+        let first = try await coordinator.preview(for: req(1))
+        try FileManager.default.setAttributes([.modificationDate: Date().addingTimeInterval(-500)], ofItemAtPath: first.path)
+        _ = try await coordinator.preview(for: req(1))  // hit
+        let after = try FileManager.default.attributesOfItem(atPath: first.path)[.modificationDate] as? Date
+        #expect(after! > Date().addingTimeInterval(-60))
+        let second = try await coordinator.preview(for: req(2))
+        #expect(FileManager.default.fileExists(atPath: second.path))
+        #expect(!FileManager.default.fileExists(atPath: first.path))
+    }
+}

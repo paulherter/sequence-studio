@@ -68,14 +68,42 @@ enum JSONFileIO {
         try data.write(to: url, options: .atomic)
     }
 
+    /// Number of `<name>.corrupt-*` backups kept per file name.
+    static let corruptBackupsToKeep = 3
+
     static func backupCorrupt(_ url: URL) throws {
+        let fm = FileManager.default
+        let dir = url.deletingLastPathComponent()
+        let prefix = "\(url.lastPathComponent).corrupt-"
         let stamp = Int(Date().timeIntervalSince1970)
-        var backup = url.deletingLastPathComponent().appendingPathComponent("\(url.lastPathComponent).corrupt-\(stamp)")
-        var n = 1
-        while FileManager.default.fileExists(atPath: backup.path) {
-            backup = url.deletingLastPathComponent().appendingPathComponent("\(url.lastPathComponent).corrupt-\(stamp)-\(n)")
-            n += 1
+        // Next free counter for this second: max existing + 1, so pruning never frees a lower name that would sort as oldest.
+        let existing = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
+        let used = existing.compactMap { order(of: $0, prefix: prefix) }.filter { $0.stamp == stamp }
+        var name = "\(prefix)\(stamp)"
+        if !used.isEmpty { name += "-\((used.map(\.n).max() ?? 0) + 1)" }
+        try fm.moveItem(at: url, to: dir.appendingPathComponent(name))
+        pruneCorruptBackups(of: url)
+    }
+
+    private static func order(of fileName: String, prefix: String) -> (stamp: Int, n: Int)? {
+        guard fileName.hasPrefix(prefix) else { return nil }
+        let parts = fileName.dropFirst(prefix.count).split(separator: "-", omittingEmptySubsequences: false)
+        guard (1...2).contains(parts.count), let stamp = Int(parts[0]) else { return nil }
+        if parts.count == 1 { return (stamp, 0) }
+        guard let n = Int(parts[1]) else { return nil }
+        return (stamp, n)
+    }
+
+    /// Keeps the newest `corruptBackupsToKeep` backups of this file name (by name stamp, then counter); siblings of other names are untouched.
+    static func pruneCorruptBackups(of url: URL) {
+        let fm = FileManager.default
+        let dir = url.deletingLastPathComponent()
+        let prefix = "\(url.lastPathComponent).corrupt-"
+        let names = (try? fm.contentsOfDirectory(atPath: dir.path)) ?? []
+        let backups = names.compactMap { name in order(of: name, prefix: prefix).map { (name, $0) } }
+            .sorted { ($0.1.stamp, $0.1.n) > ($1.1.stamp, $1.1.n) }
+        for (name, _) in backups.dropFirst(corruptBackupsToKeep) {
+            try? fm.removeItem(at: dir.appendingPathComponent(name))
         }
-        try FileManager.default.moveItem(at: url, to: backup)
     }
 }
