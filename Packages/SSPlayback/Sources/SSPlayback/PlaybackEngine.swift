@@ -31,7 +31,7 @@ import SSRender
         loop = try RenderLoop(device: device, resolver: media, clock: clock, cache: cache)
     }
 
-    // No deinit cleanup needed beyond the driver: `attach(nil)` stops it; the thread holds only the loop.
+    isolated deinit { driver?.stop() }
 
     /// Value snapshot; cheap, called after every edit. Swaps the composite source, never flushes the frame cache.
     public func setTimeline(_ timeline: Timeline) { setTimeline(timeline, sequences: [:]) }
@@ -47,9 +47,8 @@ import SSRender
         driver?.stop(); driver = nil
         guard let layer else { loop.setPresenter(nil); return }
         loop.setPresenter(Presenter(device: device, layer: layer))
-        let loop = self.loop
-        driver = DisplayLinkDriver(layer: layer) { [weak self] drawable in
-            guard let o = loop.tick(drawable: drawable), loop.publish(o) else { return }
+        driver = DisplayLinkDriver(layer: layer) { [weak self, weak loop] drawable in
+            guard let loop, let o = loop.tick(drawable: drawable), loop.publish(o) else { return }
             Task { @MainActor [weak self] in
                 guard let self, let o = self.loop.takeOutcome() else { return }
                 self.apply(o)

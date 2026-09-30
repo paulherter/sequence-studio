@@ -2,6 +2,7 @@ import Testing
 import Foundation
 import CoreMedia
 import Metal
+import Synchronization
 import SSCore
 import SSMedia
 import SSMediaTestSupport
@@ -61,10 +62,10 @@ private struct Rig {
     let media: UUID
     var timeline: Timeline
 
-    static func make(_ build: (UUID) -> Timeline) async throws -> Rig {
+    static func make(wrap: (any Demuxing) -> any Demuxing = { $0 }, _ build: (UUID) -> Timeline) async throws -> Rig {
         let device = try #require(MTLCreateSystemDefaultDevice())
         let url = try await SharedClip.shared.get()
-        let demuxer = try await AVDemuxer(url: url)
+        let demuxer = wrap(try await AVDemuxer(url: url))
         let media = UUID()
         let resolver = StaticMediaResolver(demuxers: [media: demuxer])
         let clock = ManualClock()
@@ -149,6 +150,7 @@ private struct Rig {
         #expect(rig.tick() == 37)
         #expect(e.position == fd * 37)
         #expect(e.stats.stepLatencies.count == 1)
+        #expect(e.stats.droppedFrames == 0)       // a paused seek waiting for decode is not a drop
     }
 
     @Test func setTimelineAfterTrimRecompositesWithoutFlush() async throws {
@@ -209,5 +211,88 @@ private struct Rig {
         #expect(engine.tick())
         #expect(engine.lastRenderedTexture != nil)
         #expect(engine.stats.presentedFrames == 1)
+    }
+
+    // MARK: Review regressions
+
+    @Test func invalidationDuringTickIsNotLost() async throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let hook = Hook()
+        let engine = try PlaybackEngine(device: device, media: HookResolver(hook: hook), clock: ManualClock())
+        engine.setTimeline(Rig.single(UUID()))          // offline media: the composite is complete (placeholder)
+        let loop = engine.loop
+        hook.set { loop.invalidate() }                  // fires inside the tick, while resolving the layer's media
+        #expect(engine.tick())
+        #expect(engine.tick())                          // the invalidation from inside the first tick still renders
+        #expect(engine.tick() == false)
+    }
+
+    @Test func publishMergesOutcomes() async throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let engine = try PlaybackEngine(device: device, media: StaticMediaResolver(), clock: ManualClock())
+        let loop = engine.loop
+        #expect(loop.publish(TickOutcome(presented: true, time: fd * 5, stoppedAtEdge: false)))
+        #expect(!loop.publish(TickOutcome(presented: false, time: fd * 5, stoppedAtEdge: false)))
+        #expect(!loop.publish(TickOutcome(presented: false, time: fd * 6, stoppedAtEdge: true)))
+        let o = try #require(loop.takeOutcome())
+        #expect(o.presented && o.stoppedAtEdge && o.time == fd * 5)
+        #expect(!loop.publish(TickOutcome(presented: false, time: fd * 7, stoppedAtEdge: false)))   // idle: no hop
+        #expect(loop.takeOutcome() == nil)
+    }
+
+    @Test func frameIndexClampsToFirstAndLast() {
+        let entries = (0..<4).map { SampleIndex.Entry(pts: fd * Int64($0), dts: fd * Int64($0), duration: fd, isSync: $0 == 0, decodeOrdinal: $0) }
+        let index = SampleIndex(entries: entries)
+        #expect(RenderLoop.frameIndex(fd * -2, in: index) == 0)
+        #expect(RenderLoop.frameIndex(fd * 2, in: index) == 2)
+        #expect(RenderLoop.frameIndex(fd * 9, in: index) == 3)
+    }
+
+    @Test func setTimelineClearsDamage() async throws {
+        let flaky = Flaky()
+        var rig = try await Rig.make(wrap: { FlakyDemuxer(inner: $0, flaky: flaky) }, Rig.single)
+        let e = rig.engine
+        flaky.set(true)
+        e.seek(to: fd * 10)
+        await e.waitForDecodes()
+        _ = e.tick()
+        #expect(rig.stamp() != 10)                      // damaged placeholder
+        flaky.set(false)
+        rig.timeline.name = "edited"
+        e.setTimeline(rig.timeline)
+        e.seek(to: fd * 10)
+        _ = e.tick()
+        await e.waitForDecodes()
+        #expect(rig.tick() == 10)
+    }
+}
+
+private final class Hook: Sendable {
+    private let fn = Mutex<(@Sendable () -> Void)?>(nil)
+    func set(_ f: @escaping @Sendable () -> Void) { fn.withLock { $0 = f } }
+    func fire() { fn.withLock { $0 }?() }
+}
+
+/// Every media is offline; each lookup fires the hook.
+private struct HookResolver: MediaResolver {
+    let hook: Hook
+    func demuxer(for media: UUID) throws -> any Demuxing { hook.fire(); throw MediaResolverError.unknownMedia(media) }
+    func audio(for media: UUID) throws -> any AudioSource { throw MediaResolverError.unknownMedia(media) }
+}
+
+private final class Flaky: Sendable {
+    private let failing = Mutex(false)
+    func set(_ v: Bool) { failing.withLock { $0 = v } }
+    var isFailing: Bool { failing.withLock { $0 } }
+}
+
+private struct FlakyDemuxer: Demuxing {
+    let inner: any Demuxing
+    let flaky: Flaky
+    var index: SampleIndex { inner.index }
+    var formatDescription: CMFormatDescription { inner.formatDescription }
+    func samples(for range: ClosedRange<Int>) async throws -> [CMSampleBuffer] {
+        if flaky.isFailing { throw MediaError.truncated }
+        return try await inner.samples(for: range)
     }
 }

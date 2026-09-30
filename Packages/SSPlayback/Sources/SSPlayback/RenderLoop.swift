@@ -32,6 +32,19 @@ final class MediaTable: Sendable {
         return nil
     }
 
+    /// Already resolved demuxer only; never calls the resolver (safe on the main actor).
+    func resolvedDemuxer(_ media: UUID) -> (any Demuxing)? {
+        if case .ready(let d)? = state.withLock({ $0.entries[media] }) { return d }
+        return nil
+    }
+
+    func isKnownOffline(_ media: UUID) -> Bool {
+        if case .offline? = state.withLock({ $0.entries[media] }) { return true }
+        return false
+    }
+
+    func clearDamaged() { state.withLock { $0.damaged.removeAll() } }
+
     func forgetOffline() {
         state.withLock { s in s.entries = s.entries.filter { if case .offline = $0.value { false } else { true } } }
     }
@@ -95,7 +108,10 @@ final class RenderLoop: @unchecked Sendable {
         var mapping: Mapping = { $0.pts }
         var quality: DecodeScale = .full
         var zoom: ViewerZoom = .fit
-        var invalidated = true
+        /// Bumped by every invalidator; a tick renders when it differs from `renderedGeneration` and records the
+        /// generation it snapshotted, so an invalidation that lands during a tick is never lost.
+        var generation: UInt64 = 1
+        var renderedGeneration: UInt64 = 0
         /// Last composite had a layer without its exact frame (still decoding): re-render until complete.
         var incomplete = false
         var lastTime: Time?
@@ -161,7 +177,7 @@ final class RenderLoop: @unchecked Sendable {
 
     private func decodeFailed(_ id: UUID) {
         media.markDamaged(id)
-        state.withLock { $0.invalidated = true }
+        state.withLock { $0.generation &+= 1 }
     }
 
     /// Posts `jobs` to the scheduler in call order (last wins), without blocking the caller.
@@ -169,6 +185,14 @@ final class RenderLoop: @unchecked Sendable {
         submitChain.withLock { last in
             let prev = last
             last = Task { await prev?.value; await scheduler.submit(jobs) }
+        }
+    }
+
+    /// Clears the scheduler's failed-job memory, ordered with the submissions.
+    private func post(reset scheduler: DecodeScheduler) {
+        submitChain.withLock { last in
+            let prev = last
+            last = Task { await prev?.value; await scheduler.resetFailures() }
         }
     }
 
@@ -192,32 +216,37 @@ final class RenderLoop: @unchecked Sendable {
         media.forgetOffline()
         state.withLock { s in
             s.timeline = timeline; s.sequences = sequences; s.mediaIDs = ids; s.mapping = mapping
-            s.invalidated = true
+            s.generation &+= 1
+            s.lastJobs = []
         }
+        // Edits may have fixed a damaged/relinked media: forget damage marks and failed jobs.
+        media.clearDamaged()
+        if let s = state.withLock({ $0.scheduler }) { post(reset: s) }
     }
 
     func setQuality(_ q: DecodeScale) {
+        guard state.withLock({ $0.schedulerScale != q }) else { return }
+        let new = makeScheduler(q)
         let old: DecodeScheduler? = state.withLock { s in
             guard s.schedulerScale != q else { return nil }
             let old = s.scheduler
-            s.quality = q; s.schedulerScale = q; s.invalidated = true; s.lastJobs = []
+            s.scheduler = new; s.quality = q; s.schedulerScale = q; s.generation &+= 1; s.lastJobs = []
             return old
         }
-        guard old != nil else { return }
-        let new = makeScheduler(q)
-        state.withLock { $0.scheduler = new }
         if let old { Task { await old.cancelAll() } }
     }
 
-    func setPresenter(_ p: Presenter?) { state.withLock { $0.presenter = p; $0.invalidated = true } }
+    func setPresenter(_ p: Presenter?) { state.withLock { $0.presenter = p; $0.generation &+= 1 } }
 
-    func invalidate() { state.withLock { $0.invalidated = true } }
+    func invalidate() { state.withLock { $0.generation &+= 1 } }
 
     func beginStep(target: Time) {
-        state.withLock { $0.pendingStep = (target, ContinuousClock.now); $0.invalidated = true }
+        state.withLock { $0.pendingStep = (target, ContinuousClock.now); $0.generation &+= 1 }
     }
 
-    var lastRendered: RenderedTexture? { gpu.withLock { g in g.target.map { RenderedTexture(texture: $0) } } }
+    /// Handed off under its own short lock after each render (never waits on the GPU lock).
+    private let lastTexture = Mutex<RenderedTexture?>(nil)
+    var lastRendered: RenderedTexture? { lastTexture.withLock { $0 } }
 
     var stats: PlaybackStats {
         var s = state.withLock { $0.stats }
@@ -255,11 +284,12 @@ final class RenderLoop: @unchecked Sendable {
         let now = clock.now()
         let rate = clock.rate
         let snap = state.withLock { s in
-            (s.timeline, s.sequences, s.quality, s.zoom, s.invalidated, s.incomplete, s.lastTime, s.presenter)
+            (s.timeline, s.sequences, s.quality, s.zoom, s.generation, s.renderedGeneration != s.generation,
+             s.incomplete, s.lastTime, s.presenter, s.pendingStep != nil)
         }
         guard let tl = snap.0 else { return nil }
-        let (sequences, scale, zoom, invalidated, incomplete, lastTime, presenter) =
-            (snap.1, snap.2, snap.3, snap.4, snap.5, snap.6, snap.7)
+        let (sequences, scale, zoom, generation, invalidated, incomplete, lastTime, presenter, stepPending) =
+            (snap.1, snap.2, snap.3, snap.4, snap.5, snap.6, snap.7, snap.8, snap.9)
         let fd = tl.format.frameDuration
         let last = Self.lastFrame(tl)
         var t = Self.gridTime(now, tl)
@@ -294,16 +324,19 @@ final class RenderLoop: @unchecked Sendable {
             }
             cb.commit()
             if presenter == nil { cb.waitUntilCompleted() }
+            if presented { lastTexture.withLock { $0 = RenderedTexture(texture: target) } }
         }
 
         let isNew = t != lastTime
+        let playing = !rate.isPaused && !edge
         state.withLock { s in
-            s.invalidated = false
+            s.renderedGeneration = generation
             s.incomplete = b.waiting
             guard presented else { return }
             s.lastTime = t
             s.stats.presentedFrames += 1
-            if isNew && b.missing > 0 { s.stats.droppedFrames += 1 }
+            // A drop is a playing frame shown without its exact picture; a paused seek/step waiting for decode is not.
+            if isNew && b.missing > 0 && playing && !stepPending { s.stats.droppedFrames += 1 }
             if let p = s.pendingStep, p.target == t, b.missing == 0 {
                 s.stats.stepLatencies.append(ContinuousClock.now - p.start)
                 s.pendingStep = nil
@@ -322,7 +355,7 @@ final class RenderLoop: @unchecked Sendable {
         if media.isDamaged(r.media) { return placeholder(.damaged) }
         let index = d.index
         guard index.count > 0 else { return placeholder(.damaged) }
-        let f = index.frame(at: r.sourceTime) ?? (r.sourceTime.isNegative ? 0 : index.count - 1)
+        let f = Self.frameIndex(r.sourceTime, in: index)
         let key = FrameKey(media: r.media, pts: index.entries[f].pts, scale: scale)
         var frame = cache.frame(key)
         if frame == nil {
@@ -335,6 +368,12 @@ final class RenderLoop: @unchecked Sendable {
             codec: "", bitDepth: 8, chroma: "4:2:0", nominalFrameDuration: frame.duration, isVariableFrameRate: false)
         return RenderLayer(content: .frame(frame.pixelBuffer, colorHint: info), transform: r.transform,
                            cornerRadius: r.cornerRadius)
+    }
+
+    /// Frame showing `sourceTime`; before the first frame -> 0, at/after the end -> last. Requires a non-empty index.
+    static func frameIndex(_ sourceTime: Time, in index: SampleIndex) -> Int {
+        if let f = index.frame(at: sourceTime) { return f }
+        return sourceTime < index.entries[0].pts ? 0 : index.count - 1
     }
 
     private func target(_ g: inout GPU, format: SequenceFormat) -> MTLTexture? {
@@ -352,15 +391,41 @@ final class RenderLoop: @unchecked Sendable {
 
     /// Plans the decode window around `t` and submits it (deduplicated); also used by seek on the main actor so a
     /// random access starts decoding before the next display tick.
+    /// Main-actor entry. Never calls the resolver on the caller's thread: when every media is already resolved the
+    /// window is planned right here; otherwise resolving + planning run on `resolveQueue` (ordered in the submit chain,
+    /// so `waitForDecodes` covers it).
     func prefetch(at t: Time, rate: PlaybackRate) {
-        guard let (tl, scale) = state.withLock({ s in s.timeline.map { ($0, s.quality) } }) else { return }
-        prefetch(timeline: tl, at: Self.gridTime(t, tl), rate: rate, scale: scale, misses: [])
+        guard let (tl, scale, ids) = state.withLock({ s in s.timeline.map { ($0, s.quality, s.mediaIDs) } }) else { return }
+        let at = Self.gridTime(t, tl)
+        if ids.allSatisfy({ media.resolvedDemuxer($0) != nil || media.isKnownOffline($0) }) {
+            prefetch(timeline: tl, at: at, rate: rate, scale: scale, misses: [], resolve: false)
+            return
+        }
+        let queue = resolveQueue
+        submitChain.withLock { last in
+            let prev = last
+            last = Task { [weak self] in
+                await prev?.value
+                await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
+                    queue.async {
+                        self?.prefetch(timeline: tl, at: at, rate: rate, scale: scale, misses: [], resolve: true)
+                        c.resume()
+                    }
+                }
+            }
+        }
     }
 
-    private func prefetch(timeline tl: Timeline, at t: Time, rate: PlaybackRate, scale: DecodeScale, misses: [(UUID, Int)]) {
+    /// Resolver calls requested from the main actor run here (may block on opening an asset).
+    private let resolveQueue = DispatchQueue(label: "SSPlayback.resolve", qos: .userInitiated)
+
+    private func prefetch(timeline tl: Timeline, at t: Time, rate: PlaybackRate, scale: DecodeScale, misses: [(UUID, Int)],
+                          resolve: Bool = true) {
         let (ids, mapping) = state.withLock { ($0.mediaIDs, $0.mapping) }
         var indexes: [UUID: SampleIndex] = [:]
-        for id in ids where !media.isDamaged(id) { if let d = media.demuxer(id) { indexes[id] = d.index } }
+        for id in ids where !media.isDamaged(id) {
+            if let d = resolve ? media.demuxer(id) : media.resolvedDemuxer(id) { indexes[id] = d.index }
+        }
         let cache = self.cache
         var jobs = planner.jobs(timeline: tl, playhead: t, rate: rate, indexes: indexes) { m, i in
             guard let idx = indexes[m], i < idx.count else { return true }
@@ -369,7 +434,7 @@ final class RenderLoop: @unchecked Sendable {
         // Misses the planner does not see (nested sequences): their GOP goes first.
         var urgent: [Job] = []
         for (m, f) in misses where !media.isDamaged(m) {
-            guard let idx = media.demuxer(m)?.index else { continue }
+            guard let idx = media.resolvedDemuxer(m)?.index else { continue }
             let gop = idx.gop(containing: f)
             if !jobs.contains(where: { $0.media == m && $0.frames == gop }) && !urgent.contains(where: { $0.media == m && $0.frames == gop }) {
                 urgent.append(Job(media: m, frames: gop, priority: urgent.count))
@@ -417,10 +482,19 @@ final class RenderLoop: @unchecked Sendable {
 
     // MARK: Main-actor reporting (render thread)
 
-    /// Stores the outcome; returns true when the caller must schedule a main-actor hop (none pending yet).
+    /// Merges the outcome into the pending report (presented/stoppedAtEdge are OR-ed, time is the latest presented
+    /// one); ticks that neither presented nor stopped are ignored. Returns true when the caller must schedule a
+    /// main-actor hop (none pending yet).
     func publish(_ o: TickOutcome) -> Bool {
-        state.withLock { s in
-            s.lastOutcome = o
+        guard o.presented || o.stoppedAtEdge else { return false }
+        return state.withLock { s in
+            if var m = s.lastOutcome {
+                if o.presented { m.time = o.time; m.presented = true }
+                m.stoppedAtEdge = m.stoppedAtEdge || o.stoppedAtEdge
+                s.lastOutcome = m
+            } else {
+                s.lastOutcome = o
+            }
             if s.reportPending { return false }
             s.reportPending = true
             return true
@@ -433,32 +507,46 @@ final class RenderLoop: @unchecked Sendable {
 }
 
 /// Drives `RenderLoop` from a `CAMetalDisplayLink` on a dedicated render thread while a layer is attached.
+/// `stop()` takes effect promptly (CFRunLoopStop) and drops the tick closure, so nothing keeps the loop alive.
 final class DisplayLinkDriver: NSObject, CAMetalDisplayLinkDelegate, @unchecked Sendable {
     private struct LayerBox: @unchecked Sendable { let layer: CAMetalLayer }
-    private let onTick: @Sendable (CAMetalDrawable) -> Void
-    private let stopped = Mutex(false)
+    private struct RunLoopBox: @unchecked Sendable { let runLoop: CFRunLoop }
+    private struct State {
+        var stopped = false
+        var runLoop: RunLoopBox?
+        var onTick: (@Sendable (CAMetalDrawable) -> Void)?
+    }
+    private let state: Mutex<State>
 
     init(layer: CAMetalLayer, onTick: @escaping @Sendable (CAMetalDrawable) -> Void) {
-        self.onTick = onTick
+        state = Mutex(State(onTick: onTick))
         super.init()
         let box = LayerBox(layer: layer)
         let thread = Thread { [self] in
             let link = CAMetalDisplayLink(metalLayer: box.layer)
             link.delegate = self
             link.add(to: .current, forMode: .default)
-            while !stopped.withLock({ $0 }) {
+            state.withLock { $0.runLoop = RunLoopBox(runLoop: CFRunLoopGetCurrent()) }
+            while !state.withLock({ $0.stopped }) {
                 _ = RunLoop.current.run(mode: .default, before: Date(timeIntervalSinceNow: 0.1))
             }
             link.invalidate()
+            state.withLock { $0.runLoop = nil }
         }
         thread.name = "SSPlayback.render"
         thread.qualityOfService = .userInteractive
         thread.start()
     }
 
-    func stop() { stopped.withLock { $0 = true } }
+    func stop() {
+        let rl = state.withLock { s -> RunLoopBox? in
+            s.stopped = true; s.onTick = nil
+            return s.runLoop
+        }
+        if let rl { CFRunLoopStop(rl.runLoop); CFRunLoopWakeUp(rl.runLoop) }
+    }
 
     func metalDisplayLink(_ link: CAMetalDisplayLink, needsUpdate update: CAMetalDisplayLink.Update) {
-        onTick(update.drawable)
+        state.withLock { $0.onTick }?(update.drawable)
     }
 }
