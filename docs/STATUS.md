@@ -11,17 +11,17 @@ PHASE5 (audio FX), PHASE7 (text), PHASE8 (captions), EXPORT, LIBRARY, PROXY, REV
 - SSAudioFX (PHASE5 1–6): gain/automation, presets, RNNoise + mix, own 4-band compressor, R128 metering, offline chain with resampling.
 - SSText (PHASE7 1–4) + anchored animations, template v3. SSTranscribe (PHASE8 1–4). SSLibrary (LIBRARY 1–5).
 - SSExport (EXPORT 1–7) + sidecar SRT. SSProxy (PROXY a–f) + auto-generation policy, LRU cap, color rule.
-- REVIEW-1 fixes #1, #2, #3, #7, #8, #9, #10.
+- REVIEW-1: all 10 findings fixed.
 
 **In progress in other sessions (uncommitted, do not touch)**
 - Phase 2: E-03 VideoDecoder (SSMedia) + PHASE3 slice 6 SonyMetadata (SSMedia).
-- SSCore KeyframesEasing/Editing (likely REVIEW-1 #6). SSExport loudness normalisation + FrameSource. SSText retime helper.
+- SSExport loudness normalisation + FrameSource. SSText retime helper.
 
 **Next (in order, blocked-by in brackets)**
 1. Phase 2 engine E-03…E-14, then shell/timeline/monitors/shortcuts U/T/M/K (section below). Critical path.
-2. REVIEW-1 #4 (Time decode validation), #5 (ripple trim pivot with J/L cuts); #6 if the running session doesn't land it.
+2. (REVIEW-1 done.)
 3. PHASE3 slice 9: `ColorCorrection` → SSCore (`Clip.color`), per-clip source override (Interpret Footage), SonyMetadata → `SourceColorSpace`; embedded camera LUT [SonyMetadata].
-4. Library open questions → `[auto]` decisions (DECISIONS.md); small SSLibrary follow-up (preview cache LRU cap, backup pruning).
+4. Library decisions recorded (DECISIONS.md [auto]); SSLibrary follow-up running (preview cache LRU cap, backup pruning).
 5. SSAudioFX realtime path for playback (no allocation in render, latency compensation) [E-10/E-11 API]; volume into `AudioSegment`.
 6. SSText rendering (rasterize layout + style into a texture for the compositor) [E-07].
 7. Integration [E-07/E-09]: color chain + scopes in compositor, keyframed transform in compositor (units: canvas px from centre), proxies in playback (PROXY §SSPlayback integration), SSExport `FrameSource` from the real renderer + caption burn-in.
