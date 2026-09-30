@@ -28,6 +28,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     var toolbar: EditorToolbar!
     let mainWorkspaceSubmenu = NSMenu(title: "Workspace")
     var keyMonitor: Any?
+    /// Set once quitting started (Save alert, then teardown): the key monitor must not touch views any more.
+    var isTerminating = false
     var saveWorkspaceWork: DispatchWorkItem?
     var deadlineWork: DispatchWorkItem?
     let exports = ExportCoordinator()
@@ -155,7 +157,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool { true }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard session.isDirty else { return .terminateNow }
+        guard session.isDirty else { removeKeyMonitor(); return .terminateNow }
+        // The Save alert runs a modal loop: the monitor stays installed but `handle` bails out while it is up.
+        isTerminating = true
         let alert = NSAlert()
         alert.messageText = "Save changes to “\(session.displayName)”?"
         alert.informativeText = "Your changes will be lost if you don’t save them."
@@ -166,15 +170,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         case .alertFirstButtonReturn:
             Task {
                 let ok = await saveDocument()
+                if ok { removeKeyMonitor() } else { isTerminating = false }
                 NSApp.reply(toApplicationShouldTerminate: ok)
             }
             return .terminateLater
-        case .alertSecondButtonReturn: return .terminateNow
-        default: return .terminateCancel
+        case .alertSecondButtonReturn: removeKeyMonitor(); return .terminateNow
+        default: isTerminating = false; return .terminateCancel
         }
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        removeKeyMonitor()
         session.close()
         try? store.save()
     }
@@ -446,9 +452,20 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         }
     }
 
+    /// Also ends the router deadline timer; safe to call twice.
+    func removeKeyMonitor() {
+        isTerminating = true
+        if let m = keyMonitor { NSEvent.removeMonitor(m) }
+        keyMonitor = nil
+        deadlineWork?.cancel(); deadlineWork = nil
+    }
+
     /// Returns nil when the event was consumed.
     private func handle(_ event: NSEvent) -> NSEvent? {
-        guard event.window === window, window.attachedSheet == nil else { return event }
+        // Nothing while quitting or while any modal (Save alert, open/save panel) runs: its window is not ours and
+        // the panels may be mid-teardown (crash: objc_retain on a freed first responder during applicationShouldTerminate).
+        guard !isTerminating, NSApp.modalWindow == nil, NSApp.keyWindow?.sheetParent == nil,
+              let window, event.window === window, window.attachedSheet == nil, panels != nil else { return event }
         if event.type == .leftMouseDown {
             if let p = panels.panel(containing: window.contentView?.hitTest(event.locationInWindow)) { focusedPanel = p }
             return event

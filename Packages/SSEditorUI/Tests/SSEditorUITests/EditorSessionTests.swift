@@ -413,6 +413,45 @@ private final class SessionTestClock: @unchecked Sendable {
         #expect(f.width == 3840 && f.height == 2160 && f.frameDuration == Time(1001, 30000))
     }
 
+    @Test func configuredSequenceKeepsItsFormatWhenEmptyAgain() throws {
+        var p = EditorSession.makeUntitled()
+        let m = mediaRef("A", w: 3840, h: 2160, fd: Time(1001, 30000))
+        p.add(m)
+        let session = EditorSession(project: p, engine: StubProgramEngine(), autosaveStore: AutosaveStore(base: tempDir()))
+        let vertical = SequenceFormat(width: 1080, height: 1920, frameDuration: Time(1, 25))
+        #expect(session.setSequenceFormat(vertical))
+        #expect(session.placeMedia([m.id], mode: .overwrite))
+        #expect(session.activeTimeline?.format == vertical)
+        // New Sequence is configured as well.
+        let id = session.addSequence(format: SequenceFormat(width: 640, height: 360, frameDuration: Time(1, 24)))
+        #expect(session.placeMedia([m.id], mode: .overwrite))
+        #expect(session.project.timelines.first { $0.id == id }?.format.width == 640)
+    }
+
+    @Test func dropOnV2PlacesLinkedAudioOnA2AndCreatesMissingTracks() throws {
+        var p = EditorSession.makeUntitled()
+        let m = mediaRef("A")
+        p.add(m)
+        let session = EditorSession(project: p, engine: StubProgramEngine(), autosaveStore: AutosaveStore(base: tempDir()))
+        let t0 = try #require(session.activeTimeline)
+        let v = t0.tracks.filter { $0.kind == .video }, a = t0.tracks.filter { $0.kind == .audio }
+        #expect(session.placeMedia([m.id], at: .zero, videoTrack: v[1].id, mode: .overwrite))
+        let t1 = try #require(session.activeTimeline)
+        #expect(t1.track(v[1].id)?.clips.count == 1)
+        #expect(t1.track(a[1].id)?.clips.count == 1)
+        #expect(t1.track(a[0].id)?.clips.isEmpty == true)
+        // A drop on V4 with only three audio tracks would create A5 when missing; here A4 exists.
+        #expect(session.placeMedia([m.id], at: s(10), videoTrack: v[3].id, mode: .overwrite))
+        #expect(session.activeTimeline?.track(a[3].id)?.clips.count == 1)
+        // Fewer audio tracks than video tracks: the missing mirrored track is created.
+        try session.performTimeline("Remove") { $0.tracks.removeAll { $0.id == a[3].id } }
+        #expect(session.placeMedia([m.id], at: s(20), videoTrack: v[3].id, mode: .overwrite))
+        let t2 = try #require(session.activeTimeline)
+        #expect(t2.tracks.filter { $0.kind == .audio }.count == 4)
+        let created = try #require(t2.audioTrack(atOrdinal: 3))
+        #expect(t2.track(created)?.clips.count == 1)
+    }
+
     @Test func secondClipKeepsTheSequenceFormat() throws {
         let r = try Rig()
         let m = mediaRef("A", w: 3840, h: 2160)

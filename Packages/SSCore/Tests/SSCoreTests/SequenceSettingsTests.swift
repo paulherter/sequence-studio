@@ -40,6 +40,21 @@ private func track(_ kind: TrackKind, _ c: Clip) throws -> Track {
         }
     }
 
+    @Test func setFormatLocksAndFlagRoundTripsWithOldFilesDecodingLocked() throws {
+        var p = Project(name: "p", timelines: [Timeline(name: "t", format: SequenceFormat(frameDuration: Time(1, 30)),
+                                                        tracks: [], formatLocked: false)])
+        #expect(!p.timelines[0].formatLocked)
+        let open = try JSONDecoder().decode(Timeline.self, from: JSONEncoder().encode(p.timelines[0]))
+        #expect(!open.formatLocked)
+        try p.setFormat(SequenceFormat(width: 1080, height: 1920, frameDuration: Time(1, 30)), of: p.timelines[0].id)
+        #expect(p.timelines[0].formatLocked)
+        // A file written before the flag existed has no key: locked.
+        var json = try #require(JSONSerialization.jsonObject(with: JSONEncoder().encode(p.timelines[0])) as? [String: Any])
+        json["formatLocked"] = nil
+        let old = try JSONDecoder().decode(Timeline.self, from: JSONSerialization.data(withJSONObject: json))
+        #expect(old.formatLocked)
+    }
+
     @Test func primaryClipOfLinkedPairIsTheVideoClip() throws {
         let l = UUID()
         let v = clip(.video, link: l), a = clip(.audio, link: l), other = clip(.video)

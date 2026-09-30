@@ -10,6 +10,8 @@ final class EditorPanels {
     let session: EditorSession
 
     let timelineView = TimelineView()
+    /// Peaks for audio clips; filled for every clip on the timeline, whichever way the media came in.
+    let waveforms = TimelineWaveforms()
     let viewer = ViewerView(frame: .zero)
     let monitorModel: MonitorPanelModel
     let monitorView: MonitorPanelView
@@ -61,6 +63,7 @@ final class EditorPanels {
 
     private func wireTimeline() {
         let tv = timelineView
+        tv.waveforms = waveforms
         tv.onCommit = { [weak self] c in
             guard let self else { return }
             session.commit(c)
@@ -104,7 +107,14 @@ final class EditorPanels {
                                 hasAudio: ref.info?.audio != nil)
             }
         case .files(let urls):
-            return urls.map { DropItem(name: $0.lastPathComponent, duration: Time(seconds: 5)) }
+            // Not probed yet: guess the streams from the extension (video files carry audio, stills do not).
+            let still: Set<String> = ["png", "jpg", "jpeg", "tif", "tiff", "heic", "gif", "bmp", "webp", "psd"]
+            let sound: Set<String> = ["wav", "aif", "aiff", "mp3", "m4a", "aac", "flac", "caf", "ogg", "opus"]
+            return urls.map { u in
+                let e = u.pathExtension.lowercased()
+                return DropItem(name: u.lastPathComponent, duration: Time(seconds: 5),
+                                hasVideo: !sound.contains(e), hasAudio: !still.contains(e))
+            }
         case .textTemplate(let id):
             return [DropItem(name: TextTemplateCatalog.entry(id: id)?.name ?? "", duration: Time(seconds: 5))]
         case .effect: return []
@@ -263,6 +273,13 @@ final class EditorPanels {
         timelineView.setTimeline(session.activeTimeline ?? Timeline(name: "", frameDuration: Time(1001, 30000)))
         timelineView.setSelection(session.selection)
         timelineView.setCaptionSelection(session.captionSelection)
+        ensureWaveforms()
+    }
+
+    /// Cmd+I, Project drop, Finder drop, Library and open all end with clips here: build what is missing.
+    private func ensureWaveforms() {
+        guard let t = session.activeTimeline else { return }
+        waveforms.ensure(timeline: t, project: session.project)
     }
 
     private var lastFrameDuration = Time(1001, 30000)
@@ -274,6 +291,7 @@ final class EditorPanels {
                 if t != timelineView.timeline || timelineView.interaction.preview != timelineView.timeline { syncTimeline() }
                 if projectModel.project != session.project { projectModel.setProject(session.project) }
             }
+            if let t { waveforms.ensure(timeline: t, project: session.project) }
             timelineView.setOfflineMedia(Set(session.project.media.filter { session.media.isOffline($0.id) }.map(\.id)))
             timelineView.setLabelResolver(session.project.labelResolver)
             projectModel.refreshOffline()

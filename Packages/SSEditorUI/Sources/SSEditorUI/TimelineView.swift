@@ -49,6 +49,8 @@ public final class TimelineView: NSView {
     /// Files dragged in from the Library or Finder: URLs, drop time, track under the pointer, insert instead of overwrite.
     public var onDropFiles: (([URL], Time, Track.ID?, Bool) -> Void)?
     /// Describes a drag in flight (length, video/audio) so the ghost can be drawn. Nil or empty result = 5 s video placeholder.
+    /// Peaks drawn inside audio clips; the owner calls `ensure` and the view redraws when peaks arrive.
+    public var waveforms: TimelineWaveforms? { didSet { waveforms?.onReady = { [weak self] in self?.needsDisplay = true } } }
     public var dropItemsProvider: ((DropSource) -> [DropItem])?
     /// An effect (`com.sequencestudio.effect-id`) dropped on a clip: effect id, clip id.
     public var onDropEffect: ((String, Clip.ID) -> Void)?
@@ -663,6 +665,11 @@ public final class TimelineView: NSView {
                 ClipDrawing.draw(name: c.name, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
                                  visible: visibleX, style: .label(labelResolver.label(for: c)), isSelected: selection.contains(c.id),
                                  isOffline: offlineMedia.contains(c.media))
+                if track.kind == .audio, let wf = waveforms, let d = wf.data[c.media] {
+                    ClipDrawing.drawWaveform(data: d, media: c.media, source: c.source,
+                                             rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
+                                             visible: visibleX, cache: wf.cache)
+                }
             }
         }
     }
@@ -694,9 +701,18 @@ public final class TimelineView: NSView {
         let rows = geometry.rows(for: timeline)
         if dropPreview.isActive, !dropPreview.ghosts.isEmpty {
             for g in dropPreview.ghosts {
-                guard let row = rows.first(where: { $0.track == g.track }) else { continue }
-                let r = CGRect(x: geometry.x(for: g.range.start), y: row.y,
-                               width: max(geometry.width(of: g.range.duration), 2), height: row.height - 1)
+                let rowY: CGFloat, rowH: CGFloat
+                if let row = rows.first(where: { $0.track == g.track }) {
+                    rowY = row.y; rowH = row.height
+                } else if let n = g.newTrackOrdinal {
+                    // Audio track the drop creates: drawn below the last audio row.
+                    let audio = rows.filter { $0.kind == .audio }
+                    let last = audio.last ?? rows.last
+                    rowH = last?.height ?? 40
+                    rowY = (last?.maxY ?? TimelineGeometry.rulerHeight) + CGFloat(max(n - audio.count, 0)) * rowH
+                } else { continue }
+                let r = CGRect(x: geometry.x(for: g.range.start), y: rowY,
+                               width: max(geometry.width(of: g.range.duration), 2), height: rowH - 1)
                 (g.kind == .audio ? Theme.Colors.clipAudio : Theme.Colors.clipVideo).withAlphaComponent(0.55).setFill()
                 NSBezierPath(roundedRect: r, xRadius: 3, yRadius: 3).fill()
                 Theme.Colors.accent.setStroke()
