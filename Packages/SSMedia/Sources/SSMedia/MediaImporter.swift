@@ -15,7 +15,7 @@ public enum MediaImporter {
         var video: VideoTrackInfo?
         if let vTrack {
             let demux = try await AVDemuxer(url: url)
-            video = try videoInfo(track: vTrack, format: demux.formatDescription, index: demux.index)
+            video = try videoInfo(format: demux.formatDescription, index: demux.index)
         }
         var audio: AudioTrackInfo?
         if let aTrack, let fd = try? await aTrack.load(.formatDescriptions).first,
@@ -35,7 +35,7 @@ public enum MediaImporter {
         return (ref, info)
     }
 
-    static func videoInfo(track: AVAssetTrack, format fd: CMFormatDescription, index: SampleIndex) throws -> VideoTrackInfo {
+    static func videoInfo(format fd: CMFormatDescription, index: SampleIndex) throws -> VideoTrackInfo {
         let dims = CMVideoFormatDescriptionGetDimensions(fd)
         let sub = CMFormatDescriptionGetMediaSubType(fd)
         let ext = CMFormatDescriptionGetExtensions(fd) as? [String: Any] ?? [:]
