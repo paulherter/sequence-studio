@@ -40,6 +40,8 @@ import SSRender
     public let audio: (any AudioPlaying)?
     private var prepareFailed = false
     private var audioPrepared = false
+    /// Between `beginScrub` and `endScrub` (drags play grains).
+    private var scrubbing = false
     /// `audio.prepare()` failed or the output stalled: running on the injected clock until the next `play()` retries.
     public var audioUnavailable: Bool { prepareFailed || switching.audioFailed }
 
@@ -86,6 +88,7 @@ import SSRender
 
     public func play(_ rate: PlaybackRate = .init(1, 1)) {
         guard !rate.isPaused else { pause(); return }
+        stopScrubAudio()                                   // the play path owns the output from here
         if audioUnavailable { prepareFailed = false; switching.clearAudioFailure() }   // retry
         selectClock(mayPrepare: true)
         let start = gridNow()
@@ -110,17 +113,35 @@ import SSRender
         loop.prefetch(at: target, rate: rate)
     }
 
-    /// ± frames from the current clock position; pauses playback first. (Audio grain: E-12.)
+    /// ± frames from the current clock position; pauses playback first. Plays one audio grain of the new frame
+    /// (one frame, at least 40 ms) in step direction when the timeline is audible.
     public func step(_ frames: Int) {
         if !rate.isPaused { pause() }
         guard let tl = timeline else { return }
-        seek(to: gridNow() + tl.format.frameDuration * Int64(frames))
+        let from = gridNow()
+        let to = RenderLoop.gridTime(from + tl.format.frameDuration * Int64(frames), tl)
+        seek(to: to)
+        scrubOutput(tl)?.step(from: from, to: to)
     }
 
-    // Scrub: video only for now (E-12 adds the audio grains).
-    public func beginScrub() { if !rate.isPaused { pause() } }
-    public func scrub(to t: Time) { seek(to: t) }
-    public func endScrub() {}
+    /// Start of a scrub gesture: pauses playback; drags until `endScrub` play audio grains (ARCHITECTURE §7).
+    public func beginScrub() {
+        if !rate.isPaused { pause() }
+        scrubbing = true
+        guard let tl = timeline, let audio, let s = scrubOutput(tl) else { return }
+        s.begin(at: gridNow(), hostNanos: audio.hostNanoseconds())
+    }
+
+    /// Seeks (video) and, inside a scrub gesture, plays a grain at `t` in the drag direction.
+    public func scrub(to t: Time) {
+        seek(to: t)
+        guard scrubbing, let tl = timeline, let audio, let s = scrubOutput(tl) else { return }
+        let clamped = min(max(t, .zero), tl.duration)
+        s.scrub(to: clamped, hostNanos: audio.hostNanoseconds())
+    }
+
+    /// End of the gesture: scrub audio fades out (5 ms).
+    public func endScrub() { stopScrubAudio() }
 
     public var stats: PlaybackStats { loop.stats }
 
@@ -166,6 +187,21 @@ import SSRender
     nonisolated static func isAudible(_ tl: Timeline, sequences: [Timeline.ID: Timeline]) -> Bool {
         guard tl.duration > .zero else { return false }
         return !tl.audioSegments(in: TimeRange(start: .zero, duration: tl.duration), sequences: { sequences[$0] }).isEmpty
+    }
+
+    /// Scrub grains are played only when the output has a scrub voice, the timeline is audible and the output is up
+    /// (prepared here on first use, like `play()`; a failure marks the audio unavailable until the next `play()`).
+    private func scrubOutput(_ tl: Timeline) -> ScrubAudio? {
+        guard let audio, let s = audio.scrubAudio, !audioUnavailable, Self.isAudible(tl, sequences: sequences) else { return nil }
+        if !audioPrepared {
+            do { try audio.prepare(); audioPrepared = true } catch { prepareFailed = true; return nil }
+        }
+        return s
+    }
+
+    private func stopScrubAudio() {
+        scrubbing = false
+        audio?.scrubAudio?.stop()
     }
 
     private func gridNow() -> Time {

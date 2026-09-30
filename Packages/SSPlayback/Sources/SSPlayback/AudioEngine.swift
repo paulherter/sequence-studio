@@ -174,6 +174,8 @@ public final class AudioEngine: AudioPlaying, @unchecked Sendable {
     private struct Graph {
         let engine = AVAudioEngine()
         let source: AVAudioSourceNode
+        /// Scrub grains (E-12): own node straight into the main mixer (no TimePitch latency, play ring untouched).
+        let scrubSource: AVAudioSourceNode
         let format: AVAudioFormat
         var prepared = false
         var observer: (any NSObjectProtocol)?
@@ -185,7 +187,12 @@ public final class AudioEngine: AudioPlaying, @unchecked Sendable {
         self.init(resolver: { try media.audio(for: $0) })
     }
 
+    /// Scrub/step grains, rendered by their own source node into the main mixer (see `ScrubAudio`).
+    public let scrubAudio: ScrubAudio?
+
     public init(resolver: @escaping AudioFeeder.Resolver) {
+        let scrub = ScrubAudio(resolver: resolver, sampleRate: 48_000)
+        scrubAudio = scrub
         ring = RingBuffer(capacity: Self.ringCapacity, fadeFrames: 240)
         feeder = AudioFeeder(timeline: Timeline(name: "", frameDuration: Time(1, 30)), ring: ring, sampleRate: 48_000,
                              blockFrames: 1024, resolver: resolver)
@@ -201,7 +208,15 @@ public final class AudioEngine: AudioPlaying, @unchecked Sendable {
             isSilence.pointee = ObjCBool(core.render(left: l, right: r, count: Int(frameCount), hostNanos: hostNanosecondsNow()))
             return noErr
         }
-        graph = Mutex(Graph(source: source, format: format))
+        let voice = scrub.voice
+        let scrubSource = AVAudioSourceNode(format: format) { isSilence, _, frameCount, abl in
+            let bufs = UnsafeMutableAudioBufferListPointer(abl)
+            guard bufs.count >= 2, let l = bufs[0].mData?.assumingMemoryBound(to: Float.self),
+                  let r = bufs[1].mData?.assumingMemoryBound(to: Float.self) else { return noErr }
+            isSilence.pointee = ObjCBool(voice.render(left: l, right: r, count: Int(frameCount)))
+            return noErr
+        }
+        graph = Mutex(Graph(source: source, scrubSource: scrubSource, format: format))
     }
 
     deinit { shutdown() }
@@ -209,6 +224,7 @@ public final class AudioEngine: AudioPlaying, @unchecked Sendable {
     /// Stops the hardware and the feeder thread. `prepare()` brings them back.
     public func shutdown() {
         core.playing.store(false, ordering: .releasing)
+        scrubAudio?.stop()
         feeder.stop()
         graph.withLock { g in
             if let o = g.observer { NotificationCenter.default.removeObserver(o); g.observer = nil }
@@ -226,7 +242,7 @@ public final class AudioEngine: AudioPlaying, @unchecked Sendable {
             let e = g.engine
             let out = e.outputNode.outputFormat(forBus: 0)
             guard out.channelCount > 0, out.sampleRate > 0 else { throw AudioEngineError.noOutputDevice }
-            if g.source.engine == nil { e.attach(g.source); e.attach(timePitch) }
+            if g.source.engine == nil { e.attach(g.source); e.attach(timePitch); e.attach(g.scrubSource) }
             connect(g)
             let meter = self.meter
             g.source.installTap(onBus: 0, bufferSize: 1024, format: g.format) { buffer, _ in
@@ -251,7 +267,9 @@ public final class AudioEngine: AudioPlaying, @unchecked Sendable {
 
     private func connect(_ g: Graph) {
         g.engine.connect(g.source, to: timePitch, format: g.format)
-        g.engine.connect(timePitch, to: g.engine.mainMixerNode, format: g.format)
+        // Explicit mixer buses: reconnecting after a configuration change must not pile up inputs.
+        g.engine.connect(timePitch, to: g.engine.mainMixerNode, fromBus: 0, toBus: 0, format: g.format)
+        g.engine.connect(g.scrubSource, to: g.engine.mainMixerNode, fromBus: 0, toBus: 1, format: g.format)
     }
 
     /// Output configuration changed (device switched, sample rate changed): the engine stopped. Restart it, re-measure
@@ -305,6 +323,7 @@ public final class AudioEngine: AudioPlaying, @unchecked Sendable {
 
     public func setTimeline(_ timeline: Timeline, sequences: [Timeline.ID: Timeline]) {
         feeder.setTimeline(timeline, sequences: sequences)
+        scrubAudio?.setTimeline(timeline, sequences: sequences)
     }
 
     public func start() { core.playing.store(true, ordering: .releasing) }

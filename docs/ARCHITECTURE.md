@@ -267,7 +267,7 @@ public actor DecodeScheduler {                             // runs jobs, one in 
     public func pause()
     public func seek(to t: Time)                           // exact frame, shows it as soon as decoded
     public func step(_ frames: Int)                        // ± frames, plays a 1-frame audio grain
-    public func beginScrub(); public func scrub(to t: Time); public func endScrub()   // audio grains while dragging
+    public func beginScrub(); public func scrub(to t: Time); public func endScrub()   // audio grains while dragging (E-12, §7)
     public var quality: DecodeScale
     public var onPositionChange: (@MainActor (Time) -> Void)?   // ≤ display rate, for playhead/timecode
     public var stats: PlaybackStats { get }
@@ -302,7 +302,7 @@ media's `SampleIndex` → cache lookup (miss: `nearest`, count drop, ask schedul
 - Graph: `AVAudioSourceNode` (our mixer) → `AVAudioUnitTimePitch` (rate = |speed|, pitch preserved) → `mainMixerNode` → output.
   Tap on the source node output for the timeline audio meter (peak/RMS per channel).
 - Landed (main): `AudioFeeder`, `RingBuffer` in SSPlayback; `AudioSource`/`AssetAudioSource`/`MemoryAudioSource` in SSMedia; `RealtimeAudioFX` in SSAudioFX.
-  E-11: `AudioPlaying` protocol (AudioPlaying.swift, + `ManualAudio` for tests), `AudioEngine` (real graph), `AudioClock`. `ScrubAudio` not yet.
+  E-11: `AudioPlaying` protocol (AudioPlaying.swift, + `ManualAudio` for tests), `AudioEngine` (real graph), `AudioClock`. E-12: `ScrubAudio` (ScrubAudio.swift).
 - `AudioPlaying`: `prepare() throws` (hardware + feeder thread, idempotent, may block; `AudioEngineError.noOutputDevice`), `start()`/`stop()` (atomics;
   stop = 5 ms fade-out then silence, hardware keeps running), `setRate` (direction for the next seek, TimePitch |rate|, bypass at 1, re-reads latency),
   `seek(to: Time) -> generation`, `flushed`, `consumedAtEpoch`, `consumedFrames`, `lastRender: AudioRenderStamp` (frames after / consumed by /
@@ -341,8 +341,19 @@ media's `SampleIndex` → cache lookup (miss: `nearest`, count drop, ask schedul
   `RingBuffer(fadeFrames: 240)` adds the 5 ms fade on the consumer side: new audio fades in, the old tail (snapshot taken after each pop,
   skipped if the consumer paused > 100 ms) fades out cross-faded; the tail is not counted as consumed. Default `fadeFrames` is 0.
 - Scrub audio (`ScrubAudio`): while scrubbing or stepping, play short grains (≈ 1 frame, min 40 ms) of source audio at the
-  playhead in drag direction, 5 ms raised-cosine crossfades between grains, speed from drag velocity through TimePitch.
-  Target: sounds like Premiere (Paul judges).
+  playhead in drag direction, 5 ms raised-cosine crossfades between grains. Target: sounds like Premiere (Paul judges).
+  E-12 as built (deviations from the line above): speed follows the drag velocity by grain placement (grains read at 1x,
+  pitch preserved, each starts at the current scrub position), not through TimePitch (its ~85 ms latency would lag the
+  mouse); `ScrubSettings.maxVarispeed` > 1 optionally speeds grains up (pitch rises) to that factor, default 1.
+  Output: own `ScrubVoice` rendered by a second `AVAudioSourceNode` -> `mainMixerNode` (bus 1), not the play ring (owned by
+  `AudioClock`); no meter tap, no track FX (dry mix: clip volume, mute/solo, gaps = silence). Pieces: `ScrubGrainPlanner`
+  (pure: hop = max(frame, 40 ms), 40 ms when |v| >= 2x; no movement = no grain; reverse grain when moving left; step =
+  new frame forward from its start / backward from its end), worker queue mixing latest-wins requests into one of 4
+  fixed voice slots, lock-free handoff (free bitmask + one pending slot; a newer grain replaces an unplayed one), voice takes
+  the pending grain at the playing grain's hop (crossfade) or at once when idle; `stop()` = 5 ms fade, drops pending and
+  older-generation grains. `AudioPlaying.scrubAudio: ScrubAudio?` (default nil; `ManualAudio(scrub:)`). PlaybackEngine:
+  grains only inside beginScrub/endScrub and on `step`, only when the timeline is audible; beginScrub/step may `prepare()`
+  the output (like play); `endScrub()` and `play()` stop the voice.
 
 ## 8. Threads and Swift 6
 

@@ -66,6 +66,12 @@ public protocol AudioPlaying: AnyObject, Sendable {
     /// Called (any thread, no locks held) after the output was restarted underneath, e.g. a device configuration change:
     /// the clock re-seeks at its current position.
     func setRestartHandler(_ handler: (@Sendable () -> Void)?)
+    /// Scrub/step grain player on the same output (E-12), nil when the output has none. Usable once `prepare()` succeeded.
+    var scrubAudio: ScrubAudio? { get }
+}
+
+extension AudioPlaying {
+    public var scrubAudio: ScrubAudio? { nil }
 }
 
 /// Headless `AudioPlaying`: models the feeder (flush on seek, generation, latency M) and the ring consumer
@@ -96,10 +102,13 @@ public final class ManualAudio: AudioPlaying {
     /// When true (default), `render` applies a pending feeder flush first (the feeder is always ahead).
     public let autoFlush: Bool
 
+    /// Scrub grains (tests render `scrubAudio.voice` by hand); nil = no scrub audio.
+    public let scrubAudio: ScrubAudio?
+
     /// `timePitchLatency` is added to `outputLatency` while |rate| != 1 (TimePitch not bypassed).
     public init(sampleRate: Int = 48_000, latencySamples: Int = 0, outputLatency: Time = .zero, timePitchLatency: Time = .zero,
-                autoFlush: Bool = true, failsToPrepare: Bool = false) {
-        self.sampleRate = sampleRate; self.autoFlush = autoFlush
+                autoFlush: Bool = true, failsToPrepare: Bool = false, scrub: ScrubAudio? = nil) {
+        self.sampleRate = sampleRate; self.autoFlush = autoFlush; self.scrubAudio = scrub
         state = Mutex(State(prepareFails: failsToPrepare, latencySamples: latencySamples, outputLatency: outputLatency,
                             timePitchLatency: timePitchLatency))
     }
@@ -154,6 +163,7 @@ public final class ManualAudio: AudioPlaying {
 
     public func setTimeline(_ timeline: Timeline, sequences: [Timeline.ID: Timeline]) {
         state.withLock { $0.timeline = timeline }
+        scrubAudio?.setTimeline(timeline, sequences: sequences)
     }
     public func prepare() throws {
         try state.withLock { s in
