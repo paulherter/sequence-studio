@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 import SSCore
@@ -8,97 +9,93 @@ import SSRender
     func model() -> ColorInspectorModel {
         let m = ColorInspectorModel()
         m.recents = RecentLUTs(defaults: UserDefaults(suiteName: "ColorInspectorModelTests-\(UUID())")!)
+        m.recentLUTs = []
         return m
     }
-    var basicID: Int { 1 }
-    var lutID: Int { 2 }
+    let e1 = 1
 
-    @Test func defaultStackIsBasicCorrectionThenInputLUT() {
+    @Test func defaultIsOneEffectWithAutomaticInputLUT() {
         let m = model()
-        #expect(m.sections.map(\.kind) == [.basicCorrection, .inputLUT])
-        #expect(m.lutChoice(lutID) == .automatic)
+        #expect(m.effects.count == 1)
+        #expect(m.lutChoice(e1, .input) == .automatic)
+        #expect(m.lutChoice(e1, .look) == nil)
         #expect(m.color.isDefault)
         #expect(m.source == .rec709)
     }
 
-    @Test func sliderSpecsFollowLumetri() {
-        #expect(ColorParam.layout(for: .basicCorrection).flatMap(\.params).map(\.title) ==
-                ["Temperature", "Tint", "Exposure", "Contrast", "Highlights", "Shadows", "Whites", "Blacks", "Saturation", "Vibrance"])
+    @Test func sliderLayoutFollowsLumetri() {
+        let basic = ColorParam.layout(for: .basicCorrection)
+        #expect(basic.map { $0.group ?? "" } == ["Color", "Light"])
+        #expect(basic[0].params.map(\.title) == ["Temperature", "Tint", "Saturation"])
+        #expect(basic[1].params.map(\.title) == ["Exposure", "Contrast", "Highlights", "Shadows", "Whites", "Blacks"])
+        let creative = ColorParam.layout(for: .creative)
+        #expect(creative[0].group == "Adjustments")
+        #expect(creative[0].params.map(\.title) == ["Faded Film", "Vibrance", "Saturation"])
         #expect(ColorParam.saturation.neutral == 100 && ColorParam.saturation.range == 0...200)
         #expect(ColorParam.exposure.range == -5...5 && ColorParam.exposure.decimals == 2)
+        #expect(ColorParam.temperature.track == .temperature && ColorParam.tint.track == .tint && ColorParam.contrast.track == .plain)
         #expect(ColorParam.vignetteMidpoint.neutral == 50 && ColorParam.vignetteFeather.neutral == 50)
-        #expect(ColorParam.lookIntensity.neutral == 100)
-        // Every slider reads and writes exactly its own block and round-trips its neutral.
+        #expect(ColorParam.lookIntensity.neutral == 100 && ColorParam.inputLUTIntensity.neutral == 100)
+        // Every slider reads its neutral from a default effect, writes (clamped) into it and belongs to its section.
         for p in ColorParam.allCases {
-            let kind: ColorSectionKind = switch p {
-            case .temperature, .tint, .exposure, .contrast, .highlights, .shadows, .whites, .blacks, .saturation, .vibrance: .basicCorrection
-            case .lookIntensity, .fadedFilm, .creativeVibrance, .creativeSaturation, .tintBalance: .creative
-            case .wheelsSaturation: .wheels
-            case .vignetteAmount, .vignetteMidpoint, .vignetteRoundness, .vignetteFeather: .vignette
-            }
-            var params = ColorSectionParams.defaults(for: kind)
-            #expect(p.read(params) == p.neutral, "\(p) default is its neutral")
-            #expect(p.write(p.range.upperBound, into: &params))
-            #expect(p.read(params) == p.range.upperBound)
-            var other = ColorSectionParams.defaults(for: .curves)
-            #expect(!p.write(1, into: &other))
+            var e = ColorEffect(id: 1)
+            #expect(p.read(e) == p.neutral, "\(p) default is its neutral")
+            p.write(p.range.upperBound + 500, into: &e)
+            #expect(p.read(e) == p.range.upperBound)
+            p.write(p.range.lowerBound - 500, into: &e)
+            #expect(p.read(e) == p.range.lowerBound)
         }
     }
 
-    @Test func setClampsAndTargetsTheSection() {
+    @Test func setClampsAndTargetsTheEffect() {
         let m = model()
-        m.set(basicID, .temperature, 250)
-        m.set(basicID, .exposure, -9)
-        m.set(basicID, .saturation, 300)
-        m.set(basicID, .contrast, 12.5)
-        m.set(basicID, .whites, 40)
-        #expect(m.value(basicID, .temperature) == 100)
-        #expect(m.value(basicID, .exposure) == -5)
-        #expect(m.value(basicID, .saturation) == 200)
-        #expect(m.value(basicID, .contrast) == 12.5 && m.value(basicID, .whites) == 40)
-        // Setting a slider on a block it does not belong to does nothing.
-        m.set(lutID, .temperature, 10)
-        #expect(m.color.sections[1].params == .inputLUT(.automatic))
+        m.set(e1, .temperature, 250)
+        m.set(e1, .exposure, -9)
+        m.set(e1, .saturation, 300)
+        m.set(e1, .contrast, 12.5)
+        m.set(e1, .whites, 40)
+        #expect(m.value(e1, .temperature) == 100)
+        #expect(m.value(e1, .exposure) == -5)
+        #expect(m.value(e1, .saturation) == 200)
+        #expect(m.value(e1, .contrast) == 12.5 && m.value(e1, .whites) == 40)
+        m.set(99, .tint, 5)   // unknown effect: ignored
+        #expect(m.effects.count == 1 && m.value(99, .tint) == 0)
     }
 
     @Test func changeCallbackFiresOncePerRealChange() {
         let m = model()
         var seen: [ClipColor] = []
         m.onChange = { seen.append($0) }
-        m.set(basicID, .tint, 10)
+        m.set(e1, .tint, 10)
         #expect(seen.count == 1)
-        m.set(basicID, .tint, 10)
+        m.set(e1, .tint, 10)
         #expect(seen.count == 1)
-        guard case .basic(let b) = seen[0].sections[0].params else { Issue.record("basic"); return }
-        #expect(b.tint == 10)
+        #expect(seen[0].effects[0].basic.tint == 10)
     }
 
-    @Test func addRemoveReorderEnableAndReset() {
+    @Test func sectionTogglesResetsAndEffects() {
         let m = model()
-        m.addSection(.curves); m.addSection(.vignette); m.addSection(.basicCorrection)
-        #expect(m.sections.map(\.kind) == [.basicCorrection, .inputLUT, .curves, .vignette, .basicCorrection])
-        let second = m.sections[4].id
-        m.moveSection(second, to: 1)                 // a second correction before the LUT
-        #expect(m.sections.map(\.kind) == [.basicCorrection, .basicCorrection, .inputLUT, .curves, .vignette])
-        m.moveSection(second, by: 1)
-        #expect(m.sections.map(\.kind) == [.basicCorrection, .inputLUT, .basicCorrection, .curves, .vignette])
-        m.moveSection(m.sections[0].id, by: -1)      // already first: no-op
-        #expect(m.sections[0].kind == .basicCorrection)
-        m.set(second, .contrast, 30)
-        m.setEnabled(second, false)
-        #expect(!m.isEnabled(second))
-        m.resetSection(second)
-        #expect(m.value(second, .contrast) == 0 && !m.isEnabled(second), "reset keeps the enabled state")
-        m.removeSection(second)
-        #expect(m.sections.count == 4)
-        let lut = m.sections.first { $0.kind == .inputLUT }!.id
-        m.removeSection(lut)
-        #expect(m.sections.contains { $0.kind == .inputLUT }, "the Input LUT cannot be removed")
-        m.set(m.sections[0].id, .exposure, 2)
+        m.set(e1, .contrast, 30)
+        m.set(e1, .fadedFilm, 20)
+        m.setEnabled(e1, .basicCorrection, false)
+        #expect(!m.isEnabled(e1, .basicCorrection) && m.isEnabled(e1, .creative))
+        m.resetSection(e1, .basicCorrection)
+        #expect(m.value(e1, .contrast) == 0 && !m.isEnabled(e1, .basicCorrection), "reset keeps the toggle")
+        #expect(m.value(e1, .fadedFilm) == 20, "other sections are untouched")
+        m.setEnabled(e1, .hslSecondary, false)
+        #expect(m.isEnabled(e1, .hslSecondary), "the HSL placeholder cannot be toggled")
+        m.addEffect()
+        #expect(m.effects.map(\.id) == [1, 2])
+        m.set(2, .vignetteAmount, -2)
+        #expect(m.value(2, .vignetteAmount) == -2 && m.value(1, .vignetteAmount) == 0)
+        m.removeEffect(2)
+        #expect(m.effects.count == 1)
+        m.removeEffect(1)
+        #expect(m.effects.count == 1, "the last effect stays")
+        m.set(e1, .exposure, 2)
         m.setSourceOverride(.hlgBT2020)
         m.resetAll()
-        #expect(m.sections.map(\.kind) == [.basicCorrection, .inputLUT] && m.color.source == .hlgBT2020)
-        #expect(m.value(1, .exposure) == 0)
+        #expect(m.color.source == .hlgBT2020 && m.color.effects.count == 1 && m.value(e1, .exposure) == 0)
     }
 
     @Test func structuralEditsAreOneGestureEach() {
@@ -106,48 +103,44 @@ import SSRender
         var began = 0, ended = 0
         m.onGestureBegan = { began += 1 }
         m.onGestureEnded = { ended += 1 }
-        m.addSection(.wheels)
-        m.resetSection(1)
-        m.moveSection(2, by: 1)
-        m.removeSection(3)
+        m.addEffect()
+        m.resetSection(e1, .creative)
+        m.setEnabled(e1, .wheels, false)
+        m.removeEffect(2)
         #expect(began == 4 && ended == 4)
         began = 0; ended = 0
-        m.gesture { m.set(1, .tint, 5); m.set(1, .tint, 6) }
+        m.gesture { m.set(e1, .tint, 5); m.set(e1, .tint, 6) }
         #expect(began == 1 && ended == 1)
-        m.resetParameter(1, .tint)
-        #expect(began == 2 && ended == 2 && m.value(1, .tint) == 0)
+        m.resetParameter(e1, .tint)
+        #expect(began == 2 && ended == 2 && m.value(e1, .tint) == 0)
     }
 
     @Test func wheelsAndTintsStoreHueAmountAndLuma() {
         let m = model()
-        m.addSection(.wheels); m.addSection(.creative)
-        let w = m.sections[2].id, c = m.sections[3].id
-        m.setWheel(w, .shadows, hue: 210, amount: 1.4)
-        m.setWheelLuma(w, .shadows, -250)
-        m.setWheelLuma(w, .midtones, 40)
-        #expect(m.wheel(w, .shadows).value == WheelValue(hue: 210, amount: 1))
-        #expect(m.wheel(w, .shadows).luma == -100 && m.wheel(w, .midtones).luma == 40)
-        m.setWheel(c, .shadowTint, hue: 30, amount: 0.5)
-        #expect(m.wheel(c, .shadowTint).value == WheelValue(hue: 30, amount: 0.5))
-        m.setWheelLuma(c, .shadowTint, 50)   // tints have no luma
-        #expect(m.wheel(c, .shadowTint).luma == 0)
-        m.resetWheel(w, .shadows)
-        #expect(m.wheel(w, .shadows).value.isNeutral && m.wheel(w, .shadows).luma == 0)
-        #expect(m.wheel(w, .midtones).luma == 40, "other wheels untouched")
+        m.setWheel(e1, .shadows, hue: 210, amount: 1.4)
+        m.setWheelLuma(e1, .shadows, -250)
+        m.setWheelLuma(e1, .midtones, 40)
+        #expect(m.wheel(e1, .shadows).value == WheelValue(hue: 210, amount: 1))
+        #expect(m.wheel(e1, .shadows).luma == -100 && m.wheel(e1, .midtones).luma == 40)
+        m.setWheel(e1, .shadowTint, hue: 30, amount: 0.5)
+        #expect(m.wheel(e1, .shadowTint).value == WheelValue(hue: 30, amount: 0.5))
+        m.setWheelLuma(e1, .shadowTint, 50)   // tints have no luma
+        #expect(m.wheel(e1, .shadowTint).luma == 0)
+        m.resetWheel(e1, .shadows)
+        #expect(m.wheel(e1, .shadows).value.isNeutral && m.wheel(e1, .shadows).luma == 0)
+        #expect(m.wheel(e1, .midtones).luma == 40, "other wheels untouched")
         #expect(ColorWheelSlot.highlights.hasLuma && !ColorWheelSlot.shadowTint.hasLuma)
     }
 
     @Test func curvesRoundTrip() {
         let m = model()
-        m.addSection(.curves)
-        let id = m.sections[2].id
-        var c = m.curves(id)
+        var c = m.curves(e1)
         #expect(c.isNeutral)
         c.master = [CurvePoint(0, 0), CurvePoint(0.5, 0.6), CurvePoint(1, 1)]
-        m.setCurves(id, c)
-        #expect(m.curves(id).master.count == 3)
-        m.setCurves(1, c)   // not a curves block: ignored
-        #expect(m.color.sections[0].params == .basic(BasicCorrection()))
+        m.setCurves(e1, c)
+        #expect(m.curves(e1).master.count == 3)
+        m.setCurves(42, c)   // unknown effect: ignored
+        #expect(m.color.effects.count == 1)
     }
 
     @Test func loadAndClipColorRoundTrip() {
@@ -156,9 +149,9 @@ import SSRender
         m.onChange = { _ in fired += 1 }
         var c = ClipColor.default
         c.source = .sLog3SGamut3Cine
-        c.sections[0].params = .basic({ var b = BasicCorrection(); b.exposure = 1; return b }())
-        c.sections[1].enabled = false
-        c.addSection(.vignette)
+        c.effects[0].basic.exposure = 1
+        c.effects[0].setEnabled(.vignette, false)
+        c.addEffect()
         m.load(c, mediaID: UUID(), info: MediaInfo(duration: Time(1, 1), detectedColorSpace: .hlgBT2020, embeddedLUTName: "Look"))
         #expect(fired == 0, "load never reports")
         #expect(m.clipColor() == c)
@@ -169,40 +162,68 @@ import SSRender
         #expect(fired == 1)
     }
 
-    @Test func collapsedStateIsUIOnlyAndPrunedOnLoad() {
+    @Test func collapsedStateIsUIOnlyDefaultsLikePremiereAndIsPruned() {
         let m = model()
-        m.addSection(.vignette)
-        m.setCollapsed(3, true)
-        #expect(m.isCollapsed(3))
-        #expect(m.color.sections.count == 3, "collapsing does not edit the clip")
         m.load(.default, mediaID: nil, info: nil)
-        #expect(!m.isCollapsed(3), "ids that no longer exist are forgotten")
+        #expect(!m.isCollapsed(ColorPanelKey(1, .basicCorrection)) && !m.isCollapsed(ColorPanelKey(1, .creative)))
+        #expect(m.isCollapsed(ColorPanelKey(1, .curves)) && m.isCollapsed(ColorPanelKey(1, .vignette)))
+        let key = ColorPanelKey(1, .basicCorrection, group: "Light")
+        m.setCollapsed(key, true)
+        #expect(m.isCollapsed(key))
+        #expect(m.color.isDefault, "collapsing does not edit the clip")
+        m.setCollapsed(ColorPanelKey(1, .curves), false)
+        m.load(.default, mediaID: nil, info: nil)
+        #expect(!m.isCollapsed(ColorPanelKey(1, .curves)), "reloading the same effect keeps the user's choice")
+        var two = ClipColor.default; two.addEffect()
+        m.load(two, mediaID: nil, info: nil)
+        #expect(m.isCollapsed(ColorPanelKey(2, .curves)) && !m.isCollapsed(ColorPanelKey(2, .basicCorrection)))
+        m.load(.default, mediaID: nil, info: nil)
+        #expect(!m.isCollapsed(ColorPanelKey(2, .curves)), "keys of effects that no longer exist are forgotten")
     }
 
     @Test func lutChoicesMapToRefsAndRecentsArePersistedMostRecentFirst() {
         let m = model()
         let media = UUID()
         m.load(.default, mediaID: media, info: MediaInfo(duration: Time(1, 1), embeddedLUTName: "Look"))
-        m.setLUT(lutID, .embedded(name: "x"))
-        #expect(m.color.sections[1].params == .inputLUT(.embedded(media)))
-        #expect(m.lutChoice(lutID) == .embedded(name: "Look"))
-        m.setLUT(lutID, .file("/luts/a.cube"))
-        m.setLUT(lutID, .file("/luts/b.cube"))
-        m.setLUT(lutID, .file("/luts/a.cube"))
+        m.setLUT(e1, .input, .embedded(name: "x"))
+        #expect(m.color.effects[0].inputLUT == .embedded(media))
+        #expect(m.lutChoice(e1, .input) == .embedded(name: "Look"))
+        m.setLUT(e1, .input, .file("/luts/a.cube"))
+        m.setLUT(e1, .input, .file("/luts/b.cube"))
+        m.setLUT(e1, .input, .file("/luts/a.cube"))
         #expect(m.recentLUTs == ["/luts/a.cube", "/luts/b.cube"])
-        #expect(m.lutChoice(lutID)?.name == "a")
-        m.setLUT(lutID, nil)
-        #expect(m.color.sections[1].params == .inputLUT(nil) && m.lutChoice(lutID) == nil)
-        m.setLUT(lutID, .automatic)
-        #expect(m.color.sections[1].params == .inputLUT(.automatic))
+        #expect(m.lutChoice(e1, .input)?.name == "a")
+        m.setLUT(e1, .input, nil)
+        #expect(m.color.effects[0].inputLUT == nil && m.lutChoice(e1, .input) == nil)
+        m.setLUT(e1, .input, .automatic)
+        #expect(m.color.effects[0].inputLUT == .automatic)
         // Creative look.
-        m.addSection(.creative)
-        let cr = m.sections[2].id
-        m.setLUT(cr, .file("/luts/look.cube"))
-        #expect(m.lutChoice(cr) == .file("/luts/look.cube"))
-        m.setLUT(cr, nil)
-        #expect(m.lutChoice(cr) == nil)
+        m.setLUT(e1, .look, .file("/luts/look.cube"))
+        #expect(m.lutChoice(e1, .look) == .file("/luts/look.cube"))
+        m.setLUT(e1, .look, nil)
+        #expect(m.lutChoice(e1, .look) == nil)
         #expect(m.recents.paths.first == "/luts/look.cube")
+    }
+
+    @Test func lookArrowsCycleThroughNoneAndTheAvailableLooks() {
+        let m = model()
+        m.availableLUTs = [.file("/l/a.cube"), .file("/l/b.cube")]
+        #expect(m.lookChoices.map(\.name) == ["a", "b"])
+        var began = 0
+        m.onGestureBegan = { began += 1 }
+        m.cycleLook(e1, by: 1)
+        #expect(m.lutChoice(e1, .look) == .file("/l/a.cube"))
+        m.cycleLook(e1, by: 1)
+        #expect(m.lutChoice(e1, .look)?.name == "b")
+        m.cycleLook(e1, by: 1)
+        #expect(m.lutChoice(e1, .look) == nil, "wraps to None")
+        m.cycleLook(e1, by: -1)
+        #expect(m.lutChoice(e1, .look)?.name == "b", "backwards wraps to the last look")
+        #expect(began == 4, "one undo step per arrow click")
+        // A look that is not in the list (chosen from a file) is still part of the cycle.
+        m.setLUT(e1, .look, .file("/elsewhere/c.cube"))
+        m.cycleLook(e1, by: 1)
+        #expect(m.lutChoice(e1, .look) == nil)
     }
 
     @Test func recentLUTsKeepAtMostEightAndSurviveANewStore() {
@@ -215,11 +236,17 @@ import SSRender
         #expect(store.paths.isEmpty)
     }
 
-    @Test func sectionDropSlotCountsBlocksAboveThePointer() {
-        #expect(ColorSectionsStack.slot(midYs: [50, 150, 250], y: 10) == 0)
-        #expect(ColorSectionsStack.slot(midYs: [50, 150, 250], y: 160) == 2)
-        #expect(ColorSectionsStack.slot(midYs: [50, 150, 250], y: 999) == 3)
-        #expect(ColorSectionsStack.slot(midYs: [], y: 5) == 0)
+    @Test func lookPreviewRendersTheLookIntoTheThumbnail() throws {
+        let plain = ColorLookPreview.render(lut: nil, width: 20, height: 12)
+        #expect(plain.size == NSSize(width: 20, height: 12))
+        // A constant-red look turns every pixel red.
+        let cube = "LUT_3D_SIZE 2\n1 0 0\n1 0 0\n1 0 0\n1 0 0\n1 0 0\n1 0 0\n1 0 0\n1 0 0\n"
+        let lut = try CubeLUT.parse(cube)
+        let img = ColorLookPreview.render(lut: lut, width: 20, height: 12)
+        let tiff = try #require(img.tiffRepresentation)
+        let rep = try #require(NSBitmapImageRep(data: tiff))
+        let px = try #require(rep.colorAt(x: 10, y: 3)?.usingColorSpace(.sRGB))
+        #expect(px.redComponent > 0.9 && px.greenComponent < 0.25 && px.blueComponent < 0.25, "\(px)")
     }
 
     @Test func curveEditingKeepsOrderGapsAndEndPoints() {

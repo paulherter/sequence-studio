@@ -6,7 +6,7 @@ PHASE5 (audio FX), PHASE7 (text), PHASE8 (captions), EXPORT, LIBRARY, PROXY, REV
 
 **Done**
 - Phase 1 SSCore; Phase 2 P2-01…04, E-01, E-02.
-- Color blocks (2026-10-01, project v11): Lumetri-like ordered stack (Basic Correction, Input LUT, Creative, Curves, Wheels, Vignette), display-referred maths, collapsible/reorderable panel with working wheels and curves; see DECISIONS. Open: Sharpen, Hue/Sat curves, HSL Secondary.
+- Colour effects (2026-10-01, project v12): fixed Lumetri-like sections per effect (Basic Correction incl. Input LUT, Creative, Curves, Color Wheels & Match, HSL Secondary placeholder, Vignette), each with a toggle; a clip holds several Colour effects (`ClipColor.effects`); order inside an effect: Basic sliders, Input LUT, Creative, Curves, Wheels, Vignette. Panel = Premiere layout (coloured Temperature/Tint tracks, blue editable values, look thumbnail + arrows). v11 blocks migrate (extras become a 2nd effect). Open: Sharpen, WB eyedropper, Hue/Sat curves, HSL Secondary maths, real-frame look thumbnail, Colour effect not yet in Effect Controls.
 - Color core (PHASE3 1–8): transfer/gamut/Bradford, `.cube` + tetrahedral, correction + tone map, pipeline, log2 saturation, Metal color chain, GPU scopes. HLG OOTF.
 - Keyframe core (PHASE4 1–8) + `Clip.animation`, file format v3.
 - SSAudioFX (PHASE5 1–6): gain/automation, presets, RNNoise + mix, own 4-band compressor, R128 metering, offline chain with resampling.

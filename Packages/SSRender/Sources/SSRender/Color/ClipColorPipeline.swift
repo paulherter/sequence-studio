@@ -93,27 +93,29 @@ public final class CachingLUTProvider: LUTProvider, @unchecked Sendable {
 }
 
 extension ColorPipeline {
-    /// Builds the per-layer pipeline from a clip's colour blocks and its media's detected properties.
+    /// Builds the per-layer pipeline from a clip's Colour effects and its media's detected properties.
     /// - Source: `clipColor.source` override, else `mediaInfo.colorSpace`, else Rec.709.
-    /// - Blocks in list order; disabled or neutral blocks are skipped. The Input LUT is always the conversion step
-    ///   (a disabled one or "none" = the built-in automatic conversion). `.file`/`.embedded` = that LUT; `.automatic` =
-    ///   the media's embedded camera LUT when `useEmbeddedLUT`, the media has one, and the effective source is S-Log3
-    ///   (the Sony look LUTs expect S-Log3 input, so they are skipped when the clip is reinterpreted).
-    /// - Creative look LUT: intensity 0…100 -> 0…1; look first, then the creative adjustments.
+    /// - Effects in list order. Inside one effect: Basic Correction sliders -> Input LUT -> Creative (look, then
+    ///   adjustments) -> Curves -> Wheels -> Vignette. Disabled or neutral sections are skipped.
+    /// - The first effect's Input LUT is the conversion step and is always emitted (a disabled Basic Correction or
+    ///   "none" = the built-in conversion). `.file`/`.embedded` = that LUT; `.automatic` = the media's embedded camera
+    ///   LUT when `useEmbeddedLUT`, the media has one, and the effective source is S-Log3 (the Sony look LUTs expect
+    ///   S-Log3 input, so they are skipped when the clip is reinterpreted). So the first effect's sliders work on the
+    ///   source signal, everything after it on display-referred Rec.709.
+    /// - Later effects: their Input LUT is an ordinary look at `inputLUTIntensity`.
+    /// - Creative look LUT: intensity 0…100 -> 0…1.
     /// A LUT that fails to load is treated as absent.
     public static func from(clipColor c: ClipColor, mediaID: UUID, mediaInfo: MediaInfo?,
                             lutProvider: LUTProvider?) -> ColorPipeline {
         let id = c.source ?? mediaInfo?.colorSpace ?? .rec709
         let source = SourceColorSpace(id)
         var ops: [ColorOp] = []
-        var hasConversion = false
-        for s in c.sections {
-            switch s.params {
-            case .inputLUT(let ref):
-                guard !hasConversion else { continue }
-                hasConversion = true
+        for (n, e) in c.effects.enumerated() {
+            let basicOn = e.isEnabled(.basicCorrection)
+            if basicOn, !e.basic.isNeutral { ops.append(.basic(e.basic)) }
+            if n == 0 {
                 var lut: CubeLUT?
-                if s.enabled, let ref {
+                if basicOn, let ref = e.inputLUT {
                     switch ref {
                     case .file, .embedded: lut = lutProvider?.lut(for: ref)
                     case .automatic:
@@ -123,23 +125,21 @@ extension ColorPipeline {
                     }
                 }
                 ops.append(.conversion(lut))
-            case .basic(let b):
-                if s.enabled, !b.isNeutral { ops.append(.basic(b)) }
-            case .creative(let k):
-                guard s.enabled else { continue }
+            } else if basicOn, let ref = e.inputLUT, ref != .automatic, e.inputLUTIntensity > 0,
+                      let lut = lutProvider?.lut(for: ref) {
+                ops.append(.look(lut, intensity: min(max(e.inputLUTIntensity, 0), 100) / 100))
+            }
+            if e.isEnabled(.creative) {
+                let k = e.creative
                 if k.hasLook, let ref = k.look, let lut = lutProvider?.lut(for: ref) {
                     ops.append(.look(lut, intensity: min(max(k.intensity, 0), 100) / 100))
                 }
                 if k.hasTone { ops.append(.creative(k)) }
-            case .curves(let k):
-                if s.enabled, !k.isNeutral { ops.append(.curves(k)) }
-            case .wheels(let w):
-                if s.enabled, !w.isNeutral { ops.append(.wheels(w)) }
-            case .vignette(let v):
-                if s.enabled, !v.isNeutral { ops.append(.vignette(v)) }
             }
+            if e.isEnabled(.curves), !e.curves.isNeutral { ops.append(.curves(e.curves)) }
+            if e.isEnabled(.wheels), !e.wheels.isNeutral { ops.append(.wheels(e.wheels)) }
+            if e.isEnabled(.vignette), !e.vignette.isNeutral { ops.append(.vignette(e.vignette)) }
         }
-        if !hasConversion { ops.insert(.conversion(nil), at: 0) }
         return ColorPipeline(source: source, ops: ops)
     }
 }

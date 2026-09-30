@@ -46,9 +46,9 @@ final class StubProvider: LUTProvider, @unchecked Sendable {
         #expect(simd_length(off.process(px) - expected) > 1e-3)   // automatic conversion instead
 
         // Explicit "no LUT" and bypass behave like off; media without an embedded LUT too.
-        c = .default; c.sections[1].params = .inputLUT(nil)
+        c = .default; c.effects[0].inputLUT = nil
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: p).conversionLUT == nil)
-        c = .default; c.sections[1].enabled = false
+        c = .default; c.effects[0].setEnabled(.basicCorrection, false)
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: p).conversionLUT == nil)
         #expect(ColorPipeline.from(clipColor: .default, mediaID: media, mediaInfo: slogNoLUT, lutProvider: p).conversionLUT == nil)
         // No provider: nothing to load.
@@ -60,7 +60,7 @@ final class StubProvider: LUTProvider, @unchecked Sendable {
         c.source = .rec709
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: provider()).conversionLUT == nil)
         // An explicit .embedded reference is honoured regardless.
-        c.sections[1].params = .inputLUT(.embedded(media))
+        c.effects[0].inputLUT = .embedded(media)
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: provider()).conversionLUT != nil)
     }
 
@@ -69,10 +69,9 @@ final class StubProvider: LUTProvider, @unchecked Sendable {
         p.table[.file("/c.cube")] = constantLUT(0.3, title: "conv")
         p.table[.file("/k.cube")] = constantLUT(0.9, title: "look")
         var c = ClipColor.default
-        c.sections[1].params = .inputLUT(.file("/c.cube"))
+        c.effects[0].inputLUT = .file("/c.cube")
         var k = CreativeLook(); k.look = .file("/k.cube"); k.intensity = 50
-        let cid = c.addSection(.creative)!
-        c.sections[c.sections.firstIndex { $0.id == cid }!].params = .creative(k)
+        c.effects[0].creative = k
         let pipe = ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: p)
         #expect(pipe.conversionLUT?.title == "conv" && pipe.creativeLUT?.title == "look")
         #expect(pipe.creativeIntensity == 0.5)
@@ -80,39 +79,55 @@ final class StubProvider: LUTProvider, @unchecked Sendable {
         #expect(simd_length(out - TransferFunctions.bt709InverseOETF(SIMD3<Float>(repeating: 0.6))) < 1e-5)
 
         k.intensity = 700
-        c.sections[2].params = .creative(k)
+        c.effects[0].creative = k
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: p).creativeIntensity == 1)
-        c.sections[2].enabled = false
+        c.effects[0].setEnabled(.creative, false)
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: p).creativeLUT == nil)
         // Missing file: no LUT, no crash.
-        c.sections[2].enabled = true
-        k.look = .file("/missing.cube"); c.sections[2].params = .creative(k)
+        c.effects[0].setEnabled(.creative, true)
+        k.look = .file("/missing.cube"); c.effects[0].creative = k
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slog, lutProvider: p).creativeLUT == nil)
     }
 
     @Test func sectionOrderIsProcessingOrder() {
         var b = BasicCorrection(); b.exposure = 1
         var c = ClipColor.default
-        c.sections[0].params = .basic(b)
+        c.effects[0].basic = b
         func kinds(_ c: ClipColor) -> [String] {
             ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: nil, lutProvider: nil).ops.map {
                 switch $0 { case .conversion: "conv"; case .basic: "basic"; case .creative: "creative"; case .look: "look"
                 case .curves: "curves"; case .wheels: "wheels"; case .vignette: "vignette" }
             }
         }
+        // Basic Correction sliders come before the Input LUT (the conversion).
         #expect(kinds(c) == ["basic", "conv"])
-        c.moveSection(1, to: 1)                       // Basic Correction now after the Input LUT
-        #expect(kinds(c) == ["conv", "basic"])
-        let v = c.addSection(.vignette)!, w = c.addSection(.wheels)!
-        var vg = Vignette(); vg.amount = -2
-        c.sections[c.sections.firstIndex { $0.id == v }!].params = .vignette(vg)
-        c.sections[c.sections.firstIndex { $0.id == w }!].enabled = true
-        #expect(kinds(c) == ["conv", "basic", "vignette"], "neutral blocks (the wheels) are skipped")
+        c.effects[0].vignette.amount = -2
+        c.effects[0].curves.master = [CurvePoint(0, 0), CurvePoint(0.5, 0.6), CurvePoint(1, 1)]
+        c.effects[0].creative.fadedFilm = 20
+        #expect(kinds(c) == ["basic", "conv", "creative", "curves", "vignette"], "neutral sections (the wheels) are skipped")
+        c.effects[0].wheels.saturation = 120
+        #expect(kinds(c) == ["basic", "conv", "creative", "curves", "wheels", "vignette"])
+        // A second effect follows the first; its sliders work after the conversion.
+        var b2 = BasicCorrection(); b2.contrast = 10
+        c.addEffect(); c.effects[1].basic = b2
+        c.effects[1].vignette.amount = 1
+        #expect(kinds(c) == ["basic", "conv", "creative", "curves", "wheels", "vignette", "basic", "vignette"])
+    }
+
+    @Test func secondEffectInputLUTIsALookWithIntensity() {
+        let p = StubProvider(); p.table[.file("/l.cube")] = constantLUT(0.9, title: "look")
+        var c = ClipColor.default
+        c.addEffect(); c.effects[1].inputLUT = .file("/l.cube"); c.effects[1].inputLUTIntensity = 25
+        let pipe = ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: nil, lutProvider: p)
+        #expect(pipe.creativeLUT?.title == "look" && pipe.creativeIntensity == 0.25)
+        #expect(pipe.conversionLUT == nil)
+        c.effects[1].setEnabled(.basicCorrection, false)
+        #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: nil, lutProvider: p).creativeLUT == nil)
     }
 
     @Test func disabledInputLUTStillConvertsAutomatically() {
         var c = ClipColor.default
-        c.sections[1].params = .inputLUT(.file("/c.cube")); c.sections[1].enabled = false
+        c.effects[0].inputLUT = .file("/c.cube"); c.effects[0].setEnabled(.basicCorrection, false)
         let p = StubProvider(); p.table[.file("/c.cube")] = constantLUT(0.3, title: "conv")
         let pipe = ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: slogNoLUT, lutProvider: p)
         #expect(pipe.conversionLUT == nil && pipe.stages.count == 1)
@@ -121,12 +136,12 @@ final class StubProvider: LUTProvider, @unchecked Sendable {
     @Test func correctionBlocksMatchDirectPipeline() {
         var b = BasicCorrection(); b.exposure = 1; b.saturation = 80; b.contrast = 25; b.whites = 15
         var c = ClipColor.default
-        c.sections[0].params = .basic(b)
+        c.effects[0].basic = b
         let pipe = ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: nil, lutProvider: nil)
         let direct = ColorPipeline(source: .rec709, ops: [.basic(b), .conversion(nil)])
         let px = SIMD3<Float>(0.3, 0.5, 0.2)
         #expect(simd_length(pipe.process(px) - direct.process(px)) < 1e-7)
-        c.sections[0].enabled = false
+        c.effects[0].setEnabled(.basicCorrection, false)
         #expect(ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: nil, lutProvider: nil).isIdentity)
     }
 
