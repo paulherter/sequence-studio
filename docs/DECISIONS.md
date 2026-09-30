@@ -21,3 +21,6 @@
 - Ripple head trim keeps the clip's start, later content shifts (Premiere).
 - `Clip.mediaDuration` (optional) bounds tail extension; head extension is bounded by source start 0.
 
+
+## 2026-09-30 New package SSEditorUI
+- AppKit timeline, viewer, monitor panels, theme, workspace tree and command map live in a new package `SSEditorUI` (depends on SSCore, SSMedia, SSRender, SSPlayback) so UI logic is testable with `swift test` instead of building the app. `App` keeps the shell, lifecycle, EditorSession and menus. (Paul)

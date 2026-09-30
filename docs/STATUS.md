@@ -59,7 +59,7 @@ Legend: **Files** to create/change · **API** (see ARCHITECTURE.md §) · **Acce
 Deferred on purpose (later phases): waveforms (Phase 5), Color page contents (Phase 3), Opt+drag duplicate, Type tool `T`, caption tracks.
 
 ## Open decisions
-- **New package `SSEditorUI`** (AppKit timeline, viewer, monitor panels, theme, workspace tree, command map) so UI logic is testable with `swift test` instead of building the app. PLAN.md's module table puts all of this in `App`. Recommendation: yes. Needs Paul's OK before U-01; if no, those files go to `App/Sources/<Area>/` and pure parts get an app test target.
+- (none) SSEditorUI package approved 2026-09-30, see DECISIONS.md.
 
 ## Phase 0 (done) — engine route B decided
 Done: XcodeGen project (`project.yml`, empty SwiftUI app), six packages in `Packages/` (SSCore, SSMedia, SSRender, SSPlayback, SSExport, SSTranscribe, each with one placeholder test), `scripts/build.sh`, `scripts/test.sh [Package]` (errors only), decode/scrub spike in `Tools/DecodeSpike`.
