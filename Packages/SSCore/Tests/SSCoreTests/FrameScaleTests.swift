@@ -113,4 +113,34 @@ import Testing
         #expect(t.tracks[0].clips[0].animation.scale.value == Vec2(0.5, 0.5))
         #expect(t.tracks[1].clips[0].animation.scale.value == Vec2(1, 1))
     }
+
+    @Test func migrationKeepsCornersWithAnchorAndKeyframes() throws {
+        let m = mediaRef(w: 3840, h: 2160)
+        var (p, _, _) = project(seqW: 1920, seqH: 1080, media: m, scale: Vec2(1.2, 0.9))
+        var c = p.timelines[0].tracks[0].clips[0]
+        c.animation.anchor = AnimatedProperty(Vec2(100, -40))
+        c.animation.anchor.track.insert(Keyframe(time: s(1), value: Vec2(300, 80)))
+        c.animation.position = AnimatedProperty(Vec2(25, 10))
+        c.animation.rotation = AnimatedProperty(30.0)
+        p.timelines[0].tracks[0].replace(c)
+        let tl = p.timelines[0]
+        let before = tl.tracks[0].clips[0]
+        // Layer corner on screen: position + rotate(scale * (corner - anchor)); corner in layer px (old: fitted, new: native).
+        func corners(_ clip: Clip, size: (Double, Double), at t: Time) -> [Vec2] {
+            let tr = clip.transform(at: t)
+            let a = tr.rotation * .pi / 180
+            return [(-1.0, -1.0), (1, -1), (1, 1), (-1, 1)].map { sx, sy in
+                let lx = (sx * size.0 / 2 - tr.anchor.x) * tr.scale.x, ly = (sy * size.1 / 2 - tr.anchor.y) * tr.scale.y
+                return Vec2(tr.position.x + lx * cos(a) - ly * sin(a), tr.position.y + lx * sin(a) + ly * cos(a))
+            }
+        }
+        let times = [Time.zero, Time(1, 2), s(1), s(2)]
+        let old = times.map { corners(before, size: (1920, 1080), at: $0) }
+        p.migrateScaleToSourcePixels()
+        let after = p.timelines[0].tracks[0].clips[0]
+        for (i, t) in times.enumerated() {
+            let now = corners(after, size: (3840, 2160), at: t)
+            for (a, b) in zip(old[i], now) { #expect(abs(a.x - b.x) < 1e-6 && abs(a.y - b.y) < 1e-6) }
+        }
+    }
 }

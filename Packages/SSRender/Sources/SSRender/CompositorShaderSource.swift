@@ -42,6 +42,12 @@ enum CompositorShaderSource {
                              constant CompositeUniforms& u [[buffer(0)]], uint2 gid [[thread_position_in_grid]]) {
         if (gid.x >= out.get_width() || gid.y >= out.get_height()) return;
         float2 uv = (float2(gid) + 0.5f) / float2(out.get_width(), out.get_height());
+        if (u.mode == 1) {
+            // RGB source with alpha (still image): keep alpha, colour un-premultiplied for the colour stage.
+            float4 c = ty.sample(linearSampler, uv);
+            out.write(float4(c.a > 0.0f ? c.rgb / c.a : float3(0.0f), c.a), gid);
+            return;
+        }
         out.write(float4(sourceEncoded(u, ty, tc, uv), 1.0f), gid);
     }
 
@@ -96,6 +102,11 @@ enum CompositorShaderSource {
             float4 c = ty.sample(linearSampler, uv);
             texA = c.a;
             rgb = texA > 0.0f ? c.rgb / texA : float3(0.0f);
+        } else if (u.mode == 1) {
+            // Colour-stage output (linear rgb, straight alpha).
+            float4 c = ty.sample(linearSampler, uv);
+            texA = c.a;
+            rgb = c.rgb;
         } else {
             rgb = sourceEncoded(u, ty, tc, uv);
         }

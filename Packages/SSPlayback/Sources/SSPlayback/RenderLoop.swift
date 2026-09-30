@@ -1,3 +1,4 @@
+import CoreMedia
 import CoreVideo
 import Foundation
 import Metal
@@ -423,9 +424,12 @@ final class RenderLoop: @unchecked Sendable {
             frame = cache.nearest(media: r.media, atOrBefore: key.pts, scale: scale)
         }
         guard let frame else { return placeholder(.loading) }
+        // Until the decoder reported its info: native size and rotation from the demuxer (the buffer may be a reduced decode).
+        let dims = CMVideoFormatDescriptionGetDimensions(d.formatDescription)
         let info = media.info(r.media) ?? VideoTrackInfo(
-            width: CVPixelBufferGetWidth(frame.pixelBuffer), height: CVPixelBufferGetHeight(frame.pixelBuffer),
-            codec: "", bitDepth: 8, chroma: "4:2:0", nominalFrameDuration: frame.duration, isVariableFrameRate: false)
+            width: Int(dims.width), height: Int(dims.height),
+            codec: "", bitDepth: 8, chroma: "4:2:0", nominalFrameDuration: frame.duration, isVariableFrameRate: false,
+            rotation: d.rotation)
         return RenderLayer(content: .frame(frame.pixelBuffer, colorHint: info), transform: r.transform,
                            colorPipeline: media.resolver.colorResolver?.pipeline(for: r.color, media: r.media),
                            cornerRadius: r.cornerRadius, nativeSize: (info.width, info.height))

@@ -61,6 +61,15 @@ extension Project {
                 for c in t.tracks[tr].clips where !c.isStill {
                     guard let f = frameFitScale(of: c, in: t), abs(f - 1) > 1e-12 else { continue }
                     var n = c
+                    // Layer-local px are now native px (fit factor larger): the anchor shrinks by f to stay on the same point.
+                    n.animation.anchor.value = Vec2(c.animation.anchor.value.x / f, c.animation.anchor.value.y / f)
+                    n.animation.anchor.track.keys = c.animation.anchor.track.keys.map {
+                        var k = $0
+                        k.value = Vec2(k.value.x / f, k.value.y / f)
+                        k.inTangent = Vec2(k.inTangent.x / f, k.inTangent.y / f)
+                        k.outTangent = Vec2(k.outTangent.x / f, k.outTangent.y / f)
+                        return k
+                    }
                     n.animation.scale.value = Vec2(c.animation.scale.value.x * f, c.animation.scale.value.y * f)
                     n.animation.scale.track.keys = c.animation.scale.track.keys.map {
                         var k = $0
