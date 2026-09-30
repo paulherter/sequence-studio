@@ -107,6 +107,15 @@ func identityCube3D(_ n: Int, extra: String = "") -> String {
         #expect(lut.domainMin == SIMD3(repeating: -1) && lut.domainMax == SIMD3(repeating: 0.4))
     }
 
+    @Test func trailingCommentsAreStripped() throws {
+        let text = "TITLE \"a # b\" # trailing\nLUT_3D_SIZE 2 # c\n" + identityCube3D(2).split(separator: "\n").dropFirst(2)
+            .enumerated().map { $0.offset == 0 ? "\($0.element) # note" : String($0.element) }.joined(separator: "\n")
+        let lut = try CubeLUT.parse(text)
+        #expect(lut.size == 2 && lut.table.count == 8 && lut.title == "a # b")
+        let l1 = try CubeLUT.parse("LUT_1D_SIZE 2\n0.1 0.2 0.3 # note\n1 1 1#x\n")
+        #expect(l1.table[0] == SIMD3(0.1, 0.2, 0.3) && l1.table[1] == SIMD3(1, 1, 1))
+    }
+
     @Test func inputRangeAndVideoRangeHeaders() throws {
         let lut = try CubeLUT.parse("\u{FEFF}LUT_3D_INPUT_RANGE -0.5 2\nLUT_IN_VIDEO_RANGE\nLUT_OUT_VIDEO_RANGE\n" + identityCube3D(2))
         #expect(lut.domainMin == SIMD3(repeating: -0.5) && lut.domainMax == SIMD3(repeating: 2))

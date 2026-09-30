@@ -22,7 +22,7 @@ public struct CubeLUT: Sendable, Equatable {
     public let domainMin: SIMD3<Float>
     public let domainMax: SIMD3<Float>
     public let table: [SIMD3<Float>]
-    /// `LUT_IN_VIDEO_RANGE` / `LUT_OUT_VIDEO_RANGE` header flags (stored, not yet honoured).
+    /// `LUT_IN_VIDEO_RANGE` / `LUT_OUT_VIDEO_RANGE` header flags (applied in `lookup`).
     public let inVideoRange: Bool
     public let outVideoRange: Bool
 
@@ -57,8 +57,8 @@ public struct CubeLUT: Sendable, Equatable {
         let lines = text.split(omittingEmptySubsequences: false, whereSeparator: { $0.isNewline })
         for (i, raw) in lines.enumerated() {
             let n = i + 1
-            let line = raw.trimmingCharacters(in: .whitespaces)
-            if line.isEmpty || line.hasPrefix("#") { continue }
+            let line = Self.stripComment(raw).trimmingCharacters(in: .whitespaces)
+            if line.isEmpty { continue }
             let parts = line.split(whereSeparator: { $0 == " " || $0 == "\t" })
             let key = String(parts[0])
             switch key {
@@ -110,9 +110,21 @@ public struct CubeLUT: Sendable, Equatable {
                        inVideoRange: inVideo, outVideoRange: outVideo)
     }
 
+    /// Removes `#…` to the end of the line; a `#` inside a double-quoted string (TITLE) is kept.
+    static func stripComment(_ line: Substring) -> Substring {
+        var inQuote = false
+        for i in line.indices {
+            let ch = line[i]
+            if ch == "\"" { inQuote.toggle() } else if ch == "#" && !inQuote { return line[..<i] }
+        }
+        return line
+    }
+
     // MARK: Lookup
 
     /// Input clamped to the domain; 3D tetrahedral, 1D linear per channel.
+    /// `LUT_IN_VIDEO_RANGE` / `LUT_OUT_VIDEO_RANGE` use the 10-bit convention (black 64, white 940, of 1023):
+    /// in: `x = x·876/1023 + 64/1023` before the domain mapping; out: `y = (y − 64/1023)·1023/876`.
     public func lookup(_ rgb: SIMD3<Float>) -> SIMD3<Float> {
         let t = simd_clamp((rgb - domainMin) / (domainMax - domainMin), SIMD3<Float>.zero, SIMD3<Float>.one)
         let scale = Float(size - 1)
