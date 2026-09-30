@@ -278,3 +278,8 @@ Shared mutable state uses `Synchronization.Mutex` / `Atomic`, not `NSLock` or `D
 Headless: offscreen target paced by a 60 Hz `CAMetalDisplayLink`-equivalent timer, real audio output. Prints `PlaybackStats`
 as one table; results go into docs/STATUS.md with commit hash. Media paths come from arguments or `SS_MEDIA_DIR`
 (default `~/Documents/Videos`), never from the repo.
+
+## Coordinate convention
+Decided 2026-09-30 (Paul). Spatial values (Position, anchor, text layout, caption boxes) are in **sequence pixels**, origin **top-left**, **y down**,
+like Premiere's Position values: the centre of a 1080×1920 sequence is (540, 960). Text layout uses points = sequence pixels (scale 1).
+Renderers convert to Metal/Core Graphics conventions at their own boundary, never in the model.
