@@ -13,6 +13,15 @@ import simd
         #expect(ColorCorrection().isNeutral)
     }
 
+    @Test func whiteBalanceIsContinuousAtZero() {
+        for g in gamuts { for s in samples {
+            var t = ColorCorrection(); t.temperature = 0.001
+            var n = ColorCorrection(); n.tint = 0.001
+            #expect(simd_length(t.apply(s, gamut: g) - s) < 1e-4 * max(1, simd_length(s)))
+            #expect(simd_length(n.apply(s, gamut: g) - s) < 1e-4 * max(1, simd_length(s)))
+        } }
+    }
+
     @Test func exposurePlusOneDoubles() {
         var c = ColorCorrection(); c.exposure = 1
         let o = c.apply([0.2, 0.3, 0.4], gamut: .rec709)
@@ -121,6 +130,16 @@ import simd
             m += 0.01
         }
         #expect(tm.mapMax(38) <= 1)
+    }
+
+    @Test func kneeAboveOneIsClamped() {
+        let t = ToneMapping(knee: 5)
+        #expect(t.knee == 0.99)
+        for m: Float in [0.5, 1, 2, 10, 38] {
+            let o = t.apply(SIMD3(repeating: m))
+            #expect(o.x.isFinite && o.x <= 1)
+        }
+        #expect(ToneMapping(knee: -1).knee == 0)
     }
 
     @Test func hueAndRatioPreserved() {

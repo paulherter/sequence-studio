@@ -22,9 +22,14 @@ public struct CubeLUT: Sendable, Equatable {
     public let domainMin: SIMD3<Float>
     public let domainMax: SIMD3<Float>
     public let table: [SIMD3<Float>]
+    /// `LUT_IN_VIDEO_RANGE` / `LUT_OUT_VIDEO_RANGE` header flags (stored, not yet honoured).
+    public let inVideoRange: Bool
+    public let outVideoRange: Bool
 
     public init(title: String = "", kind: Kind, size: Int, domainMin: SIMD3<Float> = .zero,
-                domainMax: SIMD3<Float> = .one, table: [SIMD3<Float>]) {
+                domainMax: SIMD3<Float> = .one, table: [SIMD3<Float>],
+                inVideoRange: Bool = false, outVideoRange: Bool = false) {
+        self.inVideoRange = inVideoRange; self.outVideoRange = outVideoRange
         self.title = title; self.kind = kind; self.size = size
         self.domainMin = domainMin; self.domainMax = domainMax; self.table = table
     }
@@ -36,6 +41,8 @@ public struct CubeLUT: Sendable, Equatable {
         var size1D: Int?, size3D: Int?
         var dmin = SIMD3<Float>.zero, dmax = SIMD3<Float>.one
         var table: [SIMD3<Float>] = []
+        var inVideo = false, outVideo = false
+        var domainLine = 0
 
         func number(_ t: Substring, _ line: Int) throws -> Float {
             guard let f = Float(t), f.isFinite else { throw CubeLUTError.badNumber(line: line, token: String(t)) }
@@ -46,6 +53,7 @@ public struct CubeLUT: Sendable, Equatable {
             return SIMD3(try number(parts[0], line), try number(parts[1], line), try number(parts[2], line))
         }
 
+        let text = text.hasPrefix("\u{FEFF}") ? String(text.dropFirst()) : text
         let lines = text.split(omittingEmptySubsequences: false, whereSeparator: { $0.isNewline })
         for (i, raw) in lines.enumerated() {
             let n = i + 1
@@ -70,9 +78,17 @@ public struct CubeLUT: Sendable, Equatable {
                 if is3D { size3D = s } else { size1D = s }
             case "DOMAIN_MIN":
                 dmin = try triple(Array(parts.dropFirst()), n)
+                domainLine = n
             case "DOMAIN_MAX":
                 dmax = try triple(Array(parts.dropFirst()), n)
-                if !(dmax.x > dmin.x && dmax.y > dmin.y && dmax.z > dmin.z) { throw CubeLUTError.invalidDomain(line: n) }
+                domainLine = n
+            case "LUT_1D_INPUT_RANGE", "LUT_3D_INPUT_RANGE":
+                guard parts.count == 3 else { throw CubeLUTError.malformedLine(line: n) }
+                let lo = try number(parts[1], n), hi = try number(parts[2], n)
+                dmin = SIMD3(repeating: lo); dmax = SIMD3(repeating: hi)
+                domainLine = n
+            case "LUT_IN_VIDEO_RANGE": inVideo = true
+            case "LUT_OUT_VIDEO_RANGE": outVideo = true
             default:
                 let isKeyword = key.first.map { $0.isUppercase } == true
                     && key.allSatisfy { ($0.isASCII && $0.isUppercase) || $0 == "_" || $0.isNumber }
@@ -83,14 +99,15 @@ public struct CubeLUT: Sendable, Equatable {
                 }
             }
         }
-        if !(dmax.x > dmin.x && dmax.y > dmin.y && dmax.z > dmin.z) { throw CubeLUTError.invalidDomain(line: lines.count) }
+        if !(dmax.x > dmin.x && dmax.y > dmin.y && dmax.z > dmin.z) { throw CubeLUTError.invalidDomain(line: domainLine) }
         let kind: Kind, size: Int
         if let s = size3D { kind = .lut3D; size = s } else if let s = size1D { kind = .lut1D; size = s } else {
             throw CubeLUTError.missingSize
         }
         let expected = kind == .lut3D ? size * size * size : size
         guard table.count == expected else { throw CubeLUTError.wrongEntryCount(expected: expected, found: table.count) }
-        return CubeLUT(title: title, kind: kind, size: size, domainMin: dmin, domainMax: dmax, table: table)
+        return CubeLUT(title: title, kind: kind, size: size, domainMin: dmin, domainMax: dmax, table: table,
+                       inVideoRange: inVideo, outVideoRange: outVideo)
     }
 
     // MARK: Lookup

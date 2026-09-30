@@ -43,7 +43,7 @@ import simd
         p.conversionLUT = identityLUT3D()
         for v: Float in [0.05, 0.3, 0.488, 0.7, 0.9] {
             let o = Rec709Output.encode(p.process(SIMD3(v, v * 0.8, v * 0.6)))
-            #expect(simd_length(o - SIMD3(v, v * 0.8, v * 0.6)) < 2e-3, "v=\(v) o=\(o)")
+            #expect(simd_length(o - SIMD3(v, v * 0.8, v * 0.6)) < 1e-5, "v=\(v) o=\(o)")
         }
     }
 
@@ -56,7 +56,7 @@ import simd
         p.conversionLUT = CubeLUT(kind: .lut3D, size: n, table: t)
         let v: Float = 0.5
         let o = Rec709Output.encode(p.process(SIMD3(repeating: v)))
-        #expect(abs(o.x - (1 - v)) < 2e-3)
+        #expect(abs(o.x - (1 - v)) < 1e-5)
     }
 
     @Test func correctionAppliesBeforeConversion() {

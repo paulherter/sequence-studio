@@ -99,5 +99,20 @@ func identityCube3D(_ n: Int, extra: String = "") -> String {
         #expect(err("LUT_1D_SIZE 2\nLUT_3D_SIZE 2\n") == .conflictingSizes(line: 2))
         #expect(err("LUT_3D_SIZE abc\n") == .badNumber(line: 1, token: "abc"))
         #expect(err("LUT_3D_SIZE 2\nDOMAIN_MIN 1 1 1\nDOMAIN_MAX 0 0 0\n") == .invalidDomain(line: 3))
+        #expect(err("LUT_3D_SIZE 2\nDOMAIN_MAX 0 0 0\nDOMAIN_MIN 1 1 1\n") == .invalidDomain(line: 3))
+    }
+
+    @Test func domainMaxBeforeMin() throws {
+        let lut = try CubeLUT.parse("DOMAIN_MAX 0.4 0.4 0.4\nDOMAIN_MIN -1 -1 -1\n" + identityCube3D(2))
+        #expect(lut.domainMin == SIMD3(repeating: -1) && lut.domainMax == SIMD3(repeating: 0.4))
+    }
+
+    @Test func inputRangeAndVideoRangeHeaders() throws {
+        let lut = try CubeLUT.parse("\u{FEFF}LUT_3D_INPUT_RANGE -0.5 2\nLUT_IN_VIDEO_RANGE\nLUT_OUT_VIDEO_RANGE\n" + identityCube3D(2))
+        #expect(lut.domainMin == SIMD3(repeating: -0.5) && lut.domainMax == SIMD3(repeating: 2))
+        #expect(lut.inVideoRange && lut.outVideoRange)
+        let l1 = try CubeLUT.parse("LUT_1D_INPUT_RANGE 0 4\nLUT_1D_SIZE 2\n0 0 0\n1 1 1\n")
+        #expect(l1.domainMax == SIMD3(repeating: 4) && !l1.inVideoRange && !l1.outVideoRange)
+        #expect(throws: CubeLUTError.self) { try CubeLUT.parse("LUT_3D_INPUT_RANGE 1\nLUT_3D_SIZE 2\n") }
     }
 }

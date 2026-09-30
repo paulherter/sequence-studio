@@ -68,6 +68,12 @@ import simd
         for r in 0..<3 { for c in 0..<3 { #expect(abs(m[c][r] - rows[r][c]) < 1e-3, "r\(r) c\(c)") } }
     }
 
+    @Test func sGamut3CineTo709MatchesSony() {
+        let m = Gamut.sGamut3Cine.matrix(to: .rec709)
+        let rows: [[Float]] = [[1.62695, -0.54014, -0.08681], [-0.17852, 1.41794, -0.23943], [-0.04444, -0.19592, 1.24036]]
+        for r in 0..<3 { for c in 0..<3 { #expect(abs(m[c][r] - rows[r][c]) < 1e-4, "r\(r) c\(c)") } }
+    }
+
     @Test func whiteMapsToWhite() {
         let all: [Gamut] = [.rec709, .bt2020, .sGamut3Cine]
         for a in all { for b in all {
