@@ -33,3 +33,11 @@ Colour works better now, but the panel is still confusing for a Premiere user ("
 Goal restated by Paul: not identical to Premiere, but better — nicer UI, above all a faster workflow; adopt Premiere's smart details.
 18. Scrubbing the playhead in Effect Controls while playing must stop playback, exactly like the timeline ruler.
 19. Effect Controls split: the divider between the left (properties) and right (keyframes) area shows even with no clip selected — hide it (empty state) then; when a clip is selected the divider must be draggable (min/max widths, persisted), like Premiere.
+20. Q / W (ripple trim to playhead): after Q the playhead moves with the content so it stays on the same picture — it lands on the new edit point (Premiere). General rule for ripple edits at the playhead.
+21. Selection outline of clips: white instead of yellow.
+22. Transcribe doesn't work yet (known, needs wiring + test).
+23. Program monitor: show the anchor point of the selected clip (Motion selected / clicked), draggable; smart guides — invisible snap lines (canvas centre, edges, other layers) like Photoshop/Premiere/After Effects.
+24. Audio meter panel is missing: a (dockable) meter panel right of the timeline by default; tools column stays left of the timeline (compare 23.webp).
+25. Header space is far too tall: our title bar + toolbar eat vertical space. Make it compact like Premiere (23.webp: one slim bar with Import/Edit/Export and workspace name) — save space everywhere.
+26. Text clips can be added but render nothing in the Program monitor → wire TextGenerator into playback (and export). In Effect Controls, Motion and Opacity sections come before the Text section.
+27. Tool column order (Paul's Premiere setup): Selection, Razor, Slip (move clip content), Pen, Shape (rectangle/ellipse/polygon — long-press menu), Mask tools, Hand, Type. NOTE: Pen/Shape/Mask were non-goals for V1 (DECISIONS) — Paul now wants them; treat as scope addition (later), reorder the existing tools now and leave slots.
