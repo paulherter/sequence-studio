@@ -48,6 +48,14 @@ public final class TimelineView: NSView {
     public var onDropTextTemplate: ((String, Time, Track.ID?) -> Void)?
     /// Files dragged in from the Library or Finder: URLs, drop time, track under the pointer, insert instead of overwrite.
     public var onDropFiles: (([URL], Time, Track.ID?, Bool) -> Void)?
+    /// Describes a drag in flight (length, video/audio) so the ghost can be drawn. Nil or empty result = 5 s video placeholder.
+    public var dropItemsProvider: ((DropSource) -> [DropItem])?
+    /// An effect (`com.sequencestudio.effect-id`) dropped on a clip: effect id, clip id.
+    public var onDropEffect: ((String, Clip.ID) -> Void)?
+    /// Live drop ghost (read-only for tests and the host).
+    public private(set) var dropPreview = DropPreview()
+    /// Clip highlighted while an effect is dragged over it.
+    public private(set) var effectDropTarget: Clip.ID?
     private var scrubbing: (began: Bool, active: Bool) = (false, false)
     /// Active tool, snapping and linked selection.
     public var toolState: ToolState {
@@ -77,7 +85,7 @@ public final class TimelineView: NSView {
         // macOS 14+: views do not clip by default, so an opaque `dirtyRect.fill()` would paint over its siblings.
         clipsToBounds = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
-        registerForDraggedTypes([.sequenceMediaIDs, .sequenceTextTemplate, .fileURL])
+        registerForDraggedTypes([.sequenceMediaIDs, .sequenceTextTemplate, .sequenceEffectID, .fileURL])
         addSubview(ruler)
         layoutChildren()
         rebuildHeaders()
@@ -334,47 +342,73 @@ public final class TimelineView: NSView {
 
     // MARK: Drop from the Project panel
 
-    private enum Dropped { case media([MediaRef.ID]), textTemplate(String), files([URL]), none }
+    /// What a drag carries.
+    public enum DropSource: Sendable { case media([MediaRef.ID]), textTemplate(String), files([URL]), effect(String) }
 
-    private func dropped(_ info: NSDraggingInfo) -> Dropped {
+    private func dropped(_ info: NSDraggingInfo) -> DropSource? {
         let pb = info.draggingPasteboard
+        if let id = pb.string(forType: .sequenceEffectID) { return .effect(id) }
         if let s = pb.string(forType: .sequenceMediaIDs) {
             let ids = ProjectPanelModel.decodeItems(s).compactMap { if case .media(let id) = $0 { id } else { nil } }
             if !ids.isEmpty { return .media(ids) }
         }
         if let id = pb.string(forType: .sequenceTextTemplate) { return .textTemplate(id) }
         let urls = (pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
-        return urls.isEmpty ? .none : .files(urls)
+        return urls.isEmpty ? nil : .files(urls)
     }
 
-    public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        if case .none = dropped(sender) { return [] }
-        return .copy
+    private func clipID(at p: CGPoint) -> Clip.ID? {
+        if case .clip(let id, _) = geometry.hitTest(p, in: timeline) { return id }
+        return nil
     }
 
-    public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        if case .none = dropped(sender) { return [] }
-        return .copy
-    }
-
-    public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let payload = dropped(sender)
-        if case .none = payload { return false }
-        let p = convert(sender.draggingLocation, from: nil)
-        let time = max(geometry.time(atX: max(p.x, TimelineGeometry.contentOriginX)), .zero)
-        var track: Track.ID?
-        switch geometry.hitTest(p, in: timeline) {
-        case .clip(let id, _): track = timeline.tracks.first { $0.clips.contains { $0.id == id } }?.id
-        case .gap(let t, _): track = t
-        case .header(let t): track = t
-        default: break
+    private func trackedUpdate(_ info: NSDraggingInfo) -> NSDragOperation {
+        guard let payload = dropped(info) else { return [] }
+        let p = convert(info.draggingLocation, from: nil)
+        if case .effect = payload {
+            let target = clipID(at: p)
+            if target != effectDropTarget { effectDropTarget = target; needsDisplay = true }
+            return target == nil ? [] : .copy
+        }
+        if !dropPreview.isActive {
+            let items = dropItemsProvider?(payload) ?? []
+            dropPreview.begin(items: items.isEmpty ? [DropItem(name: "", duration: Time(seconds: 5))] : items)
         }
         let insert = NSEvent.modifierFlags.contains(.command)
+        dropPreview.update(point: p, insert: insert, timeline: timeline, geometry: geometry,
+                           snapping: toolState.snapping, playhead: playhead)
+        needsDisplay = true
+        return dropPreview.ghosts.isEmpty ? [] : .copy
+    }
+
+    private func endDropTracking() {
+        guard dropPreview.isActive || effectDropTarget != nil else { return }
+        dropPreview.cancel()
+        effectDropTarget = nil
+        needsDisplay = true
+    }
+
+    public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { trackedUpdate(sender) }
+    public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { trackedUpdate(sender) }
+    /// Left the timeline or Esc: the ghost vanishes, nothing was changed.
+    public override func draggingExited(_ sender: NSDraggingInfo?) { endDropTracking() }
+    public override func draggingEnded(_ sender: NSDraggingInfo) { endDropTracking() }
+
+    public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        defer { endDropTracking() }
+        guard let payload = dropped(sender) else { return false }
+        if case .effect(let id) = payload {
+            guard let target = clipID(at: convert(sender.draggingLocation, from: nil)) else { return false }
+            onDropEffect?(id, target)
+            return true
+        }
+        _ = trackedUpdate(sender)
+        guard let target = dropPreview.commitTarget else { return false }
         switch payload {
-        case .media(let ids): onDropMedia?(ids, time, track, insert)
-        case .textTemplate(let id): onDropTextTemplate?(id, time, track)
-        case .files(let urls): onDropFiles?(urls, time, track, insert)
-        case .none: return false
+        case .media(let ids): onDropMedia?(ids, target.time, target.track, target.insert)
+        case .textTemplate(let id): onDropTextTemplate?(id, target.time, target.track)
+        case .files(let urls): onDropFiles?(urls, target.time, target.track, target.insert)
+        case .effect: return false
         }
         return true
     }
@@ -450,6 +484,7 @@ public final class TimelineView: NSView {
             drawLanes(rows: rows, clip: clip)
             drawPlayheadLine(clip: clip)
             drawGestureOverlay(clip: clip)
+            drawDropOverlay(clip: clip)
             NSGraphicsContext.restoreGraphicsState()
         }
         drawToolColumn(dirty: dirtyRect)
@@ -530,6 +565,52 @@ public final class TimelineView: NSView {
             m.fill()
             Theme.Colors.accent.setStroke()
             NSBezierPath(rect: m.insetBy(dx: 0.5, dy: 0.5)).stroke()
+        }
+    }
+
+    /// Drop ghost (video + linked audio at the snapped position), the insert arrow and the effect target outline.
+    private func drawDropOverlay(clip: CGRect) {
+        let rows = geometry.rows(for: timeline)
+        if dropPreview.isActive, !dropPreview.ghosts.isEmpty {
+            for g in dropPreview.ghosts {
+                guard let row = rows.first(where: { $0.track == g.track }) else { continue }
+                let r = CGRect(x: geometry.x(for: g.range.start), y: row.y,
+                               width: max(geometry.width(of: g.range.duration), 2), height: row.height - 1)
+                (g.kind == .audio ? Theme.Colors.clipAudio : Theme.Colors.clipVideo).withAlphaComponent(0.55).setFill()
+                NSBezierPath(roundedRect: r, xRadius: 3, yRadius: 3).fill()
+                Theme.Colors.accent.setStroke()
+                let outline = NSBezierPath(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), xRadius: 3, yRadius: 3)
+                outline.lineWidth = 1
+                outline.setLineDash([4, 3], count: 2, phase: 0)
+                outline.stroke()
+            }
+            if let t = dropPreview.snapTime {
+                Theme.Colors.clipSelect.setFill()
+                CGRect(x: geometry.x(for: t).rounded() - 0.5, y: clip.minY, width: 1, height: clip.height).fill()
+            }
+            if dropPreview.insert, let first = dropPreview.ghosts.first, let row = rows.first(where: { $0.track == first.track }) {
+                // Premiere's ripple arrow: a triangle at the insert point pushing later clips right.
+                let x = geometry.x(for: dropPreview.start)
+                let cy = row.y + row.height / 2
+                let arrow = NSBezierPath()
+                arrow.move(to: CGPoint(x: x, y: cy - 7))
+                arrow.line(to: CGPoint(x: x + 9, y: cy))
+                arrow.line(to: CGPoint(x: x, y: cy + 7))
+                arrow.close()
+                Theme.Colors.accent.setFill()
+                arrow.fill()
+            }
+        }
+        if let id = effectDropTarget,
+           let (row, c) = rows.compactMap({ r in timeline.track(r.track)?.clips.first { $0.id == id }.map { (r, $0) } }).first {
+            let r = CGRect(x: geometry.x(for: c.timeline.start), y: row.y,
+                           width: geometry.width(of: c.timeline.duration), height: row.height - 1)
+            Theme.Colors.accentTint.setFill()
+            r.fill()
+            Theme.Colors.accent.setStroke()
+            let path = NSBezierPath(rect: r.insetBy(dx: 1, dy: 1))
+            path.lineWidth = 2
+            path.stroke()
         }
     }
 

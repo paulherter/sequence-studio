@@ -83,6 +83,18 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         #expect(session.activeTimeline?.tracks.flatMap(\.clips).first { $0.id == id }?.animation.cornerRadius.value == 0)
     }
 
+    @Test func roundedCornersDroppedOnAnUnselectedClip() throws {
+        let session = makeSession()
+        let entry = try #require(TextTemplateCatalog.all.first)
+        let id = try #require(session.addTextClip(template: entry.template))
+        session.select(clips: [], captions: [])
+        #expect(!session.addRoundedCorners())                       // nothing selected
+        #expect(session.addRoundedCorners(to: [id], radius: 10))
+        #expect(session.activeTimeline?.tracks.flatMap(\.clips).first { $0.id == id }?.animation.cornerRadius.value == 10)
+        session.undo()
+        #expect(session.activeTimeline?.tracks.flatMap(\.clips).first { $0.id == id }?.animation.cornerRadius.value == 0)
+    }
+
     @Test func createCaptionsReplacesTrackInOneStep() throws {
         let session = makeSession()
         let item = CaptionItem(lines: ["Hi"], range: TimeRange(start: .zero, duration: s(1)))
