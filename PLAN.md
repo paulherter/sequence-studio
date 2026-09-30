@@ -34,6 +34,7 @@ Final-Cut-like look. Built first for a short-form (9:16) workflow, later open so
 2. Multiple sequences per project, free resolution/frame rate/aspect. Multitrack video + audio.
 3. Color per clip: .cube LUT + basic correction (WB, exposure, contrast, highlights/shadows, saturation).
    Correct color management: Log/HLG input transforms, HDR→SDR, Rec.709 export tagged 1-1-1, viewer matches QuickTime.
+   Scopes (waveform, vectorscope). Color page (second page, Final Cut-style color wheels), see docs/UX.md.
 4. Editing: trim, ripple, roll, slip, snapping, J/L cuts, move, smooth scrubbing.
 5. Audio: clip/track volume (keyframable), per-track presets (multiband compressor + light denoise).
 6. Keyframes: position, scale, rotation, opacity with easing; keyframe editor in Effect Controls.
@@ -42,7 +43,7 @@ Final-Cut-like look. Built first for a short-form (9:16) workflow, later open so
 9. Text layers, keyframable, user templates to drag in. Library panel: disk folders (thumbnails, search, favorites, audio preview) plus own presets
    (text templates, animated text templates in own format, effect/easing/caption presets). Late in V1, with text templates.
 10. Captions: on-device German transcription, transcript editor, caption style preset + animation preset applied to all captions.
-11. Export: H.264/HEVC (ProRes optional), social presets.
+11. Export: H.264/HEVC (ProRes optional), social presets. Show Details with full settings (incl. loudness normalisation, sidecar .srt), background queue.
 12. Undo/redo, autosave, robust project format.
 13. Export several sequences of a project in one go (queue).
 
