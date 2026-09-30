@@ -48,7 +48,7 @@ public final class EditorSession {
     @ObservationIgnored private var pushed: (timeline: Timeline, sequences: [Timeline.ID: Timeline])?
     @ObservationIgnored private var mediaSnapshot: [MediaRef] = []
     @ObservationIgnored private var requestedMedia: Set<UUID> = []
-    @ObservationIgnored private var gestureCounter = 0
+    @ObservationIgnored var gestureCounter = 0
     @ObservationIgnored private var autosaveTask: Task<Void, Never>?
 
     public var project: Project { history.current }
@@ -122,7 +122,7 @@ public final class EditorSession {
 
     /// Like `performTimeline`, but a refused edit only sets `lastError`. Returns whether it was applied.
     @discardableResult
-    private func attempt(_ name: String, coalescing key: String? = nil, _ body: (inout Timeline) throws -> Void) -> Bool {
+    func attempt(_ name: String, coalescing key: String? = nil, _ body: (inout Timeline) throws -> Void) -> Bool {
         let before = history.current
         do { try performTimeline(name, coalescing: key, body) } catch {
             setError(Self.message(for: error)); return false
@@ -222,7 +222,7 @@ public final class EditorSession {
         }
     }
 
-    private func setError(_ m: String) { lastError = m; notify(.status) }
+    func setError(_ m: String) { lastError = m; notify(.status) }
     public func clearError() { guard lastError != nil else { return }; lastError = nil; notify(.status) }
 
     static func message(for error: Error) -> String {

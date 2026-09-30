@@ -1,4 +1,5 @@
 import Foundation
+import Metal
 import QuartzCore
 import SSCore
 import SSMedia
@@ -25,6 +26,15 @@ public protocol ProgramEngine: AnyObject {
     var quality: DecodeScale { get set }
     /// At most display rate; drives the playhead and timecode.
     var onPositionChange: (@MainActor (Time) -> Void)? { get set }
+    /// Last composited frame (feeds the scopes); nil when nothing was rendered or the engine is a stand-in.
+    var lastRenderedTexture: MTLTexture? { get }
+    /// True when audio output could not start (playback continues on the host clock).
+    var audioUnavailable: Bool { get }
+}
+
+extension ProgramEngine {
+    public var lastRenderedTexture: MTLTexture? { nil }
+    public var audioUnavailable: Bool { false }
 }
 
 extension PlaybackEngine: ProgramEngine {}

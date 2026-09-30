@@ -4,7 +4,7 @@ import SSEditorUI
 import SSRender
 
 /// Owns the panel views and models and keeps them in step with the `EditorSession`: session changes flow in through
-/// `sync(_:)`, user gestures flow out as session calls. Panels without a real view yet are placeholders.
+/// `sync(_:)`, user gestures flow out as session calls. Only the Source monitor is still a placeholder.
 @MainActor
 final class EditorPanels {
     let session: EditorSession
@@ -17,6 +17,11 @@ final class EditorPanels {
     let projectView: ProjectPanelView
     let effectModel = EffectControlsModel()
     let effectView: EffectControlsView
+    let libraryModel = LibraryServices.makeModel()
+    let libraryView: LibraryPanelView
+    let propertiesView: PropertiesPanelView
+    let textView = TextPanelView()
+    let effectsView = EffectsPanelView()
 
     private var placeholders: [PanelID: NSView] = [:]
 
@@ -36,7 +41,11 @@ final class EditorPanels {
         })
         projectView = ProjectPanelView(model: projectModel)
         effectView = EffectControlsView(model: effectModel)
+        libraryView = LibraryPanelView(model: libraryModel)
+        propertiesView = PropertiesPanelView(session: session)
+        Task { [libraryModel] in await LibraryServices.start(libraryModel) }
         wireTimeline()
+        wireSidePanels()
         wireMonitor()
         wireEffectControls()
         sync([.project, .selection, .playhead, .transport])
@@ -62,7 +71,36 @@ final class EditorPanels {
         tv.onDropMedia = { [weak self] ids, time, track, insert in
             self?.session.placeMedia(ids, at: time, videoTrack: track, mode: insert ? .insert : .overwrite)
         }
+        tv.onDropTextTemplate = { [weak self] id, time, track in
+            guard let entry = TextTemplateCatalog.entry(id: id) else { return }
+            self?.session.addTextClip(template: entry.template, at: time, track: track)
+        }
+        tv.onDropFiles = { [weak self] urls, time, track, insert in self?.dropFiles(urls, at: time, track: track, insert: insert) }
         tv.contextMenuProvider = { [weak self] p in self?.timelineMenu(at: p) }
+    }
+
+    /// Files from the Library or Finder: imported into the project (one undo step), then placed like Project media.
+    private func dropFiles(_ urls: [URL], at time: Time, track: Track.ID?, insert: Bool) {
+        Task { [weak self] in
+            guard let self else { return }
+            await projectModel.importFiles(urls)
+            let paths = urls.map(\.path)
+            let ids = paths.compactMap { p in session.project.media.first { $0.path == p }?.id }
+            guard !ids.isEmpty else { onStatus?("Could not import the dropped files."); return }
+            session.placeMedia(ids, at: time, videoTrack: track, mode: insert ? .insert : .overwrite)
+        }
+    }
+
+    private func wireSidePanels() {
+        propertiesView.onStatus = { [weak self] m in self?.onStatus?(m) }
+        textView.onApply = { [weak self] id in
+            guard let self, let entry = TextTemplateCatalog.entry(id: id) else { return }
+            session.addTextClip(template: entry.template)
+        }
+        effectsView.onApply = { [weak self] id in
+            guard let self, id == EffectsPanelView.roundedCorners else { return }
+            if !session.addRoundedCorners() { onStatus?("Select a video clip without rounded corners first.") }
+        }
     }
 
     private func toggleTrack(_ id: Track.ID, _ toggle: TrackToggle) {
@@ -156,7 +194,11 @@ final class EditorPanels {
         case .programMonitor: return monitorView
         case .project: return projectView
         case .effectControls: return effectView
-        case .sourceMonitor, .library, .effects, .text, .properties:
+        case .library: return libraryView
+        case .properties: return propertiesView
+        case .text: return textView
+        case .effects: return effectsView
+        case .sourceMonitor:
             if let v = placeholders[p] { return v }
             let v = PlaceholderPanelView(title: EditorCommand.panelTitle(p), symbol: Self.symbol(p))
             placeholders[p] = v
@@ -167,10 +209,6 @@ final class EditorPanels {
     private static func symbol(_ p: PanelID) -> String {
         switch p {
         case .sourceMonitor: "play.rectangle"
-        case .library: "books.vertical"
-        case .effects: "sparkles"
-        case .text: "textformat"
-        case .properties: "slider.horizontal.3"
         default: "square"
         }
     }
@@ -225,6 +263,7 @@ final class EditorPanels {
             if session.isPlaying { followPlayhead() }
         }
         if change.contains(.transport) { monitorModel.isPlaying = session.isPlaying }
+        propertiesView.sync(change)
     }
 
     /// Page auto-scroll: when the playhead leaves the visible area during playback, jump a page.

@@ -6,6 +6,11 @@ import SSEditorUI
 final class TabStrip: NSView {
     private var buttons: [(PanelID, TabButton)] = []
     var onSelect: ((PanelID) -> Void)?
+    /// A tab was pressed: the owner runs the click-or-drag session (`DockDragSession`).
+    var onPress: ((PanelID, NSView, NSEvent) -> Void)?
+
+    /// Tab capsule frames in strip order, in strip coordinates.
+    var tabFrames: [CGRect] { buttons.map { $0.1.frame } }
 
     static let height = Theme.Metrics.panelHeader
 
@@ -31,6 +36,11 @@ final class TabStrip: NSView {
     @objc private func tapped(_ sender: TabButton) {
         guard let p = PanelID(rawValue: sender.identifier?.rawValue ?? "") else { return }
         onSelect?(p)
+    }
+
+    fileprivate func pressed(_ button: TabButton, _ event: NSEvent) {
+        guard let p = PanelID(rawValue: button.identifier?.rawValue ?? "") else { return }
+        if let onPress { onPress(p, button, event) } else { onSelect?(p) }
     }
 
     override func layout() {
@@ -65,6 +75,10 @@ private final class TabButton: NSButton {
     }
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
+    override func mouseDown(with event: NSEvent) {
+        (superview as? TabStrip)?.pressed(self, event)
+    }
+
     override var intrinsicContentSize: NSSize {
         let w = (title as NSString).size(withAttributes: [.font: Theme.Fonts.small]).width
         return NSSize(width: ceil(w) + 20, height: 22)
@@ -91,7 +105,7 @@ private final class TabButton: NSButton {
 final class PanelContainerView: NSView {
     let panels: [PanelID]
     let selected: PanelID
-    private let strip: TabStrip
+    let strip: TabStrip
     private let content: NSView
 
     override var isFlipped: Bool { true }

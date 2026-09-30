@@ -2,14 +2,15 @@ import AppKit
 import SSCore
 import SSEditorUI
 import SSExport
+import SSPlayback
 import SwiftUI
 
-struct RendererNotConnected: LocalizedError {
-    var errorDescription: String? { "The export renderer is not connected to the editor yet." }
+struct ExportSequenceMissing: LocalizedError {
+    var errorDescription: String? { "The sequence no longer exists." }
 }
 
-/// Export sheet and queue popover. The queue and dialog are real; the frame source is not wired to the compositor yet,
-/// so a submitted job fails with `RendererNotConnected` (shown in the queue).
+/// Export sheet and queue popover. Jobs render the project as it was when the sheet opened: decoded video through
+/// the compositor (text, nesting), mixed audio, sidecar SRT (`ExportSourceBuilder`).
 @MainActor
 final class ExportCoordinator {
     let queue = ExportQueue()
@@ -22,7 +23,14 @@ final class ExportCoordinator {
             ExportDialogModel.SequenceItem(id: $0.id, name: $0.name, duration: $0.duration, inOut: $0.inOut)
         }
         guard !items.isEmpty else { NSSound.beep(); return }
-        let model = ExportDialogModel(sequences: items) { _, _ in throw RendererNotConnected() }
+        let timelines = Dictionary(uniqueKeysWithValues: session.project.timelines.map { ($0.id, $0) })
+        let resolver = session.media
+        let mediaIDs = session.project.media.map(\.id)
+        let model = ExportDialogModel(sequences: items) { id, settings in
+            guard let timeline = timelines[id] else { throw ExportSequenceMissing() }
+            await resolver.prepare(mediaIDs)
+            return try ExportSourceBuilder.make(timeline: timeline, sequences: timelines, settings: settings, resolver: resolver)
+        }
         if let id = session.activeTimelineID, items.contains(where: { $0.id == id }) {
             model.selectedID = id
             model.checkedIDs = [id]

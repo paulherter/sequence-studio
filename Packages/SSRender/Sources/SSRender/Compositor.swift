@@ -15,6 +15,9 @@ public struct RenderLayer: @unchecked Sendable {
     public enum Content: @unchecked Sendable {
         case frame(CVPixelBuffer, colorHint: VideoTrackInfo)
         case placeholder(PlaceholderKind)
+        /// Linear-light premultiplied `kCVPixelFormatType_64RGBAHalf` raster (text), drawn at exactly `width` x `height`
+        /// sequence px (no aspect fit); `transform` positions its centre like any other layer.
+        case linearPremultiplied(CVPixelBuffer, width: Double, height: Double)
     }
     public var content: Content
     public var transform: ClipTransform
@@ -294,6 +297,20 @@ public final class Compositor: @unchecked Sendable {
                 geometry(&u, transform: layer.transform, canvas: format,
                          size: SIMD2(Float(format.width), Float(format.height)), cornerRadius: layer.cornerRadius)
                 prepared.append(Prepared(u: u, tex0: dummy, tex1: dummy))
+            case .linearPremultiplied(let pb, let w, let h):
+                guard CVPixelBufferGetPixelFormatType(pb) == kCVPixelFormatType_64RGBAHalf,
+                      let t0 = planeTexture(pb, plane: 0, format: .rgba16Float, retainer: retainer) else {
+                    unsupportedFrameCount += 1
+                    u.mode = 2; u.solid = Self.placeholderLinear(.damaged)
+                    geometry(&u, transform: layer.transform, canvas: format,
+                             size: SIMD2(Float(format.width), Float(format.height)), cornerRadius: layer.cornerRadius)
+                    prepared.append(Prepared(u: u, tex0: dummy, tex1: dummy))
+                    return
+                }
+                u.mode = 3
+                geometry(&u, transform: layer.transform, canvas: format, size: SIMD2(Float(w), Float(h)),
+                         cornerRadius: layer.cornerRadius)
+                prepared.append(Prepared(u: u, tex0: t0, tex1: dummy))
             case .frame(let pb, let hint):
                 guard let info = PixelFormats.info(for: CVPixelBufferGetPixelFormatType(pb)) else {
                     unsupportedFrameCount += 1

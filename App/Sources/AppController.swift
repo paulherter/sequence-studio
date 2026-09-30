@@ -28,13 +28,17 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     var saveWorkspaceWork: DispatchWorkItem?
     var deadlineWork: DispatchWorkItem?
     let exports = ExportCoordinator()
+    let audioEngine: AudioEngine
+    var audioWarned = false
 
     override init() {
         let media = ProjectMediaResolver()
         var engine: any ProgramEngine = StubProgramEngine()
         var note: String?
+        let audio = AudioEngine(media: media)
+        audioEngine = audio
         if let device = MTLCreateSystemDefaultDevice() {
-            do { engine = try PlaybackEngine(device: device, media: media) } catch { note = "Playback engine unavailable: \(error)" }
+            do { engine = try PlaybackEngine(device: device, media: media, audio: audio) } catch { note = "Playback engine unavailable: \(error)" }
         } else {
             note = "No Metal device: the Program monitor stays blank."
         }
@@ -52,6 +56,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         NSApp.appearance = NSAppearance(named: .darkAqua)
         panels = EditorPanels(session: session)
         panels.onFocus = { [weak self] p in self?.focusedPanel = p }
+        panels.propertiesView.onAudioPresetChange = { [audioEngine] id, p in audioEngine.feeder.setPreset(track: id, preset: p) }
         panels.onStatus = { [weak self] m in self?.shell.statusBar.flash(m) }
         panels.onCommand = { [weak self] c in self?.execute(c) }
         panels.onNest = { [weak self] in self?.requestNest() }
@@ -89,6 +94,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         shell.host.onSelectTab = { [weak self] p in
             self?.mutateWorkspace { $0.selectTab(p) }
             self?.focusedPanel = p
+        }
+        shell.host.onDock = { [weak self] panel, anchor, zone in
+            self?.maximizedPanel = nil
+            self?.mutateWorkspace { $0.dock(panel, onto: anchor, zone: zone) }
+            self?.focusedPanel = panel
+        }
+        shell.host.onMoveTab = { [weak self] panel, index in
+            self?.mutateWorkspace { $0.moveTab(panel, toIndex: index) }
         }
         shell.host.onFractions = { [weak self] path, fractions in
             guard let self else { return }
@@ -146,6 +159,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     func sessionChanged(_ change: EditorSession.Change) {
         panels?.sync(change)
         guard window != nil else { return }
+        if change.contains(.transport) {
+            if session.isPlaying {
+                if session.engine.audioUnavailable, !audioWarned {
+                    audioWarned = true
+                    shell.statusBar.flash("Audio output unavailable: playing without sound.", seconds: 6)
+                }
+            } else { audioWarned = false }
+        }
         if change.contains(.project) || change.contains(.status) { updateChrome() }
     }
 
@@ -198,12 +219,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             menu.addItem(i)
         }
         menu.addItem(.separator())
-        let save = NSMenuItem(title: "Save Layout As…", action: #selector(saveLayoutAs(_:)), keyEquivalent: "")
-        save.target = self
-        menu.addItem(save)
-        let reset = NSMenuItem(title: "Reset Layout", action: #selector(resetLayout(_:)), keyEquivalent: "")
-        reset.target = self
-        menu.addItem(reset)
+        for (title, sel) in [("Save Workspace As…", #selector(saveLayoutAs(_:))),
+                             ("Rename Workspace…", #selector(renameWorkspace(_:))),
+                             ("Delete Workspace", #selector(deleteWorkspace(_:))),
+                             ("Reset to Saved Layout", #selector(resetLayout(_:)))] {
+            let i = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+            i.target = self
+            menu.addItem(i)
+        }
     }
 
     /// A fresh menu for the toolbar item (an NSMenu has one parent, so it cannot share the main menu's).
@@ -247,6 +270,46 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         }
     }
 
+    @objc func renameWorkspace(_ sender: Any?) {
+        guard store.canRenameOrDeleteCurrent else { return }
+        let alert = NSAlert()
+        alert.messageText = "Rename Workspace"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = store.editName
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Rename")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard let self, response == .alertFirstButtonReturn else { return }
+                if self.store.renameCurrent(to: field.stringValue) {
+                    self.scheduleWorkspaceSave()
+                    self.applyWorkspace()
+                } else {
+                    self.shell.statusBar.flash("That workspace name is not available.")
+                }
+            }
+        }
+    }
+
+    @objc func deleteWorkspace(_ sender: Any?) {
+        guard store.canRenameOrDeleteCurrent else { return }
+        let alert = NSAlert()
+        alert.messageText = "Delete workspace \u{201C}\(store.editName)\u{201D}?"
+        alert.informativeText = "The Editing layout is shown afterwards."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated {
+                guard let self, response == .alertFirstButtonReturn, self.store.deleteCurrent() else { return }
+                self.maximizedPanel = nil
+                self.scheduleWorkspaceSave()
+                self.applyWorkspace()
+            }
+        }
+    }
+
     @objc func resetLayout(_ sender: Any?) {
         guard store.page == .edit, store.library.resetBuiltIn(store.editName) else {
             if store.page == .color { store.colorWorkspace = .color; scheduleWorkspaceSave(); applyWorkspace() }
@@ -264,6 +327,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
 
     @objc func toolbarPage(_ sender: NSToolbarItemGroup) {
         store.setPage(sender.selectedIndex == 1 ? .color : .edit)
+        if store.page == .color {
+            store.colorWorkspace.selectTab(.properties)
+            panels.propertiesView.select(.color)
+        }
         maximizedPanel = nil
         scheduleWorkspaceSave()
         applyWorkspace()
@@ -291,6 +358,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     }
 
     func validateMenuItem(_ item: NSMenuItem) -> Bool {
+        switch item.action {
+        case #selector(renameWorkspace(_:)), #selector(deleteWorkspace(_:)): return store.canRenameOrDeleteCurrent
+        case #selector(resetLayout(_:)): return store.canResetCurrent
+        default: break
+        }
         guard let c = item.representedObject as? EditorCommand else { return true }
         // Typing in a text field: the standard editing commands belong to it.
         if textResponder != nil, [.cut, .copy, .paste, .delete, .deleteProjectItems].contains(c) { return true }

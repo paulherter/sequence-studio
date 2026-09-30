@@ -3,6 +3,7 @@ import Foundation
 import Metal
 import SSCore
 import SSRender
+import SSText
 
 /// A decoded source frame plus what the compositor needs to interpret it.
 public struct ProvidedFrame: @unchecked Sendable {
@@ -43,7 +44,7 @@ public final class TimelineFrameSource: FrameSource {
     /// - Parameters:
     ///   - width/height: output size (the working frame is sequence-sized and resampled if they differ).
     ///   - startTime: timeline time of frame 0 (range start).
-    public init(timeline: Timeline, provider: any FrameProvider, width: Int, height: Int,
+    public init(timeline: Timeline, sequences: [Timeline.ID: Timeline] = [:], provider: any FrameProvider, width: Int, height: Int,
                 frameDuration: Time, frameCount: Int, startTime: Time = .zero,
                 pixelFormat: ExportPixelFormat = .bgra8, captions: CaptionBurnIn? = nil,
                 device: MTLDevice? = MTLCreateSystemDefaultDevice()) throws {
@@ -54,7 +55,7 @@ public final class TimelineFrameSource: FrameSource {
         if pixelFormat == .yuv420v, width % 2 != 0 || height % 2 != 0 { throw TimelineFrameSourceError.oddDimensionsFor420 }
         self.frameCount = frameCount; self.frameDuration = frameDuration; self.startTime = startTime
         self.width = width; self.height = height; self.pixelFormat = pixelFormat
-        renderer = try Renderer(timeline: timeline, provider: provider, width: width, height: height,
+        renderer = try Renderer(timeline: timeline, sequences: sequences, provider: provider, width: width, height: height,
                                 format: pixelFormat, captions: captions, device: device, queue: queue)
     }
 
@@ -68,6 +69,8 @@ public final class TimelineFrameSource: FrameSource {
 
     private actor Renderer {
         let timeline: Timeline
+        let sequences: [Timeline.ID: Timeline]
+        let clipDurations: [Clip.ID: Time]
         let provider: any FrameProvider
         let width: Int, height: Int
         let format: ExportPixelFormat
@@ -80,9 +83,12 @@ public final class TimelineFrameSource: FrameSource {
         let bgraPipe: MTLComputePipelineState, lumaPipe: MTLComputePipelineState, chromaPipe: MTLComputePipelineState
         var freeWorking: [MTLTexture] = []
 
-        init(timeline: Timeline, provider: any FrameProvider, width: Int, height: Int, format: ExportPixelFormat,
+        init(timeline: Timeline, sequences: [Timeline.ID: Timeline], provider: any FrameProvider, width: Int, height: Int, format: ExportPixelFormat,
              captions: CaptionBurnIn?, device: MTLDevice, queue: MTLCommandQueue) throws {
-            self.timeline = timeline; self.provider = provider; self.width = width; self.height = height
+            self.timeline = timeline; self.sequences = sequences; self.provider = provider
+            var durations: [Clip.ID: Time] = [:]
+            for tl in [timeline] + Array(sequences.values) { for t in tl.tracks { for c in t.clips { durations[c.id] = c.source.duration } } }
+            clipDurations = durations; self.width = width; self.height = height
             self.format = format; self.captions = captions; self.device = device; self.queue = queue
             compositor = try Compositor(device: device)
             let lib = try device.makeLibrary(source: ExportShaderSource.msl, options: nil)
@@ -137,15 +143,42 @@ public final class TimelineFrameSource: FrameSource {
             enc.endEncoding()
         }
 
+        /// Text generator layer: the raster's centre placed relative to the canvas centre; the animation factors
+        /// (opacity, scale, offset, rotation) are folded into the layer transform.
+        func textLayer(_ l: LayerRequest, _ ref: GeneratorRef) throws -> RenderLayer {
+            let dur = clipDurations[l.clip] ?? l.localTime
+            guard let f = try TextGenerator.frame(ref: ref, localTime: l.localTime, clipDuration: dur,
+                                                  canvas: timeline.format, scale: 1) else {
+                var tr = l.transform; tr.opacity = 0
+                return RenderLayer(content: .placeholder(.loading), transform: tr)   // empty text: invisible
+            }
+            var tr = l.transform
+            tr.position = Vec2(tr.position.x + f.x + f.width / 2 - Double(timeline.format.width) / 2 + f.offsetX,
+                               tr.position.y + f.y + f.height / 2 - Double(timeline.format.height) / 2 + f.offsetY)
+            tr.scale = Vec2(tr.scale.x * f.scale, tr.scale.y * f.scale)
+            tr.rotation += f.rotation
+            tr.opacity *= f.opacity
+            return RenderLayer(content: .linearPremultiplied(f.buffer, width: f.width, height: f.height), transform: tr,
+                               cornerRadius: l.cornerRadius)
+        }
+
+        func layer(for l: LayerRequest) async throws -> RenderLayer {
+            if let g = l.generator {
+                if g.kind == GeneratorRef.text { return try textLayer(l, g) }
+                return RenderLayer(content: .placeholder(.offline), transform: l.transform, cornerRadius: l.cornerRadius)
+            }
+            if let f = try await provider.frame(media: l.media, at: l.sourceTime) {
+                return RenderLayer(content: .frame(f.buffer, colorHint: f.info), transform: l.transform, cornerRadius: l.cornerRadius)
+            }
+            return RenderLayer(content: .placeholder(.offline), transform: l.transform, cornerRadius: l.cornerRadius)
+        }
+
         func render(at t: Time) async throws -> Box<CVPixelBuffer> {
+            let requests = timeline.videoLayers(at: t, sequences: { [sequences] in sequences[$0] })
             var layers: [RenderLayer] = []
-            for l in timeline.videoLayers(at: t) {
+            for l in requests {
                 try Task.checkCancellation()
-                if let f = try await provider.frame(media: l.media, at: l.sourceTime) {
-                    layers.append(RenderLayer(content: .frame(f.buffer, colorHint: f.info), transform: l.transform))
-                } else {
-                    layers.append(RenderLayer(content: .placeholder(.offline), transform: l.transform))
-                }
+                layers.append(try await layer(for: l))
             }
             try Task.checkCancellation()
 
@@ -156,7 +189,7 @@ public final class TimelineFrameSource: FrameSource {
             guard let cb = queue.makeCommandBuffer() else { throw TimelineFrameSourceError.commandBufferFailed("command buffer") }
             var keep: [CVMetalTexture] = []
             do {
-                try compositor.render(layers, format: timeline.format, into: working, commandBuffer: cb)
+                try compositor.render(nodes: RenderNode.tree(requests: requests, layers: layers), format: timeline.format, into: working, commandBuffer: cb)
                 try captions?.encode(at: t, into: working, commandBuffer: cb)
                 switch format {
                 case .bgra8:

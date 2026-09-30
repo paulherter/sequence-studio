@@ -10,6 +10,10 @@ final class WorkspaceHostView: NSView {
     var panelView: ((PanelID) -> NSView)?
     var onSelectTab: ((PanelID) -> Void)?
     var onFractions: (([Int], [Double]) -> Void)?
+    /// Tab drag outcomes; delivered asynchronously, after the drag session has ended.
+    var onDock: ((PanelID, PanelID, DropZone) -> Void)?
+    var onMoveTab: ((PanelID, Int) -> Void)?
+    private var dragging = false
 
     override var isFlipped: Bool { true }
 
@@ -23,11 +27,41 @@ final class WorkspaceHostView: NSView {
         needsLayout = true
     }
 
+    /// All tab groups currently on screen.
+    func containers() -> [PanelContainerView] {
+        var out: [PanelContainerView] = []
+        func walk(_ v: NSView) {
+            if let c = v as? PanelContainerView { out.append(c) } else { v.subviews.forEach(walk) }
+        }
+        walk(self)
+        return out
+    }
+
+    private func tabPressed(_ panel: PanelID, _ button: NSView, _ event: NSEvent) {
+        guard !dragging else { return }
+        dragging = true
+        let result = DockDragSession.run(panel: panel, button: button, event: event, host: self)
+        dragging = false
+        // Rebuild after the tab's own mouseDown has returned (the tab view is about to be replaced).
+        DispatchQueue.main.async { [weak self] in
+            MainActor.assumeIsolated {
+                switch result {
+                case .click: self?.onSelectTab?(panel)
+                case .cancelled: break
+                case .reorder(let p, let i): self?.onMoveTab?(p, i)
+                case .dock(let p, let a, let z): self?.onDock?(p, a, z)
+                }
+            }
+        }
+    }
+
     private func build(_ node: LayoutNode, path: [Int]) -> NSView {
         switch node {
         case .tabs(let panels, let selected):
-            return PanelContainerView(panels: panels, selected: selected,
-                                      content: panelView?(selected) ?? NSView()) { [weak self] p in self?.onSelectTab?(p) }
+            let c = PanelContainerView(panels: panels, selected: selected,
+                                       content: panelView?(selected) ?? NSView()) { [weak self] p in self?.onSelectTab?(p) }
+            c.strip.onPress = { [weak self] p, button, event in self?.tabPressed(p, button, event) }
+            return c
         case .split(let axis, let children, let fractions):
             let split = DividerSplitView(path: path, fractions: fractions)
             split.isVertical = axis == .horizontal

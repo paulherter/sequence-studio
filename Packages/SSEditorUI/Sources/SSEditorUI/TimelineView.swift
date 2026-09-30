@@ -44,6 +44,10 @@ public final class TimelineView: NSView {
     /// Media dragged in from the Project panel: ids, drop time, track under the pointer (nil = default track),
     /// insert instead of overwrite (Command held at the drop).
     public var onDropMedia: (([MediaRef.ID], Time, Track.ID?, Bool) -> Void)?
+    /// A text template (`TextTemplateCatalog` entry id) dragged in from the Text panel: id, drop time, track under the pointer.
+    public var onDropTextTemplate: ((String, Time, Track.ID?) -> Void)?
+    /// Files dragged in from the Library or Finder: URLs, drop time, track under the pointer, insert instead of overwrite.
+    public var onDropFiles: (([URL], Time, Track.ID?, Bool) -> Void)?
     private var scrubbing: (began: Bool, active: Bool) = (false, false)
     /// Active tool, snapping and linked selection.
     public var toolState: ToolState {
@@ -71,7 +75,7 @@ public final class TimelineView: NSView {
         super.init(frame: frame)
         wantsLayer = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
-        registerForDraggedTypes([.sequenceMediaIDs])
+        registerForDraggedTypes([.sequenceMediaIDs, .sequenceTextTemplate, .fileURL])
         addSubview(ruler)
         layoutChildren()
         rebuildHeaders()
@@ -328,22 +332,32 @@ public final class TimelineView: NSView {
 
     // MARK: Drop from the Project panel
 
-    private func droppedMedia(_ info: NSDraggingInfo) -> [MediaRef.ID] {
-        guard let s = info.draggingPasteboard.string(forType: .sequenceMediaIDs) else { return [] }
-        return ProjectPanelModel.decodeItems(s).compactMap { if case .media(let id) = $0 { id } else { nil } }
+    private enum Dropped { case media([MediaRef.ID]), textTemplate(String), files([URL]), none }
+
+    private func dropped(_ info: NSDraggingInfo) -> Dropped {
+        let pb = info.draggingPasteboard
+        if let s = pb.string(forType: .sequenceMediaIDs) {
+            let ids = ProjectPanelModel.decodeItems(s).compactMap { if case .media(let id) = $0 { id } else { nil } }
+            if !ids.isEmpty { return .media(ids) }
+        }
+        if let id = pb.string(forType: .sequenceTextTemplate) { return .textTemplate(id) }
+        let urls = (pb.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL]) ?? []
+        return urls.isEmpty ? .none : .files(urls)
     }
 
     public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
-        droppedMedia(sender).isEmpty ? [] : .copy
+        if case .none = dropped(sender) { return [] }
+        return .copy
     }
 
     public override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        droppedMedia(sender).isEmpty ? [] : .copy
+        if case .none = dropped(sender) { return [] }
+        return .copy
     }
 
     public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        let ids = droppedMedia(sender)
-        guard !ids.isEmpty else { return false }
+        let payload = dropped(sender)
+        if case .none = payload { return false }
         let p = convert(sender.draggingLocation, from: nil)
         let time = max(geometry.time(atX: max(p.x, TimelineGeometry.contentOriginX)), .zero)
         var track: Track.ID?
@@ -353,7 +367,13 @@ public final class TimelineView: NSView {
         case .header(let t): track = t
         default: break
         }
-        onDropMedia?(ids, time, track, NSEvent.modifierFlags.contains(.command))
+        let insert = NSEvent.modifierFlags.contains(.command)
+        switch payload {
+        case .media(let ids): onDropMedia?(ids, time, track, insert)
+        case .textTemplate(let id): onDropTextTemplate?(id, time, track)
+        case .files(let urls): onDropFiles?(urls, time, track, insert)
+        case .none: return false
+        }
         return true
     }
 

@@ -58,6 +58,8 @@ public final class VTVideoDecoder: VideoDecoding, @unchecked Sendable {
 
     public var isHardware: Bool { lock.withLock { hardware } }
     var stats: Stats { lock.withLock { _stats } }
+    /// Number of times decoding restarted at a sync sample (seeks), for diagnostics.
+    public var reseekCount: Int { stats.reseeks }
 
     public init(demuxer: any Demuxing, media: UUID, scale: DecodeScale = .full) throws {
         self.demuxer = demuxer; self.media = media; self.scale = scale
