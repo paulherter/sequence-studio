@@ -179,6 +179,26 @@ private final class SessionTestClock: @unchecked Sendable {
         #expect(r.engine.calls.count == calls)
     }
 
+    @Test func playbackStopsAtSequenceEndAndRestartsFromStart() throws {
+        let r = try Rig()
+        r.session.playPause()
+        r.engine.simulatePlayback(advance: Time(119, 30))      // last presented frame, one before the 4 s end
+        #expect(!r.session.isPlaying)
+        #expect(r.engine.rate.isPaused)
+        #expect(r.session.playhead == s(4))
+        r.session.playPause()                                   // Play at the end: back to the start
+        #expect(r.session.isPlaying)
+        #expect(r.session.playhead == .zero)
+    }
+
+    @Test func engineStoppingItselfLeavesPlaying() throws {
+        let r = try Rig()
+        r.session.playPause()
+        r.engine.pause()                                        // engine stopped at the edge on its own
+        r.engine.onPositionChange?(.zero)
+        #expect(!r.session.isPlaying)
+    }
+
     @Test func transportCommands() throws {
         let r = try Rig()
         r.session.playPause()

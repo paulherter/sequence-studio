@@ -211,8 +211,9 @@ import SSRender
 
     private func apply(_ o: TickOutcome) {
         if o.stoppedAtEdge { rate = .zero }
-        guard o.presented, o.time != position else { return }
-        position = o.time
-        onPositionChange?(o.time)
+        // A stop at the edge is reported even when no new frame was presented, so the host can leave "playing".
+        guard (o.presented && o.time != position) || o.stoppedAtEdge else { return }
+        if o.presented { position = o.time }
+        onPositionChange?(position)
     }
 }
