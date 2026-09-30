@@ -85,3 +85,6 @@ Extra panel height is water-filled over the tracks (video weight 3, audio 2) up 
 
 ## 2026-10-01 [auto] New sequences: 4 video + 4 audio tracks
 `Timeline.defaultTracks()` (V1-V4, A1-A4, first of each targeted) is used by New Sequence, the first-clip/untitled project and the demo. Key monitor: only an editable NSTextView keeps keys; a non-editable field editor no longer swallows Space/J/K/L (FEEDBACK-2 T3).
+
+## 2026-10-01 [auto] Effects are an explicit per-clip list (project v9)
+`Clip.effects: [ClipEffect]` (id, kind, enabled, animatable parameters) replaces `ClipAnimation.cornerRadius`; no entry = effect not applied, no Effect Controls section, renderer ignores it. v8 -> v9: a non-default radius becomes an applied Rounded Corners effect, default = not applied. The effect's default (also what Reset restores) is Radius 24. While Effect Controls has focus, Delete/Backspace act on its selected keys, then the selected effect, never on timeline clips.

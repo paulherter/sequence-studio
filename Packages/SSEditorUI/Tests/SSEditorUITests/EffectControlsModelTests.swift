@@ -412,4 +412,15 @@ import SSCore
         m.deleteSelectionOrEffect()
         #expect(m.clip!.effects.isEmpty)
     }
+
+    @Test func selectedSectionClearsOnClipChangeOrWhenEffectGoes() {
+        let (m, _) = rig()
+        m.selectedSection = .roundedCorners
+        var c = m.clip!; c.roundedCorners = nil; m.setClip(c)            // effect gone
+        #expect(m.selectedSection == nil)
+        c.roundedCorners = .roundedCorners(); m.setClip(c)
+        m.selectedSection = .roundedCorners
+        var other = c; other.id = UUID(); m.setClip(other)                // different clip
+        #expect(m.selectedSection == nil)
+    }
 }

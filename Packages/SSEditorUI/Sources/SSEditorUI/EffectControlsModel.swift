@@ -172,8 +172,9 @@ public final class EffectControlsModel {
     /// Sets the clip shown. Never calls `onEdit`. A different clip resets selection; the same clip prunes
     /// selected keys that no longer exist.
     public func setClip(_ c: Clip?) {
-        if c?.id != clip?.id { selection = []; gestureBase = nil; gestureEmitted = false }
+        if c?.id != clip?.id { selection = []; selectedSection = nil; gestureBase = nil; gestureEmitted = false }
         clip = c
+        if let sec = selectedSection, !visibleSections.contains(sec) || sec.effectKind == nil { selectedSection = nil }
         pruneSelection()
     }
 

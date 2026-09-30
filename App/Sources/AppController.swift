@@ -426,6 +426,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             item.title = session.redoName.map { "Redo \($0)" } ?? "Redo"
             return session.canRedo || textResponder != nil
         case .save: return true
+        case _ where (c == .delete || c == .rippleDelete) && effectControlsHasFocus:
+            return !panels.effectModel.selection.isEmpty || panels.effectModel.selectedSection.map(panels.effectModel.canRemoveEffect) == true
         default: return Self.isSupported(c)
         }
     }
