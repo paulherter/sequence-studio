@@ -8,6 +8,15 @@ public enum EditError: Error, Equatable {
     case trackLocked
     case clipNotFound
     case collision
+    /// A sequence would contain itself, directly or through other nested sequences.
+    case nestingCycle
+    case timelineNotFound
+}
+
+/// What a clip plays: imported media, or another sequence of the project (nested sequence).
+public enum ClipSource: Sendable, Hashable {
+    case media(UUID)
+    case sequence(Timeline.ID)
 }
 
 public struct Clip: Sendable, Hashable, Codable, Identifiable {
@@ -26,19 +35,28 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var mediaDuration: Time?
     /// Animatable transform, opacity and volume (keyframe times are clip-local, relative to `start`).
     public var animation: ClipAnimation
+    /// Set for a nested-sequence clip: the sequence it plays. `media` then equals this ID (so code keyed on
+    /// `media` never sees a nil), `source` is a range of the inner sequence's timeline, and
+    /// `mediaDuration` is the inner sequence's duration when nested.
+    public var sequence: Timeline.ID?
+
+    /// Media or nested sequence.
+    public var clipSource: ClipSource { sequence.map(ClipSource.sequence) ?? .media(media) }
+    public var isNested: Bool { sequence != nil }
 
     public var timeline: TimeRange { TimeRange(start: start, duration: source.duration) }
 
     public init(id: UUID = UUID(), name: String, media: UUID, kind: TrackKind,
                 source: TimeRange, start: Time, link: UUID? = nil, mediaDuration: Time? = nil,
-                animation: ClipAnimation = ClipAnimation()) {
+                animation: ClipAnimation = ClipAnimation(), sequence: Timeline.ID? = nil) {
         self.animation = animation
+        self.sequence = sequence
         self.id = id; self.name = name; self.media = media; self.kind = kind
         self.source = source; self.start = start; self.link = link; self.mediaDuration = mediaDuration
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation
+        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence
     }
 
     public init(from d: Decoder) throws {
@@ -48,7 +66,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   source: try c.decode(TimeRange.self, forKey: .source), start: try c.decode(Time.self, forKey: .start),
                   link: try c.decodeIfPresent(UUID.self, forKey: .link),
                   mediaDuration: try c.decodeIfPresent(Time.self, forKey: .mediaDuration),
-                  animation: try c.decodeIfPresent(ClipAnimation.self, forKey: .animation) ?? ClipAnimation())
+                  animation: try c.decodeIfPresent(ClipAnimation.self, forKey: .animation) ?? ClipAnimation(),
+                  sequence: try c.decodeIfPresent(Timeline.ID.self, forKey: .sequence))
     }
 
     /// Moves a split-off right half onto a fresh link shared through `map` (old link to new link).

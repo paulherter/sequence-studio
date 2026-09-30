@@ -24,6 +24,8 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     public var tracks: [Track]
     public var inOut: TimeRange?
     public var markers: [Marker]
+    /// Caption tracks, shown above the video tracks. Ripple edits shift them like sync-locked tracks.
+    public var captionTracks: [CaptionTrack]
 
     public var frameDuration: Time {
         get { format.frameDuration }
@@ -31,16 +33,16 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     }
 
     public init(id: UUID = UUID(), name: String, format: SequenceFormat, tracks: [Track] = [],
-                inOut: TimeRange? = nil, markers: [Marker] = []) {
+                inOut: TimeRange? = nil, markers: [Marker] = [], captionTracks: [CaptionTrack] = []) {
         self.id = id; self.name = name; self.format = format; self.tracks = tracks
-        self.inOut = inOut; self.markers = markers
+        self.inOut = inOut; self.markers = markers; self.captionTracks = captionTracks
     }
 
     public init(id: UUID = UUID(), name: String, frameDuration: Time, tracks: [Track] = []) {
         self.init(id: id, name: name, format: SequenceFormat(frameDuration: frameDuration), tracks: tracks)
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, format, tracks, inOut, markers }
+    private enum CodingKeys: String, CodingKey { case id, name, format, tracks, inOut, markers, captionTracks }
 
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -50,6 +52,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         tracks = try c.decodeIfPresent([Track].self, forKey: .tracks) ?? []
         inOut = try c.decodeIfPresent(TimeRange.self, forKey: .inOut)
         markers = try c.decodeIfPresent([Marker].self, forKey: .markers) ?? []
+        captionTracks = try c.decodeIfPresent([CaptionTrack].self, forKey: .captionTracks) ?? []
     }
 
     public func track(_ id: Track.ID) -> Track? { tracks.first { $0.id == id } }
@@ -96,6 +99,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         for m in group { tracks[m.track].remove(m.clip.id) }
         let d = max(span - shortfall, .zero)
         for i in involved { tracks[i].shift(from: pivot[i]!, by: .zero - d) }
+        closeCaptionSpan(TimeRange(start: maxEnd - d, duration: d))
         return d
     }
 
@@ -140,6 +144,11 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         for i in involved { work[i].shift(from: pivot[i]!, by: g, excluding: ids) }
         guard work.allSatisfy(\.isConsistent) else { throw EditError.collision }
         tracks = work
+        if g < .zero {
+            closeCaptionSpan(TimeRange(start: primary.timeline.end + g, duration: .zero - g))
+        } else {
+            openCaptionGap(at: primary.timeline.end, by: g)
+        }
         return edge == .tail ? g : -g
     }
 
@@ -172,6 +181,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
             try work[i].overwrite(c, relinks: &relinks)
         }
         tracks = work
+        openCaptionGap(at: t, by: d)
     }
 
     // MARK: Helpers

@@ -44,6 +44,7 @@ extension Timeline {
         for i in involved { work[i].shift(from: range.end, by: .zero - d) }
         guard work.allSatisfy(\.isConsistent) else { throw EditError.collision }
         tracks = work
+        closeCaptionSpan(TimeRange(start: range.end - d, duration: d))
         return d
     }
 

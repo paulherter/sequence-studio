@@ -58,10 +58,12 @@ public struct ClipAnimation: Sendable, Hashable, Codable {
     public var anchor = AnimatedProperty(Vec2.zero)
     /// Linear gain (1 = unity) for audio clips.
     public var volume = AnimatedProperty(1.0)
+    /// Rounded Corners effect: radius in sequence pixels of the clip's own frame (0 = square). Read clamped >= 0.
+    public var cornerRadius = AnimatedProperty(0.0)
 
     public init() {}
 
-    private enum CodingKeys: String, CodingKey { case position, scale, rotation, opacity, anchor, volume }
+    private enum CodingKeys: String, CodingKey { case position, scale, rotation, opacity, anchor, volume, cornerRadius }
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
         position = try c.decodeIfPresent(AnimatedProperty<Vec2>.self, forKey: .position) ?? position
@@ -70,6 +72,7 @@ public struct ClipAnimation: Sendable, Hashable, Codable {
         opacity = try c.decodeIfPresent(AnimatedProperty<Double>.self, forKey: .opacity) ?? opacity
         anchor = try c.decodeIfPresent(AnimatedProperty<Vec2>.self, forKey: .anchor) ?? anchor
         volume = try c.decodeIfPresent(AnimatedProperty<Double>.self, forKey: .volume) ?? volume
+        cornerRadius = try c.decodeIfPresent(AnimatedProperty<Double>.self, forKey: .cornerRadius) ?? cornerRadius
     }
 
     func shifted(by delta: Time) -> ClipAnimation {
@@ -77,6 +80,7 @@ public struct ClipAnimation: Sendable, Hashable, Codable {
         a.position = position.shifted(by: delta); a.scale = scale.shifted(by: delta)
         a.rotation = rotation.shifted(by: delta); a.opacity = opacity.shifted(by: delta)
         a.anchor = anchor.shifted(by: delta); a.volume = volume.shifted(by: delta)
+        a.cornerRadius = cornerRadius.shifted(by: delta)
         return a
     }
 }
@@ -96,4 +100,19 @@ extension Clip {
 
     /// Linear gain at timeline time `t`, never negative.
     public func volume(at t: Time) -> Double { max(animation.volume.value(atLocal: t - start), 0) }
+}
+
+/// Evaluated clip effects at one instant (siblings of `ClipTransform`, already clamped).
+public struct ClipEffects: Sendable, Hashable {
+    /// Canvas pixels, >= 0. The compositor also limits it to half the shorter side of the clip's frame.
+    public var cornerRadius: Double
+    public init(cornerRadius: Double = 0) { self.cornerRadius = cornerRadius }
+    public static let none = ClipEffects()
+}
+
+extension Clip {
+    /// Effects at timeline time `t`.
+    public func effects(at t: Time) -> ClipEffects {
+        ClipEffects(cornerRadius: max(animation.cornerRadius.value(atLocal: t - start), 0))
+    }
 }
