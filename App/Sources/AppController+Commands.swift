@@ -9,7 +9,7 @@ extension AppController {
         case .shuttleReverse, .shuttleStop, .shuttleForward, .playPause,
              .stepBackward, .stepForward, .stepBackward5, .stepForward5,
              .previousEditPoint, .nextEditPoint, .goToStart, .goToEnd,
-             .markIn, .markOut, .goToIn, .goToOut, .clearInOut, .lift, .extract, .insert, .overwrite, .addMarker,
+             .markIn, .markOut, .markClip, .goToIn, .goToOut, .clearInOut, .lift, .extract, .insert, .overwrite, .addMarker,
              .tool, .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext,
              .delete, .rippleDelete, .toggleSnapping, .undo, .redo,
              .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel,
@@ -21,6 +21,7 @@ extension AppController {
     }
 
     func execute(_ c: EditorCommand) {
+        if ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1" { NSLog("SSKEY execute \(c) playing=\(session.isPlaying)") }
         // Editing text (a field or the timecode box): the standard commands go to the editor.
         if let tv = textResponder, forwardToText(c, tv) { return }
         guard Self.isSupported(c) else {
@@ -42,6 +43,7 @@ extension AppController {
         case .goToEnd: session.goToEnd()
         case .markIn: session.markIn()
         case .markOut: session.markOut()
+        case .markClip: session.markClip()
         case .goToIn: session.goToIn()
         case .goToOut: session.goToOut()
         case .clearInOut: session.clearInOut()

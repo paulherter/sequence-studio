@@ -57,6 +57,18 @@ private final class SessionTestClock: @unchecked Sendable {
     var timeline: Timeline { session.activeTimeline! }
 }
 
+@MainActor @Suite struct MarkClipTests {
+    @Test func marksClipUnderPlayhead() throws {
+        let r = try Rig()
+        let clip = r.t.tracks.flatMap(\.clips).first!
+        r.session.seek(to: clip.start + r.timeline.frameDuration)
+        r.session.markClip()
+        #expect(r.timeline.inOut != nil)
+        #expect(r.timeline.inOut!.start <= clip.start && r.timeline.inOut!.end >= clip.timeline.end)
+        #expect(r.session.undoName == "Mark Clip")
+    }
+}
+
 @MainActor @Suite struct EditorSessionTests {
     // MARK: Engine and undo
 

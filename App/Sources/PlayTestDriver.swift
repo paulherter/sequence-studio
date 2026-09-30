@@ -8,6 +8,25 @@ import SSPlayback
 /// and logs what the playback engine reports (presented frames, drops, position, a readback pixel). Quits when done.
 @MainActor
 enum PlayTestDriver {
+    /// `SS_KEYTEST=1` (with SS_IMPORT): posts real Space key events into the window and logs the session state.
+    static func runKeyTestIfRequested(_ c: AppController) {
+        guard ProcessInfo.processInfo.environment["SS_KEYTEST"] == "1" else { return }
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(6))
+            for i in 1...4 {
+                for type in [NSEvent.EventType.keyDown, .keyUp] {
+                    let e = NSEvent.keyEvent(with: type, location: .zero, modifierFlags: [], timestamp: ProcessInfo.processInfo.systemUptime,
+                                             windowNumber: c.window.windowNumber, context: nil, characters: " ", charactersIgnoringModifiers: " ",
+                                             isARepeat: false, keyCode: 49)!
+                    NSApp.postEvent(e, atStart: false)
+                }
+                try? await Task.sleep(for: .seconds(1))
+                NSLog("KEYTEST press \(i): isPlaying=\(c.session.isPlaying) rate=\(c.session.engine.rate) playhead=\(c.session.playhead.value)/\(c.session.playhead.timescale)")
+            }
+            exit(0)
+        }
+    }
+
     static func runIfRequested(_ c: AppController) {
         guard let path = ProcessInfo.processInfo.environment["SS_PLAYTEST"] else { return }
         Task { @MainActor in
