@@ -5,7 +5,14 @@ import SSCore
 import SSMedia
 import SSRender
 
-/// Program/Source monitor playback (video path; audio joins in E-11). API per ARCHITECTURE §6.
+/// Program/Source monitor playback. API per ARCHITECTURE §6.
+///
+/// Audio (E-11): with an `AudioPlaying` (the app passes `AudioEngine(media:)`), a timeline with audible audio
+/// (`audioSegments` non-empty: some unmuted/solo track has clips) plays through it and the engine runs on its
+/// `AudioClock` (video follows audio). Otherwise, or when the audio output cannot start, the injected clock drives.
+/// The output is prepared lazily in `play()` (hardware start may block briefly), never from `setTimeline`. If it fails,
+/// or the clock's watchdog sees the output stall (no audio consumed for 250 ms), playback continues on the injected
+/// clock at the current position and `audioUnavailable` is set; the next `play()` retries.
 ///
 /// The main actor posts snapshots (timeline, quality, seeks) into the render loop's `Mutex<RenderState>`; the render
 /// loop runs on a dedicated render thread (`CAMetalDisplayLink`) while a layer is attached, or one iteration per
@@ -22,14 +29,28 @@ import SSRender
     let loop: RenderLoop
     private let device: MTLDevice
     private var timeline: Timeline?
+    private var sequences: [Timeline.ID: Timeline] = [:]
     private var driver: DisplayLinkDriver?
+    private let switching: SwitchingClock
+    /// Audio output (nil = video only). Also the source of the timeline meter (`meterSnapshot()`).
+    public let audio: (any AudioPlaying)?
+    private var prepareFailed = false
+    private var audioPrepared = false
+    /// `audio.prepare()` failed or the output stalled: running on the injected clock until the next `play()` retries.
+    public var audioUnavailable: Bool { prepareFailed || switching.audioFailed }
 
     /// `clock` defaults to a `HostClock`; tests pass a `ManualClock` and drive the loop with `tick()`.
+    /// `audio`: nil = video only; tests pass a `ManualAudio`.
     public init(device: MTLDevice, media: MediaResolver, clock: any PlaybackClock = HostClock(),
-                cache: FrameCache<DecodedFrame> = FrameCache()) throws {
+                cache: FrameCache<DecodedFrame> = FrameCache(), audio: (any AudioPlaying)? = nil) throws {
         self.device = device
-        loop = try RenderLoop(device: device, resolver: media, clock: clock, cache: cache)
+        self.audio = audio
+        switching = SwitchingClock(host: clock, audio: audio.map { AudioClock(audio: $0) })
+        loop = try RenderLoop(device: device, resolver: media, clock: switching, cache: cache)
     }
+
+    /// True while the audio clock drives playback.
+    public var usesAudioClock: Bool { switching.isAudio }
 
     isolated deinit { driver?.stop() }
 
@@ -39,7 +60,10 @@ import SSRender
     /// Variant with the project's other sequences, so nested clips resolve (`Project.timelines` by ID).
     public func setTimeline(_ timeline: Timeline, sequences: [Timeline.ID: Timeline]) {
         self.timeline = timeline
+        self.sequences = sequences
         loop.setTimeline(timeline, sequences: sequences)
+        audio?.setTimeline(timeline, sequences: sequences)
+        selectClock(mayPrepare: false)
     }
 
     /// nil = headless (render offscreen, see `lastRenderedTexture`).
@@ -58,6 +82,8 @@ import SSRender
 
     public func play(_ rate: PlaybackRate = .init(1, 1)) {
         guard !rate.isPaused else { pause(); return }
+        if audioUnavailable { prepareFailed = false; switching.clearAudioFailure() }   // retry
+        selectClock(mayPrepare: true)
         let start = gridNow()
         loop.clock.start(at: start, rate: rate)
         self.rate = rate
@@ -114,6 +140,29 @@ import SSRender
     var cacheCount: Int { loop.cache.count }
 
     // MARK: Private
+
+    /// Audio clock when the timeline is audible and the output is up, else the injected clock. A switch hands the
+    /// position and rate over (the old clock stops).
+    /// Only `play()` may prepare (bring the hardware up); `setTimeline` switches to audio only if it already is.
+    private func selectClock(mayPrepare: Bool) {
+        guard let audio else { return }
+        let audible = !audioUnavailable && timeline.map { Self.isAudible($0, sequences: sequences) } == true
+        if audible && !switching.isAudio {
+            if !audioPrepared {
+                guard mayPrepare else { return }
+                do { try audio.prepare(); audioPrepared = true } catch { prepareFailed = true; return }
+            }
+            switching.useAudio(true)
+        } else if !audible && switching.isAudio {
+            switching.useAudio(false)
+        }
+    }
+
+    /// Some unmuted (solo-respecting) audio track has a clip anywhere in the timeline.
+    nonisolated static func isAudible(_ tl: Timeline, sequences: [Timeline.ID: Timeline]) -> Bool {
+        guard tl.duration > .zero else { return false }
+        return !tl.audioSegments(in: TimeRange(start: .zero, duration: tl.duration), sequences: { sequences[$0] }).isEmpty
+    }
 
     private func gridNow() -> Time {
         let now = loop.clock.now()

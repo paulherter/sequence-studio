@@ -227,7 +227,7 @@ public protocol PlaybackClock: Sendable {
 // Model: anchor (position, elapsed) + rate; now() = anchor + (elapsed - anchorElapsed) × rate, exact rational, continuous across re-anchors.
 public final class HostClock: PlaybackClock { public init() }   // mach_continuous_time, rational (ns timescale)
 public final class ManualClock: PlaybackClock { public init(position: Time = .zero, rate: PlaybackRate = .zero); public func advance(by: Time) }  // tests
-public final class AudioClock: PlaybackClock { }           // planned, not on main: derived from RingBuffer.consumedFrames, see §7
+public final class AudioClock: PlaybackClock { public init(audio: any AudioPlaying) }   // E-11, derived from consumed frames, see §7
 
 /// (FrameCache: pending merge, branch worktree-agent-af1484b4a26699528: adds a default budget and low-water eviction; signature below is the pre-branch contract.)
 /// Byte-budgeted cache of decoded frames. Thread-safe (Synchronization.Mutex); lookups never block on decoding.
@@ -275,6 +275,12 @@ public actor DecodeScheduler {                             // runs jobs, one in 
 // E-09 additions: init(device:media:clock: = HostClock(), cache: = FrameCache()); setTimeline(_:sequences:) for nested clips;
 //   headless hooks tick() -> Bool (one synchronous loop iteration), waitForDecodes() async, lastRenderedTexture. DecodeScheduler runs
 //   each job on a per-media serial DispatchQueue (TaskExecutor preference), never on the cooperative pool.
+// E-11 additions: init(..., audio: (any AudioPlaying)? = nil) (nil = video only; the app passes AudioEngine(media:), tests ManualAudio);
+//   `usesAudioClock`, `audioUnavailable` (prepare() threw or the output stalled -> injected clock; next play() retries), `audio` (meterSnapshot()).
+//   The loop's clock is an internal SwitchingClock (control calls + switches serialised): audible timeline (audioSegments over the whole
+//   duration non-empty) -> AudioClock, else the injected clock; a switch hands position + rate over. prepare() only in play(), never setTimeline.
+//   Watchdog: AudioClock.sample().stalled (running, no audio consumed for 250 ms) -> SwitchingClock falls back to the injected clock at the
+//   current position. On the audio clock, reverse stops inside frame 0 (audio never goes < 0).
 public protocol MediaResolver: Sendable { func demuxer(for media: UUID) throws -> any Demuxing; func audio(for media: UUID) throws -> any AudioSource }
 // StaticMediaResolver(demuxers:audio:) = fixed table (tests, bench); unknown IDs throw (layer draws .offline).
 public struct PlaybackStats: Sendable {
@@ -296,7 +302,22 @@ media's `SampleIndex` → cache lookup (miss: `nearest`, count drop, ask schedul
 - Graph: `AVAudioSourceNode` (our mixer) → `AVAudioUnitTimePitch` (rate = |speed|, pitch preserved) → `mainMixerNode` → output.
   Tap on the source node output for the timeline audio meter (peak/RMS per channel).
 - Landed (main): `AudioFeeder`, `RingBuffer` in SSPlayback; `AudioSource`/`AssetAudioSource`/`MemoryAudioSource` in SSMedia; `RealtimeAudioFX` in SSAudioFX.
-  `AudioEngine`, `AudioClock`, `ScrubAudio` and the AVAudioEngine graph are not on main yet.
+  E-11: `AudioPlaying` protocol (AudioPlaying.swift, + `ManualAudio` for tests), `AudioEngine` (real graph), `AudioClock`. `ScrubAudio` not yet.
+- `AudioPlaying`: `prepare() throws` (hardware + feeder thread, idempotent, may block; `AudioEngineError.noOutputDevice`), `start()`/`stop()` (atomics;
+  stop = 5 ms fade-out then silence, hardware keeps running), `setRate` (direction for the next seek, TimePitch |rate|, bypass at 1, re-reads latency),
+  `seek(to: Time) -> generation`, `flushed`, `consumedAtEpoch`, `consumedFrames`, `lastRender: AudioRenderStamp` (frames after / consumed by /
+  host ns of the last consuming render call), `hostNanoseconds()`, `outputLatency` (output time, unscaled: outputNode.presentationLatency
+  at prepare/config change + TimePitch latency at the current rate, 0 while bypassed), `underrunCount`, `meterSnapshot()` (peak/RMS L/R, tap on
+  the source node), `setRestartHandler` (AVAudioEngineConfigurationChange: engine restarted, latency re-measured, clock re-seeks at its position).
+  Only `AudioClock` drives it while it is the clock (every flush must be one it requested). Ring capacity 65536, fadeFrames 240.
+- Render core (`AudioRenderCore`, headless-testable): after a seek it primes on THAT generation (`AudioFeeder.flushGeneration`, lock-free, stored
+  after the ring flush and before any push): old material keeps playing until then, then silence until one full render call is queued; shortage
+  while priming is not an underrun. Priming requests are a sequence counter (a newer one is never cleared by the render thread).
+- `AudioClock`: holds at the anchor until the flush of its seek is acknowledged and until elapsed > 0, i.e.
+  `anchor ± max(0, (heard − base − M)/48k − outputLatency×|rate|)`, `heard` = last call's first frame + |rate|×48k×(now − call time), clamped
+  to that call's frames (smooth between callbacks, monotonic within an anchor). outputLatency is snapshotted at each restart.
+  Every start/setRate/seek while running = feeder restart (flush, crossfade); a seek while paused only moves the anchor. Control calls hold
+  their own lock and call the audio object outside the state lock, so `now()` never waits on audio work.
 - `AudioFeeder` (own thread) mixes `timeline.audioSegments` from `AudioSource`s into a lock-free SPSC ring buffer at
   timeline rate, **in play direction** (reverse = blocks read backwards and reversed). Render block only copies from the ring,
   never locks, never allocates. Underrun = silence + counter.

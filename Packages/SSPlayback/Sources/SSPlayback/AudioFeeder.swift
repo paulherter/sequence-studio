@@ -132,6 +132,9 @@ public final class AudioFeeder: @unchecked Sendable {
         var sequences: [Timeline.ID: Timeline] = [:]   // nested sequences, by id
     }
     private let flushState = Mutex<(generation: Int, epoch: Int, latency: Int)>((0, 0, 0))
+    /// Lock-free copy of `flushed.generation` for the audio render thread; stored after the ring flush and before any
+    /// push of that generation, so once it is >= g the ring holds nothing mixed before generation g.
+    public let flushGeneration = FlushGeneration()
     private let control: Mutex<Control>
     private var sources: [UUID: any AudioSource] = [:]
     private let mixL: UnsafeMutablePointer<Float>, mixR: UnsafeMutablePointer<Float>
@@ -254,6 +257,7 @@ public final class AudioFeeder: @unchecked Sendable {
                 }
                 let e = ring.flush(); appliedGeneration = gen
                 flushState.withLock { $0 = (gen, e, buses.latency) }
+                flushGeneration.value.store(gen, ordering: .releasing)
                 for b in buses.list { b.reset() }    // FX/denoiser history and delay lines belong to the old position
             }
             guard ring.availableToWrite >= blockFrames else { break }
@@ -402,4 +406,10 @@ public final class AudioFeeder: @unchecked Sendable {
         if num % den < 0 { q -= 1 }
         return Int64(q)
     }
+}
+
+/// Generation of the latest feeder flush, readable without locks (render thread).
+public final class FlushGeneration: Sendable {
+    public let value = Atomic<Int>(0)
+    public init() {}
 }

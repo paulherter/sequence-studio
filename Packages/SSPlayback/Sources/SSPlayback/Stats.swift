@@ -9,7 +9,8 @@ public struct PlaybackStats: Sendable, Equatable {
     public var droppedFrames = 0
     /// seek/step call -> first complete composite of the target frame.
     public var stepLatencies: [Duration] = []
-    /// |presented video time - audio clock| over the run. Stays 0 until the audio clock exists (E-11).
+    /// |presented video time - audio clock| over the run (read right after each composite while playing on the audio
+    /// clock). Stays 0 while the engine runs on the host clock.
     public var maxAVDrift: Time = .zero
     /// Bytes held by the frame cache.
     public var cacheBytes = 0

@@ -294,7 +294,9 @@ final class RenderLoop: @unchecked Sendable {
         let last = Self.lastFrame(tl)
         var t = Self.gridTime(now, tl)
         var edge = false
-        if (rate.isForward && now >= last + fd) || (rate.isReverse && now.isNegative) {
+        // The audio clock never goes below 0 in reverse (the feeder stops producing at frame 0): stop inside frame 0.
+        let audioMaster = (clock as? SwitchingClock)?.isAudio ?? (clock is AudioClock)
+        if (rate.isForward && now >= last + fd) || (rate.isReverse && (now.isNegative || (audioMaster && now < fd))) {
             t = rate.isForward ? last : .zero
             clock.stop(); clock.seek(to: t)
             edge = true
@@ -329,7 +331,14 @@ final class RenderLoop: @unchecked Sendable {
 
         let isNew = t != lastTime
         let playing = !rate.isPaused && !edge
+        // A/V drift: audio clock after the composite vs the frame just presented.
+        var drift = Time.zero
+        if presented && playing && audioMaster {
+            let d = clock.now() - t
+            drift = d.isNegative ? -d : d
+        }
         state.withLock { s in
+            if drift > s.stats.maxAVDrift { s.stats.maxAVDrift = drift }
             s.renderedGeneration = generation
             s.incomplete = b.waiting
             guard presented else { return }
