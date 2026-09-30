@@ -20,19 +20,9 @@
       "name": "playhead",
       "layers": [
         {
-          "image-name": "4-playhead-rim.svg",
-          "name": "4-playhead-rim",
-          "glass": false
-        },
-        {
           "image-name": "3-playhead.svg",
           "name": "3-playhead",
           "glass": true
-        },
-        {
-          "image-name": "2-playhead-gap.svg",
-          "name": "2-playhead-gap",
-          "glass": false
         }
       ],
       "lighting": "combined",
@@ -49,6 +39,11 @@
     {
       "name": "track",
       "layers": [
+        {
+          "image-name": "2-playhead-shadow.svg",
+          "name": "2-playhead-shadow",
+          "glass": false
+        },
         {
           "image-name": "1-video-track.svg",
           "name": "1-video-track",
