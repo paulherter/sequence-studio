@@ -6,3 +6,4 @@ DerivedData/
 build/
 /TestMedia/
 *.xcresult
+docs/reference/

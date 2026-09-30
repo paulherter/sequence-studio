@@ -1,0 +1,37 @@
+name: SequenceStudio
+options:
+  bundleIdPrefix: de.paulherter
+  deploymentTarget:
+    macOS: "26.0"
+settings:
+  base:
+    SWIFT_VERSION: "6.0"
+    SWIFT_STRICT_CONCURRENCY: complete
+    MACOSX_DEPLOYMENT_TARGET: "26.0"
+    ARCHS: arm64
+    ONLY_ACTIVE_ARCH: YES
+packages:
+  SSCore: { path: Packages/SSCore }
+  SSMedia: { path: Packages/SSMedia }
+  SSRender: { path: Packages/SSRender }
+  SSPlayback: { path: Packages/SSPlayback }
+  SSExport: { path: Packages/SSExport }
+  SSTranscribe: { path: Packages/SSTranscribe }
+targets:
+  SequenceStudio:
+    type: application
+    platform: macOS
+    sources: [App/Sources]
+    dependencies:
+      - package: SSCore
+      - package: SSMedia
+      - package: SSRender
+      - package: SSPlayback
+      - package: SSExport
+      - package: SSTranscribe
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: de.paulherter.SequenceStudio
+        GENERATE_INFOPLIST_FILE: YES
+        CODE_SIGN_STYLE: Automatic
+        CODE_SIGN_IDENTITY: "-"
