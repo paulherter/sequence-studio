@@ -27,6 +27,17 @@ public indirect enum LayoutNode: Sendable, Codable, Hashable {
         }
     }
 
+    /// Saved layouts from before the Source monitor was a placeholder may have it selected: a group holding both monitors opens on Program.
+    public var programPreferred: LayoutNode {
+        switch self {
+        case .tabs(let panels, let selected):
+            return selected == .sourceMonitor && panels.contains(.programMonitor)
+                ? .tabs(panels: panels, selected: .programMonitor) : self
+        case .split(let axis, let children, let fractions):
+            return .split(axis: axis, children: children.map(\.programPreferred), fractions: fractions)
+        }
+    }
+
     /// Repaired copy: empty tab groups and empty splits removed (with their fractions), `selected` inside `panels`,
     /// single-child splits collapsed, fractions one per child and summing to 1 (equal split otherwise). Nil when nothing is left.
     public var sanitized: LayoutNode? {
@@ -69,7 +80,7 @@ public struct Workspace: Sendable, Codable, Hashable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
-        root = try c.decode(LayoutNode.self, forKey: .root).sanitized ?? Workspace.editingPC.root
+        root = try c.decode(LayoutNode.self, forKey: .root).sanitized?.programPreferred ?? Workspace.editingPC.root
         hidden = try c.decodeIfPresent(Set<PanelID>.self, forKey: .hidden) ?? []
         maximized = try c.decodeIfPresent(PanelID.self, forKey: .maximized)
     }

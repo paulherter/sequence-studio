@@ -1,6 +1,7 @@
 import Foundation
 import Observation
 import SSCore
+import SSMedia
 
 /// The editing document: one project with undo history, the active sequence, playhead, selection, file state and
 /// the Program engine. Every edit goes through `perform` / `performTimeline` (one undo step each); after each
@@ -81,6 +82,9 @@ public final class EditorSession {
         syncMedia()
         pushTimeline(force: true)
     }
+
+    /// Probe used by `detectMissingColor` (SSMedia `ColorDetection`); injectable for tests.
+    @ObservationIgnored var colorDetector: @Sendable (URL) async -> (space: ColorSpaceID, embeddedLUTName: String?)? = { await ColorDetection.detect(url: $0) }
 
     deinit { autosaveTask?.cancel() }
 
@@ -514,6 +518,29 @@ public final class EditorSession {
         pushTimeline(force: true)
         engine.seek(to: .zero)
         notify([.project, .selection, .playhead])
+        detectMissingColor()
+    }
+
+    /// Media from before colour detection (`MediaInfo.needsColorDetection`, v6 files) is probed in the background and its
+    /// info updated once, outside undo and without dirtying the project. Runs on open; call again after a relink.
+    public func detectMissingColor() {
+        let pending = project.media.filter { $0.info?.needsColorDetection == true && $0.info?.video != nil }
+        guard !pending.isEmpty else { return }
+        let projectID = project.id
+        let detect = colorDetector
+        Task { [weak self] in
+            for ref in pending {
+                guard FileManager.default.fileExists(atPath: ref.path),
+                      let found = await detect(URL(fileURLWithPath: ref.path)) else { continue }
+                guard let self, self.project.id == projectID else { return }
+                self.history.amendAll { p in
+                    guard let i = p.media.firstIndex(where: { $0.id == ref.id && $0.path == ref.path }) else { return }
+                    p.media[i].info?.detectedColorSpace = found.space
+                    p.media[i].info?.embeddedLUTName = found.embeddedLUTName
+                }
+                self.projectDidChange()
+            }
+        }
     }
 
     // MARK: Autosave and recovery

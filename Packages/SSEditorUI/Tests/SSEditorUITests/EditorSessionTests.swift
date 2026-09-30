@@ -672,3 +672,27 @@ private final class Counter: @unchecked Sendable {
         #expect(opens.value == 2)
     }
 }
+
+@MainActor @Suite struct LazyColorDetectionTests {
+    @Test func openFillsDetectedColorOnceOutsideUndo() async throws {
+        let dir = tempDir()
+        let file = dir.appendingPathComponent("clip.mov")
+        try Data([0]).write(to: file)
+        let info = MediaInfo(duration: s(2), video: VideoTrackInfo(width: 1920, height: 1080, codec: "hvc1", bitDepth: 10,
+                             chroma: "4:2:0", nominalFrameDuration: fd, isVariableFrameRate: false))
+        #expect(info.needsColorDetection)
+        let ref = MediaRef(name: "clip.mov", path: file.path, fingerprint: MediaFingerprint(size: 1), duration: s(2), info: info)
+        var p = Project(name: "P", timelines: [Timeline(name: "T", frameDuration: fd, tracks: [Track(kind: .video)])])
+        p.add(ref)
+        let session = EditorSession()
+        session.colorDetector = { _ in (.sLog3SGamut3Cine, "Look") }
+        session.newProject(p)
+        for _ in 0..<100 where session.project.media.first?.info?.needsColorDetection == true {
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        #expect(session.project.media.first?.info?.detectedColorSpace == .sLog3SGamut3Cine)
+        #expect(session.project.media.first?.info?.embeddedLUTName == "Look")
+        #expect(!session.isDirty)
+        #expect(!session.canUndo)
+    }
+}

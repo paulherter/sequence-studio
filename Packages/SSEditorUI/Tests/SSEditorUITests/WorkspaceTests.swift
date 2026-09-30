@@ -19,6 +19,17 @@ import Testing
         #expect(Set(w.allPanels) == Set(PanelID.allCases))
     }
 
+    @Test func savedWorkspaceWithSourceSelectedOpensOnProgram() throws {
+        var w = Workspace.editingPC
+        w.root = LayoutNode.tabs(panels: [.programMonitor, .sourceMonitor], selected: .sourceMonitor)
+        let data = try JSONEncoder().encode(w)
+        let back = try JSONDecoder().decode(Workspace.self, from: data)
+        #expect(back.root == .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor))
+        // A group without Program keeps its selection.
+        let only = LayoutNode.tabs(panels: [.sourceMonitor, .text], selected: .sourceMonitor)
+        #expect(only.programPreferred == only)
+    }
+
     @Test func macBookStructure() {
         let w = Workspace.editingMacBook
         guard case .split(.horizontal, let c, _) = w.root else { Issue.record("root"); return }

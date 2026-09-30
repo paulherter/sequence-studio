@@ -53,8 +53,10 @@ public enum MediaImporter {
         var counts: [Time: Int] = [:]
         let e = index.entries
         for i in 1..<max(1, e.count) { counts[e[i].pts - e[i - 1].pts, default: 0] += 1 }
-        let nominal = counts.max { $0.value < $1.value }?.key ?? e.first?.duration ?? Time(1, 30)
-        let vfr = counts.count > 1 && counts.keys.contains { abs(Int128($0.value) * Int128(nominal.timescale) - Int128(nominal.value) * Int128($0.timescale)) * 50 > Int128(nominal.value) * Int128($0.timescale) }
+        let modal = counts.max { $0.value < $1.value }?.key ?? e.first?.duration ?? Time(1, 30)
+        // Sequence-facing rate: average over the whole clip snapped to a standard rate (a per-sample delta misleads on VFR).
+        let nominal = e.count > 1 ? FrameRate.sequenceFrameDuration(frameCount: e.count, duration: index.duration) : modal
+        let vfr = counts.count > 1 && counts.keys.contains { abs(Int128($0.value) * Int128(modal.timescale) - Int128(modal.value) * Int128($0.timescale)) * 50 > Int128(modal.value) * Int128($0.timescale) }
 
         func tag(_ key: CFString) -> String? { ext[key as String] as? String }
         return VideoTrackInfo(width: Int(dims.width), height: Int(dims.height), codec: fourCC(sub), bitDepth: depth, chroma: chroma,

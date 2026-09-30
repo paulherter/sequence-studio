@@ -4,6 +4,7 @@ import QuartzCore
 import SSCore
 import SSMedia
 import SSPlayback
+import SSRender
 
 /// What the editor needs from the Program playback engine (docs/ARCHITECTURE.md section 6). The real
 /// `SSPlayback.PlaybackEngine` conforms (below); tests run against `StubProgramEngine`.
@@ -24,6 +25,8 @@ public protocol ProgramEngine: AnyObject {
     func scrub(to t: Time)
     func endScrub()
     var quality: DecodeScale { get set }
+    /// Viewer Fit / percent zoom (the monitor popup).
+    var viewerZoom: ViewerZoom { get set }
     /// At most display rate; drives the playhead and timecode.
     var onPositionChange: (@MainActor (Time) -> Void)? { get set }
     /// Last composited frame (feeds the scopes); nil when nothing was rendered or the engine is a stand-in.
@@ -55,6 +58,7 @@ public final class StubProgramEngine: ProgramEngine {
     public private(set) var position: Time = .zero
     public private(set) var rate: PlaybackRate = .zero
     public var quality: DecodeScale = .full
+    public var viewerZoom: ViewerZoom = .fit
     public var onPositionChange: (@MainActor (Time) -> Void)?
 
     public init() {}

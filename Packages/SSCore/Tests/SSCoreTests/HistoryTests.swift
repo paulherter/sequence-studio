@@ -117,4 +117,24 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         _ = h.redo()
         #expect(!h.isDirty)
     }
+
+    @Test func amendAllChangesEveryStateWithoutAnUndoStepOrDirt() {
+        var h = History(1)
+        h.commit("inc") { $0 += 1 }       // 1 -> 2
+        h.commit("inc") { $0 += 1 }       // 2 -> 3
+        h.markSaved()
+        h.undo()                          // current 2, redo holds 3
+        h.amendAll { $0 += 100 }
+        #expect(h.current == 102)
+        #expect(h.isDirty)   // saved was 3 + 100, current 102: still different
+        h.redo(); #expect(h.current == 103)
+        h.undo(); h.undo(); #expect(h.current == 101)
+        #expect(h.undoName == nil)
+    }
+
+    @Test func amendAllKeepsCleanStateClean() {
+        var h = History(1)
+        h.amendAll { $0 += 1 }
+        #expect(h.current == 2 && !h.isDirty && !h.canUndo)
+    }
 }

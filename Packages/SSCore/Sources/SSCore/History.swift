@@ -47,6 +47,14 @@ public struct History<State: Sendable & Equatable>: Sendable {
         current = next
     }
 
+    /// Applies `change` to the current state, every undo and redo state and the saved state: a background
+    /// refinement (e.g. detected media properties) that is not an edit. Adds no undo step; dirty stays as it was.
+    public mutating func amendAll(_ change: (inout State) -> Void) {
+        change(&current); change(&saved)
+        for i in undoStack.indices { change(&undoStack[i].state) }
+        for i in redoStack.indices { change(&redoStack[i].state) }
+    }
+
     @discardableResult
     public mutating func undo() -> Bool {
         guard let e = undoStack.popLast() else { return false }

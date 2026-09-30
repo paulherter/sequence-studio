@@ -191,7 +191,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         if let t = session.activeTimeline {
             let f = t.format
             let fps = Double(f.frameDuration.timescale) / Double(f.frameDuration.value)
+            // The sequence rate is fixed; say so when its source clip is variable frame rate.
+            let vfr = t.tracks.lazy.filter { $0.kind == .video }.flatMap(\.clips)
+                .contains { session.project.media($0.media)?.info?.video?.isVariableFrameRate == true }
             shell.statusBar.setDetail("\(t.name)  ·  \(f.width)×\(f.height)  ·  \(String(format: "%.2f", fps)) fps"
+                                      + (vfr ? " VFR" : "")
                                       + (session.isDirty ? "  ·  Edited" : ""))
         }
         if let e = session.lastError { shell.statusBar.flash(e); session.clearError() }

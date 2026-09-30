@@ -23,6 +23,8 @@ public final class RulerView: NSView {
         self.timecode = TimecodeFormat(frameDuration: geometry.frameDuration)
         super.init(frame: .zero)
         wantsLayer = true
+        // macOS 14+: views do not clip by default, so an opaque `dirtyRect.fill()` would paint over its siblings.
+        clipsToBounds = true
     }
     public required init?(coder: NSCoder) { fatalError("not used") }
 
@@ -66,7 +68,7 @@ public final class RulerView: NSView {
 
     public override func draw(_ dirtyRect: NSRect) {
         Theme.Colors.lane.setFill()
-        dirtyRect.fill()
+        dirtyRect.intersection(bounds).fill()
         let h = bounds.height
         let origin = TimelineGeometry.contentOriginX
         let content = CGRect(x: origin, y: 0, width: max(bounds.width - origin, 0), height: h)

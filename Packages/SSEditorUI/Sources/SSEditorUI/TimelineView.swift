@@ -74,6 +74,8 @@ public final class TimelineView: NSView {
         self.ruler = RulerView(geometry: geometry)
         super.init(frame: frame)
         wantsLayer = true
+        // macOS 14+: views do not clip by default, so an opaque `dirtyRect.fill()` would paint over its siblings.
+        clipsToBounds = true
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         registerForDraggedTypes([.sequenceMediaIDs, .sequenceTextTemplate, .fileURL])
         addSubview(ruler)
@@ -434,7 +436,7 @@ public final class TimelineView: NSView {
 
     public override func draw(_ dirtyRect: NSRect) {
         Theme.Colors.timeline.setFill()
-        dirtyRect.fill()
+        dirtyRect.intersection(bounds).fill()
 
         let rows = geometry.rows(for: timeline)
         let contentClip = CGRect(x: TimelineGeometry.contentOriginX, y: TimelineGeometry.rulerHeight,

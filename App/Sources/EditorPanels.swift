@@ -157,8 +157,8 @@ final class EditorPanels {
         monitorModel.onQualityChange = { [weak self] q in self?.session.engine.quality = q.decodeScale }
         monitorModel.onZoomChange = { [weak self] z in
             switch z {
-            case .fit: self?.viewer.zoom = .fit
-            case .percent(let p): self?.viewer.zoom = .percent(p)
+            case .fit: self?.session.engine.viewerZoom = .fit
+            case .percent(let p): self?.session.engine.viewerZoom = .percent(p)
             }
         }
         monitorModel.onAction = { [weak self] a in

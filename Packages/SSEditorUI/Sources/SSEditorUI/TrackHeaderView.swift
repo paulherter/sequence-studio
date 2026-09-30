@@ -28,6 +28,8 @@ public final class TrackHeaderView: NSView {
         self.track = track; self.trackID = track.id; self.label = label
         super.init(frame: .zero)
         wantsLayer = true
+        // macOS 14+: views do not clip by default, so an opaque `dirtyRect.fill()` would paint over its siblings.
+        clipsToBounds = true
         for (button, toggle) in [(eyeButton, TrackToggle.visible), (muteButton, .mute), (soloButton, .solo),
                                  (lockButton, .lock), (chipButton, .target)] {
             button.target = self
