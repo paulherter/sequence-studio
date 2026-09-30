@@ -40,10 +40,19 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
     private let makeAudio: AudioFactory
     private let fileExists: @Sendable (String) -> Bool
 
-    public init(demuxer: @escaping DemuxerFactory = { try await AVDemuxer(url: $0) },
-                audio: @escaping AudioFactory = { try await AssetAudioSource.open(url: $0, sampleRate: $1) },
+    public static func openDemuxer(_ url: URL) async throws -> any Demuxing { try await AVDemuxer(url: url) }
+    public static func openAudio(_ url: URL, _ sampleRate: Int) async throws -> any AudioSource {
+        try await AssetAudioSource.open(url: url, sampleRate: sampleRate)
+    }
+
+    /// Factories default to the AVFoundation ones. They default to nil (resolved here) rather than to a closure or
+    /// function value: an async throwing function as a default-argument expression miscompiles, and the process then
+    /// aborts with "freed pointer was not the last allocation" as soon as that factory throws (e.g. an unreadable file).
+    public init(demuxer: DemuxerFactory? = nil, audio: AudioFactory? = nil,
                 fileExists: @escaping @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) {
-        makeDemuxer = demuxer; makeAudio = audio; self.fileExists = fileExists
+        makeDemuxer = demuxer ?? { try await Self.openDemuxer($0) }
+        makeAudio = audio ?? { try await Self.openAudio($0, $1) }
+        self.fileExists = fileExists
     }
 
     /// Replaces the known media. Cached and in-flight sources of items whose path changed (relink) or that are gone
