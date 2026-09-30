@@ -12,3 +12,12 @@ Keyframe types are being built in SSCore by another session: SSText defines its 
 
 ## Open questions
 (collected during implementation)
+- Font weight: only bold trait is applied (weight >= semibold); real weight axes per family need a font resolver later.
+- Layout `bounds` exclude stroke width and shadow; renderer must inflate for ink bounds if it clips.
+- Layout coordinates: y down, origin top-left, units points; alignment container = maxWidth (nil: widest line). Confirm with renderer convention.
+- Line pitch uses font-level ascent+descent+leading+lineSpacing (uniform); per-line glyph metrics (fallback fonts/emoji) not used.
+- Word longer than maxWidth: Core Text breaks by character; a single glyph wider than maxWidth overflows.
+- `Fraction` (normalized keyframe time) and `Easing` are SSText-local; map to SSCore keyframe types when they land (overshoot/hold may need bezier equivalents).
+- Animation durations (pop-in 250ms, fade 200ms) and the built-in style values (sizes, fonts) are guesses; Paul to judge feel.
+- Style ref "default" aliases "classic" to match SSTranscribe `CaptionPreset.standard`; SSTranscribe is not a dependency.
+- Template JSON: no migration path yet (only v1); font files/embedded assets not part of the template.
