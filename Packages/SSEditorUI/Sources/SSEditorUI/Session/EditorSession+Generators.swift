@@ -48,7 +48,12 @@ extension EditorSession {
     /// Switches Rounded Corners on for the selected picture clips (radius only where it is still 0).
     @discardableResult
     public func addRoundedCorners(radius: Double = 24) -> Bool {
-        let ids = selection
+        addRoundedCorners(to: selection, radius: radius)
+    }
+
+    /// Same for the given clips (an effect dropped on one clip): one undo step.
+    @discardableResult
+    public func addRoundedCorners(to ids: Set<Clip.ID>, radius: Double = 24) -> Bool {
         guard !ids.isEmpty else { return false }
         return attempt("Add Rounded Corners") { t in
             var changed = false

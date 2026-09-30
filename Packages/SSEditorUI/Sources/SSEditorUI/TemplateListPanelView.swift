@@ -3,6 +3,8 @@ import SSCore
 import SSText
 
 extension NSPasteboard.PasteboardType {
+    /// An effect dragged from the Effects panel: the effect id.
+    public static let sequenceEffectID = NSPasteboard.PasteboardType("com.sequencestudio.effect-id")
     /// A text template dragged from the Library: the `TextTemplateCatalog` entry id as a string.
     public static let sequenceTextTemplate = NSPasteboard.PasteboardType("com.sequencestudio.text-template")
 }
@@ -59,7 +61,8 @@ public class TemplateListPanelView: NSView, NSTableViewDataSource, NSTableViewDe
         self.hint.stringValue = hint
         self.hint.font = Theme.Fonts.small
         self.hint.textColor = Theme.Colors.label3
-        addSubview(scroll); addSubview(button); addSubview(self.hint)
+        addSubview(scroll); addSubview(self.hint)
+        if !buttonTitle.isEmpty { addSubview(button) }
     }
 
     @available(*, unavailable) public required init?(coder: NSCoder) { fatalError() }
@@ -67,7 +70,7 @@ public class TemplateListPanelView: NSView, NSTableViewDataSource, NSTableViewDe
     public override func layout() {
         super.layout()
         let pad = Theme.Spacing.md
-        let footer: CGFloat = 52
+        let footer: CGFloat = button.superview == nil ? 28 : 52
         hint.frame = CGRect(x: pad, y: 6, width: max(bounds.width - 2 * pad, 0), height: 18)
         button.sizeToFit()
         button.frame.origin = CGPoint(x: pad, y: 28)
@@ -121,14 +124,15 @@ public class TemplateListPanelView: NSView, NSTableViewDataSource, NSTableViewDe
     }
 }
 
-/// Effects panel: the effects that exist so far. Applying one switches it on in Effect Controls.
+/// Effects panel: the effects that exist so far. Drag one onto a clip (or double-click for the selection); it then shows in Effect Controls.
 @MainActor
 public final class EffectsPanelView: TemplateListPanelView {
     public static let roundedCorners = "rounded-corners"
 
     public init() {
         super.init(rows: [Row(id: Self.roundedCorners, title: "Rounded Corners", subtitle: "Video", symbol: "app")],
-                   buttonTitle: "Apply to Selection", hint: "Double-click to apply to the selected clips.", label: "Effects")
+                   buttonTitle: "", hint: "Drag onto a clip, or double-click for the selected clips.", label: "Effects")
+        dragType = .sequenceEffectID
     }
     @available(*, unavailable) public required init?(coder: NSCoder) { fatalError() }
 }

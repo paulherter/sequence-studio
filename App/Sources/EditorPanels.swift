@@ -83,7 +83,32 @@ final class EditorPanels {
             self?.session.addTextClip(template: entry.template, at: time, track: track)
         }
         tv.onDropFiles = { [weak self] urls, time, track, insert in self?.dropFiles(urls, at: time, track: track, insert: insert) }
+        tv.dropItemsProvider = { [weak self] source in self?.dropItems(for: source) ?? [] }
+        tv.onDropEffect = { [weak self] id, clip in
+            guard let self, id == EffectsPanelView.roundedCorners else { return }
+            if !session.addRoundedCorners(to: [clip]) { onStatus?("Rounded Corners need a video clip that has none yet.") }
+        }
         tv.contextMenuProvider = { [weak self] p in self?.timelineMenu(at: p) }
+    }
+
+    /// Length and streams of what is being dragged, for the ghost. Files not imported yet get the 5 s placeholder.
+    private func dropItems(for source: TimelineView.DropSource) -> [DropItem] {
+        switch source {
+        case .media(let ids):
+            let marks = session.project.sourceMarks
+            return ids.compactMap { id in
+                guard let ref = session.project.media(id) else { return nil }
+                let total = ref.info?.duration ?? ref.duration
+                guard let d = marks[id]?.range.duration ?? total else { return nil }
+                return DropItem(name: ref.name, duration: d, hasVideo: ref.info?.video != nil || ref.info == nil,
+                                hasAudio: ref.info?.audio != nil)
+            }
+        case .files(let urls):
+            return urls.map { DropItem(name: $0.lastPathComponent, duration: Time(seconds: 5)) }
+        case .textTemplate(let id):
+            return [DropItem(name: TextTemplateCatalog.entry(id: id)?.name ?? "", duration: Time(seconds: 5))]
+        case .effect: return []
+        }
     }
 
     /// Files from the Library or Finder: imported into the project (one undo step), then placed like Project media.
