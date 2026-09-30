@@ -159,4 +159,27 @@ private func make(_ probe: Probe, _ r: Results, max: Int = 4, failing: Set<UUID>
         #expect(probe.snapshot().cancelled == [a])
         #expect(r.jobs.withLock { $0.isEmpty })
     }
+
+    /// Blocking decoder work must not run on the cooperative pool: jobs run on a per-media serial queue.
+    @Test func decodeRunsOnDedicatedQueue() async {
+        final class Labels: Sendable { let list = Mutex<[String]>([]) }
+        struct LabelDecoder: VideoDecoding {
+            let labels: Labels
+            var info: VideoTrackInfo { VideoTrackInfo(width: 2, height: 2, codec: "avc1", bitDepth: 8, chroma: "4:2:0", nominalFrameDuration: fd, isVariableFrameRate: false) }
+            var isHardware: Bool { false }
+            func invalidate() {}
+            func decode(_ range: ClosedRange<Int>) async throws -> [DecodedFrame] {
+                let label = String(cString: __dispatch_queue_get_label(nil))
+                labels.list.withLock { $0.append(label) }
+                return []
+            }
+        }
+        let labels = Labels(), a = UUID()
+        let s = DecodeScheduler(decoder: { _ in LabelDecoder(labels: labels) }, sink: { _, _ in })
+        await s.submit([job(a, 0)])
+        await s.waitUntilIdle()
+        let got = labels.list.withLock { $0 }
+        #expect(got.count == 1)
+        #expect(got.allSatisfy { $0.hasPrefix("SSPlayback.decode.") })
+    }
 }

@@ -25,6 +25,9 @@ public actor DecodeScheduler {
     private let sink: Sink
     private let onError: ErrorHandler?
     private var decoders: [UUID: any VideoDecoding] = [:]
+    /// One serial queue per media: decoder creation and `decode` (blocking AVFoundation/VideoToolbox work) run
+    /// there, never on the cooperative thread pool.
+    private var executors: [UUID: QueueTaskExecutor] = [:]
     private var pending: [PrefetchPlanner.Job] = []
     private var flights: [UUID: Flight] = [:]      // by media; stays until the task has really finished
     private var failed: Set<PrefetchPlanner.JobKey> = []
@@ -72,7 +75,9 @@ public actor DecodeScheduler {
             let job = pending.remove(at: i)
             let factory = makeDecoder
             let known = decoders[job.media]
-            let task = Task { [weak self] in
+            let executor = executors[job.media] ?? QueueTaskExecutor(label: "SSPlayback.decode.\(job.media.uuidString.prefix(8))")
+            executors[job.media] = executor
+            let task = Task(executorPreference: executor) { [weak self] in
                 let result: Result<(any VideoDecoding, [DecodedFrame]), any Error>
                 do {
                     let d = try known ?? factory(job.media)
@@ -99,5 +104,15 @@ public actor DecodeScheduler {
             }
         }
         pump()
+    }
+}
+
+/// Task executor over a private serial `DispatchQueue` (dedicated thread per queue while it has work).
+final class QueueTaskExecutor: TaskExecutor, Sendable {
+    let queue: DispatchQueue
+    init(label: String) { queue = DispatchQueue(label: label, qos: .userInitiated) }
+    func enqueue(_ job: consuming ExecutorJob) {
+        let job = UnownedJob(job)
+        queue.async { job.runSynchronously(on: self.asUnownedTaskExecutor()) }
     }
 }

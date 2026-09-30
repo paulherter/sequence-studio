@@ -272,7 +272,11 @@ public actor DecodeScheduler {                             // runs jobs, one in 
     public var onPositionChange: (@MainActor (Time) -> Void)?   // ≤ display rate, for playhead/timecode
     public var stats: PlaybackStats { get }
 }
+// E-09 additions: init(device:media:clock: = HostClock(), cache: = FrameCache()); setTimeline(_:sequences:) for nested clips;
+//   headless hooks tick() -> Bool (one synchronous loop iteration), waitForDecodes() async, lastRenderedTexture. DecodeScheduler runs
+//   each job on a per-media serial DispatchQueue (TaskExecutor preference), never on the cooperative pool.
 public protocol MediaResolver: Sendable { func demuxer(for media: UUID) throws -> any Demuxing; func audio(for media: UUID) throws -> any AudioSource }
+// StaticMediaResolver(demuxers:audio:) = fixed table (tests, bench); unknown IDs throw (layer draws .offline).
 public struct PlaybackStats: Sendable {
     public var presentedFrames: Int, droppedFrames: Int
     public var stepLatencies: [Duration]                   // seek/step call → frame on screen
