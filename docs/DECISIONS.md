@@ -51,3 +51,8 @@
 
 ## 2026-09-30 [auto] Embedded camera LUT (PHASE3 question 6)
 - Clips with an embedded look (Sony "Look Control data" item, decoded by `EmbeddedMeta.lut(inClip:)`) load it automatically as the Conversion LUT when the clip is imported, like Premiere's "use embedded LUT". The Conversion LUT slot shows "Embedded: <name>" with a toggle to turn it off (per clip, stored in the clip's color settings); the popup still lists it so it can be replaced by a file LUT. Clips without an embedded look keep the automatic color-managed conversion.
+
+## 2026-09-30 [auto] Text layers are generator clips
+- Text clips are SSCore generator clips (`ClipSource.generator`, kind "text", opaque payload = SSText TextTemplate + AnimationSet, project file v6). SSCore stays free of SSText.
+- Position/scale/rotation of a text layer come from the clip's Motion (keyframable like any clip, Premiere-like); the template itself has no position. The block is centred on the canvas before the clip transform.
+- Text in-animations are anchored to the clip start, so a split text clip replays its in-animation on the right half (accepted; revisit if it feels wrong).
