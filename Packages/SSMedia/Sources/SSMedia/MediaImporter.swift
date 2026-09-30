@@ -23,7 +23,15 @@ public enum MediaImporter {
             audio = AudioTrackInfo(sampleRate: Int(asbd.mSampleRate.rounded()), channels: Int(asbd.mChannelsPerFrame),
                                    codec: fourCC(CMFormatDescriptionGetMediaSubType(fd)))
         }
-        let info = MediaInfo(duration: dur, video: video, audio: audio)
+        var info = MediaInfo(duration: dur, video: video, audio: audio)
+        if let v = video {
+            // Detected once here; Sony metadata and the embedded camera LUT are best-effort (nil on any error).
+            let sony = try? SonyMetadata.read(forClip: url)
+            info.detectedColorSpace = ColorDetection.detect(colorPrimaries: v.colorPrimaries, transfer: v.transfer, sony: sony)
+            if let lut = (try? EmbeddedMeta.lut(inClip: url)) ?? nil {
+                info.embeddedLUTName = lut.name ?? "Embedded LUT"
+            }
+        }
 
         let attrs = try? FileManager.default.attributesOfItem(atPath: url.path)
         let size = (attrs?[.size] as? NSNumber)?.int64Value ?? 0

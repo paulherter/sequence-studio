@@ -8,11 +8,11 @@ public enum ProjectFileError: Error, Equatable {
 
 /// Package directory `Name.ssproj/` with `project.json` and `Autosave/`.
 public enum ProjectFile {
-    public static let currentVersion = 6
+    public static let currentVersion = 7
     public typealias JSONObject = [String: Any]
     /// Upgrades the top-level object from version N to N+1, keyed by N.
     public typealias Migrations = [Int: (JSONObject) throws -> JSONObject]
-    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6] }
+    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7] }
 
     /// v2: `Timeline.frameDuration` moved into `Timeline.format` (defaults 1920x1080, 48 kHz).
     /// Track flags, `inOut` and `markers` are optional on decode, so nothing else changes.
@@ -45,6 +45,10 @@ public enum ProjectFile {
     /// v6: `Clip.generator` (text layers and other generator clips). Optional on decode, absent = media or nested
     /// clip: identity migration.
     static func migrateV5toV6(_ obj: JSONObject) throws -> JSONObject { obj }
+
+    /// v7: `Clip.color` (per-clip colour: source override, correction, LUTs) and `MediaInfo.detectedColorSpace` /
+    /// `embeddedLUTName`. All optional on decode; absent = defaults (automatic from media, neutral): identity migration.
+    static func migrateV6toV7(_ obj: JSONObject) throws -> JSONObject { obj }
 
     static let fileName = "project.json"
     static let autosaveDir = "Autosave"

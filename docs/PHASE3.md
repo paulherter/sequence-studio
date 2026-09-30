@@ -133,3 +133,8 @@ Slices 5, 7, 8 + REVIEW-1 items 7–10 + GPU review hardening (753ac61…4833c72
 - Slice 6 (1c811d7): `SonyMetadata.read(forClip:)` — sidecar `<clip>M01.XML` first, then the embedded `xml ` box, which is
   top-level in most ZV-E1 files but inside `moov` in C2157 (64-bit mdat). The embedded XML ends with a NUL (stripped before parsing).
   All 8 real clips → s-log3-cine / s-gamut3-cine in 0.3–1.5 ms. Slice 9 stays on hold until Phase 4's clip model lands.
+
+- **Slice 9 (done, engine/export/inspector wiring is the follow-up):** `ClipColor` in SSCore (`Clip.color`, carried by
+  `LayerRequest.color`), `MediaInfo.detectedColorSpace/embeddedLUTName` set by `MediaImporter` via `ColorDetection.detect`,
+  project file v7 (identity). SSRender: `ColorPipeline.from(clipColor:mediaID:mediaInfo:lutProvider:)`, `LUTProvider`,
+  `CachingLUTProvider(file:embedded:)` (embedded loader = app glue over `EmbeddedMeta.lut(inClip:)`, not yet written).

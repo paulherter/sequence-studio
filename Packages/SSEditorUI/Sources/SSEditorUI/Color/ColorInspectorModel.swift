@@ -1,5 +1,6 @@
 import Foundation
 import Observation
+import SSCore
 import SSRender
 
 /// State of the Properties/Color inspector. Sections follow the processing order (DECISIONS: Correction → Conversion LUT →

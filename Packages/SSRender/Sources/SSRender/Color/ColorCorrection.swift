@@ -1,21 +1,11 @@
 import Foundation
 import simd
+import SSCore
 
-/// Basic correction parameters (source-linear domain). Neutral: all 0, saturation 100.
-public struct ColorCorrection: Sendable, Equatable {
-    public var temperature: Float = 0   // -100…100
-    public var tint: Float = 0          // -100…100
-    public var exposure: Float = 0      // -4…4 EV
-    public var contrast: Float = 0      // -100…100
-    public var highlights: Float = 0    // -100…100
-    public var shadows: Float = 0       // -100…100
-    public var saturation: Float = 100  // 0…200
+/// The parameter type lives in SSCore (`Clip.color.correction`); the math stays here.
+public typealias ColorCorrection = SSCore.ColorCorrection
 
-    public init() {}
-
-    public static let neutral = ColorCorrection()
-    public var isNeutral: Bool { self == .neutral }
-
+extension SSCore.ColorCorrection {
     /// Precompute gamut-dependent constants once per clip/frame.
     public func prepared(for gamut: Gamut) -> PreparedCorrection { PreparedCorrection(self, gamut: gamut) }
 

@@ -61,6 +61,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     /// is nil and `source` is a free clip-local range: it may start below 0 after a head trim, so a generator
     /// can grow in both directions (only the >= 1 frame rule and neighbours limit it). Video tracks only.
     public var generator: GeneratorRef?
+    /// Static per-clip colour (source override, correction, LUTs). Default = automatic from media, neutral.
+    public var color: ClipColor = .default
 
     /// Media, nested sequence or generator.
     public var clipSource: ClipSource {
@@ -77,7 +79,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public init(id: UUID = UUID(), name: String, media: UUID, kind: TrackKind,
                 source: TimeRange, start: Time, link: UUID? = nil, mediaDuration: Time? = nil,
                 animation: ClipAnimation = ClipAnimation(), sequence: Timeline.ID? = nil,
-                generator: GeneratorRef? = nil) {
+                generator: GeneratorRef? = nil, color: ClipColor = .default) {
+        self.color = color
         self.animation = animation
         self.sequence = sequence
         self.generator = generator
@@ -86,7 +89,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator
+        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color
     }
 
     public init(from d: Decoder) throws {
@@ -98,7 +101,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   mediaDuration: try c.decodeIfPresent(Time.self, forKey: .mediaDuration),
                   animation: try c.decodeIfPresent(ClipAnimation.self, forKey: .animation) ?? ClipAnimation(),
                   sequence: try c.decodeIfPresent(Timeline.ID.self, forKey: .sequence),
-                  generator: try c.decodeIfPresent(GeneratorRef.self, forKey: .generator))
+                  generator: try c.decodeIfPresent(GeneratorRef.self, forKey: .generator),
+                  color: try c.decodeIfPresent(ClipColor.self, forKey: .color) ?? .default)
     }
 
     /// Moves a split-off right half onto a fresh link shared through `map` (old link to new link).

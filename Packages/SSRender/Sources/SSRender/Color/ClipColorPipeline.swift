@@ -1,0 +1,101 @@
+import Foundation
+import SSCore
+
+extension SourceColorSpace {
+    public init(_ id: ColorSpaceID) {
+        switch id {
+        case .rec709: self = .rec709
+        case .sLog3SGamut3Cine: self = .sLog3SGamut3Cine
+        case .hlgBT2020: self = .hlgBT2020
+        }
+    }
+}
+
+/// Loads parsed LUTs for a reference. Only `.file` and `.embedded` are loadable; `.automatic` yields nil.
+public protocol LUTProvider: Sendable {
+    func lut(for ref: LUTRef) -> CubeLUT?
+}
+
+/// Parses each referenced LUT once (successes only; failed loads are retried) and serves it from memory afterwards.
+/// The loaders return raw `.cube` bytes: a file read for `.file`, and for `.embedded` the app layer's glue over
+/// SSMedia `EmbeddedMeta.lut(inClip:)` (media ID -> file -> `EmbeddedLUT.data`).
+public final class CachingLUTProvider: LUTProvider, @unchecked Sendable {
+    public typealias FileLoader = @Sendable (String) -> Data?
+    public typealias EmbeddedLoader = @Sendable (UUID) -> Data?
+
+    private let lock = NSLock()
+    private var cache: [LUTRef: CubeLUT] = [:]
+    private let fileLoader: FileLoader
+    private let embeddedLoader: EmbeddedLoader
+
+    public init(file: @escaping FileLoader = { FileManager.default.contents(atPath: $0) },
+                embedded: @escaping EmbeddedLoader) {
+        fileLoader = file; embeddedLoader = embedded
+    }
+
+    public func lut(for ref: LUTRef) -> CubeLUT? {
+        let data: Data?
+        switch ref {
+        case .automatic: return nil
+        case .file(let path):
+            if let hit = cached(ref) { return hit }
+            data = fileLoader(path)
+        case .embedded(let id):
+            if let hit = cached(ref) { return hit }
+            data = embeddedLoader(id)
+        }
+        // I/O and parsing happen outside the lock; failures are not cached (the file may appear or be fixed later).
+        guard let lut = data.flatMap({ try? CubeLUT.parse(String(decoding: $0, as: UTF8.self)) }) else { return nil }
+        lock.lock(); defer { lock.unlock() }
+        if let existing = cache[ref] { return existing }
+        cache[ref] = lut
+        return lut
+    }
+
+    private func cached(_ ref: LUTRef) -> CubeLUT? {
+        lock.lock(); defer { lock.unlock() }
+        return cache[ref]
+    }
+
+    /// Drops everything (e.g. after a LUT file changed on disk).
+    public func removeAll() {
+        lock.lock(); defer { lock.unlock() }
+        cache.removeAll()
+    }
+}
+
+extension ColorPipeline {
+    /// Builds the per-layer pipeline from a clip's colour settings and its media's detected properties.
+    /// - Source: `clipColor.source` override, else `mediaInfo.colorSpace`, else Rec.709.
+    /// - Conversion LUT: `nil` or bypass = none (automatic conversion); `.file`/`.embedded` = that LUT; `.automatic` =
+    ///   the media's embedded camera LUT when `useEmbeddedLUT`, the media has one, and the effective source is S-Log3
+    ///   (the Sony look LUTs expect S-Log3 input, so they are skipped when the clip is reinterpreted).
+    /// - Creative LUT with `creativeIntensity` clamped to 0…1.
+    /// A LUT that fails to load is treated as absent.
+    public static func from(clipColor c: ClipColor, mediaID: UUID, mediaInfo: MediaInfo?,
+                            lutProvider: LUTProvider?) -> ColorPipeline {
+        let id = c.source ?? mediaInfo?.colorSpace ?? .rec709
+        let source = SourceColorSpace(id)
+
+        var conversion: CubeLUT?
+        if !c.bypassConversionLUT, let ref = c.conversionLUT {
+            switch ref {
+            case .file, .embedded:
+                conversion = lutProvider?.lut(for: ref)
+            case .automatic:
+                if c.useEmbeddedLUT, mediaInfo?.embeddedLUTName != nil, id == .sLog3SGamut3Cine {
+                    conversion = lutProvider?.lut(for: .embedded(mediaID))
+                }
+            }
+        }
+
+        var creative: CubeLUT?
+        if !c.bypassCreativeLUT, let ref = c.creativeLUT, ref != .automatic {
+            creative = lutProvider?.lut(for: ref)
+        }
+
+        return ColorPipeline(source: source, correction: c.bypassCorrection ? .neutral : c.correction,
+                             conversionLUT: conversion, creativeLUT: creative,
+                             creativeIntensity: Float(min(max(c.creativeIntensity, 0), 1)))
+    }
+}

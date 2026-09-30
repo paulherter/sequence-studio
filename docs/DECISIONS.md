@@ -56,3 +56,11 @@
 - Text clips are SSCore generator clips (`ClipSource.generator`, kind "text", opaque payload = SSText TextTemplate + AnimationSet, project file v6). SSCore stays free of SSText.
 - Position/scale/rotation of a text layer come from the clip's Motion (keyframable like any clip, Premiere-like); the template itself has no position. The block is centred on the canvas before the clip transform.
 - Text in-animations are anchored to the clip start, so a split text clip replays its in-animation on the right half (accepted; revisit if it feels wrong).
+
+## 2026-09-30 Color slice 9: per-clip color model
+- 2026-09-30 Paul: slice 9 go.
+- [auto] `ClipColor` (static, keyframe-free) on `Clip.color`; `ColorCorrection` parameters moved to SSCore (SSRender keeps the math, typealias for source compatibility). Order Correction -> Conversion LUT -> Creative LUT.
+- [auto] Conversion LUT: `nil` = none, `.automatic` (default) = embedded camera LUT when `useEmbeddedLUT` and the media has one, `.file`/`.embedded` explicit. Automatic embedded applies only while the effective source is S-Log3 (Sony look LUTs expect S-Log3 input); an explicit `.embedded` always applies.
+- [auto] `MediaInfo.detectedColorSpace` / `embeddedLUTName` filled once at import (HLG+2020 tags, else Sony NRT metadata, else Rec.709). Project file v7 = identity migration.
+- [auto] PQ / HDR10 sources are not supported in V1: they are detected as Rec.709 (TODO in `ColorDetection`). HLG is detected from the transfer tag alone (primaries missing or P3 still mean HLG/BT.2020).
+- [auto] Project file v6 -> v7 stays an identity migration; old media has `MediaInfo.needsColorDetection == true` and the app runs `ColorDetection.detect(url:)` on open/relink to fill `detectedColorSpace` / `embeddedLUTName`.

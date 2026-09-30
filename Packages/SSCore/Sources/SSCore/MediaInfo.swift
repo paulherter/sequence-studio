@@ -5,10 +5,23 @@ public struct MediaInfo: Sendable, Hashable, Codable {
     public var duration: Time
     public var video: VideoTrackInfo?
     public var audio: AudioTrackInfo?
+    /// Source colour space detected once at import (tags or camera metadata). nil = not detected (treated as Rec.709).
+    public var detectedColorSpace: ColorSpaceID?
+    /// Name of the camera look LUT embedded in the file, if any.
+    public var embeddedLUTName: String?
 
-    public init(duration: Time, video: VideoTrackInfo? = nil, audio: AudioTrackInfo? = nil) {
+    public init(duration: Time, video: VideoTrackInfo? = nil, audio: AudioTrackInfo? = nil,
+                detectedColorSpace: ColorSpaceID? = nil, embeddedLUTName: String? = nil) {
         self.duration = duration; self.video = video; self.audio = audio
+        self.detectedColorSpace = detectedColorSpace; self.embeddedLUTName = embeddedLUTName
     }
+
+    /// True for media imported before colour detection existed (v6 files): the app should run
+    /// `ColorDetection.detect(url:)` (SSMedia) on open/relink and store the result.
+    public var needsColorDetection: Bool { detectedColorSpace == nil }
+
+    /// Effective colour space of the media when a clip does not override it.
+    public var colorSpace: ColorSpaceID { detectedColorSpace ?? .rec709 }
 }
 
 public struct VideoTrackInfo: Sendable, Hashable, Codable {

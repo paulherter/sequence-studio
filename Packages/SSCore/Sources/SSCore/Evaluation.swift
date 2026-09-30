@@ -46,10 +46,13 @@ public struct LayerRequest: Sendable, Hashable {
     /// `t - clip.start`: time since the clip's first frame (drives animations such as text in/out).
     /// For a generator, `sourceTime` equals this.
     public var localTime: Time
+    /// The clip's static colour settings (resolved against the media by `ColorPipeline.from` in SSRender).
+    public var color: ClipColor
 
     public init(clip: Clip.ID, media: UUID, track: Track.ID, sourceTime: Time, transform: ClipTransform = .identity,
                 cornerRadius: Double = 0, groups: [LayerGroup] = [], generator: GeneratorRef? = nil,
-                localTime: Time? = nil) {
+                localTime: Time? = nil, color: ClipColor = .default) {
+        self.color = color
         self.generator = generator; self.localTime = localTime ?? sourceTime
         self.clip = clip; self.media = media; self.track = track; self.sourceTime = sourceTime
         self.transform = transform; self.cornerRadius = cornerRadius; self.groups = groups
@@ -116,7 +119,7 @@ extension Timeline {
                 out.append(LayerRequest(clip: c.id, media: c.media, track: track.id,
                                         sourceTime: c.isGenerator ? local : c.source.start + local,
                                         transform: c.transform(at: t), cornerRadius: c.effects(at: t).cornerRadius,
-                                        groups: groups, generator: c.generator, localTime: local))
+                                        groups: groups, generator: c.generator, localTime: local, color: c.color))
             }
         }
         return out

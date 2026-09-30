@@ -1,4 +1,5 @@
 import simd
+import SSCore
 
 /// Clip source colour space: transfer + gamut.
 public enum SourceColorSpace: Sendable, Equatable {
