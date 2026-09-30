@@ -64,3 +64,12 @@
 - [auto] `MediaInfo.detectedColorSpace` / `embeddedLUTName` filled once at import (HLG+2020 tags, else Sony NRT metadata, else Rec.709). Project file v7 = identity migration.
 - [auto] PQ / HDR10 sources are not supported in V1: they are detected as Rec.709 (TODO in `ColorDetection`). HLG is detected from the transfer tag alone (primaries missing or P3 still mean HLG/BT.2020).
 - [auto] Project file v6 -> v7 stays an identity migration; old media has `MediaInfo.needsColorDetection == true` and the app runs `ColorDetection.detect(url:)` on open/relink to fill `detectedColorSpace` / `embeddedLUTName`.
+
+## 2026-09-30 Paul: feedback after first app test
+- Toolbar stays minimal and exactly like the design canvas (docs/DESIGN.md screen 1): Import on the left, Edit | Color centred; no panel toggles or workspace controls in the toolbar. Panels are shown/hidden via the **Window** menu (checkmark per panel, Premiere-style). A Settings window (⌘,) is needed.
+- No Properties panel. Clip-specific controls (text style for text clips, audio, etc.) live in Effect Controls (Premiere); colour lives on the Color page.
+- **Text** panel = Premiere's Text panel: Transcript + Captions (edit transcript, create captions). Text templates belong to the Library (Text Templates), not the Text panel.
+- Effects are applied by **dragging an effect from the Effects panel onto a clip** in the timeline (no "Apply to Selection" button). Later: a Ctrl+Space quick palette (DaVinci-style) to search effects and apply to the selected clip with Enter.
+- Dragging media into the timeline shows a live ghost of the clip at the drop position (move to place, release to commit, Esc or drag out to cancel), like Premiere — not just a "+" cursor.
+- Resizing panels/window must never break layouts.
+- S-Log3 footage currently shows only yellow (placeholder) — must decode and display.
