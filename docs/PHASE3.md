@@ -36,7 +36,7 @@ Invariant (test): a Rec.709 source with neutral correction and no LUTs round-tri
 ## Basic correction (source-linear, value type, all neutral = 0 except saturation = 100)
 
 - **Temperature / Tint** −100…100: Bradford adaptation in XYZ (via the source gamut matrix) from an assumed scene white to the
-  reference white. Scene white: CCT with `mired = 1e6/6504 − temperature` (±100 mired), Duv = `−tint · 0.0002`
+  reference white. Scene white: CCT with `mired = 1e6/6504 − temperature` (±100 mired), Duv = `+tint · 0.0002` (scene white greener → image more magenta)
   (positive tint → magenta, positive temperature → warmer). Reference = same construction at 0/0, so neutral is exact identity.
 - **Exposure** −4…+4 EV: `rgb · 2^ev`.
 - **Contrast, Highlights, Shadows** −100…100, on luminance `Y` (source gamut Y row), hue-preserving (RGB × Y′/Y):
@@ -75,3 +75,10 @@ Lookup: 3D = tetrahedral interpolation, 1D = linear per channel; input clamped t
    compare side by side once an HLG clip exists (none in ~/Documents/Videos).
 5. **Out-of-gamut:** S-Gamut3.Cine → 709 gives negative components; this slice clamps. Gamut compression later if saturated
    colours look wrong.
+
+## Done (2026-09-30)
+
+Slices 1–4 + review fixes (commits 7fad1ed…dfe44b8), 47 SSRender tests. Reviewer re-derived S-Log3/HLG/709 constants,
+S-Gamut3.Cine→709 (matches Sony's matrix) and all 6 tetrahedral branches. `.cube` also accepts Resolve `LUT_*_INPUT_RANGE`;
+`LUT_IN/OUT_VIDEO_RANGE` are parsed and stored but not applied yet. Per pixel for Metal: `PreparedCorrection.apply`,
+`ColorPipeline.process`, `Rec709Output.encode`. Conversion-LUT input = range-expanded S-Log3 (Resolve convention, 18 % grey ≈ 0.406).
