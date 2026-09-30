@@ -48,3 +48,6 @@
 ## 2026-09-30 [auto] Project license: GPL-3.0-or-later
 - Reason: the project already borrows GPL-3.0 code (palmier-pro reference) and permits only GPL-3.0-compatible sources (GPL, MIT, BSD, Apache-2.0). GPL-3.0-or-later is the license that stays compatible with all of them.
 - LICENSE holds the canonical text from gnu.org; README and CONTRIBUTING state the terms.
+
+## 2026-09-30 [auto] Embedded camera LUT (PHASE3 question 6)
+- Clips with an embedded look (Sony "Look Control data" item, decoded by `EmbeddedMeta.lut(inClip:)`) load it automatically as the Conversion LUT when the clip is imported, like Premiere's "use embedded LUT". The Conversion LUT slot shows "Embedded: <name>" with a toggle to turn it off (per clip, stored in the clip's color settings); the popup still lists it so it can be replaced by a file LUT. Clips without an embedded look keep the automatic color-managed conversion.

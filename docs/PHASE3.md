@@ -103,6 +103,12 @@ Lookup: 3D = tetrahedral interpolation, 1D = linear per channel; input clamped t
 6. **Embedded camera LUT:** ZV-E1 files reference the in-camera LUT (`<RelatedTo file="NeutralPaul_v5.cube" rel="LUT"/>`),
    and the MP4 `meta` box has a 442 KB `idat` item — probably that .cube. Load it automatically as the Conversion LUT
    (with the option to turn it off), or only offer it in the popup?
+   **Findings (2026-09-30, `SSMedia/EmbeddedLUT.swift`, 36 ZV-E1 clips checked):** the `meta` box (top level, after `moov`) has
+   items "Look Control data" (434,617 B, only in clips shot with a look; the `meta` box is 444,9xx B) and "Lens profile" (7,903 B,
+   every clip), both `application/octet-stream`, `construction_method` 1 (idat). The 442 KB item is **not** `.cube` text: it is
+   SMPTE KLV ("ELUT") wrapping a big-endian "SONYBCUB" block: file name `NeutralPaul.cube`, **33^3 LUT**, 431,244 B of big-endian
+   f32 RGB triplets (red fastest, domain 0…1, values 0…1.2) plus a 3,328 B header. `EmbeddedMeta.lut(inClip:)` decodes it to
+   `.cube` text (970 KB) so SSRender's parser loads it unchanged. Clips without a look item (older ones) return nil.
 
 ## Done (2026-09-30)
 
