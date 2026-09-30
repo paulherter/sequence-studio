@@ -181,7 +181,9 @@ public final class EffectControlsModel {
     /// Sets the clip shown. Never calls `onEdit`. A different clip resets selection; the same clip prunes
     /// selected keys that no longer exist.
     public func setClip(_ c: Clip?) {
-        if c?.id != clip?.id { selection = []; selectedSection = nil; gestureBase = nil; gestureEmitted = false; zoomState = nil }
+        if c?.id != clip?.id { selection = []; selectedSection = nil; gestureBase = nil; gestureEmitted = false; zoomState = nil
+            if scrubBegan { scrubBegan = false; onScrubEnded?() }      // a lost mouse-up must not leave the scrub open
+        }
         clip = c
         if let sec = selectedSection, !visibleSections.contains(sec) || sec.effectKind == nil { selectedSection = nil }
         pruneSelection()
@@ -603,8 +605,9 @@ public final class EffectControlsModel {
     /// Ends a key drag: one undo step, and the moved keys are deselected, so a value change at the playhead
     /// afterwards creates a new key instead of editing the moved one.
     public func endKeyMove() {
+        let moved = gestureEmitted          // a drag that ended on the original frame changed nothing: keep the selection
         endGesture()
-        clearSelection()
+        if moved { clearSelection() }
     }
 
     public func applyEasing(_ curve: EasingCurve, side: EaseSide = .both) {
@@ -706,7 +709,7 @@ public final class EffectControlsModel {
     /// Default value in place of the value at the playhead (key created or replaced).
     @discardableResult
     public func resetAtPlayhead(_ p: EffectProperty) -> Bool {
-        guard var c = clip, playheadInClip else { return false }
+        guard var c = workingClip, playheadInClip else { return false }
         let d = ClipAnimation()
         let local = localPlayhead
         var ok = false

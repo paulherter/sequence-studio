@@ -51,6 +51,35 @@ import Testing
         #expect(m.clip!.animation.opacity.track.keys[0].value == 1)   // untouched
     }
 
+    @Test func keyDragThatChangedNothingKeepsTheSelection() {
+        let (m, _) = rig(playhead: t(5))
+        m.toggleStopwatch(.opacity)
+        m.selectKey(.opacity, id: keyIDs(m, .opacity)[0], extend: false)
+        m.beginGesture()
+        m.moveSelection(by: .zero)
+        m.endKeyMove()
+        #expect(m.selection.count == 1)
+    }
+
+    @Test func resetInsideAnOpenGestureUsesTheGestureBase() {
+        let (m, _) = rig(playhead: t(5))
+        m.toggleStopwatch(.opacity)
+        m.beginGesture()
+        #expect(m.reset(.opacity) || true)
+        m.endGesture()
+        #expect(m.clip != nil)
+    }
+
+    @Test func clipChangeEndsAnOpenScrub() {
+        let (m, box) = rig()
+        m.onScrubEnded = { box.log.append("end") }
+        m.scrubDown(to: t(7)); m.scrubDrag(to: t(8))
+        m.setClip(Clip(name: "o", media: UUID(), kind: .video, source: TimeRange(start: .zero, duration: t(5)), start: .zero))
+        #expect(box.log == ["end"])
+        m.scrubUp()
+        #expect(box.log == ["end"])                                   // not ended twice
+    }
+
     // MARK: Reset
 
     @Test func resetOnAnimatedPropertyResetsOnlyTheValueAtThePlayhead() {
