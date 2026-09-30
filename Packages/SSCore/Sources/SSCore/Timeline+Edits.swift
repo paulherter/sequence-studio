@@ -46,7 +46,7 @@ extension Timeline {
         var work = tracks
         for m in group {
             var c = m.clip
-            if edge == .head { c.start -= g; c.source.start -= g }
+            if edge == .head { c.start -= g; c.shiftSourceStart(by: .zero - g) }
             c.source.duration += g
             work[m.track].replace(c)
         }
@@ -83,7 +83,7 @@ extension Timeline {
         for p in pairs {
             var l = p.left, r = p.right
             l.source.duration += d
-            r.start += d; r.source.start += d; r.source.duration -= d
+            r.start += d; r.shiftSourceStart(by: d); r.source.duration -= d
             work[p.track].replace(l); work[p.track].replace(r)
         }
         tracks = try commit(work)

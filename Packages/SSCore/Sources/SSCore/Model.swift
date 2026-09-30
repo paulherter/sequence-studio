@@ -59,6 +59,14 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
         link = n
     }
 
+    /// Moves `source.start` by `d` and shifts the clip-local keys by -d, so keys stay on the same
+    /// source frames (Premiere). Keys pushed outside 0...duration are kept, like in `cropped`.
+    /// Not for slip: there keys stay at the same position in the clip.
+    mutating func shiftSourceStart(by d: Time) {
+        source.start += d
+        animation = animation.shifted(by: .zero - d)
+    }
+
     /// Keeps the part of the clip inside `range` (timeline coordinates), source offset follows.
     func cropped(to range: TimeRange) -> Clip? {
         guard let r = timeline.intersection(range) else { return nil }

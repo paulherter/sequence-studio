@@ -133,7 +133,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         var work = tracks
         for m in group {
             var c = m.clip
-            if edge == .head { c.source.start -= g }
+            if edge == .head { c.shiftSourceStart(by: .zero - g) }
             c.source.duration += g
             work[m.track].replace(c)
         }

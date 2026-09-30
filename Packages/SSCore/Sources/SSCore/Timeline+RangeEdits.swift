@@ -94,7 +94,7 @@ extension Timeline {
                 work[m.track].replace(p)
             }
             if var n = others.first(where: { $0.start >= c.timeline.end }), n.start == c.timeline.end {
-                n.start += d; n.source.start += d; n.source.duration -= d
+                n.start += d; n.shiftSourceStart(by: d); n.source.duration -= d
                 work[m.track].replace(n)
             }
             var moved = c
