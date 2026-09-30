@@ -42,7 +42,8 @@ Invariant (test): a Rec.709 source with neutral correction and no LUTs round-tri
 - **Contrast, Highlights, Shadows** −100…100, on luminance `Y` (source gamut Y row), hue-preserving (RGB × Y′/Y):
   `l = log2(Y/0.18)`; contrast: `l · (1 + 0.5·c/100)` (pivot grey); highlights: `+1.5·h/100 · smoothstep(0, 3, l)` stops;
   shadows: `+1.5·s/100 · smoothstep(0, 3, −l)` stops. `Y ≤ 2⁻¹⁶` → pixel unchanged.
-- **Saturation** 0…200: `Y + (rgb − Y) · s/100`.
+- **Saturation** 0…200, perceptual (log2 ratio to luminance): `rgb′ = Y · (max(rgb, 2⁻¹⁶)/Y)^(s/100)`; `Y ≤ 2⁻¹⁶` → unchanged.
+  Never produces negatives (linear `Y + (rgb−Y)·s` did at s > 100).
 
 ## Tone mapping (HDR → SDR)
 
@@ -62,11 +63,35 @@ Lookup: 3D = tetrahedral interpolation, 1D = linear per channel; input clamped t
 3. `ColorCorrection` + tone mapping.
 4. `ColorPipeline` (chain above) + `Rec709Output`.
 
+## Decisions (Paul, 2026-09-30)
+
+1. Exposure and WB in linear; contrast, highlights, shadows, saturation in log2 around 18 % grey (perceptual).
+2. `ColorCorrection` moves to SSCore later (Phase 4 is changing the clip model now) → slice 9.
+3. S-Log3 detection from Sony NonRealTimeMeta XML: sidecar `<clip>M01.XML` or embedded in the MP4 (top-level `meta` box →
+   `xml ` box; ZV-E1 files have it, no sidecars). Items `CaptureGammaEquation` (`s-log3-cine`), `CaptureColorPrimaries`
+   (`s-gamut3-cine`). Plus per-clip override ("Interpret Footage") → with slice 9.
+4. HLG→SDR is compared to QuickTime once `TestMedia/iphone-hlg.mov` exists.
+5. Out-of-gamut: clipping for now.
+
+## Slices, part 2
+
+5. Saturation in log2 (above).
+6. SSMedia `SonyMetadata.swift` (new file): NRT XML parser + reader (sidecar first, then embedded box; only top-level box
+   headers are read, no full-file scan). Tests on real clips in ~/Documents/Videos, skipped when missing.
+7. Metal color chain (`Color/ColorShaders.metal` + `ColorPipelineGPU.swift`): one compute pass per layer,
+   source-encoded → working-linear, rgba16Float in/out. Uniforms from `ColorPipeline` (prepared matrices), LUTs as
+   3D/1D float textures, tetrahedral via 4 `read()`s (no filtering). Must match the CPU reference (float32 textures ≤ 1e-4).
+   Entry point for the compositor (E-07): `ColorPipelineGPU.encode(_:source:destination:commandBuffer:)`.
+8. GPU scopes (`ScopeShaders.metal` + `Scopes.swift` + CPU reference): waveform (luma / RGB parade, IRE on Rec.709 output),
+   vectorscope (709 Cb/Cr, Cb → x, Cr → y up), histogram (R, G, B, Y). Atomic counts in buffers, resolve kernel → float texture;
+   graticule, skin-tone line and glow are UI.
+9. Later: move `ColorCorrection` to SSCore, per-clip source override, wire SonyMetadata → `SourceColorSpace`.
+
 ## Open questions (for Paul)
 
-1. **"Correction on the full log signal"** is implemented as correction in source *scene-linear* (decoded, unclipped,
+1. ~~**"Correction on the full log signal"** is implemented as correction in source *scene-linear* (decoded, unclipped,
    source gamut), then re-encoded before a camera LUT. Same information as the log signal, but exposure/WB are exact
-   multiplications. OK, or should the sliders act directly on log code values?
+   multiplications. OK, or should the sliders act directly on log code values?~~ Decided, see Decisions.
 2. **Where the correction model lives:** `ColorCorrection` is defined in SSRender for now. The per-clip model (Clip.color)
    belongs in SSCore; move the value type there when Phase 3 touches the model?
 3. **Source detection:** Sony files are untagged. Untagged → Rec.709 by default; S-Log3 needs camera metadata (SSMedia)
@@ -75,6 +100,9 @@ Lookup: 3D = tetrahedral interpolation, 1D = linear per channel; input clamped t
    compare side by side once an HLG clip exists (none in ~/Documents/Videos).
 5. **Out-of-gamut:** S-Gamut3.Cine → 709 gives negative components; this slice clamps. Gamut compression later if saturated
    colours look wrong.
+6. **Embedded camera LUT:** ZV-E1 files reference the in-camera LUT (`<RelatedTo file="NeutralPaul_v5.cube" rel="LUT"/>`),
+   and the MP4 `meta` box has a 442 KB `idat` item — probably that .cube. Load it automatically as the Conversion LUT
+   (with the option to turn it off), or only offer it in the popup?
 
 ## Done (2026-09-30)
 
