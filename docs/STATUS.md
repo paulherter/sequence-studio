@@ -8,5 +8,5 @@ Next session: set up XcodeGen project + packages skeleton, scripts/build.sh + sc
 - iPhone clips: .MOV in project folders (e.g. ~/Documents/Videos/Käsiger michael/IMG_1281.MOV).
 
 ## Open decisions
-- Panels: level for v1 (A fixed splits / B tab groups with drag-to-dock / C full docking + floating windows).
+- (none besides engine route)
 - Engine route: after the spike.

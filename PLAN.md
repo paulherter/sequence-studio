@@ -15,6 +15,19 @@ Final-Cut-like look. Built first for a short-form (9:16) workflow, later open so
 - Everything keyframe-based, no nodes. Drag & drop everywhere. Minimal menus.
 - Layout: see "Panels" below.
 
+## What it must feel like (Paul's priorities)
+- **Speed of cutting beats everything.** Premiere's workflow and handling, Final Cut's clean, Apple-like look.
+- **No magnetic timeline.** Classic tracks like Premiere. Ripple only when asked for (tool/shortcut).
+- **Fewer clicks than Premiere.** Every common task gets a direct path with sensible defaults; no conversion steps.
+  Example — captions: one button "Transcribe" → transcript editor opens in place → one button "Create captions"
+  uses the default preset → captions are editable text layers right away (no "convert to graphics").
+- **Easing must be excellent** (the weak spot in FCP, CapCut, DaVinci):
+  per-keyframe interpolation (linear, hold, bezier), draggable bezier handles, value graph + speed graph
+  in Effect Controls, easing presets (ease in/out, custom curves saved as presets), apply/copy easing to many
+  keyframes at once, temporal and spatial (motion path) interpolation. Treat it as a core feature, not polish.
+- Clean UI: native Apple controls wherever they fit (saves time, looks right). Custom only where needed
+  (timeline, monitors, keyframe graph). Little chrome, no clutter.
+
 ## V1 scope
 1. Import: iPhone HEVC (SDR + HDR/HLG), Sony S-Log3/S-Gamut3.Cine (currently XAVC H.264 4K, LPCM audio), mixed in one project.
 2. Multiple sequences per project, free resolution/frame rate/aspect. Multitrack video + audio.
@@ -61,10 +74,14 @@ Key decisions:
 
 ## Panels
 Layout is stored as a tree (splits → tab groups → panels) from day one, so any later docking mode needs no rewrite.
-Which level ships when: see docs/STATUS.md (open decision).
+- Phase 2: fixed layout with resizable splits, show/hide panels.
+- Phase 9: tab groups with drag-to-dock (Premiere-style), saved workspaces, per-screen-setup workspaces
+  (e.g. laptop vs. external display) selectable from a menu. Floating windows optional afterwards.
 
 ## Phases
 0. Setup + spike: XcodeGen, build/test scripts, agents. Spike measures decode + scrub on M1 Max with Sony S-Log3 and iPhone HLG → engine decision.
+0b. UX plan (`docs/UX.md`): window layout, every panel's contents, shortcuts, the core flows step by step
+   (import → cut → color → keyframes → captions → export) with click counts vs. Premiere. Basis for Figma.
 1. SSCore headless: model, time, trim/ripple/roll/slip, snapping logic, linked A/V, undo, project file. Tests first.
 2. Playback + timeline UI: monitors, J/K/L, scrubbing, tools, drag & drop, insert/overwrite, basic import/bins. Figma design of the shell before this phase.
 3. Color + export: pipeline, LUT, basic correction, H.264/HEVC export with social presets (early, to verify gamma in QuickTime).
