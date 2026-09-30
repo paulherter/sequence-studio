@@ -113,7 +113,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         window = w
     }
 
-    /// `SS_OPEN=<path.ssproj>` opens a project; `SS_DEMO=1` fills the untitled project with sample clips (screenshots).
+    /// `SS_OPEN=<path.ssproj>` opens a project; `SS_NO_RECOVERY=1` skips the recovery prompt; `SS_DEMO=1` fills the untitled project with sample clips (screenshots).
     private func launchDocument() {
         let env = ProcessInfo.processInfo.environment
         if let path = env["SS_OPEN"] {
@@ -122,8 +122,22 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             session.newProject(DemoProject.make())
             session.seek(to: DemoProject.playhead)
             session.select(clips: DemoProject.selection(in: session))
-        } else {
+        } else if env["SS_NO_RECOVERY"] != "1", env["SS_IMPORT"] == nil {
             offerRecovery()
+        }
+        if let list = env["SS_IMPORT"] { importAtLaunch(list.split(separator: ":").map { URL(fileURLWithPath: String($0)) }) }
+    }
+
+    /// `SS_IMPORT=<path>[:<path>…]`: imports like Cmd+I, then places the first file at 0 like a Project-panel drop. Stays open.
+    private func importAtLaunch(_ urls: [URL]) {
+        Task { @MainActor in
+            try? await Task.sleep(for: .seconds(0.5))
+            await panels.projectModel.importFiles(urls)
+            guard let first = urls.first, let m = session.project.media.first(where: { $0.path == first.path }) else {
+                NSLog("SS_IMPORT: nothing imported, failures=\(panels.projectModel.importFailures)"); return
+            }
+            session.placeMedia([m.id], at: .zero, mode: .overwrite)
+            session.select(clips: [])
         }
     }
 
