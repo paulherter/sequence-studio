@@ -22,11 +22,13 @@ public struct MediaRef: Codable, Hashable, Sendable, Identifiable {
     public var bookmark: Data?
     public var fingerprint: MediaFingerprint
     public var duration: Time?
+    /// Probed media properties; nil for projects saved before probing existed.
+    public var info: MediaInfo?
 
     public init(id: UUID = UUID(), name: String, path: String, bookmark: Data? = nil,
-                fingerprint: MediaFingerprint, duration: Time? = nil) {
+                fingerprint: MediaFingerprint, duration: Time? = nil, info: MediaInfo? = nil) {
         self.id = id; self.name = name; self.path = path; self.bookmark = bookmark
-        self.fingerprint = fingerprint; self.duration = duration
+        self.fingerprint = fingerprint; self.duration = duration; self.info = info
     }
 
     /// `.missing` if nothing is at `path`, `.changed` if size or modification date differ, else `.ok`.
