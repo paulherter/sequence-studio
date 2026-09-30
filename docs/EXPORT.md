@@ -18,3 +18,11 @@ UI, renderer and sheet are out of scope; the real renderer plugs in later via `F
 6. **Audio AAC**: AAC track from an `AudioSource`, test reads format ID/sample rate/channels back.
 7. **Batch queue** (`ExportQueue` actor): jobs for several sequences (id, name, settings, sources), sequential run, states
    waiting/running/done/failed/cancelled, progress stream, cancel, unique output file names per sequence.
+
+## Status
+All 7 slices implemented in `Packages/SSExport` (28 tests). Slices 2+3 share one commit.
+- Tests export real 64x112 files (H.264 and HEVC both encode at that size, software path, `hardwareEncoding = false`).
+- SSPlayback/SSRender dependencies kept (they compile); nothing from them is used yet.
+- `ExportWriter.export(video:audio:settings:to:progress:)` writes video + optional AAC, interleaved; cancel = task cancel (partial file removed).
+- `ExportQueue` actor: `enqueue`, `runAll`, `cancel`, `status`, `updates()` stream. Unique names: `Name.mp4`, `Name 2.mp4`, ... (checks disk + reserved names).
+- Open: renderer `FrameSource` adapter, sidecar SRT / burn-in (model only), loudness normalisation (model only), 10-bit/HDR output.
