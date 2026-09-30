@@ -231,7 +231,11 @@ public struct ClipColor: Sendable, Hashable, Codable {
     /// True when the picture is unchanged: every enabled section is neutral (for a Rec.709 source an automatic or
     /// empty Input LUT is neutral; for other sources the conversion always does something).
     public func isIdentity(rec709Source: Bool) -> Bool {
-        sections.allSatisfy { !$0.enabled || ($0.isNeutral && (rec709Source || $0.kind != .inputLUT)) }
+        sections.allSatisfy {
+            // A non-Rec.709 source always needs the conversion, even when the Input LUT block is disabled.
+            if $0.kind == .inputLUT, !rec709Source { return false }
+            return !$0.enabled || $0.isNeutral
+        }
     }
 
     public func section(_ id: Int) -> ColorSection? { sections.first { $0.id == id } }
@@ -277,7 +281,9 @@ public struct ClipColor: Sendable, Hashable, Codable {
         let source = try c.decodeIfPresent(ColorSpaceID.self, forKey: .source)
         let embedded = try c.decodeIfPresent(Bool.self, forKey: .useEmbeddedLUT) ?? true
         if var sections = try c.decodeIfPresent([ColorSection].self, forKey: .sections) {
-            // Invariant: exactly one Input LUT.
+            // Invariant: exactly one Input LUT (keep the first).
+            var seenLUT = false
+            sections.removeAll { if $0.kind == .inputLUT { defer { seenLUT = true }; return seenLUT }; return false }
             if !sections.contains(where: { $0.kind == .inputLUT }) {
                 sections.append(ColorSection(id: (sections.map(\.id).max() ?? 0) + 1, params: .defaults(for: .inputLUT)))
             }

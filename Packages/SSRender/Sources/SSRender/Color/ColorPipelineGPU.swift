@@ -260,6 +260,12 @@ public final class ColorPipelineGPU: @unchecked Sendable {
             throw ColorPipelineGPUError.missingTextureUsage("destination needs .shaderWrite")
         }
         let passes = Self.passes(for: pipeline)
+        if passes.count > 1 || inPlace {
+            // Later passes (and in-place) read and write the destination.
+            guard destination.usage.contains(.shaderRead) else {
+                throw ColorPipelineGPUError.missingTextureUsage("destination needs .shaderRead for in-place passes")
+            }
+        }
         // Resolve LUT textures before creating any encoder so a throw leaves the command buffer untouched.
         var lutTextures: [(MTLTexture, MTLTexture)] = []
         for pass in passes {

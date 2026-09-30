@@ -163,4 +163,21 @@ import Testing
         let clip = try #require(p.timelines.first?.tracks.first?.clips.first)
         #expect(clip.color == .default)
     }
+
+    @Test func disabledInputLUTOnLogSourceIsNotIdentity() throws {
+        var c = ClipColor.default
+        c.sections[1].enabled = false
+        #expect(c.isIdentity(rec709Source: true))
+        #expect(!c.isIdentity(rec709Source: false))
+        let json = #"{"bypassConversionLUT":true}"#
+        let m = try JSONDecoder().decode(ClipColor.self, from: Data(json.utf8))
+        #expect(!m.sections[1].enabled && !m.isIdentity(rec709Source: false))
+    }
+
+    @Test func duplicateInputLUTsAreDedupedKeepingTheFirst() throws {
+        var c = ClipColor.default
+        c.sections.append(ColorSection(id: 9, params: .inputLUT(.file("/x.cube"))))
+        let back = try JSONDecoder().decode(ClipColor.self, from: JSONEncoder().encode(c))
+        #expect(back.sections.filter { $0.kind == .inputLUT }.map(\.id) == [2])
+    }
 }

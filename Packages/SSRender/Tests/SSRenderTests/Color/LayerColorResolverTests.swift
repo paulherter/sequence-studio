@@ -125,4 +125,12 @@ private final class MutableProvider: LUTProvider, @unchecked Sendable {
         c.source = .hlgBT2020
         #expect(r.pipelineBlocking(for: c, media: rec709ID)?.source == .hlgBT2020)
     }
+
+    @Test func disabledInputLUTOnLogMediaStillConverts() {
+        let r = make()
+        var c = ClipColor.default; c.sections[1].enabled = false
+        let p = r.pipelineBlocking(for: c, media: slogID)
+        #expect(p?.source == .sLog3SGamut3Cine && p?.conversionLUT == nil)
+        #expect(p?.process(SIMD3(repeating: 0.5)) != SIMD3<Float>(repeating: TransferFunctions.bt709InverseOETF(0.5)))
+    }
 }
