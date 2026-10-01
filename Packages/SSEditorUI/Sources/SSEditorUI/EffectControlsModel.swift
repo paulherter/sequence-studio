@@ -150,8 +150,21 @@ public final class EffectControlsModel {
     public var playhead: Time = .zero
     public var frameDuration = Time(1, 30)
     public private(set) var selection: Set<SummaryMember> = []
-    public var expanded: Set<EffectProperty> = []
-    public var collapsedSections: Set<EffectSection> = []
+    public var expanded: Set<EffectProperty> = [] { didSet { if expanded != oldValue { saveTwirl() } } }
+    public var collapsedSections: Set<EffectSection> = [] { didSet { if collapsedSections != oldValue { saveTwirl() } } }
+    /// Scale row: one linked value (Uniform Scale checked) or Width and Height. Follows the clip when it changes.
+    public var uniformScale = true
+    /// Property whose row or keys were last used: where a pasted single-property key set lands.
+    public var focusedProperty: EffectProperty?
+    @ObservationIgnored var keyClipboard: KeyframeClipboard?
+    @ObservationIgnored var effectClipboard: ClipEffect?
+    @ObservationIgnored var lastCopyWasKeys = true
+    /// Short messages for the status line (e.g. keys that did not fit).
+    @ObservationIgnored public var onNotice: ((String) -> Void)?
+    /// Where the twirl-down state per clip kind is remembered across launches (the app sets `.standard`).
+    @ObservationIgnored public var twirlDefaults: UserDefaults?
+    @ObservationIgnored var twirlKind: String?
+    @ObservationIgnored var twirlMemory: [String: TwirlState] = [:]
     /// Section header last clicked: Delete removes its effect (when removable) if no keys are selected.
     public var selectedSection: EffectSection?
     public var graphMode: GraphMode = .speed
@@ -184,6 +197,12 @@ public final class EffectControlsModel {
         if c?.id != clip?.id { selection = []; selectedSection = nil; gestureBase = nil; gestureEmitted = false; zoomState = nil
             if scrubBegan { scrubBegan = false; onScrubEnded?() }      // a lost mouse-up must not leave the scrub open
         }
+        if let c {
+            // Follows the clip: a new clip derives it, any later change (undo, redo, external edit) can only switch it off.
+            if c.id != clip?.id { uniformScale = Self.isUniformScale(c, at: .zero) }
+            else if !Self.isUniformScale(c, at: .zero) { uniformScale = false }
+        }
+        if let c { adoptTwirl(for: c.kind) }
         clip = c
         if let sec = selectedSection, !visibleSections.contains(sec) || sec.effectKind == nil { selectedSection = nil }
         pruneSelection()
@@ -328,7 +347,7 @@ public final class EffectControlsModel {
         c?.roundedCorners?.parameters[ClipEffect.radiusKey]
     }
 
-    private func track(_ p: EffectProperty, in c: Clip?) -> PropertyTrack? {
+    func track(_ p: EffectProperty, in c: Clip?) -> PropertyTrack? {
         guard let a = c?.animation else { return nil }
         switch p {
         case .position: return .vector(a.position.track)
@@ -363,10 +382,10 @@ public final class EffectControlsModel {
         gestureEmitted = false
     }
 
-    private var inGesture: Bool { gestureBase != nil }
+    var inGesture: Bool { gestureBase != nil }
 
     /// Stores `new`, and emits it unless nothing changed.
-    private func commit(_ new: Clip, _ name: String) {
+    func commit(_ new: Clip, _ name: String) {
         guard new != clip else { return }
         clip = new
         pruneSelection()
@@ -375,7 +394,7 @@ public final class EffectControlsModel {
         onEdit?(new, name, coalescing)
     }
 
-    private var workingClip: Clip? { gestureBase ?? clip }
+    var workingClip: Clip? { gestureBase ?? clip }
 
     // MARK: Stopwatch and key buttons
 
@@ -458,6 +477,8 @@ public final class EffectControlsModel {
             let cur = prop.value(atLocal: local)
             let new: Vec2
             switch (p.kind, component) {
+            case (.uniform, .x) where !uniformScale: new = Vec2(v, cur.y)
+            case (.uniform, .y) where !uniformScale: new = Vec2(cur.x, v)
             case (.uniform, _), (_, .all): new = Vec2(v, v)
             case (_, .x): new = Vec2(v, cur.y)
             case (_, .y): new = Vec2(cur.x, v)
@@ -587,6 +608,7 @@ public final class EffectControlsModel {
     }
 
     public func selectKey(_ p: EffectProperty, id: UUID, extend: Bool) {
+        focusedProperty = p
         select([SummaryMember(property: p.id, keyID: id)], extend: extend)
     }
 
@@ -614,7 +636,7 @@ public final class EffectControlsModel {
         return out
     }
 
-    private func write(_ tracks: [PropertyID: PropertyTrack], into c: inout Clip) {
+    func write(_ tracks: [PropertyID: PropertyTrack], into c: inout Clip) {
         for p in EffectProperty.allCases {
             let t = tracks[p.id]
             switch p {
@@ -632,7 +654,7 @@ public final class EffectControlsModel {
     /// Moves the selected keys (all properties) in time by `delta`, from the gesture base. Clamped to the clip
     /// range and against unselected neighbours; landing on an unselected key replaces it. Returns the delta applied.
     @discardableResult
-    public func moveSelection(by delta: Time) -> Time {
+    public func moveSelection(by delta: Time, duplicate: Bool = false) -> Time {
         guard let c = workingClip else { return .zero }
         var s = KeyframeSummary(tracks: Self.tracks(of: c))
         let members = selection.filter { s.tracks[$0.property]?.keyIDs.contains($0.keyID) ?? false }
@@ -640,10 +662,10 @@ public final class EffectControlsModel {
         let times = members.flatMap { m in (s.tracks[m.property]?.times ?? []).filter { $0.id == m.keyID }.map(\.time) }
         let lo = times.min() ?? .zero, hi = times.max() ?? .zero
         let clamped = min(max(delta, .zero - lo), c.source.duration - hi)
-        let applied = s.move(members, by: clamped)
+        let applied = duplicate ? s.moveDuplicating(members, by: clamped) : s.move(members, by: clamped)
         var out = c
         write(s.tracks, into: &out)
-        commit(out, "Move Keyframes")
+        commit(out, duplicate ? "Duplicate Keyframes" : "Move Keyframes")
         return applied
     }
 
@@ -871,7 +893,7 @@ public final class EffectControlsModel {
     /// Takes the complete track edited in the graph (one gesture = one undo step) and merges it back.
     public func applyGraphEdit(_ p: EffectProperty, component: EffectComponent, track edited: KeyframeTrack<Double>) {
         guard var c = clip else { return }
-        let uniform = p.kind == .uniform
+        let uniform = p.kind == .uniform && uniformScale
         let comp: GraphProjection.Component = component == .y ? .y : .x
         withScalar(&c, p) { $0.track = edited }
         withVector(&c, p) { $0.track = GraphProjection.merge(base: $0.track, edited: edited, component: comp, uniform: uniform) }
@@ -880,7 +902,7 @@ public final class EffectControlsModel {
 
     // MARK: Property access by kind
 
-    private func withScalar(_ c: inout Clip, _ p: EffectProperty, _ body: (inout AnimatedProperty<Double>) -> Void) {
+    func withScalar(_ c: inout Clip, _ p: EffectProperty, _ body: (inout AnimatedProperty<Double>) -> Void) {
         switch p {
         case .rotation: body(&c.animation.rotation)
         case .opacity: body(&c.animation.opacity)
@@ -897,7 +919,7 @@ public final class EffectControlsModel {
         c.roundedCorners = e
     }
 
-    private func withVector(_ c: inout Clip, _ p: EffectProperty, _ body: (inout AnimatedProperty<Vec2>) -> Void) {
+    func withVector(_ c: inout Clip, _ p: EffectProperty, _ body: (inout AnimatedProperty<Vec2>) -> Void) {
         switch p {
         case .position: body(&c.animation.position)
         case .scale: body(&c.animation.scale)
@@ -946,6 +968,8 @@ public struct EffectRow: Equatable, Sendable {
         case property(EffectProperty)
         case placeholder(EffectSection)
         case graph(EffectProperty)
+        /// Uniform Scale checkbox under the Scale row (only when the view asks for it).
+        case uniformScale
     }
     public var kind: Kind
     public var y: CGFloat
@@ -961,7 +985,7 @@ public enum EffectControlsLayout {
     }
 
     public static func rows(sections: [EffectSection], collapsed: Set<EffectSection>,
-                            expanded: Set<EffectProperty>) -> [EffectRow] {
+                            expanded: Set<EffectProperty>, uniformScaleRow: Bool = false) -> [EffectRow] {
         let h = Theme.Metrics.effectControlsRow
         var out: [EffectRow] = []
         var y: CGFloat = 0
@@ -973,6 +997,7 @@ public enum EffectControlsLayout {
             for p in s.properties {
                 add(.property(p), h)
                 if expanded.contains(p) { add(.graph(p), graphHeight(p)) }
+                if p == .scale && uniformScaleRow { add(.uniformScale, h) }
             }
         }
         return out

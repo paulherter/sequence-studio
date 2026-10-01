@@ -26,7 +26,10 @@ extension AppController {
         if ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1" { NSLog("SSKEY execute \(c) playing=\(session.isPlaying)") }
         // Editing text (a field or the timecode box): the standard commands go to the editor.
         if let tv = textResponder, forwardToText(c, tv) { return }
-        if Self.isTimelineOp(c) || c == .previousKeyframe || c == .nextKeyframe, !effectControlsHasFocus, executeTimelineOp(c) { return }
+        if [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus, executeInEffectControls(c) { return }
+        // Timeline operations (clipboard, link, nudge, edge trims...); Effect Controls keeps its own keys while it has focus.
+        let ecOwns = [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus
+        if Self.isTimelineOp(c) || c == .previousKeyframe || c == .nextKeyframe, !ecOwns, executeTimelineOp(c) { return }
         guard Self.isSupported(c) else {
             shell.statusBar.flash("\(c.title) is not available yet.")
             return
