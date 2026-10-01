@@ -33,6 +33,8 @@ public final class EditorSession {
     public private(set) var playhead: Time = .zero
     public private(set) var selection: Set<Clip.ID> = []
     public private(set) var captionSelection: Set<CaptionItem.ID> = []
+    /// The transition selected on the timeline (Effect Controls shows its Duration and Alignment).
+    public internal(set) var selectedTransition: Transition.ID?
     /// Clips copied with Cmd+C / Cmd+X (Paste puts them at the playhead).
     public var clipboard: TimelineClipboard?
     public private(set) var isPlaying = false
@@ -227,6 +229,7 @@ public final class EditorSession {
         guard let t = activeTimeline else { selection = []; captionSelection = []; return }
         selection.formIntersection(Set(t.tracks.flatMap { $0.clips.map(\.id) }))
         captionSelection.formIntersection(Set(t.captionTracks.flatMap { $0.items.map(\.id) }))
+        if let id = selectedTransition, t.transition(id) == nil { selectedTransition = nil }
     }
 
     /// Media that is not at its path (offline): the relink dialog's input.
@@ -265,6 +268,8 @@ public final class EditorSession {
         case .wrongTrackKind: "That clip does not belong on this track."
         case .emptyClip: "Nothing to edit."
         case .speedUnsupported: "Speed cannot be changed on that clip (nested sequences, titles and stills)."
+        case .notACut: "Transitions go on a cut between two clips that touch, or on a clip edge."
+        case .insufficientMedia: "Not enough media beyond the cut for a transition. Trim the clips to leave handles."
         default: error.localizedDescription
         }
     }
@@ -275,6 +280,7 @@ public final class EditorSession {
 
     private func setSelection(clips: Set<Clip.ID>, captions: Set<CaptionItem.ID>) {
         guard clips != selection || captions != captionSelection else { return }
+        if !clips.isEmpty || !captions.isEmpty { selectedTransition = nil }
         selection = clips; captionSelection = captions
         pruneSelection()
         notify(.selection)
