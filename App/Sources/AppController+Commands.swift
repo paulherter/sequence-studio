@@ -21,7 +21,7 @@ extension AppController {
         case _ where isShellCommand(c):
             true
         default:
-            Self.isTimelineOp(c)
+            Self.isTimelineOp(c) || Self.isEffectsLookOp(c)
         }
     }
 
@@ -35,6 +35,7 @@ extension AppController {
         // Timeline operations (clipboard, link, nudge, edge trims...); Effect Controls keeps its own keys while it has focus.
         let ecOwns = [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus
         if Self.isTimelineOp(c) || c == .previousKeyframe || c == .nextKeyframe, !ecOwns, executeTimelineOp(c) { return }
+        if Self.isEffectsLookOp(c), executeEffectsLookOp(c) { return }
         guard Self.isSupported(c) else {
             shell.statusBar.flash("\(c.title) is not available yet.")
             return

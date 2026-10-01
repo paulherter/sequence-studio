@@ -8,15 +8,15 @@ import SQCore
     // MARK: Effects panel
     @Test func effectsPanelListsOnlyWhatExistsUnderItsBin() {
         let rows = EffectsPanelView.rows(matching: "")
-        #expect(rows.map(\.title) == ["Video Effects", "Rounded Corners"])
-        #expect(rows[0].isHeader && !rows[1].isHeader)
+        #expect(rows.map(\.title) == ["Blur & Sharpen", "Gaussian Blur", "Transform", "Crop", "Rounded Corners"])
+        #expect(rows[0].isHeader && !rows[1].isHeader && rows[2].isHeader)
     }
 
     @Test func effectsSearchFiltersAndDropsEmptyBins() {
-        #expect(EffectsPanelView.rows(matching: "round").map(\.title) == ["Video Effects", "Rounded Corners"])
+        #expect(EffectsPanelView.rows(matching: "round").map(\.title) == ["Transform", "Rounded Corners"])
         #expect(EffectsPanelView.rows(matching: "ROUND").count == 2)
         #expect(EffectsPanelView.rows(matching: "dissolve").isEmpty)
-        #expect(EffectsPanelView.rows(matching: "video").count == 2)       // matches the bin name
+        #expect(EffectsPanelView.rows(matching: "transform").count == 3)   // matches the bin name: the bin and its two effects
     }
 
     // MARK: Tab order

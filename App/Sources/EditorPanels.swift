@@ -128,11 +128,12 @@ final class EditorPanels {
         tv.onDropFiles = { [weak self] urls, time, track, insert in self?.dropFiles(urls, at: time, track: track, insert: insert) }
         tv.dropItemsProvider = { [weak self] source in self?.dropItems(for: source) ?? [] }
         tv.onDropEffect = { [weak self] id, clip in
-            guard let self, id == EffectsPanelView.roundedCorners else { return }
-            if !session.addRoundedCorners(to: [clip]) { onStatus?("Rounded Corners need a video clip that does not have it yet.") }
+            guard let self else { return }
+            if !session.addEffect(kind: id, to: [clip]) { onStatus?("\(EffectCatalog.title(for: id)) needs a video clip.") }
         }
         tv.contextMenuProvider = { [weak self] p in self?.timelineMenu(at: p) }
         wireVolumeLine()
+        wireOpacityLine()
         tv.onEditMarker = { [weak self] id in self?.editMarker(id) }
         tv.onToggleChange = { [weak self] snap, linked in
             self?.onStatus?("Snapping \(snap ? "on" : "off"), Linked Selection \(linked ? "on" : "off")")
@@ -189,8 +190,8 @@ final class EditorPanels {
             session.addTextClip(template: entry.template)
         }
         effectsView.onApply = { [weak self] id in
-            guard let self, id == EffectsPanelView.roundedCorners else { return }
-            if !session.addRoundedCorners() { onStatus?("Select a video clip without Rounded Corners first.") }
+            guard let self else { return }
+            if !session.addEffect(kind: id, to: session.selection) { onStatus?("Select a video clip first, then double-click \(EffectCatalog.title(for: id)).") }
         }
     }
 

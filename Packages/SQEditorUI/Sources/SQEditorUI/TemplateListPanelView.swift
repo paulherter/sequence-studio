@@ -159,7 +159,10 @@ public class TemplateListPanelView: NSView, NSTableViewDataSource, NSTableViewDe
 /// double-click for the selection); it then shows in Effect Controls. Categories with no effect are not listed.
 @MainActor
 public final class EffectsPanelView: TemplateListPanelView {
-    public static let roundedCorners = "rounded-corners"
+    /// Entry ids are effect kinds (`ClipEffect.kind`).
+    public static let roundedCorners = ClipEffect.roundedCornersKind
+    public static let crop = ClipEffect.cropKind
+    public static let gaussianBlur = ClipEffect.gaussianBlurKind
 
     public struct Entry: Sendable, Hashable {
         public var id: String, title: String, category: String, symbol: String
@@ -170,7 +173,9 @@ public final class EffectsPanelView: TemplateListPanelView {
     /// Everything that can be applied today. Audio effects, video transitions and audio transitions have no entry
     /// until the engine can render them.
     public static let catalog: [Entry] = [
-        Entry(id: roundedCorners, title: "Rounded Corners", category: "Video Effects", symbol: "app"),
+        Entry(id: gaussianBlur, title: "Gaussian Blur", category: "Blur & Sharpen", symbol: "circle.dotted"),
+        Entry(id: crop, title: "Crop", category: "Transform", symbol: "crop"),
+        Entry(id: roundedCorners, title: "Rounded Corners", category: "Transform", symbol: "app"),
     ]
 
     /// Rows for a search text: entries whose title or category contain it (case-insensitive), under their category.

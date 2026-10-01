@@ -60,6 +60,35 @@ extension Clip {
         return k.id
     }
 
+    /// Moves an opacity key to clip-local `time` (kept inside the clip) and `value` (0...1).
+    public mutating func moveOpacityKey(_ id: UUID, toLocal time: Time, value: Double) {
+        let t = min(max(time, .zero), duration)
+        animation.opacity.track.move(id, to: t)
+        animation.opacity.track.set(id, value: min(max(value, 0), 1))
+    }
+
+    public mutating func removeOpacityKey(_ id: UUID) { animation.opacity.track.remove(id) }
+
+    /// Raises or lowers the opacity line at clip-local `t` by `delta` (0...1 scale), like dragging the rubber band there:
+    /// without keys the whole clip's opacity; with keys the segment under `t` (both of its keys), or the first / last
+    /// key when `t` is before / after all of them.
+    public mutating func shiftOpacityLine(atLocal t: Time, by delta: Double) {
+        guard abs(delta) > 1e-9 else { return }
+        func shifted(_ v: Double) -> Double { min(max(v + delta, 0), 1) }
+        let keys = animation.opacity.track.keys
+        guard !keys.isEmpty else {
+            animation.opacity.value = shifted(animation.opacity.value)
+            return
+        }
+        let ids: [UUID]
+        switch keys.lastIndex(where: { $0.time <= t }) {
+        case nil: ids = [keys[0].id]
+        case let n? where n == keys.count - 1: ids = [keys[n].id]
+        case let n?: ids = [keys[n].id, keys[n + 1].id]
+        }
+        for id in ids { if let k = animation.opacity.track.key(id: id) { animation.opacity.track.set(id, value: shifted(k.value)) } }
+    }
+
     /// Fade preset on the picture (Opacity keys): `.head` fades in from 0, `.tail` fades out to 0, over `duration`
     /// (clamped to half the clip). The opacity the clip has at the other end of the fade is kept as its target, and keys
     /// inside the fade span are replaced, so applying a fade again changes it.
