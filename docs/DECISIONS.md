@@ -139,3 +139,12 @@ Premiere semantics: Scale 100 % = one upright source pixel per sequence pixel (a
 - Eyedropper and Auto measure the composite of the Program monitor, so they are disabled (tooltip says why) when another layer is visible at the playhead, the clip has more than one Colour effect, or the playhead is outside the clip. The sample is taken after the whole effect; the solver adds the correction to the current values.
 - Hue-keyed curves wrap: the model keeps first and last point at the same y; the maths drops a point at x = 1 (first point wins), repeats the period to both sides, and treats one point as a flat curve at its y (never the diagonal). Colour is not applied by the renderer to text/generator layers, so the panel hides for them and Paste Colour skips them.
 - `scripts/test.sh` watchdog is an inactivity timeout (`SQ_TEST_IDLE`, default 300 s without output) that kills only its own process group; no machine-wide pkill.
+
+## 2026-10-01 Constant clip speed (project v14)
+- `Clip.speed` is an exact ratio (`ClipSpeed` num/den, clamp 1 %...10000 %, Premiere's range), `Clip.reversed`, `Clip.keepsPitch`. `Clip.source` stays "the media range used"; timeline duration = `source.duration / speed` (`Clip.duration`). Edits choose `source.duration = frames * frameDuration * speed`, so timeline lengths stay whole frames and source ranges are exact rationals (no Double in the model).
+- Reversed: the clip's first frame is the last frame of `source`; `Clip.sourceTime(at:frameDuration:)` is the one mapping used by evaluation, planner, render and export. Head/tail handles swap for reversed clips (`Clip.headHandle`, `tailRoom`, timeline time).
+- Keyframes stay in clip-timeline time (they move with `extendHead`, not with the source).
+- Nested sequences, titles and stills are not retimed yet (`EditError.speedUnsupported`).
+- Audio: `AudioFeeder` retimes per segment with `AudioRetimer` (stateless per output sample): overlap-add time-stretch when "Maintain Audio Pitch" is on, linear resampling when off, mirrored reads for reverse. Playback and export share it (`TimelineAudioSource` uses the feeder), so they cannot disagree. The transport rate (J/K/L) still uses AVAudioUnitTimePitch, separately.
+- Video: no frame blending; the frame covering the mapped source time is shown.
+- File version: v14 (v13 belongs to the timeline stream), migration is the identity.

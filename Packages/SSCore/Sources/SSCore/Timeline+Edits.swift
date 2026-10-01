@@ -34,13 +34,13 @@ extension Timeline {
         var g = edge == .tail ? delta : -delta            // change of duration
         for m in group {
             let c = m.clip
-            if g <= -c.source.duration { throw EditError.emptyClip }
+            if g <= -c.duration { throw EditError.emptyClip }
             guard g > .zero else { continue }
             let others = tracks[m.track].clips.filter { !ids.contains($0.id) }
             var room: Time?
             func limit(_ r: Time) { room = room.map { min($0, r) } ?? r }
             if edge == .tail {
-                if let md = c.mediaDuration { limit(md - c.source.end) }
+                if let r = c.tailRoom { limit(r) }
                 if let next = others.first(where: { $0.start >= c.timeline.end }) { limit(next.start - c.timeline.end) }
             } else {
                 if let h = c.headHandle { limit(h) }
@@ -54,8 +54,7 @@ extension Timeline {
         var work = tracks
         for m in group {
             var c = m.clip
-            if edge == .head { c.start -= g; c.shiftSourceStart(by: .zero - g) }
-            c.source.duration += g
+            if edge == .head { c.start -= g; c.extendHead(by: g) } else { c.extendTail(by: g) }
             work[m.track].replace(c)
         }
         tracks = try commit(work)
@@ -80,18 +79,18 @@ extension Timeline {
         }
         var d = delta
         for p in pairs {                                   // media first, then refuse emptying
-            if d > .zero, let md = p.left.mediaDuration { d = min(d, md - p.left.source.end) }
+            if d > .zero, let r = p.left.tailRoom { d = min(d, r) }
             if d < .zero, let h = p.right.headHandle { d = max(d, -h) }
         }
         for p in pairs {
-            if d <= -p.left.source.duration || d >= p.right.source.duration { throw EditError.emptyClip }
+            if d <= -p.left.duration || d >= p.right.duration { throw EditError.emptyClip }
         }
         if d == .zero { return .zero }
         var work = tracks
         for p in pairs {
             var l = p.left, r = p.right
-            l.source.duration += d
-            r.start += d; r.shiftSourceStart(by: d); r.source.duration -= d
+            l.extendTail(by: d)
+            r.start += d; r.extendHead(by: .zero - d)
             work[p.track].replace(l); work[p.track].replace(r)
         }
         tracks = try commit(work)
@@ -101,7 +100,9 @@ extension Timeline {
     // MARK: Slip
 
     /// Changes which part of the media shows; position and duration stay. Clamped to the media,
-    /// partners follow. Returns the applied shift of `source.start`.
+    /// partners follow. `delta` is timeline time: the content follows the pointer, so a positive `delta` shows later
+    /// source of a forward clip and earlier source of a reversed one (the source moves by `delta * speed`).
+    /// Returns the applied `delta`.
     @discardableResult
     public mutating func slip(_ id: Clip.ID, by delta: Time) throws -> Time {
         let group = try linkedGroup(id)
@@ -110,14 +111,21 @@ extension Timeline {
         for m in group {
             let c = m.clip
             if c.isGenerator || c.isStill { d = .zero; continue }        // nothing to slip
-            d = max(d, -c.source.start)
-            if let md = c.mediaDuration { d = min(d, md - c.source.end) }
+            let before = c.speed.unscale(c.source.start)                       // room for earlier source
+            let after = c.mediaDuration.map { c.speed.unscale($0 - c.source.end) }   // room for later source
+            if c.reversed {
+                d = min(d, before)
+                if let after { d = max(d, .zero - after) }
+            } else {
+                d = max(d, .zero - before)
+                if let after { d = min(d, after) }
+            }
         }
         if d == .zero { return .zero }
         var work = tracks
         for m in group {
             var c = m.clip
-            c.source.start += d
+            c.source.start += c.reversed ? .zero - c.speed.scale(d) : c.speed.scale(d)
             work[m.track].replace(c)
         }
         tracks = try commit(work)

@@ -3,7 +3,7 @@ import Foundation
 import SSCore
 
 public enum TimelineCursorKind: Sendable, Hashable {
-    case trimIn, trimOut, rippleIn, rippleOut, roll, slip, slide, razor, hand
+    case trimIn, trimOut, rippleIn, rippleOut, rateIn, rateOut, roll, slip, slide, razor, hand
 }
 
 /// Which cursor shows where, per tool. Pure: the view turns these regions into cursor rects.
@@ -30,7 +30,7 @@ public enum TimelineCursorMap {
             add(CGRect(x: content.minX, y: top, width: content.width, height: bottom - top), tool == .razor ? .razor : .hand)
         case .trackSelectForward, .pen, .shape, .mask, .type:
             break
-        case .selection, .rippleEdit, .rollEdit, .slip, .slide:
+        case .selection, .rippleEdit, .rateStretch, .rollEdit, .slip, .slide:
             for row in rows {
                 guard let track = timeline.track(row.track) else { continue }
                 for clip in track.clips {
@@ -49,6 +49,9 @@ public enum TimelineCursorMap {
                         // The reducer picks the nearest edge even over the body.
                         add(slab(x0, (x0 + x1) / 2), .rippleIn)
                         add(slab((x0 + x1) / 2, x1), .rippleOut)
+                    case .rateStretch:
+                        add(slab(x0, (x0 + x1) / 2), .rateIn)
+                        add(slab((x0 + x1) / 2, x1), .rateOut)
                     case .rollEdit:
                         add(slab(x0, x1), .roll)
                     case .slip:

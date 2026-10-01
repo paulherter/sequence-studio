@@ -140,8 +140,8 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         var g = edge == .tail ? delta : -delta            // change of duration
         for m in group {
             let c = m.clip
-            if g <= -c.source.duration { throw EditError.emptyClip }
-            let room: Time? = edge == .tail ? c.mediaDuration.map { $0 - c.source.end } : c.headHandle
+            if g <= -c.duration { throw EditError.emptyClip }
+            let room: Time? = edge == .tail ? c.tailRoom : c.headHandle
             if let room, g > room { g = room }
         }
         if g < .zero {
@@ -154,8 +154,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         var work = tracks
         for m in group {
             var c = m.clip
-            if edge == .head { c.shiftSourceStart(by: .zero - g) }
-            c.source.duration += g
+            if edge == .head { c.extendHead(by: g) } else { c.extendTail(by: g) }
             work[m.track].replace(c)
         }
         for i in involved { work[i].shift(from: pivot[i]!, by: g, excluding: ids) }

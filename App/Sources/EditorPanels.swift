@@ -246,6 +246,7 @@ final class EditorPanels {
             case .rippleDelete: self?.onCommand?(.rippleDelete)
             case .link, .unlink: self?.onCommand?(.link)
             case .nest: self?.onNest?()
+            case .speed: self?.onCommand?(.speedDuration)
             case .setToFrameSize, .scaleToFrameSize: self?.onFrameSize?()
             case .rename: self?.renameSelectedClip()
             case .label: break

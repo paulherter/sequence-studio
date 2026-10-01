@@ -43,6 +43,16 @@ Fehlt noch: Tastenkürzel selbst ändern, Dateiname im Export-Dialog, History-Li
 
 Fehlt noch: Source Patching getrennt vom Track Targeting, Gruppieren, Clip deaktivieren (Enable), Paste Attributes.
 
+## Clip-Geschwindigkeit (Stream speed)
+1. Clip anklicken, Cmd+R (oder Rechtsklick, Clip-Menü): Speed/Duration. 200 eintippen: der Clip wird halb so lang, der Name zeigt „[200%]".
+2. Im selben Dialog Dauer ändern: die Geschwindigkeit rechnet mit. Kettensymbol aus: die Geschwindigkeit ändert nur, wie viel vom Clip gezeigt wird, die Länge bleibt.
+3. Reverse Speed ankreuzen (oder -100 tippen): der Clip läuft rückwärts, Ton auch. „Maintain Audio Pitch" hält die Tonhöhe, aus = Chipmunk-Effekt.
+4. „Ripple Edit, Shifting Trailing Clips": die Clips danach rücken mit. Ohne: der Clip wächst nur in freien Platz und wird sonst abgeschnitten.
+5. R = Rate Stretch: Clipkante ziehen, die Geschwindigkeit ändert sich, der Ausschnitt bleibt. Cmd+Z macht es in einem Schritt rückgängig.
+6. Beschleunigten Clip mit C schneiden, trimmen, verschieben: Bild bleibt durchgehend, Keyframes bleiben an ihrer Stelle.
+7. Export: Länge und Ton passen zum Abspielen.
+
+Fehlt noch: Speed-Rampen (Zeit-Remapping), Geschwindigkeit für verschachtelte Sequenzen und Standbilder, Frame-Blending.
 ## Monitore und Projekt-Panel
 1. Clip im Projekt-Panel doppelklicken: öffnet im Source-Monitor. I und O setzen In und Out. `,` fügt am Playhead ein, `.` überschreibt. Der Playhead springt ans Ende des neuen Clips.
 2. Das Film-Symbol unter dem Source-Bild auf die Timeline ziehen (nur Video), danach das Wellenform-Symbol (nur Audio).

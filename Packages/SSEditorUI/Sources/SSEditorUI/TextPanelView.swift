@@ -263,7 +263,7 @@ public final class TextPanelView: NSView {
         let id = clip.id
         model.onSeek = { [weak self] t in
             guard let self, let c = self.clip(id) else { return }
-            self.session.seek(to: c.start + (t - c.source.start))
+            self.session.seek(to: c.timelineTime(forSource: t, frameDuration: self.session.activeTimeline?.frameDuration ?? .zero))
         }
         model.onCreateCaptions = { [weak self] captions in
             guard let self, let c = self.clip(id) else { return }
@@ -278,7 +278,7 @@ public final class TextPanelView: NSView {
 
     private func updatePlayhead() {
         guard let id = clipID, let c = clip(id), let m = models[id] else { return }
-        m.updatePlayhead(session.playhead - c.start + c.source.start)
+        m.updatePlayhead(c.sourceTime(at: session.playhead, frameDuration: session.activeTimeline?.frameDuration ?? .zero))
     }
 
     // MARK: Layout

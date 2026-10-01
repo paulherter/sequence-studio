@@ -42,7 +42,7 @@ public struct TimelineInteraction: Sendable {
     public static let dragThreshold: CGFloat = 3
 
     private struct Gesture {
-        enum Kind { case click, marquee, move, captionMove, captionTrim, trim, rippleTrim, roll, slip, slide, razor, hand }
+        enum Kind { case click, marquee, move, captionMove, captionTrim, trim, rippleTrim, rateStretch, roll, slip, slide, razor, hand }
         var kind: Kind
         var downPoint: CGPoint
         var downTime: Time
@@ -225,6 +225,11 @@ public struct TimelineInteraction: Sendable {
             g.clip = id
             g.kind = tool == .rippleEdit ? .rippleTrim : .roll
             g.edge = nearestEdge(of: id, zone: zone, x: p.x)
+        case (.rateStretch, .clip(let id, let zone)):
+            g.clip = id
+            g.kind = .rateStretch
+            g.edge = nearestEdge(of: id, zone: zone, x: p.x)
+            if !selection.contains(id) { selection = group(id, linked: linked(m)) }
         case (.slip, .clip(let id, _)):
             g.kind = .slip; g.clip = id
         case (.slide, .clip(let id, _)):
@@ -265,6 +270,7 @@ public struct TimelineInteraction: Sendable {
         case .captionMove: updateCaptionMove(p)
         case .captionTrim: updateCaptionTrim(p)
         case .trim, .rippleTrim: updateTrim(p)
+        case .rateStretch: updateRateStretch(p)
         case .roll: updateRoll(p)
         case .slip: updateSlip(p)
         case .slide: updateSlide(p)
@@ -390,6 +396,7 @@ public struct TimelineInteraction: Sendable {
         case .emptyClip: "Nothing to nest."
         case .wrongTrackKind: "Clips do not fit that track."
         case .invalidFormat: "That sequence format is not valid."
+        case .speedUnsupported: "Speed cannot be changed on that clip."
         case nil: "Nest failed."
         }
     }
@@ -619,6 +626,14 @@ public struct TimelineInteraction: Sendable {
             return
         }
         publish(d == .zero ? [] : [edit], ripple ? "Ripple Trim" : "Trim Clip")
+    }
+
+    /// Rate Stretch: the dragged edge snaps like a trim; the clip's speed follows the new length.
+    private mutating func updateRateStretch(_ p: CGPoint) {
+        guard let g = gesture, let id = g.clip, let c = clip(id) else { return }
+        let edgeTime = g.edge == .head ? c.start : c.timeline.end
+        let d = snappedDelta(travel(p, g), from: edgeTime, excluding: group(id, linked: true))
+        publish(d == .zero ? [] : [.rateStretch(id, edge: g.edge, by: d)], "Rate Stretch")
     }
 
     private mutating func updateRoll(_ p: CGPoint) {

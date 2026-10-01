@@ -49,7 +49,29 @@ extension Project {
                     n.mediaDuration = total
                     if let total, !c.isStill {
                         if c.source.start >= total { timelines[ti].tracks[tri].remove(c.id); continue }
-                        if c.source.end > total { n.source = TimeRange(start: c.source.start, end: total) }
+                        if c.source.end > total {
+                            if c.speed.isNormal && !c.reversed {
+                                n.source = TimeRange(start: c.source.start, end: total)
+                            } else {
+                                // Retimed: keep the length a whole number of timeline frames at the clip's speed. The end
+                                // that plays last is cut (tail); a reversed clip plays its source end first, so its head is
+                                // cut and the clip starts later (the remaining picture stays where it was).
+                                let fd = timelines[ti].frameDuration
+                                let excess = c.source.end - total
+                                if c.reversed {
+                                    let cut = c.speed.unscale(excess).frameIndex(frameDuration: fd)
+                                    let frames = cut + (c.speed.unscale(excess) > fd * cut ? 1 : 0)
+                                    let removed = fd * frames
+                                    if removed >= c.duration { timelines[ti].tracks[tri].remove(c.id); continue }
+                                    n.extendHead(by: .zero - removed)
+                                    n.start = c.start + removed
+                                } else {
+                                    let keep = c.speed.unscale(total - c.source.start).frameIndex(frameDuration: fd)
+                                    if keep < 1 { timelines[ti].tracks[tri].remove(c.id); continue }
+                                    n.extendTail(by: fd * keep - c.duration)
+                                }
+                            }
+                        }
                     }
                     timelines[ti].tracks[tri].replace(n)
                 }

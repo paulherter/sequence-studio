@@ -221,7 +221,7 @@ import Testing
         "source":{"start":{"value":0,"timescale":1},"duration":{"value":2,"timescale":1}},"start":{"value":0,"timescale":1}}]}]}]}}
         """#
         let p = try ProjectFile.decode(Data(json.utf8), migrations: ProjectFile.migrations)
-        #expect(ProjectFile.currentVersion == 14)
+        #expect(ProjectFile.currentVersion == 15)
         let clip = try #require(p.timelines.first?.tracks.first?.clips.first)
         #expect(clip.color == .default)
     }
@@ -255,6 +255,22 @@ import Testing
         let e = try #require(p.timelines.first?.tracks.first?.clips.first?.color.primary)
         #expect(e.basic.exposure == 1.5 && e.hueCurves == HueCurves() && e.hueCurves.isNeutral)
         #expect(e.isNeutral(.curves))
+    }
+
+    @Test func v13ProjectFileWithHueCurvesLoadsAtV15() throws {
+        let pid = UUID(), tid = UUID(), mid = UUID(), cid = UUID()
+        let json = #"""
+        {"formatVersion":13,"project":{"id":"\#(pid)","name":"Old","media":[],"activeTimeline":"\#(tid)",
+        "timelines":[{"id":"\#(tid)","name":"T","format":{"width":1920,"height":1080,"frameDuration":{"value":1,"timescale":30},"audioSampleRate":48000},
+        "tracks":[{"id":"\#(UUID())","kind":"video","clips":[{"id":"\#(cid)","name":"c","media":"\#(mid)","kind":"video",
+        "color":{"useEmbeddedLUT":true,"effects":[{"id":1,"hueCurves":{"hueVsSat":[{"x":0,"y":0.5},{"x":0.3,"y":0.9},{"x":1,"y":0.5}],
+        "hueVsHue":[{"x":0,"y":0.5},{"x":1,"y":0.5}],"hueVsLuma":[{"x":0,"y":0.5},{"x":1,"y":0.5}],
+        "lumaVsSat":[{"x":0,"y":0.5},{"x":1,"y":0.5}],"satVsSat":[{"x":0,"y":0.5},{"x":1,"y":0.5}]}}]},
+        "source":{"start":{"value":0,"timescale":1},"duration":{"value":2,"timescale":1}},"start":{"value":0,"timescale":1}}]}]}]}}
+        """#
+        let p = try ProjectFile.decode(Data(json.utf8), migrations: ProjectFile.migrations)
+        let e = try #require(p.timelines.first?.tracks.first?.clips.first?.color.primary)
+        #expect(e.hueCurves.hueVsSat[1] == CurvePoint(0.3, 0.9) && !e.hueCurves.isNeutral && !e.isNeutral(.curves))
     }
 
     @Test func hueCurvesRoundTripAndOnlyEncodeWhenUsed() throws {
