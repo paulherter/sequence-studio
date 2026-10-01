@@ -37,9 +37,9 @@ public enum ClipStyle: Sendable, Hashable {
 /// Draws one clip into the current graphics context. View coordinates, y down (flipped view).
 @MainActor
 public enum ClipDrawing {
-    public static let nameStripHeight: CGFloat = 14
+    nonisolated public static let nameStripHeight: CGFloat = 14
     /// Tracks at least this tall show the darker body under the name strip.
-    public static let bodyMinHeight: CGFloat = 26
+    nonisolated public static let bodyMinHeight: CGFloat = 26
     static let offlineFill = Theme.hex(0x6B2A26)
 
     private static let textAttributes: [NSAttributedString.Key: Any] =
@@ -135,22 +135,53 @@ public enum ClipDrawing {
 
     /// Waveform of an audio clip over its body (below the name strip when the clip is tall).
     /// `rect` is the clip's full rectangle, `visible` the horizontal range being drawn, `source` the clip's source range.
-    public static func drawWaveform(data: WaveformData, media: UUID, source: TimeRange, rect: CGRect, visible: CGRect,
-                                    cache: WaveformCache?) {
-        guard let cg = NSGraphicsContext.current?.cgContext, rect.width >= 1 else { return }
+    /// The waveform area inside a clip's full rectangle (also where the volume line moves).
+    nonisolated public static func waveformRect(in rect: CGRect) -> CGRect {
         let body = rect.insetBy(dx: 0, dy: 1)
         let top = body.height >= bodyMinHeight ? body.minY + nameStripHeight : body.minY
-        let wave = CGRect(x: body.minX, y: top + 1, width: body.width, height: body.maxY - top - 2)
+        return CGRect(x: body.minX, y: top + 1, width: body.width, height: body.maxY - top - 2)
+    }
+
+    /// `volumeDB`: level in dB at seconds since the clip start (Volume line plus Audio Gain), so the waveform shows
+    /// what will be heard; nil draws the source as it is.
+    public static func drawWaveform(data: WaveformData, media: UUID, source: TimeRange, rect: CGRect, visible: CGRect,
+                                    cache: WaveformCache?, volumeDB: (@Sendable (Double) -> Double)? = nil) {
+        guard let cg = NSGraphicsContext.current?.cgContext, rect.width >= 1 else { return }
+        let wave = waveformRect(in: rect)
         guard wave.height >= 4 else { return }
         let from = max(Int((visible.minX - wave.minX).rounded(.down)), 0)
         let to = min(Int((visible.maxX - wave.minX).rounded(.up)), Int(wave.width.rounded()))
         guard to > from else { return }
         let style = WaveformStyle()
         let columns = WaveformPath.columns(.init(data: data, source: source, clipWidth: wave.width, visibleColumns: from..<to,
-                                                 style: style, cache: cache.map { ($0, media) }))
+                                                 style: style, volumeDB: volumeDB ?? { _ in 0 }, cache: cache.map { ($0, media) }))
         cg.setFillColor(Theme.white(0.55).cgColor)
         cg.addPath(WaveformPath.path(columns: columns, rect: wave, style: style, firstColumn: from))
         cg.fillPath()
+    }
+
+    /// The volume rubber band over the waveform: a thin line with a diamond on every key.
+    public static func drawVolumeLine(clip: Clip, rect: CGRect, visible: CGRect, selected: Bool) {
+        guard let cg = NSGraphicsContext.current?.cgContext else { return }
+        let pts = VolumeLine.points(clip: clip, clipRect: rect, visible: visible)
+        guard pts.count >= 2 else { return }
+        cg.saveGState()
+        cg.clip(to: visible.intersection(rect))
+        cg.setLineWidth(1)
+        cg.setStrokeColor(Theme.black(0.45).cgColor)
+        cg.addLines(between: pts.map { CGPoint(x: $0.x, y: $0.y + 1) }); cg.strokePath()
+        cg.setStrokeColor(Theme.white(selected ? 0.95 : 0.75).cgColor)
+        cg.addLines(between: pts); cg.strokePath()
+        cg.setFillColor(Theme.white(0.95).cgColor)
+        cg.setStrokeColor(Theme.black(0.6).cgColor)
+        for k in VolumeLine.keyPoints(clip: clip, clipRect: rect) where k.x >= visible.minX - 4 && k.x <= visible.maxX + 4 {
+            let d = CGMutablePath()
+            d.move(to: CGPoint(x: k.x, y: k.y - 4)); d.addLine(to: CGPoint(x: k.x + 4, y: k.y))
+            d.addLine(to: CGPoint(x: k.x, y: k.y + 4)); d.addLine(to: CGPoint(x: k.x - 4, y: k.y)); d.closeSubpath()
+            cg.addPath(d); cg.fillPath()
+            cg.addPath(d); cg.strokePath()
+        }
+        cg.restoreGState()
     }
 
     /// Dark bars with a grip line at both ends: where trimming will grab (T-04).

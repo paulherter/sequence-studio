@@ -21,6 +21,9 @@ public final class TimelineView: NSView {
     public var onTrackToggle: ((Track.ID, TrackToggle) -> Void)?
     /// Double-click on a caption item: the host opens its text editor.
     public var onEditCaptionText: ((CaptionItem.ID) -> Void)?
+    /// Volume rubber band edit of an audio clip: the clip as edited so far; one drag = began, changed..., ended.
+    public var onVolumeEdit: ((Clip, VolumeEditPhase) -> Void)?
+    var volumeDrag: VolumeDrag?
     /// Builds the right-click menu for a point in view coordinates (see `TimelineContextMenu`). Nil = no menu.
     public var contextMenuProvider: ((CGPoint) -> NSMenu?)?
     /// Fired after scroll or zoom changed, so a host can sync scrollers and a zoom slider.
@@ -359,6 +362,7 @@ public final class TimelineView: NSView {
             resizing = (zone, p.y, geometry.rows(for: timeline))
             return
         }
+        if beginVolumeDrag(at: p, event: event) { return }
         onPointerDown?()
         if event.clickCount == 2, case .caption(let id, _) = geometry.hitTest(p, in: timeline) {
             onEditCaptionText?(id)
@@ -376,6 +380,7 @@ public final class TimelineView: NSView {
 
     public override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
+        if updateVolumeDrag(to: p) { return }
         if let r = resizing {
             let dy = p.y - r.startY
             switch r.zone {
@@ -399,6 +404,7 @@ public final class TimelineView: NSView {
     }
 
     public override func mouseUp(with event: NSEvent) {
+        if endVolumeDrag(at: convert(event.locationInWindow, from: nil)) { return }
         if resizing != nil {
             resizing = nil
             onTrackHeightsChange?(geometry.heightOverrides)
@@ -770,7 +776,13 @@ public final class TimelineView: NSView {
                     ClipDrawing.drawWaveform(data: d, media: c.media, source: c.source,
                                              rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
                                              visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height),
-                                             cache: wf.cache)   // pixel-mapped: only the dirty columns are needed
+                                             cache: wf.cache,   // pixel-mapped: only the dirty columns are needed
+                                             volumeDB: Self.volumeDB(of: c))
+                }
+                if track.kind == .audio, VolumeLine.isAvailable(rowHeight: row.height) {
+                    ClipDrawing.drawVolumeLine(clip: c, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
+                                               visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height),
+                                               selected: selection.contains(c.id))
                 }
             }
         }

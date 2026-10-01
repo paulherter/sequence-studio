@@ -125,6 +125,7 @@ final class EditorPanels {
             if !session.addRoundedCorners(to: [clip]) { onStatus?("Rounded Corners need a video clip that does not have it yet.") }
         }
         tv.contextMenuProvider = { [weak self] p in self?.timelineMenu(at: p) }
+        wireVolumeLine()
     }
 
     /// Length and streams of what is being dragged, for the ghost. Files not imported yet get the 5 s placeholder.
@@ -203,6 +204,7 @@ final class EditorPanels {
 
     private func timelineMenu(at p: CGPoint) -> NSMenu? {
         let tv = timelineView
+        if let k = tv.volumeKey(at: p) { return volumeKeyMenu(clip: k.clip, key: k.key) }
         tv.contextSelect(at: p)
         if tv.selection.isEmpty, !tv.captionSelection.isEmpty { return captionMenu() }
         let items = TimelineContextMenu.items(timeline: tv.timeline, selection: tv.selection,
