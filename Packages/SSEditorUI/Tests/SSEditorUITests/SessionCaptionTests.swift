@@ -1,6 +1,7 @@
 import Foundation
 import Testing
 import SSCore
+import SSText
 @testable import SSEditorUI
 
 private func s(_ n: Int64) -> Time { Time(n, 1) }
@@ -83,4 +84,15 @@ private func item(_ text: String, _ a: Int64, _ b: Int64) -> CaptionItem {
         #expect(id != nil && session.captionSelection == [id!])
         #expect(session.captionItem(id!)?.range == TimeRange(start: s(2), end: s(5)))
     }
+
+    @Test func textClipDefaultDurationEndsOnAFrame() throws {
+        let t = Timeline(name: "Main", frameDuration: Time(1001, 30000), tracks: [Track(kind: .video)])
+        let session = EditorSession(project: Project(name: "P", timelines: [t]))
+        let entry = try #require(TextTemplateCatalog.all.first)
+        let id = try #require(session.addTextClip(template: entry.template, at: Time(1001, 30000) * 7))
+        let c = try #require(session.activeTimeline?.tracks.flatMap(\.clips).first { $0.id == id })
+        #expect(c.timeline.start == Time(1001, 30000) * 7)
+        #expect(c.timeline.duration == Time(1001, 30000) * 150)         // 5 s -> 150 frames = 5.005 s
+    }
 }
+

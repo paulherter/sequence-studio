@@ -116,7 +116,8 @@ public final class TextPanelView: NSView {
             guard let self, let c = self.clip(id) else { return }
             // Every clip of the sequence that plays this media gets its captions (cut interviews, linked A/V once).
             let same = self.session.activeTimeline?.tracks.flatMap(\.clips).filter { $0.media == c.media && $0.generator == nil } ?? [c]
-            let items = CaptionMapping.items(captions, forClips: same.isEmpty ? [c] : same)
+            let items = CaptionMapping.items(captions, forClips: same.isEmpty ? [c] : same,
+                                             frameDuration: self.session.activeTimeline?.frameDuration)
             guard !items.isEmpty else { self.onStatus?("No captions fall inside this clip."); return }
             if self.session.addCaptions(items) { self.onStatus?("Created \(items.count) captions.") }
         }

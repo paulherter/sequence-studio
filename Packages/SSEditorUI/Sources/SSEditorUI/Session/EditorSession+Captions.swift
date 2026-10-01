@@ -58,7 +58,7 @@ extension EditorSession {
         guard let tl = activeTimeline else { return nil }
         let t = playhead.snapped(to: tl.frameDuration)
         var made: CaptionItem.ID?
-        let ok = attempt("Add Caption") { made = try $0.addCaption(at: t, duration: Time(3, 1)) }
+        let ok = attempt("Add Caption") { made = try $0.addCaption(at: t, duration: Time(3, 1).snapped(to: tl.frameDuration)) }
         if ok, let made { select(clips: [], captions: [made]) }
         return ok ? made : nil
     }

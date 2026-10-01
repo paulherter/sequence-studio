@@ -55,6 +55,22 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         #expect(zip(items, items.dropFirst()).allSatisfy { $0.range.end <= $1.range.start })
     }
 
+    @Test func captionsLandOnTheFrameGrid() {
+        let fd = Time(1001, 30000)
+        func item(_ a: Time, _ b: Time) -> CaptionItem { CaptionItem(lines: ["x"], range: TimeRange(start: a, end: b)) }
+        // 0.52 s .. 1.7 s at 29.97: frame 15.55 -> 16, 50.9 -> 51
+        let r = CaptionMapping.snapped([item(Time(52, 100), Time(17, 10))], to: fd)
+        #expect(r[0].range.start == fd * 16 && r[0].range.end == fd * 51)
+        // Two captions that touch still touch; one that collapses gets a frame or goes.
+        let t = CaptionMapping.snapped([item(Time(52, 100), Time(100, 100)), item(Time(100, 100), Time(150, 100))], to: fd)
+        #expect(t[0].range.end == t[1].range.start)
+        let tiny = CaptionMapping.snapped([item(Time(1, 1), Time(1, 1) + Time(1, 1000)), item(Time(2, 1), Time(3, 1))], to: fd)
+        #expect(tiny.count == 2 && tiny[0].range.end - tiny[0].range.start == fd)
+        let squeezed = CaptionMapping.snapped([item(Time(1, 1), Time(1, 1) + Time(1, 1000)), item(Time(1, 1) + Time(1, 1000), Time(2, 1))], to: fd)
+        #expect(squeezed.count == 1)                                   // no room for a frame: dropped, never overlapping
+        #expect(zip(t, t.dropFirst()).allSatisfy { $0.range.end <= $1.range.start })
+    }
+
     @Test func textTemplatesExist() {
         #expect(!TextTemplateCatalog.all.isEmpty)
         #expect(TextTemplateCatalog.all.allSatisfy { $0.template.text == TextTemplateCatalog.placeholderText })

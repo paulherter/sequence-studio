@@ -25,14 +25,38 @@ public enum ClipSectionMode: Equatable, Sendable {
 /// Maps captions produced from a transcript (source time of the clip's media) onto the timeline.
 public enum CaptionMapping {
     /// Shifts by `clip.start - clip.source.start` and keeps only what lies inside the clip (cut at its ends).
-    public static func items(_ captions: [Caption], for clip: Clip) -> [CaptionItem] {
+    /// With `frameDuration` the ranges are put on the frame grid (nearest frame, at least one frame long): spoken
+    /// word times fall between frames, captions must not.
+    public static func items(_ captions: [Caption], for clip: Clip, frameDuration: Time? = nil) -> [CaptionItem] {
         let offset = clip.start - clip.source.start
         let bounds = clip.timeline
-        return captions.compactMap { c in
+        let items: [CaptionItem] = captions.compactMap { c in
             let shifted = TimeRange(start: c.range.start + offset, duration: c.range.duration)
             guard let r = shifted.intersection(bounds), !r.isEmpty else { return nil }
             return CaptionItem(lines: c.lines, range: r, styleRef: c.styleRef, animationRef: c.animationRef)
         }
+        guard let fd = frameDuration else { return items }
+        return snapped(items, to: fd)
+    }
+
+    /// Nearest frame for both ends; a caption that collapses gets one frame when the next one leaves room, else it goes.
+    /// Sorted, non-overlapping input stays non-overlapping.
+    public static func snapped(_ items: [CaptionItem], to fd: Time) -> [CaptionItem] {
+        var out: [CaptionItem] = []
+        let sorted = items.sorted { $0.range.start < $1.range.start }
+        for (i, it) in sorted.enumerated() {
+            var s = it.range.start.snapped(to: fd), e = it.range.end.snapped(to: fd)
+            if let last = out.last, s < last.range.end { s = last.range.end }
+            if e <= s {
+                let next = i + 1 < sorted.count ? sorted[i + 1].range.start.snapped(to: fd) : nil
+                guard next == nil || next! >= s + fd else { continue }
+                e = s + fd
+            }
+            var c = it
+            c.range = TimeRange(start: s, end: e)
+            out.append(c)
+        }
+        return out
     }
 }
 
@@ -40,11 +64,11 @@ extension CaptionMapping {
     /// All clips that play the same media (a cut interview, or the video and audio halves of one recording): the
     /// captions of each clip's part, in time order. Where two clips cover the same time (linked video + audio) the
     /// first one wins, so the result never overlaps.
-    public static func items(_ captions: [Caption], forClips clips: [Clip]) -> [CaptionItem] {
+    public static func items(_ captions: [Caption], forClips clips: [Clip], frameDuration: Time? = nil) -> [CaptionItem] {
         let sorted = clips.sorted { $0.start < $1.start }
         var out: [CaptionItem] = []
         for clip in sorted {
-            for item in items(captions, for: clip) where !out.contains(where: { $0.range.overlaps(item.range) }) {
+            for item in items(captions, for: clip, frameDuration: frameDuration) where !out.contains(where: { $0.range.overlaps(item.range) }) {
                 out.append(item)
             }
         }
