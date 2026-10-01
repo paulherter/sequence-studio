@@ -40,12 +40,14 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
         var used = 0
         var seq: UInt64 = 0
         var passes = 0
+        var generation = 0
         var playhead: Time = .zero
         var direction = 0
         var mapping: Mapping = { $0.pts }
 
         mutating func store(_ payload: Payload, _ key: FrameKey, cost: Int) {
             seq += 1
+            generation += 1
             entries[key] = Entry(payload: payload, cost: cost, seq: seq)
             used += cost
             let ik = IndexKey(media: key.media, scale: key.scale)
@@ -57,6 +59,7 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
         @discardableResult
         mutating func remove(_ key: FrameKey) -> Entry? {
             guard let e = entries.removeValue(forKey: key) else { return nil }
+            generation += 1
             used -= e.cost
             let ik = IndexKey(media: key.media, scale: key.scale)
             if var arr = index[ik] {
@@ -103,6 +106,8 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
 
     public var usedBytes: Int { state.withLock { $0.used } }
     public var count: Int { state.withLock { $0.entries.count } }
+    /// Bumped on every insert, removal and clear: lets a poller skip `cachedRanges` when nothing changed.
+    public var generation: Int { state.withLock { $0.generation } }
     /// Number of eviction passes started (for tests and stats).
     var evictionPasses: Int { state.withLock { $0.passes } }
 
@@ -151,8 +156,26 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
         }
     }
 
+    /// Timeline spans that cached frames cover (the "yellow bar" of the ruler): every frame covers one `frameDuration`
+    /// from its timeline time; frames at most one frame apart merge into one span. Keys the focus mapping cannot place
+    /// on the timeline are skipped. Sorted, non-overlapping. A pure query (no side effects).
+    public func cachedRanges(frameDuration fd: Time) -> [TimeRange] {
+        guard fd > .zero else { return [] }
+        let (keys, mapping) = state.withLock { s in (Array(s.entries.keys), s.mapping) }
+        let times = keys.compactMap(mapping).sorted()
+        var out: [TimeRange] = []
+        for t in times {
+            if let last = out.last, t <= last.end + fd {
+                if t + fd > last.end { out[out.count - 1] = TimeRange(start: last.start, end: t + fd) }
+            } else {
+                out.append(TimeRange(start: t, duration: fd))
+            }
+        }
+        return out
+    }
+
     public func removeAll() {
-        state.withLock { $0.entries.removeAll(); $0.index.removeAll(); $0.used = 0 }
+        state.withLock { $0.entries.removeAll(); $0.index.removeAll(); $0.used = 0; $0.generation += 1 }
     }
 
     /// Scores `snap` (plus the candidate) outside the lock, then removes victims until `used <= target`.

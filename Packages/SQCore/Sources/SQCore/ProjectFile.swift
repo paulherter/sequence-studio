@@ -55,6 +55,7 @@ public enum ProjectFile {
         t[15] = migrateV15toV16
         t[16] = migrateV16toV17
         t[17] = migrateV17toV18
+        t[18] = migrateV18toV19
         t[20] = migrateV20toV21
         return t
     }

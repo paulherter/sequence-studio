@@ -20,62 +20,80 @@ extension EditorSession {
         let hasAudio = ref.info?.audio != nil
         var endTime = Time.zero
         var noTarget = false
+        var fourPoint = false
         let done = attempt(mode == .insert ? "Insert" : "Overwrite") { tl in
             if adopts, let v = ref.info?.video {
                 tl.format = SequenceFormat(width: v.displayWidth, height: v.displayHeight,
                                            frameDuration: still ? tl.format.frameDuration : v.nominalFrameDuration,
                                            audioSampleRate: tl.format.audioSampleRate)
             }
-            let at = tl.sourceEditPosition(playhead: self.playhead).snapped(to: tl.frameDuration)
             guard let targets = tl.sourceEditTargets(hasVideo: hasVideo, hasAudio: hasAudio, streams: streams) else {
                 noTarget = true; throw EditError.clipNotFound
             }
             let fit = ref.info?.video.map { tl.format.fitScale(width: $0.displayWidth, height: $0.displayHeight) } ?? 1
-            // Whole sequence frames (a 24 fps clip in a 30 fps sequence, 60 in 25): round the length, stay inside the media.
-            let fd = tl.frameDuration
-            var d = source.duration.snapped(to: fd)
-            if d <= .zero { d = fd }
-            if !still, source.start + d > total { d = d - fd }
-            guard d > .zero else { throw EditError.emptyClip }
-            let placed = TimeRange(start: source.start, duration: d)
+            // Three-point rule (Adobe): sequence In and Out give the length, otherwise the source does; an Out alone is back-timed
+            // and cuts the source head when there is no room before it. Four marks: sequence range and source In.
+            let sm = tl.explicitMarks
+            guard let plan = Timeline.sourceEditPlan(sourceMarks: m, total: total, sequenceIn: sm.markIn, sequenceOut: sm.markOut,
+                                                     playhead: self.playhead, frameDuration: tl.frameDuration, isStill: still)
+            else { throw EditError.emptyClip }
+            fourPoint = plan.usedFourPointDefault
+            let placed = plan.source, at = plan.at, d = plan.source.duration
             try tl.threePointEdit(source: placed, media: id, name: ref.name, mediaDuration: still ? nil : total,
                                   isStill: still, initialScale: fit, targets: targets, at: at, mode: mode)
             endTime = at + d
         }
         if noTarget { setError("Target a track first (the V1 / A1 buttons in the track headers).") }
         if done { seek(to: endTime) }
+        if done, fourPoint { setError("Four marks set: used the sequence In/Out and the source In (no Fit Clip dialog yet).") }
         return done
     }
 }
 
 extension EditorSession {
-    /// Play In to Out: plays the sequence In..Out range (the whole sequence without marks), stops at Out, or loops.
-    public func playInToOut() {
+    /// Play In to Out (Option+K): plays the sequence In..Out range (the whole sequence without marks), stops at Out, or
+    /// loops. With `preroll` / `postroll` (Shift+Space, Premiere "Play In to Out with Preroll/Postroll") it starts that
+    /// long before In and ends that long after Out, clamped to the sequence.
+    public func playInToOut(preroll: Time = .zero, postroll: Time = .zero) {
         guard let t = activeTimeline else { return }
-        let range = t.inOut.flatMap { $0.isEmpty ? nil : $0 }
-        let start = range?.start ?? .zero
+        var range = t.inOut.flatMap { $0.isEmpty ? nil : $0 }
+        if let r = range, preroll > .zero || postroll > .zero {
+            range = PlaybackBounds.extended(r, preroll: preroll, postroll: postroll, duration: t.duration) ?? r
+        }
+        start(range: range, from: range?.start ?? .zero, returnTo: nil)
+    }
+
+    /// Shift+K, Play Around: from `preroll` before the playhead to `postroll` after it; at the end the playhead goes back
+    /// to where it was.
+    public func playAround(preroll: Time, postroll: Time) {
+        guard let t = activeTimeline else { return }
+        let here = playhead
+        guard let range = PlaybackBounds.playAround(at: here, preroll: preroll, postroll: postroll, duration: t.duration) else { return }
+        start(range: range, from: range.start, returnTo: here)
+    }
+
+    private func start(range: TimeRange?, from t: Time, returnTo: Time?) {
         if isPlaying { stopPlayback() }
-        seek(to: start)
+        seek(to: t)
         apply(shuttle: .setRate(.forward))
         bounds.range = range           // after apply: starting playback clears the range
+        bounds.returnTo = range == nil ? nil : returnTo
     }
 
     public func toggleLoop() { bounds.loop.toggle() }
 }
 
 extension EditorSession {
-    /// Option+I: the sequence In goes back to the start (Out stays). Both cleared: no range at all.
+    /// Option+I: the sequence In goes away (Out stays). Both cleared: no range at all.
     public func clearIn() {
-        guard let io = activeTimeline?.inOut else { return }
-        let end = io.end
-        attempt("Clear In") { $0.inOut = end >= $0.duration ? nil : TimeRange(start: .zero, end: end) }
+        guard activeTimeline?.explicitMarks.markIn != nil else { return }
+        attempt("Clear In") { $0.clearIn() }
     }
 
-    /// Option+O: the sequence Out goes back to the end of the sequence (In stays).
+    /// Option+O: the sequence Out goes away (In stays, the range then runs to the end of the sequence).
     public func clearOut() {
-        guard let io = activeTimeline?.inOut else { return }
-        let start = io.start
-        attempt("Clear Out") { $0.inOut = start <= .zero ? nil : TimeRange(start: start, end: max($0.duration, start + $0.frameDuration)) }
+        guard activeTimeline?.explicitMarks.markOut != nil else { return }
+        attempt("Clear Out") { $0.clearOut() }
     }
 }
 
@@ -95,5 +113,19 @@ extension EditorSession {
     /// Replace Footage / Link Media: `ref` (probed from the new file) takes over the item `id`. One undo step.
     public func replaceFootage(_ id: MediaRef.ID, with ref: MediaRef) {
         perform("Replace Footage") { _ = $0.replaceMedia(id, with: ref) }
+    }
+}
+
+extension EditorSession {
+    /// Dragging the In / Out grip on the Program monitor strip: sets that mark at the frame `t` (Out: the frame is the
+    /// last one inside). One undo step per drag.
+    public func setInPoint(at t: Time) {
+        guard activeTimeline != nil else { return }
+        attempt("Mark In") { $0.markIn(at: max(.zero, t)) }
+    }
+
+    public func setOutPoint(at t: Time) {
+        guard activeTimeline != nil else { return }
+        attempt("Mark Out") { $0.markOut(at: max(.zero, t)) }
     }
 }

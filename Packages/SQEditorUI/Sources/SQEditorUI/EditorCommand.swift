@@ -53,6 +53,9 @@ public enum EditorCommand: Sendable, Hashable {
     case previousKeyframe, nextKeyframe, toggleSpeedGraph, addKeyframe
     // Audio
     case audioGain, toggleAudioScrubbing
+    // Source and Project flow: Play In to Out with preroll/postroll (Shift+Space), Play Around (Shift+K), poster frame
+    // (Cmd+P / Option+P), Hover Scrub (Shift+H), Find (Cmd+F).
+    case playInToOutRoll, playAround, setPosterFrame, clearPosterFrame, toggleHoverScrub, find
     // Captions
     case toggleCaptionsInMonitor
 
@@ -197,6 +200,12 @@ public enum EditorCommand: Sendable, Hashable {
         case .addKeyframe: "Add Keyframe"
         case .audioGain: "Audio Gain…"
         case .toggleAudioScrubbing: "Audio Scrubbing"
+        case .playInToOutRoll: "Play In to Out with Preroll/Postroll"
+        case .playAround: "Play Around"
+        case .setPosterFrame: "Set Poster Frame"
+        case .clearPosterFrame: "Clear Poster Frame"
+        case .toggleHoverScrub: "Hover Scrub"
+        case .find: "Find…"
         case .toggleCaptionsInMonitor: "Show Captions in Program Monitor"
         }
     }

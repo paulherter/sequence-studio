@@ -47,6 +47,7 @@ final class EditorPanels {
     private var trackHeightsFor: Timeline.ID?
     private var pagingTimeline = false
     private var wasPlaying = false
+    var lastCacheKey: [Int] = []
 
     /// A panel was clicked or received a command: move keyboard focus (and shortcut scope) there.
     var onFocus: ((PanelID) -> Void)?
@@ -353,6 +354,7 @@ final class EditorPanels {
         projectView.onOpenSequence = { [weak self] id in self?.session.setActiveTimeline(id) }
         projectView.onPlace = { [weak self] ids, mode in self?.session.placeMedia(ids, mode: mode) }
         projectView.onNewSequenceFromClip = { [weak self] id in self?.session.newSequence(fromMedia: id) }
+        wireSourceFlow()
         projectView.onNewSequence = { [weak self] in self?.onCommand?(.newSequence) }
         projectView.onReplaceFootage = { [weak self] id in self?.replaceFootage(id) }
         monitorView.safeMarginsView.rectProvider = { [weak self] in self?.surface.mapping.canvasRect ?? .zero }

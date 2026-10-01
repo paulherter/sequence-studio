@@ -21,6 +21,11 @@ final class SourceMonitorController {
     private var isPlaying = false
     private var position = Time.zero
     var bounds = PlaybackBounds()
+    /// Clips opened earlier (title popup): at most 20, most recent first.
+    private(set) var history = SourceHistory()
+    /// Preroll / postroll of Play In to Out with roll and of Play Around (Preferences > Playback).
+    var preroll = PlaybackBounds.defaultPreroll
+    var postroll = PlaybackBounds.defaultPostroll
     /// Streams of the drag in flight (video-only / audio-only icons); read by the timeline's drop handler.
     private(set) var dragStreams: SourceStreams = .both
 
@@ -66,12 +71,13 @@ final class SourceMonitorController {
             case .stepBack: stepFrames(-1)
             case .stepForward: stepFrames(1)
             case .playPause: playPause()
-            case .addMarker: onStatus?("Markers on source clips are not available yet.")
+            case .addMarker: addMarker()
             case .insert: edit(.insert)
             case .overwrite: edit(.overwrite)
             case .exportFrame: exportFrame()
             case .loop: bounds.loop.toggle(); model.isLooping = bounds.loop
-            case .lift, .extract, .playInToOut, .toggleSafeMargins: break
+            case .playInToOut: playInToOut()
+            case .lift, .extract, .toggleSafeMargins: break
             }
         }
         model.dragItem = { [weak self] streams in
@@ -82,6 +88,17 @@ final class SourceMonitorController {
             return item
         }
         model.onDragEnded = { [weak self] in self?.dragStreams = .both }
+        model.onMarkEdit = { [weak self] end, t in
+            switch end {
+            case .markIn: self?.setMarks { $0.setSourceIn(t, for: $1) }
+            case .markOut: self?.setMarks { $0.setSourceOut(t, for: $1) }
+            case .playhead: break
+            }
+        }
+        model.onPickSource = { [weak self] id in self?.open(id) }
+        model.onCloseSource = { [weak self] in self?.closeCurrent() }
+        model.onCloseAllSources = { [weak self] in self?.closeAll() }
+        model.onDropMedia = { [weak self] ids in self?.open(all: ids) }
         model.contextMenuBuilder = { [weak self] menu in self?.fillContextMenu(menu) }
     }
 
@@ -114,8 +131,29 @@ final class SourceMonitorController {
         model.dropFrame = fd == Time(1001, 30000) || fd == Time(1001, 60000)
         model.duration = total
         model.currentTime = position
+        history.open(id)
         refreshMarks()
         return true
+    }
+
+    /// Several clips at once (a drop or a multi-selection): the first one shows, the rest join the history in order.
+    @discardableResult
+    func open(all ids: [MediaRef.ID]) -> Bool {
+        guard let first = ids.first(where: { session.project.media($0) != nil }) else { return false }
+        history.open(all: ids.filter { session.project.media($0) != nil })
+        return open(first)
+    }
+
+    /// Title popup > Close: the current clip leaves the history; the next one (if any) shows.
+    func closeCurrent() {
+        guard let id = mediaID else { return }
+        history.close(id)
+        if let next = history.ids.first { open(next) } else { close() }
+    }
+
+    func closeAll() {
+        history.closeAll()
+        close()
     }
 
     func close() {
@@ -124,20 +162,25 @@ final class SourceMonitorController {
         duration = .zero
         position = .zero
         model.duration = .zero; model.currentTime = .zero; model.markIn = nil; model.markOut = nil
+        refreshMarks()
         engine.setTimeline(Timeline(name: "", frameDuration: frameDuration, tracks: []), sequences: [:])
     }
 
     func sync(_ change: EditorSession.Change) {
         guard let id = mediaID else { return }
-        if session.project.media(id) == nil { close(); return }
+        if session.project.media(id) == nil { history.close(id); if let next = history.ids.first { open(next) } else { close() }; return }
         if change.contains(.project) { refreshMarks() }
     }
 
     private func refreshMarks() {
-        guard let id = mediaID else { return }
+        history.prune(keeping: Set(session.project.media.map(\.id)))
+        model.sourceItems = history.ids.compactMap { id in session.project.media(id).map { .init(id: id, name: $0.name) } }
+        model.sourceCurrent = mediaID
+        guard let id = mediaID else { model.markerTimes = []; return }
         let m = session.project.sourceMarks(for: id)
         model.markIn = m.markIn
         model.markOut = m.markOut
+        model.markerTimes = session.project.sourceMarkers(for: id).map(\.time)
     }
 
     var marks: SourceMarks { mediaID.map { session.project.sourceMarks(for: $0) } ?? SourceMarks() }
@@ -190,17 +233,32 @@ final class SourceMonitorController {
         }
     }
 
-    func nudge(forward: Bool) { play(rate: engine.rate.nudged(forward: forward)) }
+    func nudge(forward: Bool) {
+        play(rate: engine.rate.nudged(forward: forward))
+        shuttle.adopt(engine.rate)
+    }
 
     func press(_ key: ShuttleKey) { apply(shuttle: shuttle.press(key)); _ = shuttle.release(key) }
 
-    func playInToOut() {
+    /// Option+K plays In..Out; Shift+Space (`withRoll`) starts `preroll` before In and ends `postroll` after Out.
+    func playInToOut(withRoll: Bool = false) {
         guard mediaID != nil else { return }
-        let m = marks
-        let range = Timeline.sourceEditRange(marks: m, total: duration)
+        var range = Timeline.sourceEditRange(marks: marks, total: duration)
+        if withRoll, let r = range { range = PlaybackBounds.extended(r, preroll: preroll, postroll: postroll, duration: duration) ?? r }
         seek(to: range?.start ?? .zero)
         play(rate: .forward)
         bounds.range = range
+    }
+
+    /// Shift+K: from `preroll` before the playhead to `postroll` after it, then back to where it was.
+    func playAround() {
+        guard mediaID != nil else { return }
+        let here = position
+        guard let range = PlaybackBounds.playAround(at: here, preroll: preroll, postroll: postroll, duration: duration) else { return }
+        seek(to: range.start)
+        play(rate: .forward)
+        bounds.range = range
+        bounds.returnTo = here
     }
 
     private func positionChanged(_ t: Time) {
@@ -213,9 +271,14 @@ final class SourceMonitorController {
             return
         case .stop(let at):
             // Park on the last frame (the end itself is one frame past the picture).
-            let parked = max(.zero, min(at, duration) - frameDuration)
+            // Reverse playback stops on the range start itself.
+            let parked = rate.isReverse ? max(.zero, at) : max(.zero, min(at, duration) - frameDuration)
             pause(); position = parked; model.currentTime = parked
             engine.seek(to: parked)
+            return
+        case .stopAndReturn(let back):
+            pause(); bounds.range = nil
+            seek(to: back)
             return
         case .none: break
         }
@@ -239,6 +302,43 @@ final class SourceMonitorController {
     func clearIn() { setMarks { $0.clearSourceIn(for: $1) } }
     func clearOut() { setMarks { $0.clearSourceOut(for: $1) } }
     func clearMarks() { setMarks { $0.clearSourceMarks(for: $1) } }
+    /// X: In at the start, Out at the end of the whole clip. The sequence's In/Out stay as they are.
+    func markClip() {
+        let d = duration
+        setMarks { _ = $0.markSourceClip($1, duration: d) }
+    }
+
+    // MARK: Markers (M)
+
+    /// M: a marker on the clip at the playhead. A second M on the same frame says so (no dialog for clip markers yet).
+    func addMarker() {
+        guard let id = mediaID else { onStatus?("Open a clip in the Source monitor first."); return }
+        var p = session.project
+        guard let r = p.addSourceMarker(at: position, frameDuration: frameDuration, to: id) else { return }
+        if !r.isNew { onStatus?("There is already a marker on this frame."); return }
+        session.setSourceMarkers(p.sourceMarkers(for: id), for: id)
+        refreshMarks()
+    }
+
+    func clearMarkerAtPlayhead() {
+        guard let id = mediaID, let m = session.project.sourceMarkers(for: id).first(where: { $0.time == position }) else { return }
+        var p = session.project
+        p.removeSourceMarker(m.id, from: id)
+        session.setSourceMarkers(p.sourceMarkers(for: id), for: id)
+        refreshMarks()
+    }
+
+    func clearAllMarkers() {
+        guard let id = mediaID else { return }
+        session.setSourceMarkers(nil, for: id)
+        refreshMarks()
+    }
+
+    func goToMarker(forward: Bool) {
+        guard let id = mediaID else { return }
+        let times = session.project.sourceMarkers(for: id).map(\.time)
+        if let t = forward ? times.first(where: { $0 > position }) : times.last(where: { $0 < position }) { seek(to: t) }
+    }
 
     // MARK: Editing
 
@@ -268,13 +368,18 @@ final class SourceMonitorController {
         case .clearOut: clearOut()
         case .clearInOut: clearMarks()
         case .playInToOut: playInToOut()
+        case .playInToOutRoll: playInToOut(withRoll: true)
+        case .playAround: playAround()
+        case .markClip: markClip()
+        case .nextMarker: goToMarker(forward: true)
+        case .previousMarker: goToMarker(forward: false)
         case .toggleLoop: bounds.loop.toggle(); model.isLooping = bounds.loop
         case .shuttleReverse: press(.j)
         case .shuttleStop: press(.k)
         case .shuttleSlowReverse: nudge(forward: false)
         case .shuttleSlowForward: nudge(forward: true)
         case .shuttleForward: press(.l)
-        case .addMarker: onStatus?("Markers on source clips are not available yet.")
+        case .addMarker: addMarker()
         default: return false
         }
         return true
@@ -298,6 +403,7 @@ final class SourceMonitorController {
         }
         let has = mediaID != nil
         let m = marks
+        add("Mark Clip", has) { [weak self] in self?.markClip() }
         add("Mark In", has) { [weak self] in self?.markIn() }
         add("Mark Out", has) { [weak self] in self?.markOut() }
         add("Go to In", m.markIn != nil) { [weak self] in self?.goToIn() }
@@ -306,6 +412,11 @@ final class SourceMonitorController {
         add("Clear In", m.markIn != nil) { [weak self] in self?.clearIn() }
         add("Clear Out", m.markOut != nil) { [weak self] in self?.clearOut() }
         add("Clear In and Out", !m.isEmpty) { [weak self] in self?.clearMarks() }
+        menu.addItem(.separator())
+        let markers = mediaID.map { session.project.sourceMarkers(for: $0) } ?? []
+        add("Add Marker", has) { [weak self] in self?.addMarker() }
+        if markers.contains(where: { $0.time == position }) { add("Clear Marker") { [weak self] in self?.clearMarkerAtPlayhead() } }
+        if !markers.isEmpty { add("Clear All Markers") { [weak self] in self?.clearAllMarkers() } }
         menu.addItem(.separator())
         add("Insert", has) { [weak self] in self?.edit(.insert) }
         add("Overwrite", has) { [weak self] in self?.edit(.overwrite) }

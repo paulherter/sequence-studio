@@ -42,6 +42,12 @@ public protocol ProgramEngine: AnyObject {
     var meterReading: (sequence: Int, peaks: [Float])? { get }
     /// Dragging the playhead and stepping play short audio grains (Premiere "audio scrubbing").
     var audioScrubbing: Bool { get set }
+    /// Timeline spans with cached frames (ruler strip); empty for stand-ins.
+    var cachedSpans: [TimeRange] { get }
+    /// Changes whenever the frame cache does (poll gate for `cachedSpans`).
+    var cacheGeneration: Int { get }
+    /// Debug HUD text with the scrub latency; nil when nothing was measured or for stand-ins.
+    var scrubLatencyText: String? { get }
     /// Captions drawn over the picture in the monitor (the export burn-in is separate).
     var showsCaptions: Bool { get set }
 }
@@ -54,10 +60,15 @@ extension ProgramEngine {
     public var audioUnavailable: Bool { false }
     public var meterReading: (sequence: Int, peaks: [Float])? { nil }
     public var audioScrubbing: Bool { get { true } set {} }
+    public var cachedSpans: [TimeRange] { [] }
+    public var cacheGeneration: Int { 0 }
+    public var scrubLatencyText: String? { nil }
     public var showsCaptions: Bool { get { true } set {} }
 }
 
 extension PlaybackEngine: ProgramEngine {
+    public var cachedSpans: [TimeRange] { cachedRanges() }
+    public var scrubLatencyText: String? { stats.latencySummary()?.text }
     public var meterReading: (sequence: Int, peaks: [Float])? {
         guard let s = audio?.meterSnapshot() else { return nil }
         return (s.sequence, [s.left.peak, s.right.peak])

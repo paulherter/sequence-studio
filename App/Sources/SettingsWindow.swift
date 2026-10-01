@@ -12,6 +12,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let autosavePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let recoveryCheck = NSButton(checkboxWithTitle: "Offer to restore the last autosave after an unclean quit", target: nil, action: nil)
     private let qualityPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let prerollPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let postrollPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let textDurationPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let cachePath = NSTextField(labelWithString: "")
     private let usedLabel = NSTextField(labelWithString: "")
@@ -106,7 +108,12 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private func playbackPage() -> NSView {
         for q in MonitorQuality.allCases { qualityPopUp.addItem(withTitle: q.title); qualityPopUp.lastItem?.representedObject = q.rawValue }
         qualityPopUp.target = self; qualityPopUp.action = #selector(changed)
-        return column([row("Default quality", qualityPopUp),
+        for pop in [prerollPopUp, postrollPopUp] {
+            for n in AppSettings.rollChoices { pop.addItem(withTitle: n == 1 ? "1 second" : "\(n) seconds") }
+            pop.target = self; pop.action = #selector(changed)
+        }
+        return column([row("Default quality", qualityPopUp), row("Preroll", prerollPopUp), row("Postroll", postrollPopUp),
+                       note("Preroll and postroll are the seconds played before and after the marked range (Shift+Space) or the playhead (Shift+K, Play Around)."),
                        note("Quality is the Program monitor's playback resolution at launch; change it any time in the monitor. Audio plays on the system output device.")])
     }
 
@@ -126,6 +133,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         autosavePopUp.selectItem(at: AppSettings.autosaveChoices.firstIndex(of: s.autosaveInterval) ?? 2)
         recoveryCheck.state = s.offerRecovery ? .on : .off
         qualityPopUp.selectItem(at: MonitorQuality.allCases.firstIndex(of: s.defaultQuality) ?? 0)
+        prerollPopUp.selectItem(at: AppSettings.rollChoices.firstIndex(of: s.prerollSeconds) ?? 3)
+        postrollPopUp.selectItem(at: AppSettings.rollChoices.firstIndex(of: s.postrollSeconds) ?? 2)
         textDurationPopUp.selectItem(withTag: s.defaultTextSeconds)
         if textDurationPopUp.selectedItem == nil { textDurationPopUp.selectItem(withTag: 5) }
         cachePath.stringValue = s.effectiveCacheFolder.path
@@ -137,6 +146,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         s.autosaveInterval = AppSettings.autosaveChoices[max(autosavePopUp.indexOfSelectedItem, 0)]
         s.offerRecovery = recoveryCheck.state == .on
         if let raw = qualityPopUp.selectedItem?.representedObject as? String, let q = MonitorQuality(rawValue: raw) { s.defaultQuality = q }
+        s.prerollSeconds = AppSettings.rollChoices[max(prerollPopUp.indexOfSelectedItem, 0)]
+        s.postrollSeconds = AppSettings.rollChoices[max(postrollPopUp.indexOfSelectedItem, 0)]
         if let t = textDurationPopUp.selectedItem?.tag, t > 0 { s.defaultTextSeconds = t }
         controller.settings = s
         s.save()

@@ -31,6 +31,7 @@ public struct PlaybackRate: Sendable, Hashable {
     /// Scales the magnitude by `factor`, keeping the sign.
     func scaled(by factor: Int32) -> PlaybackRate { PlaybackRate(num * factor, den) }
     func isLess(thanMagnitude other: Int32) -> Bool { Int64(abs(num)) < Int64(other) * Int64(den) }
+    func isGreater(thanMagnitude other: Int32) -> Bool { Int64(abs(num)) > Int64(other) * Int64(den) }
 }
 
 public enum ShuttleKey: Sendable, Hashable { case j, k, l }
@@ -43,7 +44,9 @@ public enum ShuttleAction: Sendable, Equatable {
 
 /// J/K/L shuttle state machine (Premiere behaviour).
 ///
-/// - L: 1, 2, 4, 8 on repeated presses (capped at 8). J mirrors. The opposite key restarts at ±1.
+/// - L: 1, 2, 4, 8 on repeated presses (capped at 8, whatever the starting rate). J mirrors.
+/// - The opposite key while playing faster than 1x slows down one step (halves the speed, not below 1x); at 1x or slower
+///   (or paused) it starts the other direction at ±1 (Premiere: L L L then J J J gives 4x, 2x, 1x, then -1x).
 /// - K: stop. While K is held:
 ///   - press of L/J is a tap: `.step(±1)` frame immediately;
 ///   - if the L/J key is still held after the UI's hold threshold (~0.25 s), the UI calls
@@ -61,6 +64,9 @@ public struct Shuttle: Sendable, Equatable {
     /// Playback was stopped by something other than K (a click in the timeline, the transport button).
     public mutating func stopped() { rate = .zero }
 
+    /// The playing speed was changed from outside (Shift+L / Shift+J nudge): the next L/J continues from it.
+    public mutating func adopt(_ r: PlaybackRate) { rate = r }
+
     public mutating func press(_ key: ShuttleKey) -> ShuttleAction {
         switch key {
         case .k:
@@ -71,10 +77,16 @@ public struct Shuttle: Sendable, Equatable {
             held.insert(key)
             if kHeld { return .step(Int(dir)) }
             let same = dir > 0 ? rate.isForward : rate.isReverse
-            if !same { return setRate(PlaybackRate(dir)) }
+            if !same {
+                if rate.isGreater(thanMagnitude: 1) {
+                    let half = PlaybackRate(rate.num, rate.den * 2)
+                    return setRate(half.isLess(thanMagnitude: 1) ? PlaybackRate(rate.isForward ? 1 : -1) : half)
+                }
+                return setRate(PlaybackRate(dir))
+            }
             if rate.isLess(thanMagnitude: 1) { return setRate(PlaybackRate(dir)) }
-            if !rate.isLess(thanMagnitude: 8) { return setRate(rate) }
-            return setRate(rate.scaled(by: 2))
+            let doubled = rate.scaled(by: 2)
+            return setRate(doubled.isGreater(thanMagnitude: 8) ? PlaybackRate(dir * 8) : doubled)
         }
     }
 

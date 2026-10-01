@@ -35,8 +35,14 @@ import Testing
             ("L x4", Array(repeating: .press(.l), count: 4), PlaybackRate(8)),
             ("L x5 capped", Array(repeating: .press(.l), count: 5), PlaybackRate(8)),
             ("J J", [.press(.j), .press(.j)], PlaybackRate(-2)),
-            ("L L J", [.press(.l), .press(.l), .press(.j)], PlaybackRate(-1)),
-            ("J J L", [.press(.j), .press(.j), .press(.l)], PlaybackRate(1)),
+            ("L L J decelerates", [.press(.l), .press(.l), .press(.j)], PlaybackRate(1)),
+            ("L J at 1x reverses", [.press(.l), .press(.j)], PlaybackRate(-1)),
+            ("J J L decelerates", [.press(.j), .press(.j), .press(.l)], PlaybackRate(-1)),
+            ("J L at -1x reverses", [.press(.j), .press(.l)], PlaybackRate(1)),
+            ("L L L J", [.press(.l), .press(.l), .press(.l), .press(.j)], PlaybackRate(2)),
+            ("L L L J J", [.press(.l), .press(.l), .press(.l), .press(.j), .press(.j)], PlaybackRate(1)),
+            ("L L L J J J", [.press(.l), .press(.l), .press(.l), .press(.j), .press(.j), .press(.j)], PlaybackRate(-1)),
+            ("L L L J K", [.press(.l), .press(.l), .press(.l), .press(.j), .press(.k)], .zero),
             ("L K", [.press(.l), .press(.k)], .zero),
             ("K+L held", [.press(.k), .press(.l), .hold(.l)], PlaybackRate(1, 4)),
             ("K+J held", [.press(.k), .press(.j), .hold(.j)], PlaybackRate(-1, 4)),
@@ -61,5 +67,20 @@ import Testing
         let (s, a) = Self.run([.press(.l), .hold(.l)])
         #expect(a.last == ShuttleAction.none)
         #expect(s.rate == .forward)
+    }
+
+    @Test func followsNudgedRateAndClampsAtEight() {
+        // The app layer changed the speed (Shift+L): doubling must never pass 8x, a rate of 5 goes to 8 not 10.
+        for (start, expected) in [(PlaybackRate(3), PlaybackRate(6)), (PlaybackRate(5), PlaybackRate(8)), (PlaybackRate(7), PlaybackRate(8)),
+                                  (PlaybackRate(-5), PlaybackRate(-8)), (PlaybackRate(9, 2), PlaybackRate(8))] {
+            var s = Shuttle()
+            s.adopt(start)
+            #expect(s.press(start.isForward ? .l : .j) == .setRate(expected), "\(start)")
+        }
+        // 1.25x (Shift+L from a stop) then J: slows to 1x, then reverses.
+        var s = Shuttle()
+        s.adopt(PlaybackRate(5, 4))
+        #expect(s.press(.j) == .setRate(PlaybackRate(1)))
+        #expect(s.press(.j) == .setRate(PlaybackRate(-1)))
     }
 }
