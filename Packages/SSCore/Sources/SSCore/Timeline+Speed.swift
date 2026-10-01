@@ -28,10 +28,12 @@ extension Timeline {
     ///   truncated (shows less source) like Premiere. A clip that shrinks leaves a gap.
     /// - `ripple == true` (Ripple Edit, Shifting Trailing Clips): later clips on every ripple track shift by the change,
     ///   like a ripple trim; shortening closes only as far as nothing collides.
+    /// - `holdingDuration`: keeps the timeline length and changes the source range instead (the speed and duration
+    ///   fields of Premiere's dialog unlinked): the clip shows more or less of its media, limited by the media.
     /// Returns the change of the clip's timeline duration.
     @discardableResult
     public mutating func setSpeed(_ id: Clip.ID, to speed: ClipSpeed, reversed: Bool? = nil, keepsPitch: Bool? = nil,
-                                  ripple: Bool = false) throws -> Time {
+                                  ripple: Bool = false, holdingDuration: Bool = false) throws -> Time {
         let group = try retimeGroup(id)
         let fd = frameDuration
         let ids = Set(group.map(\.clip.id))
@@ -45,7 +47,7 @@ extension Timeline {
         for m in group {
             var c = m.clip
             if let r = reversed { c.reversed = r }
-            var want = max(frames(speed.unscale(c.source.duration)), 1)
+            var want = max(frames(holdingDuration ? c.duration : speed.unscale(c.source.duration)), 1)
             let perFrame = speed.scale(fd)
             // Media limits (the anchor end of the range stays, the other end moves).
             if c.reversed {
@@ -160,5 +162,50 @@ extension Timeline {
         guard work.allSatisfy(\.isConsistent) else { throw EditError.collision }
         tracks = work
         return applied
+    }
+}
+
+/// One Speed/Duration dialog result (or script/replay step): what to change on a clip and its linked partners.
+public struct SpeedChange: Sendable, Equatable {
+    /// New speed. Ignored when `duration` is set.
+    public var speed: ClipSpeed?
+    /// New timeline duration; the speed follows (Premiere: the duration field).
+    public var duration: Time?
+    public var reversed: Bool?
+    public var keepsPitch: Bool?
+    /// Ripple Edit, Shifting Trailing Clips.
+    public var ripple: Bool
+    /// Speed typed with the link between speed and duration broken: the clip keeps its length and shows more or less media.
+    public var holdingDuration: Bool
+
+    public init(speed: ClipSpeed? = nil, duration: Time? = nil, reversed: Bool? = nil, keepsPitch: Bool? = nil,
+                ripple: Bool = false, holdingDuration: Bool = false) {
+        self.speed = speed; self.duration = duration; self.reversed = reversed; self.keepsPitch = keepsPitch
+        self.ripple = ripple; self.holdingDuration = holdingDuration
+    }
+}
+
+extension Timeline {
+    /// Applies `change` to the clip (and its linked partners). Returns the change of the clip's timeline duration.
+    @discardableResult
+    public mutating func apply(_ change: SpeedChange, to id: Clip.ID) throws -> Time {
+        guard let c = find(id)?.clip else { throw EditError.clipNotFound }
+        if let d = change.duration {
+            return try setDuration(id, to: d, reversed: change.reversed, keepsPitch: change.keepsPitch, ripple: change.ripple)
+        }
+        return try setSpeed(id, to: change.speed ?? c.speed, reversed: change.reversed, keepsPitch: change.keepsPitch,
+                            ripple: change.ripple, holdingDuration: change.holdingDuration)
+    }
+
+    /// Applies `change` to every clip of `ids` (a linked pair counts once). Refuses the whole edit when any clip cannot be
+    /// retimed or a track is locked; the timeline is unchanged then.
+    public mutating func apply(_ change: SpeedChange, to ids: [Clip.ID]) throws {
+        var work = self
+        var done = Set<Clip.ID>()
+        for id in ids where !done.contains(id) {
+            done.formUnion(try work.linkedGroup(id).map(\.clip.id))
+            try work.apply(change, to: id)
+        }
+        self = work
     }
 }

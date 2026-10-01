@@ -325,6 +325,45 @@ private func timeline(_ tracks: [[Clip]], kinds: [TrackKind]? = nil) throws -> T
     }
 }
 
+@Suite struct SpeedChangeTests {
+    @Test func unlinkedSpeedKeepsTheLengthAndChangesTheSourceRange() throws {
+        var tl = try timeline([[clip(from: 0, frames: 30)]])
+        let id = tl.tracks[0].clips[0].id
+        try tl.setSpeed(id, to: pct(200), holdingDuration: true)
+        let c = tl.tracks[0].clips[0]
+        #expect(c.duration == f(30) && c.source.duration == f(60) && c.speed == pct(200))
+    }
+
+    @Test func unlinkedSlowdownIsLimitedByTheMedia() throws {
+        var tl = try timeline([[clip(from: 0, frames: 30, media: 40)]])
+        let id = tl.tracks[0].clips[0].id
+        try tl.setSpeed(id, to: pct(200), holdingDuration: true)               // would need 60 frames of media
+        #expect(tl.tracks[0].clips[0].source.end <= f(40) && tl.tracks[0].clips[0].duration == f(20))
+    }
+
+    @Test func changeAppliesToSeveralClipsAsOneEdit() throws {
+        let l = UUID()
+        var tl = try timeline([[clip(from: 0, frames: 60, link: l), clip(start: 100, from: 0, frames: 30)],
+                               [clip(from: 0, frames: 60, kind: .audio, link: l)]], kinds: [.video, .audio])
+        let ids = [tl.tracks[0].clips[0].id, tl.tracks[1].clips[0].id, tl.tracks[0].clips[1].id]
+        try tl.apply(SpeedChange(speed: pct(200)), to: ids)
+        #expect(tl.tracks[0].clips[0].duration == f(30) && tl.tracks[1].clips[0].duration == f(30)
+                && tl.tracks[0].clips[1].duration == f(15))
+        var nested = tl.tracks[0].clips[1]; nested.sequence = UUID()
+        var broken = tl
+        broken.tracks[0] = Track(kind: .video, clips: [tl.tracks[0].clips[0], nested])
+        let before = broken
+        #expect(throws: EditError.speedUnsupported) { try broken.apply(SpeedChange(speed: pct(50)), to: ids) }
+        #expect(broken == before)
+    }
+
+    @Test func durationChangeGoesThroughApply() throws {
+        var tl = try timeline([[clip(from: 0, frames: 90)]])
+        try tl.apply(SpeedChange(duration: f(45), reversed: true), to: tl.tracks[0].clips[0].id)
+        #expect(tl.tracks[0].clips[0].speed == pct(200) && tl.tracks[0].clips[0].reversed)
+    }
+}
+
 @Suite struct RateStretchTests {
     @Test func tailDragChangesSpeedNotSource() throws {
         var tl = try timeline([[clip(from: 0, frames: 60)]])
@@ -400,6 +439,18 @@ private func timeline(_ tracks: [[Clip]], kinds: [TrackKind]? = nil) throws -> T
         let p = try ProjectFile.decode(Data(json.utf8), migrations: ProjectFile.migrations)
         let c = p.timelines[0].tracks[0].clips[0]
         #expect(c.speed == .normal && !c.reversed && c.keepsPitch && c.duration == Time(4, 1))
+    }
+
+    @Test func v13FileLoadsAtNormalSpeed() throws {
+        let tid = UUID()
+        let json = #"""
+        {"formatVersion":13,"project":{"id":"\#(UUID())","name":"Old","media":[],"activeTimeline":"\#(tid)",
+        "timelines":[{"id":"\#(tid)","name":"T","format":{"width":1920,"height":1080,"frameDuration":{"value":1,"timescale":30},"audioSampleRate":48000},
+        "tracks":[{"id":"\#(UUID())","kind":"video","clips":[{"id":"\#(UUID())","name":"c","media":"\#(UUID())","kind":"video",
+        "source":{"start":{"value":0,"timescale":1},"duration":{"value":4,"timescale":1}},"start":{"value":0,"timescale":1}}]}]}]}}
+        """#
+        let p = try ProjectFile.decode(Data(json.utf8), migrations: ProjectFile.migrations)
+        #expect(p.timelines[0].tracks[0].clips[0].speed == .normal)
     }
 
     @Test func speedRoundTripsThroughTheFile() throws {
