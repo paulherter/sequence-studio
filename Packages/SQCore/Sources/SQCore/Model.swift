@@ -59,6 +59,9 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var start: Time
     /// Linked A/V partners share a link ID.
     public var link: UUID?
+    /// Group (Cmd+G, v24): clips sharing a group ID select, move, trim at the group's outer edges and delete as one unit.
+    /// Independent of `link`: a clip can be both grouped and A/V linked. See `Timeline+Group.swift`.
+    public var group: UUID?
     /// Length of the whole media, when known. `nil` = unbounded (only the start of the media limits trims).
     public var mediaDuration: Time?
     /// Animatable transform, opacity and volume (keyframe times are clip-local, relative to `start`).
@@ -265,7 +268,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB, isEnabled, blendMode, holdFrame, motionEnabled, opacityEnabled, speedKeys, timeInterpolation
+        case id, name, media, kind, source, start, link, group, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB, isEnabled, blendMode, holdFrame, motionEnabled, opacityEnabled, speedKeys, timeInterpolation
         case audioTag, duckKeyIDs, audioFades
     }
 
@@ -286,6 +289,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   speed: try c.decodeIfPresent(ClipSpeed.self, forKey: .speed) ?? .normal,
                   reversed: try c.decodeIfPresent(Bool.self, forKey: .reversed) ?? false,
                   keepsPitch: try c.decodeIfPresent(Bool.self, forKey: .keepsPitch) ?? true)
+        group = try c.decodeIfPresent(UUID.self, forKey: .group)
         audioGainDB = try c.decodeIfPresent(Double.self, forKey: .audioGainDB) ?? 0
         audioTag = try c.decodeIfPresent(AudioTag.self, forKey: .audioTag)
         duckKeyIDs = try c.decodeIfPresent([UUID].self, forKey: .duckKeyIDs) ?? []
@@ -308,11 +312,19 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
 
     /// Moves a split-off right half onto a fresh link shared through `map` (old link to new link).
+    /// A group is cut the same way: the right halves of one group share a new group ID (link and group IDs never
+    /// collide, so one map serves both).
     mutating func relink(_ map: inout [UUID: UUID]) {
-        guard let l = link else { return }
-        let n = map[l] ?? UUID()
-        map[l] = n
-        link = n
+        if let l = link {
+            let n = map[l] ?? UUID()
+            map[l] = n
+            link = n
+        }
+        if let g = group {
+            let n = map[g] ?? UUID()
+            map[g] = n
+            group = n
+        }
     }
 
     /// Makes the clip `g` longer at its head (negative = shorter) without moving `start` (the caller moves it).
@@ -395,6 +407,10 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
     public var isSolo: Bool
     /// Receives inserts/overwrites from the source monitor.
     public var isTargeted: Bool
+    /// Source patch (v24): this track receives the Source monitor's video / audio in Insert and Overwrite. Separate from
+    /// `isTargeted`, which keeps deciding paste, add edit, navigation and match frame. Files older than v24 take it from
+    /// `isTargeted`.
+    public var isSourcePatched: Bool
     /// Transitions at cuts and clip edges of this track (v17). Anchored to clip IDs; see `Transition.swift`.
     public var transitions: [Transition] = []
     /// Row height in points (UI hint).
@@ -408,7 +424,9 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
     public init(id: UUID = UUID(), kind: TrackKind, clips: [Clip] = [],
                 isLocked: Bool = false, syncLock: Bool = true,
                 name: String = "", isVisible: Bool = true, isMuted: Bool = false, isSolo: Bool = false,
-                isTargeted: Bool = false, height: Double = Track.defaultHeight, transitions: [Transition] = []) {
+                isTargeted: Bool = false, height: Double = Track.defaultHeight, transitions: [Transition] = [],
+                isSourcePatched: Bool? = nil) {
+        self.isSourcePatched = isSourcePatched ?? isTargeted
         self.transitions = transitions
         self.id = id; self.kind = kind; self.clips = clips
         self.isLocked = isLocked; self.syncLock = syncLock
@@ -417,7 +435,7 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, clips, isLocked, syncLock, name, isVisible, isMuted, isSolo, isTargeted, height, transitions
+        case id, kind, clips, isLocked, syncLock, name, isVisible, isMuted, isSolo, isTargeted, height, transitions, isSourcePatched
         case volumeDB, pan
     }
 
@@ -435,6 +453,7 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
                   isTargeted: try c.decodeIfPresent(Bool.self, forKey: .isTargeted) ?? false,
                   height: try c.decodeIfPresent(Double.self, forKey: .height) ?? Track.defaultHeight,
                   transitions: try c.decodeIfPresent([Transition].self, forKey: .transitions) ?? [])
+        isSourcePatched = try c.decodeIfPresent(Bool.self, forKey: .isSourcePatched) ?? isTargeted
         volumeDB = try c.decodeIfPresent(Double.self, forKey: .volumeDB) ?? 0
         pan = try c.decodeIfPresent(Double.self, forKey: .pan) ?? 0
     }

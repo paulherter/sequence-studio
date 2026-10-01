@@ -21,16 +21,17 @@ extension Timeline {
     /// the sequence Out does not shorten the source here because our In/Out always carries both ends).
     public func sourceEditPosition(playhead: Time) -> Time { inOut?.start ?? playhead }
 
-    /// Destination tracks. The edit uses the targeted tracks (first targeted video, first targeted audio); a kind
-    /// without a targeted track is dropped (Premiere). With no targeted track at all the default drop rule applies
+    /// Destination tracks. The edit uses the source-patched tracks (first patched video, first patched audio; see
+    /// `Timeline+SourcePatch.swift`, track targets play no part); a kind without a patched track is dropped (Premiere).
+    /// With no patched track at all the default drop rule applies
     /// (V1 and its mirrored audio track, created when missing). Returns nil when nothing is left to place.
     public mutating func sourceEditTargets(hasVideo: Bool, hasAudio: Bool, streams: SourceStreams = .both) -> [Track.ID]? {
         let wantV = hasVideo && streams.includesVideo, wantA = hasAudio && streams.includesAudio
         guard wantV || wantA else { return nil }
         var out: [Track.ID] = []
-        if tracks.contains(where: \.isTargeted) {
-            if wantV, let v = tracks.first(where: { $0.kind == .video && $0.isTargeted }) { out.append(v.id) }
-            if wantA, let a = tracks.first(where: { $0.kind == .audio && $0.isTargeted }) { out.append(a.id) }
+        if tracks.contains(where: \.isSourcePatched) {
+            if wantV, let v = tracks.first(where: { $0.kind == .video && $0.isSourcePatched }) { out.append(v.id) }
+            if wantA, let a = tracks.first(where: { $0.kind == .audio && $0.isSourcePatched }) { out.append(a.id) }
         } else {
             let d = dropTargets(pointer: nil, hasVideo: wantV, hasAudio: wantA)
             if let v = d.video { out.append(v) }

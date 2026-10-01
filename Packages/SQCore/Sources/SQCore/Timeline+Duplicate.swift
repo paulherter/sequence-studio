@@ -19,6 +19,7 @@ extension Timeline {
             var c = m.clip
             c.id = copy.ids[m.clip.id] ?? UUID()
             if c.link != nil { c.link = copy.link }
+            if c.group != nil { c.group = copy.group }
             return (c, dest)
         }
         var work = self

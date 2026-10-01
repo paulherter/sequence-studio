@@ -64,7 +64,10 @@ extension Timeline {
         }
         var linkMap: [UUID: UUID] = [:]
         var counts: [UUID: Int] = [:]
-        for e in cb.entries { if let l = e.clip.link { counts[l, default: 0] += 1 } }
+        for e in cb.entries {
+            if let l = e.clip.link { counts[l, default: 0] += 1 }
+            if let g = e.clip.group { counts[g, default: 0] += 1 }
+        }
         var placements: [(clip: Clip, track: Track.ID)] = []
         var newID: [Clip.ID: Clip.ID] = [:]
         // Lanes that do not exist are created (Premiere adds tracks), so clips never stack on one track.
@@ -90,6 +93,13 @@ extension Timeline {
                     linkMap[l] = n
                     c.link = n
                 } else { c.link = nil }
+            }
+            if let g = c.group {
+                if counts[g, default: 0] > 1 {
+                    let n = linkMap[g] ?? UUID()
+                    linkMap[g] = n
+                    c.group = n
+                } else { c.group = nil }
             }
             placements.append((c, list[lane].id))
         }
@@ -192,11 +202,11 @@ extension Timeline {
     /// The whole group moves as one: it never collides with itself, covered neighbours are cut (overwrite).
     /// Clamped so nothing starts before 0. Returns the applied delta.
     @discardableResult
-    public mutating func nudge(_ ids: Set<Clip.ID>, by delta: Time) throws -> Time {
+    public mutating func nudge(_ ids: Set<Clip.ID>, by delta: Time, individual: Bool = false) throws -> Time {
         var group: [Member] = []
         var seen = Set<Clip.ID>()
         for id in ids {
-            for m in try linkedGroup(id) where seen.insert(m.clip.id).inserted { group.append(m) }
+            for m in try linkedGroup(id, individual: individual) where seen.insert(m.clip.id).inserted { group.append(m) }
         }
         guard !group.isEmpty else { throw EditError.clipNotFound }
         if group.contains(where: { tracks[$0.track].isLocked }) { throw EditError.trackLocked }

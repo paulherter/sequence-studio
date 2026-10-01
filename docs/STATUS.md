@@ -202,3 +202,6 @@ Native decoded formats: Sony `x422` (10-bit 4:2:2, VT hands out the Apple-compre
 - Real-media playback bench reads low (19 frames/5 s) when the Mac is idle/unattended: macOS throttles the test window's display link. Use `PresentationRateTests` (manual clock) for the engine; re-run the bench with a user at the Mac.
 - Not built yet: Group/Ungroup, Trim mode (double-click a cut), source patching, four-point Fit Clip, ease curves for time remapping, Optical Flow, wipes, Sharpen, HSL Secondary, Make Subclip.
 - Cloud: routine "Sequence Studio Cloud" (trigger trig_01JRjmL6Cqm8wpaZSMygNkMP), jobs in docs/CLOUD.md; it cannot reach Adobe or archive.org; results arrive as PRs on cloud/* branches.
+
+## Cloud: core groups / source patching / four-point (cloud/core-group-patching)
+- SQCore: Clip.group (Cmd+G), Track.isSourcePatched (project v24), resolveFourPoint. Tests in GroupingTests.swift. **Uncompiled** (no Swift in the cloud run): run `scripts/test.sh SQCore` first. UI work: docs/cloud/core-features-3.md.

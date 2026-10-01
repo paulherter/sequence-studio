@@ -8,10 +8,10 @@ extension Timeline {
 
     /// Deletes clips and their linked partners and leaves gaps (nothing shifts). Unknown ids throw
     /// `.clipNotFound`; any member on a locked track refuses the whole edit.
-    public mutating func lift(_ ids: [Clip.ID]) throws {
+    public mutating func lift(_ ids: [Clip.ID], individual: Bool = false) throws {
         var remove: [(track: Int, id: Clip.ID)] = []
         for id in ids {
-            let group = try linkedGroup(id)
+            let group = try linkedGroup(id, individual: individual)
             if group.contains(where: { tracks[$0.track].isLocked }) { throw EditError.trackLocked }
             for m in group { remove.append((m.track, m.clip.id)) }
         }
@@ -101,8 +101,13 @@ extension Timeline {
                 let n = newLinks[l] ?? UUID()
                 newLinks[l] = n
                 right.link = n
-                work[i].replace(right)
             }
+            if let g = c.group {
+                let n = newLinks[g] ?? UUID()
+                newLinks[g] = n
+                right.group = n
+            }
+            if c.link != nil || c.group != nil { work[i].replace(right) }
             created.append(right.id)
         }
         tracks = work

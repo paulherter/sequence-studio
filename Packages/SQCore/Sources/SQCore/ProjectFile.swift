@@ -30,7 +30,7 @@ public enum ProjectFile {
         return candidate
     }
 
-    public static let currentVersion = 23
+    public static let currentVersion = 24
     public typealias JSONObject = [String: Any]
     /// Upgrades the top-level object from version N to N+1, keyed by N.
     public typealias Migrations = [Int: (JSONObject) throws -> JSONObject]
@@ -60,6 +60,7 @@ public enum ProjectFile {
         t[20] = migrateV20toV21
         t[21] = migrateV21toV22
         t[22] = migrateV22toV23
+        t[23] = migrateV23toV24
         return t
     }
     /// The full chain 1..<currentVersion. Missing steps are identity: every format change since v2 only added

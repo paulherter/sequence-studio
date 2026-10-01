@@ -20,14 +20,14 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         #expect(t.sourceEditPosition(playhead: s(7)) == s(3))
     }
 
-    @Test func targetsFollowTargetedTracks() {
+    @Test func targetsFollowPatchedTracks() {
         var t = Timeline(name: "t", frameDuration: Time(1, 30), tracks: Timeline.defaultTracks())
         let v1 = t.tracks.first { $0.kind == .video }!.id, a1 = t.tracks.first { $0.kind == .audio }!.id
         #expect(t.sourceEditTargets(hasVideo: true, hasAudio: true) == [v1, a1])
         #expect(t.sourceEditTargets(hasVideo: true, hasAudio: true, streams: .videoOnly) == [v1])
         #expect(t.sourceEditTargets(hasVideo: true, hasAudio: true, streams: .audioOnly) == [a1])
         let vi = t.tracks.firstIndex { $0.id == v1 }!
-        t.tracks[vi].isTargeted = false
+        t.tracks[vi].isSourcePatched = false
         #expect(t.sourceEditTargets(hasVideo: true, hasAudio: true) == [a1])
         #expect(t.sourceEditTargets(hasVideo: true, hasAudio: false) == nil)
     }

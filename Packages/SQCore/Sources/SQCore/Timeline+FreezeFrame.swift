@@ -21,6 +21,7 @@ extension Clip {
         var h = self
         h.id = UUID()
         h.link = nil
+        h.group = nil
         h.start = newStart
         h.source = TimeRange(start: frame, duration: duration)
         h.speed = .normal
@@ -97,6 +98,7 @@ extension Timeline {
         var hold = target.clip.holding(frame: held, at: t, start: t, duration: piece.timeline.duration, keepsAnimation: true)
         hold.id = piece.id
         hold.link = piece.link
+        hold.group = piece.group
         work[target.track].replace(hold)
         tracks = work
         return hold.id

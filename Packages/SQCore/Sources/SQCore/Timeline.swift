@@ -101,7 +101,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     /// Other tracks can block the gap: it closes only as far as nothing collides.
     /// Returns the total time closed, summed over the deleted clips.
     @discardableResult
-    public mutating func rippleDelete(_ ids: [Clip.ID]) throws -> Time {
+    public mutating func rippleDelete(_ ids: [Clip.ID], individual: Bool = false) throws -> Time {
         var work = self
         var primaries = try ids.map { id -> Clip in
             guard let c = work.find(id)?.clip else { throw EditError.clipNotFound }
@@ -111,7 +111,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         var closed = Time.zero
         for p in primaries {
             guard work.find(p.id) != nil else { continue }   // already gone with a linked partner
-            closed += try work.rippleDeleteOne(p.id)
+            closed += try work.rippleDeleteOne(p.id, individual: individual)
         }
         self = work
         return closed
@@ -120,8 +120,8 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     /// Removes the group and closes the gap by ONE amount on every involved track, so later material
     /// stays in sync (Premiere): the span of the group's union. Each track closes from its own member's
     /// end (tracks without a member from the group's latest end). If any track lacks room, all close less.
-    mutating func rippleDeleteOne(_ id: Clip.ID) throws -> Time {
-        let group = try linkedGroup(id)
+    mutating func rippleDeleteOne(_ id: Clip.ID, individual: Bool = false) throws -> Time {
+        let group = try linkedGroup(id, individual: individual)
         let ids = Set(group.map(\.clip.id))
         let involved = try involvedTracks(group)
         let minStart = group.map { $0.clip.start }.min() ?? .zero
@@ -148,9 +148,11 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     /// The clip's start stays put, like Premiere. Clamped by the media, by collisions on other
     /// tracks when shortening, and refuses to empty a clip. Returns how far the edge actually moved.
     @discardableResult
-    public mutating func rippleTrim(_ id: Clip.ID, edge: ClipEdge, by delta: Time) throws -> Time {
-        let group = try linkedGroup(id)
-        let involved = try involvedTracks(group)
+    public mutating func rippleTrim(_ id: Clip.ID, edge: ClipEdge, by delta: Time, individual: Bool = false) throws -> Time {
+        let all = try linkedGroup(id, individual: individual)
+        let group = outerEdgeMembers(all, edge: edge)       // a group trims at its outer edges only
+        guard group.first?.clip.id == id else { return .zero }
+        let involved = try involvedTracks(all)
         let primary = group[0].clip
         let ids = Set(group.map(\.clip.id))
         // Each track shifts what follows its own member's original end; tracks without one, the primary's.
@@ -231,12 +233,28 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     }
 
     /// The clip first, then every clip sharing its link.
-    func linkedGroup(_ id: Clip.ID) throws -> [Member] {
+    /// With `individual` (Option-click), only the clip itself: link and group are ignored.
+    /// Otherwise the closure over links and groups: a grouped clip brings its whole group, and every member's link
+    /// partners, and so on until nothing new joins.
+    func linkedGroup(_ id: Clip.ID, individual: Bool = false) throws -> [Member] {
         guard let m = find(id) else { throw EditError.clipNotFound }
+        if individual { return [m] }
         var out = [m]
-        if let link = m.clip.link {
+        var seen: Set<Clip.ID> = [id]
+        var links: Set<UUID> = m.clip.link.map { [$0] } ?? []
+        var groups: Set<UUID> = m.clip.group.map { [$0] } ?? []
+        var grew = true
+        while grew {
+            grew = false
             for (i, t) in tracks.enumerated() {
-                for c in t.clips where c.link == link && c.id != id { out.append(Member(track: i, clip: c)) }
+                for c in t.clips where !seen.contains(c.id)
+                    && (c.link.map(links.contains) == true || c.group.map(groups.contains) == true) {
+                    seen.insert(c.id)
+                    out.append(Member(track: i, clip: c))
+                    if let l = c.link { links.insert(l) }
+                    if let g = c.group { groups.insert(g) }
+                    grew = true
+                }
             }
         }
         return out

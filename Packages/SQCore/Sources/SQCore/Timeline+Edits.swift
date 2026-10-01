@@ -7,7 +7,11 @@ public enum MoveMode: Sendable { case overwrite }
 public struct CopySpec: Sendable, Hashable {
     public var ids: [Clip.ID: Clip.ID]
     public var link: UUID
-    public init(ids: [Clip.ID: Clip.ID] = [:], link: UUID = UUID()) { self.ids = ids; self.link = link }
+    /// The group the copied clips share (copies never join the originals' group).
+    public var group: UUID
+    public init(ids: [Clip.ID: Clip.ID] = [:], link: UUID = UUID(), group: UUID = UUID()) {
+        self.ids = ids; self.link = link; self.group = group
+    }
 }
 
 /// Non-ripple edits: nothing outside the edited clips (and what they cover) shifts.
@@ -27,9 +31,12 @@ extension Timeline {
     /// the neighbour on the track, the media and timeline start 0. Linked partners get the same change;
     /// the applied amount is the most restrictive across the group. Returns how far the edge moved.
     @discardableResult
-    public mutating func trim(_ id: Clip.ID, edge: ClipEdge, by delta: Time) throws -> Time {
-        let group = try linkedGroup(id)
-        try requireUnlocked(group)
+    public mutating func trim(_ id: Clip.ID, edge: ClipEdge, by delta: Time, individual: Bool = false) throws -> Time {
+        let all = try linkedGroup(id, individual: individual)
+        try requireUnlocked(all)
+        // A group trims at its outer edges only: members whose edge is not on the boundary stay as they are.
+        let group = outerEdgeMembers(all, edge: edge)
+        guard group.first?.clip.id == id else { return .zero }
         let ids = Set(group.map(\.clip.id))
         var g = edge == .tail ? delta : -delta            // change of duration
         for m in group {
@@ -141,8 +148,8 @@ extension Timeline {
     @discardableResult
     public mutating func move(_ id: Clip.ID, to start: Time, track target: Track.ID? = nil,
                               retarget: [Clip.ID: Track.ID] = [:], mode: MoveMode = .overwrite,
-                              copy: CopySpec? = nil) throws -> Time {
-        let group = try linkedGroup(id)
+                              copy: CopySpec? = nil, individual: Bool = false) throws -> Time {
+        let group = try linkedGroup(id, individual: individual)
         try requireUnlocked(group)
         var destinations = group.map(\.track)
         if let target {
@@ -171,6 +178,7 @@ extension Timeline {
             if let copy {
                 c.id = copy.ids[m.clip.id] ?? UUID()
                 if c.link != nil { c.link = copy.link }
+                if c.group != nil { c.group = copy.group }
             }
             c.start += d
             try work[ti].overwrite(c, relinks: &relinks)
