@@ -116,3 +116,17 @@ extension EditorSession {
         perform("Replace Footage") { _ = $0.replaceMedia(id, with: ref) }
     }
 }
+
+extension EditorSession {
+    /// Dragging the In / Out grip on the Program monitor strip: sets that mark at the frame `t` (Out: the frame is the
+    /// last one inside). One undo step per drag.
+    public func setInPoint(at t: Time) {
+        guard activeTimeline != nil else { return }
+        attempt("Mark In") { $0.markIn(at: max(.zero, t)) }
+    }
+
+    public func setOutPoint(at t: Time) {
+        guard activeTimeline != nil else { return }
+        attempt("Mark Out") { $0.markOut(at: max(.zero, t)) }
+    }
+}

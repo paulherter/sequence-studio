@@ -15,7 +15,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     let engineNote: String?
     let commandMap = CommandMap.premiereDefault
     var store = WorkspaceStore.load()
-    var settings: AppSettings
+    var settings: AppSettings { didSet { panels?.applySettings(settings) } }
     private(set) lazy var settingsWindow = SettingsWindowController(controller: self)
     var maximizedPanel: PanelID?
     var focusedPanel: PanelID? = .timeline { didSet { router.focus = focusedPanel; shell.host.focusedPanel = focusedPanel } }
@@ -86,6 +86,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         restoreAudioScrubbing()
         panels.onFrameSize = { [weak self] in self?.session.setToFrameSize() }
         panels.monitorModel.setQuality(settings.defaultQuality)
+        panels.applySettings(settings)
 
         shell.statusBar.onTasksClicked = { [weak self] v in self?.toggleTasks(v) }
         exports.queueModel.start()

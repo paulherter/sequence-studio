@@ -107,6 +107,14 @@ public final class MonitorScrubBar: NSView {
             if let i = model.markIn { NSRect(x: m.x(for: i) - 1, y: bounds.midY - 5, width: 2, height: 10).fill() }
             if let o = model.markOut { NSRect(x: m.x(for: o) - 1, y: bounds.midY - 5, width: 2, height: 10).fill() }
         }
+        // Markers (Source monitor): a small mark above the track.
+        Theme.Colors.yellow.setFill()
+        for t in model.markerTimes {
+            let mx = m.x(for: t)
+            let tri = NSBezierPath()
+            tri.move(to: NSPoint(x: mx - 3, y: 0)); tri.line(to: NSPoint(x: mx + 3, y: 0)); tri.line(to: NSPoint(x: mx, y: 5)); tri.close()
+            tri.fill()
+        }
         let x = m.x(for: model.currentTime)
         Theme.Colors.label.setFill()
         NSRect(x: x - 0.75, y: 2, width: 1.5, height: bounds.height - 4).fill()

@@ -40,10 +40,11 @@ public enum EditorMenus {
     public static let edit = MenuSpec(title: "Edit", items: cmds([
         .undo, .redo, nil, .cut, .copy, .paste, .pasteInsert, .pasteAttributes, nil,
         .selectAll, .deselectAll, nil,
-        .delete, .rippleDelete,
+        .delete, .rippleDelete, nil,
+        .find,
     ]))
     public static let clip = MenuSpec(title: "Clip", items: cmds([
-        .insert, .overwrite, nil, .speedDuration, nil, .link, nil,
+        .insert, .overwrite, nil, .setPosterFrame, .clearPosterFrame, nil, .speedDuration, nil, .link, nil,
         .setToFrameSize, nil,
         .audioGain, nil,
         .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation, .addKeyframe, .toggleSpeedGraph,
@@ -66,13 +67,13 @@ public enum EditorMenus {
     ]))
     public static let view = MenuSpec(title: "View", items: [
         .submenu("Playback", cmds([
-            .playPause, .playInToOut, .toggleLoop, nil, .shuttleReverse, .shuttleStop, .shuttleForward, nil,
+            .playPause, .playInToOut, .playInToOutRoll, .playAround, .toggleLoop, nil, .shuttleReverse, .shuttleStop, .shuttleForward, nil,
             .stepBackward, .stepForward, .stepBackward5, .stepForward5,
         ])),
         .separator,
         .command(.zoomIn), .command(.zoomOut), .command(.zoomFit),
         .separator,
-        .command(.toggleAudioScrubbing),
+        .command(.toggleAudioScrubbing), .command(.toggleHoverScrub),
         .separator,
         .submenu("Track Height", cmds([
             .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter, nil,

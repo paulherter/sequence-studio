@@ -703,6 +703,17 @@ public final class EditorSession {
         notify(.project)
     }
 
+    /// Source markers (M in the Source monitor) of a media item: like the marks, clip metadata outside the undo history.
+    public func setSourceMarkers(_ markers: [Marker]?, for media: MediaRef.ID) {
+        let value = (markers?.isEmpty ?? true) ? nil : markers
+        guard project.media(media)?.sourceMarkers != value else { return }
+        history.amendAll { p in
+            if let i = p.media.firstIndex(where: { $0.id == media }) { p.media[i].sourceMarkers = value }
+        }
+        forceDirty = true
+        notify(.project)
+    }
+
     // MARK: Autosave and recovery
 
     /// Writes an autosave version when the project is dirty and the policy says one is due. The app calls this

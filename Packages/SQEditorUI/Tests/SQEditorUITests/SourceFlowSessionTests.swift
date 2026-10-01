@@ -85,4 +85,27 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         session.playInToOut()                                                              // plain: exactly In..Out
         #expect(session.bounds.range == TimeRange(start: s(4), end: s(6) + fd))
     }
+
+    @Test func sourceMarkersAreNotUndoSteps() {
+        let (session, _, m) = makeSession()
+        session.perform("Rename") { $0.name = "Renamed" }
+        let name = session.undoName
+        var p = session.project
+        p.addSourceMarker(at: s(2), frameDuration: Time(1, 30), to: m.id)
+        session.setSourceMarkers(p.sourceMarkers(for: m.id), for: m.id)
+        #expect(session.undoName == name)
+        session.undo()
+        #expect(session.project.name != "Renamed")
+        #expect(session.project.sourceMarkers(for: m.id).count == 1)       // the undo did not revert the marker
+        session.setSourceMarkers(nil, for: m.id)
+        #expect(session.project.media(m.id)?.sourceMarkers == nil)
+    }
+
+    @Test func gripDragIsOneUndoStep() {
+        let (session, _, _) = makeSession()
+        session.setInPoint(at: s(2))
+        session.setOutPoint(at: s(5))
+        #expect(session.activeTimeline?.inOut == TimeRange(start: s(2), end: s(5) + session.activeTimeline!.frameDuration))
+        #expect(session.undoName == "Mark Out")
+    }
 }

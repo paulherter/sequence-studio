@@ -16,7 +16,8 @@ extension AppController {
              .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel, .maximizeActivePanel, .resetLayout,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .minimizeAllTracks, .expandAllTracks, .speedDuration,
-             .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing:
+             .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing,
+             .playInToOutRoll, .playAround, .setPosterFrame, .clearPosterFrame, .toggleHoverScrub, .find:
             true
         case _ where isShellCommand(c):
             true
@@ -30,6 +31,7 @@ extension AppController {
         // Editing text (a field or the timecode box): the standard commands go to the editor.
         if let tv = textResponder, forwardToText(c, tv) { return }
         if focusedPanel == .sourceMonitor, panels.source.handle(c) { return }
+        if executeSourceFlowCommand(c) { return }
         if executeShellCommand(c) { return }
         if [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus, executeInEffectControls(c) { return }
         // Timeline operations (clipboard, link, nudge, edge trims...); Effect Controls keeps its own keys while it has focus.
@@ -118,7 +120,10 @@ extension AppController {
 
     private func nudgeShuttle(forward: Bool) {
         if focusedPanel == .sourceMonitor { panels.source.nudge(forward: forward); return }
-        session.apply(shuttle: .setRate(session.engine.rate.nudged(forward: forward)))
+        let rate = session.engine.rate.nudged(forward: forward)
+        session.apply(shuttle: .setRate(rate))
+        router.rateChanged(to: rate)          // the next J / L continues from the nudged speed
+        menuShuttle.adopt(rate)
     }
 
     private func exportProgramFrame() {

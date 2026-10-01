@@ -55,6 +55,21 @@ public final class MonitorPanelModel {
     public var isLooping = false
     public var safeMargins = false
 
+    /// Source monitor: the clips opened earlier (title popup, most recent first), the current one, and its markers (M).
+    public struct SourceItem: Sendable, Hashable {
+        public var id: UUID
+        public var name: String
+        public init(id: UUID, name: String) { self.id = id; self.name = name }
+    }
+    public var sourceItems: [SourceItem] = []
+    public var sourceCurrent: UUID?
+    public var markerTimes: [Time] = []
+    @ObservationIgnored public var onPickSource: ((UUID) -> Void)?
+    @ObservationIgnored public var onCloseSource: (() -> Void)?
+    @ObservationIgnored public var onCloseAllSources: (() -> Void)?
+    /// Project items dropped on the Source monitor (the first loads, the rest join the history).
+    @ObservationIgnored public var onDropMedia: (([UUID]) -> Void)?
+
     @ObservationIgnored public var onSeek: ((Time) -> Void)?
     @ObservationIgnored public var onAction: ((MonitorAction) -> Void)?
     @ObservationIgnored public var onZoomChange: ((MonitorZoom) -> Void)?
