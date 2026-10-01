@@ -32,6 +32,31 @@ public enum SequenceFormatPresets {
         FrameRate(label: "60", frameDuration: Time(1, 60)),
     ]
 
+    /// Ready-made targets for the New Sequence sheet: size and frame rate in one choice.
+    public struct Preset: Sendable, Hashable {
+        public let group: String
+        public let name: String
+        public let width: Int
+        public let height: Int
+        public let frameDuration: Time
+    }
+
+    public static let presets: [Preset] = {
+        func rate(_ n: Int64) -> Time { Time(1, n) }
+        var out: [Preset] = []
+        for fps in [24, 25, 30, 50, 60] as [Int64] {
+            out.append(Preset(group: "YouTube", name: "YouTube 1080p \(fps)", width: 1920, height: 1080, frameDuration: rate(fps)))
+        }
+        for fps in [24, 25, 30, 50, 60] as [Int64] {
+            out.append(Preset(group: "YouTube", name: "YouTube 4K \(fps)", width: 3840, height: 2160, frameDuration: rate(fps)))
+        }
+        for fps in [24, 25, 30, 60] as [Int64] {
+            out.append(Preset(group: "TikTok, Shorts, Reels", name: "TikTok / Shorts / Reels 1080 × 1920 \(fps)",
+                              width: 1080, height: 1920, frameDuration: rate(fps)))
+        }
+        return out
+    }()
+
     public static let sampleRates = [44_100, 48_000, 96_000]
 
     public static func size(width: Int, height: Int) -> Size? { sizes.first { $0.width == width && $0.height == height } }

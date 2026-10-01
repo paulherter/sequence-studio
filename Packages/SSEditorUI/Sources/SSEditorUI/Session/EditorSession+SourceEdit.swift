@@ -71,3 +71,22 @@ extension EditorSession {
         attempt("Clear Out") { $0.inOut = start <= .zero ? nil : TimeRange(start: start, end: max($0.duration, start + $0.frameDuration)) }
     }
 }
+
+extension EditorSession {
+    /// New Sequence From Clip: a sequence in the clip's own format holding the clip; it becomes the active one.
+    @discardableResult
+    public func newSequence(fromMedia id: MediaRef.ID) -> Timeline.ID? {
+        guard let t = project.sequence(fromMedia: id) else { setError("That clip cannot become a sequence yet."); return nil }
+        perform("New Sequence From Clip") { p in
+            p.timelines.append(t)
+            p.normalizeBins()
+        }
+        setActiveTimeline(t.id)
+        return t.id
+    }
+
+    /// Replace Footage / Link Media: `ref` (probed from the new file) takes over the item `id`. One undo step.
+    public func replaceFootage(_ id: MediaRef.ID, with ref: MediaRef) {
+        perform("Replace Footage") { _ = $0.replaceMedia(id, with: ref) }
+    }
+}

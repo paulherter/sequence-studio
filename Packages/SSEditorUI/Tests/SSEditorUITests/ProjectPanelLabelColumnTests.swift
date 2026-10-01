@@ -83,12 +83,12 @@ private func media(_ name: String, video: Bool = true, audio: Bool = true, path:
         #expect(m.cellText(.frameRate, .bin(p.rootBin.id)) == "")
     }
 
-    @Test func defaultLayoutIsNameAndFrameRate() {
-        #expect(ProjectColumnLayout.defaults.visible == [.name, .frameRate])
+    @Test func defaultLayoutIsNameRateDurationFormat() {
+        #expect(ProjectColumnLayout.defaults.visible == [.name, .frameRate, .duration, .format])
     }
 
     @Test func layoutToggleOrderAndNameAlwaysFirst() {
-        var l = ProjectColumnLayout.defaults
+        var l = ProjectColumnLayout(visible: [.name, .frameRate])
         l.toggle(.name)
         #expect(l.visible == [.name, .frameRate])
         l.toggle(.codec); l.toggle(.duration)

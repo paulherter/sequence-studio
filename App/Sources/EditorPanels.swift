@@ -1,11 +1,12 @@
 import AppKit
 import SSCore
 import SSEditorUI
+import SSMedia
 import SSRender
 import SSText
 
 /// Owns the panel views and models and keeps them in step with the `EditorSession`: session changes flow in through
-/// `sync(_:)`, user gestures flow out as session calls. Only the Source monitor is still a placeholder.
+/// `sync(_:)`, user gestures flow out as session calls.
 @MainActor
 final class EditorPanels {
     let session: EditorSession
@@ -297,11 +298,37 @@ final class EditorPanels {
             onShowSource?()
         }
         projectView.onOpenSequence = { [weak self] id in self?.session.setActiveTimeline(id) }
+        projectView.onPlace = { [weak self] ids, mode in self?.session.placeMedia(ids, mode: mode) }
+        projectView.onNewSequenceFromClip = { [weak self] id in self?.session.newSequence(fromMedia: id) }
+        projectView.onNewSequence = { [weak self] in self?.onCommand?(.newSequence) }
+        projectView.onReplaceFootage = { [weak self] id in self?.replaceFootage(id) }
         monitorView.safeMarginsView.rectProvider = { [weak self] in self?.surface.mapping.canvasRect ?? .zero }
         monitorModel.onScrubBegan = { [weak self] in self?.session.beginScrub() }
         monitorModel.onScrub = { [weak self] t in self?.session.scrub(to: t) }
         monitorModel.onScrubEnded = { [weak self] in self?.session.endScrub() }
         monitorModel.contextMenuBuilder = { [weak self] menu in self?.fillProgramMenu(menu) }
+    }
+
+    /// Replace Footage / Link Media: pick a file, probe it, and let it take over the item (clips, marks, label stay).
+    private func replaceFootage(_ id: MediaRef.ID) {
+        guard let ref = session.project.media(id) else { return }
+        let panel = NSOpenPanel()
+        panel.message = "Choose the file that replaces “\(ref.name)”."
+        panel.prompt = ref.status() == .missing ? "Link" : "Replace"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: ref.path).deletingLastPathComponent()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            guard let probed = try? await MediaImporter.probe(url).0 else { onStatus?("Could not read \(url.lastPathComponent)."); return }
+            session.replaceFootage(id, with: probed)
+            waveforms.invalidate(id)
+            projectView.forgetThumbnail(id)
+            projectModel.refreshOffline()
+            if source.mediaID == id { source.open(id) }
+            onStatus?("Replaced footage with \(url.lastPathComponent).")
+        }
     }
 
     /// Opens the media item under the playhead in the Source monitor, parked on the same frame (F).

@@ -7,6 +7,7 @@ import SSCore
 final class SequenceSettingsSheet: NSObject, NSTextFieldDelegate {
     private static let customTitle = "Custom"
 
+    private let presetPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let sizePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let widthField = NSTextField(string: "")
     private let heightField = NSTextField(string: "")
@@ -19,6 +20,20 @@ final class SequenceSettingsSheet: NSObject, NSTextFieldDelegate {
     private init(format: SequenceFormat, name: String?) {
         original = format
         super.init()
+        presetPopup.addItem(withTitle: "Custom")
+        var group = ""
+        for p in SequenceFormatPresets.presets {
+            if p.group != group {
+                group = p.group
+                presetPopup.menu?.addItem(.separator())
+                let h = NSMenuItem(title: group, action: nil, keyEquivalent: "")
+                h.isEnabled = false
+                presetPopup.menu?.addItem(h)
+            }
+            presetPopup.addItem(withTitle: p.name)
+        }
+        presetPopup.target = self
+        presetPopup.action = #selector(presetChosen)
         for s in SequenceFormatPresets.sizes { sizePopup.addItem(withTitle: s.name) }
         sizePopup.addItem(withTitle: Self.customTitle)
         sizePopup.target = self
@@ -49,14 +64,24 @@ final class SequenceSettingsSheet: NSObject, NSTextFieldDelegate {
         return s.replacingOccurrences(of: #"\.?0+$"#, with: "", options: .regularExpression)
     }
 
+    /// A YouTube / TikTok preset sets size and frame rate in one go.
+    @objc private func presetChosen() {
+        guard let p = SequenceFormatPresets.presets.first(where: { $0.name == presetPopup.titleOfSelectedItem }) else { return }
+        widthField.stringValue = "\(p.width)"
+        heightField.stringValue = "\(p.height)"
+        selectSizePreset()
+        if let i = SequenceFormatPresets.frameRates.firstIndex(where: { $0.frameDuration == p.frameDuration }) { ratePopup.selectItem(at: i) }
+    }
+
     @objc private func sizePresetChanged() {
+        presetPopup.selectItem(at: 0)
         let i = sizePopup.indexOfSelectedItem
         guard i < SequenceFormatPresets.sizes.count else { return }
         widthField.stringValue = "\(SequenceFormatPresets.sizes[i].width)"
         heightField.stringValue = "\(SequenceFormatPresets.sizes[i].height)"
     }
 
-    func controlTextDidChange(_ obj: Notification) { selectSizePreset() }
+    func controlTextDidChange(_ obj: Notification) { selectSizePreset(); presetPopup.selectItem(at: 0) }
 
     private func selectSizePreset() {
         if let w = Int(widthField.stringValue), let h = Int(heightField.stringValue),
@@ -73,7 +98,7 @@ final class SequenceSettingsSheet: NSObject, NSTextFieldDelegate {
         heightField.widthAnchor.constraint(equalToConstant: 70).isActive = true
         var rows: [[NSView]] = []
         if showName { nameField.placeholderString = "Sequence name"; rows.append([label("Name"), nameField]) }
-        rows += [[label("Preset"), sizePopup], [label("Frame size"), sizeRow], [label("Frame rate"), ratePopup],
+        rows += [[label("Preset"), presetPopup], [label("Frame size"), sizePopup], [label(""), sizeRow], [label("Frame rate"), ratePopup],
                  [label("Audio sample rate"), audioPopup]]
         let grid = NSGridView(views: rows)
         grid.rowSpacing = 8; grid.columnSpacing = 10
