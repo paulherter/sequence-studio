@@ -14,7 +14,10 @@ struct ToolColumnViewTests {
         return TimelineView(timeline: t, frame: NSRect(x: 0, y: 0, width: 1000, height: height))
     }
 
-    private func buttons(_ v: TimelineView) -> [NSButton] { v.subviews.compactMap { $0 as? NSButton } }
+    /// The tool buttons (Snap and Linked Selection toggles follow them).
+    private func buttons(_ v: TimelineView) -> [NSButton] {
+        Array(v.subviews.compactMap { $0 as? NSButton }.prefix(TimelineView.toolColumnOrder.count))
+    }
 
     @Test func columnHasRealButtonsWithSelectionActive() {
         let v = makeView()

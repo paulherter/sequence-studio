@@ -213,7 +213,7 @@ public struct TimelineInteraction: Sendable {
             g.baseSelection = selection
         case (.trackSelectForward, .clip(let id, _)):
             selectForward(from: timeline.tracks.first { $0.clips.contains { $0.id == id } }?.id,
-                          pivot: clip(id)?.start ?? .zero, allTracks: m.contains(.shift), linked: linked(m))
+                          pivot: (toolState.selectBackward ? clip(id)?.timeline.end : clip(id)?.start) ?? .zero, allTracks: m.contains(.shift), linked: linked(m))
         case (.trackSelectForward, .gap(let track, let t)):
             selectForward(from: track, pivot: t, allTracks: m.contains(.shift), linked: linked(m))
         case (.rippleEdit, .clip(let id, let zone)), (.rollEdit, .clip(let id, let zone)):
@@ -393,8 +393,9 @@ public struct TimelineInteraction: Sendable {
 
     private mutating func selectForward(from track: Track.ID?, pivot: Time, allTracks: Bool, linked: Bool) {
         var ids = Set<Clip.ID>()
+        let backward = toolState.selectBackward
         for t in timeline.tracks where allTracks || t.id == track {
-            for c in t.clips where c.timeline.end > pivot { ids.insert(c.id) }
+            for c in t.clips where backward ? c.start < pivot : c.timeline.end > pivot { ids.insert(c.id) }
         }
         selection = linked ? groups(ids, linked: true) : ids
     }

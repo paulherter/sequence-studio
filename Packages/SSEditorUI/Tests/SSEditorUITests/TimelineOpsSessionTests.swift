@@ -86,4 +86,55 @@ private func track(_ clips: [Clip], kind: TrackKind = .video) -> Track {
         ses.goToPreviousMarker(); ses.goToPreviousMarker()
         #expect(ses.playhead == s(1))
     }
+
+    @Test func trackAddDeleteRename() {
+        let a = clip(0, 2)
+        let ses = makeSession([track([a]), track([], kind: .audio)])
+        ses.addTrack(.video)
+        ses.addTrack(.audio)
+        #expect(ses.activeTimeline!.tracks.map(\.kind) == [.video, .video, .audio, .audio])
+        let first = ses.activeTimeline!.tracks[0].id
+        ses.renameTrack(first, to: " Camera ")
+        #expect(ses.activeTimeline!.tracks[0].name == "Camera")
+        ses.deleteTrack(first)
+        #expect(ses.activeTimeline!.tracks.count == 3)
+        #expect(ses.undo())
+        #expect(ses.activeTimeline!.tracks.count == 4)
+    }
+
+    @Test func markerAtPlayheadOpensEditOnSecondPress() {
+        let ses = makeSession([track([clip(0, 5)])])
+        ses.seek(to: s(2))
+        let first = ses.markAtPlayhead()
+        #expect(first?.openEdit == false)
+        let second = ses.markAtPlayhead()
+        #expect(second?.openEdit == true && second?.id == first?.id)
+        #expect(ses.activeTimeline!.markers.count == 1)
+        ses.editMarker(first!.id, name: "Cut", color: .red, comment: "tighten")
+        #expect(ses.activeTimeline!.markers[0].color == .red && ses.activeTimeline!.markers[0].name == "Cut")
+        ses.deleteMarker(first!.id)
+        #expect(ses.activeTimeline!.markers.isEmpty)
+    }
+
+    @Test func renameAndLabelSelectedClip() {
+        let a = clip(0, 2)
+        let ses = makeSession([track([a])])
+        ses.select(clips: [a.id])
+        ses.renameSelectedClip(to: "Interview")
+        ses.setLabel(.rose)
+        let c = ses.activeTimeline!.tracks[0].clips[0]
+        #expect(c.name == "Interview" && c.label == .rose)
+        ses.setLabel(nil)
+        #expect(ses.activeTimeline!.tracks[0].clips[0].label == nil)
+    }
+
+    @Test func editPointJumpFollowsTargetedTracks() {
+        var v1 = track([clip(0, 2), clip(2, 2)])
+        v1.isTargeted = true
+        let v2 = track([clip(1, 5)])
+        let ses = makeSession([v1, v2])
+        ses.seek(to: s(0))
+        ses.goToNextEditPoint()
+        #expect(ses.playhead == s(2))
+    }
 }

@@ -75,6 +75,54 @@ extension EditorSession {
         attempt("Ripple Delete") { _ = try $0.closeGap(on: gap.track, at: gap.range.start) }
     }
 
+    // MARK: Markers
+
+    /// M: adds a marker at the playhead. When one already sits on that frame nothing is added and its ID comes back
+    /// so the host can open the marker dialog (Premiere: M twice).
+    @discardableResult
+    public func markAtPlayhead() -> (id: Marker.ID, openEdit: Bool)? {
+        guard let t = activeTimeline else { return nil }
+        var probe = t
+        let r = probe.markAtPlayhead(playhead)
+        if r.openEdit { return r }
+        var made: Marker.ID?
+        attempt("Add Marker") { made = $0.markAtPlayhead(self.playhead).id }
+        return made.map { ($0, false) }
+    }
+
+    /// Marker dialog OK: name, colour, comment.
+    public func editMarker(_ id: Marker.ID, name: String, color: MarkerColor, comment: String) {
+        attempt("Edit Marker") { t in t.updateMarker(id) { $0.name = name; $0.color = color; $0.comment = comment } }
+    }
+
+    public func deleteMarker(_ id: Marker.ID) { attempt("Delete Marker") { $0.removeMarker(id) } }
+
+    // MARK: Tracks
+
+    /// New empty track of `kind` after the last one of that kind (a new top video track, a new bottom audio track).
+    public func addTrack(_ kind: TrackKind) {
+        attempt(kind == .video ? "Add Video Track" : "Add Audio Track") { t in
+            let i = (t.tracks.lastIndex { $0.kind == kind } ?? (kind == .video ? -1 : t.tracks.count - 1)) + 1
+            t.tracks.insert(Track(kind: kind), at: i)
+        }
+    }
+
+    /// Deletes a track with its clips (undoable). A locked track is refused.
+    public func deleteTrack(_ id: Track.ID) {
+        attempt("Delete Track") { t in
+            guard let i = t.tracks.firstIndex(where: { $0.id == id }) else { return }
+            if t.tracks[i].isLocked { throw EditError.trackLocked }
+            t.tracks.remove(at: i)
+        }
+    }
+
+    public func renameTrack(_ id: Track.ID, to name: String) {
+        let n = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        attempt("Rename Track") { t in
+            if let i = t.tracks.firstIndex(where: { $0.id == id }) { t.tracks[i].name = n }
+        }
+    }
+
     // MARK: Rename and label
 
     /// Context menu Rename: the one selected clip. A blank name is ignored.

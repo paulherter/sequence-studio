@@ -54,7 +54,9 @@ extension AppController {
         case .extract: session.extractRange()
         case .insert: placeSelectedMedia(.insert)
         case .overwrite: placeSelectedMedia(.overwrite)
-        case .addMarker: session.addMarkerAtPlayhead()
+        case .addMarker:
+            // M on a frame that already has a marker opens its dialog (Premiere).
+            if let r = session.markAtPlayhead(), r.openEdit { panels.editMarker(r.id) }
         case .tool(let t): selectTool(t)
         case .addEdit: session.addEditAtPlayhead()
         case .addEditAllTracks: session.addEditAtPlayhead(allTracks: true)
@@ -114,6 +116,7 @@ extension AppController {
         // The Program monitor follows: Hand pans the view, Type places text, everything else is the selection behaviour.
         panels.setMonitorTool(t == .hand ? .hand : t == .type ? .type : .select)
         guard let mapped else { shell.statusBar.flash("\(EditorCommand.tool(t).title) is not available yet."); return }
+        panels.timelineView.toolState.selectBackward = t == .trackBackward
         panels.timelineView.toolState.tool = mapped
         shell.statusBar.flash(EditorCommand.tool(t).title, seconds: 2)
     }

@@ -370,6 +370,7 @@ public final class TimelineView: NSView {
             return
         }
         if geometry.hitTest(p, in: timeline) == .ruler {
+            if event.clickCount == 2, let m = markerID(at: p) { onEditMarker?(m); return }   // double-click a marker flag
             scrubbing = (false, true)
             onSeek?(scrubTime(at: p, shift: event.modifierFlags.contains(.shift)))
             return
@@ -423,6 +424,14 @@ public final class TimelineView: NSView {
         if wasRejected, let m = interaction.rejectionMessage { onRejection?(m) }
         if let commit { onCommit?(commit) }
     }
+
+    /// Marker whose flag is under a ruler point (within 6 pt of its pole).
+    public func markerID(at p: CGPoint) -> Marker.ID? {
+        timeline.markers.first { abs(geometry.x(for: $0.time) - p.x) <= 6 }?.id
+    }
+
+    /// Double-click on a marker in the ruler: the host opens the marker dialog.
+    public var onEditMarker: ((Marker.ID) -> Void)?
 
     /// Time under the pointer for a playhead drag. Shift sticks it to clip edges, markers and 0 and shows the snap line.
     private func scrubTime(at p: CGPoint, shift: Bool) -> Time {
@@ -608,7 +617,7 @@ public final class TimelineView: NSView {
 
     private func buildToggleButtons() {
         let specs: [(ToggleKind, String, String, String)] = [
-            (.snap, "magnet", "Snap (S)", "Snap"),
+            (.snap, "arrow.left.and.right.righttriangle.left.righttriangle.right", "Snap (S)", "Snap"),
             (.linked, "link", "Linked Selection", "Linked Selection"),
         ]
         for (kind, symbol, tip, title) in specs {
@@ -618,7 +627,7 @@ public final class TimelineView: NSView {
             b.imagePosition = .imageOnly
             b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
                 ?? NSImage(systemSymbolName: kind == .snap ? "scope" : "link", accessibilityDescription: title)
-            b.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+            b.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
             b.toolTip = tip
             b.setAccessibilityLabel(title)
             b.wantsLayer = true
@@ -680,13 +689,13 @@ public final class TimelineView: NSView {
                              width: Self.toolButtonSize, height: Self.toolButtonSize)
             y += step
         }
-        // Toggles sit at the bottom of the column; hidden when the column is too short to hold them below the tools.
-        var ty = bounds.height - 4 - Self.toolButtonSize
-        for (_, b) in toggleButtons.reversed() {
-            b.isHidden = ty < y + 4
-            b.frame = CGRect(x: (TimelineGeometry.toolColumnWidth - Self.toolButtonSize) / 2, y: ty,
-                             width: Self.toolButtonSize, height: Self.toolButtonSize)
-            ty -= step
+        // Snap and Linked Selection sit in the ruler corner above the track headers (Premiere's timeline header).
+        let size: CGFloat = 20
+        var tx = TimelineGeometry.toolColumnWidth + 6
+        for (_, b) in toggleButtons {
+            b.isHidden = false
+            b.frame = CGRect(x: tx, y: ((TimelineGeometry.rulerHeight - size) / 2).rounded(), width: size, height: size)
+            tx += size + 4
         }
     }
 
@@ -848,7 +857,7 @@ public final class TimelineView: NSView {
             Theme.Colors.snapLine.setFill()
             CGRect(x: x - 0.5, y: clip.minY, width: 1, height: clip.height).fill()
         }
-        let rows = geometry.rows(for: timeline)
+        let rows = interaction.gapSelection != nil || interaction.edgeSelection != nil ? geometry.rows(for: timeline) : []
         if let g = interaction.gapSelection, let row = rows.first(where: { $0.track == g.track }) {
             let r = CGRect(x: geometry.x(for: g.range.start), y: row.y + 1, width: geometry.x(for: g.range.end) - geometry.x(for: g.range.start),
                            height: row.height - 2)

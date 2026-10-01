@@ -100,7 +100,8 @@ private func rates(_ a: [RouterAction]) -> [ShuttleAction] {
             #expect(Set(cmds).count == cmds.count, "duplicate in \(menu.title)")
             for c in cmds {
                 #expect(!c.title.isEmpty)
-                #expect(map.binding(for: c) != nil, "no key for \(c)")
+                // Linked Selection has no default key in Premiere (menu and timeline button only).
+                #expect(map.binding(for: c) != nil || c == .toggleLinkedSelection, "no key for \(c)")
             }
         }
         #expect(EditorMenus.all.map(\.title) == ["File", "Edit", "Clip", "Sequence", "View", "Window"])

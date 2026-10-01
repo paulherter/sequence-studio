@@ -124,6 +124,7 @@ final class EditorPanels {
             if !session.addRoundedCorners(to: [clip]) { onStatus?("Rounded Corners need a video clip that does not have it yet.") }
         }
         tv.contextMenuProvider = { [weak self] p in self?.timelineMenu(at: p) }
+        tv.onEditMarker = { [weak self] id in self?.editMarker(id) }
         tv.onToggleChange = { [weak self] snap, linked in
             self?.onStatus?("Snapping \(snap ? "on" : "off"), Linked Selection \(linked ? "on" : "off")")
         }
@@ -189,6 +190,7 @@ final class EditorPanels {
         case .solo: name = "Toggle Solo"
         case .lock: name = "Toggle Track Lock"
         case .target: name = "Toggle Track Target"
+        case .syncLock: name = "Toggle Sync Lock"
         }
         try? session.performTimeline(name) { t in
             guard let i = t.tracks.firstIndex(where: { $0.id == id }) else { return }
@@ -198,6 +200,7 @@ final class EditorPanels {
             case .solo: t.tracks[i].isSolo.toggle()
             case .lock: t.tracks[i].isLocked.toggle()
             case .target: t.tracks[i].isTargeted.toggle()
+            case .syncLock: t.tracks[i].syncLock.toggle()
             }
         }
     }
@@ -215,6 +218,10 @@ final class EditorPanels {
             items = TimelineContextMenu.gapItems(clipboardHasClips: hasClipboard)
         case .gap, .captionGap:
             items = TimelineContextMenu.emptyItems(clipboardHasClips: hasClipboard)
+        case .header(let id):
+            return trackHeaderMenu(for: id)
+        case .ruler:
+            return rulerMenu(at: p)
         default:
             return nil
         }

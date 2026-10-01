@@ -59,6 +59,8 @@ public struct ToolState: Sendable, Equatable {
     public var snapping = true
     /// Linked selection: clicking a clip also selects (and razor also cuts) its linked partners. Option inverts per gesture.
     public var linkedSelection = true
+    /// Track Select tool direction: false = forward (A), true = backward (Shift+A).
+    public var selectBackward = false
     public init(tool: TimelineTool = .selection, snapping: Bool = true, linkedSelection: Bool = true) {
         self.tool = tool; self.snapping = snapping; self.linkedSelection = linkedSelection
     }
