@@ -221,7 +221,7 @@ import Testing
         "source":{"start":{"value":0,"timescale":1},"duration":{"value":2,"timescale":1}},"start":{"value":0,"timescale":1}}]}]}]}}
         """#
         let p = try ProjectFile.decode(Data(json.utf8), migrations: ProjectFile.migrations)
-        #expect(ProjectFile.currentVersion == 13)
+        #expect(ProjectFile.currentVersion == 14)
         let clip = try #require(p.timelines.first?.tracks.first?.clips.first)
         #expect(clip.color == .default)
     }
@@ -241,7 +241,7 @@ import Testing
         #expect(clip.color.effects.count == 1 && clip.color.primary.basic.exposure == 2 && clip.color.primary.inputLUT == .automatic)
     }
 
-    @Test func v12ProjectFileMigratesToV13WithFlatHueCurves() throws {
+    @Test func v12ProjectFileMigratesToV14WithFlatHueCurves() throws {
         let pid = UUID(), tid = UUID(), mid = UUID(), cid = UUID()
         let json = #"""
         {"formatVersion":12,"project":{"id":"\#(pid)","name":"Old","media":[],"activeTimeline":"\#(tid)",

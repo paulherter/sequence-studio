@@ -17,7 +17,7 @@ Basic Correction). "(unverified)" = not found in those pages.
 | White balance eyedropper | Click neutral area in Program monitor | Click in the Program monitor: 5 x 5 mean of the composite, `WhiteBalanceSolver` sets Temperature and Tint, one undo step, crosshair cursor, click outside the picture cancels | Cmd = 10 x 10 sample; no Esc cancel | yes |
 | Look thumbnail | Shows the look on the clip's frame | Shows the clip's frame at the playhead (composite already holds the look), updated 120 ms after the last change, not while playing; synthetic picture if the playhead is outside the clip | Thumbnails of the other looks in the popup | yes |
 | Curves: RGB | Master/R/G/B; Cmd-click deletes a point; Shift locks x | Existed; Cmd-click delete and Shift x-lock added (double-click also deletes) | none | yes |
-| Curves: Hue Saturation | Hue vs Sat, Hue vs Hue, Hue vs Luma, Luma vs Sat, Sat vs Sat; all sample the colour entering the section; eyedropper adds 3 points | New: all five, popup + editor in the Curves section, hue strip under the plot, wrap-around, CPU and Metal maths with parity test, project v13 | Eyedropper that adds 3 points; Lumetri's preset points | yes |
+| Curves: Hue Saturation | Hue vs Sat, Hue vs Hue, Hue vs Luma, Luma vs Sat, Sat vs Sat; all sample the colour entering the section; eyedropper adds 3 points | New: all five, popup + editor in the Curves section, hue strip under the plot, wrap-around, CPU and Metal maths with parity test, project v14 | Eyedropper that adds 3 points; Lumetri's preset points | yes |
 | Creative: Faded Film, Vibrance, Saturation, Tint wheels | Real maths | Already real (CPU and GPU, parity tests) | none | already right |
 | Creative: Sharpen | Spatial sharpen | Disabled row, no maths. The colour chain is per pixel; Sharpen needs a neighbourhood pass in the compositor | Open | no (documented) |
 | HSL Secondary | Key by H/S/L, correct the key | Disabled placeholder (toggle and body inactive) | Open | no (documented, only if time remained) |
@@ -26,7 +26,7 @@ Basic Correction). "(unverified)" = not found in those pages.
 | Adjustment layers | Colour on an adjustment layer | No adjustment layers in the app | n/a | n/a |
 | Colour order | Basic, Creative, RGB Curves, Hue Sat Curves, Wheels, HSL Secondary, Vignette | Same (Basic sliders before the Input LUT by Paul's rule) | none | verified |
 
-File format: v13 (`ColorEffect.hueCurves`, encoded only when not flat). Migrations v10 -> v11 -> v12 -> v13 tested.
+File format: v14 (`ColorEffect.hueCurves`, encoded only when not flat). Migrations v10 -> v11 -> v12 -> v13 -> v14 tested.
 
 ## Part B: stability
 
