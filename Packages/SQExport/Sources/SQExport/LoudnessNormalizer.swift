@@ -46,7 +46,7 @@ public final class NormalizedAudioSource: RewindableAudioSource {
 
     private init(base: any RewindableAudioSource, measurement: LoudnessMeasurement, gainDB: Double) {
         self.base = base; self.measurement = measurement; self.gainDB = gainDB
-        self.gain = Float(AudioGain.linear(fromDB: gainDB))
+        self.gain = Float(GainMath.linear(fromDB: gainDB))
     }
 
     public static func make(_ base: some RewindableAudioSource, settings: LoudnessNormalization) async throws -> NormalizedAudioSource {

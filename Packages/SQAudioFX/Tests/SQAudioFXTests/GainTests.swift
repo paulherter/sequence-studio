@@ -5,13 +5,13 @@ import SQCore
 
 @Suite struct GainTests {
     @Test func dbConversion() {
-        #expect(SQAudioFX.AudioGain.linear(fromDB: 0) == 1)
-        #expect(abs(SQAudioFX.AudioGain.linear(fromDB: 6.0206) - 2) < 1e-4)
-        #expect(SQAudioFX.AudioGain.linear(fromDB: -.infinity) == 0)
-        #expect(SQAudioFX.AudioGain.linear(fromDB: -120) == 0)
-        #expect(SQAudioFX.AudioGain.dB(fromLinear: 0) == -.infinity)
-        #expect(abs(SQAudioFX.AudioGain.dB(fromLinear: 0.5) + 6.0206) < 1e-3)
-        #expect(abs(SQAudioFX.AudioGain.dB(fromLinear: SQAudioFX.AudioGain.linear(fromDB: -17.3)) + 17.3) < 1e-9)
+        #expect(GainMath.linear(fromDB: 0) == 1)
+        #expect(abs(GainMath.linear(fromDB: 6.0206) - 2) < 1e-4)
+        #expect(GainMath.linear(fromDB: -.infinity) == 0)
+        #expect(GainMath.linear(fromDB: -120) == 0)
+        #expect(GainMath.dB(fromLinear: 0) == -.infinity)
+        #expect(abs(GainMath.dB(fromLinear: 0.5) + 6.0206) < 1e-3)
+        #expect(abs(GainMath.dB(fromLinear: GainMath.linear(fromDB: -17.3)) + 17.3) < 1e-9)
     }
 
     @Test func staticGain() {
