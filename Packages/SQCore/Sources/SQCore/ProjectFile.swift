@@ -86,7 +86,7 @@ public enum ProjectFile {
     /// on screen. A project that does not decode is passed on unchanged (the final decode then reports it).
     static func migrateV9toV10(_ obj: JSONObject) throws -> JSONObject {
         var o = obj
-        guard let projectObj = obj["project"],
+        guard let projectObj = obj["project"], JSONSerialization.isValidJSONObject(projectObj),
               let raw = try? JSONSerialization.data(withJSONObject: projectObj),
               var project = try? decoder().decode(Project.self, from: raw) else { return obj }
         project.migrateScaleToSourcePixels()
@@ -152,7 +152,8 @@ public enum ProjectFile {
             obj = try step(obj)
             version += 1
         }
-        guard let projectObj = obj["project"],
+        // `data(withJSONObject:)` raises (not throws) for a non-container value such as `"project": 5`.
+        guard let projectObj = obj["project"], JSONSerialization.isValidJSONObject(projectObj),
               let raw = try? JSONSerialization.data(withJSONObject: projectObj),
               let project = try? decoder().decode(Project.self, from: raw) else { throw ProjectFileError.corrupt }
         return project
