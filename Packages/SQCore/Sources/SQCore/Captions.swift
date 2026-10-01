@@ -8,12 +8,33 @@ public struct CaptionItem: Sendable, Hashable, Codable, Identifiable {
     public var lines: [String]
     /// Timeline position (half-open).
     public var range: TimeRange
+    /// The style this caption is drawn with. Follows the track's style unless `styleOverridden`.
     public var styleRef: String
     public var animationRef: String
+    /// True once the caption got its own style: a change of the track style leaves it alone.
+    public var styleOverridden: Bool
+    /// Word timings on the timeline (karaoke highlight); empty = spread over the range by word length
+    /// (see `effectiveWords`).
+    public var words: [CaptionWord]
 
-    public init(id: UUID = UUID(), lines: [String], range: TimeRange, styleRef: String = "", animationRef: String = "") {
+    public init(id: UUID = UUID(), lines: [String], range: TimeRange, styleRef: String = "", animationRef: String = "",
+                styleOverridden: Bool = false, words: [CaptionWord] = []) {
         self.id = id; self.lines = lines; self.range = range
         self.styleRef = styleRef; self.animationRef = animationRef
+        self.styleOverridden = styleOverridden; self.words = words
+    }
+
+    private enum CodingKeys: String, CodingKey { case id, lines, range, styleRef, animationRef, styleOverridden, words }
+
+    /// Older files lack the override flag and the word timings.
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        self.init(id: try c.decode(UUID.self, forKey: .id), lines: try c.decode([String].self, forKey: .lines),
+                  range: try c.decode(TimeRange.self, forKey: .range),
+                  styleRef: try c.decodeIfPresent(String.self, forKey: .styleRef) ?? "",
+                  animationRef: try c.decodeIfPresent(String.self, forKey: .animationRef) ?? "",
+                  styleOverridden: try c.decodeIfPresent(Bool.self, forKey: .styleOverridden) ?? false,
+                  words: try c.decodeIfPresent([CaptionWord].self, forKey: .words) ?? [])
     }
 
     /// Lines joined with newlines.
@@ -29,17 +50,24 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
     public var syncLock: Bool
     /// Hidden tracks produce no captions in `Timeline.captions(at:)`.
     public var isVisible: Bool
+    /// Style of the track: every caption without its own style follows it ("" = each caption keeps what it has).
+    public var styleRef: String
+    public var animationRef: String
+    /// Karaoke word highlight (the TikTok look); nil = off.
+    public var karaoke: KaraokeStyle?
     /// Sorted by start, never overlapping.
     public private(set) var items: [CaptionItem]
 
     public init(id: UUID = UUID(), name: String = "", isLocked: Bool = false, syncLock: Bool = true,
-                isVisible: Bool = true, items: [CaptionItem] = []) {
+                isVisible: Bool = true, items: [CaptionItem] = [], styleRef: String = "", animationRef: String = "",
+                karaoke: KaraokeStyle? = nil) {
         self.id = id; self.name = name; self.isLocked = isLocked; self.syncLock = syncLock
         self.isVisible = isVisible
+        self.styleRef = styleRef; self.animationRef = animationRef; self.karaoke = karaoke
         self.items = items.sorted { $0.range.start < $1.range.start }
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, isLocked, syncLock, isVisible, items }
+    private enum CodingKeys: String, CodingKey { case id, name, isLocked, syncLock, isVisible, items, styleRef, animationRef, karaoke }
 
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -48,7 +76,10 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
                   isLocked: try c.decodeIfPresent(Bool.self, forKey: .isLocked) ?? false,
                   syncLock: try c.decodeIfPresent(Bool.self, forKey: .syncLock) ?? true,
                   isVisible: try c.decodeIfPresent(Bool.self, forKey: .isVisible) ?? true,
-                  items: try c.decodeIfPresent([CaptionItem].self, forKey: .items) ?? [])
+                  items: try c.decodeIfPresent([CaptionItem].self, forKey: .items) ?? [],
+                  styleRef: try c.decodeIfPresent(String.self, forKey: .styleRef) ?? "",
+                  animationRef: try c.decodeIfPresent(String.self, forKey: .animationRef) ?? "",
+                  karaoke: try c.decodeIfPresent(KaraokeStyle.self, forKey: .karaoke))
     }
 
     public var followsRipple: Bool { syncLock && !isLocked }
@@ -85,8 +116,9 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
         return s
     }
 
-    /// Moves one edge to `t`. Clamped by the neighbours, 0 and `minDuration` (the item never gets shorter).
-    /// Returns the new range, or nil if the item is unknown.
+    /// Moves one edge to `t`. Clamped by the neighbours, 0 and `minDuration` (the item never gets shorter; one that is
+    /// already shorter, squeezed by its neighbours, just cannot shrink further). The neighbours always win: the result
+    /// never overlaps them, however short the item is. Returns the new range, or nil if the item is unknown.
     @discardableResult
     public mutating func trim(_ id: CaptionItem.ID, edge: ClipEdge, to t: Time, minDuration: Time) -> TimeRange? {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return nil }
@@ -94,12 +126,12 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
         switch edge {
         case .head:
             let lo = i > 0 ? items[i - 1].range.end : .zero
-            let s = min(max(t, lo), r.end - minDuration)
-            items[i].range = TimeRange(start: s, end: r.end)
+            let hi = max(r.start, r.end - minDuration)
+            items[i].range = TimeRange(start: max(lo, min(t, hi)), end: r.end)
         case .tail:
-            var e = max(t, r.start + minDuration)
+            var e = max(t, min(r.end, r.start + minDuration))
             if i + 1 < items.count { e = min(e, items[i + 1].range.start) }
-            items[i].range = TimeRange(start: r.start, end: max(e, r.start + minDuration))
+            items[i].range = TimeRange(start: r.start, end: e)
         }
         return items[i].range
     }
@@ -134,6 +166,11 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
         }
         left.lines = leftLines.isEmpty ? [""] : leftLines
         right.lines = rightLines.isEmpty ? [""] : rightLines
+        // The word timings go with their words; without timings each half spreads its own.
+        if items[i].hasWordTimings {
+            let eff = items[i].words
+            left.words = Array(eff[..<min(k, eff.count)]); right.words = Array(eff[min(k, eff.count)...])
+        } else { left.words = []; right.words = [] }
         right.id = UUID()
         items[i] = left
         items.insert(right, at: i + 1)
@@ -148,6 +185,8 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
         var m = items[lo]
         let text = items[lo...hi].map { $0.lines.joined(separator: " ") }.filter { !$0.isEmpty }.joined(separator: " ")
         m.lines = [text]
+        // Timings survive when every part has them; otherwise the merged caption spreads its words again.
+        m.words = items[lo...hi].allSatisfy({ $0.hasWordTimings || $0.tokens.isEmpty }) ? items[lo...hi].flatMap(\.words) : []
         m.range = TimeRange(start: items[lo].range.start, end: items[hi].range.end)
         items.replaceSubrange(lo...hi, with: [m])
         return m.id
@@ -161,17 +200,34 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
         if let next = items.first(where: { $0.range.start >= at }) { end = min(end, next.range.start) }
         guard end > at else { throw EditError.collision }
         let ref = items.last { $0.range.end <= at } ?? items.first
+        // A new caption follows the track's style; without one it takes its neighbour's look (as before).
         let item = CaptionItem(lines: [""], range: TimeRange(start: at, end: end),
-                               styleRef: ref?.styleRef ?? style, animationRef: ref?.animationRef ?? animation)
+                               styleRef: styleRef.isEmpty ? (ref?.styleRef ?? style) : styleRef,
+                               animationRef: animationRef.isEmpty ? (ref?.animationRef ?? animation) : animationRef)
         items.append(item)
         items.sort { $0.range.start < $1.range.start }
         return item.id
     }
 
+    /// The track style: stored on the track and applied to every caption that has no style of its own.
     mutating func setStyle(styleRef: String, animationRef: String?) {
-        for i in items.indices {
+        self.styleRef = styleRef
+        if let animationRef { self.animationRef = animationRef }
+        for i in items.indices where !items[i].styleOverridden {
             items[i].styleRef = styleRef
             if let animationRef { items[i].animationRef = animationRef }
+        }
+    }
+
+    /// Gives the captions their own style (`styleRef`), or hands them back to the track style (nil).
+    mutating func setItemStyle(_ ids: Set<CaptionItem.ID>, styleRef: String?) {
+        for i in items.indices where ids.contains(items[i].id) {
+            if let styleRef { items[i].styleRef = styleRef; items[i].styleOverridden = true }
+            else {
+                items[i].styleOverridden = false
+                if !self.styleRef.isEmpty { items[i].styleRef = self.styleRef }
+                if !animationRef.isEmpty { items[i].animationRef = animationRef }
+            }
         }
     }
 
@@ -336,10 +392,25 @@ extension Timeline {
             .filter { $0.lines.contains { $0.range(of: find, options: opts) != nil } }.map(\.id)
     }
 
-    /// Applies a caption style (and optionally an animation) to every caption of the track.
+    /// Sets the style (and optionally the animation) of the track: every caption without its own style follows it.
     public mutating func setCaptionStyle(styleRef: String, animationRef: String? = nil, track id: CaptionTrack.ID) throws {
         let i = try captionTrackIndex(id)
         captionTracks[i].setStyle(styleRef: styleRef, animationRef: animationRef)
+    }
+
+    /// Gives the captions their own style (an override), or with nil hands them back to the track style.
+    public mutating func setCaptionItemStyle(_ ids: Set<CaptionItem.ID>, styleRef: String?) throws {
+        guard !ids.isEmpty else { return }
+        for i in captionTracks.indices where captionTracks[i].items.contains(where: { ids.contains($0.id) }) {
+            if captionTracks[i].isLocked { throw EditError.trackLocked }
+        }
+        for i in captionTracks.indices { captionTracks[i].setItemStyle(ids, styleRef: styleRef) }
+    }
+
+    /// Turns the karaoke word highlight of a track on (a style) or off (nil).
+    public mutating func setCaptionKaraoke(_ karaoke: KaraokeStyle?, track id: CaptionTrack.ID) throws {
+        let i = try captionTrackIndex(id)
+        captionTracks[i].karaoke = karaoke
     }
 
     /// Captions visible at `t`, bottom track first. Captions of nested sequences are not evaluated (Premiere).
