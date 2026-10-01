@@ -69,14 +69,14 @@ extension Timeline {
             let next = others.first { $0.start >= c.timeline.end }
             if d < .zero {
                 if let p = prev, p.timeline.end == c.start {
-                    d = max(d, .zero - (p.duration - frame))
+                    d = max(d, .zero - max(p.duration - frame, .zero))
                 } else {
                     d = max(d, .zero - (c.start - (prev?.timeline.end ?? .zero)))
                 }
                 if let n = next, n.start == c.timeline.end, let h = n.headHandle { d = max(d, .zero - h) }
             } else if d > .zero {
                 if let n = next, n.start == c.timeline.end {
-                    d = min(d, n.duration - frame)
+                    d = min(d, max(n.duration - frame, .zero))
                 } else if let n = next {
                     d = min(d, n.start - c.timeline.end)
                 }

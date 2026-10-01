@@ -10,6 +10,9 @@ public struct History<State: Sendable & Equatable>: Sendable {
     private var redoStack: [Entry] = []
     private var saved: State
     private var lastKey: String?
+    /// Undo entries dropped by the `limit` trim. Depths are counted from the very first step, so a depth taken
+    /// before a trim still names the same step afterwards (clamped to the oldest entry still held).
+    private var dropped = 0
     public let limit: Int
 
     public init(_ initial: State, limit: Int = 200) {
@@ -40,7 +43,7 @@ public struct History<State: Sendable & Equatable>: Sendable {
             undoStack[undoStack.count - 1].name = name
         } else {
             undoStack.append(Entry(name: name, state: current))
-            if undoStack.count > limit { undoStack.removeFirst(undoStack.count - limit) }
+            if undoStack.count > limit { dropped += undoStack.count - limit; undoStack.removeFirst(undoStack.count - limit) }
         }
         lastKey = key
         redoStack.removeAll()
@@ -56,12 +59,13 @@ public struct History<State: Sendable & Equatable>: Sendable {
     }
 
     /// Number of undo steps.
-    public var undoDepth: Int { undoStack.count }
+    public var undoDepth: Int { undoStack.count + dropped }
 
     /// Goes back to `depth` undo steps and forgets everything above (no redo entries are left): for an edit that is
     /// withdrawn before it was ever finished (an empty text box).
     public mutating func rewind(toDepth depth: Int) {
-        guard depth >= 0, undoStack.count > depth else { return }
+        let depth = max(depth - dropped, 0)
+        guard undoStack.count > depth else { return }
         current = undoStack[depth].state
         undoStack.removeSubrange(depth...)
         redoStack.removeAll()
@@ -70,7 +74,8 @@ public struct History<State: Sendable & Equatable>: Sendable {
 
     /// Folds the undo steps above `depth` into one named step (state before the first of them).
     public mutating func squash(fromDepth depth: Int, name: String) {
-        guard depth >= 0, undoStack.count > depth else { return }
+        let depth = max(depth - dropped, 0)
+        guard undoStack.count > depth else { return }
         undoStack[depth].name = name
         if undoStack.count > depth + 1 { undoStack.removeSubrange((depth + 1)...) }
         lastKey = nil
