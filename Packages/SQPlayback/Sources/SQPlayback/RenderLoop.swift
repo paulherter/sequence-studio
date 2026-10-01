@@ -372,7 +372,15 @@ final class RenderLoop: @unchecked Sendable {
     struct TickTiming: Sendable { var ticks = 0; var total = Duration.zero; var presents = 0; var presentTotal = Duration.zero }
     let timing = Mutex(TickTiming())
 
-    private struct LayerBuild { var layers: [RenderLayer] = []; var missing = 0; var waiting = false; var misses: [(UUID, Int)] = []; var noFrame = 0 }
+    private struct LayerBuild { var layers: [RenderLayer] = []; var missing = 0; var waiting = false; var misses: [(UUID, Int)] = []; var noFrame = 0
+        /// Cold (undecoded) layers that are part of a transition, and flat colour layers (dips), which are never cold.
+        var coldInTransition = 0; var solids = 0 }
+
+    /// Whether to keep showing the last presented frame instead of compositing now. Solid dip layers do not count as
+    /// pictures; a transition with one cold side holds too (a dissolve against the grey "loading" placeholder would flash).
+    static func shouldHold(noFrame: Int, layers: Int, solids: Int, coldInTransition: Int, hasLast: Bool) -> Bool {
+        hasLast && ((noFrame > 0 && noFrame == layers - solids) || coldInTransition > 0)
+    }
 
     private func tickLocked(_ g: inout GPU, drawable: CAMetalDrawable?) -> TickOutcome? {
         let now = clock.now()
@@ -403,12 +411,17 @@ final class RenderLoop: @unchecked Sendable {
         let requests = tl.videoLayers(at: t, sequences: { sequences[$0] })
         let durations = state.withLock { $0.clipDurations }
         var b = LayerBuild()
-        for r in requests { b.layers.append(layer(for: r, scale: scale, build: &b, tl.format, durations)) }
+        for r in requests {
+            let cold = b.noFrame
+            b.layers.append(layer(for: r, scale: scale, build: &b, tl.format, durations))
+            if r.generator?.kind == GeneratorRef.solid { b.solids += 1 }
+            if r.inTransition, b.noFrame > cold { b.coldInTransition += 1 }
+        }
 
         // Every layer has no picture at all yet (far seek into undecoded media): keep showing the last presented frame
         // instead of a black placeholder; `incomplete` makes the next ticks retry until the decode lands. Bounded: a
         // decode that never lands falls through to the placeholder composite. One cold layer among others composites.
-        if b.noFrame > 0 && b.noFrame == b.layers.count && lastTime != nil {
+        if Self.shouldHold(noFrame: b.noFrame, layers: b.layers.count, solids: b.solids, coldInTransition: b.coldInTransition, hasLast: lastTime != nil) {
             let now = ContinuousClock.now
             let hold = state.withLock { s -> Bool in
                 if s.holdStart?.time != t { s.holdStart = (t, now) }
@@ -571,6 +584,7 @@ final class RenderLoop: @unchecked Sendable {
         func placeholder(_ k: PlaceholderKind) -> RenderLayer {
             RenderLayer(content: .placeholder(k), transform: r.transform, cornerRadius: r.cornerRadius)
         }
+        if let g = r.generator, g.kind == GeneratorRef.solid { return RenderLayer.solid(payload: g.payload, transform: r.transform) }
         if let g = r.generator {
             return g.kind == GeneratorRef.text ? textLayer(r, g, canvas: format, durations: durations, build: &b) : placeholder(.offline)
         }

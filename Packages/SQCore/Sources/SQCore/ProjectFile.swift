@@ -151,7 +151,8 @@ public enum ProjectFile {
     /// no tracking, upright, point text, no gap: identity migration. Older builds drop these fields on save.
     static func migrateV15toV16(_ obj: JSONObject) throws -> JSONObject { obj }
 
-    /// v17: transitions stream (placeholder so the chain is complete until that stream's migration lands): identity.
+    /// v17: `Track.transitions` (cut and fade transitions). Optional on decode; absent = none: identity migration.
+    /// Older builds drop the transitions on save.
     static func migrateV16toV17(_ obj: JSONObject) throws -> JSONObject { obj }
 
 

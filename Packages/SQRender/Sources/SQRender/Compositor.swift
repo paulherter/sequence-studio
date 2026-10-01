@@ -19,6 +19,8 @@ public struct RenderLayer: @unchecked Sendable {
         /// Linear-light premultiplied `kCVPixelFormatType_64RGBAHalf` raster (text), drawn at exactly `width` x `height`
         /// sequence px (no aspect fit); `transform` positions its centre like any other layer.
         case linearPremultiplied(CVPixelBuffer, width: Double, height: Double)
+        /// Flat colour over the whole canvas (transition dips). Display-encoded (BT.709 OETF) 0...1; the compositor linearises it.
+        case solid(red: Float, green: Float, blue: Float)
     }
     public var content: Content
     public var transform: ClipTransform
@@ -34,6 +36,12 @@ public struct RenderLayer: @unchecked Sendable {
     /// nil = the buffer's own size.
     public var nativeSize: (width: Int, height: Int)?
 
+    /// A solid layer from a `GeneratorRef.solid` payload (RGB bytes).
+    public static func solid(payload: Data, transform: ClipTransform = .identity) -> RenderLayer {
+        let b = [UInt8](payload) + [0, 0, 0]
+        return RenderLayer(content: .solid(red: Float(b[0]) / 255, green: Float(b[1]) / 255, blue: Float(b[2]) / 255), transform: transform)
+    }
+
     public init(content: Content, transform: ClipTransform = .identity, colorPipeline: ColorPipeline? = nil,
                 cornerRadius: Double = 0, nativeSize: (width: Int, height: Int)? = nil) {
         self.content = content; self.transform = transform; self.colorPipeline = colorPipeline
@@ -48,6 +56,10 @@ public struct RenderLayer: @unchecked Sendable {
 public indirect enum RenderNode: @unchecked Sendable {
     case layer(RenderLayer)
     case group(format: SequenceFormat, transform: ClipTransform, opacity: Double, cornerRadius: Double, children: [RenderNode])
+    /// Cross dissolve of two pictures: `first` and `second` (opacities already folded in: 1-w and w) are summed as premultiplied
+    /// colour, `first + second`, into one transparent canvas-sized image that is then composited over what is below. Correct for
+    /// letterboxed, transparent and nested pictures, on any track (a plain "over" of B on A would not fade A out where B is empty).
+    case pair(format: SequenceFormat, first: [RenderNode], second: [RenderNode])
 
     /// Builds the tree from flat `LayerRequest`s (bottom -> top) and their prepared layers (`layers[i]` belongs to
     /// `requests[i]`). Consecutive layers sharing the same `groups` prefix (same nested clip) form one group,
@@ -62,6 +74,19 @@ public indirect enum RenderNode: @unchecked Sendable {
         var i = 0
         while i < items.count {
             let (req, layer) = items[i]
+            if let p = req.pair, p.depth == depth {
+                var j = i + 1
+                while j < items.count, items[j].0.pair?.id == p.id { j += 1 }
+                func side(_ role: LayerRequest.PairRole) -> [RenderNode] {
+                    build(items[i..<j].filter { $0.0.pair?.role == role }.map { item in
+                        var r = item.0; r.pair = nil
+                        return (r, item.1)
+                    }, depth: depth)
+                }
+                out.append(.pair(format: p.format, first: side(.first), second: side(.second)))
+                i = j
+                continue
+            }
             guard req.groups.count > depth else { out.append(.layer(layer)); i += 1; continue }
             let g = req.groups[depth]
             var j = i + 1
@@ -90,6 +115,8 @@ public final class Compositor: @unchecked Sendable {
     public let device: MTLDevice
     private let convertPipeline: MTLComputePipelineState
     private let renderPipeline: MTLRenderPipelineState
+    /// Same shader with additive blending (premultiplied sum): the second side of a transition pair.
+    private let additivePipeline: MTLRenderPipelineState
     private let textureCache: CVMetalTextureCache
     private let colorGPU: ColorPipelineGPU
     private let dummy: MTLTexture
@@ -138,6 +165,8 @@ public final class Compositor: @unchecked Sendable {
         ca.sourceRGBBlendFactor = .one; ca.sourceAlphaBlendFactor = .one
         ca.destinationRGBBlendFactor = .oneMinusSourceAlpha; ca.destinationAlphaBlendFactor = .oneMinusSourceAlpha
         renderPipeline = try device.makeRenderPipelineState(descriptor: rp)
+        ca.destinationRGBBlendFactor = .one; ca.destinationAlphaBlendFactor = .one
+        additivePipeline = try device.makeRenderPipelineState(descriptor: rp)
         var cache: CVMetalTextureCache?
         guard CVMetalTextureCacheCreate(nil, nil, device, nil, &cache) == kCVReturnSuccess, let cache else {
             throw CompositorError.resourceAllocation
@@ -204,9 +233,11 @@ public final class Compositor: @unchecked Sendable {
         case .damaged: d = SIMD3(0.45, 0.33, 0.05)
         case .loading: d = SIMD3(0.20, 0.20, 0.20)
         }
-        func lin(_ e: Float) -> Float { e < 0.081242858 ? e / 4.5 : pow((e + 0.09929682680944) / 1.09929682680944, 1 / 0.45) }
         return SIMD4(lin(d.x), lin(d.y), lin(d.z), 1)
     }
+
+    /// Inverse BT.709 OETF: display-encoded -> working-linear.
+    static func lin(_ e: Float) -> Float { e < 0.081242858 ? e / 4.5 : pow((e + 0.09929682680944) / 1.09929682680944, 1 / 0.45) }
 
     /// Corner radii are given in px of the layer fitted into the canvas (what they meant before Scale became relative to
     /// source pixels); the layer is now drawn at its own size, so the radius is converted: native / fitted.
@@ -263,7 +294,7 @@ public final class Compositor: @unchecked Sendable {
     }
 
     private func encode(_ nodes: [RenderNode], format: SequenceFormat, into target: MTLTexture, commandBuffer: MTLCommandBuffer,
-                        retainer: Retainer, clear: MTLClearColor) throws {
+                        retainer: Retainer, clear: MTLClearColor, additiveOnto: Bool = false) throws {
         var prepared: [Prepared] = []
         for node in nodes {
             switch node {
@@ -282,15 +313,27 @@ public final class Compositor: @unchecked Sendable {
                          cornerRadius: radius * Self.radiusFactor(gf.width, gf.height, canvas: format))
                 u.opacity = Float(min(1, max(0, transform.opacity * opacity)))
                 prepared.append(Prepared(u: u, tex0: tex, tex1: dummy))
+            case .pair(let pf, let first, let second):
+                guard let tex = acquireIntermediate(width: pf.width, height: pf.height) else { throw CompositorError.resourceAllocation }
+                retainer.pooled.append(tex)
+                let clearAll = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+                try encode(first, format: pf, into: tex, commandBuffer: commandBuffer, retainer: retainer, clear: clearAll)
+                try encode(second, format: pf, into: tex, commandBuffer: commandBuffer, retainer: retainer, clear: clearAll,
+                           additiveOnto: true)
+                var u = Uniforms()
+                u.mode = 3
+                geometry(&u, transform: .identity, canvas: format, size: SIMD2(Float(pf.width), Float(pf.height)))
+                prepared.append(Prepared(u: u, tex0: tex, tex1: dummy))
             }
         }
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = target
-        pass.colorAttachments[0].loadAction = .clear
+        // `additiveOnto`: keep what is in the target (the first side of a pair) and add this layer list on top.
+        pass.colorAttachments[0].loadAction = additiveOnto ? .load : .clear
         pass.colorAttachments[0].storeAction = .store
         pass.colorAttachments[0].clearColor = clear
         guard let enc = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { throw CompositorError.resourceAllocation }
-        enc.setRenderPipelineState(renderPipeline)
+        enc.setRenderPipelineState(additiveOnto ? additivePipeline : renderPipeline)
         enc.setCullMode(.none)
         for var p in prepared {
             enc.setVertexBytes(&p.u, length: MemoryLayout<Uniforms>.stride, index: 0)
@@ -310,6 +353,11 @@ public final class Compositor: @unchecked Sendable {
                 // "Loading" draws nothing: a frame that is not decoded yet must never cover the layers below.
                 if kind == .loading { return }
                 u.mode = 2; u.solid = Self.placeholderLinear(kind)
+                geometry(&u, transform: layer.transform, canvas: format,
+                         size: SIMD2(Float(format.width), Float(format.height)), cornerRadius: layer.cornerRadius)
+                prepared.append(Prepared(u: u, tex0: dummy, tex1: dummy))
+            case .solid(let r, let g, let b):
+                u.mode = 2; u.solid = SIMD4(Self.lin(r), Self.lin(g), Self.lin(b), 1)
                 geometry(&u, transform: layer.transform, canvas: format,
                          size: SIMD2(Float(format.width), Float(format.height)), cornerRadius: layer.cornerRadius)
                 prepared.append(Prepared(u: u, tex0: dummy, tex1: dummy))

@@ -56,6 +56,8 @@ public enum EditorCommand: Sendable, Hashable {
     // Source and Project flow: Play In to Out with preroll/postroll (Shift+Space), Play Around (Shift+K), poster frame
     // (Cmd+P / Option+P), Hover Scrub (Shift+H), Find (Cmd+F).
     case playInToOutRoll, playAround, setPosterFrame, clearPosterFrame, toggleHoverScrub, find
+    // Transitions (Sequence menu): Cmd+D, Shift+Cmd+D, Shift+D
+    case applyVideoTransition, applyAudioTransition, applyDefaultTransitions
     // Captions
     case toggleCaptionsInMonitor
 
@@ -206,6 +208,9 @@ public enum EditorCommand: Sendable, Hashable {
         case .clearPosterFrame: "Clear Poster Frame"
         case .toggleHoverScrub: "Hover Scrub"
         case .find: "Find…"
+        case .applyVideoTransition: "Apply Video Transition"
+        case .applyAudioTransition: "Apply Audio Transition"
+        case .applyDefaultTransitions: "Apply Default Transitions to Selection"
         case .toggleCaptionsInMonitor: "Show Captions in Program Monitor"
         }
     }

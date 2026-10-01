@@ -338,4 +338,29 @@ import Testing
         let back = try JSONDecoder().decode(Clip.self, from: JSONEncoder().encode(g))
         #expect(back.audioGainDB == 6 && back.reversed)
     }
+
+    @Test func v16FileLoadsWithoutTransitionsAndTransitionsRoundTrip() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        let pid = UUID(), tid = UUID(), mid = UUID()
+        let json = #"""
+        {"formatVersion":16,"project":{"id":"\#(pid)","name":"V16","media":[],"activeTimeline":"\#(tid)",
+        "timelines":[{"id":"\#(tid)","name":"T","format":{"width":1920,"height":1080,"frameDuration":{"value":1,"timescale":30},"audioSampleRate":48000},
+        "tracks":[{"id":"\#(UUID())","kind":"video","clips":[{"id":"\#(UUID())","name":"c","media":"\#(mid)","kind":"video",
+        "source":{"start":{"value":0,"timescale":1},"duration":{"value":4,"timescale":1}},"start":{"value":0,"timescale":1}}]}]}]}}
+        """#
+        try Data(json.utf8).write(to: dir.appendingPathComponent("project.json"))
+        var p = try ProjectFile.read(from: dir)
+        #expect(p.timelines[0].tracks[0].transitions.isEmpty)
+        let fd = Time(1, 30)
+        let a = Clip(name: "a", media: mid, kind: .video, source: TimeRange(start: Time(1, 1), duration: Time(2, 1)), start: .zero, mediaDuration: Time(10, 1))
+        let b = Clip(name: "b", media: mid, kind: .video, source: TimeRange(start: Time(1, 1), duration: Time(2, 1)), start: Time(2, 1), mediaDuration: Time(10, 1))
+        var t = Track(kind: .video); try t.overwrite(a); try t.overwrite(b)
+        p.timelines[0].tracks = [t]
+        let id = try p.timelines[0].addTransition(kind: .dipToWhite, track: t.id, outgoing: a.id, incoming: b.id, duration: fd * 20, alignment: .custom, customBefore: fd * 4)
+        try ProjectFile.write(p, to: dir)
+        let back = try ProjectFile.read(from: dir)
+        let tr = try #require(back.timelines[0].tracks[0].transitions.first)
+        #expect(tr.id == id && tr.kind == .dipToWhite && tr.duration == fd * 20 && tr.alignment == .custom && tr.customBefore == fd * 4)
+        #expect(back.timelines[0].tracks[0].transitions == p.timelines[0].tracks[0].transitions)
+    }
 }

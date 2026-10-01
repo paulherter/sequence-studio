@@ -32,6 +32,9 @@ final class EditorPanels {
     let projectView: ProjectPanelView
     let effectModel = EffectControlsModel()
     let effectView: EffectControlsView
+    /// Effect Controls with the transition view over it while a transition is selected.
+    let transitionView = TransitionControlsView()
+    lazy var effectContainer = EffectControlsContainerView(effects: effectView, transition: transitionView)
     let libraryModel = LibraryServices.makeModel()
     let libraryView: LibraryPanelView
     let clipSections: ClipSectionsView
@@ -88,6 +91,7 @@ final class EditorPanels {
         wireSource()
         wireOverlay()
         wireEffectControls()
+        wireTransitions()
         sync([.project, .selection, .playhead, .transport])
     }
 
@@ -194,7 +198,14 @@ final class EditorPanels {
             session.addTextClip(template: entry.template)
         }
         effectsView.onApply = { [weak self] id in
-            guard let self, id == EffectsPanelView.roundedCorners else { return }
+            guard let self else { return }
+            // Double-click on a transition: the selected edit, else the edit at the playhead on the targeted tracks.
+            if let kind = EffectsPanelView.transitionKind(forID: id) {
+                session.applyDefaultTransitions(scope: kind.trackKind == .video ? .video : .audio,
+                                                edges: timelineView.interaction.edgeSelection, kind: kind)
+                return
+            }
+            guard id == EffectsPanelView.roundedCorners else { return }
             if !session.addRoundedCorners() { onStatus?("Select a video clip without Rounded Corners first.") }
         }
     }
@@ -230,6 +241,7 @@ final class EditorPanels {
     private func timelineMenu(at p: CGPoint) -> NSMenu? {
         let tv = timelineView
         if let k = tv.volumeKey(at: p) { return volumeKeyMenu(clip: k.clip, key: k.key) }
+        if let m = transitionMenu(at: p) { return m }
         tv.contextSelect(at: p)
         if tv.selection.isEmpty, !tv.captionSelection.isEmpty { return captionMenu() }
         let hasClipboard = session.clipboard != nil
@@ -249,7 +261,7 @@ final class EditorPanels {
         default:
             return nil
         }
-        return TimelineContextMenu.makeMenu(items: items, labelHandler: { [weak self] l in self?.session.setLabel(l) }) { [weak self] action in
+        let menu = TimelineContextMenu.makeMenu(items: items, labelHandler: { [weak self] l in self?.session.setLabel(l) }) { [weak self] action in
             switch action {
             case .cut: self?.onCommand?(.cut)
             case .copy: self?.onCommand?(.copy)
@@ -266,6 +278,8 @@ final class EditorPanels {
             case .label, .editCaption, .splitCaption, .mergeCaptions: break   // captions have their own menu (`captionMenu`)
             }
         }
+        addEditPointItems(to: menu, at: p)
+        return menu
     }
 
     /// Rename sheet for the one selected clip.
@@ -635,7 +649,7 @@ final class EditorPanels {
         case .timeline: return timelineView
         case .programMonitor: return monitorView
         case .project: return projectView
-        case .effectControls: return effectView
+        case .effectControls: return effectContainer
         case .library: return libraryView
         case .text: return textView
         case .colorInspector: return colorView
@@ -726,6 +740,7 @@ final class EditorPanels {
         monitorModel.isLooping = session.bounds.loop
         source.sync(change)
         effectModel.sync(with: session, change: change)
+        syncTransitions(change)
         updateOverlay()
         clipSections.sync(change)
         textView.sync(change)
