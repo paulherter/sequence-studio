@@ -71,16 +71,16 @@ private func ref(_ name: String, path: String? = nil, w: Int = 3840, dur: Time =
         #expect(m.move([.bin(b)], to: a))
         #expect(!m.move([.bin(a)], to: b))        // cycle refused
         #expect(m.project.bin(a)?.children.count == 1)
-        #expect(m.delete([.bin(a)]))
+        #expect(m.delete([.bin(a)]).changed)
         #expect(m.project.rootBin.children.map(\.ref) == [.bin(b)])
-        #expect(!m.delete([.bin(m.project.rootBin.id)]))
+        #expect(!m.delete([.bin(m.project.rootBin.id)]).changed)
     }
 
     @Test func mediaDelete() {
         let r1 = ref("a"), r2 = ref("b")
         var p = Project(name: "P"); p.add(r1); p.add(r2)
         let (m, _) = makeModel(p)
-        #expect(m.delete([.media(r1.id)]))
+        #expect(m.delete([.media(r1.id)]).changed)
         #expect(m.project.media.map(\.id) == [r2.id])
         #expect(m.project.rootBin.mediaIDs == [r2.id])
     }

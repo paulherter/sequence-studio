@@ -12,9 +12,13 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let autosavePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let recoveryCheck = NSButton(checkboxWithTitle: "Offer to restore the last autosave after an unclean quit", target: nil, action: nil)
     private let qualityPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let prerollPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let postrollPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let textDurationPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let cachePath = NSTextField(labelWithString: "")
     private let usedLabel = NSTextField(labelWithString: "")
+    private let videoTransitionField = NSTextField(string: "")
+    private let audioTransitionField = NSTextField(string: "")
 
     init(controller: AppController) {
         self.controller = controller
@@ -96,17 +100,31 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
         autosavePopUp.target = self; autosavePopUp.action = #selector(changed)
         recoveryCheck.target = self; recoveryCheck.action = #selector(changed)
+        for f in [videoTransitionField, audioTransitionField] {
+            f.alignment = .right; f.target = self; f.action = #selector(transitionDefaultsChanged)
+            f.widthAnchor.constraint(equalToConstant: 60).isActive = true
+        }
+        let video = NSStackView(views: [videoTransitionField, NSTextField(labelWithString: "frames (0 = 1 second)")])
+        let audio = NSStackView(views: [audioTransitionField, NSTextField(labelWithString: "seconds")])
+        for s in [video, audio] { s.spacing = 6 }
         for s in AppSettings.textDurationChoices { textDurationPopUp.addItem(withTitle: s == 1 ? "1 second" : "\(s) seconds"); textDurationPopUp.lastItem?.tag = s }
         textDurationPopUp.target = self; textDurationPopUp.action = #selector(changed)
         return column([row("Autosave", autosavePopUp), row("Recovery", recoveryCheck),
                        row("New text length", textDurationPopUp),
-                       note("Changed projects are saved to a recovery copy; your project file is only written when you save. The interval applies the next time Sequence Studio starts.")])
+                       note("Changed projects are saved to a recovery copy; your project file is only written when you save. The interval applies the next time Sequence Studio starts."),
+                       row("Video transition", video), row("Audio transition", audio),
+                       note("Default length of transitions placed with Command-D, Shift-Command-D and Shift-D. It does not change transitions already on the timeline.")])
     }
 
     private func playbackPage() -> NSView {
         for q in MonitorQuality.allCases { qualityPopUp.addItem(withTitle: q.title); qualityPopUp.lastItem?.representedObject = q.rawValue }
         qualityPopUp.target = self; qualityPopUp.action = #selector(changed)
-        return column([row("Default quality", qualityPopUp),
+        for pop in [prerollPopUp, postrollPopUp] {
+            for n in AppSettings.rollChoices { pop.addItem(withTitle: n == 1 ? "1 second" : "\(n) seconds") }
+            pop.target = self; pop.action = #selector(changed)
+        }
+        return column([row("Default quality", qualityPopUp), row("Preroll", prerollPopUp), row("Postroll", postrollPopUp),
+                       note("Preroll and postroll are the seconds played before and after the marked range (Shift+Space) or the playhead (Shift+K, Play Around)."),
                        note("Quality is the Program monitor's playback resolution at launch; change it any time in the monitor. Audio plays on the system output device.")])
     }
 
@@ -126,10 +144,26 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         autosavePopUp.selectItem(at: AppSettings.autosaveChoices.firstIndex(of: s.autosaveInterval) ?? 2)
         recoveryCheck.state = s.offerRecovery ? .on : .off
         qualityPopUp.selectItem(at: MonitorQuality.allCases.firstIndex(of: s.defaultQuality) ?? 0)
+        prerollPopUp.selectItem(at: AppSettings.rollChoices.firstIndex(of: s.prerollSeconds) ?? 3)
+        postrollPopUp.selectItem(at: AppSettings.rollChoices.firstIndex(of: s.postrollSeconds) ?? 2)
         textDurationPopUp.selectItem(withTag: s.defaultTextSeconds)
         if textDurationPopUp.selectedItem == nil { textDurationPopUp.selectItem(withTag: 5) }
         cachePath.stringValue = s.effectiveCacheFolder.path
+        let t = TransitionDefaults.load()
+        videoTransitionField.integerValue = t.videoFrames
+        audioTransitionField.stringValue = String(format: "%g", t.audioSeconds)
         refreshUsed()
+    }
+
+    @objc private func transitionDefaultsChanged() {
+        var t = TransitionDefaults.load()
+        let frames = videoTransitionField.integerValue
+        if frames >= 0, frames <= 10_000 { t.videoFrames = frames }
+        let seconds = audioTransitionField.doubleValue
+        if seconds.isFinite, seconds > 0, seconds <= 600 { t.audioSeconds = seconds }
+        t.save()
+        videoTransitionField.integerValue = t.videoFrames
+        audioTransitionField.stringValue = String(format: "%g", t.audioSeconds)
     }
 
     @objc private func changed() {
@@ -137,6 +171,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         s.autosaveInterval = AppSettings.autosaveChoices[max(autosavePopUp.indexOfSelectedItem, 0)]
         s.offerRecovery = recoveryCheck.state == .on
         if let raw = qualityPopUp.selectedItem?.representedObject as? String, let q = MonitorQuality(rawValue: raw) { s.defaultQuality = q }
+        s.prerollSeconds = AppSettings.rollChoices[max(prerollPopUp.indexOfSelectedItem, 0)]
+        s.postrollSeconds = AppSettings.rollChoices[max(postrollPopUp.indexOfSelectedItem, 0)]
         if let t = textDurationPopUp.selectedItem?.tag, t > 0 { s.defaultTextSeconds = t }
         controller.settings = s
         s.save()

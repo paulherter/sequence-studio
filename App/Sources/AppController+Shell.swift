@@ -42,7 +42,7 @@ extension AppController {
         case .setToFrameSize, .enableClip, .duplicate, .moveSelectionUp, .moveSelectionDown: return !session.selection.isEmpty
         case .toggleTimeRemapping: return session.canToggleTimeRemapping
         case .removeTimeRemapping: return session.canRemoveTimeRemapping
-        case .delete, .rippleDelete: return !session.selection.isEmpty || !session.captionSelection.isEmpty
+        case .delete, .rippleDelete: return !session.selection.isEmpty || !session.captionSelection.isEmpty || session.selectedTransition != nil
         case .sequenceSettings: return session.activeTimeline != nil
         default: return true
         }

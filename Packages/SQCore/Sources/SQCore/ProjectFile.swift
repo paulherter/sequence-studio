@@ -55,7 +55,9 @@ public enum ProjectFile {
         t[15] = migrateV15toV16
         t[16] = migrateV16toV17
         t[17] = migrateV17toV18
+        t[18] = migrateV18toV19
         t[20] = migrateV20toV21
+        t[21] = migrateV21toV22
         t[22] = migrateV22toV23
         return t
     }
@@ -151,7 +153,8 @@ public enum ProjectFile {
     /// no tracking, upright, point text, no gap: identity migration. Older builds drop these fields on save.
     static func migrateV15toV16(_ obj: JSONObject) throws -> JSONObject { obj }
 
-    /// v17: transitions stream (placeholder so the chain is complete until that stream's migration lands): identity.
+    /// v17: `Track.transitions` (cut and fade transitions). Optional on decode; absent = none: identity migration.
+    /// Older builds drop the transitions on save.
     static func migrateV16toV17(_ obj: JSONObject) throws -> JSONObject { obj }
 
 
@@ -163,6 +166,11 @@ public enum ProjectFile {
     /// text payloads). All optional on decode; absent = captions keep their own style, no word highlight, no overrides,
     /// normal case, outside stroke: identity migration. Older builds drop these fields on save.
     static func migrateV20toV21(_ obj: JSONObject) throws -> JSONObject { obj }
+
+    /// v22 (effects-look): `Clip.blendMode` (Opacity > Blend Mode), `Clip.holdFrame` (Frame Hold) and the fx toggles
+    /// `Clip.motionEnabled` / `opacityEnabled`. Effect instances need no new field (`ClipEffect` always had an id; the list
+    /// order is the evaluation order). All optional on decode; absent = Normal, no hold, toggles on: identity migration.
+    static func migrateV21toV22(_ obj: JSONObject) throws -> JSONObject { obj }
 
     /// v23 (stream speed-time): `Clip.speedKeys` (time remapping: segments with ramps and an origin) and
     /// `Clip.timeInterpolation`. Both optional on decode; absent = constant speed (`speed` / `reversed`) and frame sampling,

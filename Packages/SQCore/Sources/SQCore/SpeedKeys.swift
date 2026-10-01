@@ -212,10 +212,26 @@ public struct SpeedKeys: Sendable, Hashable, Codable {
     }
 
     /// The source time of the frame shown at clip-local `local` (see "Frame convention").
+    /// Outside `0 ... duration` (a transition reading a handle before the head or after the tail) the track runs on at its end
+    /// speed and direction: see `positionExtended`.
     public func sourceTime(at local: Time, frameDuration fd: Time) -> Time {
-        let x = min(max(local, .zero), duration)
-        if segments[index(containing: x)].reversed { return position(at: min(x + fd, duration)) }
-        return position(at: x)
+        let reversed = local < .zero ? segments[0].reversed : (local >= duration ? segments[segments.count - 1].reversed
+                                                                                 : segments[index(containing: local)].reversed)
+        return positionExtended(at: reversed ? local + fd : local)
+    }
+
+    /// `position(at:)` that continues linearly past both ends: before 0 at the first segment's start speed and direction, after
+    /// `duration` at the last segment's end speed and direction (the media beyond a clip's edges, for transitions and audio).
+    public func positionExtended(at local: Time) -> Time {
+        if local < .zero {
+            let s = segments[0]
+            return (originQ + (s.reversed ? Rational(-1) : Rational(1)) * Rational(s.from) * Rational(local)).time
+        }
+        if local > duration {
+            let s = segments[segments.count - 1]
+            return (table.pos[segments.count] + (s.reversed ? Rational(-1) : Rational(1)) * Rational(s.to) * Rational(local - duration)).time
+        }
+        return position(at: local)
     }
 
     /// Clip-local time at which source time `s` is shown: the inverse of `position` (first visit when the track revisits

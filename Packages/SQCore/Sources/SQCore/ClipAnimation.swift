@@ -112,10 +112,13 @@ extension Clip {
     public func transform(at t: Time) -> ClipTransform {
         let l = t - start
         let s = animation.scale.value(atLocal: l)
+        // fx toggle off: the section renders at its defaults (no evaluation at all), the stored values stay.
+        let opacity = opacityEnabled ? min(max(animation.opacity.value(atLocal: l), 0), 1) : 1
+        guard motionEnabled else { return ClipTransform(opacity: opacity) }
         return ClipTransform(position: animation.position.value(atLocal: l),
                              scale: Vec2(max(s.x, 0), max(s.y, 0)),
                              rotation: animation.rotation.value(atLocal: l),
-                             opacity: min(max(animation.opacity.value(atLocal: l), 0), 1),
+                             opacity: opacity,
                              anchor: animation.anchor.value(atLocal: l))
     }
 
@@ -123,21 +126,5 @@ extension Clip {
     public func volume(at t: Time) -> Double {
         let v = max(animation.volume.value(atLocal: t - start), 0)
         return audioGainDB == 0 ? v : v * pow(10, audioGainDB / 20)
-    }
-}
-
-/// Evaluated clip effects at one instant (siblings of `ClipTransform`, already clamped).
-public struct ClipEffects: Sendable, Hashable {
-    /// Canvas pixels, >= 0. The compositor also limits it to half the shorter side of the clip's frame.
-    public var cornerRadius: Double
-    public init(cornerRadius: Double = 0) { self.cornerRadius = cornerRadius }
-    public static let none = ClipEffects()
-}
-
-extension Clip {
-    /// Effects at timeline time `t`.
-    public func effects(at t: Time) -> ClipEffects {
-        guard let e = roundedCorners, e.enabled, let r = e.parameters[ClipEffect.radiusKey] else { return .none }
-        return ClipEffects(cornerRadius: max(r.value(atLocal: t - start), 0))
     }
 }

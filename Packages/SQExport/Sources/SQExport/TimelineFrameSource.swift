@@ -165,8 +165,14 @@ public final class TimelineFrameSource: FrameSource {
                                cornerRadius: l.cornerRadius)
         }
 
+        /// The layer with the clip's effects (Crop, Rounded Corners, Gaussian Blur) and blend mode attached, like playback.
         func layer(for l: LayerRequest) async throws -> RenderLayer {
+            try await baseLayer(for: l).applying(l)
+        }
+
+        func baseLayer(for l: LayerRequest) async throws -> RenderLayer {
             if let g = l.generator {
+                if g.kind == GeneratorRef.solid { return RenderLayer.solid(payload: g.payload, transform: l.transform) }
                 if g.kind == GeneratorRef.text { return try textLayer(l, g) }
                 return RenderLayer(content: .placeholder(.offline), transform: l.transform, cornerRadius: l.cornerRadius)
             }

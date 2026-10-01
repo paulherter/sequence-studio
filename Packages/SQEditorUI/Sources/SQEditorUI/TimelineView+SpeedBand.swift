@@ -49,6 +49,8 @@ extension TimelineView {
     }
 
     func beginSpeedDrag(at p: CGPoint, event: NSEvent) -> Bool {
+        // A transition box sits on the clip edge and wins over the band underneath it.
+        if TransitionLayout.hitTest(p, in: timeline, geometry: geometry) != nil { return false }
         guard let t = speedTarget(at: p) else { return false }
         let keys = SpeedKeys.of(t.clip)
         let hit = SpeedBand.hit(keys: keys, clipStart: t.clip.start, lane: t.lane, at: p, x: { self.geometry.x(for: $0) })

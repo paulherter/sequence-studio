@@ -21,7 +21,13 @@ struct AudioTimeMap: Sendable {
         var total: Double
         /// Source seconds at `local` and the direction sign there.
         func eval(_ t: Double) -> (pos: Double, sign: Double) {
-            let local = min(max(t - clipStart, 0), total)
+            let raw = t - clipStart
+            // Outside the clip (a transition's handle) the track runs on at its end speed and direction.
+            if raw < 0 { let s = segments[0]; return (s.pos + s.sign * s.from * raw, s.sign) }
+            if raw > total, let l = segments.last {
+                return (l.pos + l.sign * l.duration * (l.from + l.to) / 2 + l.sign * l.to * (raw - total), l.sign)
+            }
+            let local = raw
             var i = segments.count - 1
             for (j, s) in segments.enumerated() where local < s.start + s.duration { i = j; break }
             let s = segments[i]

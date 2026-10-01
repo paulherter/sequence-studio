@@ -40,12 +40,17 @@ public enum EditorMenus {
     public static let edit = MenuSpec(title: "Edit", items: cmds([
         .undo, .redo, nil, .cut, .copy, .paste, .pasteInsert, .pasteAttributes, nil, .duplicate, nil,
         .selectAll, .deselectAll, nil,
-        .delete, .rippleDelete,
+        .delete, .rippleDelete, nil,
+        .find,
     ]))
     public static let clip = MenuSpec(title: "Clip", items: cmds([
-        .insert, .overwrite, nil, .speedDuration, .toggleTimeRemapping, .removeTimeRemapping, nil, .enableClip, .link, nil,
+        .insert, .overwrite, nil, .setPosterFrame, .clearPosterFrame, nil, .speedDuration, .toggleTimeRemapping, .removeTimeRemapping, nil, .enableClip, .link, nil,
         .setToFrameSize, nil,
         .audioGain, nil,
+    ]) + [
+        .submenu("Video Options", cmds([.addFrameHold, .insertFrameHold, nil, .videoFadeIn, .videoFadeOut])),
+        .separator,
+    ] + cmds([
         .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation, .addKeyframe, .toggleSpeedGraph,
     ]))
     public static let sequence = MenuSpec(title: "Sequence", items: cmds([
@@ -53,6 +58,7 @@ public enum EditorMenus {
         .lift, .extract, nil,
         .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext, .trimPrevious, .trimNext,
         .rollTrimPrevious, .rollTrimNext, .extendEdit, .toggleTrimType, nil,
+        .applyVideoTransition, .applyAudioTransition, .applyDefaultTransitions, nil,
         .toggleSnapping, .toggleLinkedSelection, nil,
         .matchFrame, .reverseMatchFrame, nil,
         .previousEditPoint, .nextEditPoint, .goToStart, .goToEnd,
@@ -67,13 +73,13 @@ public enum EditorMenus {
     ]))
     public static let view = MenuSpec(title: "View", items: [
         .submenu("Playback", cmds([
-            .playPause, .playInToOut, .toggleLoop, nil, .shuttleReverse, .shuttleStop, .shuttleForward, nil,
+            .playPause, .playInToOut, .playInToOutRoll, .playAround, .toggleLoop, nil, .shuttleReverse, .shuttleStop, .shuttleForward, nil,
             .stepBackward, .stepForward, .stepBackward5, .stepForward5,
         ])),
         .separator,
         .command(.zoomIn), .command(.zoomOut), .command(.zoomFit),
         .separator,
-        .command(.toggleAudioScrubbing),
+        .command(.toggleAudioScrubbing), .command(.toggleHoverScrub),
         .command(.toggleCaptionsInMonitor),
         .separator,
         .submenu("Track Height", cmds([
@@ -99,5 +105,6 @@ public enum EditorMenus {
     /// handles them) and commands that are menu-only (no default key in Premiere).
     public static let alwaysShown: Set<EditorCommand> = [.undo, .redo, .cut, .copy, .paste, .delete]
     public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection, .toggleAudioScrubbing, .toggleCaptionsInMonitor,
-                                                                .toggleTimeRemapping, .removeTimeRemapping]
+                                                       .videoFadeIn, .videoFadeOut, .addFrameHold, .insertFrameHold,
+                                                       .toggleTimeRemapping, .removeTimeRemapping]
 }

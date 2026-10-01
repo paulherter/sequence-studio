@@ -33,6 +33,8 @@ public final class EditorSession {
     public private(set) var playhead: Time = .zero
     public private(set) var selection: Set<Clip.ID> = []
     public private(set) var captionSelection: Set<CaptionItem.ID> = []
+    /// The transition selected on the timeline (Effect Controls shows its Duration and Alignment).
+    public internal(set) var selectedTransition: Transition.ID?
     /// Clips copied with Cmd+C / Cmd+X (Paste puts them at the playhead).
     public var clipboard: TimelineClipboard?
     public private(set) var isPlaying = false
@@ -188,11 +190,27 @@ public final class EditorSession {
 
     public func setActiveTimeline(_ id: Timeline.ID) {
         guard project.timeline(id) != nil, id != activeTimelineID else { return }
+        stopForSequenceChange()
         activeTimelineID = id
         selection = []; captionSelection = []
         syncMedia()
         pushTimeline(force: true)
+        clampPlayheadToActiveSequence()
         notify([.project, .selection])
+    }
+
+    /// A different sequence becomes active: playback stops and the Play In to Out / Play Around range and return point of
+    /// the old one are dropped (Loop stays as the user set it).
+    private func stopForSequenceChange() {
+        if isPlaying || !engine.rate.isPaused { engine.pause(); isPlaying = false; notify(.transport) }
+        bounds = PlaybackBounds(loop: bounds.loop)
+    }
+
+    /// Puts the playhead on a frame of the (new) active sequence.
+    private func clampPlayheadToActiveSequence() {
+        let end = activeTimeline?.duration ?? .zero
+        let last = max(.zero, end - frameDuration)
+        if playhead > last { seek(to: last) } else { engine.seek(to: playhead) }
     }
 
     /// Withdraws every undo step above `depth` (Type tool: an empty text box leaves no trace). No redo entries remain.
@@ -205,11 +223,16 @@ public final class EditorSession {
     public func foldUndo(fromDepth depth: Int, name: String) { history.squash(fromDepth: depth, name: name) }
 
     private func projectDidChange() {
+        let before = activeTimelineID
         if let id = activeTimelineID, project.timeline(id) == nil { activeTimelineID = nil }
-        if activeTimelineID == nil { activeTimelineID = project.activeTimeline.flatMap { project.timeline($0) }?.id ?? project.timelines.first?.id }
+        if activeTimelineID == nil {
+            activeTimelineID = project.activeTimeline.flatMap { project.timeline($0) }?.id ?? project.timelines.first?.id
+            if activeTimelineID != before { stopForSequenceChange() }
+        }
         pruneSelection()
         syncMedia()
         pushTimeline(force: false)
+        if activeTimelineID != before { clampPlayheadToActiveSequence() }
         notify([.project, .selection])
     }
 
@@ -227,6 +250,7 @@ public final class EditorSession {
         guard let t = activeTimeline else { selection = []; captionSelection = []; return }
         selection.formIntersection(Set(t.tracks.flatMap { $0.clips.map(\.id) }))
         captionSelection.formIntersection(Set(t.captionTracks.flatMap { $0.items.map(\.id) }))
+        if let id = selectedTransition, t.transition(id) == nil { selectedTransition = nil }
     }
 
     /// Media that is not at its path (offline): the relink dialog's input.
@@ -265,6 +289,8 @@ public final class EditorSession {
         case .wrongTrackKind: "That clip does not belong on this track."
         case .emptyClip: "Nothing to edit."
         case .speedUnsupported: "Speed cannot be changed on that clip (titles and stills)."
+        case .notACut: "Transitions go on a cut between two clips that touch, or on a clip edge."
+        case .insufficientMedia: "Not enough media beyond the cut for a transition. Trim the clips to leave handles."
         default: error.localizedDescription
         }
     }
@@ -275,6 +301,7 @@ public final class EditorSession {
 
     private func setSelection(clips: Set<Clip.ID>, captions: Set<CaptionItem.ID>) {
         guard clips != selection || captions != captionSelection else { return }
+        if !clips.isEmpty || !captions.isEmpty { selectedTransition = nil }
         selection = clips; captionSelection = captions
         pruneSelection()
         notify(.selection)
@@ -312,8 +339,16 @@ public final class EditorSession {
             notify(.playhead)
             return
         case .stop(let at) where bounds.range != nil:
-            engine.pause(); isPlaying = false; playhead = at
+            // Forward: the range end is exclusive, park on its last frame (the Out frame). Reverse stops at the In frame itself.
+            let reverse = rate.isReverse
+            engine.pause(); isPlaying = false; playhead = reverse ? at : max(.zero, at - frameDuration)
             notify([.playhead, .transport])
+            return
+        case .stopAndReturn(let back):
+            engine.pause(); isPlaying = false
+            bounds.range = nil
+            seek(to: back)
+            notify(.transport)
             return
         default: break
         }
@@ -395,7 +430,8 @@ public final class EditorSession {
     }
 
     public func goToIn() { if let io = activeTimeline?.inOut { seek(to: io.start) } }
-    public func goToOut() { if let io = activeTimeline?.inOut { seek(to: io.end) } }
+    /// Out is stored one frame past its frame: go to the marked (last included) frame.
+    public func goToOut() { if let io = activeTimeline?.inOut { seek(to: max(io.start, io.end - frameDuration)) } }
 
     // MARK: Timeline commands
 
@@ -565,18 +601,20 @@ public final class EditorSession {
         return true
     }
 
+    /// I: In at the playhead. Like Out, In includes its own frame (Premiere); a later Out stays, an earlier one moves
+    /// to the end of the sequence.
     public func markIn() {
-        guard let t = activeTimeline else { return }
+        guard activeTimeline != nil else { return }
         let at = playhead
-        let end = t.inOut.map(\.end).flatMap { $0 > at ? $0 : nil } ?? max(t.duration, at + frameDuration)
-        attempt("Mark In") { $0.inOut = TimeRange(start: at, end: end) }
+        attempt("Mark In") { $0.markIn(at: at) }
     }
 
+    /// O: the frame under the playhead is the last frame inside the range (In = 10, Out = 20 is 11 frames); allowed at
+    /// frame 0. With no In set, an edit placed from this range is back-timed (`Timeline.sourceEditPlacement`).
     public func markOut() {
-        guard let t = activeTimeline, playhead > .zero else { return }
+        guard activeTimeline != nil else { return }
         let at = playhead
-        let start = t.inOut.map(\.start).flatMap { $0 < at ? $0 : nil } ?? .zero
-        attempt("Mark Out") { $0.inOut = TimeRange(start: start, end: at) }
+        attempt("Mark Out") { $0.markOut(at: at) }
     }
 
     /// X: In/Out around the clip under the playhead on the targeted tracks (all tracks when none is targeted).
@@ -584,12 +622,12 @@ public final class EditorSession {
         guard let t = activeTimeline else { return }
         let targeted = t.tracks.filter(\.isTargeted).map(\.id)
         guard let range = t.markClipRange(at: playhead, tracks: targeted.isEmpty ? nil : targeted) else { return }
-        attempt("Mark Clip") { $0.inOut = range }
+        attempt("Mark Clip") { $0.setMarkedRange(range) }
     }
 
     public func clearInOut() {
         guard activeTimeline?.inOut != nil else { return }
-        attempt("Clear In and Out") { $0.inOut = nil }
+        attempt("Clear In and Out") { $0.setMarkedRange(nil) }
     }
 
     public func addMarkerAtPlayhead() {
@@ -689,6 +727,17 @@ public final class EditorSession {
     public func setSourceMarks(_ marks: SourceMarks?, for media: MediaRef.ID) {
         guard project.sourceMarks[media] != (marks?.isEmpty == true ? nil : marks) else { return }
         history.amendAll { p in p.sourceMarks[media] = (marks?.isEmpty == true) ? nil : marks }
+        forceDirty = true
+        notify(.project)
+    }
+
+    /// Source markers (M in the Source monitor) of a media item: like the marks, clip metadata outside the undo history.
+    public func setSourceMarkers(_ markers: [Marker]?, for media: MediaRef.ID) {
+        let value = (markers?.isEmpty ?? true) ? nil : markers
+        guard project.media(media)?.sourceMarkers != value else { return }
+        history.amendAll { p in
+            if let i = p.media.firstIndex(where: { $0.id == media }) { p.media[i].sourceMarkers = value }
+        }
         forceDirty = true
         notify(.project)
     }
