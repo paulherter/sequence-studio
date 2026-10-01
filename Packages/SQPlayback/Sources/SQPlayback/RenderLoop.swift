@@ -522,20 +522,31 @@ final class RenderLoop: @unchecked Sendable {
         guard !active.isEmpty else { return [] }
         var out: [RenderNode] = []
         for a in active where !a.item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            // Karaoke: the lit word at this time (the same function the export burn-in asks).
-            let lit = CaptionKaraoke.highlight(for: a.item, style: tl.captionTrack(a.track)?.karaoke, at: t)
-            guard let ref = try? CaptionPreview.ref(for: a.item, canvas: tl.format, highlight: lit) else { continue }
+            // The plain caption is one raster for the whole caption; the lit word is a second layer on top (the same two
+            // layers the export burn-in draws). A lit layer that is not ready is skipped, never the caption.
+            guard let plan = try? CaptionPreview.plan(for: a.item, karaoke: tl.captionTrack(a.track)?.karaoke, canvas: tl.format, at: t)
+            else { continue }
+            let ref = plan.plain
             if textFailed.withLock({ $0.contains(ref) }) { continue }
             if !TextGenerator.isCached(ref: ref) { prewarmText(ref); b.waiting = true; continue }
             let local = t - a.item.range.start
-            guard let f = try? TextGenerator.frame(ref: ref, localTime: local, clipDuration: a.item.range.duration,
-                                                   canvas: tl.format, scale: 1) else {
-                textFailed.withLock { _ = $0.insert(ref) }
-                continue
-            }
             let base = ClipTransform(position: CaptionPreview.position(canvas: tl.format))
-            out.append(.layer(RenderLayer(content: .linearPremultiplied(f.buffer, width: f.width, height: f.height),
-                                          transform: f.layerTransform(base: base, canvas: tl.format))))
+            func layer(_ r: GeneratorRef) -> RenderNode? {
+                guard !textFailed.withLock({ $0.contains(r) }) else { return nil }
+                guard let f = try? TextGenerator.frame(ref: r, localTime: local, clipDuration: a.item.range.duration,
+                                                       canvas: tl.format, scale: 1) else {
+                    textFailed.withLock { _ = $0.insert(r) }
+                    return nil
+                }
+                return .layer(RenderLayer(content: .linearPremultiplied(f.buffer, width: f.width, height: f.height),
+                                          transform: f.layerTransform(base: base, canvas: tl.format)))
+            }
+            guard let plainNode = layer(ref) else { continue }
+            out.append(plainNode)
+            if let n = plan.next { prewarmText(n) }
+            if let lit = plan.lit {
+                if TextGenerator.isCached(ref: lit), let node = layer(lit) { out.append(node) } else { prewarmText(lit) }
+            }
         }
         return out
     }

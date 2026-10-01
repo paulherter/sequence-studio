@@ -45,3 +45,15 @@ its own fix, keep that one and drop this one (same file, same function).
 - A caption cut by a reversed clip spreads its words evenly (no word timings).
 - `ProjectFile.currentVersion` stays at 16 in this branch: the v21 step is registered (`20: migrateV20toV21`, identity) and
   the version is set on merge to the highest number, per the bump protocol.
+
+## Review fixes (second pass)
+- Word times inside a caption are relative to its start: move, ripple, tail trim and snapping need no change, head trim and
+  split rebase them, reads clamp into the caption. Split cuts where the speech is (words ending before the cut stay left).
+- Karaoke draws the plain caption once per caption and the lit words as a second, small layer (monitor and burn-in the same
+  way); a cold lit layer is skipped for a frame, the caption never waits. The next word's layer is prepared ahead.
+- Burn-in cache evicts only what lies behind the current caption.
+- Word spans are computed once in `TextLayout` on the original text (`TextWords`, `Character.isWhitespace`), shared by the
+  renderer; capitals are made per character, so "Strasse" with a sharp s keeps its spans (test), and a wrapped long word stays one word.
+- In-place editor with All Caps: the field is drawn visibly (dark backing, stored text) instead of an invisible caret layer.
+- Not covered by a test: the burn-in texture eviction (needs a Metal device); `ExportQueueTests.cancelRunningJobContinuesWithNext`
+  and `textLayerAppearsOnlyWhileTheClipIsActive` failed once under load 60 and pass alone.

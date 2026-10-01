@@ -166,4 +166,76 @@ private func timeline(_ items: [CaptionItem]) throws -> (Timeline, CaptionTrack.
             }
         }
     }
+
+    // MARK: Word times follow edits (relative to the caption start)
+
+    /// "a b" at 10..14 s, a = first second, b = third second of the caption.
+    private func timed(_ start: Int64 = 10) -> (Timeline, CaptionItem.ID) {
+        var it = cap("a b", start, start + 4)
+        it.words = [CaptionWord(text: "a", range: TimeRange(start: .zero, end: s(1))),
+                    CaptionWord(text: "b", range: TimeRange(start: s(2), end: s(3)))]
+        var t = Timeline(name: "t", frameDuration: Time(1, 30), tracks: [Track(kind: .video)])
+        _ = try? t.replaceCaptions([it])
+        return (t, it.id)
+    }
+    private func lit(_ t: Timeline, _ id: CaptionItem.ID, at sec: Time) -> Int? {
+        t.captionTracks[0].item(id)?.activeWord(at: sec)
+    }
+
+    @Test func movingACaptionMovesItsWords() throws {
+        var (t, id) = timed()
+        try t.moveCaption(id, to: s(20))
+        #expect(lit(t, id, at: Time(41, 2)) == 0 && lit(t, id, at: Time(45, 2)) == 1)   // 20.5 s, 22.5 s
+    }
+
+    @Test func aRippleKeepsTheWordsInPlaceRelativeToTheCaption() {
+        var (t, id) = timed()
+        t.openCaptionGap(at: s(2), by: s(5))                      // caption moves 10 -> 15
+        #expect(t.captionTracks[0].item(id)?.range.start == s(15))
+        #expect(lit(t, id, at: Time(31, 2)) == 0 && lit(t, id, at: Time(35, 2)) == 1)   // 15.5, 17.5
+        t.closeCaptionSpan(TimeRange(start: s(0), end: s(5)))     // and back to 10
+        #expect(lit(t, id, at: Time(21, 2)) == 0 && lit(t, id, at: Time(25, 2)) == 1)   // 10.5, 12.5
+    }
+
+    @Test func aHeadTrimKeepsTheSpeechWhereItWas() throws {
+        var (t, id) = timed()
+        try t.trimCaption(id, edge: .head, to: s(12))             // the first word (10..11) is cut off
+        #expect(t.captionTracks[0].item(id)?.range.start == s(12))
+        #expect(lit(t, id, at: Time(25, 2)) == 1)                 // 12.5 s: still the word b
+        #expect(lit(t, id, at: Time(27, 2)) == nil)               // 13.5 s: word b ended at 13
+        let w = t.captionTracks[0].items[0].effectiveWords
+        #expect(w.allSatisfy { $0.range.start >= s(12) && $0.range.end <= s(14) })   // clamped into the caption
+    }
+
+    @Test func aTailTrimClampsAndKeepsTheStart() throws {
+        var (t, id) = timed()
+        try t.trimCaption(id, edge: .tail, to: Time(25, 2))        // ends at 12.5, inside word b
+        #expect(lit(t, id, at: Time(21, 2)) == 0 && lit(t, id, at: Time(49, 4)) == 1)   // 10.5; 12.25
+        #expect(lit(t, id, at: s(13)) == nil)
+        #expect(t.captionTracks[0].items[0].effectiveWords[1].range.end == Time(25, 2))
+    }
+
+    @Test func splitCutsWhereTheSpeechIs() throws {
+        var it = cap("a b c d", 0, 8)
+        it.words = [("a", 0, 1), ("b", 1, 2), ("c", 2, 3), ("d", 7, 8)].map {
+            CaptionWord(text: $0.0, range: TimeRange(start: s(Int64($0.1)), end: s(Int64($0.2))))
+        }
+        var (t, _) = try timeline([it])
+        _ = try t.splitCaption(it.id, at: s(4))      // by proportion this would be 2 + 2; three words end before 4 s
+        let items = t.captionTracks[0].items
+        #expect(items.map(\.text) == ["a b c", "d"])
+        #expect(items[1].effectiveWords.map(\.range.start) == [s(7)])
+        #expect(items[1].words[0].range.start == s(3))   // relative to the new start at 4 s
+        #expect(items[1].activeWord(at: Time(15, 2)) == 0)
+    }
+
+    @Test func matchesAreOrderedByTimeAcrossTracks() throws {
+        var t = Timeline(name: "t", frameDuration: Time(1, 30), tracks: [Track(kind: .video)])
+        _ = try t.replaceCaptions([cap("cat", 5, 6)])
+        let second = CaptionTrack(items: [cap("cat", 1, 2), cap("cat", 8, 9)])
+        t.captionTracks.append(second)
+        let order = t.captionMatches(find: "cat", caseSensitive: false)
+        let starts = order.compactMap { id in t.captionTracks.flatMap(\.items).first { $0.id == id }?.range.start }
+        #expect(starts == [s(1), s(5), s(8)])
+    }
 }

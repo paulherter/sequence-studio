@@ -29,4 +29,23 @@ enum CaptionPreview {
     static func ref(for item: CaptionItem, canvas: SequenceFormat, highlight: TextHighlight? = nil) throws -> GeneratorRef {
         try TextGenerator.makeRef(template: template(for: item, canvas: canvas, highlight: highlight), animations: animations(for: item))
     }
+
+    /// What one frame of a caption needs: the plain caption (the same ref on every frame of the caption, so its raster is
+    /// made once), the lit-words layer for the current word, and the layer of the next word (prepared ahead of time).
+    struct Plan: Equatable {
+        var plain: GeneratorRef
+        var lit: GeneratorRef?
+        var next: GeneratorRef?
+    }
+
+    static func plan(for item: CaptionItem, karaoke: KaraokeStyle?, canvas: SequenceFormat, at t: Time) throws -> Plan {
+        let plain = try ref(for: item, canvas: canvas)
+        guard let karaoke else { return Plan(plain: plain, lit: nil, next: nil) }
+        let count = item.tokens.count
+        let lit = try CaptionKaraoke.highlight(for: item, style: karaoke, at: t).map { try ref(for: item, canvas: canvas, highlight: $0) }
+        let current = item.activeWord(at: t) ?? -1
+        let next = current + 1 < count
+            ? try ref(for: item, canvas: canvas, highlight: CaptionKaraoke.highlight(forWord: current + 1, style: karaoke)) : nil
+        return Plan(plain: plain, lit: lit, next: next)
+    }
 }

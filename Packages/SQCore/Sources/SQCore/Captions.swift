@@ -127,13 +127,23 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
         case .head:
             let lo = i > 0 ? items[i - 1].range.end : .zero
             let hi = max(r.start, r.end - minDuration)
-            items[i].range = TimeRange(start: max(lo, min(t, hi)), end: r.end)
+            let newStart = max(lo, min(t, hi))
+            items[i].shiftWordOrigin(by: newStart - r.start)   // word times are relative to the start
+            items[i].range = TimeRange(start: newStart, end: r.end)
         case .tail:
             var e = max(t, min(r.end, r.start + minDuration))
             if i + 1 < items.count { e = min(e, items[i + 1].range.start) }   // the neighbour wins over minDuration
             items[i].range = TimeRange(start: r.start, end: e)
         }
         return items[i].range
+    }
+
+    /// Absolute words made relative to `range.start`, clamped into the range.
+    static func relativeWords(_ words: [CaptionWord], to range: TimeRange) -> [CaptionWord] {
+        words.map { w in
+            let a = min(max(w.range.start, range.start), range.end), b = min(max(w.range.end, a), range.end)
+            return CaptionWord(text: w.text, range: TimeRange(start: a - range.start, end: b - range.start))
+        }
     }
 
     public mutating func remove(_ id: CaptionItem.ID) { items.removeAll { $0.id == id } }
@@ -144,9 +154,14 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
         guard let i = items.firstIndex(where: { $0.id == id }) else { return nil }
         let r = items[i].range
         guard t > r.start, t < r.end else { return nil }
-        let words = items[i].lines.flatMap { $0.split(whereSeparator: \.isWhitespace).map(String.init) }
+        let words = items[i].tokens
         let k: Int
-        if words.count < 2 { k = words.count } else {
+        if words.count < 2 { k = words.count }
+        else if items[i].hasWordTimings {
+            // With timings the cut falls where the speech does: the words that end at or before the cut stay left.
+            let ending = items[i].effectiveWords.filter { $0.range.end <= t }.count
+            k = min(max(ending, 1), words.count - 1)
+        } else {
             let frac = Double((t - r.start).value) / Double((t - r.start).timescale)
                 / (Double((r.end - r.start).value) / Double((r.end - r.start).timescale))
             k = min(max(Int((Double(words.count) * frac).rounded()), 1), words.count - 1)
@@ -168,8 +183,10 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
         right.lines = rightLines.isEmpty ? [""] : rightLines
         // The word timings go with their words; without timings each half spreads its own.
         if items[i].hasWordTimings {
-            let eff = items[i].words
-            left.words = Array(eff[..<min(k, eff.count)]); right.words = Array(eff[min(k, eff.count)...])
+            let eff = items[i].effectiveWords   // absolute, already clamped into the caption
+            let cut = min(k, eff.count)
+            left.words = Self.relativeWords(Array(eff[..<cut]), to: left.range)
+            right.words = Self.relativeWords(Array(eff[cut...]), to: right.range)
         } else { left.words = []; right.words = [] }
         right.id = UUID()
         items[i] = left
@@ -186,8 +203,9 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
         let text = items[lo...hi].map { $0.lines.joined(separator: " ") }.filter { !$0.isEmpty }.joined(separator: " ")
         m.lines = [text]
         // Timings survive when every part has them; otherwise the merged caption spreads its words again.
-        m.words = items[lo...hi].allSatisfy({ $0.hasWordTimings || $0.tokens.isEmpty }) ? items[lo...hi].flatMap(\.words) : []
         m.range = TimeRange(start: items[lo].range.start, end: items[hi].range.end)
+        m.words = items[lo...hi].allSatisfy({ $0.hasWordTimings || $0.tokens.isEmpty })
+            ? Self.relativeWords(items[lo...hi].flatMap(\.effectiveWords), to: m.range) : []
         items.replaceSubrange(lo...hi, with: [m])
         return m.id
     }
@@ -261,13 +279,15 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
     }
 
     /// Ripple-opens a gap of `length` at `pivot`: items starting at or after it move right, an item
-    /// under the pivot stretches over the gap.
+    /// under the pivot stretches over the gap (its words after the pivot move with the material).
     mutating func openGap(at pivot: Time, by length: Time) {
         guard length > .zero else { return }
+        func g(_ t: Time) -> Time { t >= pivot ? t + length : t }
         items = items.map { item in
             var c = item
             let a = item.range.start, b = item.range.end
             c.range = TimeRange(start: a >= pivot ? a + length : a, end: b > pivot ? b + length : b)
+            c.mapWords(from: item, g)
             return c
         }
     }
@@ -278,8 +298,19 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
             let r = TimeRange(start: f(item.range.start), end: f(item.range.end))
             guard !r.isEmpty else { return nil }
             c.range = r
+            c.mapWords(from: item, f)
             return c
         }
+    }
+}
+
+extension CaptionItem {
+    /// After a ripple: the word times of `old` pass through the same time map as the material, and are stored relative
+    /// to the (already set) new range. Items without usable timings are left alone.
+    fileprivate mutating func mapWords(from old: CaptionItem, _ f: (Time) -> Time) {
+        guard old.hasWordTimings else { return }
+        let moved = old.effectiveWords.map { CaptionWord(text: $0.text, range: TimeRange(start: f($0.range.start), end: f($0.range.end))) }
+        words = CaptionTrack.relativeWords(moved, to: range)
     }
 }
 

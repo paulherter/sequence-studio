@@ -112,7 +112,8 @@ public final class CaptionBurnIn: @unchecked Sendable {
         defer { CVPixelBufferUnlockBaseAddress(pb, .readOnly) }
         tex.replace(region: MTLRegionMake2D(0, 0, raster.pixelWidth, raster.pixelHeight), mipmapLevel: 0,
                     withBytes: CVPixelBufferGetBaseAddress(pb)!, bytesPerRow: CVPixelBufferGetBytesPerRow(pb))
-        if textures.count >= 8 { textures.removeAll() }
+        // Export runs forward: drop only what lies behind the current caption, never the cache of the caption on screen.
+        textures = textures.filter { $0.key.index >= index }
         let cached = Cached(texture: tex, originX: raster.originX, originY: raster.originY)
         textures[key] = cached
         return cached
@@ -125,31 +126,36 @@ public final class CaptionBurnIn: @unchecked Sendable {
         guard let s = state(at: t), s.opacity > 0, s.scale > 0 else { return false }
         lock.lock(); defer { lock.unlock() }
         let device = target.device
-        guard let cached = try texture(for: s.index, highlight: s.highlight, canvasWidth: target.width,
-                                       canvasHeight: target.height, device: device)
-        else { return false }
-        let tex = cached.texture
         let pipe = try makePipeline(device)
         let w = Float(target.width), h = Float(target.height)
-        let size = SIMD2(Float(tex.width), Float(tex.height))
-        // Where the monitor puts the raster: inside the shared caption box (`CaptionLayout`); its centre is the pivot.
-        let c = CaptionLayout.rasterCentre(canvasWidth: Double(w), canvasHeight: Double(h), originX: cached.originX,
-                                           originY: cached.originY, width: Double(size.x), height: Double(size.y),
-                                           widthFraction: placement.maxWidthFraction, bottomMargin: placement.bottomMargin)
-        let center = SIMD2(Float(c.x), Float(c.y))
-        var u = OverlayUniforms(canvas: SIMD2(w, h), center: center, size: size, scale: Float(s.scale),
-                                opacity: Float(s.opacity))
-        let pass = MTLRenderPassDescriptor()
-        pass.colorAttachments[0].texture = target
-        pass.colorAttachments[0].loadAction = .load
-        pass.colorAttachments[0].storeAction = .store
-        guard let enc = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { throw CompositorOverlayError.allocation }
-        enc.setRenderPipelineState(pipe)
-        enc.setVertexBytes(&u, length: MemoryLayout<OverlayUniforms>.stride, index: 0)
-        enc.setFragmentBytes(&u, length: MemoryLayout<OverlayUniforms>.stride, index: 0)
-        enc.setFragmentTexture(tex, index: 0)
-        enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
-        enc.endEncoding()
+        // The plain caption, then the lit words as a second layer (the same two layers the Program monitor draws).
+        for highlight in [nil, s.highlight] as [TextHighlight?] {
+            guard let cached = try texture(for: s.index, highlight: highlight, canvasWidth: target.width,
+                                           canvasHeight: target.height, device: device) else {
+                if highlight == nil { return false } else { continue }
+            }
+            let tex = cached.texture
+            let size = SIMD2(Float(tex.width), Float(tex.height))
+            // Where the monitor puts the raster: inside the shared caption box (`CaptionLayout`); its centre is the pivot.
+            let c = CaptionLayout.rasterCentre(canvasWidth: Double(w), canvasHeight: Double(h), originX: cached.originX,
+                                               originY: cached.originY, width: Double(size.x), height: Double(size.y),
+                                               widthFraction: placement.maxWidthFraction, bottomMargin: placement.bottomMargin)
+            let center = SIMD2(Float(c.x), Float(c.y))
+            var u = OverlayUniforms(canvas: SIMD2(w, h), center: center, size: size, scale: Float(s.scale),
+                                    opacity: Float(s.opacity))
+            let pass = MTLRenderPassDescriptor()
+            pass.colorAttachments[0].texture = target
+            pass.colorAttachments[0].loadAction = .load
+            pass.colorAttachments[0].storeAction = .store
+            guard let enc = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { throw CompositorOverlayError.allocation }
+            enc.setRenderPipelineState(pipe)
+            enc.setVertexBytes(&u, length: MemoryLayout<OverlayUniforms>.stride, index: 0)
+            enc.setFragmentBytes(&u, length: MemoryLayout<OverlayUniforms>.stride, index: 0)
+            enc.setFragmentTexture(tex, index: 0)
+            enc.drawPrimitives(type: .triangleStrip, vertexStart: 0, vertexCount: 4)
+            enc.endEncoding()
+            if s.highlight == nil { break }
+        }
         return true
     }
 }

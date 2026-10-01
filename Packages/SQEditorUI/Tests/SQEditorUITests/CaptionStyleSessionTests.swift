@@ -132,7 +132,8 @@ private let textTemplate = TextTemplate(name: "Text", text: "Hello", style: Text
         let items = CaptionMapping.items([cap], for: clip)
         #expect(items.count == 1)
         #expect(items[0].range == TimeRange(start: s(3), end: s(6)))
-        #expect(items[0].words.map(\.range.start) == [s(3), s(4)])
+        #expect(items[0].words.map(\.range.start) == [s(0), s(1)])   // relative to the caption start
+        #expect(items[0].effectiveWords.map(\.range.start) == [s(3), s(4)])
         #expect(items[0].hasWordTimings)
     }
 }

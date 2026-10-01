@@ -49,7 +49,7 @@ public enum CaptionMapping {
         return words.map { w in
             let a = min(max(clip.timelineTime(forSource: w.range.start), r.start), r.end)
             let b = min(max(clip.timelineTime(forSource: w.range.end), a), r.end)
-            return CaptionWord(text: w.text, range: TimeRange(start: a, end: b))
+            return CaptionWord(text: w.text, range: TimeRange(start: a - r.start, end: b - r.start))   // relative to the caption
         }
     }
 
@@ -67,6 +67,7 @@ public enum CaptionMapping {
                 e = s + fd
             }
             var c = it
+            c.shiftWordOrigin(by: s - it.range.start)   // word times are relative to the start
             c.range = TimeRange(start: s, end: e)
             out.append(c)
         }

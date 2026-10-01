@@ -35,4 +35,14 @@ import SQCore
         #expect(t.captionMatch(find: "cat", caseSensitive: false, from: Time(2, 1), forward: false) == ids[3])   // wraps back
         #expect(t.captionMatch(find: "dog", caseSensitive: false, from: .zero, forward: true) == nil)
     }
+
+    @Test func nextAndPreviousAreOrderedByTimeAcrossTracks() throws {
+        func item(_ a: Int64) -> CaptionItem { CaptionItem(lines: ["cat"], range: TimeRange(start: Time(a, 1), end: Time(a + 1, 1))) }
+        var t = Timeline(name: "t", frameDuration: Time(1, 30), tracks: [Track(kind: .video)])
+        _ = try t.replaceCaptions([item(5)])
+        t.captionTracks.append(CaptionTrack(items: [item(1), item(8)]))
+        func start(_ id: CaptionItem.ID?) -> Time? { t.captionTracks.flatMap(\.items).first { $0.id == id }?.range.start }
+        #expect(start(t.captionMatch(find: "cat", caseSensitive: false, from: Time(1, 1), forward: true)) == Time(5, 1))
+        #expect(start(t.captionMatch(find: "cat", caseSensitive: false, from: Time(8, 1), forward: false)) == Time(5, 1))
+    }
 }

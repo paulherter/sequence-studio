@@ -1,6 +1,8 @@
 import Foundation
 
-/// One spoken word of a caption, positioned on the timeline.
+/// One spoken word of a caption. Inside a `CaptionItem` the range is relative to the item's start, so moving, rippling
+/// and tail-trimming a caption keep its words right without touching them (a head trim shifts them by the trimmed
+/// amount). `Caption.words` of a transcript (SQTranscribe) are in source time and are made relative on creation.
 public struct CaptionWord: Sendable, Hashable, Codable {
     public var text: String
     public var range: TimeRange
@@ -33,12 +35,25 @@ extension CaptionItem {
     /// True when the stored word timings still match the text (editing a word keeps them, adding or removing one does not).
     public var hasWordTimings: Bool { !words.isEmpty && words.count == tokens.count }
 
-    /// One timed word per word of the text: the stored timings while they match, else the range spread over the words
+    /// Moves the stored word origin when the start of the caption moves by `delta` without the speech moving (head trim).
+    public mutating func shiftWordOrigin(by delta: Time) {
+        guard !words.isEmpty, delta != .zero else { return }
+        words = words.map { CaptionWord(text: $0.text, range: TimeRange(start: $0.range.start - delta, end: $0.range.end - delta)) }
+    }
+
+    /// One timed word per word of the text (absolute timeline time, clamped into the caption): the stored timings while
+    /// they match, else the range spread over the words
     /// by their length (so captions typed by hand highlight too). Always rational.
     public var effectiveWords: [CaptionWord] {
         let toks = tokens
         guard !toks.isEmpty else { return [] }
-        if hasWordTimings { return zip(toks, words).map { CaptionWord(text: $0, range: $1.range) } }
+        if hasWordTimings {
+            func clamp(_ t: Time) -> Time { min(max(t, range.start), range.end) }
+            return zip(toks, words).map { tok, w in
+                let a = clamp(range.start + w.range.start), b = max(clamp(range.start + w.range.end), a)
+                return CaptionWord(text: tok, range: TimeRange(start: a, end: b))
+            }
+        }
         let total = Int64(toks.reduce(0) { $0 + max($1.count, 1) })
         let d = range.duration
         var cum: Int64 = 0

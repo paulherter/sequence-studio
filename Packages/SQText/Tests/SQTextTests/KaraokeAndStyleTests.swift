@@ -246,4 +246,62 @@ private let red = RGBAColor(red: 1, green: 0, blue: 0)
         let d = (l.inkBounds.x + l.inkBounds.width / 2) - (l.bounds.x + l.bounds.width / 2)
         #expect(abs(q.x - (l.bounds.width - 960 - d * (1 - 2))) < 1e-6)
     }
+
+    // MARK: Word spans, All Caps with length-changing capitals, the lit-only layer
+
+    @Test func wordSpansAreFoundOnTheOriginalTextEvenWhenCapitalsChangeTheLength() {
+        var s = base(); s.allCaps = true
+        let l = TextLayout.layout(text: "Stra\u{DF}e is  here", style: s, maxWidth: nil)
+        #expect(l.displayText == "STRASSE IS  HERE")          // the sharp s became SS
+        #expect(l.wordSpans == [NSRange(location: 0, length: 7), NSRange(location: 8, length: 2), NSRange(location: 12, length: 4)])
+        #expect(l.lines[0].text == "STRASSE IS  HERE")
+        // The stored text is untouched and has the same three words.
+        #expect(CaptionItem(lines: ["Stra\u{DF}e is  here"], range: TimeRange(start: .zero, end: Time(1, 1))).tokens.count == 3)
+    }
+
+    @Test func aHighlightedWordStaysOneWordWhenTheWrapBreaksIt() throws {
+        // A word wider than the box is broken across lines; both pieces belong to word 1 and both are lit.
+        let l = TextLayout.layout(text: "a Supercalifragilistic b", style: base(), maxWidth: 220)
+        #expect(l.wordSpans.count == 3)
+        let pieces = l.lines.filter { NSIntersectionRange($0.location == 0 ? NSRange(location: 0, length: 0) : NSRange(location: $0.location, length: $0.text.utf16.count), l.wordSpans[1]).length > 0 }
+        #expect(pieces.count >= 2)
+        let h = TextHighlight(words: 1..<2, color: red, onlyLit: true)
+        let r = try #require(try TextRenderer.render(text: "a Supercalifragilistic b", style: base(), maxWidth: 220, highlight: h))
+        let p = RasterProbe(r.image)
+        // Red ink appears on at least two separate text rows (one per line the word occupies).
+        let rows = (0..<p.h).filter { y in (0..<p.w).contains { let c = p.px($0, y); return c.a > 200 && c.r > 200 && c.g < 60 } }
+        var bands = 0, prev = -2
+        for y in rows { if y != prev + 1 { bands += 1 }; prev = y }
+        #expect(bands >= 2)
+    }
+
+    @Test func theLitLayerHoldsOnlyTheLitWordsAtTheSameSizeAsThePlainRaster() throws {
+        var s = base(); s.stroke = TextStroke(color: .black, width: 6)
+        let plain = try #require(try TextRenderer.render(text: "I I I", style: s, maxWidth: nil))
+        let layer = try #require(try TextRenderer.render(text: "I I I", style: s, maxWidth: nil,
+                                                         highlight: TextHighlight(words: 1..<2, color: red, onlyLit: true)))
+        #expect(plain.pixelWidth == layer.pixelWidth && plain.pixelHeight == layer.pixelHeight)
+        #expect(plain.originX == layer.originX && plain.originY == layer.originY)
+        let p = RasterProbe(layer.image)
+        let y = p.h / 2
+        let opaque = (0..<p.w).filter { p.px($0, y).a > 200 }
+        #expect(!opaque.isEmpty && opaque.allSatisfy { p.px($0, y).r > 200 && p.px($0, y).g < 60 })   // red only: no white, no stroke
+        #expect(opaque.first! > p.w / 3 && opaque.last! < 2 * p.w / 3)                                 // the middle word only
+    }
+
+    @Test func plainPlusLitLayerMatchTheMonitorAndExportPaths() throws {
+        let style = CaptionPresetLibrary.builtIn.style(for: "tiktok")
+        let h = TextHighlight(words: 1..<2, color: RGBAColor(red: 1, green: 0.86, blue: 0.1), onlyLit: true)
+        let canvas = SequenceFormat(width: 1080, height: 1920, frameDuration: Time(1, 30))
+        for hl in [nil, h] as [TextHighlight?] {
+            let t = CaptionLayout.template(text: "so this is how", style: style, canvasWidth: 1080, canvasHeight: 1920, highlight: hl)
+            let ref = try TextGenerator.makeRef(template: t, animations: nil)
+            TextGenerator.clearCache()
+            let frame = try #require(try TextGenerator.frame(ref: ref, localTime: .zero, clipDuration: Time(1, 1), canvas: canvas, scale: 1))
+            let direct = try #require(try TextRenderer.render(text: t.text, style: t.style, maxWidth: t.box?.width,
+                                                              boxHeight: t.box?.height, highlight: t.highlight))
+            #expect(bytes(frame.buffer) == bytes(direct.linearBuffer))
+            #expect(frame.x == frame.x && frame.width == Double(direct.pixelWidth))
+        }
+    }
 }

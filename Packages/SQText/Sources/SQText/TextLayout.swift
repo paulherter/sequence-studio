@@ -38,6 +38,8 @@ public struct TextLine: Sendable, Hashable {
     public let height: Double
     /// Distance from `y` to the baseline.
     public let baseline: Double
+    /// UTF-16 offset of `text` in `TextLayoutResult.displayText` (so word spans can be mapped onto the line).
+    public let location: Int
     public var rect: TextRect { TextRect(x: x, y: y, width: width, height: height) }
     /// `rect` grown by the style's stroke width and shadow (offset + blur); equals `rect` without either.
     public let inkBounds: TextRect
@@ -52,6 +54,11 @@ public struct TextLayoutResult: Sendable, Hashable {
     public let inkBounds: TextRect
     /// `bounds` expanded by the style's background padding; nil without background or text.
     public let backgroundRect: TextRect?
+    /// The text as drawn (capitals when the style says All Caps; the stored text is untouched).
+    public let displayText: String
+    /// UTF-16 ranges of the words in `displayText`, found once on the original text with one whitespace definition
+    /// (`Character.isWhitespace`, the same as `CaptionItem.tokens`). A word the wrap breaks across lines stays one word.
+    public let wordSpans: [NSRange]
 }
 
 /// Deterministic pure function of (text, style, maxWidth), built on Core Text.
@@ -68,19 +75,23 @@ public enum TextLayout {
     public static func layout(text original: String, style: TextStyle, maxWidth: Double?, boxHeight: Double? = nil) -> TextLayoutResult {
         // All caps changes the glyphs only: the caller keeps the text as typed, the layout (and so the renderer, which
         // draws the line texts) sees the capitals.
-        let text = style.allCaps ? original.uppercased() : original
+        let (text, wordSpans) = TextWords.display(original, allCaps: style.allCaps)
         let font = makeFont(style)
         let fontAscent = CTFontGetAscent(font), fontDescent = CTFontGetDescent(font), fontLeading = CTFontGetLeading(font)
         let wrap = maxWidth.map { max(1, $0) } ?? Double.greatestFiniteMagnitude
 
         var raw: [Measured] = []
         if !text.isEmpty {
+            var base = 0
             for para in text.components(separatedBy: "\n") {
-                if para.isEmpty { raw.append(Measured(text: "", width: 0, ascent: 0, descent: 0, leading: 0)); continue }
-                raw.append(contentsOf: wrapParagraph(para, font: font, maxWidth: wrap, tracking: style.tracking))
+                if para.isEmpty { raw.append(Measured(text: "", width: 0, ascent: 0, descent: 0, leading: 0, location: base)) }
+                else { raw.append(contentsOf: wrapParagraph(para, base: base, font: font, maxWidth: wrap, tracking: style.tracking)) }
+                base += para.utf16.count + 1
             }
         }
-        guard !raw.isEmpty else { return TextLayoutResult(lines: [], bounds: .zero, inkBounds: .zero, backgroundRect: nil) }
+        guard !raw.isEmpty else {
+            return TextLayoutResult(lines: [], bounds: .zero, inkBounds: .zero, backgroundRect: nil, displayText: text, wordSpans: wordSpans)
+        }
 
         let container = maxWidth.map { max(1, $0) } ?? raw.map(\.width).max()!
         var lines: [TextLine] = []
@@ -97,7 +108,7 @@ public enum TextLayout {
             }
             let box = TextRect(x: x, y: y, width: m.width, height: ascent + descent)
             lines.append(TextLine(text: m.text, x: x, y: y, width: m.width, height: ascent + descent, baseline: ascent,
-                                  inkBounds: inkRect(box, style: style)))
+                                  location: m.location, inkBounds: inkRect(box, style: style)))
             y += ascent + descent + leading + style.lineSpacing
         }
         let minX = lines.map(\.x).min()!, maxX = lines.map { $0.x + $0.width }.max()!
@@ -114,7 +125,7 @@ public enum TextLayout {
             if dy != 0 {
                 lines = lines.map {
                     TextLine(text: $0.text, x: $0.x, y: $0.y + dy, width: $0.width, height: $0.height, baseline: $0.baseline,
-                             inkBounds: $0.inkBounds.offsetBy(dx: 0, dy: dy))
+                             location: $0.location, inkBounds: $0.inkBounds.offsetBy(dx: 0, dy: dy))
                 }
                 textBounds = textBounds.offsetBy(dx: 0, dy: dy)
             }
@@ -126,7 +137,7 @@ public enum TextLayout {
                           width: textBounds.width + 2 * b.padding.horizontal, height: textBounds.height + 2 * b.padding.vertical)
         }
         let ink = inkRect(bounds.union(textBounds).union(bg ?? textBounds), style: style)
-        return TextLayoutResult(lines: lines, bounds: bounds, inkBounds: ink, backgroundRect: bg)
+        return TextLayoutResult(lines: lines, bounds: bounds, inkBounds: ink, backgroundRect: bg, displayText: text, wordSpans: wordSpans)
     }
 
     /// `rect` grown by how far the stroke reaches (its width outside, half of it centred) and united with its shadow.
@@ -149,6 +160,7 @@ public enum TextLayout {
         var text: String
         var width: Double
         var ascent: Double, descent: Double, leading: Double
+        var location: Int
     }
 
     static func attributes(font: CTFont, tracking: Double) -> [NSAttributedString.Key: Any] {
@@ -157,7 +169,7 @@ public enum TextLayout {
         return a
     }
 
-    private static func wrapParagraph(_ para: String, font: CTFont, maxWidth: Double, tracking: Double) -> [Measured] {
+    private static func wrapParagraph(_ para: String, base: Int, font: CTFont, maxWidth: Double, tracking: Double) -> [Measured] {
         let attr = NSAttributedString(string: para, attributes: attributes(font: font, tracking: tracking))
         let ts = CTTypesetterCreateWithAttributedString(attr)
         let ns = para as NSString
@@ -173,9 +185,31 @@ public enum TextLayout {
             let w = max(0, full - CTLineGetTrailingWhitespaceWidth(line))
             let piece = ns.substring(with: NSRange(location: start, length: count))
             // Leading whitespace is significant (drawn and measured); only the wrap-causing trailing run is dropped.
-            out.append(Measured(text: trimTrailingWhitespace(piece), width: w, ascent: a, descent: d, leading: l))
+            out.append(Measured(text: trimTrailingWhitespace(piece), width: w, ascent: a, descent: d, leading: l, location: base + start))
             start += count
         }
         return out
+    }
+}
+
+/// Words of a text. One definition for the whole app: `Character.isWhitespace` separates words.
+public enum TextWords {
+    /// The text as drawn and the UTF-16 spans of its words, computed once. With `allCaps` each character is
+    /// capitalised on its own, so a length-changing capital ("ß" becomes "SS") moves the spans but never splits or
+    /// merges a word, and the spans still describe the words of the original text.
+    public static func display(_ original: String, allCaps: Bool) -> (text: String, spans: [NSRange]) {
+        var out = "", spans: [NSRange] = []
+        var start: Int?
+        var length = 0
+        for ch in original {
+            let piece = allCaps ? String(ch).uppercased() : String(ch)
+            if ch.isWhitespace {
+                if let st = start { spans.append(NSRange(location: st, length: length - st)); start = nil }
+            } else if start == nil { start = length }
+            out += piece
+            length += piece.utf16.count
+        }
+        if let st = start { spans.append(NSRange(location: st, length: length - st)) }
+        return (out, spans)
     }
 }

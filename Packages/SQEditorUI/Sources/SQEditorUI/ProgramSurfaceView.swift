@@ -271,6 +271,15 @@ public final class ProgramSurfaceView: NSView, NSTextViewDelegate {
             tv.frame = CGRect(x: c.x - w / 2, y: c.y - h / 2, width: w, height: h)
         }
         applyEditorAttributes(tv, style: style, scale: k * s)
+        // The field edits the text as stored. With All Caps the picture shows capitals, whose widths differ from the
+        // typed letters, so the field is drawn visibly (dark backing, white text) instead of an invisible caret layer
+        // over the capitals: what you see in the field is what is stored.
+        let visible = style.allCaps
+        tv.drawsBackground = visible
+        tv.backgroundColor = NSColor.black.withAlphaComponent(0.8)
+        tv.textColor = visible ? .white : .clear
+        tv.selectedTextAttributes = [.backgroundColor: Theme.Colors.accent.withAlphaComponent(0.5),
+                                     .foregroundColor: visible ? NSColor.white : NSColor.clear]
     }
 
     /// Top inset that mirrors `TextStyle.verticalAlignment` inside the box.
