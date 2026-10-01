@@ -64,6 +64,16 @@ public final class TimelineView: NSView {
     /// Clip highlighted while an effect is dragged over it.
     public private(set) var effectDropTarget: Clip.ID?
     private var scrubbing: (began: Bool, active: Bool) = (false, false)
+    /// Zoom tool gesture: where it started, where the pointer is now, Option held at mouse down (zoom out).
+    private var zoomDrag: (start: CGPoint, current: CGPoint, zoomOut: Bool)?
+    /// Marker flag drag in the ruler: the marker, where the pointer went down, whether it moved, its original time.
+    private var markerDrag: (id: Marker.ID, downX: CGFloat, moved: Bool, original: Time)?
+    /// A marker was dragged to a new time (the host commits one undo step).
+    public var onMarkerMoved: ((Marker.ID, Time) -> Void)?
+    /// Last pointer position and modifiers of the drag in flight, for edge autoscroll and the Hold-S snap flip.
+    private var lastDrag: (point: CGPoint, modifiers: GestureModifiers)?
+    private var autoscrollTimer: Timer?
+    private var autoscrollLast: TimeInterval = 0
     /// Edit point the playhead is stuck to while Shift-scrubbing (snap indicator), nil otherwise.
     public private(set) var scrubSnapTime: Time?
     /// Active tool, snapping and linked selection.
@@ -413,12 +423,21 @@ public final class TimelineView: NSView {
         }
         if geometry.hitTest(p, in: timeline) == .ruler {
             if event.clickCount == 2, let m = markerID(at: p) { onEditMarker?(m); return }   // double-click a marker flag
+            if let m = markerID(at: p), let time = timeline.markers.first(where: { $0.id == m })?.time {
+                markerDrag = (m, p.x, false, time)         // a drag moves the marker, a click still seeks (mouse up)
+                return
+            }
             scrubbing = (false, true)
             onSeek?(scrubTime(at: p, shift: event.modifierFlags.contains(.shift)))
             return
         }
+        if toolState.tool == .zoom, p.x >= TimelineGeometry.contentOriginX, p.y >= TimelineGeometry.rulerHeight {
+            zoomDrag = (p, p, event.modifierFlags.contains(.option))
+            return
+        }
         feedInteraction()
         interaction.mouseDown(p, modifiers: gestureModifiers(event))
+        lastDrag = (p, gestureModifiers(event))
         refreshFromInteraction()
     }
 
@@ -437,18 +456,154 @@ public final class TimelineView: NSView {
             }
             return
         }
+        if var z = zoomDrag {
+            z.current = p
+            zoomDrag = z
+            needsDisplay = true
+            return
+        }
+        if var d = markerDrag {
+            if !d.moved, abs(p.x - d.downX) < TimelineInteraction.dragThreshold { return }
+            d.moved = true
+            markerDrag = d
+            lastDrag = (p, gestureModifiers(event))
+            dragMarker(to: p)
+            updateAutoscroll()
+            return
+        }
         if scrubbing.active {
             if !scrubbing.began { scrubbing.began = true; onScrubBegan?() }
+            lastDrag = (p, gestureModifiers(event))
             onScrub?(scrubTime(at: p, shift: event.modifierFlags.contains(.shift)))
+            updateAutoscroll()
             return
         }
         interaction.geometry = geometry
         interaction.mouseDragged(p, modifiers: gestureModifiers(event))
+        lastDrag = (p, gestureModifiers(event))
+        refreshFromInteraction()
+        updateAutoscroll()
+    }
+
+    // MARK: Zoom tool, marker drag
+
+    private func applyZoom(scale: Double, scrollX: Double) {
+        geometry.pointsPerSecond = TimelineZoom.clamp(scale, to: zoomLimits)
+        geometry.scrollX = CGFloat(scrollX)
+        clampScroll()
+        viewportChanged()
+    }
+
+    private func finishZoomDrag(_ z: (start: CGPoint, current: CGPoint, zoomOut: Bool)) {
+        zoomDrag = nil
+        needsDisplay = true
+        let dx = abs(z.current.x - z.start.x), dy = abs(z.current.y - z.start.y)
+        if max(dx, dy) < TimelineInteraction.dragThreshold {
+            let r = TimelineZoom.zoomClick(scale: geometry.pointsPerSecond, scrollX: Double(geometry.scrollX),
+                                           anchorX: Double(z.start.x - TimelineGeometry.contentOriginX),
+                                           zoomOut: z.zoomOut, range: zoomLimits)
+            applyZoom(scale: r.scale, scrollX: r.scrollX)
+        } else {
+            func seconds(_ x: CGFloat) -> Double {
+                let t = geometry.unsnappedTime(atX: x)
+                return Double(t.value) / Double(t.timescale)
+            }
+            let r = TimelineZoom.zoomMarquee(startSeconds: seconds(z.start.x), endSeconds: seconds(z.current.x),
+                                             viewport: Double(contentViewportWidth), range: zoomLimits)
+            applyZoom(scale: r.scale, scrollX: r.scrollX)
+        }
+    }
+
+    /// Moves the dragged marker flag in the local copy of the timeline (preview); `mouseUp` commits it.
+    private func dragMarker(to p: CGPoint) {
+        guard let d = markerDrag else { return }
+        let r = MarkerDrag.target(time: geometry.unsnappedTime(atX: p.x), dragging: d.id, in: timeline, playhead: playhead,
+                                  snapping: toolState.snapping, geometry: geometry)
+        timeline.moveMarker(d.id, to: r.time)
+        setScrubSnap(r.hit?.time)
+        syncChildren()
+        needsDisplay = true
+    }
+
+    // MARK: Edge autoscroll
+
+    /// Starts or stops the autoscroll timer for the drag in flight: the pointer near the left or right edge of the
+    /// content area scrolls it (`TimelineAutoscroll`), and the gesture is fed the same pointer position again.
+    private func updateAutoscroll() {
+        guard let l = lastDrag, toolState.tool != .hand, toolState.tool != .zoom else { stopAutoscroll(); return }
+        let v = TimelineAutoscroll.velocity(pointerX: l.point.x, viewLeft: TimelineGeometry.contentOriginX, viewRight: bounds.width)
+        if v == 0 { stopAutoscroll(); return }
+        guard autoscrollTimer == nil else { return }
+        autoscrollLast = ProcessInfo.processInfo.systemUptime
+        autoscrollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.autoscrollTick() }
+        }
+    }
+
+    private func stopAutoscroll() { autoscrollTimer?.invalidate(); autoscrollTimer = nil }
+
+    private func autoscrollTick() {
+        let now = ProcessInfo.processInfo.systemUptime
+        let dt = min(now - autoscrollLast, 0.1)
+        autoscrollLast = now
+        guard let l = lastDrag, isDragging else { stopAutoscroll(); return }
+        let v = TimelineAutoscroll.velocity(pointerX: l.point.x, viewLeft: TimelineGeometry.contentOriginX, viewRight: bounds.width)
+        guard v != 0 else { stopAutoscroll(); return }
+        let before = geometry.scrollX
+        scroll(byX: v * CGFloat(dt), y: 0)
+        guard geometry.scrollX != before else { return }
+        replayDrag()
+    }
+
+    /// Feeds the last pointer position to the gesture in flight again (after a scroll or a Hold-S flip).
+    private func replayDrag() {
+        guard let l = lastDrag else { return }
+        if markerDrag?.moved == true { dragMarker(to: l.point); return }
+        if scrubbing.active, scrubbing.began { onScrub?(scrubTime(at: l.point, shift: l.modifiers.contains(.shift))); return }
+        guard !interaction.isIdle else { return }
+        interaction.geometry = geometry
+        interaction.mouseDragged(l.point, modifiers: l.modifiers)
         refreshFromInteraction()
     }
 
+    /// A clip, edge, marker or playhead drag is in flight.
+    public var isDragging: Bool { !interaction.isIdle || scrubbing.active || markerDrag != nil }
+
+    /// Hold-S while dragging: snapping is flipped until the key comes up (the gesture is recomputed at once).
+    public func setSnapInverted(_ on: Bool) {
+        guard isDragging || !on else { return }
+        guard interaction.snapInverted != on else { return }
+        interaction.snapInverted = on
+        replayDrag()
+    }
+
+    /// Ctrl+T: the next trim type of the selected edit (regular, ripple, rolling). False when no edit is selected.
+    @discardableResult
+    public func cycleTrimType() -> Bool {
+        guard let sel = interaction.edgeSelection else { return false }
+        interaction.setEdgeSelection(EdgeEdits.cycled(sel, in: timeline))
+        needsDisplay = true
+        return true
+    }
+
     public override func mouseUp(with event: NSEvent) {
+        stopAutoscroll()
+        lastDrag = nil
         if endVolumeDrag(at: convert(event.locationInWindow, from: nil)) { return }
+        if let z = zoomDrag { finishZoomDrag((z.start, convert(event.locationInWindow, from: nil), z.zoomOut)); return }
+        if let d = markerDrag {
+            markerDrag = nil
+            setScrubSnap(nil)
+            let p = convert(event.locationInWindow, from: nil)
+            if d.moved {
+                let r = MarkerDrag.target(time: geometry.unsnappedTime(atX: p.x), dragging: d.id, in: timeline, playhead: playhead,
+                                          snapping: toolState.snapping, geometry: geometry)
+                if r.time != d.original { onMarkerMoved?(d.id, r.time) } else { timeline.moveMarker(d.id, to: d.original); syncChildren(); needsDisplay = true }
+            } else {
+                onSeek?(geometry.time(atX: p.x))
+            }
+            return
+        }
         if resizing != nil {
             resizing = nil
             onTrackHeightsChange?(geometry.heightOverrides)
@@ -502,6 +657,9 @@ public final class TimelineView: NSView {
 
     /// Escape during a drag.
     public func cancelGesture() {
+        stopAutoscroll()
+        zoomDrag = nil
+        if let d = markerDrag { timeline.moveMarker(d.id, to: d.original); markerDrag = nil; syncChildren() }
         interaction.cancel()
         refreshFromInteraction()
     }
@@ -636,6 +794,7 @@ public final class TimelineView: NSView {
         .slip: ("arrow.left.and.right.square", "Slip"),
         .slide: ("arrow.left.and.right.square.fill", "Slide"),
         .hand: ("hand.raised", "Hand"),
+        .zoom: ("magnifyingglass", "Zoom"),
         .rateStretch: ("gauge.with.dots.needle.67percent", "Rate Stretch"),
         .pen: ("pencil.tip", "Pen"),
         .shape: ("rectangle", "Shape"),
@@ -946,6 +1105,14 @@ public final class TimelineView: NSView {
                                             : CGRect(x: x - 3, y: row.y + 1, width: 3, height: row.height - 2)
                 bar.fill()
             }
+        }
+        if let z = zoomDrag, hypot(z.current.x - z.start.x, z.current.y - z.start.y) >= TimelineInteraction.dragThreshold {
+            let m = CGRect(x: min(z.start.x, z.current.x), y: min(z.start.y, z.current.y),
+                           width: abs(z.current.x - z.start.x), height: abs(z.current.y - z.start.y))
+            Theme.Colors.accentTint.setFill()
+            m.fill()
+            Theme.Colors.accent.setStroke()
+            NSBezierPath(rect: m.insetBy(dx: 0.5, dy: 0.5)).stroke()
         }
         if let m = interaction.marquee {
             Theme.Colors.accentTint.setFill()

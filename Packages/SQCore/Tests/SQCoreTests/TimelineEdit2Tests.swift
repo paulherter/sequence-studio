@@ -369,3 +369,37 @@ private func spans(_ t: Track) -> [[Int64]] {
         #expect(tl.markers[0].time == .zero)
     }
 }
+
+// MARK: Target toggle modifiers
+
+@Suite struct TargetToggleTests {
+    private func tl() -> (Timeline, [Track.ID]) {
+        let t = timeline(Track(kind: .video, isTargeted: true), Track(kind: .video), Track(kind: .video, isTargeted: true),
+                         Track(kind: .audio, isTargeted: true), Track(kind: .audio))
+        return (t, t.tracks.map(\.id))
+    }
+
+    @Test func plainClickFlipsOnlyThatTrack() {
+        var (t, ids) = tl()
+        t.toggleTarget(ids[1])
+        #expect(t.tracks.map(\.isTargeted) == [true, true, true, true, false])
+        t.toggleTarget(ids[1])
+        #expect(t.tracks[1].isTargeted == false)
+    }
+
+    @Test func shiftClickSetsEveryTrackOfTheKind() {
+        var (t, ids) = tl()
+        t.toggleTarget(ids[1], shift: true)                       // off -> all video on
+        #expect(t.tracks.map(\.isTargeted) == [true, true, true, true, false])
+        t.toggleTarget(ids[1], shift: true)                       // on -> all video off
+        #expect(t.tracks.map(\.isTargeted) == [false, false, false, true, false])
+    }
+
+    @Test func optionClickTargetsOnlyThatTrackOfItsKind() {
+        var (t, ids) = tl()
+        t.toggleTarget(ids[1], option: true)
+        #expect(t.tracks.map(\.isTargeted) == [false, true, false, true, false])
+        t.toggleTarget(ids[1], option: true)
+        #expect(t.tracks.map(\.isTargeted) == [false, true, false, true, false])   // already solo: unchanged
+    }
+}

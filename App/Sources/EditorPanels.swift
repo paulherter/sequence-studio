@@ -134,6 +134,7 @@ final class EditorPanels {
         tv.contextMenuProvider = { [weak self] p in self?.timelineMenu(at: p) }
         wireVolumeLine()
         tv.onEditMarker = { [weak self] id in self?.editMarker(id) }
+        tv.onMarkerMoved = { [weak self] id, time in self?.session.moveMarker(id, to: time) }
         tv.onToggleChange = { [weak self] snap, linked in
             self?.onStatus?("Snapping \(snap ? "on" : "off"), Linked Selection \(linked ? "on" : "off")")
         }
@@ -195,6 +196,11 @@ final class EditorPanels {
     }
 
     private func toggleTrack(_ id: Track.ID, _ toggle: TrackToggle) {
+        if toggle == .target, let flags = NSApp.currentEvent?.modifierFlags,
+           !flags.intersection([.shift, .option]).isEmpty {
+            session.toggleTarget(id, shift: flags.contains(.shift), option: flags.contains(.option))   // Shift: all of the kind, Option: only this
+            return
+        }
         let name: String
         switch toggle {
         case .visible: name = "Toggle Track Output"
