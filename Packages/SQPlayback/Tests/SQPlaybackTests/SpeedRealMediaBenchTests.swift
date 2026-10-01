@@ -58,9 +58,11 @@ import SQMedia
         window.orderOut(nil)
         let st = engine.stats
         let adv = pos1 - seekPos
-        let line = String(format: "[speed %@] %d%% reversed=%d presented=%d dropped=%d advance=%.3fs decodeCalls=%d",
+        let line = String(format: "[speed %@] %d%% reversed=%d presented=%d dropped=%d advance=%.3fs decodeCalls=%d ticks=%d",
                           label, Int(speed.percent), reversed ? 1 : 0, st.presentedFrames - before.presentedFrames,
-                          st.droppedFrames - before.droppedFrames, Double(adv.value) / Double(adv.timescale), engine.decodeCalls - decodes0)
+                          st.droppedFrames - before.droppedFrames, Double(adv.value) / Double(adv.timescale), engine.decodeCalls - decodes0, st.renderTicks - before.renderTicks)
+        let ticks = st.renderTicks - before.renderTicks
+        if ticks < 200 { print("[speed \(label)] WARNING: only \(ticks) display-link ticks in 5 s (60 Hz = ~300): macOS throttled the bench window (idle, locked or occluded session), so presented= says nothing about the engine.") }
         print(line)
         NSLog("%@", line)
     }
