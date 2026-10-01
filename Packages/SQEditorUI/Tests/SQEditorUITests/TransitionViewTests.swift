@@ -78,13 +78,13 @@ private func clip(_ name: String, start: Int64, kind: TrackKind = .video) -> Cli
         var selected: Transition.ID?? = nil
         var doubled: Transition.ID?
         var changes: [(Transition.ID, TransitionLayout.Change, Bool)] = []
-        v.onTransitionSelect = { selected = .some($0) }
+        v.onTransitionSelect = { id, _ in selected = .some(id) }
         v.onTransitionDoubleClick = { doubled = $0 }
         v.onTransitionChange = { changes.append(($0, $1, $2)) }
         let row = v.geometry.rows(for: t)[0]
         let r = try #require(t.resolvedTransitions(on: t.tracks[0].id).first { $0.id == ids[0] })
         let box = TransitionLayout.rect(r, row: row, geometry: v.geometry)
-        let mid = CGPoint(x: box.midX, y: row.y + row.height / 2)
+        let mid = CGPoint(x: box.midX - 40, y: row.y + row.height / 2)
 
         v.mouseDown(with: event(.leftMouseDown, at: mid, in: v))
         #expect(selected == .some(ids[0]) && v.selectedTransition == ids[0])
@@ -117,7 +117,7 @@ private func clip(_ name: String, start: Int64, kind: TrackKind = .video) -> Cli
     @Test func clickingAClipDeselectsTheTransition() throws {
         let (v, t, ids) = try makeView(selectFirst: true)
         var selected: Transition.ID?? = nil
-        v.onTransitionSelect = { selected = .some($0) }
+        v.onTransitionSelect = { id, _ in selected = .some(id) }
         #expect(v.selectedTransition == ids[0])
         let row = v.geometry.rows(for: t)[0]
         let x = v.geometry.x(for: f(100))                                  // inside B-roll, away from the boxes
@@ -176,5 +176,36 @@ private func clip(_ name: String, start: Int64, kind: TrackKind = .video) -> Cli
             c.cacheDisplay(in: c.bounds, to: rep)
             try rep.representation(using: .png, properties: [:])!.write(to: URL(fileURLWithPath: dir).appendingPathComponent("controls.png"))
         }
+    }
+
+    @Test func onlyTheSelectionToolHitsBoxesAndShiftKeepsTheClipSelection() throws {
+        let (v, t, ids) = try makeView()
+        let row = v.geometry.rows(for: t)[0]
+        let r = try #require(t.resolvedTransitions(on: t.tracks[0].id).first { $0.id == ids[0] })
+        let box = TransitionLayout.rect(r, row: row, geometry: v.geometry)
+        let p = CGPoint(x: box.midX - 40, y: row.y + row.height / 2)
+        var tool = v.toolState; tool.tool = .razor; v.toolState = tool
+        v.mouseDown(with: event(.leftMouseDown, at: p, in: v))
+        v.mouseUp(with: event(.leftMouseUp, at: p, in: v))
+        #expect(v.selectedTransition == nil)                                // the razor cuts the clip beneath
+        tool.tool = .selection; v.toolState = tool
+        // A clip is selected first; a plain click on the box replaces it, Shift adds the transition to it.
+        let clipPoint = CGPoint(x: v.geometry.x(for: f(100)), y: row.y + row.height / 2)
+        v.mouseDown(with: event(.leftMouseDown, at: clipPoint, in: v)); v.mouseUp(with: event(.leftMouseUp, at: clipPoint, in: v))
+        #expect(!v.selection.isEmpty)
+        v.mouseDown(with: event(.leftMouseDown, at: p, in: v, flags: .shift)); v.mouseUp(with: event(.leftMouseUp, at: p, in: v, flags: .shift))
+        #expect(v.selectedTransition == ids[0] && !v.selection.isEmpty)
+        v.setSelectedTransition(nil)
+        v.mouseDown(with: event(.leftMouseDown, at: p, in: v)); v.mouseUp(with: event(.leftMouseUp, at: p, in: v))
+        #expect(v.selectedTransition == ids[0] && v.selection.isEmpty)
+    }
+
+    @Test func staleSelectionIsDroppedWhenTheTimelineChanges() throws {
+        let (v, t, ids) = try makeView(selectFirst: true)
+        #expect(v.selectedTransition == ids[0])
+        var gone = t
+        for i in gone.tracks.indices { gone.tracks[i].transitions = [] }
+        v.setTimeline(gone)
+        #expect(v.selectedTransition == nil)
     }
 }

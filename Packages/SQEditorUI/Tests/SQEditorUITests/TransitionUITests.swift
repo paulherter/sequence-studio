@@ -230,7 +230,9 @@ private let defaults = TransitionDefaults(videoFrames: 20, audioSeconds: 1)
         let box = TransitionLayout.rect(r, row: row, geometry: g)
         #expect(abs(box.minX - g.x(for: f(50))) < 1e-9 && abs(box.width - 200) < 1e-9)
         let y = row.y + row.height / 2
-        #expect(TransitionLayout.hitTest(CGPoint(x: box.midX, y: y), in: t, geometry: g)?.zone == .body)
+        #expect(TransitionLayout.hitTest(CGPoint(x: box.midX - 30, y: y), in: t, geometry: g)?.zone == .body)
+        #expect(TransitionLayout.hitTest(CGPoint(x: box.midX + 4, y: y), in: t, geometry: g) == nil)      // the clip edge at the cut wins
+        #expect(TransitionLayout.hitTest(CGPoint(x: box.midX - 4, y: y), in: t, geometry: g) == nil)
         #expect(TransitionLayout.hitTest(CGPoint(x: box.minX + 1, y: y), in: t, geometry: g)?.zone == .leftEdge)
         #expect(TransitionLayout.hitTest(CGPoint(x: box.maxX - 1, y: y), in: t, geometry: g)?.zone == .rightEdge)
         #expect(TransitionLayout.hitTest(CGPoint(x: box.minX - 2, y: y), in: t, geometry: g) == nil)
@@ -256,5 +258,22 @@ private let defaults = TransitionDefaults(videoFrames: 20, audioSeconds: 1)
         let head = TransitionLayout.dropTarget(at: CGPoint(x: g.x(for: .zero) + 4, y: y), kind: .dipToWhite, in: t, geometry: g)
         #expect(head?.alignment == .startAtCut)
         if case .head = head?.point {} else { Issue.record("expected a head target") }
+    }
+}
+
+@Suite struct TransitionStaleSelectionTests {
+    @MainActor @Test func deleteFallsThroughWhenTheSelectedTransitionIsGone() throws {
+        let (s, _, c) = try makeSession()
+        let tr = s.activeTimeline!.tracks[0].id
+        _ = s.addTransition(kind: .crossDissolve, track: tr, point: .cut(outgoing: c["A"]!.id, incoming: c["B"]!.id),
+                            alignment: .center, defaults: defaults)
+        #expect(s.selectedTransition != nil)
+        s.undo()                                                        // the transition is gone with the undo
+        #expect(s.selectedTransition == nil)
+        #expect(!s.removeSelectedTransition())
+        // Even a selection that is still set but whose transition vanished must not swallow Delete.
+        s.selectTransition(UUID())
+        #expect(!s.removeSelectedTransition() && s.selectedTransition == nil)
+        #expect(s.lastError == nil)
     }
 }

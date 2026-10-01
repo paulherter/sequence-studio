@@ -349,6 +349,7 @@ public final class AudioFeeder: @unchecked Sendable {
                                            keepsPitch: seg.keepsPitch,
                                            srcStart: Self.roundFrame(seg.source.start, rate), srcEnd: Self.roundFrame(seg.source.end, rate),
                                            firstOutput: f0 - Self.ceilFrame(seg.clipStart, rate),
+                                           lead: max(0, Self.ceilFrame(seg.clipStart, rate) - Self.ceilFrame(seg.timeline.start, rate)),
                                            count: n, into: scratch)
                     } else {
                         let got = try source.read(from: srcStart, count: n, into: scratch, channel: ch)

@@ -57,13 +57,14 @@ final class AudioRetimer: @unchecked Sendable {
     ///   - origin: source frame at output frame 0 (forward: where the clip starts reading; reversed: the end it reads backwards from, exclusive).
     ///   - speed: source frames per output frame (> 0), at most 100.
     ///   - srcStart/srcEnd: the clip's source range in frames; reads outside it are silence.
-    ///   - firstOutput: index of `out[0]` (>= 0).
+    ///   - firstOutput: index of `out[0]`; negative inside a transition's head extension (the clip plays before its start).
+    ///   - lead: output frames before 0 that are valid (the length of that extension), so the first grain is the one covering them.
     func render(read: Read, origin: Double, speed: Double, reversed: Bool, keepsPitch: Bool, srcStart: Int64, srcEnd: Int64,
-                firstOutput: Int64, count: Int, into out: UnsafeMutablePointer<Float>) throws {
+                firstOutput: Int64, lead: Int64 = 0, count: Int, into out: UnsafeMutablePointer<Float>) throws {
         guard count > 0 else { return }
         precondition(count <= maxFrames && speed <= Double(Self.maxSpeed) + 1e-9)
         if keepsPitch && speed != 1 {
-            try stretch(read, origin, speed, reversed, srcStart, srcEnd, firstOutput, count, out)
+            try stretch(read, origin, speed, reversed, srcStart, srcEnd, firstOutput, lead, count, out)
         } else {
             try resample(read, origin, speed, reversed, srcStart, srcEnd, firstOutput, count, out)
         }
@@ -91,11 +92,12 @@ final class AudioRetimer: @unchecked Sendable {
     // MARK: Time-stretch (pitch kept)
 
     private func stretch(_ read: Read, _ origin: Double, _ speed: Double, _ reversed: Bool, _ s0: Int64, _ s1: Int64,
-                         _ first: Int64, _ count: Int, _ out: UnsafeMutablePointer<Float>) throws {
+                         _ first: Int64, _ lead: Int64, _ count: Int, _ out: UnsafeMutablePointer<Float>) throws {
         let h = Int64(Self.hop), g = 2 * Self.hop
         out.update(repeating: 0, count: count)
         let last = first + Int64(count) - 1
-        let kFirst = max(Int64(0), Self.floorDiv(first, h) - 1), kLast = Self.floorDiv(last, h)
+        let kMin = Self.floorDiv(-max(lead, 0), h)       // 0 unless the clip plays before its start
+        let kFirst = max(kMin, Self.floorDiv(first, h) - 1), kLast = Self.floorDiv(last, h)
         guard kFirst <= kLast else { return }
         for k in kFirst...kLast {
             let gStart = k * h                                  // output frame of the grain's first sample
@@ -118,7 +120,7 @@ final class AudioRetimer: @unchecked Sendable {
             for o in lo..<hi {
                 let i = Int(o - gStart)
                 // Flat window on the clip's very first hop (no grain before it to overlap with).
-                let w: Float = (k == 0 && i < Self.hop) ? 1 : Self.window[i]
+                let w: Float = (k == kMin && i < Self.hop) ? 1 : Self.window[i]
                 let s = reversed ? grain[g - 1 - i] : grain[i]
                 out[Int(o - first)] += s * w
             }

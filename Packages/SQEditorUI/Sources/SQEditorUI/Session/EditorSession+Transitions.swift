@@ -17,10 +17,11 @@ extension EditorSession {
         return (tid, tr, track.resolvedTransitions(frameDuration: t.format.frameDuration).first { $0.id == id })
     }
 
-    public func selectTransition(_ id: Transition.ID?) {
+    /// `keepClips`: Shift / Command click adds the transition to the selection instead of replacing the clips.
+    public func selectTransition(_ id: Transition.ID?, keepClips: Bool = false) {
         guard selectedTransition != id else { return }
         selectedTransition = id
-        if id != nil, !selection.isEmpty || !captionSelection.isEmpty { select(clips: [], captions: []) }
+        if id != nil, !keepClips, !selection.isEmpty || !captionSelection.isEmpty { select(clips: [], captions: []) }
         notify(.selection)
     }
 
@@ -80,6 +81,8 @@ extension EditorSession {
     @discardableResult
     public func removeSelectedTransition() -> Bool {
         guard let id = selectedTransition else { return false }
+        // Gone already (undo, an edit that removed its cut): forget it and let Delete act on the clips / gap instead.
+        guard activeTimeline?.transition(id) != nil else { selectedTransition = nil; return false }
         return removeTransition(id)
     }
 

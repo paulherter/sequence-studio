@@ -52,6 +52,9 @@ public struct LayerRequest: Sendable, Hashable {
     /// Set on the two layers of a cross dissolve (opacities already 1-w and w): the compositor sums them as premultiplied
     /// colour instead of compositing B over A. `format` is the canvas the pair is summed in.
     public var pair: PairInfo?
+    /// The layer belongs to a transition in progress (either side of a dissolve or dip, or a fade): the engine holds the last
+    /// frame rather than draw a half-decoded transition.
+    public var inTransition = false
 
     public enum PairRole: Sendable, Hashable { case first, second }
     public struct PairInfo: Sendable, Hashable {
@@ -162,6 +165,7 @@ extension Timeline {
             for (n, (c, factor)) in state.items.enumerated() {
                 var tr = c.transform(at: t)
                 tr.opacity *= factor
+                let inTransition = state.pair != nil || state.dip != nil || factor != 1
                 let pair = state.pair.map { LayerRequest.PairInfo(id: $0, role: n == 0 ? .first : .second, format: format, depth: groups.count) }
                 if let seqID = c.sequence {
                     guard !visiting.contains(seqID), let inner = sequences(seqID) else { continue }
@@ -169,7 +173,10 @@ extension Timeline {
                                        transform: tr, cornerRadius: c.effects(at: t).cornerRadius)
                     var inners = inner.videoLayers(at: c.source.start + (t - c.start), sequences: sequences,
                                                    groups: groups + [g], visiting: visiting.union([seqID]))
-                    if let pair { for k in inners.indices where inners[k].pair == nil { inners[k].pair = pair } }
+                    for k in inners.indices {
+                        if let pair, inners[k].pair == nil { inners[k].pair = pair }
+                        if inTransition { inners[k].inTransition = true }
+                    }
                     out += inners
                 } else {
                     let local = t - c.start
@@ -178,6 +185,7 @@ extension Timeline {
                                             transform: tr, cornerRadius: c.effects(at: t).cornerRadius,
                                             groups: groups, generator: c.generator, localTime: local, color: c.color))
                     out[out.count - 1].pair = pair
+                    out[out.count - 1].inTransition = inTransition
                 }
             }
         }

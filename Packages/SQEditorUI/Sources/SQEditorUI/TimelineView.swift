@@ -62,7 +62,7 @@ public final class TimelineView: NSView {
     // Transitions: state lives in `TimelineView+Transitions.swift`; the host wires these callbacks.
     var transitionState = TransitionViewState()
     /// A transition box was clicked (nil = deselected).
-    public var onTransitionSelect: ((Transition.ID?) -> Void)?
+    public var onTransitionSelect: ((Transition.ID?, _ keepClips: Bool) -> Void)?
     /// Double-click on a transition box: the host opens "Set Transition Duration".
     public var onTransitionDoubleClick: ((Transition.ID) -> Void)?
     /// A drag of a transition edge or body: new values, and whether this continues the gesture's first change.
@@ -188,6 +188,7 @@ public final class TimelineView: NSView {
         syncBadges = t.syncOffsets()
         geometry.frameDuration = t.frameDuration
         selection.formIntersection(Set(t.tracks.flatMap { $0.clips.map(\.id) }))
+        if let id = transitionState.selected, t.transition(id) == nil { transitionState.selected = nil }
         captionSelection.formIntersection(Set(t.captionTracks.flatMap { $0.items.map(\.id) }))
         interaction.reset(timeline: t)
         interaction.setSelection(selection)
@@ -433,7 +434,9 @@ public final class TimelineView: NSView {
             onSeek?(scrubTime(at: p, shift: event.modifierFlags.contains(.shift)))
             return
         }
-        if transitionState.selected != nil { setSelectedTransition(nil) }
+        if transitionState.selected != nil, !event.modifierFlags.contains(.shift), !event.modifierFlags.contains(.command) {
+            setSelectedTransition(nil)
+        }
         feedInteraction()
         interaction.mouseDown(p, modifiers: gestureModifiers(event))
         refreshFromInteraction()

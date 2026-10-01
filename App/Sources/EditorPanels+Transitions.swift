@@ -7,7 +7,7 @@ import SQEditorUI
 extension EditorPanels {
     func wireTransitions() {
         let tv = timelineView
-        tv.onTransitionSelect = { [weak self] id in self?.session.selectTransition(id) }
+        tv.onTransitionSelect = { [weak self] id, keep in self?.session.selectTransition(id, keepClips: keep) }
         tv.onTransitionDoubleClick = { [weak self] id in self?.setTransitionDuration(id) }
         tv.onTransitionChange = { [weak self] id, change, continues in
             guard let self else { return }

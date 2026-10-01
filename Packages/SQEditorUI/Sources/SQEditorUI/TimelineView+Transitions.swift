@@ -22,11 +22,11 @@ extension TimelineView {
     public var selectedTransition: Transition.ID? { transitionState.selected }
 
     /// Selects a transition (nil clears). Clip selection is cleared like Premiere; the host mirrors it into the session.
-    public func setSelectedTransition(_ id: Transition.ID?, notify: Bool = true) {
+    public func setSelectedTransition(_ id: Transition.ID?, notify: Bool = true, keepClips: Bool = false) {
         guard transitionState.selected != id else { return }
         transitionState.selected = id
-        if id != nil, !selection.isEmpty || !captionSelection.isEmpty { clearClipSelectionForTransition() }
-        if notify { onTransitionSelect?(id) }
+        if id != nil, !keepClips, !selection.isEmpty || !captionSelection.isEmpty { clearClipSelectionForTransition() }
+        if notify { onTransitionSelect?(id, keepClips) }
         needsDisplay = true
     }
 
@@ -34,8 +34,9 @@ extension TimelineView {
 
     /// True when the press hit a transition box and was handled here.
     func transitionMouseDown(_ p: CGPoint, event: NSEvent) -> Bool {
-        guard let hit = TransitionLayout.hitTest(p, in: timeline, geometry: geometry) else { return false }
-        setSelectedTransition(hit.id)
+        // Boxes only answer to the Selection tool: Razor, Ripple, Roll, Slip, Slide... act on the clips beneath them.
+        guard toolState.tool == .selection, let hit = TransitionLayout.hitTest(p, in: timeline, geometry: geometry) else { return false }
+        setSelectedTransition(hit.id, keepClips: event.modifierFlags.contains(.shift) || event.modifierFlags.contains(.command))
         if event.clickCount == 2 {
             onTransitionDoubleClick?(hit.id)
             return true

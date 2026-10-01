@@ -40,13 +40,16 @@ public enum TransitionLayout {
 
     /// The transition box under `p` (view coordinates), if any. Boxes sit above the clips, so this is asked before the
     /// clip hit test.
-    public static func hitTest(_ p: CGPoint, in timeline: Timeline, geometry: TimelineGeometry) -> TransitionHit? {
+    public static func hitTest(_ p: CGPoint, in timeline: Timeline, geometry: TimelineGeometry,
+                               cutSlop: CGFloat = TimelineGeometry.maxTrimHandleWidth) -> TransitionHit? {
         guard p.x >= TimelineGeometry.contentOriginX else { return nil }
         for row in geometry.rows(for: timeline) where p.y >= row.y && p.y < row.maxY {
             guard let track = timeline.track(row.track) else { return nil }
             for r in track.resolvedTransitions(frameDuration: timeline.format.frameDuration) {
                 let box = rect(r, row: row, geometry: geometry)
                 guard p.x >= box.minX && p.x < box.maxX else { continue }
+                // The clip edge at the cut stays trimmable: within the trim handle of it the clips answer, not the box.
+                if abs(p.x - geometry.x(for: r.cut)) <= cutSlop { continue }
                 let e = edgeWidth(forWidth: box.width)
                 let zone: TransitionZone = p.x < box.minX + e ? .leftEdge : (p.x >= box.maxX - e ? .rightEdge : .body)
                 return TransitionHit(id: r.id, track: track.id, zone: zone)

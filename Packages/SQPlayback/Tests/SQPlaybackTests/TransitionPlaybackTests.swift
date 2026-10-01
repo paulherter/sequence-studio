@@ -124,3 +124,21 @@ private func bits(_ v: Int) -> [Float] { (0..<FrameStamp.bitCount).map { (v >> $
         #expect(results[1].1 > 100)      // played, not stalled
     }
 }
+
+@Suite struct TransitionHoldTests {
+    @Test func solidDipLayersDoNotPreventTheScrubHold() {
+        // A dip: solid + outgoing + incoming, both pictures cold: hold (3 layers, 1 solid, 2 cold).
+        #expect(RenderLoop.shouldHold(noFrame: 2, layers: 3, solids: 1, coldInTransition: 2, hasLast: true))
+        // Plain cut, everything cold: as before.
+        #expect(RenderLoop.shouldHold(noFrame: 1, layers: 1, solids: 0, coldInTransition: 0, hasLast: true))
+        // Nothing presented yet: never hold.
+        #expect(!RenderLoop.shouldHold(noFrame: 1, layers: 1, solids: 0, coldInTransition: 0, hasLast: false))
+    }
+
+    @Test func aDissolveWithOneColdSideHoldsInsteadOfDrawingThePlaceholder() {
+        #expect(RenderLoop.shouldHold(noFrame: 1, layers: 2, solids: 0, coldInTransition: 1, hasLast: true))
+        // One cold layer among others that are not part of a transition still composites (unchanged behaviour).
+        #expect(!RenderLoop.shouldHold(noFrame: 1, layers: 3, solids: 0, coldInTransition: 0, hasLast: true))
+        #expect(!RenderLoop.shouldHold(noFrame: 0, layers: 2, solids: 0, coldInTransition: 0, hasLast: true))
+    }
+}
