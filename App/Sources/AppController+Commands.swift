@@ -12,13 +12,15 @@ extension AppController {
              .markIn, .markOut, .markClip, .goToIn, .goToOut, .clearInOut, .lift, .extract, .insert, .overwrite, .addMarker,
              .tool, .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext,
              .delete, .rippleDelete, .toggleSnapping, .undo, .redo,
-             .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel,
+             .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel, .maximizeActivePanel, .resetLayout,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .minimizeAllTracks, .expandAllTracks,
              .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing:
             true
+        case _ where isShellCommand(c):
+            true
         default:
-            false
+            Self.isTimelineOp(c)
         }
     }
 
@@ -26,7 +28,11 @@ extension AppController {
         if ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1" { NSLog("SSKEY execute \(c) playing=\(session.isPlaying)") }
         // Editing text (a field or the timecode box): the standard commands go to the editor.
         if let tv = textResponder, forwardToText(c, tv) { return }
+        if executeShellCommand(c) { return }
         if [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus, executeInEffectControls(c) { return }
+        // Timeline operations (clipboard, link, nudge, edge trims...); Effect Controls keeps its own keys while it has focus.
+        let ecOwns = [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus
+        if Self.isTimelineOp(c) || c == .previousKeyframe || c == .nextKeyframe, !ecOwns, executeTimelineOp(c) { return }
         guard Self.isSupported(c) else {
             shell.statusBar.flash("\(c.title) is not available yet.")
             return
@@ -54,7 +60,9 @@ extension AppController {
         case .extract: session.extractRange()
         case .insert: placeSelectedMedia(.insert)
         case .overwrite: placeSelectedMedia(.overwrite)
-        case .addMarker: session.addMarkerAtPlayhead()
+        case .addMarker:
+            // M on a frame that already has a marker opens its dialog (Premiere).
+            if let r = session.markAtPlayhead(), r.openEdit { panels.editMarker(r.id) }
         case .tool(let t): selectTool(t)
         case .addEdit: session.addEditAtPlayhead()
         case .addEditAllTracks: session.addEditAtPlayhead(allTracks: true)
@@ -63,6 +71,7 @@ extension AppController {
         case .delete, .rippleDelete:
             // Effect Controls owns Delete while it has focus: keys, then the selected effect. Never the timeline clips.
             if effectControlsHasFocus { panels.effectModel.deleteSelectionOrEffect() }
+            else if deleteSelectedGap() { }
             else { session.deleteSelection(ripple: c == .rippleDelete) }
         case .toggleSnapping:
             panels.timelineView.toolState.snapping.toggle()
@@ -80,7 +89,7 @@ extension AppController {
         case .zoomFit: if effectControlsHasFocus { panels.effectModel.zoomToFit() } else { panels.timelineView.zoomToFit() }
         case .focusPanel(let p): showPanel(p)
         case .maximizePanel:
-            if let p = focusedPanel { maximizedPanel = maximizedPanel == p ? nil : p; applyWorkspace() }
+            if let p = panelUnderMouse() ?? focusedPanel { toggleMaximize(p) }
         case .importMedia:
             showPanel(.project)
             panels.projectView.runImportPanel()
@@ -115,6 +124,7 @@ extension AppController {
         // The Program monitor follows: Hand pans the view, Type places text, everything else is the selection behaviour.
         panels.setMonitorTool(t == .hand ? .hand : t == .type ? .type : .select)
         guard let mapped else { shell.statusBar.flash("\(EditorCommand.tool(t).title) is not available yet."); return }
+        panels.timelineView.toolState.selectBackward = t == .trackBackward
         panels.timelineView.toolState.tool = mapped
         shell.statusBar.flash(EditorCommand.tool(t).title, seconds: 2)
     }

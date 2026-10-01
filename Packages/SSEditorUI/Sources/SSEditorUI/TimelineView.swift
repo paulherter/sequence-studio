@@ -81,6 +81,11 @@ public final class TimelineView: NSView {
     /// Any click inside the view (ruler, clips, empty space), before it is handled: the host stops playback here.
     public var onPointerDown: (() -> Void)?
     private var toolButtons: [(tool: TimelineTool, button: NSButton)] = []
+    /// Snap (magnet) and Linked Selection (chain) toggles at the bottom of the tool column, like Premiere's timeline header.
+    private var toggleButtons: [(kind: ToggleKind, button: NSButton)] = []
+    private enum ToggleKind { case snap, linked }
+    /// The user flipped Snap or Linked Selection with its button (the host may show a status message).
+    public var onToggleChange: ((_ snapping: Bool, _ linkedSelection: Bool) -> Void)?
 
     // MARK: Track heights
 
@@ -128,9 +133,10 @@ public final class TimelineView: NSView {
 
     public static let minPointsPerSecond: Double = 0.02
     public static let maxPointsPerFrame: Double = 400
-    public static let zoomStep: Double = 1.5
+    public static let zoomStep: Double = TimelineZoom.keyStep
 
     private let ruler: RulerView
+    private let zoomBar = TimelineZoomBar()
     private var headers: [Track.ID: TrackHeaderView] = [:]
 
     public override var isFlipped: Bool { true }
@@ -152,6 +158,8 @@ public final class TimelineView: NSView {
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         registerForDraggedTypes([.sequenceMediaIDs, .sequenceTextTemplate, .sequenceEffectID, .fileURL])
         addSubview(ruler)
+        addSubview(zoomBar)
+        wireZoomBar()
         buildToolButtons()
         layoutChildren()
         rebuildHeaders()
@@ -236,7 +244,7 @@ public final class TimelineView: NSView {
         max(geometry.width(of: contentEnd) + contentViewportWidth * 0.5 - contentViewportWidth * 0.0, 0)
     }
 
-    private func maxScrollY() -> CGFloat { max(geometry.contentHeight(for: timeline) - bounds.height, 0) }
+    private func maxScrollY() -> CGFloat { max(geometry.contentHeight(for: timeline) + TimelineZoomBar.height - bounds.height, 0) }
 
     private func clampScroll() {
         geometry.scrollX = min(max(geometry.scrollX, 0), maxScrollX())
@@ -256,17 +264,35 @@ public final class TimelineView: NSView {
         viewportChanged()
     }
 
+    /// Span `\` fits: In/Out when set, else the whole sequence.
+    private var fitSpan: TimeRange {
+        timeline.inOut.flatMap { $0.isEmpty ? nil : $0 } ?? TimeRange(start: .zero, duration: contentEnd)
+    }
+
+    private var frameSeconds: Double { Double(geometry.frameDuration.value) / Double(geometry.frameDuration.timescale) }
+
+    /// Scale at which the fit span fills the content area (with a margin on both sides).
+    public var fitScale: Double {
+        let span = fitSpan
+        guard !span.isEmpty else { return 1 }
+        let seconds = Double(span.duration.value) / Double(span.duration.timescale)
+        return max(Double(contentViewportWidth) - 2 * Double(Theme.Spacing.lg), 1) / seconds
+    }
+
+    /// Allowed scales: a little beyond the whole sequence down to a few frames across the width.
+    public var zoomLimits: ClosedRange<Double> {
+        TimelineZoom.limits(fit: fitScale, viewportWidth: Double(contentViewportWidth), frameSeconds: frameSeconds)
+    }
+
     /// Sets zoom, keeping the time under `anchorX` (view coordinates) fixed.
     public func setZoom(pointsPerSecond: Double, anchorX: CGFloat? = nil) {
-        let fdSec = Double(geometry.frameDuration.value) / Double(geometry.frameDuration.timescale)
-        let maxPPS = Self.maxPointsPerFrame / fdSec
-        let pps = min(max(pointsPerSecond, Self.minPointsPerSecond), maxPPS)
+        let pps = TimelineZoom.clamp(pointsPerSecond, to: zoomLimits)
         guard pps != geometry.pointsPerSecond else { return }
         let anchor = anchorX ?? defaultZoomAnchor()
-        let relX = Double(anchor - TimelineGeometry.contentOriginX)
-        let seconds = (relX + Double(geometry.scrollX)) / geometry.pointsPerSecond
+        geometry.scrollX = CGFloat(TimelineZoom.anchoredScroll(oldScale: geometry.pointsPerSecond, newScale: pps,
+                                                               scrollX: Double(geometry.scrollX),
+                                                               anchorX: Double(anchor - TimelineGeometry.contentOriginX)))
         geometry.pointsPerSecond = pps
-        geometry.scrollX = CGFloat(seconds * pps - relX)
         clampScroll()
         viewportChanged()
     }
@@ -280,23 +306,31 @@ public final class TimelineView: NSView {
     public func zoomIn(anchorX: CGFloat? = nil) { setZoom(pointsPerSecond: geometry.pointsPerSecond * Self.zoomStep, anchorX: anchorX) }
     public func zoomOut(anchorX: CGFloat? = nil) { setZoom(pointsPerSecond: geometry.pointsPerSecond / Self.zoomStep, anchorX: anchorX) }
 
-    /// `\`: fit the whole sequence (clips, or In/Out when set) into the content area.
+    private var fitToggle = ZoomFitToggle()
+
+    /// `\`: fit the whole sequence (clips, or In/Out when set); pressed again it returns to the previous zoom (Premiere).
     public func zoomToFit() {
-        let span = timeline.inOut.flatMap { $0.isEmpty ? nil : $0 } ?? TimeRange(start: .zero, duration: contentEnd)
-        guard !span.isEmpty else { return }
-        let seconds = Double(span.duration.value) / Double(span.duration.timescale)
-        let startSeconds = Double(span.start.value) / Double(span.start.timescale)
-        let usable = Double(contentViewportWidth) - 2 * Double(Theme.Spacing.lg)
-        geometry.scrollX = 0
-        setZoom(pointsPerSecond: max(usable, 1) / seconds, anchorX: TimelineGeometry.contentOriginX)
-        geometry.scrollX = CGFloat(startSeconds * geometry.pointsPerSecond) - Theme.Spacing.lg
-        clampScroll()
-        viewportChanged()
+        switch fitToggle.press(scale: geometry.pointsPerSecond, scrollX: Double(geometry.scrollX), fit: fitScale) {
+        case .restore(let scale, let scrollX):
+            geometry.pointsPerSecond = TimelineZoom.clamp(scale, to: zoomLimits)
+            geometry.scrollX = CGFloat(scrollX)
+            clampScroll()
+            viewportChanged()
+        case .fit:
+            let span = fitSpan
+            guard !span.isEmpty else { return }
+            let startSeconds = Double(span.start.value) / Double(span.start.timescale)
+            geometry.pointsPerSecond = fitScale
+            geometry.scrollX = CGFloat(startSeconds * fitScale) - Theme.Spacing.lg
+            clampScroll()
+            viewportChanged()
+        }
     }
 
     private func viewportChanged() {
         invalidateCursors()
         syncChildren()
+        zoomBar.needsDisplay = true
         needsDisplay = true
         onViewportChange?()
     }
@@ -307,20 +341,24 @@ public final class TimelineView: NSView {
         let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
         if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.option) {
             let anchor = convert(event.locationInWindow, from: nil).x
-            setZoom(pointsPerSecond: geometry.pointsPerSecond * exp(Double(dy) * 0.01), anchorX: anchor)
+            let d = abs(dy) >= abs(dx) ? dy : dx
+            setZoom(pointsPerSecond: geometry.pointsPerSecond * TimelineZoom.scrollFactor(delta: Double(d), precise: event.hasPreciseScrollingDeltas),
+                    anchorX: anchor)
             return
         }
+        // A mouse wheel reports ~1 pt per notch; a trackpad reports pixels. Notches scroll like a swipe.
+        let k: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 24
         let horizontalOnly = event.modifierFlags.contains(.shift) || maxScrollY() == 0
         if horizontalOnly {
-            scroll(byX: -(abs(dx) > abs(dy) ? dx : dy), y: 0)
+            scroll(byX: -(abs(dx) > abs(dy) ? dx : dy) * k, y: 0)
         } else {
-            scroll(byX: -dx, y: -dy)
+            scroll(byX: -dx * k, y: -dy * k)
         }
     }
 
     public override func magnify(with event: NSEvent) {
         let anchor = convert(event.locationInWindow, from: nil).x
-        setZoom(pointsPerSecond: geometry.pointsPerSecond * (1 + Double(event.magnification)), anchorX: anchor)
+        setZoom(pointsPerSecond: geometry.pointsPerSecond * TimelineZoom.pinchFactor(magnification: Double(event.magnification)), anchorX: anchor)
     }
 
     private func gestureModifiers(_ e: NSEvent) -> GestureModifiers {
@@ -374,6 +412,7 @@ public final class TimelineView: NSView {
             return
         }
         if geometry.hitTest(p, in: timeline) == .ruler {
+            if event.clickCount == 2, let m = markerID(at: p) { onEditMarker?(m); return }   // double-click a marker flag
             scrubbing = (false, true)
             onSeek?(scrubTime(at: p, shift: event.modifierFlags.contains(.shift)))
             return
@@ -429,6 +468,14 @@ public final class TimelineView: NSView {
         if wasRejected, let m = interaction.rejectionMessage { onRejection?(m) }
         if let commit { onCommit?(commit) }
     }
+
+    /// Marker whose flag is under a ruler point (within 6 pt of its pole).
+    public func markerID(at p: CGPoint) -> Marker.ID? {
+        timeline.markers.first { abs(geometry.x(for: $0.time) - p.x) <= 6 }?.id
+    }
+
+    /// Double-click on a marker in the ruler: the host opens the marker dialog.
+    public var onEditMarker: ((Marker.ID) -> Void)?
 
     /// Time under the pointer for a playhead drag. Shift sticks it to clip edges, markers and 0 and shows the snap line.
     private func scrubTime(at p: CGPoint, shift: Bool) -> Time {
@@ -557,7 +604,23 @@ public final class TimelineView: NSView {
         needsDisplay = true
     }
 
+    private func wireZoomBar() {
+        zoomBar.state = { [unowned self] in
+            .init(scrollX: Double(geometry.scrollX), viewport: Double(contentViewportWidth), scale: geometry.pointsPerSecond,
+                  contentSeconds: Double(contentEnd.value) / Double(contentEnd.timescale), limits: zoomLimits)
+        }
+        zoomBar.onApply = { [unowned self] scale, scrollX in
+            geometry.pointsPerSecond = TimelineZoom.clamp(scale, to: zoomLimits)
+            geometry.scrollX = CGFloat(scrollX)
+            clampScroll()
+            viewportChanged()
+        }
+        zoomBar.onFit = { [unowned self] in zoomToFit() }
+    }
+
     private func layoutChildren() {
+        zoomBar.frame = CGRect(x: TimelineGeometry.contentOriginX, y: max(bounds.height - TimelineZoomBar.height, 0),
+                               width: max(bounds.width - TimelineGeometry.contentOriginX, 0), height: TimelineZoomBar.height)
         ruler.frame = CGRect(x: 0, y: 0, width: bounds.width, height: TimelineGeometry.rulerHeight)
         layoutToolButtons()
     }
@@ -608,7 +671,46 @@ public final class TimelineView: NSView {
             addSubview(b)
             toolButtons.append((tool, b))
         }
+        buildToggleButtons()
         syncToolButtons()
+    }
+
+    private func buildToggleButtons() {
+        let specs: [(ToggleKind, String, String, String)] = [
+            (.snap, "arrow.left.and.right.righttriangle.left.righttriangle.right", "Snap (S)", "Snap"),
+            (.linked, "link", "Linked Selection", "Linked Selection"),
+        ]
+        for (kind, symbol, tip, title) in specs {
+            let b = NSButton(frame: .zero)
+            b.setButtonType(.pushOnPushOff)
+            b.isBordered = false
+            b.imagePosition = .imageOnly
+            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+                ?? NSImage(systemSymbolName: kind == .snap ? "scope" : "link", accessibilityDescription: title)
+            b.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .regular)
+            b.toolTip = tip
+            b.setAccessibilityLabel(title)
+            b.wantsLayer = true
+            b.layer?.cornerRadius = 5
+            b.focusRingType = .none
+            b.target = self
+            b.action = #selector(toggleButtonClicked(_:))
+            b.tag = toggleButtons.count
+            addSubview(b)
+            toggleButtons.append((kind, b))
+        }
+    }
+
+    @objc private func toggleButtonClicked(_ sender: NSButton) {
+        guard toggleButtons.indices.contains(sender.tag) else { return }
+        var s = toolState
+        switch toggleButtons[sender.tag].kind {
+        case .snap: s.snapping.toggle()
+        case .linked: s.linkedSelection.toggle()
+        }
+        toolState = s
+        window?.makeFirstResponder(self)
+        onToggleChange?(s.snapping, s.linkedSelection)
     }
 
     @objc private func toolButtonClicked(_ sender: NSButton) {
@@ -629,6 +731,12 @@ public final class TimelineView: NSView {
             b.contentTintColor = on ? Theme.Colors.accent : (tool.isAvailable ? Theme.Colors.label2 : Theme.Colors.label3)
             b.layer?.backgroundColor = (on ? Theme.Colors.accentTint : NSColor.clear).cgColor
         }
+        for (kind, b) in toggleButtons {
+            let on = kind == .snap ? toolState.snapping : toolState.linkedSelection
+            b.state = on ? .on : .off
+            b.contentTintColor = on ? Theme.Colors.accent : Theme.Colors.label3
+            b.layer?.backgroundColor = (on ? Theme.Colors.accentTint : NSColor.clear).cgColor
+        }
     }
 
     private func layoutToolButtons() {
@@ -640,6 +748,14 @@ public final class TimelineView: NSView {
             b.frame = CGRect(x: (TimelineGeometry.toolColumnWidth - Self.toolButtonSize) / 2, y: y,
                              width: Self.toolButtonSize, height: Self.toolButtonSize)
             y += step
+        }
+        // Snap and Linked Selection sit in the ruler corner above the track headers (Premiere's timeline header).
+        let size: CGFloat = 20
+        var tx = TimelineGeometry.toolColumnWidth + 6
+        for (_, b) in toggleButtons {
+            b.isHidden = false
+            b.frame = CGRect(x: tx, y: ((TimelineGeometry.rulerHeight - size) / 2).rounded(), width: size, height: size)
+            tx += size + 4
         }
     }
 
@@ -809,6 +925,26 @@ public final class TimelineView: NSView {
             let x = geometry.x(for: t).rounded()
             Theme.Colors.snapLine.setFill()
             CGRect(x: x - 0.5, y: clip.minY, width: 1, height: clip.height).fill()
+        }
+        let rows = interaction.gapSelection != nil || interaction.edgeSelection != nil ? geometry.rows(for: timeline) : []
+        if let g = interaction.gapSelection, let row = rows.first(where: { $0.track == g.track }) {
+            let r = CGRect(x: geometry.x(for: g.range.start), y: row.y + 1, width: geometry.x(for: g.range.end) - geometry.x(for: g.range.start),
+                           height: row.height - 2)
+            Theme.Colors.accentTint.setFill()
+            r.fill()
+            Theme.Colors.accent.setStroke()
+            NSBezierPath(rect: r.insetBy(dx: 0.5, dy: 0.5)).stroke()
+        }
+        if let e = interaction.edgeSelection {
+            (e.ripple ? NSColor.systemOrange : Theme.Colors.accent).setFill()
+            for ref in e.edges {
+                guard let t = EdgeEdits.time(of: ref, in: timeline),
+                      let row = rows.first(where: { r in timeline.track(r.track)?.clips.contains { $0.id == ref.clip } == true }) else { continue }
+                let x = geometry.x(for: t).rounded()
+                let bar = ref.edge == .head ? CGRect(x: x, y: row.y + 1, width: 3, height: row.height - 2)
+                                            : CGRect(x: x - 3, y: row.y + 1, width: 3, height: row.height - 2)
+                bar.fill()
+            }
         }
         if let m = interaction.marquee {
             Theme.Colors.accentTint.setFill()

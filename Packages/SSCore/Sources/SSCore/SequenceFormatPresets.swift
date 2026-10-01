@@ -38,6 +38,30 @@ public enum SequenceFormatPresets {
     public static func frameRate(_ d: Time) -> FrameRate? { frameRates.first { $0.frameDuration == d } }
 
     public static let maxDimension = 16_384
+
+    public struct Named: Sendable, Hashable {
+        public let name: String
+        public let format: SequenceFormat
+    }
+
+    /// New Sequence presets: YouTube 1080p / 4K at 24, 25, 30, 50, 60 fps and vertical 1080x1920 for TikTok, Shorts, Reels.
+    public static let named: [Named] = {
+        var out: [Named] = []
+        for (label, w, h) in [("YouTube 1080p", 1920, 1080), ("YouTube 4K", 3840, 2160)] {
+            for fps in [24, 25, 30, 50, 60] {
+                out.append(Named(name: "\(label) \(fps)", format: SequenceFormat(width: w, height: h, frameDuration: Time(1, Int64(fps)))))
+            }
+        }
+        for fps in [30, 60] {
+            out.append(Named(name: "Vertical 1080×1920 (TikTok / Shorts / Reels) \(fps)",
+                             format: SequenceFormat(width: 1080, height: 1920, frameDuration: Time(1, Int64(fps)))))
+        }
+        return out
+    }()
+
+    public static func preset(matching f: SequenceFormat) -> Named? {
+        named.first { $0.format.width == f.width && $0.format.height == f.height && $0.format.frameDuration == f.frameDuration }
+    }
 }
 
 extension SequenceFormat {

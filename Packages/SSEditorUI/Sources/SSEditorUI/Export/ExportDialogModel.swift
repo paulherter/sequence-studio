@@ -14,8 +14,10 @@ public final class ExportDialogModel {
         public var duration: Time
         /// The sequence's In/Out range, if the user set one.
         public var inOut: TimeRange?
-        public init(id: UUID = UUID(), name: String, duration: Time, inOut: TimeRange? = nil) {
-            self.id = id; self.name = name; self.duration = duration; self.inOut = inOut
+        /// The sequence format: presets that follow the source (Match Source, YouTube frame rate) read it.
+        public var format: SequenceFormat?
+        public init(id: UUID = UUID(), name: String, duration: Time, inOut: TimeRange? = nil, format: SequenceFormat? = nil) {
+            self.id = id; self.name = name; self.duration = duration; self.inOut = inOut; self.format = format
         }
     }
 
@@ -38,7 +40,7 @@ public final class ExportDialogModel {
         self.sourceProvider = sources
         self.selectedID = sequences[0].id
         self.checkedIDs = [sequences[0].id]
-        self.perSequence = Dictionary(uniqueKeysWithValues: sequences.map { ($0.id, initialPreset.settings) })
+        self.perSequence = Dictionary(uniqueKeysWithValues: sequences.map { ($0.id, initialPreset.settings(matching: $0.format)) })
         self.perSequencePreset = Dictionary(uniqueKeysWithValues: sequences.map { ($0.id, initialPreset.id) })
     }
 
@@ -67,7 +69,7 @@ public final class ExportDialogModel {
         get { perSequencePreset[selectedID] ?? Self.customPresetID }
         set {
             guard let p = ExportPreset.all.first(where: { $0.id == newValue }) else { return }
-            var s = p.settings
+            var s = p.settings(matching: selectedItem.format)
             // A preset never touches captions/loudness/range: those are per-export choices.
             s.captions = settings.captions; s.audio.loudnessTarget = settings.audio.loudnessTarget; s.range = settings.range
             perSequence[selectedID] = s
@@ -149,6 +151,16 @@ public final class ExportDialogModel {
     /// Total estimated size of all checked sequences, in bytes.
     public var estimatedBytes: Int64 {
         checkedSequences.reduce(0) { $0 + settings(for: $1.id).estimatedFileSize(duration: effectiveDuration(of: $1.id)) }
+    }
+
+    /// "1920×1080 · 29.97 fps · H.264 · 12 Mbit/s" for the selected sequence.
+    public var summaryText: String {
+        let v = settings.video
+        let codecName = v.codec == .h264 ? "H.264" : v.codec == .hevc ? "HEVC" : "ProRes 422 HQ"
+        let fpsText = fps == fps.rounded() ? "\(Int(fps))" : String(format: "%.5g", fps)
+        var parts = ["\(v.width)×\(v.height)", "\(fpsText) fps", codecName]
+        if !v.codec.isMastering { parts.append(String(format: "%.3g Mbit/s", bitrateMbps)) }
+        return parts.joined(separator: " · ")
     }
 
     public var estimatedSizeText: String {

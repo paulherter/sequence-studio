@@ -59,9 +59,32 @@ public struct ToolState: Sendable, Equatable {
     public var snapping = true
     /// Linked selection: clicking a clip also selects (and razor also cuts) its linked partners. Option inverts per gesture.
     public var linkedSelection = true
+    /// Track Select tool direction: false = forward (A), true = backward (Shift+A).
+    public var selectBackward = false
     public init(tool: TimelineTool = .selection, snapping: Bool = true, linkedSelection: Bool = true) {
         self.tool = tool; self.snapping = snapping; self.linkedSelection = linkedSelection
     }
+}
+
+/// One clip edge picked with the Selection tool (click on a clip's head or tail).
+public struct EdgeRef: Sendable, Hashable {
+    public var clip: Clip.ID
+    public var edge: ClipEdge
+    public init(clip: Clip.ID, edge: ClipEdge) { self.clip = clip; self.edge = edge }
+}
+
+/// Selected clip edges. `ripple` (Cmd-click) makes trims ripple; both sides of one edit selected make a rolling edit.
+public struct EdgeSelection: Sendable, Equatable {
+    public var edges: [EdgeRef]
+    public var ripple: Bool
+    public init(edges: [EdgeRef], ripple: Bool = false) { self.edges = edges; self.ripple = ripple }
+}
+
+/// A selected gap (click on empty space between clips): Delete closes it.
+public struct GapSelection: Sendable, Equatable {
+    public var track: Track.ID
+    public var range: TimeRange
+    public init(track: Track.ID, range: TimeRange) { self.track = track; self.range = range }
 }
 
 /// One SSCore edit, replayable. A gesture yields an ordered list that is applied to the timeline as a single undo step.
@@ -79,6 +102,12 @@ public enum TimelineEdit: Sendable, Equatable {
     case slip(Clip.ID, by: Time)
     case slide(Clip.ID, by: Time)
     case addEdit(at: Time, tracks: [Track.ID]?)
+    /// Option-drag: like `moveGroup`, but the originals stay and the copies get the identities in `spec`.
+    case copyGroup(Clip.ID, to: Time, track: Track.ID?, partners: [Clip.ID: Track.ID], spec: CopySpec)
+    case nudge([Clip.ID], by: Time)
+    case closeGap(Track.ID, at: Time)
+    case link([Clip.ID])
+    case unlink([Clip.ID])
     case moveCaption(CaptionItem.ID, to: Time)
     case trimCaption(CaptionItem.ID, edge: ClipEdge, to: Time)
     case deleteCaption(CaptionItem.ID)
@@ -97,6 +126,11 @@ public enum TimelineEdit: Sendable, Equatable {
         case let .slip(id, d): try t.slip(id, by: d)
         case let .slide(id, d): try t.slide(id, by: d)
         case let .addEdit(at, ids): _ = try t.addEdit(at: at, tracks: ids)
+        case let .copyGroup(id, start, track, partners, spec): try t.move(id, to: start, track: track, retarget: partners, copy: spec)
+        case let .nudge(ids, d): try t.nudge(Set(ids), by: d)
+        case let .closeGap(track, at): try t.closeGap(on: track, at: at)
+        case .link(let ids): try t.link(Set(ids))
+        case .unlink(let ids): try t.unlink(Set(ids))
         case let .moveCaption(id, start): try t.moveCaption(id, to: start)
         case let .trimCaption(id, edge, time): try t.trimCaption(id, edge: edge, to: time)
         case .deleteCaption(let id): try t.deleteCaption(id)

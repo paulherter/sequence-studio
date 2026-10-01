@@ -23,15 +23,22 @@ public enum EditorCommand: Sendable, Hashable {
     case toggleSnapping, matchFrame, reverseMatchFrame, link, group
     // Clipboard / history
     case copy, cut, paste, pasteAttributes, undo, redo
+    // Timeline selection, nudge, edit trims (Premiere: Cmd+Left/Right nudge, Opt+Shift+Left/Right trim 5 frames)
+    case selectClipAtPlayhead, deselectAll, nextEditPointAnyTrack, previousEditPointAnyTrack
+    case pasteInsert, selectAll, toggleLinkedSelection, markSelection, nextMarker, previousMarker
+    case nudgeLeft, nudgeRight, nudgeLeft5, nudgeRight5, trimBackward5, trimForward5
     // View / window
     case zoomIn, zoomOut, zoomFit
     // Track heights (Premiere: Cmd+=/- video, Option+=/- audio, Shift+= expand all, Shift+- minimize all)
     case videoTracksTaller, videoTracksShorter, audioTracksTaller, audioTracksShorter
     case minimizeAllTracks, expandAllTracks
     case focusPanel(PanelID)
-    case maximizePanel
+    case maximizePanel, maximizeActivePanel, resetLayout
     // File
     case importMedia, newSequence, save, export
+    case newProject, openProject, saveAs, revert, sequenceSettings, setToFrameSize
+    // App
+    case keyboardShortcuts, preferences
     // Keyframes (proposal in UX section 3)
     case easyEase, easeIn, easeOut, toggleHoldInterpolation
     case previousKeyframe, nextKeyframe, toggleSpeedGraph, addKeyframe
@@ -42,7 +49,8 @@ public enum EditorCommand: Sendable, Hashable {
     public var isRepeatable: Bool {
         switch self {
         case .stepBackward, .stepForward, .stepBackward5, .stepForward5,
-             .previousEditPoint, .nextEditPoint, .zoomIn, .zoomOut,
+             .previousEditPoint, .nextEditPoint, .nextEditPointAnyTrack, .previousEditPointAnyTrack, .zoomIn, .zoomOut,
+             .nudgeLeft, .nudgeRight, .nudgeLeft5, .nudgeRight5, .trimBackward5, .trimForward5,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .undo, .redo, .previousKeyframe, .nextKeyframe: true
         default: false
@@ -106,6 +114,22 @@ public enum EditorCommand: Sendable, Hashable {
         case .cut: "Cut"
         case .paste: "Paste"
         case .pasteAttributes: "Paste Attributes"
+        case .selectClipAtPlayhead: "Select Clip at Playhead"
+        case .deselectAll: "Deselect All"
+        case .nextEditPointAnyTrack: "Go to Next Edit Point on Any Track"
+        case .previousEditPointAnyTrack: "Go to Previous Edit Point on Any Track"
+        case .pasteInsert: "Paste Insert"
+        case .selectAll: "Select All"
+        case .toggleLinkedSelection: "Linked Selection"
+        case .markSelection: "Mark Selection"
+        case .nextMarker: "Go to Next Marker"
+        case .previousMarker: "Go to Previous Marker"
+        case .nudgeLeft: "Nudge Clip Selection Left"
+        case .nudgeRight: "Nudge Clip Selection Right"
+        case .nudgeLeft5: "Nudge Clip Selection Left Five Frames"
+        case .nudgeRight5: "Nudge Clip Selection Right Five Frames"
+        case .trimBackward5: "Trim Backward Five Frames"
+        case .trimForward5: "Trim Forward Five Frames"
         case .undo: "Undo"
         case .redo: "Redo"
         case .zoomIn: "Zoom In"
@@ -118,11 +142,21 @@ public enum EditorCommand: Sendable, Hashable {
         case .minimizeAllTracks: "Minimize All Tracks"
         case .expandAllTracks: "Expand All Tracks"
         case .focusPanel(let p): "Show " + Self.panelTitle(p)
-        case .maximizePanel: "Maximize Panel"
+        case .maximizePanel: "Maximize or Restore Panel Under Pointer"
+        case .maximizeActivePanel: "Maximize or Restore Active Panel"
+        case .resetLayout: "Reset to Saved Layout"
         case .importMedia: "Import Media…"
         case .newSequence: "New Sequence…"
         case .save: "Save"
         case .export: "Export…"
+        case .newProject: "New Project"
+        case .openProject: "Open Project…"
+        case .saveAs: "Save As…"
+        case .revert: "Revert"
+        case .sequenceSettings: "Sequence Settings…"
+        case .setToFrameSize: "Set to Frame Size"
+        case .keyboardShortcuts: "Keyboard Shortcuts…"
+        case .preferences: "Settings…"
         case .easyEase: "Easy Ease"
         case .easeIn: "Ease In"
         case .easeOut: "Ease Out"
