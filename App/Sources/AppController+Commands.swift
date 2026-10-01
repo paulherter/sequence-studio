@@ -160,7 +160,7 @@ extension AppController {
         case .hand: mapped = .hand
         case .type: mapped = .type
         case .rateStretch: mapped = .rateStretch
-        case .zoom: mapped = nil
+        case .zoom: mapped = .zoom
         }
         // The Program monitor follows: Hand pans the view, Type places text, everything else is the selection behaviour.
         panels.setMonitorTool(t == .hand ? .hand : t == .type ? .type : .select)

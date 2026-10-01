@@ -683,7 +683,7 @@ final class RenderLoop: @unchecked Sendable {
         func walk(_ t: Timeline) {
             guard visited.insert(t.id).inserted else { return }
             for track in t.tracks where track.kind == .video {
-                for c in track.clips where !c.isGenerator {
+                for c in track.clips where c.isEnabled && !c.isGenerator {
                     if let s = c.sequence { if let inner = sequences[s] { walk(inner) } } else { out.append((c.color, c.media)) }
                 }
             }
@@ -698,7 +698,7 @@ final class RenderLoop: @unchecked Sendable {
         func walk(_ t: Timeline) {
             guard visited.insert(t.id).inserted else { return }
             for track in t.tracks where track.kind == .video {
-                for c in track.clips where !c.isGenerator {
+                for c in track.clips where c.isEnabled && !c.isGenerator {
                     if let s = c.sequence { if let inner = sequences[s] { walk(inner) } } else { out.insert(c.media) }
                 }
             }
@@ -709,7 +709,7 @@ final class RenderLoop: @unchecked Sendable {
 
     /// FrameKey -> top-level timeline time of the first clip showing that source frame (eviction distance).
     static func mapping(_ tl: Timeline) -> Mapping {
-        let clips = tl.tracks.filter { $0.kind == .video }.flatMap(\.clips).filter { !$0.isNested && !$0.isGenerator }
+        let clips = tl.tracks.filter { $0.kind == .video }.flatMap(\.clips).filter { $0.isEnabled && !$0.isNested && !$0.isGenerator }
         let byMedia = Dictionary(grouping: clips, by: \.media)
         return { key in
             guard let cs = byMedia[key.media] else { return nil }

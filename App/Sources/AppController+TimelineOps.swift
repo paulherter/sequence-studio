@@ -9,7 +9,8 @@ extension AppController {
         case .selectClipAtPlayhead, .deselectAll, .nextEditPointAnyTrack, .previousEditPointAnyTrack,
              .copy, .cut, .paste, .pasteInsert, .selectAll, .link, .toggleLinkedSelection, .markSelection,
              .nextMarker, .previousMarker, .nudgeLeft, .nudgeRight, .nudgeLeft5, .nudgeRight5,
-             .trimBackward5, .trimForward5, .extendEdit:
+             .trimBackward5, .trimForward5, .extendEdit, .rollTrimPrevious, .rollTrimNext, .trimPrevious, .trimNext,
+             .enableClip, .duplicate, .toggleTrimType, .moveSelectionUp, .moveSelectionDown:
             true
         default:
             false
@@ -48,6 +49,18 @@ extension AppController {
         case .trimBackward5: if let e = edges { session.trimEdges(e, frames: -5) } else { needEdit() }
         case .trimForward5: if let e = edges { session.trimEdges(e, frames: 5) } else { needEdit() }
         case .extendEdit: if let e = edges { session.extendEdit(e) } else { needEdit() }
+        case .rollTrimPrevious: session.trimToPlayhead(.head, mode: .roll)
+        case .rollTrimNext: session.trimToPlayhead(.tail, mode: .roll)
+        case .trimPrevious: session.trimToPlayhead(.head, mode: .plain)
+        case .trimNext: session.trimToPlayhead(.tail, mode: .plain)
+        case .enableClip:
+            if session.selection.isEmpty { shell.statusBar.flash("Select clips to enable or disable.") } else { session.toggleEnabledSelection() }
+        case .duplicate:
+            if session.selection.isEmpty { shell.statusBar.flash("Select clips to duplicate.") } else { session.duplicateSelection() }
+        case .toggleTrimType: if !tv.cycleTrimType() { needEdit() }
+        case .moveSelectionUp, .moveSelectionDown:
+            if session.selection.isEmpty { shell.statusBar.flash("Select clips to move.") }
+            else if !session.moveSelectionLane(up: c == .moveSelectionUp) { shell.statusBar.flash("The clips cannot go further \(c == .moveSelectionUp ? "up" : "down").") }
         case .previousKeyframe:
             guard let e = edges else { return false }
             session.trimEdges(e, frames: -1)
@@ -57,6 +70,22 @@ extension AppController {
         default: return false
         }
         return true
+    }
+
+    /// Hold-S during a clip, edge, marker or playhead drag flips snapping until the key comes up (Premiere's momentary
+    /// snap). True when the event was used. Outside a drag S is the plain Snap toggle.
+    func handleSnapHold(_ ke: KeyEvent) -> Bool {
+        guard ke.key == .char("s"), ke.modifiers.isEmpty, let tv = panels?.timelineView else { return false }
+        switch ke.phase {
+        case .down:
+            guard tv.isDragging else { return false }
+            tv.setSnapInverted(true)
+            return true
+        case .up:
+            guard tv.interaction.snapInverted else { return false }
+            tv.setSnapInverted(false)
+            return true
+        }
     }
 
     /// Delete / Shift+Delete on a selected gap closes it (ripple). False when no gap is selected.

@@ -290,7 +290,7 @@ extension Track {
     func videoEntries(at t: Time, frameDuration fd: Time)
         -> (dip: (id: Transition.ID, color: [UInt8])?, pair: Transition.ID?, items: [(clip: Clip, opacity: Double)]) {
         let k = clipIndex(endingAfter: t)
-        let base = k < clips.count && clips[k].timeline.contains(t) ? clips[k] : nil
+        let base = k < clips.count && clips[k].timeline.contains(t) && clips[k].isEnabled ? clips[k] : nil
         guard !transitions.isEmpty else { return (nil, nil, base.map { [($0, 1.0)] } ?? []) }
         // Only transitions on the clip at `t` and its neighbours can reach `t` (a span never leaves the clips it joins).
         let near = Set(clips[max(0, k - 1)..<min(clips.count, k + 2)].map(\.id))
@@ -302,18 +302,20 @@ extension Track {
             switch (r.outgoing, r.incoming) {
             case let (o?, i?):
                 guard let oc = clip(o), let ic = clip(i) else { continue }
-                if dipKind {
-                    let m = TransitionMix.video(r.kind, weight: w)
-                    return (dip, nil, [(oc, m.outgoing), (ic, m.incoming)])
-                }
+                // A disabled clip next to the cut never shows: the other side fades alone.
+                var items: [(clip: Clip, opacity: Double)] = []
+                let m = TransitionMix.video(r.kind, weight: w)
+                if oc.isEnabled { items.append((oc, dipKind ? m.outgoing : 1 - w)) }
+                if ic.isEnabled { items.append((ic, dipKind ? m.incoming : w)) }
+                if dipKind { return (dip, nil, items) }
                 // Cross dissolve: premultiplied sum A*(1-w) + B*w in linear light (the compositor's `pair` node).
-                return (nil, r.id, [(oc, 1 - w), (ic, w)])
+                return (nil, items.count == 2 ? r.id : nil, items)
             case let (nil, i?):
                 guard let ic = clip(i) else { continue }
-                return (dip, nil, [(ic, w)])
+                return (dip, nil, ic.isEnabled ? [(ic, w)] : [])
             case let (o?, nil):
                 guard let oc = clip(o) else { continue }
-                return (dip, nil, [(oc, 1 - w)])
+                return (dip, nil, oc.isEnabled ? [(oc, 1 - w)] : [])
             case (nil, nil):
                 continue
             }

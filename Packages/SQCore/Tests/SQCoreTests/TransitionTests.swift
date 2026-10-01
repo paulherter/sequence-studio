@@ -528,3 +528,84 @@ private func pair(kind: TrackKind = .video, a: Clip? = nil, b: Clip? = nil) thro
         #expect(t.resolvedTransitions(on: tr).count == 2)
     }
 }
+
+@Suite struct TransitionRound2EditTests {
+    @Test func aDisabledNeighbourNeverShowsInADissolve() throws {
+        var (t, a, b) = try pair()
+        let tr = t.tracks[0].id
+        try t.addTransition(kind: .crossDissolve, track: tr, outgoing: a.id, incoming: b.id, duration: f(20))
+        _ = try t.toggleEnabled([a.id])                                   // A disabled
+        var l = t.videoLayers(at: f(55))
+        #expect(l.count == 1 && l[0].clip == b.id && l[0].pair == nil && abs(l[0].transform.opacity - 6.0 / 21) < 1e-12)
+        _ = try t.toggleEnabled([a.id]); _ = try t.toggleEnabled([b.id])  // A back, B disabled
+        l = t.videoLayers(at: f(65))
+        #expect(l.count == 1 && l[0].clip == a.id && abs(l[0].transform.opacity - 5.0 / 21) < 1e-12)
+        #expect(t.videoLayers(at: f(100)).isEmpty)                         // outside the span a disabled clip is simply absent
+        _ = try t.toggleEnabled([a.id])                                   // both disabled
+        #expect(t.videoLayers(at: f(55)).isEmpty)
+    }
+
+    @Test func aDisabledNeighbourIsSilentInAnAudioCrossfade() throws {
+        var (t, a, b) = try pair(kind: .audio)
+        try t.addTransition(kind: .constantPower, track: t.tracks[0].id, outgoing: a.id, incoming: b.id, duration: f(20))
+        _ = try t.toggleEnabled([a.id])
+        let segs = t.audioSegments(in: TimeRange(start: .zero, duration: f(200)))
+        #expect(segs.count == 1 && segs[0].clip == b.id)
+        _ = try t.toggleEnabled([a.id])
+        #expect(t.audioSegments(in: TimeRange(start: .zero, duration: f(200))).count == 2)
+    }
+
+    @Test func dipWithADisabledSideStillDips() throws {
+        var (t, a, b) = try pair()
+        try t.addTransition(kind: .dipToBlack, track: t.tracks[0].id, outgoing: a.id, incoming: b.id, duration: f(21), alignment: .startAtCut)
+        _ = try t.toggleEnabled([b.id])
+        let l = t.videoLayers(at: f(60 + 5))                                // first half: A fades to black
+        #expect(l.count == 2 && l[0].generator?.kind == GeneratorRef.solid && l[1].clip == a.id)
+    }
+
+    @Test func duplicateCopiesTheTransitionOfAdjacentClipsAsOneStep() throws {
+        var (t, a, b) = try pair()
+        let tr = t.tracks[0].id
+        try t.addTransition(kind: .crossDissolve, track: tr, outgoing: a.id, incoming: b.id, duration: f(20))
+        let made = try t.duplicate([a.id, b.id])
+        #expect(made.count == 2)
+        let rs = t.resolvedTransitions(on: tr)
+        #expect(rs.count == 2 && rs.contains { $0.outgoing == made[0] || $0.incoming == made[1] })
+        var p = Project(name: "p", timelines: [t])
+        try p.edit(t.id) { _ = try $0.duplicate([made[0], made[1]]) }
+        #expect(p.timelines[0].tracks[0].transitions.count == 3)
+    }
+
+    @Test func rearrangingOneClipOfACutDropsItsTransitionAndKeepsTheRest() throws {
+        var (t, a, b) = try pair()
+        let tr = t.tracks[0].id
+        try t.tracks[0].overwrite(clip("C", start: 120))
+        let c = t.tracks[0].clips[2]
+        try t.addTransition(kind: .crossDissolve, track: tr, outgoing: a.id, incoming: b.id, duration: f(20))
+        try t.addTransition(kind: .crossDissolve, track: tr, outgoing: b.id, incoming: c.id, duration: f(20))
+        var p = Project(name: "p", timelines: [t])
+        try p.edit(t.id) { try $0.moveInsert(a.id, to: f(120)) }          // A lands between B and C: A|B and B|C are both gone
+        let rest = p.timelines[0].tracks[0]
+        #expect(rest.clips.map(\.id) == [b.id, a.id, c.id])
+        #expect(rest.transitions.isEmpty)
+        // Rearranging so that the pair stays adjacent keeps its transition (undo is one snapshot either way).
+        var q = Project(name: "q", timelines: [t])
+        try q.edit(t.id) { try $0.moveInsert(c.id, to: .zero) }           // C to the front: A|B untouched
+        #expect(q.timelines[0].tracks[0].transitions.contains { $0.outgoing == a.id && $0.incoming == b.id })
+        #expect(!q.timelines[0].tracks[0].transitions.contains { $0.outgoing == b.id })
+    }
+
+    @Test func insertMoveAndInsertCopyKeepEverythingConsistent() throws {
+        var (t, a, b) = try pair()
+        let tr = t.tracks[0].id
+        try t.addTransition(kind: .crossDissolve, track: tr, outgoing: a.id, incoming: b.id, duration: f(20))
+        var p = Project(name: "p", timelines: [t])
+        // Insert a copy of B in the middle of A: A is split, its tail transition follows the right half.
+        try p.edit(t.id) { try $0.insertCopy(b.id, to: f(30), copy: CopySpec()) }
+        let tl = p.timelines[0]
+        for r in tl.resolvedTransitions(on: tr) { #expect(r.span.start >= .zero) }
+        #expect(tl.tracks[0].transitions.allSatisfy { x in tl.resolvedTransitions(on: tr).contains { $0.id == x.id } })
+        #expect(tl.resolvedTransitions(on: tr).count == 1)
+    }
+}
+

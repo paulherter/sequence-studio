@@ -214,7 +214,7 @@ extension Timeline {
                 let x = info[c.id]
                 // A clip in a transition plays on into its handle: outgoing past its end, incoming before its start.
                 let extended = TimeRange(start: c.start - (x?.head ?? .zero), end: c.timeline.end + (x?.tail ?? .zero))
-                guard let r = extended.intersection(range), !r.isEmpty else { continue }
+                guard c.isEnabled, let r = extended.intersection(range), !r.isEmpty else { continue }
                 let a = r.start - c.start
                 let innerStart = c.reversed ? c.source.end - c.speed.scale(a) : c.source.start + c.speed.scale(a)
                 let envelopes = x?.envelopes ?? []
