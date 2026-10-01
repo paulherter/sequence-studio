@@ -36,6 +36,9 @@ import SQRender
     private let device: MTLDevice
     private var timeline: Timeline?
     private var sequences: [Timeline.ID: Timeline] = [:]
+    /// `isAudible` of the current timeline, computed once per `setTimeline` (it walks every clip; scrub and step events
+    /// arrive per mouse event).
+    private var timelineAudible = false
     private var driver: DisplayLinkDriver?
     private let switching: SwitchingClock
     /// Audio output (nil = video only). Also the source of the timeline meter (`meterSnapshot()`).
@@ -71,9 +74,18 @@ import SQRender
     public func setTimeline(_ timeline: Timeline, sequences: [Timeline.ID: Timeline]) {
         self.timeline = timeline
         self.sequences = sequences
+        timelineAudible = Self.isAudible(timeline, sequences: sequences)
         loop.setTimeline(timeline, sequences: sequences)
         audio?.setTimeline(timeline, sequences: sequences)
         selectClock(mayPrepare: false)
+    }
+
+    /// These media were relinked to other files while online: forget their opened files, decoders and cached frames so the
+    /// viewer shows the new file. (Audio sources are refreshed by the audio side.)
+    public func mediaChanged(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        loop.mediaChanged(ids)
+        if let tl = timeline { loop.prefetch(at: RenderLoop.gridTime(loop.clock.now(), tl), rate: rate) }
     }
 
     /// nil = headless (render offscreen, see `lastRenderedTexture`).
@@ -190,7 +202,7 @@ import SQRender
     /// Only `play()` may prepare (bring the hardware up); `setTimeline` switches to audio only if it already is.
     private func selectClock(mayPrepare: Bool) {
         guard let audio else { return }
-        let audible = !audioUnavailable && timeline.map { Self.isAudible($0, sequences: sequences) } == true
+        let audible = !audioUnavailable && timelineAudible
         if audible && !switching.isAudio {
             if !audioPrepared {
                 guard mayPrepare else { return }
@@ -211,7 +223,7 @@ import SQRender
     /// Scrub grains are played only when the output has a scrub voice, the timeline is audible and the output is up
     /// (prepared here on first use, like `play()`; a failure marks the audio unavailable until the next `play()`).
     private func scrubOutput(_ tl: Timeline) -> ScrubAudio? {
-        guard audioScrubbing, let audio, let s = audio.scrubAudio, !audioUnavailable, Self.isAudible(tl, sequences: sequences) else { return nil }
+        guard audioScrubbing, let audio, let s = audio.scrubAudio, !audioUnavailable, timelineAudible else { return nil }
         if !audioPrepared {
             do { try audio.prepare(); audioPrepared = true } catch { prepareFailed = true; return nil }
         }

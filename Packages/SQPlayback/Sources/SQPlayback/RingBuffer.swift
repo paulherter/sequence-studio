@@ -15,6 +15,8 @@ public final class RingBuffer: @unchecked Sendable {
     private let underruns = Atomic<Int>(0)
     private let consumed = Atomic<Int64>(0)
     private let consumerEpoch = Atomic<Int>(0)   // written by the consumer only
+    /// Test hook: runs on the consumer between the flush-epoch load and the write-index load of `pop` (the race window).
+    nonisolated(unsafe) var afterEpochLoad: (() -> Void)?
 
     // Flush acknowledgement (seqlock: odd sequence = consumer is writing). Written by the consumer only.
     private let ackSeq = Atomic<Int>(0)
@@ -83,14 +85,21 @@ public final class RingBuffer: @unchecked Sendable {
     @discardableResult
     public func pop(left l: UnsafeMutablePointer<Float>, right r: UnsafeMutablePointer<Float>, count: Int) -> Int {
         var rd = readIndex.load(ordering: .relaxed)
-        let epoch = flushEpoch.load(ordering: .acquiring)
-        if epoch != consumerEpoch.load(ordering: .relaxed) {
-            rd = max(rd, flushTarget.load(ordering: .acquiring))
-            consumerEpoch.store(epoch, ordering: .relaxed)
-            publishAck(epoch: epoch, frames: consumed.load(ordering: .relaxed))
-            beginFade()
+        var w: Int64
+        while true {
+            let epoch = flushEpoch.load(ordering: .acquiring)
+            if epoch != consumerEpoch.load(ordering: .relaxed) {
+                rd = max(rd, flushTarget.load(ordering: .acquiring))
+                consumerEpoch.store(epoch, ordering: .relaxed)
+                publishAck(epoch: epoch, frames: consumed.load(ordering: .relaxed))
+                beginFade()
+            }
+            afterEpochLoad?()
+            w = writeIndex.load(ordering: .acquiring)
+            // A flush (and new pushes) that landed between the two loads: `w` may then include data pushed after the cut
+            // while `rd` still points before it. Apply the flush first, then read `w` again.
+            if flushEpoch.load(ordering: .acquiring) == epoch { break }
         }
-        let w = writeIndex.load(ordering: .acquiring)
         let n = max(0, min(count, Int(w - rd)))
         if n > 0 {
             let pos = Int(rd % Int64(capacity))

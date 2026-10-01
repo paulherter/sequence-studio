@@ -20,6 +20,9 @@ import SQCore
 /// Watchdog: `sample()` reports `stalled` when running and no render call consumed audio for `stallTimeout`.
 public final class AudioClock: PlaybackClock {
     public static let stallTimeoutNanos: Int64 = 250_000_000
+    /// Before the first audio of a restart was consumed the feeder may still be opening a cold or network file and the
+    /// output is priming with silence: that is not a stall yet.
+    public static let primingTimeoutNanos: Int64 = 2_000_000_000
 
     private struct State {
         var anchor: Time = .zero
@@ -51,7 +54,8 @@ public final class AudioClock: PlaybackClock {
         let ns = audio.hostNanoseconds()
         return state.withLock { s in
             let p = position(&s, nanos: ns)
-            let stalled = !s.rate.isPaused && s.generation != .max && ns - s.progressNanos > Self.stallTimeoutNanos
+            let limit = s.base == nil ? Self.primingTimeoutNanos : Self.stallTimeoutNanos
+            let stalled = !s.rate.isPaused && s.generation != .max && ns - s.progressNanos > limit
             return (p, stalled)
         }
     }
@@ -145,6 +149,13 @@ public final class AudioClock: PlaybackClock {
                 let f = Int128(dt) * Int128(mag.num) * Int128(sampleRate) / (Int128(mag.den) * 1_000_000_000)
                 heard += min(stamp.quantum, Int64(clamping: f))
             }
+        }
+        // Reverse: the feeder produces nothing below frame 0, so once everything from the anchor down to the start was
+        // consumed the output has nothing left to play (its latency would keep the position above frame 0 forever and the
+        // watchdog would then fail the audio): the clock is at the start.
+        if s.rate.isReverse, Time(heard - s.base!, sampleRate) + Time(1, sampleRate) >= s.anchor {
+            s.lastReturned = .zero
+            return .zero
         }
         let elapsed = Time(heard - s.base! - s.latency, sampleRate) - scaled(s.outputLatency, by: mag)
         guard elapsed > .zero else { return s.anchor }

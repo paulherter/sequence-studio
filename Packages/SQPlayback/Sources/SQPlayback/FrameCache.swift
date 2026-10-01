@@ -43,6 +43,7 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
         var generation = 0
         var playhead: Time = .zero
         var direction = 0
+        var scale: DecodeScale?
         var mapping: Mapping = { $0.pts }
 
         mutating func store(_ payload: Payload, _ key: FrameKey, cost: Int) {
@@ -84,6 +85,7 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
         var items: [(key: FrameKey, seq: UInt64)]
         var playhead: Time
         var direction: Int
+        var scale: DecodeScale?
         var mapping: Mapping
     }
 
@@ -136,7 +138,7 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
                 if s.used + cost <= budget { s.store(payload, key, cost: cost); return nil }
                 s.passes += 1
                 return Snapshot(items: s.entries.map { ($0.key, $0.value.seq) },
-                                playhead: s.playhead, direction: s.direction, mapping: s.mapping)
+                                playhead: s.playhead, direction: s.direction, scale: s.scale, mapping: s.mapping)
             }
             guard let snap else { return }
             let target = min(lowWaterBytes, budget - cost)
@@ -148,10 +150,13 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
     /// Updates the playhead/direction used for eviction (`direction`: +1 forward, -1 backward, 0 none).
     /// `mapping` converts a key to timeline time (nil = not on the timeline). It is called outside the
     /// lock, on a snapshot, possibly concurrently: keep it cheap and side-effect free.
-    public func setFocus(playhead: Time, direction: Int, mapping: @escaping Mapping = { $0.pts }) {
+    /// `scale`: the decode scale in use; frames of another scale are unplaceable (evicted first), so a quality change does
+    /// not leave a second copy of the same pictures competing for the budget. nil = every scale counts.
+    public func setFocus(playhead: Time, direction: Int, scale: DecodeScale? = nil, mapping: @escaping Mapping = { $0.pts }) {
         state.withLock { s in
             s.playhead = playhead
             s.direction = direction.signum()
+            s.scale = scale
             s.mapping = mapping
         }
     }
@@ -174,6 +179,13 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
         return out
     }
 
+    /// Drops every frame of `media` (it was relinked to another file).
+    public func remove(media: UUID) {
+        state.withLock { s in
+            for key in s.entries.keys where key.media == media { s.remove(key) }
+        }
+    }
+
     public func removeAll() {
         state.withLock { $0.entries.removeAll(); $0.index.removeAll(); $0.used = 0; $0.generation += 1 }
     }
@@ -182,6 +194,7 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
     /// Returns false if the candidate itself is the next victim (it is not stored).
     private func evict(_ snap: Snapshot, target: Int, candidate: FrameKey) -> Bool {
         func score(_ k: FrameKey) -> Time? {
+            if let sc = snap.scale, k.scale != sc { return nil }
             guard let t = snap.mapping(k) else { return nil }   // nil = unplaceable = infinitely far
             let delta = t - snap.playhead
             let behind = (snap.direction > 0 && delta.isNegative) || (snap.direction < 0 && delta > .zero)

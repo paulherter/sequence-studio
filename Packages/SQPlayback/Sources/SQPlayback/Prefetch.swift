@@ -35,7 +35,8 @@ public struct PrefetchPlanner: Sendable {
         self.lookahead = lookahead; self.behind = behind; self.pausedRadius = pausedRadius
     }
 
-    public func jobs(timeline: Timeline, playhead: Time, rate: PlaybackRate,
+    /// `sequences` resolves nested clips (the project's other sequences): their inner clips are planned like top-level ones.
+    public func jobs(timeline: Timeline, sequences: [Timeline.ID: Timeline] = [:], playhead: Time, rate: PlaybackRate,
                      indexes: [UUID: SampleIndex], cached: (UUID, Int) -> Bool) -> [Job] {
         let fd = timeline.format.frameDuration
         guard fd > .zero else { return [] }
@@ -55,7 +56,7 @@ public struct PrefetchPlanner: Sendable {
             let t = playhead + fd * Int64(k)
             guard t >= .zero, t < end else { return }
             let distance = k < 0 ? -(fd * Int64(k)) : fd * Int64(k)
-            for layer in timeline.videoLayers(at: t) where layer.generator == nil {
+            for layer in timeline.videoLayers(at: t, sequences: { sequences[$0] }) where layer.generator == nil {
                 defer { order += 1 }
                 guard let index = indexes[layer.media], let f = index.frame(at: layer.sourceTime) else { continue }
                 let key = JobKey(media: layer.media, frames: index.gop(containing: f))
