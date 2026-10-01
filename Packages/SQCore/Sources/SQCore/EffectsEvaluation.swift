@@ -11,7 +11,7 @@ public struct CropInsets: Sendable, Hashable {
     /// Nothing is left of the picture.
     public var isEmpty: Bool { left + right >= 1 || top + bottom >= 1 }
     /// The larger inset per edge: two crops in a row keep what both keep.
-    func merged(with o: CropInsets) -> CropInsets {
+    public func merged(with o: CropInsets) -> CropInsets {
         CropInsets(left: max(left, o.left), top: max(top, o.top), right: max(right, o.right), bottom: max(bottom, o.bottom))
     }
 }
@@ -24,7 +24,7 @@ public struct EffectMasks: Sendable, Hashable {
     public init(crop: CropInsets = .none, cornerRadius: Double = 0) { self.crop = crop; self.cornerRadius = cornerRadius }
     public static let none = EffectMasks()
     public var isIdentity: Bool { crop.isIdentity && cornerRadius == 0 }
-    func merged(with o: EffectMasks) -> EffectMasks {
+    public func merged(with o: EffectMasks) -> EffectMasks {
         EffectMasks(crop: crop.merged(with: o.crop), cornerRadius: max(cornerRadius, o.cornerRadius))
     }
 }

@@ -542,8 +542,14 @@ final class RenderLoop: @unchecked Sendable {
         return d
     }
 
+    /// The layer with the clip's effects (Crop, Rounded Corners, Gaussian Blur) and blend mode attached.
     private func layer(for r: LayerRequest, scale: DecodeScale, build b: inout LayerBuild,
                        _ format: SequenceFormat, _ durations: [Clip.ID: Time]) -> RenderLayer {
+        baseLayer(for: r, scale: scale, build: &b, format, durations).applying(r)
+    }
+
+    private func baseLayer(for r: LayerRequest, scale: DecodeScale, build b: inout LayerBuild,
+                           _ format: SequenceFormat, _ durations: [Clip.ID: Time]) -> RenderLayer {
         func placeholder(_ k: PlaceholderKind) -> RenderLayer {
             RenderLayer(content: .placeholder(k), transform: r.transform, cornerRadius: r.cornerRadius)
         }

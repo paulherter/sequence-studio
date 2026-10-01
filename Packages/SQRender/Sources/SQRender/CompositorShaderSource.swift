@@ -1,5 +1,5 @@
 /// MSL for the compositor, compiled at runtime (SwiftPM CLI does not bundle .metal; same pattern as ColorShaderSource).
-/// `CompositeUniforms` mirrors `Compositor.Uniforms` (160 bytes).
+/// `CompositeUniforms` mirrors `Compositor.Uniforms` (176 bytes).
 enum CompositorShaderSource {
     static let msl = """
     #include <metal_stdlib>
@@ -19,6 +19,9 @@ enum CompositorShaderSource {
         uint linearize;      // 1 = apply inverse BT.709 OETF (no colour stage)
         float cornerRadius;  // layer-local px (before transform scale)
         uint quarter;        // clockwise quarter turns of the source picture (modes 0 and 1)
+        uint blend;          // blend mode id (compositeFragmentBlend only): 1 multiply, 2 screen, 3 add, 4 overlay
+        float2 maskSize;     // rectangle Crop / Rounded Corners work on, layer px; 0 = size
+        float4 crop;         // left, top, right, bottom insets as fractions of maskSize
     };
 
     constexpr sampler linearSampler(filter::linear, address::clamp_to_edge);
@@ -55,7 +58,8 @@ enum CompositorShaderSource {
 
     // Edge antialiasing (mask on the layer rect) is on for rounded or rotated layers only, so axis-aligned
     // unrounded layers stay bit-exact. The quad is grown by 1 screen px then so edge pixels outside get covered.
-    inline bool edgeAA(constant CompositeUniforms& u) { return u.cornerRadius > 0.0f || u.rotSin != 0.0f; }
+    inline bool hasCrop(constant CompositeUniforms& u) { return any(u.crop != 0.0f); }
+    inline bool edgeAA(constant CompositeUniforms& u) { return u.cornerRadius > 0.0f || u.rotSin != 0.0f || hasCrop(u); }
 
     vertex VOut compositeVertex(uint vid [[vertex_id]], constant CompositeUniforms& u [[buffer(0)]]) {
         float2 uv = float2(vid & 1, vid >> 1);
@@ -70,15 +74,19 @@ enum CompositorShaderSource {
         return o;
     }
 
-    fragment float4 compositeFragment(VOut in [[stage_in]], constant CompositeUniforms& u [[buffer(0)]],
-                                      texture2d<float> ty [[texture(0)]], texture2d<float> tc [[texture(1)]]) {
+    inline float4 shadeLayer(VOut in, constant CompositeUniforms& u, texture2d<float> ty, texture2d<float> tc) {
         float cover = 1.0f;
         if (edgeAA(u)) {
-            float2 h = u.size * 0.5f;
+            // Kept rectangle: the mask rectangle minus the crop insets, rounded by cornerRadius.
+            float2 ms = u.maskSize.x > 0.0f ? u.maskSize : u.size;
+            float2 lo = -0.5f * ms + u.crop.xy * ms;
+            float2 hi = 0.5f * ms - u.crop.zw * ms;
+            float2 c = 0.5f * (lo + hi);
+            float2 h = 0.5f * (hi - lo);
             float r = min(u.cornerRadius, min(h.x, h.y));
-            float2 q = abs(in.local) - h + r;
+            float2 q = abs(in.local - c) - h + r;
             float d = length(max(q, 0.0f)) + min(max(q.x, q.y), 0.0f) - r;   // signed distance, layer px
-            float w = max(length(float2(dfdx(d), dfdy(d))), 1e-6f);          // layer px per screen px
+            float w = 1.0f / max(min(u.scale.x, u.scale.y), 1e-4f);          // layer px per screen px (not dfdx: a 2x2 quad edge skews it)
             cover = clamp(0.5f - d / w, 0.0f, 1.0f);
         }
         float2 uv = in.local / u.size + 0.5f;
@@ -114,6 +122,55 @@ enum CompositorShaderSource {
         rgb = max(rgb, 0.0f);
         float a = u.opacity * cover * texA;
         return float4(rgb * a, a);   // premultiplied
+    }
+
+    fragment float4 compositeFragment(VOut in [[stage_in]], constant CompositeUniforms& u [[buffer(0)]],
+                                      texture2d<float> ty [[texture(0)]], texture2d<float> tc [[texture(1)]]) {
+        return shadeLayer(in, u, ty, tc);
+    }
+
+    // B(cd, cs) of the blend modes; mirrors BlendModes.channel (CPU reference).
+    inline float3 blendChannel(uint mode, float3 cd, float3 cs) {
+        if (mode == 1u) return cd * cs;
+        if (mode == 2u) return cd + cs - cd * cs;
+        if (mode == 3u) return cd + cs;
+        if (mode == 4u) {
+            float3 lo = 2.0f * cd * cs;
+            float3 hi = 1.0f - 2.0f * (1.0f - cd) * (1.0f - cs);
+            return select(hi, lo, cd <= 0.5f);
+        }
+        return cs;
+    }
+
+    // Single-layer composite with a blend mode: reads the destination (programmable blending, Apple GPUs) and writes the
+    // finished pixel, so the pipeline has fixed-function blending off.
+    fragment float4 compositeFragmentBlend(VOut in [[stage_in]], constant CompositeUniforms& u [[buffer(0)]],
+                                           texture2d<float> ty [[texture(0)]], texture2d<float> tc [[texture(1)]],
+                                           float4 dst [[color(0)]]) {
+        float4 s = shadeLayer(in, u, ty, tc);
+        float3 cs = s.a > 0.0f ? s.rgb / s.a : float3(0.0f);
+        float3 cd = dst.a > 0.0f ? dst.rgb / dst.a : float3(0.0f);
+        float3 b = blendChannel(u.blend, cd, cs);
+        float3 rgb = s.rgb * (1.0f - dst.a) + dst.rgb * (1.0f - s.a) + s.a * dst.a * b;
+        return float4(rgb, s.a + dst.a * (1.0f - s.a));
+    }
+
+    // One axis of a separable Gaussian: out(p) = sum_k w[k + r] * in(p + k * axis), zero outside the image.
+    struct BlurUniforms { int2 axis; int radius; };
+
+    kernel void gaussianBlur1D(texture2d<float, access::read> src [[texture(0)]],
+                               texture2d<float, access::write> dst [[texture(1)]],
+                               constant BlurUniforms& b [[buffer(0)]], constant float* w [[buffer(1)]],
+                               uint2 gid [[thread_position_in_grid]]) {
+        int W = int(src.get_width()), H = int(src.get_height());
+        if (int(gid.x) >= W || int(gid.y) >= H) return;
+        float4 acc = float4(0.0f);
+        for (int k = -b.radius; k <= b.radius; k++) {
+            int2 p = int2(gid) + b.axis * k;
+            if (p.x < 0 || p.y < 0 || p.x >= W || p.y >= H) continue;
+            acc += src.read(uint2(p)) * w[k + b.radius];
+        }
+        dst.write(acc, gid);
     }
     """
 }

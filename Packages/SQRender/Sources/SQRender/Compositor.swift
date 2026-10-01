@@ -33,11 +33,26 @@ public struct RenderLayer: @unchecked Sendable {
     /// smaller buffer that must still be drawn at the native size: scale 1 = one native pixel per sequence pixel.
     /// nil = the buffer's own size.
     public var nativeSize: (width: Int, height: Int)?
+    /// Crop, Rounded Corners and Gaussian Blur of the clip. Identity = the plain path (no effect maths runs); then
+    /// `cornerRadius` above is used as before.
+    public var effects: ClipEffects
+    /// Opacity > Blend Mode. Normal = plain alpha-over.
+    public var blendMode: BlendMode
 
     public init(content: Content, transform: ClipTransform = .identity, colorPipeline: ColorPipeline? = nil,
-                cornerRadius: Double = 0, nativeSize: (width: Int, height: Int)? = nil) {
+                cornerRadius: Double = 0, nativeSize: (width: Int, height: Int)? = nil,
+                effects: ClipEffects = .none, blendMode: BlendMode = .normal) {
         self.content = content; self.transform = transform; self.colorPipeline = colorPipeline
         self.cornerRadius = cornerRadius; self.nativeSize = nativeSize
+        self.effects = effects; self.blendMode = blendMode
+    }
+
+    /// The same layer with the effects and blend mode of the request it was built from.
+    public func applying(_ request: LayerRequest) -> RenderLayer {
+        var l = self
+        l.effects = request.effects
+        l.blendMode = request.blendMode
+        return l
     }
 }
 
@@ -89,10 +104,13 @@ public enum CompositorError: Error, Sendable {
 public final class Compositor: @unchecked Sendable {
     public let device: MTLDevice
     private let convertPipeline: MTLComputePipelineState
-    private let renderPipeline: MTLRenderPipelineState
+    let renderPipeline: MTLRenderPipelineState
+    /// Same fragment with programmable blending (reads the destination); nil on GPUs without framebuffer fetch.
+    let blendPipeline: MTLRenderPipelineState?
+    let blurPipeline: MTLComputePipelineState
     private let textureCache: CVMetalTextureCache
     private let colorGPU: ColorPipelineGPU
-    private let dummy: MTLTexture
+    let dummy: MTLTexture
     private let queueLock = NSLock()
     private var freeIntermediates: [MTLTexture] = []
     /// Frames that could not be sampled (unknown / unsupported compressed format) and were drawn as `.damaged`.
@@ -114,6 +132,12 @@ public final class Compositor: @unchecked Sendable {
         var cornerRadius: Float = 0
         /// Clockwise quarter turns of a source picture (0...3): the layer quad is upright, the texture lookup turns.
         var quarter: UInt32 = 0
+        /// Blend mode id for the blending pipeline (0 = normal; see `BlendModes.shaderID`).
+        var blend: UInt32 = 0
+        /// Size of the rectangle Crop and Rounded Corners work on (the layer's own picture); zero = `size`.
+        var maskSize = SIMD2<Float>(0, 0)
+        /// Crop insets as fractions of `maskSize`: left, top, right, bottom.
+        var crop = SIMD4<Float>(0, 0, 0, 0)
     }
 
     public init(device: MTLDevice) throws {
@@ -138,6 +162,17 @@ public final class Compositor: @unchecked Sendable {
         ca.sourceRGBBlendFactor = .one; ca.sourceAlphaBlendFactor = .one
         ca.destinationRGBBlendFactor = .oneMinusSourceAlpha; ca.destinationAlphaBlendFactor = .oneMinusSourceAlpha
         renderPipeline = try device.makeRenderPipelineState(descriptor: rp)
+        blurPipeline = try device.makeComputePipelineState(function: fn("gaussianBlur1D"))
+        if device.supportsFamily(.apple1), let bf = library.makeFunction(name: "compositeFragmentBlend") {
+            let bp = MTLRenderPipelineDescriptor()
+            bp.vertexFunction = try fn("compositeVertex")
+            bp.fragmentFunction = bf
+            bp.colorAttachments[0].pixelFormat = .rgba16Float
+            bp.colorAttachments[0].isBlendingEnabled = false
+            blendPipeline = try? device.makeRenderPipelineState(descriptor: bp)
+        } else {
+            blendPipeline = nil
+        }
         var cache: CVMetalTextureCache?
         guard CVMetalTextureCacheCreate(nil, nil, device, nil, &cache) == kCVReturnSuccess, let cache else {
             throw CompositorError.resourceAllocation
@@ -153,15 +188,19 @@ public final class Compositor: @unchecked Sendable {
     // MARK: Helpers
 
     /// Keeps CVMetalTextures (and pooled intermediates) alive until the GPU finished.
-    private final class Retainer: @unchecked Sendable {
+    final class Retainer: @unchecked Sendable {
         var textures: [CVMetalTexture] = []
         var pooled: [MTLTexture] = []
     }
 
-    private struct Prepared {
+    struct Prepared {
         var u: Uniforms
         var tex0: MTLTexture
         var tex1: MTLTexture
+        /// Blend mode of this draw (single-layer composite; two-layer transition blending is a separate path).
+        var blend: BlendMode = .normal
+        /// Converts a corner radius in clip px (fitted into the canvas) to layer px, as `prepareLayer` did.
+        var radiusFactor: Double = 1
     }
 
     private func planeTexture(_ pb: CVPixelBuffer, plane: Int, format: MTLPixelFormat, retainer: Retainer) -> MTLTexture? {
@@ -175,7 +214,7 @@ public final class Compositor: @unchecked Sendable {
         return tex
     }
 
-    private func acquireIntermediate(width: Int, height: Int) -> MTLTexture? {
+    func acquireIntermediate(width: Int, height: Int) -> MTLTexture? {
         queueLock.lock()
         if let i = freeIntermediates.firstIndex(where: { $0.width == width && $0.height == height }) {
             let t = freeIntermediates.remove(at: i)
@@ -268,7 +307,11 @@ public final class Compositor: @unchecked Sendable {
         for node in nodes {
             switch node {
             case .layer(let layer):
-                prepareLayer(layer, format: format, commandBuffer: commandBuffer, retainer: retainer, into: &prepared)
+                var base: [Prepared] = []
+                prepareLayer(layer, format: format, commandBuffer: commandBuffer, retainer: retainer, into: &base)
+                for p in base {
+                    finishLayer(p, layer: layer, format: format, commandBuffer: commandBuffer, retainer: retainer, into: &prepared)
+                }
             case .group(let gf, let transform, let opacity, let radius, let children):
                 guard let tex = acquireIntermediate(width: gf.width, height: gf.height) else {
                     throw CompositorError.resourceAllocation
@@ -292,7 +335,15 @@ public final class Compositor: @unchecked Sendable {
         guard let enc = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { throw CompositorError.resourceAllocation }
         enc.setRenderPipelineState(renderPipeline)
         enc.setCullMode(.none)
+        var usingBlendPipeline = false
         for var p in prepared {
+            // Blend modes need the destination: the programmable-blending pipeline for those draws, plain alpha-over otherwise.
+            let wantsBlend = p.blend != .normal && blendPipeline != nil
+            if wantsBlend != usingBlendPipeline {
+                enc.setRenderPipelineState(wantsBlend ? blendPipeline! : renderPipeline)
+                usingBlendPipeline = wantsBlend
+            }
+            p.u.blend = wantsBlend ? BlendModes.shaderID(p.blend) : 0
             enc.setVertexBytes(&p.u, length: MemoryLayout<Uniforms>.stride, index: 0)
             enc.setFragmentBytes(&p.u, length: MemoryLayout<Uniforms>.stride, index: 0)
             enc.setFragmentTexture(p.tex0, index: 0)
@@ -358,6 +409,7 @@ public final class Compositor: @unchecked Sendable {
                 geometry(&u, transform: layer.transform, canvas: format, size: SIMD2(Float(dw), Float(dh)),
                          cornerRadius: layer.cornerRadius * Self.radiusFactor(dw, dh, canvas: format))
                 var p = Prepared(u: u, tex0: t0, tex1: t1)
+                p.radiusFactor = Self.radiusFactor(dw, dh, canvas: format)
                 if let pipeline = layer.colorPipeline {
                     if let mid = acquireIntermediate(width: w, height: h) {
                         retainer.pooled.append(mid)
