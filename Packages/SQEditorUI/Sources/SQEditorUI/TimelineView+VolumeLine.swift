@@ -52,10 +52,18 @@ extension TimelineView {
         return (t.clip.id, id)
     }
 
+    /// An audio transition on an edge replaces the fade handle there (Premiere: the transition takes the handle's place).
+    func hiddenFadeHandles(of clip: Clip) -> Set<FadeHandle> {
+        var h: Set<FadeHandle> = []
+        if timeline.hasAudioTransition(clip: clip.id, head: true) { h.insert(.head) }
+        if timeline.hasAudioTransition(clip: clip.id, head: false) { h.insert(.tail) }
+        return h
+    }
+
     /// Fade handles (head and tail squares on the clip) come before the line: they sit at the top, away from it.
     private func beginFadeDrag(at p: CGPoint) -> Bool {
         guard let t = volumeTarget(at: p), t.rect.contains(CGPoint(x: p.x, y: t.rect.midY)),
-              let h = VolumeLine.fadeHandle(clip: t.clip, clipRect: t.rect, at: p) else { return false }
+              let h = VolumeLine.fadeHandle(clip: t.clip, clipRect: t.rect, at: p, hidden: hiddenFadeHandles(of: t.clip)) else { return false }
         onPointerDown?()
         let len = h == .head ? t.clip.audioFadeIn : t.clip.audioFadeOut
         fadeDrag = FadeDrag(handle: h, original: t.clip, startX: p.x, startLength: len, rect: t.rect, last: t.clip)

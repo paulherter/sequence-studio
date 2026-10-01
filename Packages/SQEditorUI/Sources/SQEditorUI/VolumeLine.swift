@@ -99,7 +99,7 @@ public enum VolumeLine {
 
 /// Fade handles: the two small squares near the top corners of an audio clip (Premiere's fade handles). Dragging one
 /// sets the head or tail fade as keys on the volume line (`FadeKeys`).
-public enum FadeHandle: Sendable, Equatable { case head, tail }
+public enum FadeHandle: Sendable, Hashable { case head, tail }
 
 extension VolumeLine {
     public static let handleSize: CGFloat = 8
@@ -118,13 +118,13 @@ extension VolumeLine {
     }
 
     /// The handle under `p`, if any. Tail wins when the two overlap on a very short clip.
-    public static func fadeHandle(clip: Clip, clipRect: CGRect, at p: CGPoint) -> FadeHandle? {
+    public static func fadeHandle(clip: Clip, clipRect: CGRect, at p: CGPoint, hidden: Set<FadeHandle> = []) -> FadeHandle? {
         guard clipRect.width >= 4 * handleSize else { return nil }
         let pts = fadeHandlePoints(clip: clip, clipRect: clipRect)
         let r = handleSize / 2 + 2
         func hits(_ c: CGPoint) -> Bool { abs(p.x - c.x) <= r && abs(p.y - c.y) <= r }
-        if hits(pts.tail) { return .tail }
-        if hits(pts.head) { return .head }
+        if !hidden.contains(.tail), hits(pts.tail) { return .tail }
+        if !hidden.contains(.head), hits(pts.head) { return .head }
         return nil
     }
 

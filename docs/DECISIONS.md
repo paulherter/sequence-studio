@@ -157,5 +157,5 @@ Premiere semantics: Scale 100 % = one upright source pixel per sequence pixel (a
 - Source marks and Source markers are clip metadata outside the undo history; the poster frame is a normal undo step. `MediaRef.posterTime`, `MediaRef.sourceMarkers`: project v19, identity migration.
 - Deleting: a media item used in a sequence stays and the status line names the sequences; a sequence cannot be deleted when it is the last one or nested in another.
 
-## 2026-10-01: Remove Silences is an explicit timeline edit (audio-shortform)
-"Remove Silences..." (Clip > Audio Options) detects pauses from the waveform and ripples them out of the timeline after a dialog (threshold dB, minimum length, padding, preview count). It never runs automatically and does not change media; one undo step. Flagged for Paul before merge.
+## 2026-10-01: Remove Silences is an explicit timeline edit, hidden until Paul decides (audio-shortform)
+"Remove Silences..." detects pauses from the waveform as heard (gain, volume line and track fader included, through reverse and speed ramps) and ripples them out of the timeline after a dialog (threshold dB, minimum length, padding, preview count). It never runs automatically and does not change media; one undo step. OPEN: Paul has not decided whether it should exist. The code and tests stay, but the command is not shown (no menu entry, not in `AppController.isSupported`) while `FeatureFlags.removeSilences` (SQEditorUI/FeatureFlags.swift) is `false`. Switch it on with that one line.

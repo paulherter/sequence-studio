@@ -138,6 +138,8 @@ public final class AudioFeeder: @unchecked Sendable {
     private let control: Mutex<Control>
     private var sources: [UUID: any AudioSource] = [:]
     /// Time maps of remapped clip chains, built once and reused for every block (feeder thread only); a changed clip rebuilds.
+    /// Fader gain each bus ended the previous block with: a change is ramped linearly across the next block (no step, no click).
+    private var faderState: [FaderKey: (left: Double, right: Double)] = [:]
     private var timeMaps: [[Clip.ID]: (chain: [Clip], map: AudioTimeMap)] = [:]
     private let retimer: AudioRetimer
     private let mixL: UnsafeMutablePointer<Float>, mixR: UnsafeMutablePointer<Float>
@@ -323,6 +325,8 @@ public final class AudioFeeder: @unchecked Sendable {
         precondition(count <= blockFrames)
         let rate = Int64(sampleRate)
         let range = TimeRange(start: Time(startFrame, rate), duration: Time(Int64(count), rate))
+        var endState: [FaderKey: (left: Double, right: Double)] = [:]
+        defer { for (k, v) in endState { faderState[k] = v } }
         for seg in timeline.audioSegments(in: range, sequences: { sequences[$0] }) {
             let f0 = max(startFrame, Self.ceilFrame(seg.timeline.start, rate))
             let f1 = min(startFrame + Int64(count), Self.ceilFrame(seg.timeline.end, rate))
@@ -343,7 +347,10 @@ public final class AudioFeeder: @unchecked Sendable {
                 if let s = sources[seg.media] { source = s } else { source = try resolver(seg.media); sources[seg.media] = source }
             } catch { failedReads.add(1, ordering: .relaxed); continue }
             let (dl, dr) = destination(seg.nests.first?.track ?? seg.track)
-            let fader = Self.trackFader(timeline: timeline, track: seg.nests.first?.track ?? seg.track)
+            let fader = Self.faderChain(seg, top: timeline, sequences: sequences, monoSource: source.isMono)
+            let busKey = FaderKey(track: seg.nests.first?.track ?? seg.track, mono: source.isMono)
+            let previous = faderState[busKey] ?? fader
+            endState[busKey] = fader
             for (ch, dst) in [dl, dr].enumerated() {
                 do {
                     if let timeMap {
@@ -371,9 +378,15 @@ public final class AudioFeeder: @unchecked Sendable {
                         if got < n { (scratch + got).update(repeating: 0, count: n - got) }
                     }
                 } catch { failedReads.add(1, ordering: .relaxed); continue }
-                let side = ch == 0 ? fader.left : fader.right      // track fader x pan (same path for playback, scrub and export)
-                Self.accumulate(scratch, into: dst + dstOff, count: n, firstFrame: f0, rate: rate, animated: animated,
-                                gain: side == 1 ? gain : { gain($0) * side })
+                // Track fader x pan (same path for playback, scrub and export); a change since the last block ramps across this block.
+                let side = ch == 0 ? fader.left : fader.right, was = ch == 0 ? previous.left : previous.right
+                if was != side {
+                    Self.accumulate(scratch, into: dst + dstOff, count: n, firstFrame: f0, rate: rate, animated: true, gain: gain,
+                                    ramp: (Float(was), Float(side), offset: Int(f0 - startFrame), total: count))
+                } else {
+                    Self.accumulate(scratch, into: dst + dstOff, count: n, firstFrame: f0, rate: rate, animated: animated,
+                                    gain: side == 1 ? gain : { gain($0) * side })
+                }
             }
         }
     }
@@ -411,7 +424,13 @@ public final class AudioFeeder: @unchecked Sendable {
     }
 
     private static func accumulate(_ src: UnsafePointer<Float>, into dst: UnsafeMutablePointer<Float>, count: Int,
-                                   firstFrame: Int64, rate: Int64, animated: Bool, gain: (Int64) -> Double) {
+                                   firstFrame: Int64, rate: Int64, animated: Bool, gain: (Int64) -> Double,
+                                   ramp: (from: Float, to: Float, offset: Int, total: Int)? = nil) {
+        // `ramp`: an extra linear gain from `from` (block start) to `to` (block end), exact per sample.
+        @inline(__always) func r(_ i: Int) -> Float {
+            guard let ramp else { return 1 }
+            return ramp.from + (ramp.to - ramp.from) * Float(ramp.offset + i) / Float(ramp.total)
+        }
         if !animated {
             let g = Float(gain(firstFrame))
             for i in 0..<count { dst[i] += src[i] * g }
@@ -427,7 +446,7 @@ public final class AudioFeeder: @unchecked Sendable {
             let g1 = Float(gain(base + Int64(gainChunk)))
             for k in 0..<n {
                 let w = Float(f + Int64(k) - base) / Float(gainChunk)
-                dst[i + k] += src[i + k] * (g0 + (g1 - g0) * w)
+                dst[i + k] += src[i + k] * (g0 + (g1 - g0) * w) * r(i + k)
             }
             i += n
         }

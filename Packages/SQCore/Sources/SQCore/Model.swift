@@ -85,6 +85,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var audioTag: AudioTag?
     /// IDs of the volume keys the last Auto Duck run generated (v20); a re-run replaces exactly these.
     public var duckKeyIDs: [UUID] = []
+    /// IDs of the volume keys the audio fade handles created (v20); see `FadeMarks`.
+    public var audioFades = FadeMarks()
     /// Constant speed (v13). 100 % = `.normal`. Only media clips are retimed (nested sequences, generators and stills
     /// stay at 100 %; `Timeline.setSpeed` refuses them).
     public var speed: ClipSpeed = .normal
@@ -264,7 +266,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB, isEnabled, blendMode, holdFrame, motionEnabled, opacityEnabled, speedKeys, timeInterpolation
-        case audioTag, duckKeyIDs
+        case audioTag, duckKeyIDs, audioFades
     }
 
     public init(from d: Decoder) throws {
@@ -287,6 +289,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
         audioGainDB = try c.decodeIfPresent(Double.self, forKey: .audioGainDB) ?? 0
         audioTag = try c.decodeIfPresent(AudioTag.self, forKey: .audioTag)
         duckKeyIDs = try c.decodeIfPresent([UUID].self, forKey: .duckKeyIDs) ?? []
+        audioFades = try c.decodeIfPresent(FadeMarks.self, forKey: .audioFades) ?? FadeMarks()
         speedKeys = try c.decodeIfPresent(SpeedKeys.self, forKey: .speedKeys)
         timeInterpolation = try c.decodeIfPresent(TimeInterpolation.self, forKey: .timeInterpolation) ?? .frameSampling
         isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true

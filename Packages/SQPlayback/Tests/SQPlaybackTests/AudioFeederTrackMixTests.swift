@@ -48,7 +48,7 @@ private func played(_ f: AudioFeeder, _ n: Int) -> (l: [Float], r: [Float]) {
         #expect(c.l.allSatisfy { $0 == 0.5 } && c.r.allSatisfy { $0 == 0.5 })
         let o = mixed(feeder(left, m, constant(30_000)), left, from: 100, count: 512)
         #expect(o.r.allSatisfy { $0 == 0 })
-        #expect(o.l.allSatisfy { abs(Double($0) - 0.5 * 2.0.squareRoot()) < 1e-5 })
+        #expect(o.l.allSatisfy { abs(Double($0) - 0.5) < 1e-5 })
     }
 
     @Test func faderScalesBothSides() {
@@ -158,5 +158,83 @@ private func played(_ f: AudioFeeder, _ n: Int) -> (l: [Float], r: [Float]) {
         let t = Timeline(name: "t", format: fmt, tracks: [tr])
         let o = mixed(feeder(t, m, constant(30_000)), t, from: 0, count: 512)
         #expect(o.l.allSatisfy { $0 == 0 } && o.r.allSatisfy { $0 == 0 })
+    }
+}
+
+/// Nested sequences, fader ramps and the pan laws through the feeder.
+@Suite struct AudioFeederFaderRampTests {
+    private func clip(_ m: UUID, len: Int64 = 20_000) -> Clip {
+        Clip(name: "c", media: m, kind: .audio, source: TimeRange(start: .zero, duration: frames(len)), start: .zero)
+    }
+
+    @Test func nestedSequenceSoundsLikeItsContentAloneAndOuterFaderMultiplies() {
+        let m = UUID()
+        var it = Track(kind: .audio, clips: [clip(m)]); it.volumeDB = -6.0206; it.pan = 0.5
+        let inner = Timeline(name: "inner", format: fmt, tracks: [it])
+        let nest = Clip(name: "n", media: inner.id, kind: .audio, source: TimeRange(start: .zero, duration: frames(20_000)),
+                        start: .zero, sequence: inner.id)
+        func outer(_ db: Double) -> Timeline {
+            var ot = Track(kind: .audio, clips: [nest]); ot.volumeDB = db
+            return Timeline(name: "outer", format: fmt, tracks: [ot])
+        }
+        let src = constant(30_000, 0.8)
+        func render(_ t: Timeline, seqs: [Timeline.ID: Timeline]) -> (l: [Float], r: [Float]) {
+            let f = AudioFeeder(timeline: t, ring: RingBuffer(capacity: 1 << 14), blockFrames: 1024) { _ in src }
+            var l = [Float](repeating: 9, count: 512), r = l
+            l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in
+                f.mix(timeline: t, sequences: seqs, startFrame: 100, count: 512, left: lp.baseAddress!, right: rp.baseAddress!) } }
+            return (l, r)
+        }
+        let alone = render(inner, seqs: [:])
+        let nested = render(outer(0), seqs: [inner.id: inner])
+        #expect(alone.l.contains { $0 != 0 })
+        for i in 0..<512 {
+            #expect(abs(alone.l[i] - nested.l[i]) < 1e-6 && abs(alone.r[i] - nested.r[i]) < 1e-6)
+        }
+        let quieter = render(outer(-6.0206), seqs: [inner.id: inner])
+        #expect((0..<512).allSatisfy { abs(quieter.l[$0] - nested.l[$0] * 0.5) < 1e-5 })
+    }
+
+    @Test func aFaderChangeRampsAcrossTheNextBlockWithoutAStep() {
+        let m = UUID()
+        let base = Track(kind: .audio, clips: [clip(m)])
+        func tl(_ db: Double) -> Timeline {
+            var tr = base; tr.volumeDB = db                        // same track ID: a live fader move
+            return Timeline(name: "t", format: fmt, tracks: [tr])
+        }
+        let loud = tl(0), quiet = tl(-12)
+        let src = constant(30_000, 0.5)
+        let f = AudioFeeder(timeline: loud, ring: RingBuffer(capacity: 1 << 14), blockFrames: 1024) { _ in src }
+        func block(_ t: Timeline, _ from: Int64) -> [Float] {
+            var l = [Float](repeating: 9, count: 1024), r = l
+            l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in
+                f.mix(timeline: t, startFrame: from, count: 1024, left: lp.baseAddress!, right: rp.baseAddress!) } }
+            return l
+        }
+        let a = block(loud, 0), b = block(quiet, 1024), c = block(quiet, 2048)
+        let target = Float(0.5 * TrackPan.linear(volumeDB: -12))
+        let slope = (0.5 - target) / 1024
+        #expect(a.allSatisfy { $0 == 0.5 } && c.allSatisfy { abs($0 - target) < 1e-6 })
+        let all = a + b + c
+        let maxStep = zip(all, all.dropFirst()).map { abs($0 - $1) }.max()!
+        #expect(maxStep <= slope * 1.01 + 1e-7, "largest step \(maxStep) vs ramp slope \(slope)")
+        #expect(b.first! > 0.49 && abs(b.last! - target) < slope * 2)
+    }
+
+    @Test func monoAndStereoSourcesUseTheirOwnPanLaw() {
+        let m = UUID()
+        var tr = Track(kind: .audio, clips: [clip(m)]); tr.pan = 0.5
+        let t = Timeline(name: "t", format: fmt, tracks: [tr])
+        func render(_ s: MemoryAudioSource) -> (l: Float, r: Float) {
+            let f = AudioFeeder(timeline: t, ring: RingBuffer(capacity: 1 << 14), blockFrames: 1024) { _ in s }
+            let o = mixed(f, t, from: 100, count: 64)
+            return (o.l[10], o.r[10])
+        }
+        let st = render(MemoryAudioSource(left: [Float](repeating: 0.5, count: 30_000), right: [Float](repeating: 0.5, count: 30_000)))
+        #expect(abs(st.l - 0.25) < 1e-6 && st.r == 0.5)                            // balance: only the far side is attenuated
+        let mono = render(constant(30_000, 0.5))
+        let g = TrackPan.gains(pan: 0.5, stereoSource: false)
+        #expect(abs(Double(mono.l) - 0.5 * g.left) < 1e-6 && abs(Double(mono.r) - 0.5 * g.right) < 1e-6 && mono.r == 0.5)
+        #expect(st.l <= 0.5 && st.r <= 0.5 && mono.l <= 0.5 && mono.r <= 0.5)      // no pan boost above unity
     }
 }

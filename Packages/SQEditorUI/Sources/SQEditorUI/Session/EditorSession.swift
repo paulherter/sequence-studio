@@ -130,7 +130,7 @@ public final class EditorSession {
     public func performTimeline(_ name: String, coalescing key: String? = nil,
                                 _ body: (inout Timeline) throws -> Void) throws {
         guard let id = activeTimelineID else { throw EditError.timelineNotFound }
-        try perform(name, coalescing: key) { try $0.edit(id, body) }
+        try perform(name, coalescing: key) { try $0.edit(id) { try body(&$0); $0.normalizeAudioKeyMarks() } }
     }
 
     /// Like `performTimeline`, but a refused edit only sets `lastError`. Returns whether it was applied.

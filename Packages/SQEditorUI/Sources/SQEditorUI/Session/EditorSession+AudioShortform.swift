@@ -30,20 +30,56 @@ public enum AudioShortform {
         return out
     }
 
-    /// Pauses of `clip` in timeline time, found in the waveform peaks of its source range.
-    public static func silences(of clip: Clip, in data: WaveformData, thresholdDB: Double, minimumLength: Time) -> [TimeRange] {
-        let dur = clip.source.duration
-        guard dur > .zero else { return [] }
-        // One level per ~10 ms of source time; the window is an exact rational fraction of the source duration.
-        let n = max(1, Int((Double(dur.value) / Double(dur.timescale) * 100).rounded(.up)))
-        let peaks = data.peaks(in: clip.source, buckets: n)
-        let levels: [Float] = (0..<n).map { i in peaks.reduce(Float(0)) { m, ch in
-            i < ch.count ? max(m, abs(ch[i].min), abs(ch[i].max)) : m } }
-        let window = Time(dur.value, dur.timescale * Int64(n))
-        // Minimum length is in timeline time; the detector works in source time.
-        let minSource = clip.speed.scale(minimumLength)
-        return SilenceDetector.silences(levels: levels, window: window, thresholdDB: thresholdDB, minimumLength: minSource)
-            .compactMap { clip.timelineRange(forSource: TimeRange(start: clip.source.start + $0.start, duration: $0.duration)) }
+    /// Pauses of `clip` in timeline time, as heard: the source level goes through the clip's time mapping (reverse, speed,
+    /// ramps), Audio Gain, the volume line and the track fader before it is compared with the threshold. `sourcePeak` is the
+    /// linear peak of the media in a source range.
+    public static func silences(of clip: Clip, trackVolumeDB: Double = 0, thresholdDB: Double, minimumLength: Time,
+                                sourcePeak: (TimeRange) -> Float) -> [TimeRange] {
+        let (levels, window) = ClipLevels.audible(of: clip, trackVolumeDB: trackVolumeDB, sourcePeak: sourcePeak)
+        return SilenceDetector.silences(levels: levels, window: window, thresholdDB: thresholdDB, minimumLength: minimumLength)
+            .map { TimeRange(start: clip.start + $0.start, duration: $0.duration) }
+    }
+
+    /// Same, reading the peaks from a decoded waveform.
+    public static func silences(of clip: Clip, in data: WaveformData, trackVolumeDB: Double = 0, thresholdDB: Double,
+                                minimumLength: Time) -> [TimeRange] {
+        silences(of: clip, trackVolumeDB: trackVolumeDB, thresholdDB: thresholdDB, minimumLength: minimumLength) { r in
+            data.peaks(in: r, buckets: 1).reduce(Float(0)) { m, ch in
+                guard let p = ch.first else { return m }
+                return max(m, abs(p.min), abs(p.max))
+            }
+        }
+    }
+
+    /// Pauses of several overlapping or touching clips together: a range is silent only where EVERY clip covering it is
+    /// silent (the others are still heard there). Where clips do not overlap this is the plain union of their pauses.
+    /// Gaps between clips are not pauses.
+    public static func combinedSilences(_ clips: [(range: TimeRange, silences: [TimeRange])]) -> [TimeRange] {
+        let coverage = merged(clips.map(\.range))
+        let active = merged(clips.flatMap { activeRanges(of: $0.range, silences: $0.silences) })
+        return subtract(active, from: coverage)
+    }
+
+    /// `ranges` (sorted, disjoint) minus `cut` (sorted, disjoint).
+    static func subtract(_ cut: [TimeRange], from ranges: [TimeRange]) -> [TimeRange] {
+        var out: [TimeRange] = []
+        for r in ranges {
+            var cursor = r.start
+            for c in cut where c.end > r.start && c.start < r.end {
+                if c.start > cursor { out.append(TimeRange(start: cursor, duration: c.start - cursor)) }
+                cursor = max(cursor, c.end)
+            }
+            if r.end > cursor { out.append(TimeRange(start: cursor, duration: r.end - cursor)) }
+        }
+        return out
+    }
+}
+
+extension AudioShortform {
+    /// Audio tracks that are heard: not muted, and only the solo ones when any audio track is solo.
+    public static func audibleTracks(_ t: Timeline) -> [Track] {
+        let audio = t.tracks.filter { $0.kind == .audio && !$0.isMuted }
+        return audio.contains { $0.isSolo } ? audio.filter(\.isSolo) : audio
     }
 }
 
@@ -88,12 +124,13 @@ extension EditorSession {
         return chosen.isEmpty ? music : chosen
     }
 
-    /// Dialogue activity on the timeline: every unmuted Dialogue clip minus its pauses (`silences` gives them per clip).
+    /// Dialogue activity on the timeline: every audible Dialogue clip minus its pauses (`silences` gives them per clip).
+    /// Disabled clips and muted tracks are silent and do not duck; with a solo audio track only the solo tracks count.
     public func dialogueRanges(silences: (Clip) -> [TimeRange]) -> [TimeRange] {
         guard let t = activeTimeline else { return [] }
         var all: [TimeRange] = []
-        for track in t.tracks where track.kind == .audio && !track.isMuted {
-            for c in track.clips where c.audioTag == .dialogue { all += AudioShortform.activeRanges(of: c.timeline, silences: silences(c)) }
+        for track in AudioShortform.audibleTracks(t) {
+            for c in track.clips where c.audioTag == .dialogue && c.isEnabled { all += AudioShortform.activeRanges(of: c.timeline, silences: silences(c)) }
         }
         return AudioShortform.merged(all)
     }
@@ -147,11 +184,13 @@ extension EditorSession {
 
     // MARK: Remove silences
 
-    /// Frame-aligned cuts for the clips' pauses (timeline time), merged over all clips.
+    /// Frame-aligned cuts for the clips' pauses (timeline time). Only audible clips count (enabled, on an unmuted track,
+    /// solo respected); where selected clips overlap, a range is a pause only if all of them are silent there.
     public func silenceCuts(for clips: [Clip], silences: (Clip) -> [TimeRange], padding: Time) -> [TimeRange] {
-        guard let fd = activeTimeline?.frameDuration else { return [] }
-        let all = clips.flatMap { silences($0) }
-        return SilenceRemoval.cuts(silences: AudioShortform.merged(all), padding: padding, frameDuration: fd)
+        guard let t = activeTimeline else { return [] }
+        let heard = Set(AudioShortform.audibleTracks(t).flatMap(\.clips).filter(\.isEnabled).map(\.id))
+        let parts = clips.filter { heard.contains($0.id) }.map { (range: $0.timeline, silences: silences($0)) }
+        return SilenceRemoval.cuts(silences: AudioShortform.combinedSilences(parts), padding: padding, frameDuration: t.frameDuration)
     }
 
     /// Ripple-deletes the cuts on the tracks of `clips` and of their linked partners: one undo step, all or nothing.

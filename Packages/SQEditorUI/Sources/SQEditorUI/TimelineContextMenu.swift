@@ -69,13 +69,13 @@ public enum TimelineContextMenu {
             TimelineMenuItem(.nest, "Nest…", enabled: hasClips, separatorBefore: true),
             TimelineMenuItem(.speed, "Speed/Duration…", enabled: canRetime, key: "r"),
             TimelineMenuItem(.audioGain, "Audio Gain…", enabled: hasAudio, key: "g", modifiers: []),
-            TimelineMenuItem(.removeSilences, "Remove Silences…", enabled: hasAudio),
+            TimelineMenuItem(.removeSilences, "Remove Silences…", enabled: hasAudio),   // hidden by `FeatureFlags.removeSilences`
             TimelineMenuItem(.timeRemapping, "Show Time Remapping", enabled: hasVideoMedia),
             TimelineMenuItem(.setToFrameSize, "Set to Frame Size", enabled: hasPictures, separatorBefore: true),
             TimelineMenuItem(.scaleToFrameSize, "Scale to Frame Size", enabled: hasPictures),
             TimelineMenuItem(.label, "Label", enabled: hasClips, separatorBefore: true),
             TimelineMenuItem(.rename, "Rename…", enabled: clips.count == 1),
-        ]
+        ].filter { FeatureFlags.removeSilences || $0.action != .removeSilences }
     }
 
     /// Menu of caption segments (right-click on a caption): edit the text, split at the playhead, merge, delete.

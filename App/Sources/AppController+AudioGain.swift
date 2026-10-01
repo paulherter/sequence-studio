@@ -50,7 +50,10 @@ extension AppController {
 
     /// Pauses of a clip from its waveform; nil when the waveform has not been read yet.
     private func silences(of clip: Clip, thresholdDB: Double, minimum: Time) -> [TimeRange]? {
-        panels.waveforms.data[clip.media].map { AudioShortform.silences(of: clip, in: $0, thresholdDB: thresholdDB, minimumLength: minimum) }
+        let fader = session.activeTimeline?.tracks.first { $0.clips.contains { $0.id == clip.id } }?.volumeDB ?? 0
+        return panels.waveforms.data[clip.media].map {
+            AudioShortform.silences(of: clip, in: $0, trackVolumeDB: fader, thresholdDB: thresholdDB, minimumLength: minimum)
+        }
     }
 
     func requestMatchLoudness() {

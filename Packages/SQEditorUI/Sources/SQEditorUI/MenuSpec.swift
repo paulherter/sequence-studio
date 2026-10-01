@@ -49,8 +49,9 @@ public enum EditorMenus {
     ]) + [
         .submenu("Audio Options", cmds([
             .audioGain, .audioGainDown, .audioGainUp, nil,
-            .matchLoudness, .autoDuck, .removeSilences, nil,
-            .tagDialogue, .tagMusic, .tagSFX,
+            .matchLoudness, .autoDuck,
+        ] + (FeatureFlags.removeSilences ? [.removeSilences] : []) + [
+            nil, .tagDialogue, .tagMusic, .tagSFX,
         ])),
         .submenu("Video Options", cmds([.addFrameHold, .insertFrameHold, nil, .videoFadeIn, .videoFadeOut])),
         .separator,

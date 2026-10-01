@@ -80,20 +80,43 @@ private func audio(_ start: Int64 = 0, _ dur: Int64 = 10) -> Clip {
 }
 
 @Suite struct TrackPanTests {
-    @Test func centreIsUnityAndPowerIsConstant() {
-        let c = TrackPan.gains(pan: 0)
-        #expect(c.left == 1 && c.right == 1)
-        for p in stride(from: -1.0, through: 1.0, by: 0.25) {
-            let g = TrackPan.gains(pan: p)
-            #expect(abs(g.left * g.left + g.right * g.right - 2) < 1e-12)
+    @Test func centreIsUnityForBothLaws() {
+        for stereo in [true, false] {
+            let c = TrackPan.gains(pan: 0, stereoSource: stereo)
+            #expect(c.left == 1 && c.right == 1)
         }
     }
 
+    @Test func panNeverBoostsAboveUnity() {
+        for stereo in [true, false] {
+            for p in stride(from: -1.0, through: 1.0, by: 0.05) {
+                let g = TrackPan.gains(pan: p, stereoSource: stereo)
+                #expect(g.left <= 1 && g.right <= 1 && g.left >= 0 && g.right >= 0, "pan \(p) stereo \(stereo)")
+            }
+        }
+    }
+
+    @Test func stereoBalanceAttenuatesOnlyTheOppositeSide() {
+        let r = TrackPan.gains(pan: 0.5)
+        #expect(r.right == 1 && abs(r.left - 0.5) < 1e-12)
+        let l = TrackPan.gains(pan: -0.25)
+        #expect(l.left == 1 && abs(l.right - 0.75) < 1e-12)
+    }
+
+    @Test func monoUsesEqualPowerAndIsContinuousThroughTheCentre() {
+        let g = TrackPan.gains(pan: -0.5, stereoSource: false)
+        #expect(g.left == 1 && abs(g.right - 2.0.squareRoot() * sin(Double.pi / 8)) < 1e-12)
+        let near = TrackPan.gains(pan: 0.001, stereoSource: false)
+        #expect(abs(near.left - 1) < 0.01 && near.right == 1)       // no step next to the centre
+    }
+
     @Test func hardLeftSilencesTheRight() {
-        let g = TrackPan.gains(pan: -1)
-        #expect(abs(g.right) < 1e-12 && g.left > 1)
-        #expect(abs(TrackPan.gains(pan: 1).left) < 1e-12)
-        #expect(TrackPan.gains(pan: -5).right == TrackPan.gains(pan: -1).right)
+        for stereo in [true, false] {
+            let g = TrackPan.gains(pan: -1, stereoSource: stereo)
+            #expect(abs(g.right) < 1e-12 && g.left == 1)
+            #expect(abs(TrackPan.gains(pan: 1, stereoSource: stereo).left) < 1e-12)
+            #expect(TrackPan.gains(pan: -5, stereoSource: stereo).right == TrackPan.gains(pan: -1, stereoSource: stereo).right)
+        }
     }
 
     @Test func faderFloorMutes() {
