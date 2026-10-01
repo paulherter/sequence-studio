@@ -19,6 +19,15 @@ public final class TextInspectorView: NSView {
     private let lineSpacingField = NSTextField()
     private let trackingField = NSTextField()
     private let italicCheck = NSButton(checkboxWithTitle: "Italic", target: nil, action: nil)
+    private let capsCheck = NSButton(checkboxWithTitle: "All Caps", target: nil, action: nil)
+    private let strokePositionPopup = NSPopUpButton(frame: .zero, pullsDown: false)
+    /// Premiere's six align buttons (left, centre, right, top, middle, bottom), momentary.
+    private let alignFrameControl = NSSegmentedControl(frame: .zero)
+    private static let alignSymbols: [(FrameAlignment, String, String)] = [
+        (.left, "align.horizontal.left", "Align Left"), (.centerHorizontally, "align.horizontal.center", "Align Center Horizontally"),
+        (.right, "align.horizontal.right", "Align Right"), (.top, "align.vertical.top", "Align Top"),
+        (.centerVertically, "align.vertical.center", "Align Center Vertically"), (.bottom, "align.vertical.bottom", "Align Bottom"),
+    ]
     private let vAlignControl = NSSegmentedControl(labels: ["Top", "Middle", "Bottom"], trackingMode: .selectOne,
                                                    target: nil, action: nil)
     private let boxOpacityField = NSTextField()
@@ -81,6 +90,22 @@ public final class TextInspectorView: NSView {
         vAlignControl.toolTip = "Vertical alignment inside an area text box"
         italicCheck.target = self; italicCheck.action = #selector(italicToggled)
         italicCheck.font = Theme.Fonts.small; italicCheck.controlSize = .small
+        capsCheck.target = self; capsCheck.action = #selector(capsToggled)
+        capsCheck.font = Theme.Fonts.small; capsCheck.controlSize = .small
+        strokePositionPopup.addItems(withTitles: ["Outside", "Centre"])
+        strokePositionPopup.font = Theme.Fonts.small; strokePositionPopup.controlSize = .small
+        strokePositionPopup.target = self; strokePositionPopup.action = #selector(strokePositionChanged)
+        strokePositionPopup.toolTip = "Outside keeps the letters whole; Centre draws the stroke over the letter edge"
+        alignFrameControl.segmentCount = Self.alignSymbols.count
+        alignFrameControl.trackingMode = .momentary
+        alignFrameControl.controlSize = .small
+        for (i, s) in Self.alignSymbols.enumerated() {
+            alignFrameControl.setImage(NSImage(systemSymbolName: s.1, accessibilityDescription: s.2), forSegment: i)
+            alignFrameControl.setToolTip(s.2, forSegment: i)
+            alignFrameControl.setWidth(30, forSegment: i)
+        }
+        alignFrameControl.target = self; alignFrameControl.action = #selector(alignToFrame)
+        alignFrameControl.setAccessibilityLabel("Align to frame")
         for (well, sel) in [(colorWell, #selector(colorChanged)), (strokeWell, #selector(strokeColorChanged)),
                             (boxWell, #selector(boxColorChanged)), (shadowWell, #selector(shadowColorChanged))] {
             well.target = self; well.action = sel
@@ -105,12 +130,14 @@ public final class TextInspectorView: NSView {
             section("Text"),
             row("Font", [fontPopup]),
             row("Weight", [weightPopup, italicCheck]),
-            row("Size", [sizeField, colorWell]),
+            row("Size", [sizeField, colorWell, capsCheck]),
             row("Alignment", [alignControl]),
             row("Vertical", [vAlignControl]),
             row("Tracking", [trackingField, caption("Leading"), lineSpacingField]),
+            row("Align", [alignFrameControl]),
             section("Appearance"),
             row(nil, [strokeCheck, strokeWell, caption("Width"), strokeWidthField]),
+            row("Stroke", [strokePositionPopup]),
             row(nil, [boxCheck, boxWell]),
             row("Padding", [padXField, padYField]),
             row("Radius", [radiusField, caption("Opacity"), boxOpacityField]),
@@ -198,13 +225,18 @@ public final class TextInspectorView: NSView {
         if let i = Self.weights.firstIndex(where: { $0.1 == s.weight }) { weightPopup.selectItem(at: i) }
         setNumber(sizeField, s.size); setNumber(lineSpacingField, s.lineSpacing); setNumber(trackingField, s.tracking)
         italicCheck.state = s.italic ? .on : .off
+        capsCheck.state = s.allCaps ? .on : .off
         vAlignControl.selectedSegment = [TextVerticalAlignment.top, .middle, .bottom].firstIndex(of: s.verticalAlignment) ?? 0
         colorWell.color = nsColor(s.color)
         alignControl.selectedSegment = [TextAlignment.left, .center, .right].firstIndex(of: s.alignment) ?? 1
 
         strokeCheck.state = s.stroke == nil ? .off : .on
         strokeWell.isEnabled = s.stroke != nil; strokeWidthField.isEnabled = s.stroke != nil
-        if let v = s.stroke { strokeWell.color = nsColor(v.color); setNumber(strokeWidthField, v.width) }
+        strokePositionPopup.isEnabled = s.stroke != nil
+        if let v = s.stroke {
+            strokeWell.color = nsColor(v.color); setNumber(strokeWidthField, v.width)
+            strokePositionPopup.selectItem(at: v.position == .outside ? 0 : 1)
+        }
 
         boxCheck.state = s.background == nil ? .off : .on
         for c in [boxWell, padXField, padYField, radiusField, boxOpacityField] as [NSControl] { c.isEnabled = s.background != nil }
@@ -257,6 +289,12 @@ public final class TextInspectorView: NSView {
         if a.indices.contains(i) { model.setVerticalAlignment(a[i]) }
     }
     @objc private func italicToggled() { model.setItalic(italicCheck.state == .on) }
+    @objc private func capsToggled() { model.setAllCaps(capsCheck.state == .on) }
+    @objc private func strokePositionChanged() { model.setStrokePosition(strokePositionPopup.indexOfSelectedItem == 1 ? .centre : .outside) }
+    @objc private func alignToFrame() {
+        let i = alignFrameControl.selectedSegment
+        if Self.alignSymbols.indices.contains(i) { model.alignToFrame(Self.alignSymbols[i].0) }
+    }
     @objc private func inChanged() { if let id = inPopup.selectedItem?.representedObject as? String { model.setInAnimation(id) } }
     @objc private func outChanged() { if let id = outPopup.selectedItem?.representedObject as? String { model.setOutAnimation(id) } }
 

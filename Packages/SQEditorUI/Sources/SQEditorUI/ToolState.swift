@@ -6,6 +6,8 @@ public enum TimelineTool: Sendable, Hashable, CaseIterable {
     case selection, trackSelectForward, rippleEdit, rollEdit, slip, slide, razor, hand
     /// Rate Stretch (R): dragging a clip edge changes the speed instead of trimming.
     case rateStretch
+    /// Zoom (Z): click zooms in, Option-click out, drag a box to zoom to it.
+    case zoom
     /// Pen, shape and mask are column slots only (scope addition, later); `type` is the Type tool (behaviour: C2).
     case pen, shape, mask, type
 
@@ -24,6 +26,7 @@ public enum TimelineTool: Sendable, Hashable, CaseIterable {
         case "h": self = .hand
         case "t": self = .type
         case "r": self = .rateStretch
+        case "z": self = .zoom
         default: return nil
         }
     }
@@ -43,6 +46,7 @@ public enum TimelineTool: Sendable, Hashable, CaseIterable {
         case .mask: "o"
         case .type: "t"
         case .rateStretch: "r"
+        case .zoom: "z"
         }
     }
 }
@@ -97,7 +101,10 @@ public enum TimelineEdit: Sendable, Equatable {
     case move(Clip.ID, to: Time, track: Track.ID?)
     /// Move with linked partners retargeted to their own tracks (mirrored track change).
     case moveGroup(Clip.ID, to: Time, track: Track.ID?, partners: [Clip.ID: Track.ID])
+    /// Cmd+Option-drag "rearrange": lifts the clip, closes its old gap, inserts it at the drop.
     case moveInsert(Clip.ID, to: Time, track: Track.ID?)
+    /// Cmd-drag: insert at the drop, the old place stays as a gap.
+    case insertMove(Clip.ID, to: Time, track: Track.ID?)
     case lift([Clip.ID])
     case rippleDelete([Clip.ID])
     case trim(Clip.ID, edge: ClipEdge, by: Time)
@@ -112,6 +119,8 @@ public enum TimelineEdit: Sendable, Equatable {
     case addEdit(at: Time, tracks: [Track.ID]?)
     /// Option-drag: like `moveGroup`, but the originals stay and the copies get the identities in `spec`.
     case copyGroup(Clip.ID, to: Time, track: Track.ID?, partners: [Clip.ID: Track.ID], spec: CopySpec)
+    /// Cmd+Option-drag: insert a copy at the drop time, the original stays.
+    case insertCopy(Clip.ID, to: Time, track: Track.ID?, spec: CopySpec)
     case nudge([Clip.ID], by: Time)
     case closeGap(Track.ID, at: Time)
     case link([Clip.ID])
@@ -126,6 +135,7 @@ public enum TimelineEdit: Sendable, Equatable {
         case let .move(id, start, track): try t.move(id, to: start, track: track)
         case let .moveGroup(id, start, track, partners): try t.move(id, to: start, track: track, retarget: partners)
         case let .moveInsert(id, start, track): try t.moveInsert(id, to: start, track: track)
+        case let .insertMove(id, start, track): try t.insertMove(id, to: start, track: track)
         case .lift(let ids): try t.lift(ids)
         case .rippleDelete(let ids): _ = try t.rippleDelete(ids)
         case let .trim(id, edge, d): try t.trim(id, edge: edge, by: d)
@@ -137,6 +147,7 @@ public enum TimelineEdit: Sendable, Equatable {
         case let .slide(id, d): try t.slide(id, by: d)
         case let .addEdit(at, ids): _ = try t.addEdit(at: at, tracks: ids)
         case let .copyGroup(id, start, track, partners, spec): try t.move(id, to: start, track: track, retarget: partners, copy: spec)
+        case let .insertCopy(id, start, track, spec): try t.insertCopy(id, to: start, track: track, copy: spec)
         case let .nudge(ids, d): try t.nudge(Set(ids), by: d)
         case let .closeGap(track, at): try t.closeGap(on: track, at: at)
         case .link(let ids): try t.link(Set(ids))

@@ -512,9 +512,9 @@ private func click(_ i: inout TimelineInteraction, _ p: CGPoint, _ m: GestureMod
 
     @Test func toolKeys() {
         let pairs: [(Character, TimelineTool)] = [("v", .selection), ("A", .trackSelectForward), ("b", .rippleEdit),
-                                                  ("n", .rollEdit), ("y", .slip), ("u", .slide), ("c", .razor), ("h", .hand)]
+                                                  ("n", .rollEdit), ("y", .slip), ("u", .slide), ("c", .razor), ("h", .hand), ("z", .zoom)]
         for (k, t) in pairs { #expect(TimelineTool(key: k) == t); #expect(TimelineTool(key: t.key) == t) }
-        #expect(TimelineTool(key: "z") == nil)
+        #expect(TimelineTool(key: "k") == nil)
     }
 
     @Test func clicksOnRulerAndHeaderAreIgnored() {

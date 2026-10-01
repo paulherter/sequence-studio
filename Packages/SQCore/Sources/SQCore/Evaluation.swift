@@ -131,7 +131,7 @@ extension Timeline {
                              visiting: Set<Timeline.ID>) -> [LayerRequest] {
         var out: [LayerRequest] = []
         for track in tracks where track.kind == .video && track.isVisible {
-            guard let c = track.clips.first(where: { $0.timeline.contains(t) }) else { continue }
+            guard let c = track.clips.first(where: { $0.isEnabled && $0.timeline.contains(t) }) else { continue }
             if let seqID = c.sequence {
                 guard !visiting.contains(seqID), let inner = sequences(seqID) else { continue }
                 let g = LayerGroup(clip: c.id, track: track.id, sequence: seqID, format: inner.format,
@@ -162,7 +162,7 @@ extension Timeline {
         let anySolo = audio.contains { $0.isSolo }
         var out: [AudioSegment] = []
         for track in audio where !track.isMuted && (!anySolo || track.isSolo) {
-            for c in track.clips {
+            for c in track.clips where c.isEnabled {
                 guard let r = c.timeline.intersection(range), !r.isEmpty else { continue }
                 let a = r.start - c.start
                 let innerStart = c.sourceInstant(atLocal: a)

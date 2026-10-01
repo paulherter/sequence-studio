@@ -25,12 +25,16 @@ public struct TextTemplate: Sendable, Hashable, Codable {
     public var animation: KeyframeTemplate?
     /// Area text: the wrap width and height of the box. Nil = point text (one line per paragraph, grows with the text).
     public var box: TextBox?
+    /// Words drawn in another colour (karaoke captions); nil for plain text.
+    public var highlight: TextHighlight?
 
-    public init(name: String, text: String, style: TextStyle, animation: KeyframeTemplate? = nil, box: TextBox? = nil) {
+    public init(name: String, text: String, style: TextStyle, animation: KeyframeTemplate? = nil, box: TextBox? = nil,
+                highlight: TextHighlight? = nil) {
         self.name = name; self.text = text; self.style = style; self.animation = animation; self.box = box
+        self.highlight = highlight
     }
 
-    private enum CodingKeys: String, CodingKey { case formatVersion, name, text, style, animation, box }
+    private enum CodingKeys: String, CodingKey { case formatVersion, name, text, style, animation, box, highlight }
 
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
@@ -39,6 +43,7 @@ public struct TextTemplate: Sendable, Hashable, Codable {
         style = try c.decode(TextStyle.self, forKey: .style)
         animation = try c.decodeIfPresent(KeyframeTemplate.self, forKey: .animation)
         box = try c.decodeIfPresent(TextBox.self, forKey: .box)
+        highlight = try c.decodeIfPresent(TextHighlight.self, forKey: .highlight)
     }
 
     public func encode(to encoder: Encoder) throws {
@@ -49,6 +54,7 @@ public struct TextTemplate: Sendable, Hashable, Codable {
         try c.encode(style, forKey: .style)
         try c.encodeIfPresent(animation, forKey: .animation)
         try c.encodeIfPresent(box, forKey: .box)
+        try c.encodeIfPresent(highlight, forKey: .highlight)
     }
 
     /// Pretty-printed JSON with sorted keys (stable for diffs).

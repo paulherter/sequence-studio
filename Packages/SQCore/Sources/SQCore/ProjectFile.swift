@@ -34,7 +34,38 @@ public enum ProjectFile {
     public typealias JSONObject = [String: Any]
     /// Upgrades the top-level object from version N to N+1, keyed by N.
     public typealias Migrations = [Int: (JSONObject) throws -> JSONObject]
-    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7, 7: migrateV7toV8, 8: migrateV8toV9, 9: migrateV9toV10, 10: migrateV10toV11, 11: migrateV11toV12, 12: migrateV12toV13, 13: migrateV13toV14, 14: migrateV14toV15, 15: migrateV15toV16, 22: migrateV22toV23] }
+    /// Steps that change data. One entry per version, one line each, so streams that merge out of order never
+    /// collide on a line or on a key. A version without an entry here is an identity step (see `migrations`).
+    static var realMigrations: Migrations {
+        var t: Migrations = [:]
+        t[1] = migrateV1toV2
+        t[2] = migrateV2toV3
+        t[3] = migrateV3toV4
+        t[4] = migrateV4toV5
+        t[5] = migrateV5toV6
+        t[6] = migrateV6toV7
+        t[7] = migrateV7toV8
+        t[8] = migrateV8toV9
+        t[9] = migrateV9toV10
+        t[10] = migrateV10toV11
+        t[11] = migrateV11toV12
+        t[12] = migrateV12toV13
+        t[13] = migrateV13toV14
+        t[14] = migrateV14toV15
+        t[15] = migrateV15toV16
+        t[16] = migrateV16toV17
+        t[17] = migrateV17toV18
+        t[20] = migrateV20toV21
+        t[22] = migrateV22toV23
+        return t
+    }
+    /// The full chain 1..<currentVersion. Missing steps are identity: every format change since v2 only added
+    /// fields that are optional on decode.
+    public static var migrations: Migrations {
+        var t = realMigrations
+        for v in 1..<currentVersion where t[v] == nil { t[v] = { $0 } }
+        return t
+    }
 
     /// v2: `Timeline.frameDuration` moved into `Timeline.format` (defaults 1920x1080, 48 kHz).
     /// Track flags, `inOut` and `markers` are optional on decode, so nothing else changes.
@@ -120,18 +151,25 @@ public enum ProjectFile {
     /// no tracking, upright, point text, no gap: identity migration. Older builds drop these fields on save.
     static func migrateV15toV16(_ obj: JSONObject) throws -> JSONObject { obj }
 
+    /// v17: transitions stream (placeholder so the chain is complete until that stream's migration lands): identity.
+    static func migrateV16toV17(_ obj: JSONObject) throws -> JSONObject { obj }
+
+
+    /// v18 (round 2, timeline-edit): `Clip.isEnabled` (Enable / Disable Clip). Optional on decode; absent = enabled:
+    /// identity migration. (v17 belongs to transitions; `currentVersion` is raised to the highest number on merge.)
+    static func migrateV17toV18(_ obj: JSONObject) throws -> JSONObject { obj }
+    /// v21 (stream captions-text; v17-v20 belong to the other round-2 streams): `CaptionTrack.styleRef/animationRef/karaoke`,
+    /// `CaptionItem.styleOverridden/words`, `TextStyle.allCaps`, `TextStroke.position`, `TextTemplate.highlight` (inside
+    /// text payloads). All optional on decode; absent = captions keep their own style, no word highlight, no overrides,
+    /// normal case, outside stroke: identity migration. Older builds drop these fields on save.
+    static func migrateV20toV21(_ obj: JSONObject) throws -> JSONObject { obj }
+
     /// v23 (stream speed-time): `Clip.speedKeys` (time remapping: segments with ramps and an origin) and
     /// `Clip.timeInterpolation`. Both optional on decode; absent = constant speed (`speed` / `reversed`) and frame sampling,
     /// so every v22 clip, constant-speed clips included, decodes and plays unchanged: identity migration. Older builds drop the
     /// speed track on save and then play the clip at its `speed` over its `source` hull.
     static func migrateV22toV23(_ obj: JSONObject) throws -> JSONObject { obj }
 
-    /// INTERIM, delete on merge: v16 -> v22 belong to the other round-2 streams (v17 transitions ... v22), whose blocks are
-    /// not on this branch. Until they are merged an older file steps through them as identity migrations so this branch can open it.
-    /// Once a real `migrations[N]` exists it wins (see `decode`).
-    static func interimIdentity(_ version: Int) -> ((JSONObject) throws -> JSONObject)? {
-        (16..<22).contains(version) ? { $0 } : nil
-    }
 
     static let fileName = "project.json"
     static let autosaveDir = "Autosave"
@@ -161,7 +199,7 @@ public enum ProjectFile {
               var version = obj["formatVersion"] as? Int, obj["project"] != nil else { throw ProjectFileError.corrupt }
         if version > currentVersion { throw ProjectFileError.newerVersion(found: version, supported: currentVersion) }
         while version < currentVersion {
-            guard let step = migrations[version] ?? interimIdentity(version) else { throw ProjectFileError.corrupt }
+            guard let step = migrations[version] else { throw ProjectFileError.corrupt }
             obj = try step(obj)
             version += 1
         }

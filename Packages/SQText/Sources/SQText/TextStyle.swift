@@ -37,10 +37,32 @@ public struct BoxPadding: Sendable, Hashable, Codable {
     public static let zero = BoxPadding(horizontal: 0, vertical: 0)
 }
 
+/// Where the stroke sits on the glyph outline. `width` is the visible thickness either way.
+public enum StrokePosition: String, Sendable, Hashable, Codable {
+    /// Outside the glyphs: the fill stays whole, the ink grows by the width (the default, and what older files mean).
+    case outside
+    /// Centred on the outline, drawn over the fill: half of it eats into the glyph, the ink grows by half the width.
+    case centre
+}
+
 public struct TextStroke: Sendable, Hashable, Codable {
     public var color: RGBAColor
     public var width: Double
-    public init(color: RGBAColor, width: Double) { self.color = color; self.width = max(0, width) }
+    public var position: StrokePosition
+    public init(color: RGBAColor, width: Double, position: StrokePosition = .outside) {
+        self.color = color; self.width = max(0, width); self.position = position
+    }
+
+    private enum CodingKeys: String, CodingKey { case color, width, position }
+
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        self.init(color: try c.decode(RGBAColor.self, forKey: .color), width: try c.decode(Double.self, forKey: .width),
+                  position: try c.decodeIfPresent(StrokePosition.self, forKey: .position) ?? .outside)
+    }
+
+    /// How far the stroke reaches beyond the glyph outline.
+    public var reach: Double { position == .outside ? width : width / 2 }
 }
 
 public struct TextBackground: Sendable, Hashable, Codable {
@@ -100,20 +122,24 @@ public struct TextStyle: Sendable, Hashable, Codable {
     public var italic: Bool
     /// Only used for area text (a box with a height).
     public var verticalAlignment: TextVerticalAlignment
+    /// All caps: the glyphs are drawn in capitals, the stored text stays as typed.
+    public var allCaps: Bool
 
     public init(fontName: String = "Helvetica", size: Double = 48, weight: FontWeight = .regular,
                 color: RGBAColor = .white, stroke: TextStroke? = nil, background: TextBackground? = nil,
                 shadow: TextShadow? = nil, alignment: TextAlignment = .center, lineSpacing: Double = 0,
-                tracking: Double = 0, italic: Bool = false, verticalAlignment: TextVerticalAlignment = .top) {
+                tracking: Double = 0, italic: Bool = false, verticalAlignment: TextVerticalAlignment = .top,
+                allCaps: Bool = false) {
         self.fontName = fontName; self.size = max(1, size); self.weight = weight; self.color = color
         self.stroke = stroke; self.background = background; self.shadow = shadow
         self.alignment = alignment; self.lineSpacing = lineSpacing
         self.tracking = tracking; self.italic = italic; self.verticalAlignment = verticalAlignment
+        self.allCaps = allCaps
     }
 
     private enum CodingKeys: String, CodingKey {
         case fontName, size, weight, color, stroke, background, shadow, alignment, lineSpacing
-        case tracking, italic, verticalAlignment
+        case tracking, italic, verticalAlignment, allCaps
     }
 
     /// Older files lack the newer keys: they read as 0 / false / top.
@@ -130,6 +156,7 @@ public struct TextStyle: Sendable, Hashable, Codable {
                   lineSpacing: try c.decode(Double.self, forKey: .lineSpacing),
                   tracking: try c.decodeIfPresent(Double.self, forKey: .tracking) ?? 0,
                   italic: try c.decodeIfPresent(Bool.self, forKey: .italic) ?? false,
-                  verticalAlignment: try c.decodeIfPresent(TextVerticalAlignment.self, forKey: .verticalAlignment) ?? .top)
+                  verticalAlignment: try c.decodeIfPresent(TextVerticalAlignment.self, forKey: .verticalAlignment) ?? .top,
+                  allCaps: try c.decodeIfPresent(Bool.self, forKey: .allCaps) ?? false)
     }
 }

@@ -30,12 +30,13 @@ public enum ExportSourceBuilder {
     /// caption style at the bottom safe area. Nil when burn-in is off or there are no captions.
     public static func burnIn(for timeline: Timeline, settings: ExportSettings) -> CaptionBurnIn? {
         guard settings.captions == .burnIn else { return nil }
-        let items = timeline.captionTracks.filter(\.isVisible).flatMap(\.items)
-            .filter { !$0.range.isEmpty && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
-        guard !items.isEmpty else { return nil }
-        let captions = items.map {
-            Caption(lines: $0.lines, range: $0.range, styleRef: $0.styleRef, animationRef: $0.animationRef)
+        let captions: [Caption] = timeline.captionTracks.filter(\.isVisible).flatMap { track in
+            track.items
+                .filter { !$0.range.isEmpty && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+                .map { Caption(lines: $0.lines, range: $0.range, styleRef: $0.styleRef, animationRef: $0.animationRef,
+                               words: $0.words, karaoke: track.karaoke) }
         }
+        guard !captions.isEmpty else { return nil }
         return CaptionBurnIn(captions: captions, library: .builtIn)
     }
 
