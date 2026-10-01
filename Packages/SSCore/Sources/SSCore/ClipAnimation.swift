@@ -103,8 +103,11 @@ extension Clip {
                              anchor: animation.anchor.value(atLocal: l))
     }
 
-    /// Linear gain at timeline time `t`, never negative.
-    public func volume(at t: Time) -> Double { max(animation.volume.value(atLocal: t - start), 0) }
+    /// Linear gain at timeline time `t` (volume line times Audio Gain), never negative.
+    public func volume(at t: Time) -> Double {
+        let v = max(animation.volume.value(atLocal: t - start), 0)
+        return audioGainDB == 0 ? v : v * pow(10, audioGainDB / 20)
+    }
 }
 
 /// Evaluated clip effects at one instant (siblings of `ClipTransform`, already clamped).
