@@ -17,6 +17,10 @@ public struct AppSettings: Sendable, Equatable {
     public var cacheFolder: URL?
     /// Cache size cap in gigabytes.
     public var cacheCapGB: Int
+    // Text
+    /// Length of a new text layer and of a caption added by hand, in seconds (Premiere: 5 s for a title).
+    public var defaultTextSeconds: Int = 5
+    public static let textDurationChoices = [1, 2, 3, 4, 5, 8, 10, 15, 30]
 
     public static let autosaveChoices: [TimeInterval] = [60, 120, 300, 600, 900]
     public static let cacheCapChoices = [10, 20, 50, 100, 250]
@@ -45,6 +49,7 @@ public struct AppSettings: Sendable, Equatable {
         static let audio = "settings.audioOutputUID"
         static let cache = "settings.cacheFolder"
         static let cap = "settings.cacheCapGB"
+        static let textSeconds = "settings.defaultTextSeconds"
     }
 
     public static func load(from d: UserDefaults = .standard) -> AppSettings {
@@ -61,6 +66,10 @@ public struct AppSettings: Sendable, Equatable {
             let v = d.integer(forKey: Key.cap)
             if v >= 1, v <= 10_000 { s.cacheCapGB = v }
         }
+        if d.object(forKey: Key.textSeconds) != nil {
+            let v = d.integer(forKey: Key.textSeconds)
+            if v >= 1, v <= 600 { s.defaultTextSeconds = v }
+        }
         return s
     }
 
@@ -71,6 +80,7 @@ public struct AppSettings: Sendable, Equatable {
         if let audioOutputUID { d.set(audioOutputUID, forKey: Key.audio) } else { d.removeObject(forKey: Key.audio) }
         if let cacheFolder { d.set(cacheFolder.path, forKey: Key.cache) } else { d.removeObject(forKey: Key.cache) }
         d.set(cacheCapGB, forKey: Key.cap)
+        d.set(defaultTextSeconds, forKey: Key.textSeconds)
     }
 }
 

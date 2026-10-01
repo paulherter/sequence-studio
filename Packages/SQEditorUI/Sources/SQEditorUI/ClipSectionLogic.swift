@@ -34,10 +34,23 @@ public enum CaptionMapping {
             let a = clip.timelineTime(forSource: s.start), b = clip.timelineTime(forSource: s.end)
             let r = clip.reversed ? TimeRange(start: b, end: a) : TimeRange(start: a, end: b)
             guard !r.isEmpty else { return nil }
-            return CaptionItem(lines: c.lines, range: r, styleRef: c.styleRef, animationRef: c.animationRef)
+            return CaptionItem(lines: c.lines, range: r, styleRef: c.styleRef, animationRef: c.animationRef,
+                               words: timelineWords(c.words, in: r, clip: clip))
         }
         guard let fd = frameDuration else { return items }
         return snapped(items, to: fd)
+    }
+
+    /// The spoken words of a caption on the timeline (karaoke): source times through the clip's speed, clamped into the
+    /// caption's range so a caption cut by the clip edge keeps one timed word per word. A reversed clip has no usable
+    /// word order, so its captions spread their words instead.
+    static func timelineWords(_ words: [CaptionWord], in r: TimeRange, clip: Clip) -> [CaptionWord] {
+        guard !clip.reversed else { return [] }
+        return words.map { w in
+            let a = min(max(clip.timelineTime(forSource: w.range.start), r.start), r.end)
+            let b = min(max(clip.timelineTime(forSource: w.range.end), a), r.end)
+            return CaptionWord(text: w.text, range: TimeRange(start: a - r.start, end: b - r.start))   // relative to the caption
+        }
     }
 
     /// Nearest frame for both ends; a caption that collapses gets one frame when the next one leaves room, else it goes.
@@ -54,6 +67,7 @@ public enum CaptionMapping {
                 e = s + fd
             }
             var c = it
+            c.shiftWordOrigin(by: s - it.range.start)   // word times are relative to the start
             c.range = TimeRange(start: s, end: e)
             out.append(c)
         }

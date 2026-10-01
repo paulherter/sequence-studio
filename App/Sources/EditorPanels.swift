@@ -22,6 +22,8 @@ final class EditorPanels {
     private var overlayGesture: (target: OverlayTarget, start: ClipTransform)?
     private struct TextEditing { var clip: Clip.ID; var template: TextTemplate; var animations: AnimationSet?; var isNew: Bool; var depth = 0; var first = true }
     private var textEditing: TextEditing?
+    /// A caption being typed into in the Program monitor (see `EditorPanels+Captions.swift`).
+    var captionEditing: CaptionEdit?
     private var failedRasters = Set<GeneratorRef>()
     let monitorModel: MonitorPanelModel
     let source: SourceMonitorController
@@ -457,8 +459,17 @@ final class EditorPanels {
         surface.onTypeClick = { [weak self] pos in self?.typeToolClick(pos) }
         surface.onTypeBox = { [weak self] centre, box in self?.typeToolBox(centre, box) }
         surface.onStyleToggle = { [weak self] t in self?.toggleEditedStyle(t) }
-        surface.onTextEdited = { [weak self] text in self?.textEdited(text) }
-        surface.onTextEditEnded = { [weak self] text in self?.textEditEnded(text) }
+        surface.onTextEdited = { [weak self] text in
+            guard let self, !captionEdited(text) else { return }   // a caption edited in the monitor, else the text layer
+            textEdited(text)
+        }
+        surface.onTextEditEnded = { [weak self] text in
+            guard let self, !captionEditEnded(text) else { return }
+            textEditEnded(text)
+        }
+        surface.captionHitTest = { [weak self] p in self?.captionHit(p) ?? false }
+        surface.onCaptionDoubleClick = { [weak self] p in self?.beginCaptionEditing(at: p) }
+        clipSections.onAlignToFrame = { [weak self] a in self?.alignSelectedText(a) }
     }
 
     /// One gesture = one undo step; the values land in Effect Controls live (same clip, same playhead).
@@ -511,7 +522,8 @@ final class EditorPanels {
         template.box = box
         if box != nil { template.text = "Text"; template.style.alignment = .left }
         let depth = session.undoDepth
-        guard session.addTextClip(template: template, position: position) != nil else { return }
+        guard session.addTextClip(template: template, duration: Time(Int64(AppSettings.load().defaultTextSeconds), 1),
+                                  position: position) != nil else { return }
         session.seek(to: session.playhead)   // an empty sequence clamped the engine to 0: show the new text now
         updateOverlay()
         beginTextEditing(selectAll: true, isNew: true, depth: depth)
@@ -520,14 +532,7 @@ final class EditorPanels {
     /// Topmost visible text clip under the playhead whose drawn rectangle contains `p` (sequence px from the centre).
     private func textClip(at p: Vec2) -> Clip.ID? {
         guard let tl = session.activeTimeline else { return nil }
-        for track in tl.tracks.filter({ $0.kind == .video && $0.isVisible }).reversed() {
-            for c in track.clips {
-                guard let ref = c.generator, ref.kind == GeneratorRef.text,
-                      let o = OverlayTarget.make(clip: c, project: session.project, timeline: tl, at: session.playhead) else { continue }
-                if LayerBounds.rect(size: o.size, transform: o.displayTransform).contains(CGPoint(x: p.x, y: p.y)) { return c.id }
-            }
-        }
-        return nil
+        return TextHitTest.topmostTextClip(at: p, in: tl, project: session.project, time: session.playhead)
     }
 
     /// Cmd+B / Cmd+I while editing: bold toggles between Bold and Regular, italic on and off, for the whole layer.

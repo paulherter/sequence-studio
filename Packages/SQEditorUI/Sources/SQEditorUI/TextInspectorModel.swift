@@ -104,6 +104,11 @@ public final class TextInspectorModel {
     public func setTracking(_ v: Double) { edit { $0.tracking = v } }
     public func setItalic(_ on: Bool) { edit { $0.italic = on } }
     public func setVerticalAlignment(_ a: TextVerticalAlignment) { edit { $0.verticalAlignment = a } }
+    public func setAllCaps(_ on: Bool) { edit { $0.allCaps = on } }
+
+    /// The six align buttons: the host moves the clip so its text block meets the frame (it owns the clip's transform).
+    @ObservationIgnored public var onAlignToFrame: ((FrameAlignment) -> Void)?
+    public func alignToFrame(_ a: FrameAlignment) { onAlignToFrame?(a) }
 
     // MARK: Stroke
 
@@ -111,6 +116,7 @@ public final class TextInspectorModel {
     public func setStrokeEnabled(_ on: Bool) { edit { $0.stroke = on ? lastStroke : nil } }
     public func setStrokeColor(_ c: RGBAColor) { edit { $0.stroke?.color = c } }
     public func setStrokeWidth(_ w: Double) { edit { $0.stroke?.width = max(0, w) } }
+    public func setStrokePosition(_ p: StrokePosition) { edit { $0.stroke?.position = p } }
 
     // MARK: Background box
 

@@ -34,6 +34,10 @@ public final class ProgramSurfaceView: NSView, NSTextViewDelegate {
     /// Text edited in place / editing finished (Esc, Cmd+Return, click away, tool change).
     public var onTextEdited: ((String) -> Void)?
     public var onTextEditEnded: ((String) -> Void)?
+    /// Double-click on a caption's text (select tool): the position (sequence px from the canvas centre); the host edits it.
+    public var onCaptionDoubleClick: ((Vec2) -> Void)?
+    /// Asked on a double-click: does a caption lie under this position? (Routes the click here instead of the overlay.)
+    public var captionHitTest: ((Vec2) -> Bool)?
     /// Cmd+B / Cmd+I while editing.
     public enum StyleToggle: Sendable { case bold, italic }
     public var onStyleToggle: ((StyleToggle) -> Void)?
@@ -114,11 +118,20 @@ public final class ProgramSurfaceView: NSView, NSTextViewDelegate {
 
     public override func hitTest(_ point: NSPoint) -> NSView? {
         if ColorPickHub.shared.isPicking, bounds.contains(convert(point, from: superview)) { return self }
+        if isCaptionDoubleClick(at: convert(point, from: superview)) { return self }
         guard tool != .select || textEditor != nil else { return super.hitTest(point) }
         let p = convert(point, from: superview)
         guard bounds.contains(p) else { return nil }
         if let tv = textEditor, tool != .hand, tv.frame.contains(p) { return super.hitTest(point) }
         return self
+    }
+
+    /// A double-click on a caption's text belongs to the caption, not to the clip overlay in front of the picture.
+    private func isCaptionDoubleClick(at p: CGPoint) -> Bool {
+        guard tool == .select, textEditor == nil, let hit = captionHitTest,
+              let e = NSApp.currentEvent, e.type == .leftMouseDown, e.clickCount == 2,
+              let pos = TypeToolPlacement.position(forClick: p, mapping: mapping) else { return false }
+        return hit(pos)
     }
 
     public override func resetCursorRects() {
@@ -144,7 +157,11 @@ public final class ProgramSurfaceView: NSView, NSTextViewDelegate {
         case .type:
             if textEditor != nil { endTextEditing() }
             typeStart = p
-        case .select: if textEditor != nil { endTextEditing() }
+        case .select:
+            if textEditor != nil { endTextEditing() }
+            if event.clickCount == 2, let pos = TypeToolPlacement.position(forClick: p, mapping: mapping), captionHitTest?(pos) == true {
+                onCaptionDoubleClick?(pos)
+            }
         }
     }
 
@@ -254,6 +271,15 @@ public final class ProgramSurfaceView: NSView, NSTextViewDelegate {
             tv.frame = CGRect(x: c.x - w / 2, y: c.y - h / 2, width: w, height: h)
         }
         applyEditorAttributes(tv, style: style, scale: k * s)
+        // The field edits the text as stored. With All Caps the picture shows capitals, whose widths differ from the
+        // typed letters, so the field is drawn visibly (dark backing, white text) instead of an invisible caret layer
+        // over the capitals: what you see in the field is what is stored.
+        let visible = style.allCaps
+        tv.drawsBackground = visible
+        tv.backgroundColor = NSColor.black.withAlphaComponent(0.8)
+        tv.textColor = visible ? .white : .clear
+        tv.selectedTextAttributes = [.backgroundColor: Theme.Colors.accent.withAlphaComponent(0.5),
+                                     .foregroundColor: visible ? NSColor.white : NSColor.clear]
     }
 
     /// Top inset that mirrors `TextStyle.verticalAlignment` inside the box.
