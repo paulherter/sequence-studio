@@ -13,10 +13,12 @@ extension AppController {
              .playInToOut, .toggleLoop, .exportFrame, .newBin, .matchFrame, .reverseMatchFrame,
              .tool, .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext,
              .delete, .rippleDelete, .toggleSnapping, .undo, .redo,
-             .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel,
+             .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel, .maximizeActivePanel, .resetLayout,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .minimizeAllTracks, .expandAllTracks,
              .importMedia, .newSequence, .save, .export:
+            true
+        case _ where isShellCommand(c):
             true
         default:
             false
@@ -28,6 +30,8 @@ extension AppController {
         // Editing text (a field or the timecode box): the standard commands go to the editor.
         if let tv = textResponder, forwardToText(c, tv) { return }
         if focusedPanel == .sourceMonitor, panels.source.handle(c) { return }
+        if executeShellCommand(c) { return }
+        if [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus, executeInEffectControls(c) { return }
         guard Self.isSupported(c) else {
             shell.statusBar.flash("\(c.title) is not available yet.")
             return
@@ -92,7 +96,7 @@ extension AppController {
         case .zoomFit: if effectControlsHasFocus { panels.effectModel.zoomToFit() } else { panels.timelineView.zoomToFit() }
         case .focusPanel(let p): showPanel(p)
         case .maximizePanel:
-            if let p = focusedPanel { maximizedPanel = maximizedPanel == p ? nil : p; applyWorkspace() }
+            if let p = panelUnderMouse() ?? focusedPanel { toggleMaximize(p) }
         case .importMedia:
             showPanel(.project)
             panels.projectView.runImportPanel()

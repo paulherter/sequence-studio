@@ -78,12 +78,16 @@ public struct CommandMap: Sendable {
         add(g, ch("z"), .command, .undo); add(g, ch("z"), [.command, .shift], .redo)
         add(g, ch("i"), .command, .importMedia); add(g, ch("n"), .command, .newSequence)
         add(g, ch("s"), .command, .save); add(g, ch("m"), .command, .export)
+        add(g, ch("s"), [.command, .shift], .saveAs); add(g, ch("o"), .command, .openProject)
+        add(g, ch("n"), [.command, .option], .newProject)
+        add(g, ch("k"), [.command, .option], .keyboardShortcuts); add(g, ch(","), .command, .preferences)
         // Panels (Premiere set; 6 maps to Library, our closest to the audio-side panel)
         let panels: [PanelID] = [.project, .sourceMonitor, .timeline, .programMonitor, .effectControls, .library, .effects]
         for (i, p) in panels.enumerated() {
             add(g, ch(Character(String(i + 1))), .shift, .focusPanel(p))
         }
-        add(g, ch("`"), .maximizePanel)
+        add(g, ch("`"), .maximizePanel); add(g, ch("`"), .shift, .maximizeActivePanel)
+        add(g, ch("0"), [.option, .shift], .resetLayout)
 
         // Timeline
         add(t, .up, .previousEditPoint); add(t, .down, .nextEditPoint)
@@ -93,7 +97,7 @@ public struct CommandMap: Sendable {
         add(t, ch("s"), .toggleSnapping)
         add(t, ch("l"), .command, .link); add(t, ch("g"), .command, .group)
         add(t, ch("f"), .matchFrame); add(t, ch("r"), .shift, .reverseMatchFrame)
-        add(t, ch("="), .zoomIn); add(t, ch("+"), .zoomIn); add(t, ch("-"), .zoomOut); add(t, ch("\\"), .zoomFit)
+        add(t, ch("="), .zoomIn); add(t, ch("-"), .zoomOut); add(t, ch("\\"), .zoomFit)
         // Track heights: modifier combinations only, so plain +/-/\ stay timeline zoom.
         add(t, ch("="), .command, .videoTracksTaller); add(t, ch("-"), .command, .videoTracksShorter)
         add(t, ch("="), .option, .audioTracksTaller); add(t, ch("-"), .option, .audioTracksShorter)

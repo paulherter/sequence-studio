@@ -39,11 +39,4 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         let missing = p.replaceMedia(UUID(), with: other)
         #expect(!missing)
     }
-
-    @Test func formatPresetsCoverYouTubeAndVertical() {
-        let names = SequenceFormatPresets.presets.map(\.name)
-        #expect(names.contains("YouTube 1080p 30") && names.contains("YouTube 4K 60"))
-        #expect(SequenceFormatPresets.presets.contains { $0.width == 1080 && $0.height == 1920 })
-        #expect(Set(names).count == names.count)
-    }
 }

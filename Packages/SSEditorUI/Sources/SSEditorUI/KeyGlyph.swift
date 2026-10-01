@@ -33,8 +33,10 @@ public struct KeyGlyph: Sendable, Hashable {
     public static func glyphs<V: KeyframeValue>(of track: KeyframeTrack<V>) -> [(id: UUID, time: Time, glyph: KeyGlyph)] {
         let keys = track.keys
         return keys.enumerated().map { i, k in
+            // Rendering ignores `interpolation` except for hold, so the glyph reads the handles the same way:
+            // a key eased on one side shows as eased whatever its neighbour's shape is.
             let out: KeyHalf? = i + 1 < keys.count ? half(k.interpolation, handle: k.outHandle) : nil
-            let inc: KeyHalf? = i > 0 ? half(keys[i - 1].interpolation, handle: k.inHandle) : nil
+            let inc: KeyHalf? = i > 0 ? (keys[i - 1].interpolation == .hold ? .hold : (isLinear(k.inHandle) ? .linear : .eased)) : nil
             let g = KeyGlyph(incoming: inc ?? out ?? .linear, outgoing: out ?? inc ?? .linear)
             return (k.id, k.time, g)
         }
