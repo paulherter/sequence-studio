@@ -912,3 +912,20 @@ private final class Counter: @unchecked Sendable {
         #expect(!session.canUndo)
     }
 }
+
+@MainActor @Suite struct RelinkEngineTests {
+    // Review finding 4: relinking a media that was online to another file left the engine on the old file.
+    @Test func relinkTellsTheEngineWhichMediaMoved() throws {
+        var p = EditorSession.makeUntitled()
+        let a = MediaRef(name: "A.mov", path: "/orig/A.mov", fingerprint: MediaFingerprint(size: 1), duration: Time(2, 1))
+        let b = MediaRef(name: "B.mov", path: "/orig/B.mov", fingerprint: MediaFingerprint(size: 2), duration: Time(2, 1))
+        p.add(a); p.add(b)
+        let engine = StubProgramEngine()
+        let session = EditorSession(project: p, engine: engine, autosaveStore: AutosaveStore(base: tempDir()))
+        #expect(engine.changedMedia.isEmpty)
+        session.relinkMedia([a.id: "/elsewhere/A.mov"])
+        #expect(engine.changedMedia == [[a.id]])
+        session.undo()                                              // the old file again: moved back
+        #expect(engine.changedMedia == [[a.id], [a.id]])
+    }
+}

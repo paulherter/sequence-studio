@@ -266,6 +266,11 @@ public final class EditorSession {
     private func syncMedia() {
         // Always: the active sequence's sample rate can change without the media changing.
         media.update(project.media, sampleRate: activeTimeline?.format.audioSampleRate)
+        // A media that was online and now points at another file (relink, undo of a relink): the engine still holds the
+        // old file's demuxer, decoder and frames.
+        let oldPaths = Dictionary(mediaSnapshot.map { ($0.id, $0.path) }, uniquingKeysWith: { a, _ in a })
+        let moved = Set(project.media.filter { m in oldPaths[m.id].map { $0 != m.path } ?? false }.map(\.id))
+        if !moved.isEmpty { engine.mediaChanged(moved) }
         guard project.media != mediaSnapshot else { return }
         mediaSnapshot = project.media
         let fresh = project.media.map(\.id).filter { requestedMedia.insert($0).inserted }

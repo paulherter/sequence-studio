@@ -312,8 +312,9 @@ public final class Compositor: @unchecked Sendable {
         enc.endEncoding()
         var linearize: UInt32 = 1
         if let pipeline {
-            guard (try? colorGPU.encode(pipeline, source: ma, destination: ma, commandBuffer: commandBuffer)) != nil,
-                  (try? colorGPU.encode(pipeline, source: mb, destination: mb, commandBuffer: commandBuffer)) != nil else { return nil }
+            let turned = u.quarter & 1 == 1
+            guard (try? colorGPU.encode(pipeline, source: ma, destination: ma, commandBuffer: commandBuffer, quarterTurned: turned)) != nil,
+                  (try? colorGPU.encode(pipeline, source: mb, destination: mb, commandBuffer: commandBuffer, quarterTurned: turned)) != nil else { return nil }
             linearize = 0
         }
         guard let enc2 = commandBuffer.makeComputeCommandEncoder() else { return nil }
@@ -591,7 +592,7 @@ public final class Compositor: @unchecked Sendable {
                             let tg = MTLSize(width: 16, height: 16, depth: 1)
                             enc.dispatchThreads(MTLSize(width: w, height: h, depth: 1), threadsPerThreadgroup: tg)
                             enc.endEncoding()
-                            if (try? colorGPU.encode(pipeline, source: mid, destination: mid, commandBuffer: commandBuffer)) != nil {
+                            if (try? colorGPU.encode(pipeline, source: mid, destination: mid, commandBuffer: commandBuffer, quarterTurned: quarter & 1 == 1)) != nil {
                                 p.u.mode = 1; p.u.linearize = 0
                                 p.tex0 = mid; p.tex1 = dummy
                             }

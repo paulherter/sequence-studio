@@ -74,10 +74,13 @@ struct ColorStage: Sendable {
 /// `process` is per pixel and allocation-free; the struct is cheap to copy and mutate per frame.
 public struct ColorPipeline: Sendable {
     public var source: SourceColorSpace { didSet { compile() } }
-    public var toneMapping: ToneMapping
+    public var toneMapping: ToneMapping { didSet { compile() } }
     public var ops: [ColorOp] { didSet { compile() } }
 
     private(set) var stages: [ColorStage] = []
+    /// The GPU compute passes of the compiled chain, built once in `compile()` (they are pure data: sections, curve tables):
+    /// the compositor encodes them for every graded layer on every frame.
+    private(set) var gpuPasses: [ColorPipelineGPU.Pass] = []
     private(set) var toRec709: simd_float3x3
 
     public init(source: SourceColorSpace, ops: [ColorOp] = [.conversion(nil)], toneMapping: ToneMapping = ToneMapping()) {
@@ -120,6 +123,7 @@ public struct ColorPipeline: Sendable {
             }
         }
         stages = out
+        gpuPasses = ColorPipelineGPU.passes(for: self)
     }
 
     /// The conversion LUT, if any (diagnostics and tests).

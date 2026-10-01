@@ -652,7 +652,7 @@ final class RenderLoop: @unchecked Sendable {
             return placeholder(.offline)
         case .still(let still):
             return RenderLayer(content: .frame(still.buffer, colorHint: still.info), transform: r.transform,
-                               colorPipeline: media.resolver.colorResolver?.pipeline(for: r.color, media: r.media),
+                               colorPipeline: media.resolver.colorResolver?.pipeline(for: r.color, media: r.media, owner: r.clip),
                                cornerRadius: r.cornerRadius, nativeSize: (still.info.width, still.info.height))
         case .ready(let demuxer):
             d = demuxer
@@ -689,7 +689,7 @@ final class RenderLoop: @unchecked Sendable {
             }
         }
         return RenderLayer(content: .frame(frame.pixelBuffer, colorHint: info), transform: r.transform,
-                           colorPipeline: media.resolver.colorResolver?.pipeline(for: r.color, media: r.media),
+                           colorPipeline: media.resolver.colorResolver?.pipeline(for: r.color, media: r.media, owner: r.clip),
                            cornerRadius: r.cornerRadius, nativeSize: (info.width, info.height), blend: blend)
     }
 

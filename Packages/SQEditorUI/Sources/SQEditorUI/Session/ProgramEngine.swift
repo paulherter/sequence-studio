@@ -50,11 +50,14 @@ public protocol ProgramEngine: AnyObject {
     var scrubLatencyText: String? { get }
     /// Captions drawn over the picture in the monitor (the export burn-in is separate).
     var showsCaptions: Bool { get set }
+    /// These media (still online) now point at other files: forget their opened files, decoders and cached frames.
+    func mediaChanged(_ ids: Set<UUID>)
 }
 
 extension ProgramEngine {
     /// Default: nothing to redraw (stand-ins).
     public func redraw() {}
+    public func mediaChanged(_ ids: Set<UUID>) {}
     public var lastRenderedTexture: MTLTexture? { nil }
     public func requestFrameCapture(key: String, _ encode: @escaping FrameCaptureEncoder) {}
     public var audioUnavailable: Bool { false }
@@ -87,6 +90,9 @@ public final class StubProgramEngine: ProgramEngine {
     public private(set) var timelines: [Timeline] = []
     public private(set) var sequences: [Timeline.ID: Timeline] = [:]
     public private(set) var calls: [Call] = []
+    /// Every `mediaChanged` call, in order.
+    public private(set) var changedMedia: [Set<UUID>] = []
+    public func mediaChanged(_ ids: Set<UUID>) { changedMedia.append(ids) }
     public private(set) var layer: CAMetalLayer?
     public private(set) var position: Time = .zero
     public private(set) var rate: PlaybackRate = .zero

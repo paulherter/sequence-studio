@@ -35,8 +35,10 @@ public final class LayerColorResolver: Sendable {
     private struct State {
         var entries: [Key: Entry] = [:]
         var inflight: Set<Key> = []
-        /// Last built pipeline per media: served while a new one is still being built.
+        /// Last built pipeline per owner (the clip, else the media): served while a new one is still being built.
         var previous: [UUID: ColorPipeline?] = [:]
+        /// Keys in build order (oldest first) for eviction.
+        var order: [Key] = []
         var onWarmed: (@Sendable () -> Void)?
     }
 
@@ -58,14 +60,17 @@ public final class LayerColorResolver: Sendable {
 
     // MARK: Lookup (render thread)
 
-    /// nil = identity Rec.709 (use the fast path). Never does I/O.
-    public func pipeline(for color: ClipColor, media: UUID) -> ColorPipeline? {
+    /// nil = identity Rec.709 (use the fast path). Never does I/O. While the pipeline of a changed colour is still being
+    /// built, the one last served for the same `owner` (the clip; the media when nil) keeps drawing: with `owner` a clip never
+    /// shows another clip's grade of the same media.
+    public func pipeline(for color: ClipColor, media: UUID, owner: UUID? = nil) -> ColorPipeline? {
         guard let (key, _) = Self.needsPipeline(color, media, mediaInfo(media)) else { return nil }
         let (hit, previous, due): (Entry?, ColorPipeline??, Bool) = state.withLock { s in
             let e = s.entries[key]
-            return (e, s.previous[media], e == nil || (e?.retryAfter.map { $0 <= Date() } ?? false))
+            if let e, let owner { s.previous[owner] = .some(e.pipeline) }   // follows the clip's latest served grade
+            return (e, s.previous[owner ?? media], e == nil || (e?.retryAfter.map { $0 <= Date() } ?? false))
         }
-        if due { schedule(key, color: color, media: media, force: false) }
+        if due { schedule(key, color: color, media: media, owner: owner, force: false) }
         if let hit { return hit.pipeline }
         return previous ?? nil
     }
@@ -74,20 +79,20 @@ public final class LayerColorResolver: Sendable {
     public func pipelineBlocking(for color: ClipColor, media: UUID) -> ColorPipeline? {
         let info = mediaInfo(media)
         guard let (key, _) = Self.needsPipeline(color, media, info) else { return nil }
-        return build(key, color: color, media: media, info: info, force: false)
+        return build(key, color: color, media: media, owner: nil, info: info, force: false)
     }
 
     /// Schedules background builds for the given layers (timeline push / colour change).
     public func warm(_ layers: [(color: ClipColor, media: UUID)]) {
         for l in layers {
             guard let (key, _) = Self.needsPipeline(l.color, l.media, mediaInfo(l.media)) else { continue }
-            schedule(key, color: l.color, media: l.media, force: true)
+            schedule(key, color: l.color, media: l.media, owner: nil, force: true)
         }
     }
 
     /// Drops cached pipelines (media relinked, project opened). The last served pipelines stay as fallbacks.
     public func invalidate() {
-        state.withLock { $0.entries.removeAll() }
+        state.withLock { $0.entries.removeAll(); $0.order.removeAll() }
     }
 
     /// Waits for running background builds (tests).
@@ -105,12 +110,12 @@ public final class LayerColorResolver: Sendable {
         return (Key(color: color, media: media, space: info?.detectedColorSpace, embeddedLUT: info?.embeddedLUTName), info)
     }
 
-    private func schedule(_ key: Key, color: ClipColor, media: UUID, force: Bool) {
+    private func schedule(_ key: Key, color: ClipColor, media: UUID, owner: UUID?, force: Bool) {
         let start = state.withLock { $0.inflight.insert(key).inserted }
         guard start else { return }
         queue.async { [self] in
             let info = mediaInfo(media)
-            _ = build(key, color: color, media: media, info: info, force: force)
+            _ = build(key, color: color, media: media, owner: owner, info: info, force: force)
             let notify = state.withLock { $0.onWarmed }
             notify?()
             state.withLock { _ = $0.inflight.remove(key) }
@@ -118,7 +123,7 @@ public final class LayerColorResolver: Sendable {
     }
 
     /// `force`: re-check file stamps and retry failed LUTs even when an entry exists.
-    private func build(_ key: Key, color: ClipColor, media: UUID, info: MediaInfo?, force: Bool) -> ColorPipeline? {
+    private func build(_ key: Key, color: ClipColor, media: UUID, owner: UUID?, info: MediaInfo?, force: Bool) -> ColorPipeline? {
         let stamps = fileStamps(color)
         if let e = state.withLock({ $0.entries[key] }), e.stamps == stamps,
            e.retryAfter == nil || (!force && e.retryAfter! > Date()) {
@@ -132,10 +137,17 @@ public final class LayerColorResolver: Sendable {
             NSLog("COLOR: media=\(media) pipeline=\(what ?? "identity")\(recorder.failed ? " (LUT failed)" : "")")
         }
         state.withLock { s in
-            if s.entries.count >= Self.cacheLimit { s.entries.removeAll() }
+            // Full: drop the oldest quarter, not everything (every visible layer would otherwise miss at once).
+            if s.entries.count >= Self.cacheLimit {
+                let drop = s.order.prefix(Self.cacheLimit / 4)
+                for k in drop { s.entries[k] = nil }
+                s.order.removeFirst(drop.count)
+            }
+            if s.entries[key] == nil { s.order.append(key) }
             s.entries[key] = Entry(pipeline: result, stamps: stamps,
                                    retryAfter: recorder.failed ? Date().addingTimeInterval(Self.failureRetry) : nil)
-            s.previous[media] = .some(result)
+            s.previous[owner ?? media] = .some(result)
+            if s.previous.count > 4 * Self.cacheLimit { s.previous.removeAll() }
         }
         return result
     }
