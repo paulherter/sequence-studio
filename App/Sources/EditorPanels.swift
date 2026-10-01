@@ -242,7 +242,7 @@ final class EditorPanels {
             case .nest: self?.onNest?()
             case .setToFrameSize, .scaleToFrameSize: self?.onFrameSize?()
             case .rename: self?.renameSelectedClip()
-            case .label: break
+            case .label, .editCaption, .splitCaption, .mergeCaptions: break   // captions have their own menu (`captionMenu`)
             }
         }
     }
