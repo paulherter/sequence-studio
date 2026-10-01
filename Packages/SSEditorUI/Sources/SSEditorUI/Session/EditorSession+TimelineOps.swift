@@ -156,6 +156,21 @@ extension EditorSession {
         select(clips: Set(t.tracks.flatMap(\.clips).map(\.id)))
     }
 
+    /// D: selects the clips under the playhead on the targeted tracks (all tracks when none is targeted).
+    public func selectClipAtPlayhead() {
+        guard let t = activeTimeline else { return }
+        let targeted = t.tracks.filter(\.isTargeted)
+        let pool = targeted.isEmpty ? t.tracks : targeted
+        select(clips: Set(pool.flatMap(\.clips).filter { $0.timeline.contains(playhead) }.map(\.id)))
+    }
+
+    /// Shift+Up / Shift+Down: edit points of every track, ignoring targets.
+    public func goToEditPointOnAnyTrack(forward: Bool) {
+        guard let pts = activeTimeline?.editPoints() else { return }
+        if forward, let t = pts.first(where: { $0 > playhead }) { seek(to: t) }
+        if !forward, let t = pts.last(where: { $0 < playhead }) { seek(to: t) }
+    }
+
     /// `/`: In/Out around the selected clips.
     public func markSelection() {
         guard let t = activeTimeline else { return }

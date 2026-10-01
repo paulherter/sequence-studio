@@ -24,6 +24,7 @@ public enum EditorCommand: Sendable, Hashable {
     // Clipboard / history
     case copy, cut, paste, pasteAttributes, undo, redo
     // Timeline selection, nudge, edit trims (Premiere: Cmd+Left/Right nudge, Opt+Shift+Left/Right trim 5 frames)
+    case selectClipAtPlayhead, deselectAll, nextEditPointAnyTrack, previousEditPointAnyTrack
     case pasteInsert, selectAll, toggleLinkedSelection, markSelection, nextMarker, previousMarker
     case nudgeLeft, nudgeRight, nudgeLeft5, nudgeRight5, trimBackward5, trimForward5
     // View / window
@@ -43,7 +44,7 @@ public enum EditorCommand: Sendable, Hashable {
     public var isRepeatable: Bool {
         switch self {
         case .stepBackward, .stepForward, .stepBackward5, .stepForward5,
-             .previousEditPoint, .nextEditPoint, .zoomIn, .zoomOut,
+             .previousEditPoint, .nextEditPoint, .nextEditPointAnyTrack, .previousEditPointAnyTrack, .zoomIn, .zoomOut,
              .nudgeLeft, .nudgeRight, .nudgeLeft5, .nudgeRight5, .trimBackward5, .trimForward5,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .undo, .redo, .previousKeyframe, .nextKeyframe: true
@@ -108,6 +109,10 @@ public enum EditorCommand: Sendable, Hashable {
         case .cut: "Cut"
         case .paste: "Paste"
         case .pasteAttributes: "Paste Attributes"
+        case .selectClipAtPlayhead: "Select Clip at Playhead"
+        case .deselectAll: "Deselect All"
+        case .nextEditPointAnyTrack: "Go to Next Edit Point on Any Track"
+        case .previousEditPointAnyTrack: "Go to Previous Edit Point on Any Track"
         case .pasteInsert: "Paste Insert"
         case .selectAll: "Select All"
         case .toggleLinkedSelection: "Linked Selection"

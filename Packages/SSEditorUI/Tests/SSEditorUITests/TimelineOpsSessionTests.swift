@@ -137,4 +137,19 @@ private func track(_ clips: [Clip], kind: TrackKind = .video) -> Track {
         ses.goToNextEditPoint()
         #expect(ses.playhead == s(2))
     }
+
+    @Test func selectClipAtPlayheadAndAnyTrackJump() {
+        var v1 = track([clip(0, 2), clip(2, 2)])
+        v1.isTargeted = true
+        let v2 = track([clip(1, 5)])
+        let ses = makeSession([v1, v2])
+        ses.seek(to: s(1))
+        ses.selectClipAtPlayhead()
+        #expect(ses.selection == [ses.activeTimeline!.tracks[0].clips[0].id])
+        ses.seek(to: s(0))
+        ses.goToEditPointOnAnyTrack(forward: true)
+        #expect(ses.playhead == s(1))
+        ses.goToEditPointOnAnyTrack(forward: false)
+        #expect(ses.playhead == s(0))
+    }
 }

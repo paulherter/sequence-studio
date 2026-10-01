@@ -90,7 +90,9 @@ public struct CommandMap: Sendable {
         add(t, ch("q"), .rippleTrimPrevious); add(t, ch("w"), .rippleTrimNext); add(t, ch("e"), .extendEdit)
         add(t, .delete, .delete); add(t, .delete, .shift, .rippleDelete)
         add(t, ch("s"), .toggleSnapping)
-        add(t, ch("a"), .command, .selectAll)
+        add(t, ch("a"), .command, .selectAll); add(t, ch("a"), [.command, .shift], .deselectAll)
+        add(t, ch("d"), .selectClipAtPlayhead)
+        add(t, .up, .shift, .previousEditPointAnyTrack); add(t, .down, .shift, .nextEditPointAnyTrack)
         // Nudge the selected clips (Cmd+arrows) or trim the selected edit (Opt+Shift+arrows; Opt+arrows is one frame, see AppController).
         add(t, .left, .command, .nudgeLeft); add(t, .right, .command, .nudgeRight)
         add(t, .left, [.command, .shift], .nudgeLeft5); add(t, .right, [.command, .shift], .nudgeRight5)

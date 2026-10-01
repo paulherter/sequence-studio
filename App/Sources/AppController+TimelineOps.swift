@@ -6,7 +6,8 @@ import SSEditorUI
 extension AppController {
     static func isTimelineOp(_ c: EditorCommand) -> Bool {
         switch c {
-        case .copy, .cut, .paste, .pasteInsert, .selectAll, .link, .toggleLinkedSelection, .markSelection,
+        case .selectClipAtPlayhead, .deselectAll, .nextEditPointAnyTrack, .previousEditPointAnyTrack,
+             .copy, .cut, .paste, .pasteInsert, .selectAll, .link, .toggleLinkedSelection, .markSelection,
              .nextMarker, .previousMarker, .nudgeLeft, .nudgeRight, .nudgeLeft5, .nudgeRight5,
              .trimBackward5, .trimForward5, .extendEdit:
             true
@@ -29,6 +30,10 @@ extension AppController {
             if session.clipboard == nil { shell.statusBar.flash("Nothing to paste. Copy clips first.") }
             else { session.pasteClipboard(insert: c == .pasteInsert) }
         case .selectAll: session.selectAllClips()
+        case .deselectAll: session.select(clips: [], captions: [])
+        case .selectClipAtPlayhead: session.selectClipAtPlayhead()
+        case .nextEditPointAnyTrack: session.goToEditPointOnAnyTrack(forward: true)
+        case .previousEditPointAnyTrack: session.goToEditPointOnAnyTrack(forward: false)
         case .link: session.toggleLinkSelection()
         case .toggleLinkedSelection:
             tv.toolState.linkedSelection.toggle()

@@ -21,7 +21,7 @@ public enum EditorMenus {
         .newSequence, .importMedia, nil, .save, nil, .export,
     ]))
     public static let edit = MenuSpec(title: "Edit", items: cmds([
-        .undo, .redo, nil, .cut, .copy, .paste, .pasteInsert, .pasteAttributes, nil, .selectAll, nil,
+        .undo, .redo, nil, .cut, .copy, .paste, .pasteInsert, .pasteAttributes, nil, .selectAll, .deselectAll, nil,
         .delete, .rippleDelete, nil, .toggleSnapping,
     ]))
     public static let clip = MenuSpec(title: "Clip", items: cmds([
