@@ -3,10 +3,12 @@ import SQCore
 
 /// What a context-menu item asks the host to do.
 public enum TimelineMenuAction: Sendable, Hashable, CaseIterable {
-    case cut, copy, paste, pasteInsert, delete, rippleDelete, unlink, link, nest, rename
+    case cut, copy, paste, pasteInsert, pasteAttributes, delete, rippleDelete, unlink, link, nest, rename
     /// Enable / Disable Clip (Shift+Cmd+E).
     case enable
-    case setToFrameSize, scaleToFrameSize
+    case setToFrameSize
+    /// Audio Gain… (G) on audio clips.
+    case audioGain
     case editCaption, splitCaption, mergeCaptions
     /// Clip > Speed/Duration.
     case speed
@@ -50,6 +52,7 @@ public enum TimelineContextMenu {
             : TimelineMenuItem(.unlink, "Unlink", enabled: true, key: "l")
         // Generators (text) have no picture size to fit.
         let hasPictures = clips.contains { !$0.isGenerator && $0.kind == .video }
+        let hasAudio = clips.contains { $0.kind == .audio }
         let canRetime = clips.contains { Timeline.canRetime($0) }
         let hasVideoMedia = clips.contains { Timeline.canRetime($0) && $0.kind == .video }
         // Premiere order. Entries for features we do not have (Reveal in Project) are left out.
@@ -58,6 +61,7 @@ public enum TimelineContextMenu {
             TimelineMenuItem(.copy, "Copy", enabled: hasClips, key: "c"),
             TimelineMenuItem(.paste, "Paste", enabled: clipboardHasClips, key: "v"),
             TimelineMenuItem(.pasteInsert, "Paste Insert", enabled: clipboardHasClips, key: "v", modifiers: [.command, .shift]),
+            TimelineMenuItem(.pasteAttributes, "Paste Attributes", enabled: clipboardHasClips && hasClips, key: "v", modifiers: [.command, .option]),
             TimelineMenuItem(.delete, "Clear", enabled: hasAny, separatorBefore: true, key: "\u{8}", modifiers: []),
             TimelineMenuItem(.rippleDelete, "Ripple Delete", enabled: hasClips, key: "\u{8}", modifiers: [.shift]),
             linkItem.separatorBefore(true),
@@ -67,7 +71,7 @@ public enum TimelineContextMenu {
             TimelineMenuItem(.speed, "Speed/Duration…", enabled: canRetime, key: "r"),
             TimelineMenuItem(.timeRemapping, "Show Time Remapping", enabled: hasVideoMedia),
             TimelineMenuItem(.setToFrameSize, "Set to Frame Size", enabled: hasPictures, separatorBefore: true),
-            TimelineMenuItem(.scaleToFrameSize, "Scale to Frame Size", enabled: hasPictures),
+            TimelineMenuItem(.audioGain, "Audio Gain…", enabled: hasAudio, key: "g", modifiers: []),
             TimelineMenuItem(.label, "Label", enabled: hasClips, separatorBefore: true),
             TimelineMenuItem(.rename, "Rename…", enabled: clips.count == 1),
         ]

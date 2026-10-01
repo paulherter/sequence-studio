@@ -30,6 +30,14 @@ extension EditorSession {
 
     // MARK: Link
 
+    /// Clip > Link menu state: enabled with two or more clips or any linked clip selected; shows "Unlink" for one linked group.
+    public var linkMenuState: (enabled: Bool, unlink: Bool) {
+        guard let t = activeTimeline else { return (false, false) }
+        let clips = t.tracks.flatMap(\.clips).filter { selection.contains($0.id) }
+        let links = Set(clips.map(\.link))
+        return (clips.count >= 2 || clips.contains { $0.link != nil }, links.count == 1 && links.first! != nil)
+    }
+
     /// Cmd+L: unlinks when the selection is one linked group, otherwise links the selected clips.
     public func toggleLinkSelection() {
         guard let t = activeTimeline else { return }

@@ -61,12 +61,15 @@ public struct CommandMap: Sendable {
         add(g, ch("x"), .markClip); add(g, ch("x"), .option, .clearInOut)
         add(g, ch("i"), .option, .clearIn); add(g, ch("o"), .option, .clearOut)
         add(g, .space, .shift, .playInToOutRoll); add(g, ch("k"), .shift, .playAround); add(g, ch("l"), .control, .toggleLoop)
-        add(g, ch("e"), .shift, .exportFrame); add(g, ch("b"), .command, .newBin)
+        add(g, ch("e"), .shift, .exportFrame); add(g, ch("/"), .command, .newBin)   // File > Bin (Premiere); Cmd+B in the Project panel below
         add(g, ch("e"), [.command, .shift], .enableClip)         // Premiere: Clip > Enable. (Export Frame is Shift+E only.)
         add(g, ch("/"), [.command, .shift], .duplicate)
         add(g, ch(";"), .lift); add(g, ch("'"), .extract)
         add(g, ch(","), .insert); add(g, ch("."), .overwrite)
         add(g, ch("m"), .addMarker)
+        // Keyframe easing for the selected keyframes in Effect Controls (After Effects keys; Premiere has none). Needs fn on most Macs.
+        add(g, .function(9), .easyEase); add(g, .function(9), .shift, .easeIn); add(g, .function(9), [.command, .shift], .easeOut)
+        add(g, ch("s"), .shift, .toggleAudioScrubbing)
         add(g, ch("d"), .command, .applyVideoTransition); add(g, ch("d"), [.command, .shift], .applyAudioTransition)
         add(g, ch("d"), .shift, .applyDefaultTransitions)
         add(g, ch("m"), .shift, .nextMarker); add(g, ch("m"), [.command, .shift], .previousMarker)
@@ -113,7 +116,7 @@ public struct CommandMap: Sendable {
         add(t, .left, .command, .nudgeLeft); add(t, .right, .command, .nudgeRight)
         add(t, .left, [.command, .shift], .nudgeLeft5); add(t, .right, [.command, .shift], .nudgeRight5)
         add(t, .left, [.option, .shift], .trimBackward5); add(t, .right, [.option, .shift], .trimForward5)
-        add(t, ch("l"), .command, .link); add(t, ch("g"), .command, .group)
+        add(t, ch("l"), .command, .link)
         add(t, ch("g"), .audioGain)
         add(t, ch("r"), .command, .speedDuration)
         add(t, ch("f"), .matchFrame); add(t, ch("r"), .shift, .reverseMatchFrame)
@@ -122,18 +125,16 @@ public struct CommandMap: Sendable {
         add(t, ch("="), .command, .videoTracksTaller); add(t, ch("-"), .command, .videoTracksShorter)
         add(t, ch("="), .option, .audioTracksTaller); add(t, ch("-"), .option, .audioTracksShorter)
         add(t, ch("="), .shift, .expandAllTracks); add(t, ch("-"), .shift, .minimizeAllTracks)
-        add(t, .function(9), .easyEase); add(t, .function(9), .shift, .easeIn)
-        add(t, .function(9), [.command, .shift], .easeOut)
-        add(t, ch("h"), [.command, .option], .toggleHoldInterpolation)
-        add(t, .left, .option, .previousKeyframe); add(t, .right, .option, .nextKeyframe)
-        add(t, .function(3), .shift, .toggleSpeedGraph); add(t, ch("k"), .option, .addKeyframe)
+        // Trim Backward/Forward 1 frame (Premiere: Opt+Left/Right), Ripple Delete also on Opt+Delete (Timeline panel default).
+        add(t, .left, .option, .trimBackward); add(t, .right, .option, .trimForward)
+        add(t, .delete, .option, .rippleDelete)
         // Play In to Out (Option+K on the Mac; the Timeline keeps Option+K for Add Keyframe, so the key is bound per panel).
         for scope in [CommandScope.program, .source, .project] { add(scope, ch("k"), .option, .playInToOut) }
         // Program monitor
         add(.program, .up, .previousEditPoint); add(.program, .down, .nextEditPoint)
         add(.program, ch("f"), .matchFrame); add(.program, ch("r"), .shift, .reverseMatchFrame)
         // Project panel
-        add(.project, .delete, .deleteProjectItems)
+        add(.project, .delete, .deleteProjectItems); add(.project, ch("b"), .command, .newBin)
         add(.project, ch("p"), .command, .setPosterFrame); add(.project, ch("p"), .option, .clearPosterFrame)
         add(.project, ch("h"), .shift, .toggleHoverScrub); add(.project, ch("f"), .command, .find)
         return CommandMap(entries: e)

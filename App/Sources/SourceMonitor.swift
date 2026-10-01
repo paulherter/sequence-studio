@@ -396,37 +396,48 @@ final class SourceMonitorController {
     }
 
     private func fillContextMenu(_ menu: NSMenu) {
-        func add(_ title: String, _ enabled: Bool = true, _ action: @escaping () -> Void) {
+        func add(_ title: String, _ enabled: Bool = true, command: EditorCommand? = nil, _ action: @escaping () -> Void) {
             let it = ClosureMenuItem(title: title, action: action)
             it.isEnabled = enabled
+            if let command { it.showShortcut(of: command) }
             menu.addItem(it)
         }
         let has = mediaID != nil
         let m = marks
-        add("Mark Clip", has) { [weak self] in self?.markClip() }
-        add("Mark In", has) { [weak self] in self?.markIn() }
-        add("Mark Out", has) { [weak self] in self?.markOut() }
-        add("Go to In", m.markIn != nil) { [weak self] in self?.goToIn() }
-        add("Go to Out", m.markOut != nil) { [weak self] in self?.goToOut() }
+        add("Mark Clip", has, command: .markClip) { [weak self] in self?.markClip() }
+        add("Mark In", has, command: .markIn) { [weak self] in self?.markIn() }
+        add("Mark Out", has, command: .markOut) { [weak self] in self?.markOut() }
+        add("Go to In", m.markIn != nil, command: .goToIn) { [weak self] in self?.goToIn() }
+        add("Go to Out", m.markOut != nil, command: .goToOut) { [weak self] in self?.goToOut() }
         menu.addItem(.separator())
-        add("Clear In", m.markIn != nil) { [weak self] in self?.clearIn() }
-        add("Clear Out", m.markOut != nil) { [weak self] in self?.clearOut() }
-        add("Clear In and Out", !m.isEmpty) { [weak self] in self?.clearMarks() }
+        add("Clear In", m.markIn != nil, command: .clearIn) { [weak self] in self?.clearIn() }
+        add("Clear Out", m.markOut != nil, command: .clearOut) { [weak self] in self?.clearOut() }
+        add("Clear In and Out", !m.isEmpty, command: .clearInOut) { [weak self] in self?.clearMarks() }
         menu.addItem(.separator())
         let markers = mediaID.map { session.project.sourceMarkers(for: $0) } ?? []
-        add("Add Marker", has) { [weak self] in self?.addMarker() }
+        add("Add Marker", has, command: .addMarker) { [weak self] in self?.addMarker() }
         if markers.contains(where: { $0.time == position }) { add("Clear Marker") { [weak self] in self?.clearMarkerAtPlayhead() } }
         if !markers.isEmpty { add("Clear All Markers") { [weak self] in self?.clearAllMarkers() } }
         menu.addItem(.separator())
-        add("Insert", has) { [weak self] in self?.edit(.insert) }
-        add("Overwrite", has) { [weak self] in self?.edit(.overwrite) }
+        add("Insert", has, command: .insert) { [weak self] in self?.edit(.insert) }
+        add("Overwrite", has, command: .overwrite) { [weak self] in self?.edit(.overwrite) }
         menu.addItem(.separator())
-        add("Export Frame…", has) { [weak self] in self?.exportFrame() }
-        add("Loop Playback") { [weak self] in
+        add("Export Frame…", has, command: .exportFrame) { [weak self] in self?.exportFrame() }
+        add("Loop Playback", command: .toggleLoop) { [weak self] in
             guard let self else { return }
             bounds.loop.toggle(); model.isLooping = bounds.loop
         }
         if let loop = menu.items.last { loop.state = bounds.loop ? .on : .off }
+        menu.addItem(.separator())
+        let zoomMenu = NSMenu(title: "Zoom")
+        for z in MonitorZoom.presets {
+            let it = ClosureMenuItem(title: z.title) { [weak self] in self?.model.setZoom(z) }
+            it.state = model.zoom == z ? .on : .off
+            zoomMenu.addItem(it)
+        }
+        let zoomItem = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
+        zoomItem.submenu = zoomMenu
+        menu.addItem(zoomItem)
         if has {
             menu.addItem(.separator())
             add("Reveal in Project") { [weak self] in
@@ -448,4 +459,16 @@ final class ClosureMenuItem: NSMenuItem {
     }
     @available(*, unavailable) required init(coder: NSCoder) { fatalError() }
     @objc private func fire() { handler() }
+}
+
+extension NSMenuItem {
+    /// Shows the command's shortcut from the key map (context menus: the key only labels the item).
+    @discardableResult
+    func showShortcut(of command: EditorCommand, map: CommandMap = .premiereDefault) -> Self {
+        if let b = map.binding(for: command), let k = KeyMapping.keyEquivalent(for: b.key) {
+            keyEquivalent = k
+            keyEquivalentModifierMask = KeyMapping.modifierMask(b.modifiers)
+        }
+        return self
+    }
 }
