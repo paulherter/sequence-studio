@@ -274,6 +274,22 @@ public final class ColorInspectorView: NSView {
                 row.spacing = Theme.Spacing.sm
                 pin(row, in: group.content, inset: Theme.Spacing.lg)
             }
+            if g.group == "Light" {
+                let reset = NSButton(title: "Reset", target: self, action: #selector(resetTonePressed(_:)))
+                let auto = NSButton(title: "Auto", target: self, action: #selector(autoTonePressed(_:)))
+                for b in [reset, auto] {
+                    b.controlSize = .small
+                    b.bezelStyle = .rounded
+                    b.font = Theme.Fonts.small
+                    b.tag = v.effect
+                }
+                reset.toolTip = "Reset Exposure, Contrast, Highlights, Shadows, Whites and Blacks"
+                auto.toolTip = "Set Exposure and Blacks from the Program monitor picture"
+                let row = NSStackView(views: [NSView(), reset, auto])
+                row.orientation = .horizontal
+                row.spacing = Theme.Spacing.sm
+                pin(row, in: group.content, inset: Theme.Spacing.lg)
+            }
             for p in g.params { pin(paramRow(v, p), in: group.content, inset: Theme.Spacing.lg) }
             pin(group, in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
         }
@@ -484,6 +500,9 @@ public final class ColorInspectorView: NSView {
         v.hueKind = kind
         refresh()
     }
+
+    @objc private func resetTonePressed(_ b: NSButton) { model.resetTone(b.tag) }
+    @objc private func autoTonePressed(_ b: NSButton) { model.onAutoTone?(b.tag) }
 
     @objc private func addEffect() { model.addEffect() }
     @objc private func removeEffect(_ b: NSButton) { model.removeEffect(b.tag) }

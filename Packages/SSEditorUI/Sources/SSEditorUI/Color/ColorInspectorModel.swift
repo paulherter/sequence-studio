@@ -353,6 +353,20 @@ public final class ColorInspectorModel {
         gesture { set(effect, .temperature, temperature); set(effect, .tint, tint) }
     }
 
+    /// Premiere's Tone Reset: Exposure, Contrast, Highlights, Shadows, Whites and Blacks of one effect back to neutral
+    /// (Temperature, Tint and Saturation stay). One undo step.
+    public func resetTone(_ effect: Int) {
+        gesture { for p in [ColorParam.exposure, .contrast, .highlights, .shadows, .whites, .blacks] { set(effect, p, p.neutral) } }
+    }
+
+    /// Writes the result of Auto (Exposure and Blacks). One undo step.
+    public func setAutoTone(_ effect: Int, _ b: BasicCorrection) {
+        gesture { set(effect, .exposure, b.exposure); set(effect, .blacks, b.blacks) }
+    }
+
+    /// Basic Correction's Auto was pressed for this effect; the host analyses the Program frame.
+    public var onAutoTone: ((Int) -> Void)?
+
     /// The white-balance eyedropper was pressed for this effect; the host starts the pick.
     public var onPickWhiteBalance: ((Int) -> Void)?
 

@@ -43,9 +43,9 @@ public final class ColorPickHub {
 
 /// Reads a small patch of the composite (rgba16Float, working-linear Rec.709, private storage) back to the CPU.
 public enum FrameSampler {
-    /// Mean linear RGB of a (2·radius+1)² patch centred on `position` (0…1, y down). nil when the texture is unusable.
+    /// Mean linear RGB of a (2·radius+1)² patch (5 x 5 like Premiere's eyedropper) centred on `position` (0…1, y down). nil when the texture is unusable.
     @MainActor
-    public static func meanColor(of texture: MTLTexture, at position: SIMD2<Double>, radius: Int = 3) -> SIMD3<Float>? {
+    public static func meanColor(of texture: MTLTexture, at position: SIMD2<Double>, radius: Int = 2) -> SIMD3<Float>? {
         guard texture.pixelFormat == .rgba16Float, texture.width > 0, texture.height > 0 else { return nil }
         let cx = min(max(Int(position.x * Double(texture.width)), 0), texture.width - 1)
         let cy = min(max(Int(position.y * Double(texture.height)), 0), texture.height - 1)
@@ -79,6 +79,25 @@ public enum FrameSampler {
     @MainActor
     public static func thumbnail(of texture: MTLTexture, width: Int = 200) -> CGImage? {
         guard texture.pixelFormat == .rgba16Float, texture.width > 0, texture.height > 0 else { return nil }
+        guard let (w, h, lin) = scaledLinear(of: texture, width: width) else { return nil }
+        var bytes = [UInt8](repeating: 255, count: w * h * 4)
+        for i in 0..<(w * h) {
+            let px = display8(lin[i])
+            bytes[i * 4] = px.x; bytes[i * 4 + 1] = px.y; bytes[i * 4 + 2] = px.z
+        }
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData), let cs = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: cs,
+                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue), provider: provider,
+                       decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+    }
+
+    @MainActor
+    static func smallLinear(of texture: MTLTexture, width: Int) -> [SIMD3<Float>]? { scaledLinear(of: texture, width: width)?.2 }
+
+    /// The composite scaled down on the GPU and read back as linear RGB.
+    @MainActor
+    static func scaledLinear(of texture: MTLTexture, width: Int) -> (Int, Int, [SIMD3<Float>])? {
+        guard texture.pixelFormat == .rgba16Float, texture.width > 0, texture.height > 0 else { return nil }
         let w = min(width, texture.width), h = max(Int((Double(w) * Double(texture.height) / Double(texture.width)).rounded()), 1)
         let device = texture.device
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: w, height: h, mipmapped: false)
@@ -92,16 +111,16 @@ public enum FrameSampler {
         guard cb.status == .completed else { return nil }
         var half = [UInt16](repeating: 0, count: w * h * 4)
         small.getBytes(&half, bytesPerRow: w * 8, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
-        var bytes = [UInt8](repeating: 255, count: w * h * 4)
-        for i in 0..<(w * h) {
-            let lin = SIMD3(halfToFloat(half[i * 4]), halfToFloat(half[i * 4 + 1]), halfToFloat(half[i * 4 + 2]))
-            let px = display8(lin)
-            bytes[i * 4] = px.x; bytes[i * 4 + 1] = px.y; bytes[i * 4 + 2] = px.z
-        }
-        guard let provider = CGDataProvider(data: Data(bytes) as CFData), let cs = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
-        return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: cs,
-                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue), provider: provider,
-                       decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+        let lin = (0..<(w * h)).map { i in SIMD3(halfToFloat(half[i * 4]), halfToFloat(half[i * 4 + 1]), halfToFloat(half[i * 4 + 2])) }
+        return (w, h, lin)
+    }
+
+    /// Display luma (BT.709-encoded, 0…1, unclamped above) of the composite scaled to about 96 px wide: the statistics for Auto.
+    @MainActor
+    public static func lumaSamples(of texture: MTLTexture, width: Int = 96) -> [Float]? {
+        guard let px = smallLinear(of: texture, width: width) else { return nil }
+        let luma = SIMD3<Float>(0.2126, 0.7152, 0.0722)
+        return px.map { TransferFunctions.bt709OETF(min(max(simd_dot(luma, $0), 0), 4)) }
     }
 
     /// Working-linear Rec.709 -> 8-bit display values (clamped, BT.709 encoded like the monitor path).

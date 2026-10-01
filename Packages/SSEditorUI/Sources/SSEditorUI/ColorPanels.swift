@@ -71,6 +71,7 @@ public final class ColorInspectorPanelView: NSView {
             model.onGestureBegan = { [weak self] in self?.beginGesture() }
             model.onGestureEnded = { [weak self] in self?.endGesture() }
             model.onChange = { [weak self] _ in self?.commit(id) }
+            model.onAutoTone = { [weak self] effect in self?.autoTone(clip: id, effect: effect) }
             model.onPickWhiteBalance = { [weak self] effect in self?.pickWhiteBalance(clip: id, effect: effect) }
             colorModels[id] = model
             views[id] = InspectorScroll(content: ColorInspectorView(model: model))
@@ -99,6 +100,14 @@ public final class ColorInspectorPanelView: NSView {
                                                    tint: model.value(effect, .tint)) else { NSSound.beep(); return }
             model.setWhiteBalance(effect, temperature: r.temperature, tint: r.tint)
         }
+    }
+
+    /// Basic Correction Auto: analyses the Program frame as shown (when the playhead is over the clip).
+    private func autoTone(clip id: Clip.ID, effect: Int) {
+        guard let model = colorModels[id], let clip = session.singleSelectedClip, clip.id == id, clip.timeline.contains(session.playhead),
+              let tex = session.engine.lastRenderedTexture, let luma = FrameSampler.lumaSamples(of: tex),
+              let e = model.color.effect(effect), let b = AutoTone.solve(luma: luma, current: e.basic) else { NSSound.beep(); return }
+        model.setAutoTone(effect, b)
     }
 
     private var gestureDepth = 0

@@ -125,6 +125,21 @@ import SSRender
         #expect(began == 1 && ended == 1)
     }
 
+    @Test func toneResetAndAutoAreOneGestureEachAndKeepColour() {
+        let m = model()
+        m.set(e1, .temperature, 20); m.set(e1, .saturation, 120)
+        m.set(e1, .exposure, 1); m.set(e1, .contrast, 30); m.set(e1, .blacks, -20); m.set(e1, .highlights, -10)
+        var began = 0
+        m.onGestureBegan = { began += 1 }
+        m.resetTone(e1)
+        #expect(began == 1)
+        #expect(m.value(e1, .exposure) == 0 && m.value(e1, .contrast) == 0 && m.value(e1, .blacks) == 0 && m.value(e1, .highlights) == 0)
+        #expect(m.value(e1, .temperature) == 20 && m.value(e1, .saturation) == 120, "colour controls stay")
+        var auto = BasicCorrection(); auto.exposure = 0.8; auto.blacks = -30; auto.contrast = 99
+        m.setAutoTone(e1, auto)
+        #expect(began == 2 && m.value(e1, .exposure) == 0.8 && m.value(e1, .blacks) == -30 && m.value(e1, .contrast) == 0)
+    }
+
     @Test func resetEffectKeepsTogglesAndOtherEffects() {
         let m = model()
         m.addEffect()

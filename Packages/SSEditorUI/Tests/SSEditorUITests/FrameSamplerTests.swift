@@ -33,6 +33,13 @@ import Testing
         #expect(img.width == 32 && img.height == 16)
     }
 
+    @Test func lumaSamplesAreDisplayEncodedAndCoverTheFrame() throws {
+        let t = try texture()
+        let l = try #require(FrameSampler.lumaSamples(of: t, width: 32))
+        #expect(l.count == 32 * 16 && l.allSatisfy { $0.isFinite })
+        #expect(l.max()! > 0.95 && l.min()! < 0.6, "right half white, left half darker")
+    }
+
     @Test func halfConversionMatchesFloat16() {
         for v: Float16 in [0, 1, -2, 0.333, 65504, 6e-8] {
             #expect(abs(FrameSampler.halfToFloat(v.bitPattern) - Float(v)) <= abs(Float(v)) * 1e-6)
