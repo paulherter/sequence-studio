@@ -49,6 +49,8 @@ public final class ProjectPanelModel {
     public private(set) var project: Project
     /// Bin that receives imports and new bins.
     public var currentBin: Bin.ID
+    /// Bin the icon view shows (double-click a bin to enter it).
+    public var browseBin: Bin.ID { didSet { if oldValue != browseBin { revision += 1 } } }
     public var searchText = "" { didSet { revision += 1 } }
     public private(set) var sortColumn: Column?
     public private(set) var sortAscending = true
@@ -72,6 +74,7 @@ public final class ProjectPanelModel {
         p.normalizeBins()
         self.project = p
         self.currentBin = p.rootBin.id
+        self.browseBin = p.rootBin.id
         self.probe = probe
         self.status = status
         self.onEdit = onEdit
@@ -83,6 +86,7 @@ public final class ProjectPanelModel {
         p.normalizeBins()
         project = p
         if project.bin(currentBin) == nil { currentBin = project.rootBin.id }
+        if project.bin(browseBin) == nil { browseBin = project.rootBin.id }
         refreshOffline()
         revision += 1
     }
