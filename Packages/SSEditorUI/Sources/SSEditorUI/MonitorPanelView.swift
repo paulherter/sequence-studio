@@ -22,6 +22,7 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
     private var buttons: [MonitorAction: NSButton] = [:]
     private let header = NSStackView()
     private let footer = NSView()
+    private lazy var scrubBar = MonitorScrubBar(model: model)
 
     public init(model: MonitorPanelModel) {
         self.model = model
@@ -162,7 +163,8 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
         }
         footer.addSubview(inOutLabel)
 
-        addSubview(header); addSubview(viewerSlot); addSubview(footer)
+        scrubBar.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(header); addSubview(viewerSlot); addSubview(scrubBar); addSubview(footer)
         let bar = Theme.Metrics.panelHeader
         NSLayoutConstraint.activate([
             header.topAnchor.constraint(equalTo: topAnchor),
@@ -172,7 +174,11 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
             viewerSlot.topAnchor.constraint(equalTo: header.bottomAnchor),
             viewerSlot.leadingAnchor.constraint(equalTo: leadingAnchor),
             viewerSlot.trailingAnchor.constraint(equalTo: trailingAnchor),
-            viewerSlot.bottomAnchor.constraint(equalTo: footer.topAnchor),
+            viewerSlot.bottomAnchor.constraint(equalTo: scrubBar.topAnchor),
+            scrubBar.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrubBar.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrubBar.bottomAnchor.constraint(equalTo: footer.topAnchor),
+            scrubBar.heightAnchor.constraint(equalToConstant: 14),
             footer.leadingAnchor.constraint(equalTo: leadingAnchor),
             footer.trailingAnchor.constraint(equalTo: trailingAnchor),
             footer.bottomAnchor.constraint(equalTo: bottomAnchor),
@@ -206,6 +212,7 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
             zoomPopup.selectItem(at: zoomPopup.numberOfItems - 1)
         }
         qualityPopup.selectItem(at: MonitorQuality.allCases.firstIndex(of: model.quality) ?? 0)
+        scrubBar.needsDisplay = true
         safeMarginsView.isHidden = !model.safeMargins
         safeMarginsView.needsDisplay = true
         let available = Set(model.availableActions)

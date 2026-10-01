@@ -14,7 +14,7 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
     let m = MediaRef(name: "A", path: "/nonexistent/A.mov", fingerprint: MediaFingerprint(size: 1),
                      duration: s(10), info: MediaInfo(duration: s(10), video: v, audio: a))
     let session = EditorSession(engine: engine, autosaveStore: AutosaveStore(base: FileManager.default.temporaryDirectory
-        .appendingPathComponent("ss-\(UUID().uuidString)"), policy: AutosavePolicy(interval: 300, keep: 3)))
+        .appendingPathComponent("sq-\(UUID().uuidString)"), policy: AutosavePolicy(interval: 300, keep: 3)))
     session.perform("Import") { $0.add(m) }
     return (session, engine, m)
 }
