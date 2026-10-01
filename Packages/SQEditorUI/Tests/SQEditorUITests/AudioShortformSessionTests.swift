@@ -51,6 +51,18 @@ private let fd = Time(1, 30)
         #expect(!s2.nudgeAudioGain(byDB: 1))                                  // only a video clip: nothing to do
     }
 
+    @Test func trackMixIsClampedAndOneUndoStep() {
+        let (sess, _, _, _, _, _) = make()
+        let id = sess.activeTimeline!.tracks[1].id
+        let depth = sess.undoDepth
+        #expect(sess.setTrackMix(id, volumeDB: -200, pan: 4))
+        let t = sess.activeTimeline!.tracks[1]
+        #expect(t.volumeDB == TrackPan.minVolumeDB && t.pan == 1 && sess.undoDepth == depth + 1)
+        #expect(!sess.setTrackMix(sess.activeTimeline!.tracks[0].id, volumeDB: -3, pan: 0))   // video track: refused
+        sess.undo()
+        #expect(sess.activeTimeline!.tracks[1].volumeDB == 0 && sess.activeTimeline!.tracks[1].pan == 0)
+    }
+
     @Test func tagsToggleInOneStep() {
         let (sess, _, _, _, _, x) = make()
         sess.select(clips: [x.id], captions: [])

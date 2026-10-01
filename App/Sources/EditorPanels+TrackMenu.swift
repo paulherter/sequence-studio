@@ -27,6 +27,9 @@ extension EditorPanels {
         menu.addItem(BlockMenuItem("Delete Track", enabled: !track.isLocked) { [weak self] in self?.session.deleteTrack(id) })
         menu.addItem(.separator())
         menu.addItem(BlockMenuItem("Rename…") { [weak self] in self?.renameTrack(track) })
+        if track.kind == .audio {
+            menu.addItem(BlockMenuItem("Volume and Pan…") { [weak self] in self?.presentTrackMix(track) })
+        }
         return menu
     }
 

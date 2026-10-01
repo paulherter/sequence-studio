@@ -24,6 +24,7 @@ public final class TimelineView: NSView {
     /// Volume rubber band edit of an audio clip: the clip as edited so far; one drag = began, changed..., ended.
     public var onVolumeEdit: ((Clip, VolumeEditPhase) -> Void)?
     var volumeDrag: VolumeDrag?
+    var fadeDrag: FadeDrag?
     /// Frames by which linked clips are out of sync (red badge on the clip); refreshed whenever `timeline` changes.
     var syncBadges: [Clip.ID: Int64] = [:]
     /// Builds the right-click menu for a point in view coordinates (see `TimelineContextMenu`). Nil = no menu.

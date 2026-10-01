@@ -16,7 +16,9 @@ extension AppController {
              .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel, .maximizeActivePanel, .resetLayout,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .minimizeAllTracks, .expandAllTracks, .speedDuration,
-             .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing:
+             .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing,
+             .audioGainDown, .audioGainUp, .audioGainDown6, .audioGainUp6, .matchLoudness, .autoDuck, .removeSilences,
+             .tagDialogue, .tagMusic, .tagSFX:
             true
         case _ where isShellCommand(c):
             true
@@ -112,6 +114,16 @@ extension AppController {
         case .export: showExport()
         case .audioGain: requestAudioGain()
         case .toggleAudioScrubbing: toggleAudioScrubbing()
+        case .audioGainDown: nudgeAudioGain(-1)
+        case .audioGainUp: nudgeAudioGain(1)
+        case .audioGainDown6: nudgeAudioGain(-6)
+        case .audioGainUp6: nudgeAudioGain(6)
+        case .matchLoudness: requestMatchLoudness()
+        case .autoDuck: requestAutoDuck()
+        case .removeSilences: requestRemoveSilences()
+        case .tagDialogue: tagSelectedAudio(.dialogue)
+        case .tagMusic: tagSelectedAudio(.music)
+        case .tagSFX: tagSelectedAudio(.sfx)
         default: break
         }
     }

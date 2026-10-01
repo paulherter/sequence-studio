@@ -203,6 +203,19 @@ public enum ClipDrawing {
             cg.addPath(d); cg.fillPath()
             cg.addPath(d); cg.strokePath()
         }
+        // Fade handles (head and tail): small squares near the top corners.
+        let h = VolumeLine.fadeHandlePoints(clip: clip, clipRect: rect)
+        if rect.width >= 4 * VolumeLine.handleSize {
+            let size = VolumeLine.handleSize
+            for c in [h.head, h.tail] {
+                let r = CGRect(x: c.x - size / 2, y: c.y - size / 2, width: size, height: size)
+                let path = CGPath(roundedRect: r, cornerWidth: 1.5, cornerHeight: 1.5, transform: nil)
+                cg.setFillColor(Theme.white(selected ? 0.95 : 0.7).cgColor)
+                cg.addPath(path); cg.fillPath()
+                cg.setStrokeColor(Theme.black(0.6).cgColor)
+                cg.addPath(path); cg.strokePath()
+            }
+        }
         cg.restoreGState()
     }
 

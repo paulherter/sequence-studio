@@ -166,3 +166,16 @@ extension EditorSession {
         return attempt("Remove Silences") { _ = try $0.removeCuts(cuts, tracks: tracks) }
     }
 }
+
+extension EditorSession {
+    /// Track fader (dB, clamped to the fader range) and pan (-1...1) of an audio track, one undo step. Playback, scrubbing and
+    /// export read the same fields.
+    @discardableResult
+    public func setTrackMix(_ id: Track.ID, volumeDB: Double, pan: Double) -> Bool {
+        attempt("Track Volume and Pan") { t in
+            guard let i = t.tracks.firstIndex(where: { $0.id == id }), t.tracks[i].kind == .audio else { return }
+            t.tracks[i].volumeDB = min(max(volumeDB, TrackPan.minVolumeDB), TrackPan.maxVolumeDB)
+            t.tracks[i].pan = min(max(pan, -1), 1)
+        }
+    }
+}
