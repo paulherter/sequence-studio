@@ -95,4 +95,20 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         #expect(ProjectPanelModel.timecode(s(10), frameDuration: Time(0, 1)) == "00:00:10")
         #expect(HoverScrub.poster(duration: s(10), frameDuration: Time(0, 1)) <= Time(2, 1))
     }
+
+    // Finding 24: OK with the unchanged speed or duration still applied a no-op SpeedChange.
+    @Test func unchangedSpeedDialogHasNoChanges() {
+        let fd = Time(1, 24)
+        let clip = Clip(name: "c", media: UUID(), kind: .video, source: TimeRange(start: .zero, duration: fd * 48), start: .zero,
+                        link: nil, mediaDuration: fd * 2000)
+        var m = SpeedDialogModel(clips: [clip], frameDuration: fd)
+        m.setPercent(100)
+        #expect(!m.hasChanges)
+        m.setDuration(fd * 48)
+        #expect(!m.hasChanges)
+        m.setPercent(200)
+        #expect(m.hasChanges)
+        m.setPercent(100)
+        #expect(!m.hasChanges)
+    }
 }
