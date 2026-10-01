@@ -131,7 +131,7 @@ private func singleClip(_ media: UUID, frames: Int, duration: Time? = nil) -> Ti
     @Test func garbageMediaShowsOfflinePlaceholder() async throws {
         var bytes = [UInt8](repeating: 0, count: 20_000)
         for i in bytes.indices { bytes[i] = .random(in: 0...255) }
-        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("SSGarbageEngine-\(UUID())")
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("SQGarbageEngine-\(UUID())")
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
         let url = dir.appendingPathComponent("noise.mov")
         try Data(bytes).write(to: url)

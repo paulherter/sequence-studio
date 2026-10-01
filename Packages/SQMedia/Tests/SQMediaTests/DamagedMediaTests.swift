@@ -26,7 +26,7 @@ private func copy(_ url: URL, name: String, transform: (inout Data) -> Void) thr
 }
 
 private func tmpFile(_ name: String, _ data: Data) throws -> URL {
-    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("SSGarbage-\(UUID().uuidString)", isDirectory: true)
+    let dir = FileManager.default.temporaryDirectory.appendingPathComponent("SQGarbage-\(UUID().uuidString)", isDirectory: true)
     try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
     let u = dir.appendingPathComponent(name)
     try data.write(to: u)
