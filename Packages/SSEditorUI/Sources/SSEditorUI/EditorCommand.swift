@@ -1,7 +1,7 @@
 import Foundation
 
 public enum EditorTool: String, Sendable, Hashable, CaseIterable {
-    case selection, trackForward, trackBackward, ripple, rolling, slip, slide, razor, hand, zoom, type
+    case selection, trackForward, trackBackward, ripple, rolling, slip, slide, razor, hand, zoom, type, rateStretch
 }
 
 /// Every command the keyboard map and the menus can trigger (docs/UX.md section 3).
@@ -21,6 +21,8 @@ public enum EditorCommand: Sendable, Hashable {
     case addEdit, addEditAllTracks, rippleTrimPrevious, rippleTrimNext, extendEdit
     case delete, rippleDelete, deleteProjectItems
     case toggleSnapping, matchFrame, reverseMatchFrame, link, group
+    /// Clip > Speed/Duration (Cmd+R).
+    case speedDuration
     // Clipboard / history
     case copy, cut, paste, pasteAttributes, undo, redo
     // View / window
@@ -89,6 +91,7 @@ public enum EditorCommand: Sendable, Hashable {
             case .hand: "Hand Tool"
             case .zoom: "Zoom Tool"
             case .type: "Type Tool"
+            case .rateStretch: "Rate Stretch Tool"
             }
         case .addEdit: "Add Edit"
         case .addEditAllTracks: "Add Edit to All Tracks"
@@ -103,6 +106,7 @@ public enum EditorCommand: Sendable, Hashable {
         case .reverseMatchFrame: "Reverse Match Frame"
         case .link: "Link"
         case .group: "Group"
+        case .speedDuration: "Speed/Duration…"
         case .copy: "Copy"
         case .cut: "Cut"
         case .paste: "Paste"

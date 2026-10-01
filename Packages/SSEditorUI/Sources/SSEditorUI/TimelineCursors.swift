@@ -44,8 +44,8 @@ public enum TimelineCursors {
         let img = image { ctx in
             let p = CGMutablePath()
             switch kind {
-            case .trimIn, .trimOut, .rippleIn, .rippleOut:
-                let serif: CGFloat = (kind == .trimIn || kind == .rippleIn) ? 1 : -1
+            case .trimIn, .trimOut, .rippleIn, .rippleOut, .rateIn, .rateOut:
+                let serif: CGFloat = (kind == .trimIn || kind == .rippleIn || kind == .rateIn) ? 1 : -1
                 p.move(to: CGPoint(x: c.x, y: c.y - 7)); p.addLine(to: CGPoint(x: c.x, y: c.y + 7))            // bar
                 p.move(to: CGPoint(x: c.x, y: c.y + 7)); p.addLine(to: CGPoint(x: c.x + serif * 4, y: c.y + 7)) // serifs
                 p.move(to: CGPoint(x: c.x, y: c.y - 7)); p.addLine(to: CGPoint(x: c.x + serif * 4, y: c.y - 7))
@@ -55,6 +55,11 @@ public enum TimelineCursors {
                 if kind == .rippleIn || kind == .rippleOut {                                                    // ripple: second bar
                     let x = c.x + serif * 7
                     p.move(to: CGPoint(x: x, y: c.y - 4)); p.addLine(to: CGPoint(x: x, y: c.y + 4))
+                }
+                if kind == .rateIn || kind == .rateOut {                                                        // rate stretch: speed ticks
+                    for dy: CGFloat in [-3.5, 3.5] {
+                        p.move(to: CGPoint(x: c.x + serif * 6, y: c.y + dy)); p.addLine(to: CGPoint(x: c.x + serif * 11, y: c.y + dy))
+                    }
                 }
             case .roll:
                 p.move(to: CGPoint(x: c.x - 2, y: c.y - 7)); p.addLine(to: CGPoint(x: c.x - 2, y: c.y + 7))

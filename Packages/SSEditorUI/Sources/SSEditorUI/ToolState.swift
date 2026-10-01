@@ -4,6 +4,8 @@ import SSCore
 /// Timeline tools (Premiere keys).
 public enum TimelineTool: Sendable, Hashable, CaseIterable {
     case selection, trackSelectForward, rippleEdit, rollEdit, slip, slide, razor, hand
+    /// Rate Stretch (R): dragging a clip edge changes the speed instead of trimming.
+    case rateStretch
     /// Pen, shape and mask are column slots only (scope addition, later); `type` is the Type tool (behaviour: C2).
     case pen, shape, mask, type
 
@@ -21,6 +23,7 @@ public enum TimelineTool: Sendable, Hashable, CaseIterable {
         case "c": self = .razor
         case "h": self = .hand
         case "t": self = .type
+        case "r": self = .rateStretch
         default: return nil
         }
     }
@@ -39,6 +42,7 @@ public enum TimelineTool: Sendable, Hashable, CaseIterable {
         case .shape: "r"
         case .mask: "o"
         case .type: "t"
+        case .rateStretch: "r"
         }
     }
 }
@@ -75,6 +79,10 @@ public enum TimelineEdit: Sendable, Equatable {
     case rippleDelete([Clip.ID])
     case trim(Clip.ID, edge: ClipEdge, by: Time)
     case rippleTrim(Clip.ID, edge: ClipEdge, by: Time)
+    /// Rate Stretch: the edge moves by `by`, the speed changes to fill the new length.
+    case rateStretch(Clip.ID, edge: ClipEdge, by: Time)
+    /// Speed/Duration dialog result for these clips (linked partners follow).
+    case speed([Clip.ID], SpeedChange)
     case roll(Clip.ID, by: Time)
     case slip(Clip.ID, by: Time)
     case slide(Clip.ID, by: Time)
@@ -93,6 +101,8 @@ public enum TimelineEdit: Sendable, Equatable {
         case .rippleDelete(let ids): _ = try t.rippleDelete(ids)
         case let .trim(id, edge, d): try t.trim(id, edge: edge, by: d)
         case let .rippleTrim(id, edge, d): try t.rippleTrim(id, edge: edge, by: d)
+        case let .rateStretch(id, edge, d): try t.rateStretch(id, edge: edge, by: d)
+        case let .speed(ids, change): try t.apply(change, to: ids)
         case let .roll(id, d): try t.roll(id, by: d)
         case let .slip(id, d): try t.slip(id, by: d)
         case let .slide(id, d): try t.slide(id, by: d)

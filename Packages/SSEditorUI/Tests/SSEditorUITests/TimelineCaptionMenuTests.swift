@@ -213,11 +213,11 @@ private func drag(_ i: inout TimelineInteraction, _ a: CGPoint, _ b: CGPoint) ->
         let none = TimelineContextMenu.items(timeline: tl, selection: [], clipboardHasClips: false)
         #expect(enabled(none).isEmpty)
         let one = TimelineContextMenu.items(timeline: tl, selection: [a.id], clipboardHasClips: true)
-        #expect(enabled(one) == [.cut, .copy, .paste, .delete, .rippleDelete, .nest, .rename, .revealInProject, .setToFrameSize, .scaleToFrameSize])
+        #expect(enabled(one) == [.cut, .copy, .paste, .delete, .rippleDelete, .nest, .rename, .revealInProject, .setToFrameSize, .scaleToFrameSize, .speed])
         let two = TimelineContextMenu.items(timeline: tl, selection: [a.id, b.id], clipboardHasClips: false)
-        #expect(enabled(two) == [.cut, .copy, .delete, .rippleDelete, .link, .nest, .revealInProject, .setToFrameSize, .scaleToFrameSize])
+        #expect(enabled(two) == [.cut, .copy, .delete, .rippleDelete, .link, .nest, .revealInProject, .setToFrameSize, .scaleToFrameSize, .speed])
         #expect(two.contains { $0.action == .enable && !$0.isEnabled })
-        #expect(two.contains { $0.action == .speed && !$0.isEnabled })
+        #expect(none.contains { $0.action == .speed && !$0.isEnabled })
     }
 
     @Test func menuShowsUnlinkForLinkedClips() {

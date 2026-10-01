@@ -14,7 +14,7 @@ extension AppController {
              .delete, .rippleDelete, .toggleSnapping, .undo, .redo,
              .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel, .maximizeActivePanel, .resetLayout,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
-             .minimizeAllTracks, .expandAllTracks,
+             .minimizeAllTracks, .expandAllTracks, .speedDuration,
              .importMedia, .newSequence, .save, .export:
             true
         case _ where isShellCommand(c):
@@ -70,6 +70,7 @@ extension AppController {
         case .toggleSnapping:
             panels.timelineView.toolState.snapping.toggle()
             shell.statusBar.flash(panels.timelineView.toolState.snapping ? "Snapping on" : "Snapping off", seconds: 2)
+        case .speedDuration: requestSpeedDuration()
         case .undo: session.undo()
         case .redo: session.redo()
         case .videoTracksTaller: panels.timelineView.sizeTracks(.video, direction: 1)
@@ -111,6 +112,7 @@ extension AppController {
         case .razor: mapped = .razor
         case .hand: mapped = .hand
         case .type: mapped = .type
+        case .rateStretch: mapped = .rateStretch
         case .zoom: mapped = nil
         }
         // The Program monitor follows: Hand pans the view, Type places text, everything else is the selection behaviour.

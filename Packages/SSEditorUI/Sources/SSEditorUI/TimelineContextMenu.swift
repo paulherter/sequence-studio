@@ -39,6 +39,7 @@ public enum TimelineContextMenu {
             : TimelineMenuItem(.unlink, "Unlink", enabled: true, key: "l")
         // Generators (text) have no picture size to fit.
         let hasPictures = clips.contains { !$0.isGenerator && $0.kind == .video }
+        let canRetime = clips.contains { Timeline.canRetime($0) }
         return [
             TimelineMenuItem(.cut, "Cut", enabled: hasClips, key: "x"),
             TimelineMenuItem(.copy, "Copy", enabled: hasClips, key: "c"),
@@ -53,7 +54,7 @@ public enum TimelineContextMenu {
             TimelineMenuItem(.scaleToFrameSize, "Scale to Frame Size", enabled: hasPictures),
             TimelineMenuItem(.rename, "Rename…", enabled: clips.count == 1, separatorBefore: true),
             TimelineMenuItem(.revealInProject, "Reveal in Project", enabled: hasClips),
-            TimelineMenuItem(.speed, "Speed/Duration…", enabled: false, separatorBefore: true),
+            TimelineMenuItem(.speed, "Speed/Duration…", enabled: canRetime, separatorBefore: true, key: "r"),
         ]
     }
 

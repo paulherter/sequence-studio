@@ -217,6 +217,7 @@ final class EditorPanels {
             case .delete: self?.onCommand?(.delete)
             case .rippleDelete: self?.onCommand?(.rippleDelete)
             case .nest: self?.onNest?()
+            case .speed: self?.onCommand?(.speedDuration)
             case .setToFrameSize, .scaleToFrameSize: self?.onFrameSize?()
             default: break
             }

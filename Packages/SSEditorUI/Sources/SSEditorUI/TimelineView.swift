@@ -562,6 +562,7 @@ public final class TimelineView: NSView {
         .slip: ("arrow.left.and.right.square", "Slip"),
         .slide: ("arrow.left.and.right.square.fill", "Slide"),
         .hand: ("hand.raised", "Hand"),
+        .rateStretch: ("gauge.with.dots.needle.67percent", "Rate Stretch"),
         .pen: ("pencil.tip", "Pen"),
         .shape: ("rectangle", "Shape"),
         .mask: ("rectangle.dashed", "Mask"),
@@ -763,14 +764,14 @@ public final class TimelineView: NSView {
                 let x0 = geometry.x(for: c.timeline.start), x1 = geometry.x(for: c.timeline.end)
                 if x1 < clip.minX { continue }
                 if x0 > clip.maxX { break }   // clips are sorted by start
-                ClipDrawing.draw(name: c.name, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
+                ClipDrawing.draw(name: c.name + SpeedLabel.nameSuffix(for: c), rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
                                  visible: visibleX, style: .label(labelResolver.label(for: c)), isSelected: selection.contains(c.id),
                                  isOffline: offlineMedia.contains(c.media))
                 if track.kind == .audio, !TrackSizing.isThin(row.height), let wf = waveforms, let d = wf.data[c.media] {
                     ClipDrawing.drawWaveform(data: d, media: c.media, source: c.source,
                                              rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
                                              visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height),
-                                             cache: wf.cache)   // pixel-mapped: only the dirty columns are needed
+                                             cache: wf.cache, reversed: c.reversed)   // pixel-mapped: only the dirty columns are needed
                 }
             }
         }
