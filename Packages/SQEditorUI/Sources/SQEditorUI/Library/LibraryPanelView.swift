@@ -260,6 +260,7 @@ public final class LibraryPanelView: NSView {
     // MARK: Refresh (driven by observation)
 
     private func refresh() {
+        let keptSelection = Set(clickedItemsSelection().map(\.id))      // survives the reload below
         // Read everything the view shows so observation tracks it.
         let folders = model.folders
         let selection = model.selection
@@ -292,6 +293,11 @@ public final class LibraryPanelView: NSView {
         reloading = true
         collection.reloadData()
         table.reloadData()
+        if !presetMode, !keptSelection.isEmpty {
+            let rows = IndexSet(items.indices.filter { keptSelection.contains(items[$0].id) })
+            collection.selectionIndexPaths = Set(rows.map { IndexPath(item: $0, section: 0) })
+            table.selectRowIndexes(rows, byExtendingSelection: false)
+        }
         reloading = false
 
         let count = presetMode ? templates.count + presets.count : items.count
@@ -380,6 +386,13 @@ public final class LibraryPanelView: NSView {
         NSWorkspace.shared.activateFileViewerSelecting(clickedItems().map(\.url))
     }
 
+    /// The selected items of the visible list or grid (before a reload replaces `items`).
+    private func clickedItemsSelection() -> [LibraryItem] {
+        if model.isShowingPresets { return [] }
+        let rows = !listScroll.isHidden ? Array(table.selectedRowIndexes) : collection.selectionIndexPaths.map(\.item)
+        return rows.sorted().compactMap { $0 < items.count ? items[$0] : nil }
+    }
+
     private func clickedItems() -> [LibraryItem] {
         if !listScroll.isHidden {
             let clicked = table.clickedRow
@@ -409,8 +422,17 @@ public final class LibraryPanelView: NSView {
     fileprivate func thumbnailImage(for item: LibraryItem) -> NSImage? {
         guard LibraryPanelModel.previewKind(for: item.entry.kind) == .thumbnail,
               let url = model.thumbnails[item.id] else { return nil }
-        return NSImage(contentsOf: url)
+        if let hit = imageCache.object(forKey: url as NSURL) { return hit }
+        guard let image = NSImage(contentsOf: url) else { return nil }
+        imageCache.setObject(image, forKey: url as NSURL)       // every cell asks again on each reload: read each file once
+        return image
     }
+
+    private let imageCache: NSCache<NSURL, NSImage> = {
+        let c = NSCache<NSURL, NSImage>()
+        c.countLimit = 300
+        return c
+    }()
 
     private static let byteFormatter: ByteCountFormatter = {
         let f = ByteCountFormatter()

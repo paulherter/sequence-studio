@@ -98,7 +98,10 @@ public final class ExportDialogModel {
     public var fps: Double {
         get {
             let d = settings.video.frameDuration
-            return d.value > 0 ? Double(d.timescale) / Double(d.value) : 0
+            guard d.value > 0 else { return 0 }
+            let raw = Double(d.timescale) / Double(d.value)
+            // The NTSC rates are 24000/1001 etc.: report the picker's tag (23.976) so the Picker can match it.
+            return Self.frameRates.first { abs($0 - raw) < 0.01 } ?? raw
         }
         set {
             let t: Time

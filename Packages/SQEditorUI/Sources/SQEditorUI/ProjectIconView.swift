@@ -182,17 +182,18 @@ final class ProjectIconView: NSView, NSMenuDelegate {
         switch ref {
         case .media(let id):
             if offline {
+                thumbs.clearFailure(id)          // back online later: the poster is tried again
                 cell.imageView.image = symbol("exclamationmark.triangle", Theme.Colors.red)
             } else if let ref = model.project.media(id) {
                 if let seen = posterSeen[id], seen != ref.posterTime { thumbs.forget(id) }
                 posterSeen[id] = ref.posterTime
                 if let img = thumbs.cachedPoster(id) { cell.imageView.image = img } else {
                     cell.imageView.image = symbol(model.icon(of: .media(id)).symbol, Theme.Colors.label3)
-                    if ref.kind != .audio {
-                        thumbs.requestPoster(ref, height: height) { [weak self] in
-                            guard let self, let c = cells[.media(id)], hovered != .media(id) else { return }
-                            c.imageView.image = thumbs.cachedPoster(id) ?? c.imageView.image
-                        }
+                }
+                if ref.kind != .audio {          // no-op while the cached poster is sharp enough for this thumbnail size
+                    thumbs.requestPoster(ref, height: height) { [weak self] in
+                        guard let self, let c = cells[.media(id)], hovered != .media(id) else { return }
+                        c.imageView.image = thumbs.cachedPoster(id) ?? c.imageView.image
                     }
                 }
             }

@@ -105,7 +105,13 @@ public final class TextPanelView: NSView {
     private func clip(_ id: Clip.ID) -> Clip? { session.activeTimeline?.tracks.lazy.flatMap(\.clips).first { $0.id == id } }
 
     private func ensure(for clip: Clip) {
-        guard views[clip.id] == nil else { return }
+        if views[clip.id] != nil {
+            // A relinked or replaced file keeps the clip's id: transcribe the file the clip plays now.
+            if let ref = session.project.media(clip.media), models[clip.id]?.sourceURL?.path != ref.path {
+                models[clip.id]?.sourceURL = URL(fileURLWithPath: ref.path)
+            }
+            return
+        }
         let model = CaptionsPanelModel(service: SpeechAnalyzerTranscriber())
         let id = clip.id
         model.onSeek = { [weak self] t in

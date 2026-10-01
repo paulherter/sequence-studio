@@ -115,6 +115,32 @@ private final class BusyFlag: @unchecked Sendable {
     func release() { lock.lock(); value = false; lock.unlock() }
 }
 
+/// Two private copies of the engine's composite, written by the engine's own command buffer (render thread) and read by
+/// the scopes on their queue: the engine reuses one render target, reading it from another queue could show a half-written frame.
+private final class FrameCopies: @unchecked Sendable {
+    private let lock = NSLock()
+    private var textures: [MTLTexture] = []
+    private var next = 0
+
+    /// The copy to write next (alternating), made again when the size or format of the frame changes.
+    func target(for frame: MTLTexture) -> MTLTexture? {
+        lock.lock(); defer { lock.unlock() }
+        if let t = textures.first, t.width != frame.width || t.height != frame.height || t.pixelFormat != frame.pixelFormat {
+            textures = []
+        }
+        if textures.isEmpty {
+            let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: frame.pixelFormat, width: frame.width, height: frame.height, mipmapped: false)
+            d.usage = [.shaderRead]; d.storageMode = .private
+            textures = (0..<2).compactMap { _ in frame.device.makeTexture(descriptor: d) }
+            guard textures.count == 2 else { textures = []; return nil }
+        }
+        defer { next = (next + 1) % textures.count }
+        return textures[next]
+    }
+}
+
+private struct SendableTexture: @unchecked Sendable { let texture: MTLTexture }
+
 /// Scopes panel content: segmented picker (Waveform, Parade, Vectorscope, Histogram) over a GPU-drawn scope with graticule overlay.
 /// Feed it with `update(frame:)` (working-linear texture: rgba16Float/32Float, `.shaderRead`).
 @MainActor
@@ -133,7 +159,10 @@ public final class ScopesView: NSView {
     private let renderer: ScopeRenderer
     private let resources: ScopeResources
     private let busy = BusyFlag()
+    private let copies = FrameCopies()
     private var hasData = false
+    /// A redraw was asked for while the GPU was busy: run it when the frame in flight is done.
+    private var redrawPending = false
 
     public init?(device: MTLDevice? = MTLCreateSystemDefaultDevice()) {
         guard let device, let q = device.makeCommandQueue(),
@@ -185,6 +214,19 @@ public final class ScopesView: NSView {
         redraw()
     }
 
+    /// Refreshes the scopes from the engine's latest finished frame: the engine blits it into this view's own texture on
+    /// its command buffer (no race with its next render), then the scopes run on that copy.
+    public func requestUpdate(from engine: any ProgramEngine) {
+        let copies = copies
+        engine.requestFrameCapture(key: "scopes") { [weak self] frame, cb in
+            guard let copy = copies.target(for: frame), let blit = cb.makeBlitCommandEncoder() else { return nil }
+            blit.copy(from: frame, to: copy)
+            blit.endEncoding()
+            let done = SendableTexture(texture: copy)
+            return { Task { @MainActor in self?.update(frame: done.texture) } }
+        }
+    }
+
     /// Runs the SQRender scopes on `frame` and draws.
     public func update(frame: MTLTexture) {
         guard busy.tryAcquire() else { return }      // previous frame still in flight: drop
@@ -193,17 +235,30 @@ public final class ScopesView: NSView {
         hasData = true
         drawPass(commandBuffer: cb)
         let flag = busy
-        cb.addCompletedHandler { _ in flag.release() }
+        cb.addCompletedHandler { [weak self] _ in
+            flag.release()
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.runPendingRedraw() } }
+        }
         cb.commit()
+    }
+
+    private func runPendingRedraw() {
+        guard redrawPending else { return }
+        redrawPending = false
+        redraw()
     }
 
     /// Redraws the last computed scope (resize, picker change).
     public func redraw() {
-        guard hasData, busy.tryAcquire() else { return }
+        guard hasData else { return }
+        guard busy.tryAcquire() else { redrawPending = true; return }
         guard let cb = queue.makeCommandBuffer() else { busy.release(); return }
         drawPass(commandBuffer: cb)
         let flag = busy
-        cb.addCompletedHandler { _ in flag.release() }
+        cb.addCompletedHandler { [weak self] _ in
+            flag.release()
+            DispatchQueue.main.async { MainActor.assumeIsolated { self?.runPendingRedraw() } }
+        }
         cb.commit()
     }
 

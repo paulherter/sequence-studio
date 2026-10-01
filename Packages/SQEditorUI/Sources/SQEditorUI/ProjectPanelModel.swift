@@ -289,8 +289,12 @@ public final class ProjectPanelModel {
         guard !refs.isEmpty else { revision += 1; return }
         let dest = project.bin(currentBin) != nil ? currentBin : project.rootBin.id
         _ = commit(refs.count == 1 ? "Import Media" : "Import \(refs.count) Media Items") { p in
-            for r in refs { p.add(r) }
-            if dest != p.rootBin.id { p.move(refs.map { .media($0.id) }, to: dest) }
+            // Another import of the same file may have finished while this one probed.
+            let present = Set(p.media.map(\.path))
+            let fresh = refs.filter { !present.contains($0.path) }
+            guard !fresh.isEmpty else { return false }
+            for r in fresh { p.add(r) }
+            if dest != p.rootBin.id { p.move(fresh.map { .media($0.id) }, to: dest) }
             return true
         }
         refreshOffline()
@@ -381,7 +385,7 @@ public final class ProjectPanelModel {
     public static func durationString(_ m: MediaRef) -> String {
         guard let d = m.duration ?? m.info?.duration, !d.isNegative else { return "" }
         func two(_ n: Int64) -> String { n < 10 ? "0\(n)" : "\(n)" }
-        if let fd = m.info?.video?.nominalFrameDuration {
+        if let fd = m.info?.video?.nominalFrameDuration, fd.value > 0 {
             let fps = max(1, Int64((Double(fd.timescale) / Double(fd.value)).rounded()))
             let frames = d.frameIndex(frameDuration: fd)
             let s = frames / fps
