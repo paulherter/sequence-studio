@@ -59,6 +59,10 @@ public enum VolumeLine {
         let lane = lane(in: clipRect)
         let x0 = max(clipRect.minX, visible.minX), x1 = min(clipRect.maxX, visible.maxX)
         guard x1 > x0, lane.height > 0 else { return [] }
+        if clip.animation.volume.track.isEmpty {   // constant level: one segment (the common case, and cheap)
+            let y = y(forDB: AudioGain.db(fromLinear: clip.animation.volume.value), in: lane)
+            return [CGPoint(x: x0, y: y), CGPoint(x: x1, y: y)]
+        }
         let secPerPoint = Double(clip.source.duration.value) / Double(clip.source.duration.timescale) / Double(max(clipRect.width, 1))
         func at(_ x: CGFloat) -> CGPoint {
             let sec = Double(x - clipRect.minX) * secPerPoint
