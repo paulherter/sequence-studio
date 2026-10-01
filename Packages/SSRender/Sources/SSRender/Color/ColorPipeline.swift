@@ -48,6 +48,7 @@ public enum ColorOp: Sendable {
     /// Look LUT with intensity 0…1 (expects and returns the display signal).
     case look(CubeLUT, intensity: Float)
     case curves(RGBCurves)
+    case hueCurves(HueCurves)
     case wheels(ColorWheels)
     case vignette(Vignette)
 }
@@ -60,6 +61,7 @@ struct ColorStage: Sendable {
         case creative(PreparedCreative)
         case look(CubeLUT, Float)
         case curves(CurveTable)
+        case hueCurves(PreparedHueCurves)
         case wheels(PreparedWheels)
         case vignette(PreparedVignette)
     }
@@ -112,6 +114,7 @@ public struct ColorPipeline: Sendable {
             case .creative(let c): out.append(ColorStage(kind: .creative(PreparedCreative(c, gamut: gamut)), pre: pre))
             case .look(let lut, let k): out.append(ColorStage(kind: .look(lut, k), pre: pre))
             case .curves(let c): out.append(ColorStage(kind: .curves(CurveTable(c)), pre: pre))
+            case .hueCurves(let h): out.append(ColorStage(kind: .hueCurves(PreparedHueCurves(h, gamut: gamut)), pre: pre))
             case .wheels(let w): out.append(ColorStage(kind: .wheels(PreparedWheels(w, gamut: gamut)), pre: pre))
             case .vignette(let v): out.append(ColorStage(kind: .vignette(PreparedVignette(v)), pre: pre))
             }
@@ -163,6 +166,7 @@ public struct ColorPipeline: Sendable {
                     c = TransferFunctions.bt709InverseOETF(Self.mixLook(lut, t, k))
                 } else { c = Self.mixLook(lut, c, k) }
             case .curves(let t): c = t.apply(c, pre: s.pre)
+            case .hueCurves(let p): c = p.apply(c, pre: s.pre)
             case .wheels(let p): c = p.apply(c, pre: s.pre)
             case .vignette(let p): c = p.apply(c, uv: uv, aspect: aspect, pre: s.pre)
             }

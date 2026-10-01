@@ -221,7 +221,7 @@ import Testing
         "source":{"start":{"value":0,"timescale":1},"duration":{"value":2,"timescale":1}},"start":{"value":0,"timescale":1}}]}]}]}}
         """#
         let p = try ProjectFile.decode(Data(json.utf8), migrations: ProjectFile.migrations)
-        #expect(ProjectFile.currentVersion == 12)
+        #expect(ProjectFile.currentVersion == 13)
         let clip = try #require(p.timelines.first?.tracks.first?.clips.first)
         #expect(clip.color == .default)
     }
@@ -239,5 +239,43 @@ import Testing
         let p = try ProjectFile.decode(Data(json.utf8), migrations: ProjectFile.migrations)
         let clip = try #require(p.timelines.first?.tracks.first?.clips.first)
         #expect(clip.color.effects.count == 1 && clip.color.primary.basic.exposure == 2 && clip.color.primary.inputLUT == .automatic)
+    }
+
+    @Test func v12ProjectFileMigratesToV13WithFlatHueCurves() throws {
+        let pid = UUID(), tid = UUID(), mid = UUID(), cid = UUID()
+        let json = #"""
+        {"formatVersion":12,"project":{"id":"\#(pid)","name":"Old","media":[],"activeTimeline":"\#(tid)",
+        "timelines":[{"id":"\#(tid)","name":"T","format":{"width":1920,"height":1080,"frameDuration":{"value":1,"timescale":30},"audioSampleRate":48000},
+        "tracks":[{"id":"\#(UUID())","kind":"video","clips":[{"id":"\#(cid)","name":"c","media":"\#(mid)","kind":"video",
+        "color":{"useEmbeddedLUT":true,"effects":[{"id":1,"inputLUT":{"kind":"automatic"},"inputLUTIntensity":100,
+        "basic":{"temperature":0,"tint":0,"exposure":1.5,"contrast":0,"highlights":0,"shadows":0,"whites":0,"blacks":0,"saturation":100,"vibrance":0}}]},
+        "source":{"start":{"value":0,"timescale":1},"duration":{"value":2,"timescale":1}},"start":{"value":0,"timescale":1}}]}]}]}}
+        """#
+        let p = try ProjectFile.decode(Data(json.utf8), migrations: ProjectFile.migrations)
+        let e = try #require(p.timelines.first?.tracks.first?.clips.first?.color.primary)
+        #expect(e.basic.exposure == 1.5 && e.hueCurves == HueCurves() && e.hueCurves.isNeutral)
+        #expect(e.isNeutral(.curves))
+    }
+
+    @Test func hueCurvesRoundTripAndOnlyEncodeWhenUsed() throws {
+        var c = ClipColor.default
+        let plain = String(decoding: try JSONEncoder().encode(c), as: UTF8.self)
+        #expect(!plain.contains("hueCurves"), "neutral curves keep the JSON unchanged")
+        c.effects[0].hueCurves.hueVsSat = [CurvePoint(0, 0.5), CurvePoint(0.33, 0.9), CurvePoint(1, 0.5)]
+        c.effects[0].hueCurves.lumaVsSat = [CurvePoint(0, 0.2), CurvePoint(1, 0.5)]
+        #expect(!c.effects[0].isNeutral(.curves) && !c.isIdentity(rec709Source: true))
+        let back = try JSONDecoder().decode(ClipColor.self, from: JSONEncoder().encode(c))
+        #expect(back == c)
+        c.resetSection(.curves, in: 1)
+        #expect(c.effects[0].hueCurves.isNeutral && c.isIdentity(rec709Source: true))
+    }
+
+    @Test func hueCurvesNeutralMeansEveryPointOnTheMiddleLine() {
+        var h = HueCurves()
+        #expect(h.isNeutral)
+        h.hueVsHue = [CurvePoint(0, 0.5), CurvePoint(0.5, 0.5), CurvePoint(1, 0.5)]
+        #expect(h.isNeutral, "extra points on the line change nothing")
+        h.hueVsLuma = [CurvePoint(0, 0.5), CurvePoint(0.5, 0.6), CurvePoint(1, 0.5)]
+        #expect(!h.isNeutral)
     }
 }

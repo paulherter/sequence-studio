@@ -258,6 +258,93 @@ public struct PreparedVignette: Sendable, Equatable {
     }
 }
 
+// MARK: Hue Saturation Curves
+
+/// Lumetri Hue Saturation Curves. Five curves (Hue vs Sat, Hue vs Hue, Hue vs Luma, Luma vs Sat, Sat vs Sat) all sample
+/// the colour that enters the block (they run in parallel, as in Premiere), then adjust it together: hue shift
+/// (up to +-60 degrees, rotation about the grey axis), saturation (x0…x2 around the luma) and luma (+-1 stop). The
+/// hue-keyed adjustments fade out towards grey, where hue is undefined. y = 0.5 is "no change".
+public struct PreparedHueCurves: Sendable, Equatable {
+    public static let count = 64
+    /// Rows 0…63 hold (hueVsSat, hueVsHue, hueVsLuma, lumaVsSat), rows 64…127 hold (satVsSat, 0, 0, 0).
+    let table: [SIMD4<Float>]
+    let luma: SIMD3<Float>
+    static let maxHueShift: Float = Float.pi / 3
+
+    init(_ h: HueCurves, gamut: Gamut) {
+        let n = Self.count
+        var rows = [SIMD4<Float>](repeating: .zero, count: 2 * n)
+        let hs = Self.periodic(h.hueVsSat, n), hh = Self.periodic(h.hueVsHue, n), hl = Self.periodic(h.hueVsLuma, n)
+        let ls = CurveMath.sample(h.lumaVsSat, n), ss = CurveMath.sample(h.satVsSat, n)
+        for k in 0..<n {
+            rows[k] = SIMD4(hs[k], hh[k], hl[k], ls[k])
+            rows[n + k] = SIMD4(ss[k], 0, 0, 0)
+        }
+        table = rows
+        luma = gamut.lumaRow
+    }
+
+    /// n samples at x = k/n of a curve that wraps around (hue): the points are repeated one period to each side.
+    static func periodic(_ pts: [CurvePoint], _ n: Int) -> [Float] {
+        let p = CurveMath.normalized(pts)
+        let ext = p.map { CurvePoint($0.x / 3, $0.y) } + p.map { CurvePoint(($0.x + 1) / 3, $0.y) }
+            + p.map { CurvePoint(($0.x + 2) / 3, $0.y) }
+        return (0..<n).map { CurveMath.evaluate(ext, (Float($0) / Float(n) + 1) / 3) }
+    }
+
+    @inline(__always) func hueSample(_ column: Int, _ h: Float) -> Float {
+        let n = Self.count
+        let p = h * Float(n)
+        let i = min(Int(p), n - 1)
+        let f = p - Float(i)
+        let a = table[i][column], b = table[(i + 1) % n][column]
+        return a + (b - a) * f
+    }
+
+    @inline(__always) func linearSample(_ row0: Int, _ column: Int, _ x: Float) -> Float {
+        let n = Self.count
+        let p = min(max(x, 0), 1) * Float(n - 1)
+        let i = min(Int(p), n - 2)
+        let f = p - Float(i)
+        let a = table[row0 + i][column], b = table[row0 + i + 1][column]
+        return a + (b - a) * f
+    }
+
+    public func apply(_ c: SIMD3<Float>, pre: Bool) -> SIMD3<Float> {
+        var t = pre ? TransferFunctions.bt709OETF(c) : c
+        let mx = max(t.x, max(t.y, t.z)), mn = min(t.x, min(t.y, t.z))
+        let d = mx - mn
+        var hue: Float = 0
+        if d > 1e-6 {
+            var h: Float
+            if mx == t.x { h = (t.y - t.z) / d } else if mx == t.y { h = (t.z - t.x) / d + 2 } else { h = (t.x - t.y) / d + 4 }
+            h /= 6
+            hue = h - floorf(h)
+        }
+        let w = ToneMath.smooth(0.005, 0.05, d)
+        let sv = mx > 1e-4 ? min(max(d / mx, 0), 1) : 0
+        let y0 = simd_dot(luma, t)
+        let vs = hueSample(0, hue), vh = hueSample(1, hue), vl = hueSample(2, hue)
+        let ls = linearSample(0, 3, y0), ss = linearSample(Self.count, 0, sv)
+        // Hue: rotate the chroma about the grey axis (Rodrigues, axis (1,1,1)/sqrt(3)).
+        let theta = (vh - 0.5) * 2 * Self.maxHueShift * w
+        if theta != 0 {
+            let m = (t.x + t.y + t.z) / 3
+            let dv = t - SIMD3(repeating: m)
+            let cr = SIMD3(dv.z - dv.y, dv.x - dv.z, dv.y - dv.x) * 0.57735027   // n x dv
+            t = SIMD3(repeating: m) + dv * cosf(theta) + cr * sinf(theta)
+        }
+        let s = (1 + (2 * vs - 1) * w) * (2 * ls) * (2 * ss)
+        if s != 1 {
+            let y = simd_dot(luma, t)
+            t = SIMD3(repeating: y) + (t - SIMD3(repeating: y)) * max(s, 0)
+        }
+        let g = exp2f((vl - 0.5) * 2 * w)
+        if g != 1 { t *= g }
+        return pre ? TransferFunctions.bt709InverseOETF(t) : t
+    }
+}
+
 // MARK: Curves
 
 /// Monotone cubic (Fritsch-Carlson) through control points, sampled into a table (master composed with each channel).

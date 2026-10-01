@@ -19,7 +19,7 @@ enum ColorShaderSource {
         float3x3 m;
     };
 
-    constant uint kConversion = 0, kBasic = 1, kCreative = 2, kLook = 3, kCurves = 4, kWheels = 5, kVignette = 6;
+    constant uint kConversion = 0, kBasic = 1, kCreative = 2, kLook = 3, kCurves = 4, kWheels = 5, kVignette = 6, kHueCurves = 7;
     constant uint kLutPresent = 1, kLut1D = 2, kLutIn = 4, kLutOut = 8;
     constant float kMinLuma = 1.0f / 65536.0f;
     constant uint kCurveCount = 64;
@@ -210,6 +210,55 @@ enum ColorShaderSource {
         return pre ? map3(o, 2) : o;
     }
 
+    // Hue Saturation Curves (PreparedHueCurves.apply). Table rows 0…63: (hueVsSat, hueVsHue, hueVsLuma, lumaVsSat); rows 64…127: satVsSat.
+    float hueSample(constant float4 *table, uint base, int column, float h) {
+        float p = h * float(kCurveCount);
+        uint i = min(uint(p), kCurveCount - 1);
+        float f = p - float(i);
+        float a = table[base + i][column], b = table[base + ((i + 1) % kCurveCount)][column];
+        return a + (b - a) * f;
+    }
+    float linearSample(constant float4 *table, uint row0, int column, float x) {
+        float p = clamp(x, 0.0f, 1.0f) * float(kCurveCount - 1);
+        uint i = min(uint(p), kCurveCount - 2);
+        float f = p - float(i);
+        float a = table[row0 + i][column], b = table[row0 + i + 1][column];
+        return a + (b - a) * f;
+    }
+    float3 hueCurvesStage(float3 c, constant Sec &s, bool pre, constant float4 *table) {
+        float3 t = pre ? map3(c, 5) : c;
+        uint base = s.head.w * kCurveCount;
+        float mx = max(t.x, max(t.y, t.z)), mn = min(t.x, min(t.y, t.z));
+        float d = mx - mn;
+        float hue = 0.0f;
+        if (d > 1e-6f) {
+            float h;
+            if (mx == t.x) { h = (t.y - t.z) / d; } else if (mx == t.y) { h = (t.z - t.x) / d + 2.0f; } else { h = (t.x - t.y) / d + 4.0f; }
+            h /= 6.0f;
+            hue = h - floor(h);
+        }
+        float w = smoothS(0.005f, 0.05f, d);
+        float sv = mx > 1e-4f ? clamp(d / mx, 0.0f, 1.0f) : 0.0f;
+        float y0 = dot(s.d.xyz, t);
+        float vs = hueSample(table, base, 0, hue), vh = hueSample(table, base, 1, hue), vl = hueSample(table, base, 2, hue);
+        float ls = linearSample(table, base, 3, y0), ss = linearSample(table, base + kCurveCount, 0, sv);
+        float theta = (vh - 0.5f) * 2.0f * (M_PI_F / 3.0f) * w;
+        if (theta != 0.0f) {
+            float m = (t.x + t.y + t.z) / 3.0f;
+            float3 dv = t - float3(m);
+            float3 cr = float3(dv.z - dv.y, dv.x - dv.z, dv.y - dv.x) * 0.57735027f;
+            t = float3(m) + dv * cos(theta) + cr * sin(theta);
+        }
+        float sat = (1.0f + (2.0f * vs - 1.0f) * w) * (2.0f * ls) * (2.0f * ss);
+        if (sat != 1.0f) {
+            float y = dot(s.d.xyz, t);
+            t = float3(y) + (t - float3(y)) * max(sat, 0.0f);
+        }
+        float g = exp2((vl - 0.5f) * 2.0f * w);
+        if (g != 1.0f) { t *= g; }
+        return pre ? map3(t, 2) : t;
+    }
+
     // MARK: tone mapping
 
     float3 toneMap(float3 rgb, float knee) {
@@ -308,6 +357,7 @@ enum ColorShaderSource {
             case 4: c = curvesStage(c, s, pre, curves); break;
             case 5: c = wheelsStage(c, s, pre); break;
             case 6: c = vignetteStage(c, s, pre, uv, aspect); break;
+            case 7: c = hueCurvesStage(c, s, pre, curves); break;
             default: break;
             }
         }
