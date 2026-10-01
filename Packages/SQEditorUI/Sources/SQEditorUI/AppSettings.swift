@@ -152,10 +152,14 @@ public enum KeyboardListing {
         }
     }
 
-    /// Rows of the Keyboard Shortcuts window: every binding, sorted by command name, scopes in plain words.
+    /// Rows of the Keyboard Shortcuts window: every binding, then every wired command that has no key (menu only),
+    /// sorted by command name, scopes in plain words.
     public static func windowRows(_ map: CommandMap) -> [Row] {
-        map.entries.map { Row(command: $0.command.title, shortcut: text(for: $0.binding), scope: scopeName($0.scope)) }
-            .sorted { ($0.command, $0.shortcut) < ($1.command, $1.shortcut) }
+        let keyed = Set(map.entries.map(\.command))
+        var rows = map.entries.map { Row(command: $0.command.title, shortcut: text(for: $0.binding), scope: scopeName($0.scope)) }
+        rows += CommandCatalog.audited(map).filter { !keyed.contains($0) && CommandSupport.isSupported($0) }
+            .map { Row(command: $0.title, shortcut: "", scope: "Menu only") }
+        return rows.sorted { ($0.command, $0.shortcut) < ($1.command, $1.shortcut) }
     }
 
     /// Case-insensitive search over command, scope and shortcut; modifier symbols also match their names
@@ -166,6 +170,9 @@ public enum KeyboardListing {
         return rows.filter { r in
             let keys = r.shortcut.replacingOccurrences(of: "⌃", with: " control ").replacingOccurrences(of: "⌥", with: " option alt ")
                 .replacingOccurrences(of: "⇧", with: " shift ").replacingOccurrences(of: "⌘", with: " command cmd ")
+                .replacingOccurrences(of: "←", with: " left ").replacingOccurrences(of: "→", with: " right ")
+                .replacingOccurrences(of: "↑", with: " up ").replacingOccurrences(of: "↓", with: " down ")
+                .replacingOccurrences(of: "⌫", with: " delete backspace ")
             let hay = (r.command + " " + r.scope + " " + r.shortcut + " " + keys).lowercased()
             return words.allSatisfy { hay.contains($0) }
         }

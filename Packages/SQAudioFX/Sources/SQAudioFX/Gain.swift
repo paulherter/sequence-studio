@@ -6,7 +6,7 @@ public enum AudioFXError: Error, Equatable, Sendable {
     case invalidChannelCount(Int)
 }
 
-public enum AudioGain {
+public enum GainMath {
     /// At or below this the gain is exact silence.
     public static let silenceFloorDB: Double = -120
 
@@ -82,7 +82,7 @@ public struct VolumeAutomation: Sendable, Hashable, Codable {
 
         func gains(at abs: Int64) -> (Double, Double) {
             let t = Time(abs, rate)
-            let g = AudioGain.linear(fromDB: dB(at: t))
+            let g = GainMath.linear(fromDB: dB(at: t))
             if stereoPan, let p = panValue(at: t) {
                 let (l, r) = Self.panGains(p)
                 return (g * l, g * r)

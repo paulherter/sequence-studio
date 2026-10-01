@@ -56,6 +56,7 @@ public enum ProjectFile {
         t[16] = migrateV16toV17
         t[17] = migrateV17toV18
         t[18] = migrateV18toV19
+        t[19] = migrateV19toV20
         t[20] = migrateV20toV21
         t[21] = migrateV21toV22
         t[22] = migrateV22toV23
@@ -153,6 +154,10 @@ public enum ProjectFile {
     /// no tracking, upright, point text, no gap: identity migration. Older builds drop these fields on save.
     static func migrateV15toV16(_ obj: JSONObject) throws -> JSONObject { obj }
 
+    /// v20 (audio-shortform): `Track.volumeDB` / `Track.pan`, `Clip.audioTag`, `Clip.duckKeyIDs`. All optional on decode;
+    /// absent = 0 dB, centre, untagged, no generated keys: identity migration. Older builds drop these fields on save.
+    /// 
+    static func migrateV19toV20(_ obj: JSONObject) throws -> JSONObject { obj }
     /// v17: `Track.transitions` (cut and fade transitions). Optional on decode; absent = none: identity migration.
     /// Older builds drop the transitions on save.
     static func migrateV16toV17(_ obj: JSONObject) throws -> JSONObject { obj }

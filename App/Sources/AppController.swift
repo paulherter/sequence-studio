@@ -14,6 +14,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     /// nil when no Metal device: the stub engine runs and nothing is shown in the Program monitor.
     let engineNote: String?
     let commandMap = CommandMap.premiereDefault
+    /// Command-key bindings that menu items own (see `MenuKeys`).
+    private(set) lazy var menuOwnedKeys = MenuKeys.owned(commandMap, isVisible: CommandSupport.isSupported)
     var store = WorkspaceStore.load()
     var settings: AppSettings { didSet { panels?.applySettings(settings) } }
     private(set) lazy var settingsWindow = SettingsWindowController(controller: self)
@@ -475,8 +477,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             if window?.firstResponder is NSTableView { return false }
         }
         if textResponder != nil, [.find, .setPosterFrame, .clearPosterFrame, .toggleHoverScrub].contains(c) { return false }
-        // Typing in a text field: the standard editing commands belong to it.
-        if textResponder != nil, [.cut, .copy, .paste, .delete, .deleteProjectItems].contains(c) { return true }
+        // Typing in a text field: the standard editing commands belong to it; panel-only Command shortcuts do not fire.
+        if textResponder != nil, [.cut, .copy, .paste, .delete, .deleteProjectItems, .selectAll].contains(c) { return true }
+        if textResponder != nil, MenuKeys.blockedWhileTyping(c, commandMap) { return false }
         if ([.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus), let enabled = validateInEffectControls(c) { return enabled }
         switch c {
         case .undo:
@@ -523,8 +526,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         if let tv = window.firstResponder as? NSTextView, tv.isEditable { return event }
         guard let ke = KeyMapping.keyEvent(from: event) else { return event }
         if handleSnapHold(ke) { return nil }
-        // Command shortcuts belong to the menus (key equivalents).
-        if ke.modifiers.contains(.command) { return event }
+        // Command shortcuts that a menu item carries belong to the menus (key equivalents). The others (nudge, Cmd+B in
+        // the Project panel) have no item and go through the router like plain keys.
+        if ke.modifiers.contains(.command), menuOwnedKeys.contains(ke.binding) { return event }
         // Lists keep their arrow and delete keys.
         if window.firstResponder is NSTableView, [Key.up, .down, .left, .right, .delete].contains(ke.key) { return event }
         // Consume every key the router knows, also auto-repeats and key ups it turns into no action: an unconsumed

@@ -27,7 +27,7 @@ public enum EditorCommand: Sendable, Hashable {
     /// Clip > Enable (Shift+Cmd+E), Edit > Duplicate (Shift+Cmd+/), Ctrl+T trim type, Opt+Up/Down lane move.
     case enableClip, duplicate, toggleTrimType, moveSelectionUp, moveSelectionDown
     case delete, rippleDelete, deleteProjectItems
-    case toggleSnapping, matchFrame, reverseMatchFrame, link, group
+    case toggleSnapping, matchFrame, reverseMatchFrame, link
     /// Clip > Speed/Duration (Cmd+R).
     case speedDuration
     /// Clip > Show Time Remapping: toggles the speed band on the selected video clips. Remove Time Remapping resets them to 100 %.
@@ -37,7 +37,7 @@ public enum EditorCommand: Sendable, Hashable {
     // Timeline selection, nudge, edit trims (Premiere: Cmd+Left/Right nudge, Opt+Shift+Left/Right trim 5 frames)
     case selectClipAtPlayhead, deselectAll, nextEditPointAnyTrack, previousEditPointAnyTrack
     case pasteInsert, selectAll, toggleLinkedSelection, markSelection, nextMarker, previousMarker
-    case nudgeLeft, nudgeRight, nudgeLeft5, nudgeRight5, trimBackward5, trimForward5
+    case nudgeLeft, nudgeRight, nudgeLeft5, nudgeRight5, trimBackward, trimForward, trimBackward5, trimForward5
     // View / window
     case zoomIn, zoomOut, zoomFit
     // Track heights (Premiere: Cmd+=/- video, Option+=/- audio, Shift+= expand all, Shift+- minimize all)
@@ -50,11 +50,14 @@ public enum EditorCommand: Sendable, Hashable {
     case newProject, openProject, saveAs, revert, sequenceSettings, setToFrameSize
     // App
     case keyboardShortcuts, preferences
-    // Keyframes (proposal in UX section 3)
+    // Keyframes: easing of the selected keyframes in Effect Controls (F9 family; Premiere has no default keys for these)
     case easyEase, easeIn, easeOut, toggleHoldInterpolation
-    case previousKeyframe, nextKeyframe, toggleSpeedGraph, addKeyframe
     // Audio
     case audioGain, toggleAudioScrubbing
+    /// `[` / `]` change the Audio Gain of the selected audio clips by 1 dB, with Shift by 6 dB.
+    case audioGainDown, audioGainUp, audioGainDown6, audioGainUp6
+    case matchLoudness, autoDuck, removeSilences
+    case tagDialogue, tagMusic, tagSFX
     // Clip > Video Options (effects-look): fade presets on the picture, frame holds
     case videoFadeIn, videoFadeOut, addFrameHold, insertFrameHold
     // Source and Project flow: Play In to Out with preroll/postroll (Shift+Space), Play Around (Shift+K), poster frame
@@ -70,9 +73,9 @@ public enum EditorCommand: Sendable, Hashable {
         switch self {
         case .stepBackward, .stepForward, .stepBackward5, .stepForward5,
              .previousEditPoint, .nextEditPoint, .nextEditPointAnyTrack, .previousEditPointAnyTrack, .zoomIn, .zoomOut,
-             .nudgeLeft, .nudgeRight, .nudgeLeft5, .nudgeRight5, .trimBackward5, .trimForward5,
+             .nudgeLeft, .nudgeRight, .nudgeLeft5, .nudgeRight5, .trimBackward, .trimForward, .trimBackward5, .trimForward5,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
-             .undo, .redo, .previousKeyframe, .nextKeyframe: true
+             .undo, .redo, .audioGainDown, .audioGainUp, .audioGainDown6, .audioGainUp6: true
         default: false
         }
     }
@@ -82,8 +85,8 @@ public enum EditorCommand: Sendable, Hashable {
         switch self {
         case .shuttleReverse: "Shuttle Reverse"
         case .shuttleStop: "Shuttle Stop"
-        case .shuttleSlowReverse: "Shuttle Slow Left"
-        case .shuttleSlowForward: "Shuttle Slow Right"
+        case .shuttleSlowReverse: "Shuttle Slow Reverse"
+        case .shuttleSlowForward: "Shuttle Slow Forward"
         case .shuttleForward: "Shuttle Forward"
         case .playPause: "Play/Pause"
         case .stepBackward: "Step Back 1 Frame"
@@ -142,12 +145,11 @@ public enum EditorCommand: Sendable, Hashable {
         case .moveSelectionDown: "Move Selection Down"
         case .delete: "Delete"
         case .rippleDelete: "Ripple Delete"
-        case .deleteProjectItems: "Delete"
+        case .deleteProjectItems: "Delete Project Items"
         case .toggleSnapping: "Snap"
         case .matchFrame: "Match Frame"
         case .reverseMatchFrame: "Reverse Match Frame"
         case .link: "Link"
-        case .group: "Group"
         case .speedDuration: "Speed/Duration…"
         case .toggleTimeRemapping: "Show Time Remapping"
         case .removeTimeRemapping: "Remove Time Remapping"
@@ -165,12 +167,14 @@ public enum EditorCommand: Sendable, Hashable {
         case .markSelection: "Mark Selection"
         case .nextMarker: "Go to Next Marker"
         case .previousMarker: "Go to Previous Marker"
-        case .nudgeLeft: "Nudge Clip Selection Left"
-        case .nudgeRight: "Nudge Clip Selection Right"
-        case .nudgeLeft5: "Nudge Clip Selection Left Five Frames"
-        case .nudgeRight5: "Nudge Clip Selection Right Five Frames"
-        case .trimBackward5: "Trim Backward Five Frames"
-        case .trimForward5: "Trim Forward Five Frames"
+        case .nudgeLeft: "Nudge Clip Selection Left 1 Frame"
+        case .nudgeRight: "Nudge Clip Selection Right 1 Frame"
+        case .nudgeLeft5: "Nudge Clip Selection Left 5 Frames"
+        case .nudgeRight5: "Nudge Clip Selection Right 5 Frames"
+        case .trimBackward: "Trim Backward"
+        case .trimForward: "Trim Forward"
+        case .trimBackward5: "Trim Backward 5 Frames"
+        case .trimForward5: "Trim Forward 5 Frames"
         case .undo: "Undo"
         case .redo: "Redo"
         case .zoomIn: "Zoom In"
@@ -183,8 +187,8 @@ public enum EditorCommand: Sendable, Hashable {
         case .minimizeAllTracks: "Minimize All Tracks"
         case .expandAllTracks: "Expand All Tracks"
         case .focusPanel(let p): "Show " + Self.panelTitle(p)
-        case .maximizePanel: "Maximize or Restore Panel Under Pointer"
-        case .maximizeActivePanel: "Maximize or Restore Active Panel"
+        case .maximizePanel: "Maximize Panel Under Pointer"
+        case .maximizeActivePanel: "Maximize Active Panel"
         case .resetLayout: "Reset to Saved Layout"
         case .importMedia: "Import Media…"
         case .newSequence: "New Sequence…"
@@ -202,12 +206,18 @@ public enum EditorCommand: Sendable, Hashable {
         case .easeIn: "Ease In"
         case .easeOut: "Ease Out"
         case .toggleHoldInterpolation: "Toggle Hold Interpolation"
-        case .previousKeyframe: "Previous Keyframe"
-        case .nextKeyframe: "Next Keyframe"
-        case .toggleSpeedGraph: "Toggle Value/Speed Graph"
-        case .addKeyframe: "Add Keyframe"
         case .audioGain: "Audio Gain…"
         case .toggleAudioScrubbing: "Audio Scrubbing"
+        case .audioGainDown: "Decrease Audio Gain by 1 dB"
+        case .audioGainUp: "Increase Audio Gain by 1 dB"
+        case .audioGainDown6: "Decrease Audio Gain by 6 dB"
+        case .audioGainUp6: "Increase Audio Gain by 6 dB"
+        case .matchLoudness: "Match Loudness"
+        case .autoDuck: "Auto Duck Music"
+        case .removeSilences: "Remove Silences…"
+        case .tagDialogue: "Dialogue"
+        case .tagMusic: "Music"
+        case .tagSFX: "SFX"
         case .videoFadeIn: "Fade In"
         case .videoFadeOut: "Fade Out"
         case .addFrameHold: "Add Frame Hold"
@@ -237,7 +247,7 @@ public enum EditorCommand: Sendable, Hashable {
         case .effects: "Effects"
         case .project: "Project"
         case .timeline: "Timeline"
-        case .audioMeter: "Meter"
+        case .audioMeter: "Audio Meters"
         }
     }
 }

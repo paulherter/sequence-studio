@@ -56,7 +56,7 @@ public enum VolumeLine {
             if hypot(p.x - kx, p.y - ky) <= keyGrab { return .key(k.id) }
         }
         guard clipRect.contains(CGPoint(x: p.x, y: clipRect.midY)) else { return nil }
-        let local = min(max(geometry.time(atX: p.x) - clip.start, .zero), clip.source.duration)
+        let local = min(max(geometry.time(atX: p.x) - clip.start, .zero), clip.duration)
         let ly = y(forDB: levelDB(clip, atLocal: local), in: lane)
         return abs(p.y - ly) <= lineGrab ? .line(atLocal: local) : nil
     }
@@ -70,7 +70,7 @@ public enum VolumeLine {
             let y = y(forDB: AudioGain.db(fromLinear: clip.animation.volume.value), in: lane)
             return [CGPoint(x: x0, y: y), CGPoint(x: x1, y: y)]
         }
-        let secPerPoint = Double(clip.source.duration.value) / Double(clip.source.duration.timescale) / Double(max(clipRect.width, 1))
+        let secPerPoint = Double(clip.duration.value) / Double(clip.duration.timescale) / Double(max(clipRect.width, 1))
         func at(_ x: CGFloat) -> CGPoint {
             let sec = Double(x - clipRect.minX) * secPerPoint
             let t = Time(Int64((sec * 1_000_000).rounded()), 1_000_000)
@@ -82,7 +82,7 @@ public enum VolumeLine {
     }
 
     private static func geometry(x t: Time, clip: Clip, rect: CGRect) -> Double {
-        let d = Double(clip.source.duration.value) / Double(clip.source.duration.timescale)
+        let d = Double(clip.duration.value) / Double(clip.duration.timescale)
         let s = Double(t.value) / Double(t.timescale)
         return Double(rect.minX) + (d > 0 ? s / d : 0) * Double(rect.width)
     }
@@ -94,6 +94,54 @@ public enum VolumeLine {
             CGPoint(x: geometry(x: $0.time, clip: clip, rect: clipRect),
                     y: y(forDB: AudioGain.db(fromLinear: $0.value), in: lane))
         }
+    }
+}
+
+/// Fade handles: the two small squares near the top corners of an audio clip (Premiere's fade handles). Dragging one
+/// sets the head or tail fade as keys on the volume line (`FadeKeys`).
+public enum FadeHandle: Sendable, Hashable { case head, tail }
+
+extension VolumeLine {
+    public static let handleSize: CGFloat = 8
+    /// Gap between a handle's centre and the clip edge when there is no fade (keeps the handle inside the clip).
+    static let handleInset: CGFloat = 6
+
+    /// Centres of the head and tail handles (view points). They sit on the top edge of the waveform lane and move
+    /// inward with the fade length.
+    public static func fadeHandlePoints(clip: Clip, clipRect: CGRect) -> (head: CGPoint, tail: CGPoint) {
+        let lane = lane(in: clipRect)
+        let d = Double(clip.duration.value) / Double(clip.duration.timescale)
+        func width(_ t: Time) -> CGFloat { d > 0 ? CGFloat(Double(t.value) / Double(t.timescale) / d) * clipRect.width : 0 }
+        let y = lane.minY + handleSize / 2 + 1
+        return (CGPoint(x: clipRect.minX + handleInset + width(clip.audioFadeIn), y: y),
+                CGPoint(x: clipRect.maxX - handleInset - width(clip.audioFadeOut), y: y))
+    }
+
+    /// The handle under `p`, if any. Tail wins when the two overlap on a very short clip.
+    public static func fadeHandle(clip: Clip, clipRect: CGRect, at p: CGPoint, hidden: Set<FadeHandle> = []) -> FadeHandle? {
+        guard clipRect.width >= 4 * handleSize else { return nil }
+        let pts = fadeHandlePoints(clip: clip, clipRect: clipRect)
+        let r = handleSize / 2 + 2
+        func hits(_ c: CGPoint) -> Bool { abs(p.x - c.x) <= r && abs(p.y - c.y) <= r }
+        if !hidden.contains(.tail), hits(pts.tail) { return .tail }
+        if !hidden.contains(.head), hits(pts.head) { return .head }
+        return nil
+    }
+
+    /// The clip with its fade set from a drag: `dx` points moved since the press (handle at `startLength` then).
+    public static func clip(_ clip: Clip, dragging h: FadeHandle, from startLength: Time, dx: CGFloat, clipRect: CGRect,
+                            frameDuration: Time) -> Clip {
+        var c = clip
+        let d = Double(clip.duration.value) / Double(clip.duration.timescale)
+        guard clipRect.width > 0, d > 0 else { return c }
+        let sec = Double(dx) / Double(clipRect.width) * d * (h == .head ? 1 : -1)
+        // Milliseconds are enough: the fade snaps down to whole frames anyway.
+        let len = startLength + Time(Int64((sec * 1000).rounded()), 1000)
+        switch h {
+        case .head: c.setAudioFadeIn(max(len, .zero), frameDuration: frameDuration)
+        case .tail: c.setAudioFadeOut(max(len, .zero), frameDuration: frameDuration)
+        }
+        return c
     }
 }
 

@@ -57,7 +57,7 @@ final class EditorPanels {
     var onStatus: ((String) -> Void)?
     var onCommand: ((EditorCommand) -> Void)?
     var onNest: (() -> Void)?
-    /// "Set to Frame Size" / "Scale to Frame Size" of the selected clips.
+    /// "Set to Frame Size" of the selected clips.
     var onFrameSize: (() -> Void)?
     /// Match Frame / double-click in the Project panel loaded the Source monitor: bring it forward.
     var onShowSource: (() -> Void)?
@@ -269,14 +269,17 @@ final class EditorPanels {
             case .copy: self?.onCommand?(.copy)
             case .paste: self?.onCommand?(.paste)
             case .pasteInsert: self?.onCommand?(.pasteInsert)
+            case .pasteAttributes: self?.onCommand?(.pasteAttributes)
             case .delete: self?.onCommand?(.delete)
             case .rippleDelete: self?.onCommand?(.rippleDelete)
             case .enable: self?.onCommand?(.enableClip)
             case .link, .unlink: self?.onCommand?(.link)
             case .nest: self?.onNest?()
             case .speed: self?.onCommand?(.speedDuration)
+            case .audioGain: self?.onCommand?(.audioGain)
+            case .removeSilences: self?.onCommand?(.removeSilences)
             case .timeRemapping: self?.onCommand?(.toggleTimeRemapping)
-            case .setToFrameSize, .scaleToFrameSize: self?.onFrameSize?()
+            case .setToFrameSize: self?.onFrameSize?()
             case .rename: self?.renameSelectedClip()
             case .label, .editCaption, .splitCaption, .mergeCaptions: break   // captions have their own menu (`captionMenu`)
             }
@@ -426,29 +429,26 @@ final class EditorPanels {
     }
 
     private func fillProgramMenu(_ menu: NSMenu) {
-        func add(_ title: String, _ enabled: Bool = true, state: Bool? = nil, _ action: @escaping () -> Void) {
+        func add(_ title: String, _ enabled: Bool = true, state: Bool? = nil, command: EditorCommand? = nil, _ action: @escaping () -> Void) {
             let it = ClosureMenuItem(title: title, action: action)
             it.isEnabled = enabled
             if let state { it.state = state ? .on : .off }
+            if let command { it.showShortcut(of: command) }
             menu.addItem(it)
         }
+        func cmd(_ c: EditorCommand, _ enabled: Bool = true, state: Bool? = nil) {
+            add(c.title, enabled, state: state, command: c) { [weak self] in self?.onCommand?(c) }
+        }
         let io = session.activeTimeline?.inOut
-        add("Mark In") { [weak self] in self?.onCommand?(.markIn) }
-        add("Mark Out") { [weak self] in self?.onCommand?(.markOut) }
-        add("Go to In", io != nil) { [weak self] in self?.onCommand?(.goToIn) }
-        add("Go to Out", io != nil) { [weak self] in self?.onCommand?(.goToOut) }
-        add("Clear In and Out", io != nil) { [weak self] in self?.onCommand?(.clearInOut) }
+        cmd(.markIn); cmd(.markOut)
+        cmd(.goToIn, io != nil); cmd(.goToOut, io != nil); cmd(.clearInOut, io != nil)
         menu.addItem(.separator())
-        add("Add Marker") { [weak self] in self?.onCommand?(.addMarker) }
-        add("Lift", io != nil) { [weak self] in self?.onCommand?(.lift) }
-        add("Extract", io != nil) { [weak self] in self?.onCommand?(.extract) }
+        cmd(.addMarker); cmd(.lift, io != nil); cmd(.extract, io != nil)
         menu.addItem(.separator())
-        add("Match Frame") { [weak self] in self?.onCommand?(.matchFrame) }
-        add("Reverse Match Frame", source.mediaID != nil) { [weak self] in self?.onCommand?(.reverseMatchFrame) }
-        add("Export Frame…") { [weak self] in self?.onCommand?(.exportFrame) }
+        cmd(.matchFrame); cmd(.reverseMatchFrame, source.mediaID != nil); cmd(.exportFrame)
         menu.addItem(.separator())
         add("Safe Margins", state: monitorModel.safeMargins) { [weak self] in self?.toggleSafeMargins() }
-        add("Loop Playback", state: session.bounds.loop) { [weak self] in self?.onCommand?(.toggleLoop) }
+        cmd(.toggleLoop, state: session.bounds.loop)
         menu.addItem(.separator())
         let zoom = NSMenu(title: "Zoom")
         for z in MonitorZoom.presets {

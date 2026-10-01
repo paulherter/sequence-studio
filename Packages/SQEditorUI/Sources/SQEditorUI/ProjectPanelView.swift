@@ -521,6 +521,9 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         viewMode == .icons ? grid.selection : outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? Node)?.ref }
     }
 
+    /// Delete in the Project panel (command key path; the table views also handle the key themselves).
+    public func deleteSelectedItems() { deleteSelection() }
+
     private func deleteSelection() {
         let refs = selectedRefs
         guard !refs.isEmpty else { return }

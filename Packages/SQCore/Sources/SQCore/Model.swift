@@ -81,6 +81,12 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var effects: [ClipEffect] = []
     /// Audio Gain in dB (Clip > Audio Options > Audio Gain), on top of the Volume level. 0 = none.
     public var audioGainDB: Double = 0
+    /// Dialogue / Music / SFX (v20). Picks the default loudness target; nil = untagged.
+    public var audioTag: AudioTag?
+    /// IDs of the volume keys the last Auto Duck run generated (v20); a re-run replaces exactly these.
+    public var duckKeyIDs: [UUID] = []
+    /// IDs of the volume keys the audio fade handles created (v20); see `FadeMarks`.
+    public var audioFades = FadeMarks()
     /// Constant speed (v13). 100 % = `.normal`. Only media clips are retimed (nested sequences, generators and stills
     /// stay at 100 %; `Timeline.setSpeed` refuses them).
     public var speed: ClipSpeed = .normal
@@ -260,6 +266,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB, isEnabled, blendMode, holdFrame, motionEnabled, opacityEnabled, speedKeys, timeInterpolation
+        case audioTag, duckKeyIDs, audioFades
     }
 
     public init(from d: Decoder) throws {
@@ -280,6 +287,9 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   reversed: try c.decodeIfPresent(Bool.self, forKey: .reversed) ?? false,
                   keepsPitch: try c.decodeIfPresent(Bool.self, forKey: .keepsPitch) ?? true)
         audioGainDB = try c.decodeIfPresent(Double.self, forKey: .audioGainDB) ?? 0
+        audioTag = try c.decodeIfPresent(AudioTag.self, forKey: .audioTag)
+        duckKeyIDs = try c.decodeIfPresent([UUID].self, forKey: .duckKeyIDs) ?? []
+        audioFades = try c.decodeIfPresent(FadeMarks.self, forKey: .audioFades) ?? FadeMarks()
         speedKeys = try c.decodeIfPresent(SpeedKeys.self, forKey: .speedKeys)
         timeInterpolation = try c.decodeIfPresent(TimeInterpolation.self, forKey: .timeInterpolation) ?? .frameSampling
         isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
@@ -389,6 +399,9 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
     public var transitions: [Transition] = []
     /// Row height in points (UI hint).
     public var height: Double
+    /// Audio track fader in dB (v20) and pan -1 (left) ... +1 (right). Applied by the one mix path (playback and export).
+    public var volumeDB: Double = 0
+    public var pan: Double = 0
 
     public static let defaultHeight: Double = 48
 
@@ -405,6 +418,7 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
 
     private enum CodingKeys: String, CodingKey {
         case id, kind, clips, isLocked, syncLock, name, isVisible, isMuted, isSolo, isTargeted, height, transitions
+        case volumeDB, pan
     }
 
     public init(from d: Decoder) throws {
@@ -421,6 +435,8 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
                   isTargeted: try c.decodeIfPresent(Bool.self, forKey: .isTargeted) ?? false,
                   height: try c.decodeIfPresent(Double.self, forKey: .height) ?? Track.defaultHeight,
                   transitions: try c.decodeIfPresent([Transition].self, forKey: .transitions) ?? [])
+        volumeDB = try c.decodeIfPresent(Double.self, forKey: .volumeDB) ?? 0
+        pan = try c.decodeIfPresent(Double.self, forKey: .pan) ?? 0
     }
 
     /// Takes part in ripple edits made on other tracks.
