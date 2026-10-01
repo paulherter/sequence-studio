@@ -168,6 +168,7 @@ final class EditorPanels {
 
     private func wireSidePanels() {
         textView.onStatus = { [weak self] m in self?.onStatus?(m) }
+        effectModel.onNotice = { [weak self] m in self?.onStatus?(m) }
         colorView.onChange = { [weak self] in self?.scopesView.scheduleRefresh() }
         libraryView.onApplyTextTemplate = { [weak self] id in
             guard let self, let entry = TextTemplateCatalog.entry(id: id) else { return }

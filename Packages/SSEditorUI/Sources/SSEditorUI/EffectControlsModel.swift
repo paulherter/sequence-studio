@@ -159,6 +159,8 @@ public final class EffectControlsModel {
     @ObservationIgnored var keyClipboard: KeyframeClipboard?
     @ObservationIgnored var effectClipboard: ClipEffect?
     @ObservationIgnored var lastCopyWasKeys = true
+    /// Short messages for the status line (e.g. keys that did not fit).
+    @ObservationIgnored public var onNotice: ((String) -> Void)?
     /// Where the twirl-down state per clip kind is remembered across launches (the app sets `.standard`).
     @ObservationIgnored public var twirlDefaults: UserDefaults?
     @ObservationIgnored var twirlKind: String?
@@ -195,7 +197,11 @@ public final class EffectControlsModel {
         if c?.id != clip?.id { selection = []; selectedSection = nil; gestureBase = nil; gestureEmitted = false; zoomState = nil
             if scrubBegan { scrubBegan = false; onScrubEnded?() }      // a lost mouse-up must not leave the scrub open
         }
-        if let c, c.id != clip?.id { uniformScale = Self.isUniformScale(c, at: .zero) }
+        if let c {
+            // Follows the clip: a new clip derives it, any later change (undo, redo, external edit) can only switch it off.
+            if c.id != clip?.id { uniformScale = Self.isUniformScale(c, at: .zero) }
+            else if !Self.isUniformScale(c, at: .zero) { uniformScale = false }
+        }
         if let c { adoptTwirl(for: c.kind) }
         clip = c
         if let sec = selectedSection, !visibleSections.contains(sec) || sec.effectKind == nil { selectedSection = nil }

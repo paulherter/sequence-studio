@@ -53,11 +53,15 @@ extension EffectControlsModel {
         guard on != uniformScale else { return }
         uniformScale = on
         guard on, var c = clip, !Self.isUniformScale(c, at: .zero) else { return }
+        var changed = 0
         withVector(&c, .scale) { prop in
+            changed = prop.track.keys.filter { abs($0.value.x - $0.value.y) > 1e-9 }.count
+            if changed == 0 && abs(prop.value.x - prop.value.y) > 1e-9 { changed = 1 }
             prop.value = Vec2(prop.value.x, prop.value.x)
             for k in prop.track.keys { prop.track.update(k.id) { $0.value = Vec2($0.value.x, $0.value.x) } }
         }
         commit(c, "Uniform Scale")
+        if changed > 0 { onNotice?("Height set to Width on \(changed) keyframe\(changed == 1 ? "" : "s").") }
     }
 
     // MARK: Interpolation (right-click menu)
@@ -107,8 +111,13 @@ extension EffectControlsModel {
             let old = Set(before[p]?.keyIDs ?? [])
             for id in t.keyIDs where !old.contains(id) { picked.insert(SummaryMember(property: p, keyID: id)) }
         }
+        guard !picked.isEmpty else {
+            onNotice?("The copied keyframes fall after the end of the clip. Move the playhead earlier.")
+            return false
+        }
         commit(out, "Paste Keyframes")
         select(Array(picked), extend: false)
+        if picked.count < cb.keyCount { onNotice?("\(cb.keyCount - picked.count) keyframe(s) past the end of the clip were not pasted.") }
         return out != c
     }
 
@@ -157,8 +166,12 @@ extension EffectControlsModel {
     public func pasteFocused() -> Bool { lastCopyWasKeys ? pasteKeys() : pasteEffect() }
 
     /// Cmd+X: copy, then delete what was copied.
+    public var canCutFocused: Bool {
+        !selection.isEmpty || selectedSection.map(canRemoveEffect) == true
+    }
+
     public func cutFocused() {
-        guard copyFocused() else { return }
+        guard canCutFocused, copyFocused() else { return }
         deleteSelectionOrEffect()
     }
 
@@ -184,5 +197,13 @@ extension EffectControlsModel {
         c.roundedCorners = copy
         commit(c, "Paste Effect")
         return true
+    }
+}
+
+/// Which handler gets Cut / Copy / Paste: Effect Controls only when the first responder is inside it, or when it is the
+/// focused panel and has something to do. Otherwise the normal (timeline) command runs.
+public enum EffectControlsEditRouting {
+    public static func effectControlsHandles(responderInside: Bool, panelFocused: Bool, canAct: Bool) -> Bool {
+        responderInside || (panelFocused && canAct)
     }
 }

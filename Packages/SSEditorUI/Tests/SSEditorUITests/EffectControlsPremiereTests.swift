@@ -177,6 +177,83 @@ import SSCore
         #expect(!m.uniformScale)
     }
 
+    // MARK: Review fixes
+    @Test func undoOfUniformCheckKeepsCheckboxOffAndHeights() {
+        let m = model(clip())
+        m.setUniformScale(false)
+        m.setValue(.scale, component: .x, to: 0.5)
+        m.setValue(.scale, component: .y, to: 0.8)
+        let before = m.clip!
+        var notice: String?
+        m.onNotice = { notice = $0 }
+        m.setUniformScale(true)
+        #expect(m.clip!.animation.scale.value == Vec2(0.5, 0.5))
+        #expect(notice?.contains("Height set to Width") == true)
+        m.setClip(before)                                    // undo hands the old clip back
+        #expect(!m.uniformScale)
+        #expect(m.clip!.animation.scale.value == Vec2(0.5, 0.8))
+        #expect(m.uniformScale == false)
+    }
+
+    @Test func externalNonUniformScaleSwitchesCheckboxOffButNeverOn() {
+        let m = model(clip())
+        var c = m.clip!; c.animation.scale.value = Vec2(1, 2); m.setClip(c)
+        #expect(!m.uniformScale)
+        c.animation.scale.value = Vec2(1, 1); m.setClip(c)
+        #expect(!m.uniformScale)
+    }
+
+    @Test func pastingOntoAShortClipExplainsDroppedKeys() {
+        let m = animatedOpacity()
+        selectAll(m, .opacity); m.copyKeys()
+        var c = clip(start: 5); c.source = TimeRange(start: .zero, duration: Time(1, 1))
+        let short = model(c, playhead: 5)
+        short.keyClipboard = m.keyClipboard
+        var notice: String?
+        short.onNotice = { notice = $0 }
+        #expect(short.pasteKeys())                            // keys at 0, 2, 4 s: only the first fits a 1 s clip
+        #expect(short.clip!.animation.opacity.track.keys.count == 1)
+        #expect(short.selectedKeyIDs(.opacity).count == 1)
+        #expect(notice?.contains("2 keyframe(s) past the end") == true)
+    }
+
+    @Test func cutNeedsSomethingRemovable() {
+        let m = model(clip())
+        m.selectedSection = .motion
+        #expect(!m.canCutFocused)
+        var c = m.clip!; c.roundedCorners = .roundedCorners(); m.setClip(c)
+        m.selectedSection = .roundedCorners
+        #expect(m.canCutFocused)
+    }
+
+    @Test func editRoutingFallsThroughWhenNothingToDo() {
+        typealias R = EffectControlsEditRouting
+        #expect(R.effectControlsHandles(responderInside: true, panelFocused: true, canAct: false))
+        #expect(!R.effectControlsHandles(responderInside: false, panelFocused: true, canAct: false))
+        #expect(R.effectControlsHandles(responderInside: false, panelFocused: true, canAct: true))
+        #expect(!R.effectControlsHandles(responderInside: false, panelFocused: false, canAct: true))
+    }
+
+    @Test func easeInAndOutTouchOnlyTheirSide() {
+        let m = animatedOpacity()
+        let id = m.track(.opacity)!.keyIDs[1]
+        m.selectKey(.opacity, id: id, extend: false)
+        guard case .scalar(let t0)? = m.track(.opacity) else { return }
+        m.applyInterpolation(.easeOut)
+        guard case .scalar(let t1)? = m.track(.opacity) else { return }
+        #expect(t1.keys[1].inHandle == t0.keys[1].inHandle)
+        #expect(t1.keys[1].outHandle != t0.keys[1].outHandle)
+        m.applyInterpolation(.easeIn)
+        guard case .scalar(let t2)? = m.track(.opacity) else { return }
+        #expect(t2.keys[1].outHandle == t1.keys[1].outHandle)
+        #expect(t2.keys[1].inHandle != t1.keys[1].inHandle)
+    }
+
+    @Test func presetIDsAreUnique() {
+        let ids = (EasingCurve.builtIns + [EasingCurve.bezierHandles]).map(\.id)
+        #expect(Set(ids).count == ids.count)
+    }
+
     // MARK: Effect copy / paste
     @Test func effectCopiesToAnotherClip() {
         var a = clip(); a.roundedCorners = .roundedCorners(radius: 40)

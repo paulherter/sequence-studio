@@ -97,5 +97,11 @@ extension KeyframeClipboard {
         }
     }
 
+    public var keyCount: Int {
+        tracks.values.reduce(0) { n, t in
+            switch t { case .scalar(let k): n + k.count; case .vector(let k): n + k.count }
+        }
+    }
+
     public var propertyIDs: Set<PropertyID> { Set(tracks.keys) }
 }
