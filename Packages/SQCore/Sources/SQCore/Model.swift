@@ -149,6 +149,29 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
         return source.start + speed.scale(local)
     }
 
+    /// True when the clip does not play its source at constant 100 % forwards.
+    public var isRetimed: Bool { speedKeys != nil || !speed.isNormal || reversed }
+
+    /// Source time at clip-local `local` as an instant (no frame convention): the inner time of a nested clip, audio positions.
+    /// Same arithmetic as `sourceTime` for forward clips; reversed clips read `source.end - speed * local`.
+    public func sourceInstant(atLocal local: Time) -> Time {
+        if let k = speedKeys { return k.position(at: local) }
+        return reversed ? source.end - speed.scale(local) : source.start + speed.scale(local)
+    }
+
+    /// The source range a stretch `[a, b]` of the clip's local time plays (nested clips: the inner time range to query).
+    public func sourceRange(fromLocal a: Time, toLocal b: Time) -> TimeRange {
+        if let k = speedKeys, a < b { return k.sliced(from: a, to: b).hull }
+        let x = sourceInstant(atLocal: a), y = sourceInstant(atLocal: b)
+        return TimeRange(start: min(x, y), end: max(x, y))
+    }
+
+    /// Clip-local time at which the instant source time `s` plays: the inverse of `sourceInstant` (first visit for tracks).
+    public func localTime(forInstant s: Time) -> Time {
+        if let k = speedKeys { return k.localTime(forSource: s) }
+        return reversed ? speed.unscale(source.end - s) : speed.unscale(s - source.start)
+    }
+
     /// Timeline time (absolute) at which source time `s` is shown; the inverse of `sourceTime`. Pass the sequence frame
     /// duration for reversed clips (the frame shown starts one frame before the mapped end). Used to map decoded frames back onto the timeline.
     public func timelineTime(forSource s: Time, frameDuration: Time = .zero) -> Time {

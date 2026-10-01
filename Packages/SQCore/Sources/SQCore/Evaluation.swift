@@ -102,7 +102,7 @@ public struct AudioSegment: Sendable, Hashable {
         var t = t, gain = 1.0
         for n in nests {
             gain *= n.clip.volume(at: t)
-            t = n.clip.source.start + (t - n.clip.start)
+            t = n.clip.sourceInstant(atLocal: t - n.clip.start)
         }
         return gain
     }
@@ -128,7 +128,7 @@ extension Timeline {
                 guard !visiting.contains(seqID), let inner = sequences(seqID) else { continue }
                 let g = LayerGroup(clip: c.id, track: track.id, sequence: seqID, format: inner.format,
                                    transform: c.transform(at: t), cornerRadius: c.effects(at: t).cornerRadius)
-                out += inner.videoLayers(at: c.source.start + (t - c.start), sequences: sequences,
+                out += inner.videoLayers(at: c.sourceTime(at: t, frameDuration: format.frameDuration), sequences: sequences,
                                          groups: groups + [g], visiting: visiting.union([seqID]))
             } else {
                 let local = t - c.start
@@ -156,10 +156,27 @@ extension Timeline {
             for c in track.clips {
                 guard let r = c.timeline.intersection(range), !r.isEmpty else { continue }
                 let a = r.start - c.start
-                let innerStart = c.reversed ? c.source.end - c.speed.scale(a) : c.source.start + c.speed.scale(a)
+                let innerStart = c.sourceInstant(atLocal: a)
                 if let seqID = c.sequence {
                     guard !visiting.contains(seqID), let inner = sequences(seqID) else { continue }
                     let offset = c.start - c.source.start           // inner time + offset = outer time
+                    if c.isRetimed {
+                        // Retimed nested clip: query the inner range this piece plays, map each inner piece back through the
+                        // clip's time mapping (both ends), and anchor the time-stretch grid at the nested clip's start.
+                        let innerRange = c.sourceRange(fromLocal: a, toLocal: r.end - c.start)
+                        guard !innerRange.isEmpty else { continue }
+                        for var s in inner.audioSegments(in: innerRange, sequences: sequences,
+                                                         nests: nests + [AudioNest(clip: c, track: track.id)],
+                                                         visiting: visiting.union([seqID])) {
+                            let x = c.start + c.localTime(forInstant: s.timeline.start)
+                            let y = c.start + c.localTime(forInstant: s.timeline.end)
+                            guard let piece = TimeRange(start: min(x, y), end: max(x, y)).intersection(r) else { continue }
+                            s.timeline = piece
+                            s.clipStart = c.start
+                            out.append(s)
+                        }
+                        continue
+                    }
                     let innerRange = TimeRange(start: innerStart, duration: r.duration)
                     for var s in inner.audioSegments(in: innerRange, sequences: sequences,
                                                      nests: nests + [AudioNest(clip: c, track: track.id)],

@@ -7,8 +7,22 @@ import Foundation
 /// chooses the source range to fit it (`source.duration = frames * frameDuration * speed`, exact rational), so
 /// edit points never drift.
 extension Timeline {
-    /// Clips that can be retimed: media clips. Nested sequences, generators and stills have no constant speed yet.
-    public static func canRetime(_ c: Clip) -> Bool { !c.isNested && !c.isGenerator && !c.isStill }
+    /// Clips that can be retimed: media clips and nested sequences (their length is the inner sequence's duration, refreshed
+    /// with `refreshNestedDurations` before the edit). Generators (text) and stills have no time axis.
+    public static func canRetime(_ c: Clip) -> Bool { !c.isGenerator && !c.isStill }
+
+    /// Brings the inner-duration limit (`mediaDuration`) of nested clips up to date: it is derived from the inner sequence at
+    /// edit time, because a stored value goes stale when the inner sequence is edited. `inner` = the sequence's current duration.
+    public mutating func refreshNestedDurations(_ inner: (Timeline.ID) -> Time?) {
+        for ti in tracks.indices {
+            for c in tracks[ti].clips {
+                guard let seq = c.sequence, let d = inner(seq), d != c.mediaDuration else { continue }
+                var n = c
+                n.mediaDuration = d
+                tracks[ti].replace(n)
+            }
+        }
+    }
 
     /// Whole frames of `t` (nearest).
     private func frames(_ t: Time) -> Int64 { t.snapped(to: frameDuration).frameIndex(frameDuration: frameDuration) }
