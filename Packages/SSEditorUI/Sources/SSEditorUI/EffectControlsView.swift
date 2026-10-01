@@ -46,6 +46,7 @@ public final class EffectControlsView: NSView {
         var sections: [EffectSection]
         var collapsed: Set<EffectSection>
         var expanded: Set<EffectProperty>
+        var uniformScale: Bool
     }
 
     public init(model: EffectControlsModel) {
@@ -123,7 +124,7 @@ public final class EffectControlsView: NSView {
 
     private var currentSignature: Signature {
         Signature(clipID: model.clip?.id, kind: model.clip?.kind, sections: model.visibleSections,
-                  collapsed: model.collapsedSections, expanded: model.expanded)
+                  collapsed: model.collapsedSections, expanded: model.expanded, uniformScale: model.uniformScale)
     }
 
     private func modelChanged() {
@@ -140,7 +141,7 @@ public final class EffectControlsView: NSView {
         // Nothing selected: no ruler, zoom bar or divider, just the empty state.
         for v in [ruler, zoomBar, divider, lanes, timecodeLabel] as [NSView] { v.isHidden = model.clip == nil }
         let rows = EffectControlsLayout.rows(sections: model.visibleSections, collapsed: model.collapsedSections,
-                                             expanded: model.expanded)
+                                             expanded: model.expanded, uniformScaleRow: true)
         for row in rows {
             let v: NSView
             switch row.kind {
@@ -148,6 +149,7 @@ public final class EffectControlsView: NSView {
             case .property(let p): v = PropertyRow(property: p, model: model, owner: self)
             case .placeholder: v = PlaceholderRow(title: "Radius")
             case .graph(let p): v = GraphRow(property: p, model: model)
+            case .uniformScale: v = UniformScaleRow(model: model)
             }
             content.addSubview(v)
             rowViews.append((row, v))
@@ -324,6 +326,9 @@ private final class SectionHeaderRow: RowBackground, RowUpdating {
             let on = model.isEffectEnabled(section)
             m.addItem(item(on ? "Disable Effect" : "Enable Effect", #selector(toggleFX)))
         }
+        if section.effectKind != nil, model.canRemoveEffect(section) { m.addItem(item("Copy", #selector(doCopy))) }
+        if model.canPasteEffect { m.addItem(item("Paste", #selector(doPaste))) }
+        if m.items.contains(where: { $0.title == "Copy" || $0.title == "Paste" }) { m.addItem(.separator()) }
         m.addItem(item("Reset \(section.title)", #selector(doReset)))
         if model.canRemoveEffect(section) {
             m.addItem(.separator())
@@ -337,6 +342,8 @@ private final class SectionHeaderRow: RowBackground, RowUpdating {
     @objc private func toggleFX() { model.setEffectEnabled(section, !model.isEffectEnabled(section)) }
     @objc private func doReset() { model.resetSection(section) }
     @objc private func doRemove() { model.removeEffect(section) }
+    @objc private func doCopy() { model.copyEffect(section) }
+    @objc private func doPaste() { model.pasteEffect() }
 
     func update() {
         let on = model.isEffectEnabled(section)
@@ -387,14 +394,14 @@ private final class PropertyRow: RowBackground, RowUpdating {
         super.init(frame: .zero)
         reset.toolTip = "Reset \(p.title) (value at the playhead when animated; right-click for Reset All)"
         addSubview(chevron); addSubview(name)
-        let comps: [EffectComponent] = p.kind == .vector ? [.x, .y] : [.all]
+        let comps: [EffectComponent] = Self.components(p, model: model)
         for (i, c) in comps.enumerated() {
             let f = ScrubField(frame: .zero)
             f.range = p.displayRange
             f.step = p.displayStep
             f.unit = p.displayUnit
             f.decimals = p.displayDecimals
-            f.setAccessibilityLabel(comps.count == 2 ? "\(p.title) \(c == .x ? "X" : "Y")" : p.title)
+            f.setAccessibilityLabel(comps.count == 2 ? "\(p.title) \(Self.componentName(p, c))" : p.title)
             f.onBegin = { model.beginGesture() }
             f.onChange = { v in model.setValue(p, component: c, to: p.native(fromDisplay: v)) }
             f.onEnd = { _ in model.endGesture() }
@@ -407,6 +414,22 @@ private final class PropertyRow: RowBackground, RowUpdating {
         addSubview(prev); addSubview(key); addSubview(next); addSubview(reset)
     }
     required init?(coder: NSCoder) { fatalError() }
+
+    /// Scale shows Width and Height while Uniform Scale is off; positions always show X and Y.
+    static func components(_ p: EffectProperty, model: EffectControlsModel) -> [EffectComponent] {
+        if p.kind == .vector || (p == .scale && !model.uniformScale) { return [.x, .y] }
+        return [.all]
+    }
+    static func componentName(_ p: EffectProperty, _ c: EffectComponent) -> String {
+        if p == .scale { return c == .x ? "Width" : "Height" }
+        return c == .x ? "X" : "Y"
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        model.focusedProperty = property
+        if let o = owner { window?.makeFirstResponder(o) }
+        super.mouseDown(with: event)
+    }
 
     override func layout() {
         super.layout()
@@ -447,11 +470,10 @@ private final class PropertyRow: RowBackground, RowUpdating {
         let animated = model.isAnimated(p)
         let state = model.keyState(p)
         fields[0].keyframeState = state
-        switch p.kind {
-        case .vector:
+        if fields.count == 2 {
             let v = model.vectorValue(p)
             set(fields[0], p.display(v.x)); set(fields[1], p.display(v.y))
-        default:
+        } else {
             set(fields[0], p.display(model.scalarValue(p)))
         }
         [prev, key, next].forEach { $0.isHidden = !animated }
@@ -470,6 +492,33 @@ private final class PropertyRow: RowBackground, RowUpdating {
     }
 }
 
+/// Uniform Scale checkbox under the Scale row (Premiere): checked = one linked value, unchecked = Width and Height.
+private final class UniformScaleRow: RowBackground, RowUpdating {
+    let model: EffectControlsModel
+    private let box = NSButton(checkboxWithTitle: "Uniform Scale", target: nil, action: nil)
+
+    init(model: EffectControlsModel) {
+        self.model = model
+        super.init(frame: .zero)
+        box.font = Theme.Fonts.small
+        box.controlSize = .small
+        box.target = self; box.action = #selector(toggled)
+        box.toolTip = "Link Width and Height"
+        box.setAccessibilityLabel("Uniform Scale")
+        addSubview(box)
+        update()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        box.sizeToFit()
+        box.frame = NSRect(x: 104, y: (bounds.height - box.frame.height) / 2, width: max(box.frame.width, 110), height: box.frame.height)
+    }
+    @objc private func toggled() { model.setUniformScale(box.state == .on) }
+    func update() { box.state = model.uniformScale ? .on : .off }
+}
+
 /// Speed graph directly under its property row (Premiere): the keys are the glyphs in the row above, the graph only shows
 /// the curve with small key markers and the handles of selected keys. The value graph is one context-menu click away.
 private final class GraphRow: NSView, RowUpdating {
@@ -483,10 +532,10 @@ private final class GraphRow: NSView, RowUpdating {
     init(property p: EffectProperty, model: EffectControlsModel) {
         property = p; self.model = model
         super.init(frame: .zero)
-        let comps: [EffectComponent] = p.kind == .vector ? [.x, .y] : [.all]
+        let comps: [EffectComponent] = PropertyRow.components(p, model: model)
         for c in comps {
             let g = KeyframeGraphView(frame: .zero)
-            g.setAccessibilityLabel(comps.count == 2 ? "\(p.title) \(c == .x ? "X" : "Y") graph" : "\(p.title) graph")
+            g.setAccessibilityLabel(comps.count == 2 ? "\(p.title) \(PropertyRow.componentName(p, c)) graph" : "\(p.title) graph")
             g.displayScale = p == .scale || p == .opacity ? 100 : 1
             g.onEdit = { t in model.applyGraphEdit(p, component: c, track: t) }
             g.onSelectionChange = { ids in model.setSelection(for: p, ids: ids) }

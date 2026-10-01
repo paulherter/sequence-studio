@@ -158,6 +158,7 @@ public final class EffectControlsModel {
     public var focusedProperty: EffectProperty?
     @ObservationIgnored var keyClipboard: KeyframeClipboard?
     @ObservationIgnored var effectClipboard: ClipEffect?
+    @ObservationIgnored var lastCopyWasKeys = true
     /// Where the twirl-down state per clip kind is remembered across launches (the app sets `.standard`).
     @ObservationIgnored public var twirlDefaults: UserDefaults?
     @ObservationIgnored var twirlKind: String?
@@ -961,6 +962,8 @@ public struct EffectRow: Equatable, Sendable {
         case property(EffectProperty)
         case placeholder(EffectSection)
         case graph(EffectProperty)
+        /// Uniform Scale checkbox under the Scale row (only when the view asks for it).
+        case uniformScale
     }
     public var kind: Kind
     public var y: CGFloat
@@ -976,7 +979,7 @@ public enum EffectControlsLayout {
     }
 
     public static func rows(sections: [EffectSection], collapsed: Set<EffectSection>,
-                            expanded: Set<EffectProperty>) -> [EffectRow] {
+                            expanded: Set<EffectProperty>, uniformScaleRow: Bool = false) -> [EffectRow] {
         let h = Theme.Metrics.effectControlsRow
         var out: [EffectRow] = []
         var y: CGFloat = 0
@@ -988,6 +991,7 @@ public enum EffectControlsLayout {
             for p in s.properties {
                 add(.property(p), h)
                 if expanded.contains(p) { add(.graph(p), graphHeight(p)) }
+                if p == .scale && uniformScaleRow { add(.uniformScale, h) }
             }
         }
         return out

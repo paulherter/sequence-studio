@@ -138,6 +138,30 @@ extension EffectControlsModel {
         return best
     }
 
+    // MARK: Edit menu while Effect Controls has focus
+
+    /// Cmd+C: the selected keyframes, else the selected effect. Returns false when there is nothing to copy.
+    @discardableResult
+    public func copyFocused() -> Bool {
+        if !selection.isEmpty { return copyKeys() && markCopied(keys: true) }
+        if let s = selectedSection, copyEffect(s) { return markCopied(keys: false) }
+        return false
+    }
+    private func markCopied(keys: Bool) -> Bool { lastCopyWasKeys = keys; return true }
+
+    public var canCopyFocused: Bool { !selection.isEmpty || selectedSection.map { clip?.effect(ofKind: $0.effectKind ?? "") != nil } == true }
+    public var canPasteFocused: Bool { lastCopyWasKeys ? canPasteKeys : canPasteEffect }
+
+    /// Cmd+V: what was copied last, keys at the playhead or the effect onto this clip.
+    @discardableResult
+    public func pasteFocused() -> Bool { lastCopyWasKeys ? pasteKeys() : pasteEffect() }
+
+    /// Cmd+X: copy, then delete what was copied.
+    public func cutFocused() {
+        guard copyFocused() else { return }
+        deleteSelectionOrEffect()
+    }
+
     // MARK: Copy / paste effects
 
     public func copyEffect(_ s: EffectSection) -> Bool {

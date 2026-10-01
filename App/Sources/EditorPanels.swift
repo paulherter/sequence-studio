@@ -61,6 +61,7 @@ final class EditorPanels {
             session?.perform(name) { $0 = p }
         })
         projectView = ProjectPanelView(model: projectModel)
+        effectModel.twirlDefaults = .standard
         effectView = EffectControlsView(model: effectModel)
         libraryView = LibraryPanelView(model: libraryModel)
         clipSections = ClipSectionsView(session: session)
