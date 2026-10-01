@@ -53,3 +53,14 @@ Fehlt noch: Source Patching getrennt vom Track Targeting, Gruppieren, Clip deakt
 7. Export: Länge und Ton passen zum Abspielen.
 
 Fehlt noch: Speed-Rampen (Zeit-Remapping), Geschwindigkeit für verschachtelte Sequenzen und Standbilder, Frame-Blending.
+## Monitore und Projekt-Panel
+1. Clip im Projekt-Panel doppelklicken: öffnet im Source-Monitor. I und O setzen In und Out. `,` fügt am Playhead ein, `.` überschreibt. Der Playhead springt ans Ende des neuen Clips.
+2. Das Film-Symbol unter dem Source-Bild auf die Timeline ziehen (nur Video), danach das Wellenform-Symbol (nur Audio).
+3. In der Timeline F drücken: Der Clip öffnet sich im Source-Monitor auf demselben Bild. Shift+R springt zurück.
+4. Leertaste, J/K/L, Shift+L, K+L in beiden Monitoren. Timecode nach links und rechts ziehen zum Scrubben, anklicken zum Tippen.
+5. Schraubenschlüssel-Menü: Loop, Safe Margins. Shift+Leertaste spielt von In bis Out. Shift+E exportiert ein Standbild.
+6. Projekt-Panel: Icon-Ansicht umschalten, mit der Maus über einen Clip fahren (Hover-Scrub), Cmd+B neuer Bin, Return benennt um, Rechtsklick: „New Sequence From Clip", „Replace Footage".
+7. Programm-Monitor: Clip wählen, an einem Seitengriff ziehen (skaliert gleichmäßig). „Uniform Scale" in den Effect Controls abwählen und noch einmal ziehen (nur Breite).
+8. Ankerpunkt in der Bildmitte greifen und ziehen: Das Bild bleibt stehen. Knapp außerhalb einer Ecke erscheint der Dreh-Pfeil, Shift rastet in 45°-Schritten.
+
+Fehlt noch: Marker im Source-Monitor, Vier-Punkt-Schnitt (Fit to Fill), eigene Source-Patch-Knöpfe.
