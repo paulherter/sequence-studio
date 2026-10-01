@@ -12,12 +12,15 @@ public struct Caption: Sendable, Hashable {
     public var animationRef: String
     /// The spoken words with their times (same time base as `range`): the karaoke highlight follows them.
     public var words: [CaptionWord]
+    /// Karaoke word highlight of the caption's track (burn-in only); nil = off.
+    public var karaoke: KaraokeStyle?
 
     public init(lines: [String], range: TimeRange, firstWordID: UUID = UUID(), lastWordID: UUID = UUID(),
-                wordIndices: Range<Int> = 0..<0, styleRef: String, animationRef: String, words: [CaptionWord] = []) {
+                wordIndices: Range<Int> = 0..<0, styleRef: String, animationRef: String, words: [CaptionWord] = [],
+                karaoke: KaraokeStyle? = nil) {
         self.lines = lines; self.range = range; self.firstWordID = firstWordID; self.lastWordID = lastWordID
         self.wordIndices = wordIndices; self.styleRef = styleRef; self.animationRef = animationRef
-        self.words = words
+        self.words = words; self.karaoke = karaoke
     }
 }
 

@@ -16,7 +16,7 @@ extension AppController {
              .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel, .maximizeActivePanel, .resetLayout,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .minimizeAllTracks, .expandAllTracks, .speedDuration,
-             .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing:
+             .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing, .toggleCaptionsInMonitor:
             true
         case _ where isShellCommand(c):
             true
@@ -112,6 +112,7 @@ extension AppController {
         case .export: showExport()
         case .audioGain: requestAudioGain()
         case .toggleAudioScrubbing: toggleAudioScrubbing()
+        case .toggleCaptionsInMonitor: toggleCaptionsInMonitor()
         default: break
         }
     }

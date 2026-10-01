@@ -73,6 +73,7 @@ public enum EditorMenus {
         .command(.zoomIn), .command(.zoomOut), .command(.zoomFit),
         .separator,
         .command(.toggleAudioScrubbing),
+        .command(.toggleCaptionsInMonitor),
         .separator,
         .submenu("Track Height", cmds([
             .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter, nil,
@@ -96,5 +97,5 @@ public enum EditorMenus {
     /// Commands that stay visible in their menu even when not wired (the standard text editing commands: a text field
     /// handles them) and commands that are menu-only (no default key in Premiere).
     public static let alwaysShown: Set<EditorCommand> = [.undo, .redo, .cut, .copy, .paste, .delete]
-    public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection, .toggleAudioScrubbing]
+    public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection, .toggleAudioScrubbing, .toggleCaptionsInMonitor]
 }

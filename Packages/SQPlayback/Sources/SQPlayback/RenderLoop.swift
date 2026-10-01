@@ -133,6 +133,8 @@ final class RenderLoop: @unchecked Sendable {
         var mapping: Mapping = { $0.pts }
         var quality: DecodeScale = .full
         var zoom: ViewerZoom = .fit
+        /// Program monitor setting: draw the captions over the picture (the export burn-in does not depend on it).
+        var showCaptions = true
         /// Bumped by every invalidator; a tick renders when it differs from `renderedGeneration` and records the
         /// generation it snapshotted, so an invalidation that lands during a tick is never lost.
         var generation: UInt64 = 1
@@ -285,6 +287,14 @@ final class RenderLoop: @unchecked Sendable {
     }
 
     var lastPresentedZoom: ViewerZoom? { state.withLock { $0.lastPresentedZoom } }
+
+    /// Shows or hides the captions in the monitor; the current frame is redrawn.
+    func setShowCaptions(_ on: Bool) {
+        state.withLock { s in
+            guard s.showCaptions != on else { return }
+            s.showCaptions = on; s.generation &+= 1
+        }
+    }
 
     func setPresenter(_ p: Presenter?) { state.withLock { $0.presenter = p; $0.generation &+= 1 } }
 
@@ -507,11 +517,14 @@ final class RenderLoop: @unchecked Sendable {
     /// Captions of the visible caption tracks at `t`, on top of the picture (Program monitor). Same rasters and the
     /// same placement as the export burn-in; a raster that is not ready yet is prepared in the background.
     private func captionNodes(_ tl: Timeline, at t: Time, build b: inout LayerBuild) -> [RenderNode] {
+        guard state.withLock({ $0.showCaptions }) else { return [] }
         let active = tl.captions(at: t)
         guard !active.isEmpty else { return [] }
         var out: [RenderNode] = []
         for a in active where !a.item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            guard let ref = try? CaptionPreview.ref(for: a.item, canvas: tl.format) else { continue }
+            // Karaoke: the lit word at this time (the same function the export burn-in asks).
+            let lit = CaptionKaraoke.highlight(for: a.item, style: tl.captionTrack(a.track)?.karaoke, at: t)
+            guard let ref = try? CaptionPreview.ref(for: a.item, canvas: tl.format, highlight: lit) else { continue }
             if textFailed.withLock({ $0.contains(ref) }) { continue }
             if !TextGenerator.isCached(ref: ref) { prewarmText(ref); b.waiting = true; continue }
             let local = t - a.item.range.start

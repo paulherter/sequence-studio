@@ -24,6 +24,8 @@ public struct CaptionDrawState: Sendable, Equatable {
     public var index: Int
     public var opacity: Double
     public var scale: Double
+    /// The karaoke word(s) lit at this time, from the same function the Program monitor uses.
+    public var highlight: TextHighlight?
 }
 
 /// Burns captions into the working-linear frame (before the output encode). Text is rasterized once per caption
@@ -36,7 +38,8 @@ public final class CaptionBurnIn: @unchecked Sendable {
     private let animation: @Sendable (String) -> KeyframeTemplate?
     private let lock = NSLock()
     private struct Cached { var texture: MTLTexture; var originX: Double, originY: Double }
-    private var textures: [Int: Cached] = [:]
+    private struct TextureKey: Hashable { var index: Int; var highlight: TextHighlight? }
+    private var textures: [TextureKey: Cached] = [:]
     private var pipeline: MTLRenderPipelineState?
     private var device: MTLDevice?
 
@@ -63,7 +66,12 @@ public final class CaptionBurnIn: @unchecked Sendable {
             opacity = a.value(of: "opacity", clipTime: local, clipDuration: c.range.duration) ?? 1
             scale = a.value(of: "scale", clipTime: local, clipDuration: c.range.duration) ?? 1
         }
-        return CaptionDrawState(index: i, opacity: min(1, max(0, opacity)), scale: max(0, scale))
+        var lit: TextHighlight?
+        if let k = c.karaoke {
+            let item = CaptionItem(lines: c.lines, range: c.range, words: c.words)
+            lit = CaptionKaraoke.highlight(for: item, style: k, at: t)
+        }
+        return CaptionDrawState(index: i, opacity: min(1, max(0, opacity)), scale: max(0, scale), highlight: lit)
     }
 
     // MARK: GPU
@@ -84,15 +92,17 @@ public final class CaptionBurnIn: @unchecked Sendable {
         return p
     }
 
-    private func texture(for index: Int, canvasWidth: Int, canvasHeight: Int, device: MTLDevice) throws -> Cached? {
-        if let t = textures[index] { return t }
+    private func texture(for index: Int, highlight: TextHighlight?, canvasWidth: Int, canvasHeight: Int,
+                         device: MTLDevice) throws -> Cached? {
+        let key = TextureKey(index: index, highlight: highlight)
+        if let t = textures[key] { return t }
         let c = captions[index]
         // Same template and box as the Program monitor (`CaptionLayout`).
         let template = CaptionLayout.template(text: c.lines.joined(separator: "\n"), style: style(c.styleRef),
                                               canvasWidth: Double(canvasWidth), canvasHeight: Double(canvasHeight),
-                                              widthFraction: placement.maxWidthFraction)
+                                              widthFraction: placement.maxWidthFraction, highlight: highlight)
         guard let raster = try TextRenderer.render(text: template.text, style: template.style, maxWidth: template.box?.width,
-                                                   boxHeight: template.box?.height) else { return nil }
+                                                   boxHeight: template.box?.height, highlight: template.highlight) else { return nil }
         let pb = raster.linearBuffer
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: raster.pixelWidth,
                                                          height: raster.pixelHeight, mipmapped: false)
@@ -104,7 +114,7 @@ public final class CaptionBurnIn: @unchecked Sendable {
                     withBytes: CVPixelBufferGetBaseAddress(pb)!, bytesPerRow: CVPixelBufferGetBytesPerRow(pb))
         if textures.count >= 8 { textures.removeAll() }
         let cached = Cached(texture: tex, originX: raster.originX, originY: raster.originY)
-        textures[index] = cached
+        textures[key] = cached
         return cached
     }
 
@@ -115,7 +125,8 @@ public final class CaptionBurnIn: @unchecked Sendable {
         guard let s = state(at: t), s.opacity > 0, s.scale > 0 else { return false }
         lock.lock(); defer { lock.unlock() }
         let device = target.device
-        guard let cached = try texture(for: s.index, canvasWidth: target.width, canvasHeight: target.height, device: device)
+        guard let cached = try texture(for: s.index, highlight: s.highlight, canvasWidth: target.width,
+                                       canvasHeight: target.height, device: device)
         else { return false }
         let tex = cached.texture
         let pipe = try makePipeline(device)
