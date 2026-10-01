@@ -1,7 +1,7 @@
 import AppKit
 import SSCore
 
-public enum TrackToggle: Sendable, Hashable { case target, visible, mute, solo, lock }
+public enum TrackToggle: Sendable, Hashable { case target, visible, mute, solo, lock, syncLock }
 
 /// One track's header: target chip, name, eye (video) or mute + solo (audio), lock on hover (always shown while locked).
 /// Real `NSButton`s with SF Symbols; this slice only reports clicks through `onToggle` (T-04/T-05 act on them).
@@ -12,11 +12,12 @@ public final class TrackHeaderView: NSView {
 
     private var track: Track
     private var label: String
-    private var isHovering = false { didSet { updateLockVisibility() } }
+    private var isHovering = false { didSet { updateLockVisibility(); needsLayout = true; needsDisplay = true } }
     private let eyeButton = TrackHeaderView.makeButton()
     private let muteButton = TrackHeaderView.makeButton()
     private let soloButton = TrackHeaderView.makeButton()
     private let lockButton = TrackHeaderView.makeButton()
+    private let syncButton = TrackHeaderView.makeButton()
     private let chipButton = TrackHeaderView.makeButton()
 
     static let chipWidth: CGFloat = 24
@@ -31,7 +32,7 @@ public final class TrackHeaderView: NSView {
         // macOS 14+: views do not clip by default, so an opaque `dirtyRect.fill()` would paint over its siblings.
         clipsToBounds = true
         for (button, toggle) in [(eyeButton, TrackToggle.visible), (muteButton, .mute), (soloButton, .solo),
-                                 (lockButton, .lock), (chipButton, .target)] {
+                                 (lockButton, .lock), (syncButton, .syncLock), (chipButton, .target)] {
             button.target = self
             button.action = #selector(clicked(_:))
             button.tag = Self.tag(toggle)
@@ -43,6 +44,7 @@ public final class TrackHeaderView: NSView {
         muteButton.toolTip = "Mute"
         soloButton.toolTip = "Solo"
         lockButton.toolTip = "Lock track"
+        syncButton.toolTip = "Sync lock: follow ripple edits on other tracks"
         apply(track: track, label: label)
     }
     public required init?(coder: NSCoder) { fatalError("not used") }
@@ -58,11 +60,11 @@ public final class TrackHeaderView: NSView {
     }
 
     private static func tag(_ t: TrackToggle) -> Int {
-        switch t { case .target: 0; case .visible: 1; case .mute: 2; case .solo: 3; case .lock: 4 }
+        switch t { case .target: 0; case .visible: 1; case .mute: 2; case .solo: 3; case .lock: 4; case .syncLock: 5 }
     }
 
     @objc private func clicked(_ sender: NSButton) {
-        let all: [TrackToggle] = [.target, .visible, .mute, .solo, .lock]
+        let all: [TrackToggle] = [.target, .visible, .mute, .solo, .lock, .syncLock]
         onToggle?(trackID, all[sender.tag])
     }
 
@@ -79,10 +81,14 @@ public final class TrackHeaderView: NSView {
         configure(soloButton, symbol: "headphones", on: track.isSolo, tint: Theme.Colors.yellow, description: "Solo")
         configure(lockButton, symbol: track.isLocked ? "lock.fill" : "lock.open", on: track.isLocked,
                   tint: Theme.Colors.label2, description: "Lock")
+        configure(syncButton, symbol: "lock.rotation", on: track.syncLock, tint: Theme.Colors.accent, description: "Sync lock")
         updateLockVisibility()
         needsLayout = true
         needsDisplay = true
     }
+
+    /// Sync lock shows while hovering, and always when it is off (the non-default state).
+    private var showsSync: Bool { isHovering || !track.syncLock }
 
     private func configure(_ b: NSButton, symbol: String, on: Bool, tint: NSColor, description: String) {
         let cfg = NSImage.SymbolConfiguration(pointSize: 10, weight: .regular)
@@ -97,6 +103,8 @@ public final class TrackHeaderView: NSView {
         let s = Self.buttonSize, y = ((bounds.height - s) / 2).rounded()
         var right = bounds.width - Theme.Spacing.xs
         lockButton.frame = CGRect(x: right - s, y: y, width: s, height: s); right -= s
+        syncButton.isHidden = !showsSync
+        if showsSync { syncButton.frame = CGRect(x: right - s, y: y, width: s, height: s); right -= s }
         if track.kind == .video {
             eyeButton.frame = CGRect(x: right - s, y: y, width: s, height: s); right -= s
         } else {

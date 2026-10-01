@@ -120,9 +120,22 @@ public final class RulerView: NSView {
         }
     }
 
+    static func color(of c: MarkerColor) -> NSColor {
+        switch c {
+        case .green: Theme.Colors.marker
+        case .red: NSColor(srgbRed: 0.93, green: 0.30, blue: 0.28, alpha: 1)
+        case .purple: NSColor(srgbRed: 0.62, green: 0.42, blue: 0.90, alpha: 1)
+        case .orange: NSColor(srgbRed: 0.96, green: 0.58, blue: 0.20, alpha: 1)
+        case .yellow: NSColor(srgbRed: 0.95, green: 0.82, blue: 0.25, alpha: 1)
+        case .white: NSColor(white: 0.92, alpha: 1)
+        case .blue: NSColor(srgbRed: 0.30, green: 0.52, blue: 0.95, alpha: 1)
+        case .cyan: NSColor(srgbRed: 0.28, green: 0.82, blue: 0.88, alpha: 1)
+        }
+    }
+
     private func drawMarkers(in clip: CGRect) {
-        Theme.Colors.marker.setFill()
         for m in markers {
+            Self.color(of: m.color).setFill()
             let x = geometry.x(for: m.time).rounded()
             guard x >= clip.minX - 8, x <= clip.maxX + 8 else { continue }
             // Small flag: pole plus a pennant.

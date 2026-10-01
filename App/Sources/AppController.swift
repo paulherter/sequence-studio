@@ -464,6 +464,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         default: break
         }
         guard let c = item.representedObject as? EditorCommand else { return true }
+        validateTimelineOpItem(c, item)
         // Plain-key items (no Command) belong to the KeyRouter; their key equivalent only fires when the router let the event pass.
         if !item.keyEquivalent.isEmpty, !item.keyEquivalentModifierMask.contains(.command) {
             if let tv = window?.firstResponder as? NSTextView, tv.isEditable || tv.isFieldEditor { return false }

@@ -65,6 +65,8 @@ public struct CommandMap: Sendable {
         add(g, ch(";"), .lift); add(g, ch("'"), .extract)
         add(g, ch(","), .insert); add(g, ch("."), .overwrite)
         add(g, ch("m"), .addMarker)
+        add(g, ch("m"), .shift, .nextMarker); add(g, ch("m"), [.command, .shift], .previousMarker)
+        add(g, ch("/"), .markSelection)
         // Tools
         add(g, ch("v"), .tool(.selection)); add(g, ch("a"), .tool(.trackForward))
         add(g, ch("a"), .shift, .tool(.trackBackward))
@@ -75,6 +77,7 @@ public struct CommandMap: Sendable {
         // Clipboard / history / file
         add(g, ch("c"), .command, .copy); add(g, ch("x"), .command, .cut); add(g, ch("v"), .command, .paste)
         add(g, ch("v"), [.command, .option], .pasteAttributes)
+        add(g, ch("v"), [.command, .shift], .pasteInsert)
         add(g, ch("z"), .command, .undo); add(g, ch("z"), [.command, .shift], .redo)
         add(g, ch("i"), .command, .importMedia); add(g, ch("n"), .command, .newSequence)
         add(g, ch("s"), .command, .save); add(g, ch("m"), .command, .export)
@@ -95,6 +98,13 @@ public struct CommandMap: Sendable {
         add(t, ch("q"), .rippleTrimPrevious); add(t, ch("w"), .rippleTrimNext); add(t, ch("e"), .extendEdit)
         add(t, .delete, .delete); add(t, .delete, .shift, .rippleDelete)
         add(t, ch("s"), .toggleSnapping)
+        add(t, ch("a"), .command, .selectAll); add(t, ch("a"), [.command, .shift], .deselectAll)
+        add(t, ch("d"), .selectClipAtPlayhead)
+        add(t, .up, .shift, .previousEditPointAnyTrack); add(t, .down, .shift, .nextEditPointAnyTrack)
+        // Nudge the selected clips (Cmd+arrows) or trim the selected edit (Opt+Shift+arrows; Opt+arrows is one frame, see AppController).
+        add(t, .left, .command, .nudgeLeft); add(t, .right, .command, .nudgeRight)
+        add(t, .left, [.command, .shift], .nudgeLeft5); add(t, .right, [.command, .shift], .nudgeRight5)
+        add(t, .left, [.option, .shift], .trimBackward5); add(t, .right, [.option, .shift], .trimForward5)
         add(t, ch("l"), .command, .link); add(t, ch("g"), .command, .group)
         add(t, ch("f"), .matchFrame); add(t, ch("r"), .shift, .reverseMatchFrame)
         add(t, ch("="), .zoomIn); add(t, ch("-"), .zoomOut); add(t, ch("\\"), .zoomFit)

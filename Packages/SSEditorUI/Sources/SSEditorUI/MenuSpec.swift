@@ -38,11 +38,12 @@ public enum EditorMenus {
         .newProject, .newSequence, .newBin, nil, .openProject, nil, .save, .saveAs, .revert, nil, .importMedia, nil, .export, .exportFrame,
     ]))
     public static let edit = MenuSpec(title: "Edit", items: cmds([
-        .undo, .redo, nil, .cut, .copy, .paste, .pasteAttributes, nil,
+        .undo, .redo, nil, .cut, .copy, .paste, .pasteInsert, .pasteAttributes, nil,
+        .selectAll, .deselectAll, nil,
         .delete, .rippleDelete,
     ]))
     public static let clip = MenuSpec(title: "Clip", items: cmds([
-        .insert, .overwrite, nil, .link, .group, nil,
+        .insert, .overwrite, nil, .link, nil,
         .setToFrameSize, nil,
         .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation, .addKeyframe, .toggleSpeedGraph,
     ]))
@@ -50,7 +51,7 @@ public enum EditorMenus {
         .sequenceSettings, nil,
         .lift, .extract, nil,
         .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext, .extendEdit, nil,
-        .toggleSnapping, nil,
+        .toggleSnapping, .toggleLinkedSelection, nil,
         .matchFrame, .reverseMatchFrame, nil,
         .previousEditPoint, .nextEditPoint, .goToStart, .goToEnd,
     ]))
@@ -59,7 +60,8 @@ public enum EditorMenus {
         .markIn, .markOut, .markClip, nil,
         .goToIn, .goToOut, nil,
         .clearIn, .clearOut, .clearInOut, nil,
-        .addMarker,
+        .addMarker, .nextMarker, .previousMarker, nil,
+        .markSelection,
     ]))
     public static let view = MenuSpec(title: "View", items: [
         .submenu("Playback", cmds([
@@ -91,5 +93,5 @@ public enum EditorMenus {
     /// Commands that stay visible in their menu even when not wired (the standard text editing commands: a text field
     /// handles them) and commands that are menu-only (no default key in Premiere).
     public static let alwaysShown: Set<EditorCommand> = [.undo, .redo, .cut, .copy, .paste, .delete]
-    public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize]
+    public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection]
 }

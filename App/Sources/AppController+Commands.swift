@@ -21,7 +21,7 @@ extension AppController {
         case _ where isShellCommand(c):
             true
         default:
-            false
+            Self.isTimelineOp(c)
         }
     }
 
@@ -32,6 +32,9 @@ extension AppController {
         if focusedPanel == .sourceMonitor, panels.source.handle(c) { return }
         if executeShellCommand(c) { return }
         if [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus, executeInEffectControls(c) { return }
+        // Timeline operations (clipboard, link, nudge, edge trims...); Effect Controls keeps its own keys while it has focus.
+        let ecOwns = [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus
+        if Self.isTimelineOp(c) || c == .previousKeyframe || c == .nextKeyframe, !ecOwns, executeTimelineOp(c) { return }
         guard Self.isSupported(c) else {
             shell.statusBar.flash("\(c.title) is not available yet.")
             return
@@ -70,7 +73,9 @@ extension AppController {
         case .reverseMatchFrame: panels.reverseMatchFrame()
         case .insert: placeSelectedMedia(.insert)
         case .overwrite: placeSelectedMedia(.overwrite)
-        case .addMarker: session.addMarkerAtPlayhead()
+        case .addMarker:
+            // M on a frame that already has a marker opens its dialog (Premiere).
+            if let r = session.markAtPlayhead(), r.openEdit { panels.editMarker(r.id) }
         case .tool(let t): selectTool(t)
         case .addEdit: session.addEditAtPlayhead()
         case .addEditAllTracks: session.addEditAtPlayhead(allTracks: true)
@@ -79,6 +84,7 @@ extension AppController {
         case .delete, .rippleDelete:
             // Effect Controls owns Delete while it has focus: keys, then the selected effect. Never the timeline clips.
             if effectControlsHasFocus { panels.effectModel.deleteSelectionOrEffect() }
+            else if deleteSelectedGap() { }
             else { session.deleteSelection(ripple: c == .rippleDelete) }
         case .toggleSnapping:
             panels.timelineView.toolState.snapping.toggle()
@@ -141,6 +147,7 @@ extension AppController {
         // The Program monitor follows: Hand pans the view, Type places text, everything else is the selection behaviour.
         panels.setMonitorTool(t == .hand ? .hand : t == .type ? .type : .select)
         guard let mapped else { shell.statusBar.flash("\(EditorCommand.tool(t).title) is not available yet."); return }
+        panels.timelineView.toolState.selectBackward = t == .trackBackward
         panels.timelineView.toolState.tool = mapped
         shell.statusBar.flash(EditorCommand.tool(t).title, seconds: 2)
     }
