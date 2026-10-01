@@ -166,6 +166,9 @@ public enum KeyboardListing {
         return rows.filter { r in
             let keys = r.shortcut.replacingOccurrences(of: "⌃", with: " control ").replacingOccurrences(of: "⌥", with: " option alt ")
                 .replacingOccurrences(of: "⇧", with: " shift ").replacingOccurrences(of: "⌘", with: " command cmd ")
+                .replacingOccurrences(of: "←", with: " left ").replacingOccurrences(of: "→", with: " right ")
+                .replacingOccurrences(of: "↑", with: " up ").replacingOccurrences(of: "↓", with: " down ")
+                .replacingOccurrences(of: "⌫", with: " delete backspace ")
             let hay = (r.command + " " + r.scope + " " + r.shortcut + " " + keys).lowercased()
             return words.allSatisfy { hay.contains($0) }
         }

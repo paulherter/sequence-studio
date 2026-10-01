@@ -4,13 +4,7 @@ import SQEditorUI
 
 /// App-level commands (project handling, settings windows) and the rules that enable or disable menu items.
 extension AppController {
-    static func isShellCommand(_ c: EditorCommand) -> Bool {
-        switch c {
-        case .newProject, .openProject, .saveAs, .revert, .sequenceSettings, .setToFrameSize, .keyboardShortcuts, .preferences,
-             .maximizeActivePanel, .resetLayout: true
-        default: false
-        }
-    }
+    static func isShellCommand(_ c: EditorCommand) -> Bool { CommandSupport.isShellCommand(c) }
 
     /// True when `c` was one of the shell commands and has been handled.
     func executeShellCommand(_ c: EditorCommand) -> Bool {
@@ -39,7 +33,13 @@ extension AppController {
         case .revert: return session.fileURL != nil && session.isDirty
         case .lift, .extract, .goToIn, .goToOut, .clearInOut: return session.activeTimeline?.inOut != nil
         case .insert, .overwrite: return !(panels?.projectView.selectedMediaIDs.isEmpty ?? true)
-        case .setToFrameSize, .enableClip, .duplicate, .moveSelectionUp, .moveSelectionDown: return !session.selection.isEmpty
+        case .enableClip, .duplicate, .moveSelectionUp, .moveSelectionDown: return !session.selection.isEmpty
+        case .setToFrameSize: return session.commandClipsForMenu(kind: .video).contains { session.selection.contains($0.id) }
+        case .link: return session.linkMenuState.enabled
+        case .paste, .pasteInsert: return session.clipboard != nil
+        case .extendEdit, .toggleTrimType, .trimBackward, .trimForward, .trimBackward5, .trimForward5:
+            return panels?.timelineView.interaction.edgeSelection != nil
+        case .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation: return !(panels?.effectModel.selection.isEmpty ?? true)
         case .toggleTimeRemapping: return session.canToggleTimeRemapping
         case .removeTimeRemapping: return session.canRemoveTimeRemapping
         case .delete, .rippleDelete: return !session.selection.isEmpty || !session.captionSelection.isEmpty || session.selectedTransition != nil

@@ -45,6 +45,20 @@ private func track(_ clips: [Clip], kind: TrackKind = .video) -> Track {
         #expect(ses.activeTimeline!.tracks[0].clips.map(\.start) == [s(2), s(4)])
     }
 
+    @Test func linkMenuStateFollowsTheSelection() {
+        let v = clip(1, 2), a = clip(1, 2, kind: .audio)
+        let ses = makeSession([track([v]), track([a], kind: .audio)])
+        #expect(ses.linkMenuState.enabled == false)
+        ses.select(clips: [v.id])
+        #expect(ses.linkMenuState.enabled == false)
+        ses.select(clips: [v.id, a.id])
+        #expect(ses.linkMenuState.enabled && !ses.linkMenuState.unlink)
+        ses.toggleLinkSelection()
+        #expect(ses.linkMenuState.enabled && ses.linkMenuState.unlink)
+        ses.select(clips: [v.id])
+        #expect(ses.linkMenuState.enabled && ses.linkMenuState.unlink)
+    }
+
     @Test func linkToggleAndNudge() {
         let v = clip(1, 2), a = clip(1, 2, kind: .audio)
         let ses = makeSession([track([v]), track([a], kind: .audio)])
