@@ -32,6 +32,9 @@ public enum EditorCommand: Sendable, Hashable {
     case maximizePanel
     // File
     case importMedia, newSequence, save, export
+    case newProject, openProject, saveAs, revert, sequenceSettings, setToFrameSize
+    // App
+    case keyboardShortcuts, preferences
     // Keyframes (proposal in UX section 3)
     case easyEase, easeIn, easeOut, toggleHoldInterpolation
     case previousKeyframe, nextKeyframe, toggleSpeedGraph, addKeyframe
@@ -121,6 +124,14 @@ public enum EditorCommand: Sendable, Hashable {
         case .newSequence: "New Sequence…"
         case .save: "Save"
         case .export: "Export…"
+        case .newProject: "New Project"
+        case .openProject: "Open Project…"
+        case .saveAs: "Save As…"
+        case .revert: "Revert"
+        case .sequenceSettings: "Sequence Settings…"
+        case .setToFrameSize: "Set to Frame Size"
+        case .keyboardShortcuts: "Keyboard Shortcuts…"
+        case .preferences: "Settings…"
         case .easyEase: "Easy Ease"
         case .easeIn: "Ease In"
         case .easeOut: "Ease Out"

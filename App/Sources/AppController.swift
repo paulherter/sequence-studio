@@ -27,6 +27,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     var panels: EditorPanels!
     var toolbar: EditorToolbar!
     let mainWorkspaceSubmenu = NSMenu(title: "Workspace")
+    let recentMenu = NSMenu(title: "Open Recent")
+    private(set) lazy var shortcutsWindow = KeyboardShortcutsWindowController(map: commandMap)
     var keyMonitor: Any?
     /// Set once quitting started (Save alert, then teardown): the key monitor must not touch views any more.
     var isTerminating = false
@@ -465,7 +467,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         case .save: return true
         case _ where (c == .delete || c == .rippleDelete) && effectControlsHasFocus:
             return !panels.effectModel.selection.isEmpty || panels.effectModel.selectedSection.map(panels.effectModel.canRemoveEffect) == true
-        default: return Self.isSupported(c)
+        default: return commandEnabled(c)
         }
     }
 

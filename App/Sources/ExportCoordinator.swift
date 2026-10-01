@@ -20,13 +20,13 @@ final class ExportCoordinator {
 
     func presentDialog(for session: EditorSession, on window: NSWindow) {
         let items = session.project.timelines.map {
-            ExportDialogModel.SequenceItem(id: $0.id, name: $0.name, duration: $0.duration, inOut: $0.inOut)
+            ExportDialogModel.SequenceItem(id: $0.id, name: $0.name, duration: $0.duration, inOut: $0.inOut, format: $0.format)
         }
         guard !items.isEmpty else { NSSound.beep(); return }
         let timelines = Dictionary(uniqueKeysWithValues: session.project.timelines.map { ($0.id, $0) })
         let resolver = session.media
         let mediaIDs = session.project.media.map(\.id)
-        let model = ExportDialogModel(sequences: items) { id, settings in
+        let model = ExportDialogModel(sequences: items, initialPreset: .matchSource) { id, settings in
             guard let timeline = timelines[id] else { throw ExportSequenceMissing() }
             await resolver.prepare(mediaIDs)
             return try ExportSourceBuilder.make(timeline: timeline, sequences: timelines, settings: settings, resolver: resolver)

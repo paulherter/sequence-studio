@@ -6,36 +6,70 @@ import SSEditorUI
 /// are still handled by `KeyRouter` from key events (it needs key-up for J/K/L); the local key monitor consumes those
 /// events before the menu sees them. When the monitor lets one through (typing in a text field, list arrows) the
 /// item is disabled by `AppController.validateMenuItem`, so it cannot fire twice or steal typing.
+/// Commands that are not wired yet are left out (no dead items); the text editing commands stay (a field handles them).
 @MainActor
 enum MenuBuilder {
     static func build(target: AppController, map: CommandMap) -> NSMenu {
         let main = NSMenu()
-        main.addItem(appMenuItem(target: target))
+        main.addItem(appMenuItem(target: target, map: map))
         for spec in EditorMenus.all {
             let menu = NSMenu(title: spec.title)
             menu.autoenablesItems = true
-            for item in spec.items {
-                switch item {
-                case .separator: menu.addItem(.separator())
-                case .command(let c): menu.addItem(menuItem(for: c, target: target, map: map))
-                }
-            }
+            addItems(spec.items, to: menu, target: target, map: map)
             if spec.title == "File" { extendFile(menu, target: target) }
-            if spec.title == "Sequence" {
-                let item = NSMenuItem(title: "Sequence Settings…", action: #selector(AppController.showSequenceSettings(_:)), keyEquivalent: "")
-                item.target = target
-                menu.insertItem(item, at: 0)
-                menu.insertItem(.separator(), at: 1)
-            }
             if spec.title == "Window" {
                 windowMenu(menu, target: target, map: map)
                 NSApp.windowsMenu = menu
             }
+            tidy(menu)
             let host = NSMenuItem(title: spec.title, action: nil, keyEquivalent: "")
             host.submenu = menu
             main.addItem(host)
         }
+        // An empty Help menu still gets macOS's menu search field, which finds every item of every menu.
+        let help = NSMenu(title: "Help")
+        let helpHost = NSMenuItem(title: "Help", action: nil, keyEquivalent: "")
+        helpHost.submenu = help
+        main.addItem(helpHost)
+        NSApp.helpMenu = help
         return main
+    }
+
+    /// Wired and worth a menu item.
+    static func isVisible(_ c: EditorCommand) -> Bool {
+        if EditorMenus.alwaysShown.contains(c) { return true }
+        if c == .tool(.zoom) { return false }          // the Zoom tool is not implemented yet
+        return AppController.isSupported(c)
+    }
+
+    private static func addItems(_ items: [MenuSpec.Item], to menu: NSMenu, target: AppController, map: CommandMap) {
+        for item in items {
+            switch item {
+            case .separator: menu.addItem(.separator())
+            case .command(let c):
+                if isVisible(c) { menu.addItem(menuItem(for: c, target: target, map: map)) }
+            case .submenu(let title, let sub):
+                let m = NSMenu(title: title)
+                m.autoenablesItems = true
+                addItems(sub, to: m, target: target, map: map)
+                tidy(m)
+                guard !m.items.isEmpty else { continue }
+                let host = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+                host.submenu = m
+                menu.addItem(host)
+            }
+        }
+    }
+
+    /// Drops leading, trailing and doubled separators left behind by hidden items.
+    private static func tidy(_ menu: NSMenu) {
+        var i = 0
+        while i < menu.items.count {
+            let it = menu.items[i]
+            let prevIsSep = i == 0 || menu.items[i - 1].isSeparatorItem
+            if it.isSeparatorItem && prevIsSep { menu.removeItem(at: i) } else { i += 1 }
+        }
+        while let last = menu.items.last, last.isSeparatorItem { menu.removeItem(last) }
     }
 
     /// Premiere's Window menu: Workspaces submenu, one checkable item per panel (toggles it), then the plain commands.
@@ -57,15 +91,20 @@ enum MenuBuilder {
         }
         head.append(.separator())
         for (i, item) in head.enumerated() { menu.insertItem(item, at: i) }
+        // macOS window commands (no Cmd+M: that is Export).
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: ""))
+        menu.addItem(NSMenuItem(title: "Zoom", action: #selector(NSWindow.performZoom(_:)), keyEquivalent: ""))
+        menu.addItem(.separator())
+        menu.addItem(NSMenuItem(title: "Bring All to Front", action: #selector(NSApplication.arrangeInFront(_:)), keyEquivalent: ""))
     }
 
-    private static func appMenuItem(target: AppController) -> NSMenuItem {
+    private static func appMenuItem(target: AppController, map: CommandMap) -> NSMenuItem {
         let menu = NSMenu(title: "Sequence Studio")
         menu.addItem(NSMenuItem(title: "About Sequence Studio", action: #selector(NSApplication.orderFrontStandardAboutPanel(_:)), keyEquivalent: ""))
         menu.addItem(.separator())
-        let settings = NSMenuItem(title: "Settings…", action: #selector(AppController.showSettings(_:)), keyEquivalent: ",")
-        settings.target = target
-        menu.addItem(settings)
+        menu.addItem(menuItem(for: .preferences, target: target, map: map))
+        menu.addItem(menuItem(for: .keyboardShortcuts, target: target, map: map))
         menu.addItem(.separator())
         let hide = NSMenuItem(title: "Hide Sequence Studio", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
         menu.addItem(hide)
@@ -80,17 +119,15 @@ enum MenuBuilder {
         return item
     }
 
+    /// Open Recent goes right after Open Project.
     private static func extendFile(_ menu: NSMenu, target: AppController) {
-        let open = NSMenuItem(title: "Open Project…", action: #selector(AppController.openProject(_:)), keyEquivalent: "o")
-        open.target = target
-        menu.insertItem(open, at: 0)
-        let saveAs = NSMenuItem(title: "Save As…", action: #selector(AppController.saveProjectAs(_:)), keyEquivalent: "s")
-        saveAs.keyEquivalentModifierMask = [.command, .shift]
-        saveAs.target = target
-        if let i = menu.items.firstIndex(where: { ($0.representedObject as? EditorCommand) == .save }) {
-            menu.insertItem(saveAs, at: i + 1)
+        let recent = NSMenuItem(title: "Open Recent", action: nil, keyEquivalent: "")
+        target.recentMenu.delegate = target
+        recent.submenu = target.recentMenu
+        if let i = menu.items.firstIndex(where: { ($0.representedObject as? EditorCommand) == .openProject }) {
+            menu.insertItem(recent, at: i + 1)
         } else {
-            menu.addItem(saveAs)
+            menu.addItem(recent)
         }
     }
 

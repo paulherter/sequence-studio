@@ -18,7 +18,7 @@ extension AppController {
 
     func openProject(at url: URL) async {
         guard await confirmDiscardChanges() else { return }
-        do { try await session.open(url: url) } catch {
+        do { try await session.open(url: url); noteRecent(url) } catch {
             presentError("Could not open “\(url.lastPathComponent)”", error)
         }
     }
@@ -29,7 +29,7 @@ extension AppController {
     @discardableResult
     func saveDocument() async -> Bool {
         if session.fileURL != nil {
-            do { try await session.save(); return true } catch { presentError("Could not save", error); return false }
+            do { try await session.save(); session.fileURL.map(noteRecent); return true } catch { presentError("Could not save", error); return false }
         }
         return await saveDocumentAs()
     }
@@ -45,7 +45,7 @@ extension AppController {
         }
         guard ok, var url = panel.url else { return false }
         if url.pathExtension != "ssproj" { url.appendPathExtension("ssproj") }
-        do { try await session.saveAs(to: url); return true } catch { presentError("Could not save", error); return false }
+        do { try await session.saveAs(to: url); noteRecent(url); return true } catch { presentError("Could not save", error); return false }
     }
 
     /// Asks before a document is replaced. True to go on.

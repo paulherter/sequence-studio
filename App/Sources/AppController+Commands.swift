@@ -17,6 +17,8 @@ extension AppController {
              .minimizeAllTracks, .expandAllTracks,
              .importMedia, .newSequence, .save, .export:
             true
+        case _ where isShellCommand(c):
+            true
         default:
             false
         }
@@ -26,6 +28,7 @@ extension AppController {
         if ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1" { NSLog("SSKEY execute \(c) playing=\(session.isPlaying)") }
         // Editing text (a field or the timecode box): the standard commands go to the editor.
         if let tv = textResponder, forwardToText(c, tv) { return }
+        if executeShellCommand(c) { return }
         guard Self.isSupported(c) else {
             shell.statusBar.flash("\(c.title) is not available yet.")
             return
