@@ -122,4 +122,20 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         v.zoomToFit()
         #expect(v.geometry.pointsPerSecond <= v.zoomLimits.upperBound + 1e-9)
     }
+
+    // Finding 8: unchecking Uniform Scale with Width == Height changed no tracked property, so the Scale row stayed single.
+    @Test func uncheckingUniformScaleRebuildsTheScaleRow() async throws {
+        let m = EffectControlsModel()
+        m.setClip(Clip(name: "c", media: UUID(), kind: .video, source: TimeRange(start: .zero, duration: Time(10, 1)), start: Time(5, 1)))
+        m.playhead = Time(5, 1)
+        let v = EffectControlsView(model: m)
+        v.frame = NSRect(x: 0, y: 0, width: 700, height: 500)
+        v.layoutSubtreeIfNeeded()
+        func count(_ n: NSView) -> Int { n.subviews.reduce(0) { $0 + ($1 is ScrubField ? 1 : 0) + count($1) } }
+        let before = count(v)
+        m.setUniformScale(false)
+        try await Task.sleep(for: .milliseconds(100))
+        v.layoutSubtreeIfNeeded()
+        #expect(count(v) == before + 1)
+    }
 }
