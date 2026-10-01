@@ -66,49 +66,37 @@ public final class MarkersPanelModel {
     public func commit(row: Int, column: MarkerColumn, text: String) -> Bool {
         guard markers.indices.contains(row) else { return false }
         let id = markers[row].id
+        let current = rows[row]
         switch column {
-        case .name: onEdit?(.rename(id, text))
-        case .comment: onEdit?(.setComment(id, text))
+        case .name: if text != current.name { onEdit?(.rename(id, text)) }
+        case .comment: if text != current.comment { onEdit?(.setComment(id, text)) }
         case .color:
             guard let c = MarkerColorChoice(rawValue: text.lowercased()) else { return false }
-            onEdit?(.setColor(id, c))
+            if c != current.color { onEdit?(.setColor(id, c)) }
         case .inPoint:
             guard let t = Self.parseTimecode(text, frameDuration: frameDuration) else { return false }
-            onEdit?(.move(id, t))
+            if text != current.inTimecode { onEdit?(.move(id, t)) }        // the shown value is frame-floored: unchanged text moves nothing
         case .duration:
             guard let t = Self.parseTimecode(text, frameDuration: frameDuration) else { return false }
-            onEdit?(.setDuration(id, t))
+            if text != current.durationTimecode { onEdit?(.setDuration(id, t)) }
         }
         return true
     }
 
-    // MARK: Timecode (non-drop, HH:MM:SS:FF)
-
-    static func framesPerSecond(_ fd: Time) -> Int64 {
-        max(1, (fd.timescale + fd.value - 1) / max(1, fd.value))
-    }
+    // MARK: Timecode (the monitor's: drop-frame at 29.97 / 59.94, else non-drop)
 
     public static func timecode(_ t: Time, frameDuration fd: Time) -> String {
-        let fps = framesPerSecond(fd)
-        let total = max(0, t.frameIndex(frameDuration: fd))
-        let f = total % fps, secs = total / fps
-        return String(format: "%02lld:%02lld:%02lld:%02lld", secs / 3600, (secs / 60) % 60, secs % 60, f)
+        Timecode(frameDuration: fd, dropFrame: true).format(max(t, .zero))
     }
 
-    /// Accepts `HH:MM:SS:FF`, `MM:SS:FF`, `SS:FF` or a plain frame count.
+    /// Accepts `HH:MM:SS:FF`, `MM:SS:FF`, `SS:FF` (`;` before the frames for drop-frame) or a plain frame count.
     public static func parseTimecode(_ text: String, frameDuration fd: Time) -> Time? {
-        let parts = text.split(separator: ":", omittingEmptySubsequences: false).map { Int64($0.trimmingCharacters(in: .whitespaces)) }
-        guard !parts.isEmpty, parts.count <= 4, !parts.contains(where: { $0 == nil || $0! < 0 }) else { return nil }
-        let v = parts.map { $0! }
-        guard v.allSatisfy({ $0 <= 999_999_999 }) else { return nil }       // keeps the frame maths below Int64 overflow
-        let fps = framesPerSecond(fd)
-        let frames: Int64
-        if v.count == 1 { frames = v[0] } else {
-            guard v[v.count - 1] < fps else { return nil }
-            var secs: Int64 = 0
-            for p in v.dropLast() { secs = secs * 60 + p }
-            frames = secs * fps + v[v.count - 1]
+        let s = text.trimmingCharacters(in: .whitespaces)
+        if !s.isEmpty, s.allSatisfy({ $0.isASCII && $0.isNumber }) {
+            guard let frames = Int64(s), frames <= 999_999_999 else { return nil }     // keeps the maths below overflow
+            return fd * frames
         }
-        return fd * frames
+        guard !s.hasPrefix("-"), let t = Timecode(frameDuration: fd, dropFrame: true).parse(s) else { return nil }
+        return t
     }
 }

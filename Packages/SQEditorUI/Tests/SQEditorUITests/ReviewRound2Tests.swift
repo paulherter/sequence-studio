@@ -138,4 +138,32 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         v.layoutSubtreeIfNeeded()
         #expect(count(v) == before + 1)
     }
+
+    // Finding 20: marker timecodes were non-drop while the monitor shows drop-frame at 29.97 / 59.94.
+    @Test func markerTimecodeIsDropFrameAtNTSC() {
+        let fd = Time(1001, 30000)
+        #expect(MarkersPanelModel.timecode(fd * 107_892, frameDuration: fd) == "01:00:00;00")
+        #expect(MarkersPanelModel.parseTimecode("01:00:00;00", frameDuration: fd) == fd * 107_892)
+        #expect(MarkersPanelModel.timecode(fd * 30, frameDuration: fd) == Timecode(frameDuration: fd, dropFrame: true).format(fd * 30))
+        let fd25 = Time(1, 25)
+        #expect(MarkersPanelModel.timecode(fd25 * 90_000, frameDuration: fd25) == "01:00:00:00")
+        #expect(MarkersPanelModel.parseTimecode("120", frameDuration: fd25) == fd25 * 120)      // a plain number is a frame count
+    }
+
+    // Finding 19: leaving a marker field unchanged still produced an edit (and moved off-grid markers onto the frame grid).
+    @Test func unchangedMarkerFieldsCommitNothing() {
+        let model = MarkersPanelModel()
+        let m = Marker(time: Time(1001, 1000) + Time(1, 100), name: "Intro")          // between two frames
+        model.update(markers: [m], frameDuration: Time(1, 30))
+        var edits: [MarkersPanelModel.Edit] = []
+        model.onEdit = { edits.append($0) }
+        let row = model.rows[0]
+        #expect(model.commit(row: 0, column: .name, text: "Intro"))
+        #expect(model.commit(row: 0, column: .inPoint, text: row.inTimecode))
+        #expect(model.commit(row: 0, column: .duration, text: row.durationTimecode))
+        #expect(model.commit(row: 0, column: .comment, text: row.comment))
+        #expect(edits.isEmpty)
+        #expect(model.commit(row: 0, column: .name, text: "Outro"))
+        #expect(edits == [.rename(m.id, "Outro")])
+    }
 }
