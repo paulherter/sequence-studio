@@ -94,6 +94,9 @@ public final class EffectControlsView: NSView {
 
     public override var acceptsFirstResponder: Bool { true }
 
+    /// Top-left origin: the layout below is written top-down (ruler first, zoom bar last).
+    public override var isFlipped: Bool { true }
+
     /// Delete / Forward Delete: removes the selected effect section (keys first when any are selected).
     public override func keyDown(with event: NSEvent) {
         if KeyframeZoomInput.key(event, model: model) { return }

@@ -311,12 +311,19 @@ extension PropertyTrack {
 
 enum KeyGlyphDrawing {
     static func draw(_ glyph: KeyGlyph, at c: NSPoint, half h: CGFloat, fill: NSColor, edge: NSColor, lineWidth: CGFloat = 1.5) {
+        // One filled shape (both halves in one path, so no anti-aliasing seam), outlined without the seam between the halves.
+        let all = NSBezierPath()
+        let outline = NSBezierPath()
         for poly in glyph.polygons(at: c, h: h) {
-            let path = NSBezierPath()
-            for (i, p) in poly.enumerated() { i == 0 ? path.move(to: p) : path.line(to: p) }
-            path.close()
-            fill.setFill(); path.fill()
-            edge.setStroke(); path.lineWidth = lineWidth; path.lineJoinStyle = .round; path.stroke()
+            let open = NSBezierPath()
+            for (i, p) in poly.enumerated() { i == 0 ? open.move(to: p) : open.line(to: p) }
+            outline.append(open)
+            let closed = open.copy() as! NSBezierPath
+            closed.close()
+            all.append(closed)
         }
+        fill.setFill(); all.fill()
+        edge.setStroke(); outline.lineWidth = lineWidth; outline.lineJoinStyle = .round; outline.lineCapStyle = .round
+        outline.stroke()
     }
 }

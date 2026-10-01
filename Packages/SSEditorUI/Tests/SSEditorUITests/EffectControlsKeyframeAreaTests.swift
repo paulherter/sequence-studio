@@ -269,4 +269,42 @@ import Testing
         let rows = EffectControlsLayout.rows(sections: m.visibleSections, collapsed: [], expanded: [])
         #expect(sections.frame.minY == EffectControlsLayout.totalHeight(rows))
     }
+
+    @Test func windowCoordinatesPutRulerAboveLanesAboveZoomBar() {
+        let (m, v) = setupView()
+        let win = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 900, height: 500), styleMask: [.titled], backing: .buffered, defer: true)
+        win.contentView = v
+        v.frame = NSRect(x: 0, y: 0, width: 900, height: 500)
+        v.layoutSubtreeIfNeeded()
+        _ = m
+        func top(_ x: NSView) -> CGFloat { x.convert(x.bounds, to: nil).maxY }   // window space: y grows upwards
+        func bottom(_ x: NSView) -> CGFloat { x.convert(x.bounds, to: nil).minY }
+        let ruler = all(KeyframeRulerView.self, in: v)[0], bar = all(KeyframeZoomBar.self, in: v)[0]
+        let lanes = all(EffectKeyframeLanesView.self, in: v)[0]
+        #expect(bottom(ruler) >= top(lanes) - 0.5)          // ruler above the lanes
+        #expect(top(bar) <= bottom(lanes) + 0.5 || top(bar) <= bottom(all(NSScrollView.self, in: v)[0]) + 0.5)
+        #expect(bottom(ruler) > top(bar))                   // and above the zoom bar
+        #expect(abs(top(ruler) - v.convert(v.bounds, to: nil).maxY) < 0.5)   // ruler touches the panel top
+    }
+
+    @Test func glyphKindPerKey() {
+        func k(_ i: Interpolation, inH: EaseHandle = .linear, outH: EaseHandle = .linear) -> Keyframe<Double> {
+            Keyframe(time: .zero, value: 0, interpolation: i, inHandle: inH, outHandle: outH)
+        }
+        var a = k(.linear), b = k(.linear); b.time = Time(1, 1)
+        // a fresh key (single, linear) is a plain diamond
+        #expect(KeyGlyph.glyphs(of: KeyframeTrack(keys: [a])).map(\.glyph) == [.linear])
+        #expect(KeyGlyph.glyphs(of: KeyframeTrack(keys: [a, b])).allSatisfy { $0.glyph == .linear })
+        // eased: hourglass halves only on the eased side
+        let ease = EaseHandle(dx: 0.6, dy: 0)
+        a.interpolation = .bezier; a.outHandle = ease
+        let g = KeyGlyph.glyphs(of: KeyframeTrack(keys: [a, b])).map(\.glyph)
+        #expect(g[0] == KeyGlyph(incoming: .eased, outgoing: .eased))
+        #expect(g[1] == KeyGlyph(incoming: .linear, outgoing: .linear))
+        // one polygon per half, centred on the key (no vertical offset)
+        let polys = g[0].polygons(at: CGPoint(x: 50, y: 12), h: 6)
+        #expect(polys.count == 2)
+        let ys = polys.flatMap { $0 }.map(\.y)
+        #expect(ys.min() == 6 && ys.max() == 18)
+    }
 }
