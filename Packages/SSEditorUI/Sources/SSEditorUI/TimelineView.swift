@@ -128,9 +128,10 @@ public final class TimelineView: NSView {
 
     public static let minPointsPerSecond: Double = 0.02
     public static let maxPointsPerFrame: Double = 400
-    public static let zoomStep: Double = 1.5
+    public static let zoomStep: Double = TimelineZoom.keyStep
 
     private let ruler: RulerView
+    private let zoomBar = TimelineZoomBar()
     private var headers: [Track.ID: TrackHeaderView] = [:]
 
     public override var isFlipped: Bool { true }
@@ -151,6 +152,8 @@ public final class TimelineView: NSView {
         layerContentsRedrawPolicy = .onSetNeedsDisplay
         registerForDraggedTypes([.sequenceMediaIDs, .sequenceTextTemplate, .sequenceEffectID, .fileURL])
         addSubview(ruler)
+        addSubview(zoomBar)
+        wireZoomBar()
         buildToolButtons()
         layoutChildren()
         rebuildHeaders()
@@ -234,7 +237,7 @@ public final class TimelineView: NSView {
         max(geometry.width(of: contentEnd) + contentViewportWidth * 0.5 - contentViewportWidth * 0.0, 0)
     }
 
-    private func maxScrollY() -> CGFloat { max(geometry.contentHeight(for: timeline) - bounds.height, 0) }
+    private func maxScrollY() -> CGFloat { max(geometry.contentHeight(for: timeline) + TimelineZoomBar.height - bounds.height, 0) }
 
     private func clampScroll() {
         geometry.scrollX = min(max(geometry.scrollX, 0), maxScrollX())
@@ -254,17 +257,35 @@ public final class TimelineView: NSView {
         viewportChanged()
     }
 
+    /// Span `\` fits: In/Out when set, else the whole sequence.
+    private var fitSpan: TimeRange {
+        timeline.inOut.flatMap { $0.isEmpty ? nil : $0 } ?? TimeRange(start: .zero, duration: contentEnd)
+    }
+
+    private var frameSeconds: Double { Double(geometry.frameDuration.value) / Double(geometry.frameDuration.timescale) }
+
+    /// Scale at which the fit span fills the content area (with a margin on both sides).
+    public var fitScale: Double {
+        let span = fitSpan
+        guard !span.isEmpty else { return 1 }
+        let seconds = Double(span.duration.value) / Double(span.duration.timescale)
+        return max(Double(contentViewportWidth) - 2 * Double(Theme.Spacing.lg), 1) / seconds
+    }
+
+    /// Allowed scales: a little beyond the whole sequence down to a few frames across the width.
+    public var zoomLimits: ClosedRange<Double> {
+        TimelineZoom.limits(fit: fitScale, viewportWidth: Double(contentViewportWidth), frameSeconds: frameSeconds)
+    }
+
     /// Sets zoom, keeping the time under `anchorX` (view coordinates) fixed.
     public func setZoom(pointsPerSecond: Double, anchorX: CGFloat? = nil) {
-        let fdSec = Double(geometry.frameDuration.value) / Double(geometry.frameDuration.timescale)
-        let maxPPS = Self.maxPointsPerFrame / fdSec
-        let pps = min(max(pointsPerSecond, Self.minPointsPerSecond), maxPPS)
+        let pps = TimelineZoom.clamp(pointsPerSecond, to: zoomLimits)
         guard pps != geometry.pointsPerSecond else { return }
         let anchor = anchorX ?? defaultZoomAnchor()
-        let relX = Double(anchor - TimelineGeometry.contentOriginX)
-        let seconds = (relX + Double(geometry.scrollX)) / geometry.pointsPerSecond
+        geometry.scrollX = CGFloat(TimelineZoom.anchoredScroll(oldScale: geometry.pointsPerSecond, newScale: pps,
+                                                               scrollX: Double(geometry.scrollX),
+                                                               anchorX: Double(anchor - TimelineGeometry.contentOriginX)))
         geometry.pointsPerSecond = pps
-        geometry.scrollX = CGFloat(seconds * pps - relX)
         clampScroll()
         viewportChanged()
     }
@@ -278,23 +299,31 @@ public final class TimelineView: NSView {
     public func zoomIn(anchorX: CGFloat? = nil) { setZoom(pointsPerSecond: geometry.pointsPerSecond * Self.zoomStep, anchorX: anchorX) }
     public func zoomOut(anchorX: CGFloat? = nil) { setZoom(pointsPerSecond: geometry.pointsPerSecond / Self.zoomStep, anchorX: anchorX) }
 
-    /// `\`: fit the whole sequence (clips, or In/Out when set) into the content area.
+    private var fitToggle = ZoomFitToggle()
+
+    /// `\`: fit the whole sequence (clips, or In/Out when set); pressed again it returns to the previous zoom (Premiere).
     public func zoomToFit() {
-        let span = timeline.inOut.flatMap { $0.isEmpty ? nil : $0 } ?? TimeRange(start: .zero, duration: contentEnd)
-        guard !span.isEmpty else { return }
-        let seconds = Double(span.duration.value) / Double(span.duration.timescale)
-        let startSeconds = Double(span.start.value) / Double(span.start.timescale)
-        let usable = Double(contentViewportWidth) - 2 * Double(Theme.Spacing.lg)
-        geometry.scrollX = 0
-        setZoom(pointsPerSecond: max(usable, 1) / seconds, anchorX: TimelineGeometry.contentOriginX)
-        geometry.scrollX = CGFloat(startSeconds * geometry.pointsPerSecond) - Theme.Spacing.lg
-        clampScroll()
-        viewportChanged()
+        switch fitToggle.press(scale: geometry.pointsPerSecond, scrollX: Double(geometry.scrollX), fit: fitScale) {
+        case .restore(let scale, let scrollX):
+            geometry.pointsPerSecond = TimelineZoom.clamp(scale, to: zoomLimits)
+            geometry.scrollX = CGFloat(scrollX)
+            clampScroll()
+            viewportChanged()
+        case .fit:
+            let span = fitSpan
+            guard !span.isEmpty else { return }
+            let startSeconds = Double(span.start.value) / Double(span.start.timescale)
+            geometry.pointsPerSecond = fitScale
+            geometry.scrollX = CGFloat(startSeconds * fitScale) - Theme.Spacing.lg
+            clampScroll()
+            viewportChanged()
+        }
     }
 
     private func viewportChanged() {
         invalidateCursors()
         syncChildren()
+        zoomBar.needsDisplay = true
         needsDisplay = true
         onViewportChange?()
     }
@@ -305,20 +334,24 @@ public final class TimelineView: NSView {
         let dx = event.scrollingDeltaX, dy = event.scrollingDeltaY
         if event.modifierFlags.contains(.command) || event.modifierFlags.contains(.option) {
             let anchor = convert(event.locationInWindow, from: nil).x
-            setZoom(pointsPerSecond: geometry.pointsPerSecond * exp(Double(dy) * 0.01), anchorX: anchor)
+            let d = abs(dy) >= abs(dx) ? dy : dx
+            setZoom(pointsPerSecond: geometry.pointsPerSecond * TimelineZoom.scrollFactor(delta: Double(d), precise: event.hasPreciseScrollingDeltas),
+                    anchorX: anchor)
             return
         }
+        // A mouse wheel reports ~1 pt per notch; a trackpad reports pixels. Notches scroll like a swipe.
+        let k: CGFloat = event.hasPreciseScrollingDeltas ? 1 : 24
         let horizontalOnly = event.modifierFlags.contains(.shift) || maxScrollY() == 0
         if horizontalOnly {
-            scroll(byX: -(abs(dx) > abs(dy) ? dx : dy), y: 0)
+            scroll(byX: -(abs(dx) > abs(dy) ? dx : dy) * k, y: 0)
         } else {
-            scroll(byX: -dx, y: -dy)
+            scroll(byX: -dx * k, y: -dy * k)
         }
     }
 
     public override func magnify(with event: NSEvent) {
         let anchor = convert(event.locationInWindow, from: nil).x
-        setZoom(pointsPerSecond: geometry.pointsPerSecond * (1 + Double(event.magnification)), anchorX: anchor)
+        setZoom(pointsPerSecond: geometry.pointsPerSecond * TimelineZoom.pinchFactor(magnification: Double(event.magnification)), anchorX: anchor)
     }
 
     private func gestureModifiers(_ e: NSEvent) -> GestureModifiers {
@@ -560,7 +593,23 @@ public final class TimelineView: NSView {
         needsDisplay = true
     }
 
+    private func wireZoomBar() {
+        zoomBar.state = { [unowned self] in
+            .init(scrollX: Double(geometry.scrollX), viewport: Double(contentViewportWidth), scale: geometry.pointsPerSecond,
+                  contentSeconds: Double(contentEnd.value) / Double(contentEnd.timescale), limits: zoomLimits)
+        }
+        zoomBar.onApply = { [unowned self] scale, scrollX in
+            geometry.pointsPerSecond = TimelineZoom.clamp(scale, to: zoomLimits)
+            geometry.scrollX = CGFloat(scrollX)
+            clampScroll()
+            viewportChanged()
+        }
+        zoomBar.onFit = { [unowned self] in zoomToFit() }
+    }
+
     private func layoutChildren() {
+        zoomBar.frame = CGRect(x: TimelineGeometry.contentOriginX, y: max(bounds.height - TimelineZoomBar.height, 0),
+                               width: max(bounds.width - TimelineGeometry.contentOriginX, 0), height: TimelineZoomBar.height)
         ruler.frame = CGRect(x: 0, y: 0, width: bounds.width, height: TimelineGeometry.rulerHeight)
         layoutToolButtons()
     }
