@@ -14,9 +14,12 @@ import SSCore
 ///
 /// Premiere behaviour, decided here:
 /// - Drag body: move (Shift = lock to the dominant axis).
-/// - Corner handle: uniform scale; Shift switches to free (non-uniform). Edge handle: that axis only.
+/// - Any handle scales uniformly while the clip's Uniform Scale is on (the default). With it off, side handles change
+///   width, top and bottom handles height, corners both freely; Shift then locks the proportions.
 ///   Scaling pivots on the anchor (Premiere default); Option pivots on the opposite handle instead (edge stays put).
-/// - Just outside a corner: rotate about the anchor, clockwise positive; Shift snaps the result to 15 degrees.
+/// - Just outside a corner (ring from the handle out to `rotateZone`): rotate about the anchor, clockwise positive;
+///   Shift snaps the result to 45 degrees.
+/// - The anchor wins every grab within `anchorRadius` of its crosshair, also at the picture centre.
 /// - Anchor crosshair: moving it does not move the picture (position is compensated).
 /// Scale is clamped to `minimumScale` (never negative).
 public struct TransformOverlayGeometry: Sendable, Equatable {
@@ -48,19 +51,23 @@ public struct TransformOverlayGeometry: Sendable, Equatable {
     }
 
     public struct ScaleModifiers: Sendable, Hashable {
-        /// Corner: toggles the default (uniform) to free.
+        /// Uniform Scale off: locks the proportions. Ignored while Uniform Scale is on.
         public var shift: Bool
         /// Pivot on the opposite handle instead of the anchor.
         public var option: Bool
-        public init(shift: Bool = false, option: Bool = false) { self.shift = shift; self.option = option }
+        /// The clip's Uniform Scale flag (Effect Controls). On: every handle scales both axes by the same factor.
+        public var uniformScale: Bool
+        public init(shift: Bool = false, option: Bool = false, uniformScale: Bool = true) {
+            self.shift = shift; self.option = option; self.uniformScale = uniformScale
+        }
     }
 
     public static let minimumScale = 0.0001
     public static let handleRadius: CGFloat = 6
-    public static let anchorRadius: CGFloat = 9
-    /// Rotation zone: outside the quad, within this distance of a corner.
-    public static let rotateZone: CGFloat = 22
-    public static let rotationSnapDegrees = 15.0
+    public static let anchorRadius: CGFloat = 10
+    /// Rotation zone: outside the quad, past the corner handle, within this distance of a corner.
+    public static let rotateZone: CGFloat = 28
+    public static let rotationSnapDegrees = 45.0
 
     public var sequenceSize: CGSize
     public var viewRect: CGRect
@@ -135,16 +142,16 @@ public struct TransformOverlayGeometry: Sendable, Equatable {
 
     // MARK: Hit testing
 
-    /// The anchor can be grabbed directly once it sits away from the layer centre (otherwise it would steal every
-    /// grab of the picture's middle; Option-drag on the picture moves it then).
-    public var anchorIsOffCentre: Bool {
-        let c = viewPoint(fromLocal: .zero), a = anchorViewPoint
-        return hypot(c.x - a.x, c.y - a.y) > Self.anchorRadius * 1.5
+    /// Direction of a handle on screen, degrees clockwise from +x (y down), for cursors: from the layer centre outward.
+    public func viewAngle(of h: Handle) -> Double {
+        let c = viewPoint(fromLocal: .zero), p = viewPoint(of: h)
+        return atan2(Double(p.y - c.y), Double(p.x - c.x)) * 180 / .pi
     }
 
-    /// `anchorAlways`: the anchor wins even when it sits on the layer centre (Option held).
-    public func hitTest(_ p: CGPoint, anchorAlways: Bool = false) -> Hit? {
-        if (anchorAlways || anchorIsOffCentre), hypot(p.x - anchorViewPoint.x, p.y - anchorViewPoint.y) <= Self.anchorRadius { return .anchor }
+    /// The anchor always has priority within `anchorRadius` of its crosshair (it sits on the centre of the picture by
+    /// default, and must still be grabbable there). `anchorAlways: false` is only for tests of the other zones.
+    public func hitTest(_ p: CGPoint, anchorAlways: Bool = true) -> Hit? {
+        if anchorAlways, hypot(p.x - anchorViewPoint.x, p.y - anchorViewPoint.y) <= Self.anchorRadius { return .anchor }
         var best: (Handle, CGFloat)?
         for h in Handle.allCases {
             let hp = viewPoint(of: h)
@@ -203,12 +210,23 @@ public struct TransformOverlayGeometry: Sendable, Equatable {
         let d = rotate(offset(fromView: eff) - fixedOffset, degrees: -t.rotation)   // scaled local vector pivot -> pointer
 
         var sx = t.scale.x, sy = t.scale.y
-        if h.isCorner && !m.shift {
-            let cur = Vec2(v.x * t.scale.x, v.y * t.scale.y)
-            let den = cur.x * cur.x + cur.y * cur.y
-            if den > 0 {
-                let k = (d.x * cur.x + d.y * cur.y) / den
-                sx = t.scale.x * k; sy = t.scale.y * k
+        if m.uniformScale || m.shift {
+            // Proportions locked: one factor for both axes, measured along the handle (corner: projection on its diagonal).
+            var k: Double?
+            if h.isCorner {
+                let cur = Vec2(v.x * t.scale.x, v.y * t.scale.y)
+                let den = cur.x * cur.x + cur.y * cur.y
+                if den > 0 { k = (d.x * cur.x + d.y * cur.y) / den }
+            } else if dir.x != 0, abs(v.x) > 1e-9 {
+                k = d.x / v.x / max(t.scale.x, Self.minimumScale)
+            } else if dir.y != 0, abs(v.y) > 1e-9 {
+                k = d.y / v.y / max(t.scale.y, Self.minimumScale)
+            }
+            if var k {
+                // One factor for both axes, kept above the minimum for the smaller axis so the proportions survive the clamp.
+                let smallest = max(min(t.scale.x, t.scale.y), Self.minimumScale)
+                k = max(k, Self.minimumScale / smallest)
+                sx = max(t.scale.x, Self.minimumScale) * k; sy = max(t.scale.y, Self.minimumScale) * k
             }
         } else {
             if dir.x != 0, abs(v.x) > 1e-9 { sx = d.x / v.x }

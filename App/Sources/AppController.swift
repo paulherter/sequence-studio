@@ -37,15 +37,21 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     let exports = ExportCoordinator()
     let audioEngine: AudioEngine
     var audioWarned = false
+    /// The Source monitor's own engine (nil members: stub when there is no Metal device).
+    let sourceEngine: any ProgramEngine
 
     override init() {
         let media = ProjectMediaResolver()
         var engine: any ProgramEngine = StubProgramEngine()
+        var srcEngine: any ProgramEngine = StubProgramEngine()
         var note: String?
         let audio = AudioEngine(media: media)
         audioEngine = audio
         if let device = MTLCreateSystemDefaultDevice() {
-            do { engine = try PlaybackEngine(device: device, media: media, audio: audio) } catch { note = "Playback engine unavailable: \(error)" }
+            do {
+                engine = try PlaybackEngine(device: device, media: media, audio: audio)
+                srcEngine = try PlaybackEngine(device: device, media: media, audio: AudioEngine(media: media))
+            } catch { note = "Playback engine unavailable: \(error)" }
         } else {
             note = "No Metal device: the Program monitor stays blank."
         }
@@ -54,6 +60,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         session = EditorSession(engine: engine, media: media,
                                 autosaveStore: AutosaveStore(policy: AutosavePolicy(interval: prefs.autosaveInterval)))
         engineNote = note
+        sourceEngine = srcEngine
         router = KeyRouter(map: .premiereDefault, focus: .timeline, clock: { ProcessInfo.processInfo.systemUptime })
         super.init()
         session.onChange = { [weak self] c in self?.sessionChanged(c) }
@@ -67,7 +74,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.appearance = NSAppearance(named: .darkAqua)
-        panels = EditorPanels(session: session)
+        panels = EditorPanels(session: session, sourceEngine: sourceEngine)
+        panels.onShowSource = { [weak self] in self?.showPanel(.sourceMonitor) }
         panels.onFocus = { [weak self] p in self?.focusedPanel = p }
         panels.clipSections.onAudioPresetChange = { [audioEngine] id, p in audioEngine.feeder.setPreset(track: id, preset: p) }
         panels.onStatus = { [weak self] m in self?.shell.statusBar.flash(m) }
@@ -532,7 +540,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         for a in actions {
             switch a {
             case .command(let c, _): execute(c)
-            case .shuttle(let s): session.apply(shuttle: s)
+            case .shuttle(let s):
+                if focusedPanel == .sourceMonitor { panels.source.apply(shuttle: s) } else { session.apply(shuttle: s) }
             }
         }
     }
