@@ -42,12 +42,14 @@ public enum EditorMenus {
         .selectAll, .deselectAll, nil,
         .delete, .rippleDelete,
     ]))
-    public static let clip = MenuSpec(title: "Clip", items: cmds([
-        .insert, .overwrite, nil, .speedDuration, nil, .link, nil,
-        .setToFrameSize, nil,
-        .audioGain, nil,
-        .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation, .addKeyframe, .toggleSpeedGraph,
-    ]))
+    public static let clip = MenuSpec(title: "Clip", items:
+        cmds([.insert, .overwrite, nil, .speedDuration, nil, .link, nil, .setToFrameSize, nil])
+        + [.submenu("Audio Options", cmds([
+            .audioGain, .audioGainDown, .audioGainUp, nil,
+            .matchLoudness, .autoDuck, .removeSilences, nil,
+            .tagDialogue, .tagMusic, .tagSFX,
+        ])), .separator]
+        + cmds([.easyEase, .easeIn, .easeOut, .toggleHoldInterpolation, .addKeyframe, .toggleSpeedGraph]))
     public static let sequence = MenuSpec(title: "Sequence", items: cmds([
         .sequenceSettings, nil,
         .lift, .extract, nil,
@@ -96,5 +98,6 @@ public enum EditorMenus {
     /// Commands that stay visible in their menu even when not wired (the standard text editing commands: a text field
     /// handles them) and commands that are menu-only (no default key in Premiere).
     public static let alwaysShown: Set<EditorCommand> = [.undo, .redo, .cut, .copy, .paste, .delete]
-    public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection, .toggleAudioScrubbing]
+    public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection, .toggleAudioScrubbing,
+                                                        .matchLoudness, .autoDuck, .removeSilences, .tagDialogue, .tagMusic, .tagSFX]
 }

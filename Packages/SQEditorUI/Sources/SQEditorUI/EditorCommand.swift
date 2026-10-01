@@ -49,6 +49,10 @@ public enum EditorCommand: Sendable, Hashable {
     case previousKeyframe, nextKeyframe, toggleSpeedGraph, addKeyframe
     // Audio
     case audioGain, toggleAudioScrubbing
+    /// `[` / `]` change the Audio Gain of the selected audio clips by 1 dB, with Shift by 6 dB.
+    case audioGainDown, audioGainUp, audioGainDown6, audioGainUp6
+    case matchLoudness, autoDuck, removeSilences
+    case tagDialogue, tagMusic, tagSFX
 
     /// Auto-repeat (key held) re-fires these; everything else ignores repeats.
     public var isRepeatable: Bool {
@@ -57,7 +61,7 @@ public enum EditorCommand: Sendable, Hashable {
              .previousEditPoint, .nextEditPoint, .nextEditPointAnyTrack, .previousEditPointAnyTrack, .zoomIn, .zoomOut,
              .nudgeLeft, .nudgeRight, .nudgeLeft5, .nudgeRight5, .trimBackward5, .trimForward5,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
-             .undo, .redo, .previousKeyframe, .nextKeyframe: true
+             .undo, .redo, .previousKeyframe, .nextKeyframe, .audioGainDown, .audioGainUp, .audioGainDown6, .audioGainUp6: true
         default: false
         }
     }
@@ -182,6 +186,16 @@ public enum EditorCommand: Sendable, Hashable {
         case .addKeyframe: "Add Keyframe"
         case .audioGain: "Audio Gain…"
         case .toggleAudioScrubbing: "Audio Scrubbing"
+        case .audioGainDown: "Decrease Audio Gain by 1 dB"
+        case .audioGainUp: "Increase Audio Gain by 1 dB"
+        case .audioGainDown6: "Decrease Audio Gain by 6 dB"
+        case .audioGainUp6: "Increase Audio Gain by 6 dB"
+        case .matchLoudness: "Match Loudness"
+        case .autoDuck: "Auto Duck Music"
+        case .removeSilences: "Remove Silences…"
+        case .tagDialogue: "Dialogue"
+        case .tagMusic: "Music"
+        case .tagSFX: "SFX"
         }
     }
 
