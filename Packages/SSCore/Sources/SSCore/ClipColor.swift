@@ -115,6 +115,23 @@ public struct ColorWheels: Sendable, Hashable, Codable {
     public var isNeutral: Bool { self == ColorWheels() }
 }
 
+/// Lumetri "Hue Saturation Curves": five curves keyed by hue, luma or saturation. x = hue (0...1 around the colour wheel,
+/// red = 0, the curve wraps), luma (0...1) or saturation (0...1); y = the adjustment, 0.5 = no change (the flat middle line), 1 = most in the
+/// positive direction (more saturation, hue shifted forward, brighter), 0 = most in the negative direction.
+public struct HueCurves: Sendable, Hashable, Codable {
+    public static let flat = [CurvePoint(0, 0.5), CurvePoint(1, 0.5)]
+    public var hueVsSat = HueCurves.flat
+    public var hueVsHue = HueCurves.flat
+    public var hueVsLuma = HueCurves.flat
+    public var lumaVsSat = HueCurves.flat
+    public var satVsSat = HueCurves.flat
+    public init() {}
+    /// True when every point of every curve sits on the middle line.
+    public var isNeutral: Bool {
+        [hueVsSat, hueVsHue, hueVsLuma, lumaVsSat, satVsSat].allSatisfy { $0.allSatisfy { $0.y == 0.5 } }
+    }
+}
+
 public struct Vignette: Sendable, Hashable, Codable {
     public var amount: Float = 0       // -5…5
     public var midpoint: Float = 50    // 0…100
@@ -159,6 +176,8 @@ public struct ColorEffect: Sendable, Hashable, Codable, Identifiable {
     public var inputLUTIntensity: Float = 100
     public var creative = CreativeLook()
     public var curves = RGBCurves()
+    /// Hue Saturation Curves; part of the Curves section (its toggle, neutral check and Reset).
+    public var hueCurves = HueCurves()
     public var wheels = ColorWheels()
     public var vignette = Vignette()
     /// Sections whose toggle is off (canonical order, so the JSON is stable).
@@ -183,7 +202,7 @@ public struct ColorEffect: Sendable, Hashable, Codable, Identifiable {
         switch k {
         case .basicCorrection: basic.isNeutral && inputLUTIsNeutral
         case .creative: creative.isNeutral
-        case .curves: curves.isNeutral
+        case .curves: curves.isNeutral && hueCurves.isNeutral
         case .wheels: wheels.isNeutral
         case .hslSecondary: true
         case .vignette: vignette.isNeutral
@@ -195,7 +214,7 @@ public struct ColorEffect: Sendable, Hashable, Codable, Identifiable {
         switch k {
         case .basicCorrection: basic = BasicCorrection(); inputLUT = isPrimary ? .automatic : nil; inputLUTIntensity = 100
         case .creative: creative = CreativeLook()
-        case .curves: curves = RGBCurves()
+        case .curves: curves = RGBCurves(); hueCurves = HueCurves()
         case .wheels: wheels = ColorWheels()
         case .hslSecondary: break
         case .vignette: vignette = Vignette()
@@ -203,7 +222,7 @@ public struct ColorEffect: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, basic, inputLUT, inputLUTIntensity, creative, curves, wheels, vignette, disabled
+        case id, basic, inputLUT, inputLUTIntensity, creative, curves, hueCurves, wheels, vignette, disabled
     }
 
     public init(from d: Decoder) throws {
@@ -215,6 +234,7 @@ public struct ColorEffect: Sendable, Hashable, Codable, Identifiable {
         inputLUTIntensity = try c.decodeIfPresent(Float.self, forKey: .inputLUTIntensity) ?? 100
         creative = try c.decodeIfPresent(CreativeLook.self, forKey: .creative) ?? CreativeLook()
         curves = try c.decodeIfPresent(RGBCurves.self, forKey: .curves) ?? RGBCurves()
+        hueCurves = try c.decodeIfPresent(HueCurves.self, forKey: .hueCurves) ?? HueCurves()
         wheels = try c.decodeIfPresent(ColorWheels.self, forKey: .wheels) ?? ColorWheels()
         vignette = try c.decodeIfPresent(Vignette.self, forKey: .vignette) ?? Vignette()
         let off = Set(try c.decodeIfPresent([ColorSectionKind].self, forKey: .disabled) ?? [])
@@ -229,6 +249,7 @@ public struct ColorEffect: Sendable, Hashable, Codable, Identifiable {
         try c.encode(inputLUTIntensity, forKey: .inputLUTIntensity)
         try c.encode(creative, forKey: .creative)
         try c.encode(curves, forKey: .curves)
+        if !hueCurves.isNeutral { try c.encode(hueCurves, forKey: .hueCurves) }
         try c.encode(wheels, forKey: .wheels)
         try c.encode(vignette, forKey: .vignette)
         if !disabled.isEmpty { try c.encode(disabled, forKey: .disabled) }
@@ -416,5 +437,23 @@ private struct LegacyCorrection: Decodable {
         temperature = try f(.temperature, 0); tint = try f(.tint, 0); exposure = try f(.exposure, 0)
         contrast = try f(.contrast, 0); highlights = try f(.highlights, 0); shadows = try f(.shadows, 0)
         saturation = try f(.saturation, 100)
+    }
+}
+
+// MARK: - Copy / paste between clips
+
+extension ClipColor {
+    /// This clip's colour after pasting the Colour effects of another clip: the effects are replaced; the footage
+    /// interpretation (`source`, `useEmbeddedLUT`) stays, because it describes the target's own media. A LUT embedded in
+    /// the other clip's media does not exist here, so it becomes "automatic" (Input LUT) or none (Creative look).
+    public func pasting(effectsOf other: ClipColor) -> ClipColor {
+        var effects = other.effects
+        for i in effects.indices {
+            if case .embedded? = effects[i].inputLUT { effects[i].inputLUT = i == 0 ? .automatic : nil }
+            if case .embedded? = effects[i].creative.look { effects[i].creative.look = nil }
+        }
+        var c = self
+        c.effects = effects
+        return c
     }
 }

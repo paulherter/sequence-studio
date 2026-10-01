@@ -96,7 +96,7 @@ final class StubProvider: LUTProvider, @unchecked Sendable {
         func kinds(_ c: ClipColor) -> [String] {
             ColorPipeline.from(clipColor: c, mediaID: media, mediaInfo: nil, lutProvider: nil).ops.map {
                 switch $0 { case .conversion: "conv"; case .basic: "basic"; case .creative: "creative"; case .look: "look"
-                case .curves: "curves"; case .wheels: "wheels"; case .vignette: "vignette" }
+                case .curves: "curves"; case .hueCurves: "hue"; case .wheels: "wheels"; case .vignette: "vignette" }
             }
         }
         // Basic Correction sliders come before the Input LUT (the conversion).
@@ -107,6 +107,12 @@ final class StubProvider: LUTProvider, @unchecked Sendable {
         #expect(kinds(c) == ["basic", "conv", "creative", "curves", "vignette"], "neutral sections (the wheels) are skipped")
         c.effects[0].wheels.saturation = 120
         #expect(kinds(c) == ["basic", "conv", "creative", "curves", "wheels", "vignette"])
+        c.effects[0].hueCurves.hueVsSat = [CurvePoint(0, 0.5), CurvePoint(0.3, 0.8), CurvePoint(1, 0.5)]
+        #expect(kinds(c) == ["basic", "conv", "creative", "curves", "hue", "wheels", "vignette"], "Hue Saturation Curves follow the RGB curves")
+        c.effects[0].setEnabled(.curves, false)
+        #expect(kinds(c) == ["basic", "conv", "creative", "wheels", "vignette"], "one switch gates both curve kinds")
+        c.effects[0].setEnabled(.curves, true)
+        c.effects[0].hueCurves = HueCurves()
         // A second effect follows the first; its sliders work after the conversion.
         var b2 = BasicCorrection(); b2.contrast = 10
         c.addEffect(); c.effects[1].basic = b2

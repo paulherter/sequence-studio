@@ -108,6 +108,11 @@ public struct RenderedTexture: @unchecked Sendable {
     public let texture: MTLTexture
 }
 
+/// A readback of the finished composite, encoded by the render loop itself. `encode` runs on the loop's command buffer,
+/// right after the composite was encoded (so it sees exactly that frame and cannot race the next one), and returns the
+/// completion to call once the command buffer finished (on a Metal thread), or nil to skip.
+public typealias FrameCaptureEncoder = @Sendable (_ frame: MTLTexture, _ commandBuffer: MTLCommandBuffer) -> (@Sendable () -> Void)?
+
 /// One render-loop iteration per display tick (render thread) or per `tick()` call (tests, bench).
 ///
 /// Per tick: `t = clock.now()` floored to the sequence frame grid (clamped to the timeline) -> unchanged and not
@@ -289,6 +294,28 @@ final class RenderLoop: @unchecked Sendable {
         state.withLock { $0.pendingStep = (target, ContinuousClock.now); $0.generation &+= 1 }
     }
 
+    /// Pending captures by key: a newer request with the same key replaces the older one (coalesced, not queued).
+    private let pendingCapture = Mutex<[String: FrameCaptureEncoder]>([:])
+    private let captureQueue = DispatchQueue(label: "ss.renderloop.capture")
+
+    /// Reads back the next finished composite, or the current one when nothing is waiting to be rendered. Never blocks
+    /// the caller: a request made after an edit is served by the render that follows it; an idle loop serves it from a
+    /// command buffer on its own queue (ordered behind the render that produced the frame). One pending request.
+    func requestCapture(key: String, _ encode: @escaping FrameCaptureEncoder) {
+        pendingCapture.withLock { $0[key] = encode }
+        let idle = state.withLock { $0.renderedGeneration == $0.generation && !$0.incomplete }
+        guard idle else { return }       // the render that is already due serves it
+        captureQueue.async { [self] in
+            let all = pendingCapture.withLock { c -> [FrameCaptureEncoder] in defer { c = [:] }; return Array(c.values) }
+            guard !all.isEmpty else { return }
+            gpu.withLock { g in
+                guard let target = g.target, let cb = g.queue.makeCommandBuffer() else { return }
+                for encode in all { if let done = encode(target, cb) { cb.addCompletedHandler { _ in done() } } }
+                cb.commit()
+            }
+        }
+    }
+
     /// Handed off under its own short lock after each render (never waits on the GPU lock).
     private let lastTexture = Mutex<RenderedTexture?>(nil)
     var lastRendered: RenderedTexture? { lastTexture.withLock { $0 } }
@@ -399,6 +426,10 @@ final class RenderLoop: @unchecked Sendable {
                 presented = true
             } catch {
                 presented = false
+            }
+            if presented {
+                let all = pendingCapture.withLock { c -> [FrameCaptureEncoder] in defer { c = [:] }; return Array(c.values) }
+                for encode in all { if let done = encode(target, cb) { cb.addCompletedHandler { _ in done() } } }
             }
             cb.commit()
             if presenter == nil { cb.waitUntilCompleted() }

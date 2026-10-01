@@ -85,7 +85,8 @@ public enum ProjectFile {
     /// v13: markers gain colour, comment and duration (decoded with defaults).
     static func migrateV12toV13(_ obj: JSONObject) throws -> JSONObject { obj }
 
-    /// v14: hue curves (colour stream). Optional on decode: identity migration.
+    /// v14: `ColorEffect.hueCurves` (Hue vs Sat, Hue vs Hue, Hue vs Luma, Luma vs Sat, Sat vs Sat). A missing key decodes as flat
+    /// (neutral) curves: identity on the JSON object.
     static func migrateV13toV14(_ obj: JSONObject) throws -> JSONObject { obj }
 
     /// v15: `Clip.speed` (ratio), `Clip.reversed`, `Clip.keepsPitch`. All optional on decode; absent = 100 %, not reversed,

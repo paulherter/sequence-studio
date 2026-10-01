@@ -55,6 +55,15 @@ import SSCore
         k.shadowTint = WheelValue(hue: 200, amount: 0.7); k.highlightTint = WheelValue(hue: 30, amount: 0.5); k.tintBalance = 20
         return k
     }
+    static func hueCurvesParams() -> HueCurves {
+        var h = HueCurves()
+        h.hueVsSat = [CurvePoint(0, 0.7), CurvePoint(0.15, 0.3), CurvePoint(0.6, 0.85), CurvePoint(1, 0.7)]
+        h.hueVsHue = [CurvePoint(0, 0.5), CurvePoint(0.3, 0.8), CurvePoint(0.7, 0.2), CurvePoint(1, 0.5)]
+        h.hueVsLuma = [CurvePoint(0, 0.5), CurvePoint(0.5, 0.65), CurvePoint(1, 0.5)]
+        h.lumaVsSat = [CurvePoint(0, 0.6), CurvePoint(0.5, 0.45), CurvePoint(1, 0.3)]
+        h.satVsSat = [CurvePoint(0, 0.5), CurvePoint(0.7, 0.5), CurvePoint(1, 0.2)]
+        return h
+    }
     static func vignetteParams() -> Vignette {
         var v = Vignette(); v.amount = -2.5; v.midpoint = 40; v.roundness = 30; v.feather = 60
         return v
@@ -68,6 +77,10 @@ import SSCore
         return [
             ("plain", ColorPipeline(source: src)),
             ("tone map", ColorPipeline(source: src, toneMapping: tm)),
+            ("hue curves post", ColorPipeline(source: src, ops: [.conversion(nil), .hueCurves(hueCurvesParams())])),
+            ("hue curves pre", ColorPipeline(source: src, ops: [.hueCurves(hueCurvesParams()), .conversion(nil)])),
+            ("hue curves between curves", ColorPipeline(source: src, ops: [.conversion(nil), .curves(curvesParams()), .hueCurves(hueCurvesParams()),
+                                                                          .curves(curvesParams()), .hueCurves(hueCurvesParams())])),
             ("basic pre", ColorPipeline(source: src, ops: [.basic(strong()), .conversion(nil)])),
             ("basic post", ColorPipeline(source: src, ops: [.conversion(nil), .basic(strong())])),
             ("all post", ColorPipeline(source: src, ops: [.conversion(nil)] + all)),

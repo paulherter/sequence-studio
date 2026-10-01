@@ -145,7 +145,7 @@ final class LumetriSlider: NSControl {
 final class ColorParamRow: NSStackView {
     let param: ColorParam?
     let slider = LumetriSlider()
-    let field = NSTextField(string: "")
+    let field = ScrubField()
     private let decimals: Int
     private let neutral: Float
     var onBegin: (() -> Void)?
@@ -181,15 +181,15 @@ final class ColorParamRow: NSStackView {
         slider.onChange = { [weak self] v in self?.onSet?(Float(v)) }
         slider.onReset = { [weak self] in self?.onReset?() }
 
-        field.isBezeled = false
-        field.drawsBackground = false
-        field.focusRingType = .none
-        field.font = Theme.Fonts.small
-        field.textColor = Theme.Colors.accent
-        field.alignment = .right
-        field.target = self
-        field.action = #selector(fieldEntered)
-        field.widthAnchor.constraint(equalToConstant: 48).isActive = true
+        // Value: drag to scrub (Shift x10, Option x0.1), click to type, arrows step. One gesture = one undo step.
+        field.range = Double(r.lowerBound)...Double(r.upperBound)
+        field.decimals = self.decimals
+        field.step = max((Double(r.upperBound) - Double(r.lowerBound)) / 400, slider.step)
+        field.value = Double(self.neutral)
+        field.onBegin = { [weak self] in self?.onBegin?() }
+        field.onChange = { [weak self] v in self?.onSet?(Float(v)) }
+        field.onEnd = { [weak self] _ in self?.onEnd?() }
+        field.widthAnchor.constraint(equalToConstant: 52).isActive = true
         field.setAccessibilityLabel(label.stringValue + " value")
 
         setViews([label, slider, field], in: .leading)
@@ -202,24 +202,15 @@ final class ColorParamRow: NSStackView {
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
-    @objc private func fieldEntered() {
-        let text = field.stringValue.replacingOccurrences(of: ",", with: ".").trimmingCharacters(in: .whitespaces)
-        guard let v = Float(text) else { show(Float(slider.value)); return }
-        onBegin?()
-        onSet?(v)
-        onEnd?()
-    }
-
     func show(_ v: Float) {
         if slider.value != Double(v) { slider.value = Double(v) }
-        if field.currentEditor() == nil { field.stringValue = String(format: "%.\(decimals)f", v) }
+        if !field.isEditing && !field.isDragging { field.value = Double(v) }
     }
 
     /// Placeholder and intensity-without-LUT rows are dimmed and cannot be edited.
     func setActive(_ on: Bool) {
         slider.isEnabled = on
-        field.isEditable = on
-        field.isSelectable = on
+        field.isEnabled = on
         alphaValue = on ? 1 : 0.4
     }
 }

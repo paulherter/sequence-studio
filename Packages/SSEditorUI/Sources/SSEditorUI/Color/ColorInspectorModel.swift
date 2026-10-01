@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Observation
 import SSCore
@@ -141,6 +142,42 @@ public enum ColorParam: Int, CaseIterable, Sendable {
     }
 }
 
+/// The five Hue Saturation Curves of the Curves section (Premiere's tabs).
+public enum HueCurveKind: Int, CaseIterable, Sendable {
+    case hueVsSat, hueVsHue, hueVsLuma, lumaVsSat, satVsSat
+
+    public var title: String {
+        switch self {
+        case .hueVsSat: "Hue vs Sat"
+        case .hueVsHue: "Hue vs Hue"
+        case .hueVsLuma: "Hue vs Luma"
+        case .lumaVsSat: "Luma vs Sat"
+        case .satVsSat: "Sat vs Sat"
+        }
+    }
+    /// The hue-keyed curves wrap around and show a hue strip under the plot.
+    public var isHueKeyed: Bool { rawValue <= HueCurveKind.hueVsLuma.rawValue }
+
+    public func points(_ h: HueCurves) -> [CurvePoint] {
+        switch self {
+        case .hueVsSat: h.hueVsSat
+        case .hueVsHue: h.hueVsHue
+        case .hueVsLuma: h.hueVsLuma
+        case .lumaVsSat: h.lumaVsSat
+        case .satVsSat: h.satVsSat
+        }
+    }
+    public func set(_ pts: [CurvePoint], in h: inout HueCurves) {
+        switch self {
+        case .hueVsSat: h.hueVsSat = pts
+        case .hueVsHue: h.hueVsHue = pts
+        case .hueVsLuma: h.hueVsLuma = pts
+        case .lumaVsSat: h.lumaVsSat = pts
+        case .satVsSat: h.satVsSat = pts
+        }
+    }
+}
+
 /// A colour wheel in the panel: the three wheels of Color Wheels, or the tints of Creative.
 public enum ColorWheelSlot: Int, CaseIterable, Sendable {
     case shadows, midtones, highlights      // Color Wheels
@@ -198,6 +235,10 @@ public final class ColorInspectorModel {
     /// Name of the camera look LUT embedded in the clip's media, if any.
     public private(set) var embeddedLUTName: String?
     public private(set) var mediaID: UUID?
+    /// Why the eyedropper and Auto are unavailable (they would measure more than this clip); nil = available.
+    public var samplingBlock: String?
+    /// The clip's frame at the playhead (with its current look) for the Creative preview; nil = use the synthetic picture.
+    public var frameThumbnail: CGImage?
 
     public private(set) var color = ClipColor.default
     /// Sections and sub-groups that are collapsed (UI state, not stored in the clip).
@@ -304,6 +345,37 @@ public final class ColorInspectorModel {
         gesture { edit { $0.resetSection(kind, in: effect) } }
     }
 
+    /// Premiere's per-effect Reset: every section of one Colour effect back to its defaults (toggles stay). One undo step.
+    public func resetEffect(_ effect: Int) {
+        gesture { for k in ColorSectionKind.allCases { edit { $0.resetSection(k, in: effect) } } }
+    }
+
+    /// Sets Temperature and Tint together (white-balance eyedropper). One undo step.
+    public func setWhiteBalance(_ effect: Int, temperature: Float, tint: Float) {
+        gesture { set(effect, .temperature, temperature); set(effect, .tint, tint) }
+    }
+
+    /// Premiere's Tone Reset: Exposure, Contrast, Highlights, Shadows, Whites and Blacks of one effect back to neutral
+    /// (Temperature, Tint and Saturation stay). One undo step.
+    public func resetTone(_ effect: Int) {
+        gesture { for p in [ColorParam.exposure, .contrast, .highlights, .shadows, .whites, .blacks] { set(effect, p, p.neutral) } }
+    }
+
+    /// Writes the result of Auto (Exposure and Blacks). One undo step.
+    public func setAutoTone(_ effect: Int, _ b: BasicCorrection) {
+        gesture { set(effect, .exposure, b.exposure); set(effect, .blacks, b.blacks) }
+    }
+
+    /// Copy / Paste buttons of the panel (the host owns the clipboard and the selection).
+    public var onCopyColor: (() -> Void)?
+    public var onPasteColor: (() -> Void)?
+
+    /// Basic Correction's Auto was pressed for this effect; the host analyses the Program frame.
+    public var onAutoTone: ((Int) -> Void)?
+
+    /// The white-balance eyedropper was pressed for this effect; the host starts the pick.
+    public var onPickWhiteBalance: ((Int) -> Void)?
+
     /// Back to one default effect (keeps "interpret as").
     public func resetAll() {
         gesture {
@@ -385,6 +457,33 @@ public final class ColorInspectorModel {
 
     public func setCurves(_ effect: Int, _ curves: RGBCurves) {
         editEffect(effect) { $0.curves = curves }
+    }
+
+    // MARK: Hue Saturation Curves
+
+    public func hueCurve(_ effect: Int, _ kind: HueCurveKind) -> [CurvePoint] {
+        kind.points(color.effect(effect)?.hueCurves ?? HueCurves())
+    }
+
+    /// Writes one hue curve. Hue-keyed curves wrap around the colour wheel, so their first and last point are the same
+    /// place: when one of them moved vertically the other follows (an edit of the last point wins when both changed).
+    public func setHueCurve(_ effect: Int, _ kind: HueCurveKind, _ pts: [CurvePoint]) {
+        editEffect(effect) { e in
+            var new = pts
+            if kind.isHueKeyed, new.count >= 2 {
+                let old = kind.points(e.hueCurves)
+                if let lo = old.first, let hi = old.last, old.count >= 2 {
+                    if new[new.count - 1].y != hi.y { new[0].y = new[new.count - 1].y }
+                    else if new[0].y != lo.y { new[new.count - 1].y = new[0].y }
+                } else { new[new.count - 1].y = new[0].y }
+            }
+            kind.set(new, in: &e.hueCurves)
+        }
+    }
+
+    /// Resets one hue curve to the flat middle line. One undo step.
+    public func resetHueCurve(_ effect: Int, _ kind: HueCurveKind) {
+        gesture { setHueCurve(effect, kind, HueCurves.flat) }
     }
 
     // MARK: LUTs (Input LUT and Creative look)

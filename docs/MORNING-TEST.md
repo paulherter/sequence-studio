@@ -64,3 +64,13 @@ Fehlt noch: Speed-Rampen (Zeit-Remapping), Geschwindigkeit für verschachtelte S
 8. Ankerpunkt in der Bildmitte greifen und ziehen: Das Bild bleibt stehen. Knapp außerhalb einer Ecke erscheint der Dreh-Pfeil, Shift rastet in 45°-Schritten.
 
 Fehlt noch: Marker im Source-Monitor, Vier-Punkt-Schnitt (Fit to Fill), eigene Source-Patch-Knöpfe.
+
+## Farbe
+1. Color-Seite, Clip wählen: einen Zahlenwert nach links und rechts ziehen, dann anklicken und eine Zahl tippen (auch „1,5").
+2. Pipette neben White Balance anklicken, dann im Programm-Monitor auf eine graue Fläche klicken. Die Pipette ist ausgegraut, wenn eine andere Spur sichtbar ist oder der Clip mehrere Farb-Effekte hat.
+3. Gruppe Light: „Auto" auf einem flauen Bild, danach Reset.
+4. Curves > Hue Saturation Curves > Hue vs Sat: einen Punkt im blauen Bereich setzen und hochziehen.
+5. Creative: Die Look-Vorschau zeigt dein eigenes Bild, wenn der Playhead über dem Clip steht.
+6. „Copy Colour", zwei andere Clips wählen, „Paste Colour", einmal Undo.
+
+Fehlt noch: Sharpen und HSL Secondary (ausgegraut). Pipette und Auto messen das Gesamtbild und sind deshalb bei mehreren Ebenen gesperrt.

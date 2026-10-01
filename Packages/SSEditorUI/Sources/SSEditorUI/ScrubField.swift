@@ -151,6 +151,7 @@ public final class ScrubField: NSControl, NSTextFieldDelegate {
 
     // MARK: Mouse: drag to scrub, click to edit
     public override func mouseDown(with event: NSEvent) {
+        guard isEnabled else { return }
         if isEditing { commitEditing(); return }
         let p = convert(event.locationInWindow, from: nil)
         pressStart = p

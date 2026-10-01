@@ -122,9 +122,8 @@ import SSCore
         #expect(m.value(1, .vignetteAmount) == -2 && row.slider.value == -2)
         row.onReset?()
         #expect(m.value(1, .vignetteAmount) == 0)
-        // Typing into the value field commits (comma or dot).
-        row.field.stringValue = "1,5"
-        _ = row.field.sendAction(row.field.action, to: row.field.target)
+        // Scrubbing / typing in the value field is one gesture and reaches the model.
+        row.field.onBegin?(); row.field.onChange?(1.5); row.field.onEnd?(1.5)
         #expect(m.value(1, .vignetteAmount) == 1.5)
         // The switch disables the section; HSL Secondary is a disabled placeholder.
         let toggle = basic.header.toggle
@@ -163,5 +162,102 @@ import SSCore
         if let s = v as? ColorSectionView { out.append(s) }
         for sub in v.subviews { out += allSections(sub) }
         return out
+    }
+
+    /// Typing a value into the box of a slider row: comma or dot decimal, clamped to the row's range, one gesture.
+    @Test func typedValuesAcceptCommaAndDotAndClamp() throws {
+        let m = ColorInspectorModel()
+        let view = ColorInspectorView(model: m)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 1400), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = view
+        view.frame = NSRect(x: 0, y: 0, width: 320, height: 1400)
+        m.setCollapsed(ColorPanelKey(1, .vignette), false)
+        view.refresh()
+        view.layoutSubtreeIfNeeded()
+        let vignette = try #require(allSections(view).first { $0.kind == .vignette })
+        let row = try #require(vignette.rows[.vignetteAmount])
+        var gestures = 0
+        m.onGestureEnded = { gestures += 1 }
+        func type(_ text: String) throws {
+            row.field.beginEditing()
+            let editor = try #require(row.field.subviews.compactMap { $0 as? NSTextField }.first)
+            editor.stringValue = text
+            row.field.commitEditing()
+        }
+        try type("1,5")
+        #expect(m.value(1, .vignetteAmount) == 1.5, "comma decimal")
+        try type("-2.25")
+        #expect(m.value(1, .vignetteAmount) == -2.25, "dot decimal")
+        try type("99")
+        #expect(m.value(1, .vignetteAmount) == 5, "clamped to the range")
+        try type("abc")
+        #expect(m.value(1, .vignetteAmount) == 5, "rejected text changes nothing")
+        #expect(gestures == 3, "one gesture per accepted entry")
+    }
+
+    @Test func eyedropperAndAutoAreBlockedWhenMoreThanTheClipIsMeasured() throws {
+        let fd = Time(1, 30)
+        let m1 = UUID(), m2 = UUID()
+        func clip(_ media: UUID) -> Clip { Clip(name: "c", media: media, kind: .video, source: TimeRange(start: .zero, duration: Time(2, 1)), start: .zero) }
+        let a = clip(m1), b = clip(m2)
+        var v1 = Track(kind: .video), v2 = Track(kind: .video)
+        try v1.overwrite(a); try v2.overwrite(b)
+        let both = Timeline(name: "T", frameDuration: fd, tracks: [v1, v2])
+        let alone = Timeline(name: "T", frameDuration: fd, tracks: [v1])
+        #expect(ColorInspectorPanelView.samplingBlockReason(timeline: alone, clip: a, playhead: .zero) == nil)
+        #expect(ColorInspectorPanelView.samplingBlockReason(timeline: both, clip: a, playhead: .zero) != nil, "second layer visible")
+        #expect(ColorInspectorPanelView.samplingBlockReason(timeline: alone, clip: a, playhead: Time(3, 1)) != nil, "playhead outside the clip")
+        var two = a
+        two.color.addEffect()
+        #expect(ColorInspectorPanelView.samplingBlockReason(timeline: alone, clip: two, playhead: .zero) != nil, "later Colour effect")
+    }
+
+    @Test func pasteColorIsOneUndoStepAcrossClipsAndSkipsAudio() throws {
+        let fd = Time(1, 30)
+        let m = UUID()
+        func clip(_ n: String, _ at: Int64, _ kind: TrackKind = .video) -> Clip {
+            Clip(name: n, media: m, kind: kind, source: TimeRange(start: .zero, duration: Time(1, 1)), start: Time(at, 1))
+        }
+        let a = clip("A", 0), b = clip("B", 1), c = clip("C", 2), au = clip("Au", 0, .audio)
+        var v = Track(kind: .video), au1 = Track(kind: .audio)
+        try v.overwrite(a); try v.overwrite(b); try v.overwrite(c); try au1.overwrite(au)
+        let session = EditorSession(project: Project(name: "P", timelines: [Timeline(name: "M", frameDuration: fd, tracks: [v, au1])]),
+                                    engine: StubProgramEngine())
+        var graded = ClipColor.default
+        graded.effects[0].basic.exposure = 1.5
+        graded.effects[0].vignette.amount = -2
+        session.select(clips: [b.id, c.id, au.id])
+        #expect(session.pasteColor(graded) == 2)
+        func color(_ id: Clip.ID) -> ClipColor { current(session, id).color }
+        #expect(color(a.id) == .default && color(b.id).effects[0].basic.exposure == 1.5 && color(c.id).effects[0].vignette.amount == -2)
+        #expect(color(au.id) == .default, "audio clips have no colour")
+        #expect(session.undoName == "Paste Colour")
+        session.undo()
+        #expect(color(b.id) == .default && color(c.id) == .default, "one step for both clips")
+        session.redo()
+        #expect(color(b.id).effects[0].basic.exposure == 1.5)
+        #expect(session.pasteColor(graded) == 0, "pasting the same colour again changes nothing")
+    }
+
+    @Test func pasteColorSkipsGeneratorClipsAndThePanelIgnoresThem() throws {
+        let fd = Time(1, 30)
+        let m = UUID()
+        let pic = Clip(name: "pic", media: m, kind: .video, source: TimeRange(start: .zero, duration: Time(1, 1)), start: .zero)
+        let textID = UUID()
+        let text = Clip(id: textID, name: "T", media: textID, kind: .video,
+                        source: TimeRange(start: .zero, duration: Time(1, 1)), start: Time(1, 1),
+                        generator: GeneratorRef(kind: "text", payload: Data()))
+        var v = Track(kind: .video)
+        try v.overwrite(pic); try v.overwrite(text)
+        let session = EditorSession(project: Project(name: "P", timelines: [Timeline(name: "M", frameDuration: fd, tracks: [v])]), engine: StubProgramEngine())
+        var graded = ClipColor.default
+        graded.effects[0].basic.exposure = 1
+        session.select(clips: [pic.id, textID])
+        #expect(session.pasteColor(graded) == 1)
+        #expect(current(session, textID).color == .default && current(session, pic.id).color.effects[0].basic.exposure == 1)
+        let panel = ColorInspectorPanelView(session: session)
+        session.select(clips: [textID])
+        panel.sync([.selection])
+        #expect(panel.colorModels[textID] == nil, "no colour controls for a text layer")
     }
 }
