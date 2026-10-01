@@ -52,4 +52,22 @@ private func f(_ n: Int64) -> Time { Time(n, 30) }
         #expect(c.averageSpeed.num * c.duration.value * 1 > 0)
         #expect(c.averageSpeed.unscale(c.retimeSpan) == c.duration)
     }
+
+    @Test func shortenedMediaCutsTheTailOfARemappedTrack() {
+        let k = SpeedKeys(segments: [SpeedSegment(duration: f(30), from: .normal), SpeedSegment(duration: f(30), from: ClipSpeed(percent: 200))],
+                          origin: .zero)                                   // 30 + 60 = 90 frames of source
+        let fit = k.fitting(media: f(70), frameDuration: fd)!
+        #expect(fit.hull.end <= f(70) && fit.duration < k.duration && fit.duration >= f(30 + 19))
+        #expect(k.fitting(media: f(1000), frameDuration: fd) == k)
+        #expect(k.fitting(media: f(0), frameDuration: fd) == nil)
+    }
+
+    @Test func movingARampKeepsItsWidth() throws {
+        let k = SpeedKeys(segments: [SpeedSegment(duration: f(60), from: .normal), SpeedSegment(duration: f(10), from: .normal, to: ClipSpeed(percent: 300)),
+                                     SpeedSegment(duration: f(50), from: ClipSpeed(percent: 300))], origin: .zero)
+        let m = try #require(k.movingRamp(atSegment: 1, by: f(10), frameDuration: fd))
+        #expect(m.segments.map(\.duration) == [f(70), f(10), f(40)] && m.duration == k.duration)
+        #expect(k.movingRamp(atSegment: 1, by: f(500), frameDuration: fd)?.segments[2].duration == f(1))
+    }
 }
+

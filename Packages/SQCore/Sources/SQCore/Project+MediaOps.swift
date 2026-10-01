@@ -50,7 +50,13 @@ extension Project {
                     if let total, !c.isStill {
                         if c.source.start >= total { timelines[ti].tracks[tri].remove(c.id); continue }
                         if c.source.end > total {
-                            if c.speed.isNormal && !c.reversed {
+                            if let keys = c.speedKeys {
+                                // Remapped: cut the tail until the whole speed track lies inside the shortened media.
+                                guard let fit = keys.fitting(media: total, frameDuration: timelines[ti].frameDuration) else {
+                                    timelines[ti].tracks[tri].remove(c.id); continue
+                                }
+                                n.setSpeedKeys(fit)
+                            } else if c.speed.isNormal && !c.reversed {
                                 n.source = TimeRange(start: c.source.start, end: total)
                             } else {
                                 // Retimed: keep the length a whole number of timeline frames at the clip's speed. The end
