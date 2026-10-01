@@ -166,4 +166,26 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         #expect(model.commit(row: 0, column: .name, text: "Outro"))
         #expect(edits == [.rename(m.id, "Outro")])
     }
+
+    // Finding 33: every decoded still stayed in memory for the life of the project.
+    @Test func stillCacheStaysWithinItsByteBudget() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("stills-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 64, pixelsHigh: 64, bitsPerSample: 8, samplesPerPixel: 4,
+                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        let png = try #require(rep.representation(using: .png, properties: [:]))
+        let info = MediaInfo(duration: Time(5, 1), video: VideoTrackInfo(width: 64, height: 64, codec: "image", bitDepth: 8, chroma: "4:4:4",
+                             nominalFrameDuration: Time(1, 30), isVariableFrameRate: false), isStill: true)
+        var refs: [MediaRef] = []
+        for i in 0..<3 {
+            let url = dir.appendingPathComponent("s\(i).png")
+            try png.write(to: url)
+            refs.append(MediaRef(name: "s\(i)", path: url.path, fingerprint: MediaFingerprint(size: 1), duration: info.duration, info: info))
+        }
+        let r = ProjectMediaResolver(stillCacheBytes: 1)
+        r.update(refs)
+        for ref in refs { _ = try r.stillFrame(for: ref.id) }
+        #expect(r.cachedStillCount == 1)
+    }
 }
