@@ -26,22 +26,27 @@ public enum HoverScrub {
 @MainActor
 final class ProjectThumbnails {
     private let thumbnailer = Thumbnailer(memoryBytes: 48 * 1024 * 1024)
-    private var posters: [UUID: NSImage] = [:]
+    /// Bounded: at most 400 posters / 64 MB; evicted ones are simply requested again.
+    private let posters: NSCache<NSUUID, NSImage> = {
+        let c = NSCache<NSUUID, NSImage>()
+        c.countLimit = 400; c.totalCostLimit = 64 * 1024 * 1024
+        return c
+    }()
     private var failed = Set<UUID>()
     private var pending = Set<UUID>()
     private var scrubTask: Task<Void, Never>?
 
-    func cachedPoster(_ id: UUID) -> NSImage? { posters[id] }
+    func cachedPoster(_ id: UUID) -> NSImage? { posters.object(forKey: id as NSUUID) }
 
     func forget(_ id: UUID) {
-        posters[id] = nil; failed.remove(id); pending.remove(id)
+        posters.removeObject(forKey: id as NSUUID); failed.remove(id); pending.remove(id)
         Task { await thumbnailer.invalidate(media: id) }
     }
 
     /// Loads the poster (async) and calls `done` on the main actor when it is there.
     func requestPoster(_ ref: MediaRef, height: Int, done: @escaping @MainActor () -> Void) {
         let id = ref.id
-        guard posters[id] == nil, !failed.contains(id), pending.insert(id).inserted else { return }
+        guard cachedPoster(id) == nil, !failed.contains(id), pending.insert(id).inserted else { return }
         let url = URL(fileURLWithPath: ref.path)
         let still = ref.info?.isStill == true || ref.kind == .image
         let fd = ref.info?.video?.nominalFrameDuration ?? Time(1, 30)
@@ -55,7 +60,13 @@ final class ProjectThumbnails {
             }
             guard let self else { return }
             pending.remove(id)
-            if let cg { posters[id] = NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height)) } else { failed.insert(id) }
+            if let cg {
+                posters.setObject(NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height)), forKey: id as NSUUID,
+                                  cost: cg.bytesPerRow * cg.height)
+            } else {
+                if failed.count > 2000 { failed.removeAll() }
+                failed.insert(id)
+            }
             done()
         }
     }

@@ -222,7 +222,12 @@ public struct TransformOverlayGeometry: Sendable, Equatable {
             } else if dir.y != 0, abs(v.y) > 1e-9 {
                 k = d.y / v.y / max(t.scale.y, Self.minimumScale)
             }
-            if let k { sx = t.scale.x * k; sy = t.scale.y * k }
+            if var k {
+                // One factor for both axes, kept above the minimum for the smaller axis so the proportions survive the clamp.
+                let smallest = max(min(t.scale.x, t.scale.y), Self.minimumScale)
+                k = max(k, Self.minimumScale / smallest)
+                sx = max(t.scale.x, Self.minimumScale) * k; sy = max(t.scale.y, Self.minimumScale) * k
+            }
         } else {
             if dir.x != 0, abs(v.x) > 1e-9 { sx = d.x / v.x }
             if dir.y != 0, abs(v.y) > 1e-9 { sy = d.y / v.y }

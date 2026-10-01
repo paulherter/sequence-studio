@@ -31,9 +31,16 @@ extension EditorSession {
                 noTarget = true; throw EditError.clipNotFound
             }
             let fit = ref.info?.video.map { tl.format.fitScale(width: $0.displayWidth, height: $0.displayHeight) } ?? 1
-            try tl.threePointEdit(source: source, media: id, name: ref.name, mediaDuration: still ? nil : total,
+            // Whole sequence frames (a 24 fps clip in a 30 fps sequence, 60 in 25): round the length, stay inside the media.
+            let fd = tl.frameDuration
+            var d = source.duration.snapped(to: fd)
+            if d <= .zero { d = fd }
+            if !still, source.start + d > total { d = d - fd }
+            guard d > .zero else { throw EditError.emptyClip }
+            let placed = TimeRange(start: source.start, duration: d)
+            try tl.threePointEdit(source: placed, media: id, name: ref.name, mediaDuration: still ? nil : total,
                                   isStill: still, initialScale: fit, targets: targets, at: at, mode: mode)
-            endTime = at + source.duration
+            endTime = at + d
         }
         if noTarget { setError("Target a track first (the V1 / A1 buttons in the track headers).") }
         if done { seek(to: endTime) }

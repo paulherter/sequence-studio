@@ -119,6 +119,7 @@ extension AppController {
     }
 
     private func exportProgramFrame() {
+        session.stopPlayback()
         let name = (session.activeTimeline?.name ?? "Frame") + ".png"
         FrameExport.run(texture: session.engine.lastRenderedTexture, suggestedName: name, on: window,
                         status: { [weak self] in self?.shell.statusBar.flash($0) })

@@ -156,7 +156,7 @@ final class SourceMonitorController {
     func seek(to t: Time) {
         guard mediaID != nil else { return }
         if isPlaying { pause() }
-        let target = min(max(.zero, t.snapped(to: frameDuration)), max(.zero, duration))
+        let target = min(max(.zero, t.snapped(to: frameDuration)), max(.zero, duration - frameDuration))
         position = target
         engine.seek(to: target)
         model.currentTime = target
@@ -166,7 +166,8 @@ final class SourceMonitorController {
     func goToStart() { seek(to: .zero) }
     func goToEnd() { seek(to: max(.zero, duration - frameDuration)) }
     func goToIn() { if let i = marks.markIn { seek(to: i) } }
-    func goToOut() { if let o = marks.markOut { seek(to: o) } }
+    /// Out is stored exclusive: show the marked (last included) frame.
+    func goToOut() { if let o = marks.markOut { seek(to: o - frameDuration) } }
 
     func play(rate: PlaybackRate) {
         guard mediaID != nil else { return }
@@ -211,8 +212,10 @@ final class SourceMonitorController {
             engine.seek(to: to); engine.play(rate)
             return
         case .stop(let at):
-            pause(); position = at; model.currentTime = at
-            engine.seek(to: at)
+            // Park on the last frame (the end itself is one frame past the picture).
+            let parked = max(.zero, min(at, duration) - frameDuration)
+            pause(); position = parked; model.currentTime = parked
+            engine.seek(to: parked)
             return
         case .none: break
         }
@@ -281,6 +284,7 @@ final class SourceMonitorController {
 
     func exportFrame() {
         guard mediaID != nil else { return }
+        pause()
         let name = mediaID.flatMap { session.project.media($0)?.name } ?? "Frame"
         let base = (name as NSString).deletingPathExtension
         FrameExport.run(texture: engine.lastRenderedTexture, suggestedName: base + ".png", on: view.window, status: { [weak self] in self?.onStatus?($0) })

@@ -56,4 +56,24 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         session.setSourceMarks(nil, for: m.id)
         #expect(session.project.sourceMarks[m.id] == nil)
     }
+
+    @Test func durationIsSnappedToSequenceFrames() {
+        // 24 fps source of 10 s, sequence 30 fps (default makeSession media is 30 fps): marks give 1.01 s.
+        let (session, _, m) = makeSession()
+        session.setSourceMarks(SourceMarks(markIn: s(0), markOut: Time(101, 100)), for: m.id)
+        #expect(session.sourceEdit(media: m.id, mode: .overwrite))
+        let c = session.activeTimeline!.tracks.flatMap(\.clips).first!
+        #expect(c.source.duration == c.source.duration.snapped(to: Time(1, 30)))
+        #expect(session.playhead == c.start + c.source.duration)
+    }
+
+    @Test func sixtyInTwentyFiveStaysOnTheGrid() {
+        let (session, _, m) = makeSession()
+        session.perform("fmt") { _ = try? $0.setFormat(SequenceFormat(frameDuration: Time(1, 25)), of: $0.timelines[0].id) }
+        session.setSourceMarks(SourceMarks(markIn: .zero, markOut: Time(103, 100)), for: m.id)
+        #expect(session.sourceEdit(media: m.id, mode: .overwrite))
+        let c = session.activeTimeline!.tracks.flatMap(\.clips).first!
+        #expect(c.source.duration == c.source.duration.snapped(to: Time(1, 25)))
+        #expect(c.source.duration == Time(26, 25))
+    }
 }

@@ -222,4 +222,15 @@ private func close(_ a: CGPoint, _ b: CGPoint, _ e: CGFloat = 0.001) -> Bool { a
                             independent: false, current: (.zero, Vec2(50, 100)))
         #expect(tg.out == Vec2(100, 0) && tg.in == Vec2(-100, 0))
     }
+
+    @Test func uniformScaleNearMinimumKeepsProportions() {
+        let g = geo(ClipTransform(scale: Vec2(2, 0.5)))
+        let c = g.viewPoint(of: .bottomRight)
+        let t = g.scaled(handle: .bottomRight, from: c, to: CGPoint(x: c.x - 5000, y: c.y - 5000))
+        #expect(t.scale.y >= TransformOverlayGeometry.minimumScale - 1e-12)
+        #expect(abs(t.scale.x / t.scale.y - 4) < 1e-6)
+        let z = geo(ClipTransform(scale: Vec2(1, 0)))
+        let zt = z.scaled(handle: .right, from: z.viewPoint(of: .right), to: CGPoint(x: 100, y: 100))
+        #expect(zt.scale.x >= TransformOverlayGeometry.minimumScale && zt.scale.y >= TransformOverlayGeometry.minimumScale)
+    }
 }

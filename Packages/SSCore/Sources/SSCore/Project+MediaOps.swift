@@ -31,6 +31,38 @@ extension Project {
         media[i].fingerprint = replacement.fingerprint
         media[i].duration = replacement.duration
         media[i].info = replacement.info
+        fitUsage(of: id)
         return true
+    }
+
+    /// After a replace: clips of `id` learn the new media length; a clip that reaches past it is trimmed at the tail, one
+    /// that starts past it is removed (linked partners follow, they use the same media); source marks are clamped to the
+    /// new length and re-snapped to the new frame rate (a mark that no longer fits is dropped).
+    private mutating func fitUsage(of id: MediaRef.ID) {
+        guard let ref = media(id) else { return }
+        let still = ref.info?.isStill == true
+        let total: Time? = still ? nil : (ref.info?.duration ?? ref.duration)
+        for ti in timelines.indices {
+            for tri in timelines[ti].tracks.indices {
+                for c in timelines[ti].tracks[tri].clips where c.media == id && !c.isNested && !c.isGenerator {
+                    var n = c
+                    n.mediaDuration = total
+                    if let total, !c.isStill {
+                        if c.source.start >= total { timelines[ti].tracks[tri].remove(c.id); continue }
+                        if c.source.end > total { n.source = TimeRange(start: c.source.start, end: total) }
+                    }
+                    timelines[ti].tracks[tri].replace(n)
+                }
+            }
+        }
+        guard var m = sourceMarks[id] else { return }
+        if let total {
+            let fd = ref.info?.video?.nominalFrameDuration ?? Time(1, 30)
+            let last = max(.zero, total - fd)
+            if let i = m.markIn { m.markIn = i >= total ? nil : min(i.snapped(to: fd), last) }
+            if let o = m.markOut { m.markOut = o.snapped(to: fd) > total ? total : max(o.snapped(to: fd), fd) }
+            if let i = m.markIn, let o = m.markOut, o <= i { m.markOut = nil }
+        }
+        sourceMarks[id] = m.isEmpty ? nil : m
     }
 }
