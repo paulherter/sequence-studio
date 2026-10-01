@@ -49,10 +49,14 @@ public struct LayerRequest: Sendable, Hashable {
     public var localTime: Time
     /// The clip's static colour settings (resolved against the media by `ColorPipeline.from` in SQRender).
     public var color: ClipColor
+    /// How a source time between two frames is shown (Time Interpolation of the clip). `.frameBlend`: mix the frame
+    /// covering `sourceTime` with the next one by the fractional position (`FrameBlend` in SQRender).
+    public var interpolation: TimeInterpolation
 
     public init(clip: Clip.ID, media: UUID, track: Track.ID, sourceTime: Time, transform: ClipTransform = .identity,
                 cornerRadius: Double = 0, groups: [LayerGroup] = [], generator: GeneratorRef? = nil,
-                localTime: Time? = nil, color: ClipColor = .default) {
+                localTime: Time? = nil, color: ClipColor = .default, interpolation: TimeInterpolation = .frameSampling) {
+        self.interpolation = interpolation
         self.color = color
         self.generator = generator; self.localTime = localTime ?? sourceTime
         self.clip = clip; self.media = media; self.track = track; self.sourceTime = sourceTime
@@ -135,7 +139,8 @@ extension Timeline {
                 out.append(LayerRequest(clip: c.id, media: c.media, track: track.id,
                                         sourceTime: c.sourceTime(at: t, frameDuration: format.frameDuration),
                                         transform: c.transform(at: t), cornerRadius: c.effects(at: t).cornerRadius,
-                                        groups: groups, generator: c.generator, localTime: local, color: c.color))
+                                        groups: groups, generator: c.generator, localTime: local, color: c.color,
+                                        interpolation: c.timeInterpolation))
             }
         }
         return out

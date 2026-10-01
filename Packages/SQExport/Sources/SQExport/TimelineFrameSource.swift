@@ -9,7 +9,12 @@ import SQText
 public struct ProvidedFrame: @unchecked Sendable {
     public var buffer: CVPixelBuffer
     public var info: VideoTrackInfo
-    public init(buffer: CVPixelBuffer, info: VideoTrackInfo) { self.buffer = buffer; self.info = info }
+    /// Presentation start and duration of this source frame in the media (nil = unknown: no Frame Blending).
+    public var start: Time?
+    public var duration: Time?
+    public init(buffer: CVPixelBuffer, info: VideoTrackInfo, start: Time? = nil, duration: Time? = nil) {
+        self.buffer = buffer; self.info = info; self.start = start; self.duration = duration
+    }
 }
 
 /// Decoded-frame supply for export (the real decoder plugs in with E-03/E-09). Returns nil when the media is
@@ -166,9 +171,17 @@ public final class TimelineFrameSource: FrameSource {
                 return RenderLayer(content: .placeholder(.offline), transform: l.transform, cornerRadius: l.cornerRadius)
             }
             if let f = try await provider.frame(media: l.media, at: l.sourceTime) {
+                // Frame Blending: mix with the next source frame by the fractional source position.
+                var blend: FrameBlend?
+                if l.interpolation == .frameBlend, let s = f.start, let d = f.duration {
+                    let w = FrameBlend.weight(sourceTime: l.sourceTime, frameStart: s, frameDuration: d)
+                    if w > 0, let n = try await provider.frame(media: l.media, at: s + d), n.buffer !== f.buffer {
+                        blend = FrameBlend(next: n.buffer, weight: w)
+                    }
+                }
                 return RenderLayer(content: .frame(f.buffer, colorHint: f.info), transform: l.transform,
                                    colorPipeline: colorResolver?.pipelineBlocking(for: l.color, media: l.media), cornerRadius: l.cornerRadius,
-                                   nativeSize: (f.info.width, f.info.height))
+                                   nativeSize: (f.info.width, f.info.height), blend: blend)
             }
             return RenderLayer(content: .placeholder(.offline), transform: l.transform, cornerRadius: l.cornerRadius)
         }

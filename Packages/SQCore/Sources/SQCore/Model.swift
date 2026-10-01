@@ -105,6 +105,13 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     /// (average speed = this / `duration`).
     public var retimeSpan: Time { speedKeys?.pathLength ?? source.duration }
 
+    /// The speed the clip plays at on average: its constant speed, or path length / duration for a remapped clip.
+    public var averageSpeed: ClipSpeed {
+        guard speedKeys != nil else { return speed }
+        let p = retimeSpan, d = duration
+        return ClipSpeed(num: p.value * d.timescale, den: p.timescale * d.value)
+    }
+
     /// Installs a speed track and keeps `source` equal to its hull. nil goes back to the constant fields.
     public mutating func setSpeedKeys(_ k: SpeedKeys?) {
         speedKeys = k

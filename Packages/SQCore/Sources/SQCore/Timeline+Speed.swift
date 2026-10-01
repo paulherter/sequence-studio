@@ -231,9 +231,12 @@ public struct SpeedChange: Sendable, Equatable {
     public var ripple: Bool
     /// Speed typed with the link between speed and duration broken: the clip keeps its length and shows more or less media.
     public var holdingDuration: Bool
+    /// Time Interpolation (Frame Sampling / Frame Blending), stored on the clip. nil = unchanged.
+    public var timeInterpolation: TimeInterpolation?
 
     public init(speed: ClipSpeed? = nil, duration: Time? = nil, reversed: Bool? = nil, keepsPitch: Bool? = nil,
-                ripple: Bool = false, holdingDuration: Bool = false) {
+                ripple: Bool = false, holdingDuration: Bool = false, timeInterpolation: TimeInterpolation? = nil) {
+        self.timeInterpolation = timeInterpolation
         self.speed = speed; self.duration = duration; self.reversed = reversed; self.keepsPitch = keepsPitch
         self.ripple = ripple; self.holdingDuration = holdingDuration
     }
@@ -244,11 +247,27 @@ extension Timeline {
     @discardableResult
     public mutating func apply(_ change: SpeedChange, to id: Clip.ID) throws -> Time {
         guard let c = find(id)?.clip else { throw EditError.clipNotFound }
+        var work = self
+        let result: Time
         if let d = change.duration {
-            return try setDuration(id, to: d, reversed: change.reversed, keepsPitch: change.keepsPitch, ripple: change.ripple)
+            result = try work.setDuration(id, to: d, reversed: change.reversed, keepsPitch: change.keepsPitch, ripple: change.ripple)
+        } else {
+            result = try work.setSpeed(id, to: change.speed ?? c.averageSpeed, reversed: change.reversed, keepsPitch: change.keepsPitch,
+                                       ripple: change.ripple, holdingDuration: change.holdingDuration)
         }
-        return try setSpeed(id, to: change.speed ?? c.speed, reversed: change.reversed, keepsPitch: change.keepsPitch,
-                            ripple: change.ripple, holdingDuration: change.holdingDuration)
+        if let ti = change.timeInterpolation { try work.setTimeInterpolation(id, ti) }
+        self = work
+        return result
+    }
+
+    /// Time Interpolation of a clip and its linked partners.
+    public mutating func setTimeInterpolation(_ id: Clip.ID, _ ti: TimeInterpolation) throws {
+        let group = try retimeGroup(id)
+        for m in group where m.clip.timeInterpolation != ti {
+            var c = m.clip
+            c.timeInterpolation = ti
+            tracks[m.track].replace(c)
+        }
     }
 
     /// Applies `change` to every clip of `ids` (a linked pair counts once). Refuses the whole edit when any clip cannot be

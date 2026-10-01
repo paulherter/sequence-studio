@@ -573,9 +573,23 @@ final class RenderLoop: @unchecked Sendable {
             width: Int(dims.width), height: Int(dims.height),
             codec: "", bitDepth: 8, chroma: "4:2:0", nominalFrameDuration: frame.duration, isVariableFrameRate: false,
             rotation: d.rotation)
+        // Frame Blending: the next source frame and the fractional position, when the source time lies between two frames.
+        // The second frame must already be cached (the planner's window covers it); otherwise the first frame shows alone and
+        // the missing one is requested, so the blend appears as soon as it is decoded without ever stalling the picture.
+        var blend: FrameBlend?
+        if r.interpolation == .frameBlend, f + 1 < index.count {
+            let w = FrameBlend.weight(sourceTime: r.sourceTime, frameStart: index.entries[f].pts, frameDuration: index.entries[f].duration)
+            if w > 0 {
+                if let next = cache.frame(FrameKey(media: r.media, pts: index.entries[f + 1].pts, scale: scale)), frame.pixelBuffer !== next.pixelBuffer {
+                    blend = FrameBlend(next: next.pixelBuffer, weight: w)
+                } else {
+                    b.misses.append((r.media, f + 1))
+                }
+            }
+        }
         return RenderLayer(content: .frame(frame.pixelBuffer, colorHint: info), transform: r.transform,
                            colorPipeline: media.resolver.colorResolver?.pipeline(for: r.color, media: r.media),
-                           cornerRadius: r.cornerRadius, nativeSize: (info.width, info.height))
+                           cornerRadius: r.cornerRadius, nativeSize: (info.width, info.height), blend: blend)
     }
 
     /// Frame showing `sourceTime`; before the first frame -> 0, at/after the end -> last. Requires a non-empty index.
