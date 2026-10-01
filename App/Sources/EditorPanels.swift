@@ -30,6 +30,8 @@ final class EditorPanels {
 
     private var placeholders: [PanelID: NSView] = [:]
     private var follow = TimelineFollow()
+    private let trackHeights = TrackHeightStore()
+    private var trackHeightsFor: Timeline.ID?
     private var pagingTimeline = false
     private var wasPlaying = false
 
@@ -86,6 +88,10 @@ final class EditorPanels {
         tv.onScrub = { [weak self] t in self?.session.scrub(to: t) }
         tv.onScrubEnded = { [weak self] in self?.session.endScrub() }
         tv.onFocusRequest = { [weak self] in self?.onFocus?(.timeline) }
+        tv.onTrackHeightsChange = { [weak self] h in
+            guard let self, let id = session.activeTimelineID else { return }
+            trackHeights.save(h, for: id)
+        }
         // Wheel, drag, zoom: the user owns the view until playback is started again. Our own page jumps do not count.
         tv.onViewportChange = { [weak self] in
             guard let self, !pagingTimeline else { return }
@@ -294,6 +300,11 @@ final class EditorPanels {
 
     private func syncTimeline() {
         timelineView.setTimeline(session.activeTimeline ?? Timeline(name: "", frameDuration: Time(1001, 30000)))
+        // Track heights belong to the sequence: load them when another sequence becomes active.
+        if session.activeTimelineID != trackHeightsFor {
+            trackHeightsFor = session.activeTimelineID
+            timelineView.setTrackHeights(session.activeTimelineID.map { trackHeights.load($0) } ?? [:])
+        }
         timelineView.setSelection(session.selection)
         timelineView.setCaptionSelection(session.captionSelection)
         ensureWaveforms()

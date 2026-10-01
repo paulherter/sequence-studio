@@ -25,6 +25,9 @@ public enum EditorCommand: Sendable, Hashable {
     case copy, cut, paste, pasteAttributes, undo, redo
     // View / window
     case zoomIn, zoomOut, zoomFit
+    // Track heights (Premiere: Cmd+=/- video, Option+=/- audio, Shift+= expand all, Shift+- minimize all)
+    case videoTracksTaller, videoTracksShorter, audioTracksTaller, audioTracksShorter
+    case minimizeAllTracks, expandAllTracks
     case focusPanel(PanelID)
     case maximizePanel
     // File
@@ -38,6 +41,7 @@ public enum EditorCommand: Sendable, Hashable {
         switch self {
         case .stepBackward, .stepForward, .stepBackward5, .stepForward5,
              .previousEditPoint, .nextEditPoint, .zoomIn, .zoomOut,
+             .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .undo, .redo, .previousKeyframe, .nextKeyframe: true
         default: false
         }
@@ -105,6 +109,12 @@ public enum EditorCommand: Sendable, Hashable {
         case .zoomIn: "Zoom In"
         case .zoomOut: "Zoom Out"
         case .zoomFit: "Zoom to Fit"
+        case .videoTracksTaller: "Increase Video Track Height"
+        case .videoTracksShorter: "Decrease Video Track Height"
+        case .audioTracksTaller: "Increase Audio Track Height"
+        case .audioTracksShorter: "Decrease Audio Track Height"
+        case .minimizeAllTracks: "Minimize All Tracks"
+        case .expandAllTracks: "Expand All Tracks"
         case .focusPanel(let p): "Show " + Self.panelTitle(p)
         case .maximizePanel: "Maximize Panel"
         case .importMedia: "Import Media…"

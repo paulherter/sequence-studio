@@ -39,6 +39,8 @@ public enum EditorMenus {
         .playPause, .shuttleReverse, .shuttleStop, .shuttleForward, nil,
         .stepBackward, .stepForward, .stepBackward5, .stepForward5, nil,
         .zoomIn, .zoomOut, .zoomFit, nil,
+        .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
+        .minimizeAllTracks, .expandAllTracks, nil,
         .tool(.selection), .tool(.trackForward), .tool(.trackBackward), .tool(.ripple), .tool(.rolling),
         .tool(.slip), .tool(.slide), .tool(.razor), .tool(.hand), .tool(.zoom), .tool(.type),
     ]))

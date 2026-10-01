@@ -90,6 +90,10 @@ public struct CommandMap: Sendable {
         add(t, ch("l"), .command, .link); add(t, ch("g"), .command, .group)
         add(t, ch("f"), .matchFrame); add(t, ch("r"), .shift, .reverseMatchFrame)
         add(t, ch("="), .zoomIn); add(t, ch("+"), .zoomIn); add(t, ch("-"), .zoomOut); add(t, ch("\\"), .zoomFit)
+        // Track heights: modifier combinations only, so plain +/-/\ stay timeline zoom.
+        add(t, ch("="), .command, .videoTracksTaller); add(t, ch("-"), .command, .videoTracksShorter)
+        add(t, ch("="), .option, .audioTracksTaller); add(t, ch("-"), .option, .audioTracksShorter)
+        add(t, ch("="), .shift, .expandAllTracks); add(t, ch("-"), .shift, .minimizeAllTracks)
         add(t, .function(9), .easyEase); add(t, .function(9), .shift, .easeIn)
         add(t, .function(9), [.command, .shift], .easeOut)
         add(t, ch("h"), [.command, .option], .toggleHoldInterpolation)
