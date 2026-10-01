@@ -284,6 +284,8 @@ final class EditorPanels {
         }
         o.onBodyDoubleClick = { [weak self] in self?.beginTextEditing(selectAll: false, isNew: false) }
         surface.onTypeClick = { [weak self] pos in self?.typeToolClick(pos) }
+        surface.onTypeBox = { [weak self] centre, box in self?.typeToolBox(centre, box) }
+        surface.onStyleToggle = { [weak self] t in self?.toggleEditedStyle(t) }
         surface.onTextEdited = { [weak self] text in self?.textEdited(text) }
         surface.onTextEditEnded = { [weak self] text in self?.textEditEnded(text) }
     }
@@ -308,11 +310,35 @@ final class EditorPanels {
         }
     }
 
-    /// Type tool: click -> new text clip on the top free video track at the playhead (5 s), caret in it at once.
+    /// Type tool: click on existing text edits it; a click elsewhere makes point text (new text clip on the top free
+    /// video track at the playhead, 5 s) with the caret in it at once.
     private func typeToolClick(_ position: Vec2) {
+        if let hit = textClip(at: position) {
+            session.stopPlayback()
+            session.select(clips: [hit])
+            updateOverlay()
+            beginTextEditing(selectAll: false, isNew: false)
+            return
+        }
+        createText(at: position, box: nil)
+    }
+
+    /// Type tool drag: area text. The box wraps the text; the caret is in it at once.
+    private func typeToolBox(_ centre: Vec2, _ box: TextBox) {
+        if let hit = textClip(at: centre), let c = session.activeTimeline?.tracks.lazy.flatMap(\.clips).first(where: { $0.id == hit }),
+           let ref = c.generator, let (t, _) = try? TextGenerator.decode(ref), t.box == nil {
+            // Dragging over existing point text edits that text, like a click.
+            typeToolClick(centre)
+            return
+        }
+        createText(at: centre, box: box)
+    }
+
+    private func createText(at position: Vec2, box: TextBox?) {
         session.stopPlayback()
-        var template = TextTemplateCatalog.all.first?.template ?? TextTemplate(name: "Text", text: "", style: TextStyle())
-        template.name = "Text"; template.text = "Text"; template.animation = nil
+        var template = TextTemplate(name: "Text", text: "Text", style: CaptionPresetLibrary.builtIn.style(for: "title"))
+        template.box = box
+        if box != nil { template.text = "Text"; template.style.alignment = .left }
         let depth = session.undoDepth
         guard session.addTextClip(template: template, position: position) != nil else { return }
         session.seek(to: session.playhead)   // an empty sequence clamped the engine to 0: show the new text now
@@ -320,12 +346,38 @@ final class EditorPanels {
         beginTextEditing(selectAll: true, isNew: true, depth: depth)
     }
 
+    /// Topmost visible text clip under the playhead whose drawn rectangle contains `p` (sequence px from the centre).
+    private func textClip(at p: Vec2) -> Clip.ID? {
+        guard let tl = session.activeTimeline else { return nil }
+        for track in tl.tracks.filter({ $0.kind == .video && $0.isVisible }).reversed() {
+            for c in track.clips {
+                guard let ref = c.generator, ref.kind == GeneratorRef.text,
+                      let o = OverlayTarget.make(clip: c, project: session.project, timeline: tl, at: session.playhead) else { continue }
+                if LayerBounds.rect(size: o.size, transform: o.displayTransform).contains(CGPoint(x: p.x, y: p.y)) { return c.id }
+            }
+        }
+        return nil
+    }
+
+    /// Cmd+B / Cmd+I while editing: bold toggles between Bold and Regular, italic on and off, for the whole layer.
+    private func toggleEditedStyle(_ t: ProgramSurfaceView.StyleToggle) {
+        guard var e = textEditing else { return }
+        switch t {
+        case .bold: e.template.style.weight = e.template.style.weight >= .bold ? .regular : .bold
+        case .italic: e.template.style.italic.toggle()
+        }
+        session.updateTextClip(e.clip, template: e.template, animations: e.animations, continuesGesture: !e.first)
+        e.first = false
+        textEditing = e
+        surface.updateEditorStyle(e.template.style, box: e.template.box, target: overlayTarget)
+    }
+
     private func beginTextEditing(selectAll: Bool, isNew: Bool, depth: Int = 0) {
         guard let clip = session.singleSelectedClip, let ref = clip.generator, let target = overlayTarget, target.clip == clip.id,
               let (template, animations) = try? TextGenerator.decode(ref) else { return }
         session.stopPlayback()
         textEditing = TextEditing(clip: clip.id, template: template, animations: animations, isNew: isNew, depth: depth)
-        surface.beginTextEditing(text: template.text, style: template.style, target: target, selectAll: selectAll)
+        surface.beginTextEditing(text: template.text, style: template.style, box: template.box, target: target, selectAll: selectAll)
     }
 
     private func textEdited(_ text: String) {

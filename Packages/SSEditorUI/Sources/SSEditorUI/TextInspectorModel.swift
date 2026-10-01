@@ -101,6 +101,9 @@ public final class TextInspectorModel {
     public func setColor(_ c: RGBAColor) { edit { $0.color = c } }
     public func setAlignment(_ a: TextAlignment) { edit { $0.alignment = a } }
     public func setLineSpacing(_ v: Double) { edit { $0.lineSpacing = v } }
+    public func setTracking(_ v: Double) { edit { $0.tracking = v } }
+    public func setItalic(_ on: Bool) { edit { $0.italic = on } }
+    public func setVerticalAlignment(_ a: TextVerticalAlignment) { edit { $0.verticalAlignment = a } }
 
     // MARK: Stroke
 
@@ -126,6 +129,29 @@ public final class TextInspectorModel {
     public func setShadowColor(_ c: RGBAColor) { edit { $0.shadow?.color = c } }
     public func setShadowOffset(x: Double, y: Double) { edit { $0.shadow?.offsetX = x; $0.shadow?.offsetY = y } }
     public func setShadowBlur(_ b: Double) { edit { $0.shadow?.blur = max(0, b) } }
+    /// Premiere-style: light angle in degrees and distance in pixels (the stored offset follows).
+    public func setShadowAngle(_ degrees: Double, distance: Double) {
+        edit {
+            guard let sh = $0.shadow else { return }
+            $0.shadow = TextShadow(color: sh.color, angle: degrees, distance: max(0, distance), blur: sh.blur)
+        }
+    }
+    public func setShadowOpacity(_ o: Double) {
+        edit {
+            guard var sh = $0.shadow else { return }
+            let c = sh.color
+            sh.color = RGBAColor(red: c.red, green: c.green, blue: c.blue, alpha: min(1, max(0, o)))
+            $0.shadow = sh
+        }
+    }
+    public func setBackgroundOpacity(_ o: Double) {
+        edit {
+            guard var b = $0.background else { return }
+            let c = b.color
+            b.color = RGBAColor(red: c.red, green: c.green, blue: c.blue, alpha: min(1, max(0, o)))
+            $0.background = b
+        }
+    }
 
     // MARK: Caption style presets
 

@@ -33,6 +33,16 @@ public struct CaptionPresetLibrary: Sendable {
                             alignment: .center, lineSpacing: 4)
         let outline = TextStyle(fontName: "Helvetica", size: 60, weight: .heavy, color: .white,
                                 stroke: TextStroke(color: .black, width: 6), alignment: .center, lineSpacing: 2)
+        let softShadow = TextShadow(color: RGBAColor(red: 0, green: 0, blue: 0, alpha: 0.55), angle: 135, distance: 3, blur: 8)
+        // Type tool default and the two short-video looks: bold sans, white fill.
+        let title = TextStyle(fontName: "Helvetica", size: 72, weight: .bold, color: .white, shadow: softShadow,
+                              alignment: .center, lineSpacing: 2)
+        let tiktok = TextStyle(fontName: "Helvetica", size: 64, weight: .black, color: .white,
+                               stroke: TextStroke(color: .black, width: 8), shadow: softShadow, alignment: .center, lineSpacing: 2)
+        let youtube = TextStyle(fontName: "Helvetica", size: 56, weight: .bold, color: .white,
+                                background: TextBackground(color: RGBAColor(red: 0, green: 0, blue: 0, alpha: 0.7),
+                                                           padding: BoxPadding(horizontal: 14, vertical: 6), cornerRadius: 6),
+                                alignment: .center, lineSpacing: 2)
         let popIn = KeyframeTemplate(tracks: [
             AnimationTrack(property: "scale", keys: [
                 (.zero, 0.8, .overshoot), (Time(1, 4), 1.0, .linear),
@@ -48,7 +58,8 @@ public struct CaptionPresetLibrary: Sendable {
             AnimationTrack(property: "opacity", keys: [(.zero, 1, .linear), (Time(1, 5), 0, .linear)]),
         ], duration: Time(1, 5), anchor: .end)
         return CaptionPresetLibrary(
-            styles: ["default": classic, "classic": classic, "bold-box": box, "outline": outline],
+            styles: ["default": classic, "classic": classic, "bold-box": box, "outline": outline,
+                     "title": title, "tiktok": tiktok, "youtube": youtube],
             animations: ["none": .none, "fade": fade, "fade-out": fadeOut, "pop-in": popIn],
             defaultStyleID: "default", defaultAnimationID: "none")
     }()

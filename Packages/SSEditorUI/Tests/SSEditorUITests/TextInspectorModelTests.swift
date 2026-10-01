@@ -32,6 +32,20 @@ import SSText
         #expect(m.style.size == 62)
     }
 
+    @Test func premiereTextControlsEditTheStyle() {
+        let (m, _) = make()
+        m.setTracking(12); m.setItalic(true); m.setVerticalAlignment(.bottom)
+        #expect(m.style.tracking == 12 && m.style.italic && m.style.verticalAlignment == .bottom)
+        m.setShadowEnabled(true)
+        m.setShadowAngle(45, distance: 10)
+        #expect(abs(m.style.shadow!.angle - 45) < 1e-6 && abs(m.style.shadow!.distance - 10) < 1e-9)
+        m.setShadowOpacity(0.25)
+        #expect(m.style.shadow!.color.alpha == 0.25 && abs(m.style.shadow!.distance - 10) < 1e-9)
+        m.setBackgroundEnabled(true)
+        m.setBackgroundOpacity(0.5)
+        #expect(m.style.background!.color.alpha == 0.5)
+    }
+
     @Test func noChangeNoCallback() {
         let (m, log) = make()
         m.setSize(m.style.size)

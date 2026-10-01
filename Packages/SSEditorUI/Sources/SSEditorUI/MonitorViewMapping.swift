@@ -1,6 +1,7 @@
 import CoreGraphics
 import Foundation
 import SSCore
+import SSText
 import SSRender
 
 /// Where the sequence canvas sits inside the Program monitor view, for a `ViewerZoom` (pure; mirrors
@@ -110,5 +111,18 @@ public enum TypeToolPlacement {
         let o = m.sequenceOffset(fromView: p)
         let hw = Double(m.sequenceSize.width) / 2, hh = Double(m.sequenceSize.height) / 2
         return Vec2(min(max(o.x, -hw), hw), min(max(o.y, -hh), hh))
+    }
+
+    /// Type tool drag from `a` to `b`: the box (centre from the canvas centre, size in sequence px) clipped to the
+    /// canvas; nil for a drag shorter than `minDrag` points in both directions (that is a click) or one outside the canvas.
+    public static func box(from a: CGPoint, to b: CGPoint, mapping m: MonitorViewMapping, minDrag: CGFloat) -> (Vec2, TextBox)? {
+        guard abs(b.x - a.x) >= minDrag || abs(b.y - a.y) >= minDrag else { return nil }
+        let r = m.canvasRect
+        let drag = CGRect(x: min(a.x, b.x), y: min(a.y, b.y), width: abs(b.x - a.x), height: abs(b.y - a.y))
+        let clipped = drag.intersection(r)
+        guard !clipped.isNull, clipped.width > 0, clipped.height > 0 else { return nil }
+        let p0 = m.sequenceOffset(fromView: CGPoint(x: clipped.minX, y: clipped.minY))
+        let p1 = m.sequenceOffset(fromView: CGPoint(x: clipped.maxX, y: clipped.maxY))
+        return (Vec2((p0.x + p1.x) / 2, (p0.y + p1.y) / 2), TextBox(width: max(1, p1.x - p0.x), height: max(1, p1.y - p0.y)))
     }
 }
