@@ -26,3 +26,32 @@ Output `docs/cloud/parity.md`, most valuable first.
 In SSCore, add property-style tests for every edit operation (insert, overwrite, lift, extract, ripple/roll/slip/slide,
 split, nudge, paste, link/unlink): invariants = no overlaps on a track, no negative or zero durations, linked clips stay
 aligned, undo then redo restores the exact snapshot. Fix what they find.
+
+## Job E: Premiere behaviour spec for one area (area given in the run text)
+Areas: `timeline` (selection, trims, tools, snapping, track headers, markers, navigation), `monitors` (Source/Program,
+three/four-point edits, JKL, Project panel), `effects` (Effect Controls, keyframes, interpolation, speed, time remapping,
+transitions), `colour` (Lumetri, scopes), `text-audio` (Type tool, Essential Graphics/Properties text, captions, audio
+gain/volume/mixing), `shell` (menus, shortcuts, workspaces, preferences, export, project handling).
+1. Get sources: run `python3 scripts/fetch_adobe_guide.py` (Adobe's guide as text into docs/reference/adobe/, gitignored;
+   never commit those files, never copy Adobe text: describe behaviour in your own words, cite the page name). Add web
+   search for details Adobe leaves out (community forums, ProVideo Coalition, Larry Jordan, Premiere Bro, YouTube tutorial
+   transcripts are fine as hints).
+2. Read our code for that area (not only docs/audit/<area>.md) and write `docs/spec/<area>.md`:
+   a table per feature: user action (incl. modifier keys, double-click, right-click menu entries, cursor shown, default
+   shortcut on macOS) → exact result in Premiere → what Sequence Studio does today (file:line) → verdict
+   (same / differs / missing) → proposed fix sized S/M/L. Include feel: speeds, step sizes, thresholds, defaults.
+3. End with a ranked backlog (most valuable for YouTube/TikTok editing first) of at most 40 items, each implementable
+   on its own, with acceptance criteria that can be unit-tested.
+
+## Job F: how others solve it (topic given in the run text)
+Topics: `feel` (timeline zoom/scroll/scrub/snapping/trim feedback in Premiere vs DaVinci Resolve vs Final Cut: what makes
+each feel fast; concrete numbers where findable), `engine` (playback caching, proxy/optimised media, waveform and
+thumbnail generation, render cache, audio pitch-preserving time-stretch, transitions and compositing order: study
+GPL-3.0-compatible open-source editors on GitHub such as Kdenlive/MLT, Olive, Shotcut, OpenShot, and OpenTimelineIO;
+read their code and docs).
+Output `docs/research/<topic>.md`: findings with links, what we should adopt, in which package, estimated effort, and for
+any code worth borrowing the licence and exact file (must be GPL-3.0-compatible; record nothing in THIRD_PARTY yet, just list).
+
+## Job G: core feature with tests (feature given in the run text) — only after the SQ rename has landed in main
+SSCore/SQCore only (pure Swift, builds on Linux: install Swift as in Job A). Tests first, rational time, value types,
+one undo step per action. Report what the UI/engine layers must add on the Mac side.
