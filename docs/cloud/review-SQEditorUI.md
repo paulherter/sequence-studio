@@ -23,7 +23,7 @@ Overall: edit paths (`perform`/`attempt`/`commit`, gestures, speed, colour, gain
 
 3. **Volume rubber band uses `source.duration` for clip-local time; keys are timeline-local.** `VolumeLine.swift:59,73-77,84-88,94`; same clamp in SQCore `AudioGain.swift:88-91` (`moveVolumeKey`). Keys are relative to `start` in timeline seconds, clip width is `clip.duration = source.duration/speed`. At 50% speed, points/diamonds are drawn at the wrong x, `hit()` (correct) disagrees with drawing, clicks in the second half clamp to the wrong time, keys can't be dragged into the second half; at 200% keys can be placed past the clip end.
 
-   **Status: LEFT FOR AUDIO STREAM (volume rubber band, TimelineView+VolumeLine / SQCore AudioGain moveVolumeKey). Not checked on current main.**
+   **Status: NOT REPRODUCIBLE on current main: VolumeLine and `moveVolumeKey` already use `clip.duration` (timeline time). ReviewAudioTests pins drawing, clamping and dragging at 50% and 200%.**
    Fix: use `clip.duration` in all four places and in the `moveVolumeKey` clamp.
 
 4. **`onRejection` never fires for gesture rejections.** `TimelineView.swift:465-468`, `TimelineInteraction.swift:445-455`. `publish` sets `isRejected` but never `rejectionMessage` (only `reject()`, used by Nest). Status message documented at `TimelineView.swift:47-48` never appears for drag/trim/razor. `wasRejected` is also read before `mouseUp`'s final `mouseDragged`, and the `defer` clears state.
@@ -110,7 +110,7 @@ Overall: edit paths (`perform`/`attempt`/`commit`, gestures, speed, colour, gain
    **Status: VERIFIED, NOT FIXED: needs an undo-coalescing API across view and model (a behaviour decision). Left open.**
 23. **Audio Gain dialog never shows peak for a single clip.** `AudioGainDialog.swift:77-78`: `?:` binds looser than `+`, so the peak suffix attaches only to the multi-clip branch. Fix: parenthesise the ternary.
 
-   **Status: LEFT FOR AUDIO STREAM (AudioGainDialog).**
+   **Status: FIXED: text built by `AudioGainDialog.infoText` (parenthesised); ReviewAudioTests.**
 24. **Speed dialog reports a change when value is unchanged.** `SpeedDialogModel.swift:70,86-88`: `edited` is always set, so OK with 100 on a 100% clip applies a no-op `SpeedChange` (possible empty undo step). Fix: compare against originals.
 
    **Status: FIXED (6b2e00f): typing the current speed or duration sets no change.**
