@@ -137,6 +137,7 @@ public final class AudioFeeder: @unchecked Sendable {
     public let flushGeneration = FlushGeneration()
     private let control: Mutex<Control>
     private var sources: [UUID: any AudioSource] = [:]
+    private let retimer = AudioRetimer()
     private let mixL: UnsafeMutablePointer<Float>, mixR: UnsafeMutablePointer<Float>
     private let scratch: UnsafeMutablePointer<Float>
     private let outL: UnsafeMutablePointer<Float>, outR: UnsafeMutablePointer<Float>
@@ -324,7 +325,8 @@ public final class AudioFeeder: @unchecked Sendable {
             let f1 = min(startFrame + Int64(count), Self.ceilFrame(seg.timeline.end, rate))
             guard f1 > f0 else { continue }
             let n = Int(f1 - f0)
-            let srcStart = Self.roundFrame(seg.sourceStart + (Time(f0, rate) - seg.timeline.start), rate)
+            let retimed = !seg.speed.isNormal || seg.reversed
+            let srcStart = retimed ? 0 : Self.roundFrame(seg.sourceStart + (Time(f0, rate) - seg.timeline.start), rate)
             let clip = Self.segmentClip(seg, top: timeline, sequences: sequences)
             let dstOff = Int(f0 - startFrame)
             let animated = (clip?.animation.volume.isAnimated ?? false) || seg.nests.contains { $0.clip.animation.volume.isAnimated }
@@ -336,8 +338,18 @@ public final class AudioFeeder: @unchecked Sendable {
             let (dl, dr) = destination(seg.nests.first?.track ?? seg.track)
             for (ch, dst) in [dl, dr].enumerated() {
                 do {
-                    let got = try source.read(from: srcStart, count: n, into: scratch, channel: ch)
-                    if got < n { (scratch + got).update(repeating: 0, count: n - got) }
+                    if retimed {
+                        let a = seg.timeline.start - seg.clipStart
+                        let originT = seg.reversed ? seg.sourceStart + seg.speed.scale(a) : seg.sourceStart - seg.speed.scale(a)
+                        try retimer.render(read: { try source.read(from: $0, count: $1, into: $2, channel: ch) },
+                                           origin: Double(originT.value) / Double(originT.timescale) * Double(rate),
+                                           speed: Double(seg.speed.num) / Double(seg.speed.den), reversed: seg.reversed,
+                                           keepsPitch: seg.keepsPitch, firstOutput: f0 - Self.ceilFrame(seg.clipStart, rate),
+                                           count: n, into: scratch)
+                    } else {
+                        let got = try source.read(from: srcStart, count: n, into: scratch, channel: ch)
+                        if got < n { (scratch + got).update(repeating: 0, count: n - got) }
+                    }
                 } catch { failedReads.add(1, ordering: .relaxed); continue }
                 Self.accumulate(scratch, into: dst + dstOff, count: n, firstFrame: f0, rate: rate, animated: animated, gain: gain)
             }
