@@ -160,6 +160,26 @@ public enum ClipDrawing {
         cg.fillPath()
     }
 
+    /// "Out of sync" badge: frames the linked partner has drifted ("+3" / "-3"), red on the clip's left edge.
+    public static func drawSyncBadge(frames: Int64, rect: CGRect, visible: CGRect) {
+        guard let cg = NSGraphicsContext.current?.cgContext, frames != 0, rect.width >= 24 else { return }
+        let text = (frames > 0 ? "+" : "\u{2212}") + String(abs(frames))
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold), .foregroundColor: NSColor.white]))
+        let w = CTLineGetTypographicBounds(line, nil, nil, nil) + 8
+        let x = max(rect.minX, visible.minX) + 3
+        let y = rect.minY + (rect.height >= bodyMinHeight ? nameStripHeight + 3 : 2)
+        let pill = CGRect(x: x, y: y, width: w, height: 12)
+        guard pill.maxX < rect.maxX else { return }
+        cg.saveGState()
+        cg.setFillColor(NSColor(srgbRed: 0.86, green: 0.2, blue: 0.2, alpha: 1).cgColor)
+        cg.addPath(CGPath(roundedRect: pill, cornerWidth: 3, cornerHeight: 3, transform: nil)); cg.fillPath()
+        cg.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        cg.textPosition = CGPoint(x: pill.minX + 4, y: pill.minY + 9)
+        CTLineDraw(line, cg)
+        cg.restoreGState()
+    }
+
     /// The volume rubber band over the waveform: a thin line with a diamond on every key.
     public static func drawVolumeLine(clip: Clip, rect: CGRect, visible: CGRect, selected: Bool) {
         guard let cg = NSGraphicsContext.current?.cgContext else { return }
