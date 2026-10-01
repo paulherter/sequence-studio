@@ -100,6 +100,7 @@ extension AppController {
         switch c {
         case .toggleSnapping: item.state = panels.timelineView.toolState.snapping ? .on : .off
         case .toggleLinkedSelection: item.state = panels.timelineView.toolState.linkedSelection ? .on : .off
+        case .toggleCaptionsInMonitor: item.state = session.engine.showsCaptions ? .on : .off
         default: break
         }
     }

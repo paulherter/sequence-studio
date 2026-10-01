@@ -55,6 +55,8 @@ public enum EditorCommand: Sendable, Hashable {
     case audioGain, toggleAudioScrubbing
     // Transitions (Sequence menu): Cmd+D, Shift+Cmd+D, Shift+D
     case applyVideoTransition, applyAudioTransition, applyDefaultTransitions
+    // Captions
+    case toggleCaptionsInMonitor
 
     /// Auto-repeat (key held) re-fires these; everything else ignores repeats.
     public var isRepeatable: Bool {
@@ -200,6 +202,7 @@ public enum EditorCommand: Sendable, Hashable {
         case .applyVideoTransition: "Apply Video Transition"
         case .applyAudioTransition: "Apply Audio Transition"
         case .applyDefaultTransitions: "Apply Default Transitions to Selection"
+        case .toggleCaptionsInMonitor: "Show Captions in Program Monitor"
         }
     }
 

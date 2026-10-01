@@ -33,6 +33,11 @@ public final class CaptionsTabView: NSView, NSTableViewDataSource, NSTableViewDe
     private let replaceField = NSTextField()
     private let matchCase = NSButton(checkboxWithTitle: "Match Case", target: nil, action: nil)
     private let replaceButton = NSButton(title: "Replace All", target: nil, action: nil)
+    private let findPrevious = NSButton(title: "", target: nil, action: nil)
+    private let findNextButton = NSButton(title: "", target: nil, action: nil)
+    private let karaokeCheck = NSButton(checkboxWithTitle: "Word Highlight", target: nil, action: nil)
+    private let karaokeWell = NSColorWell()
+    private let karaokeKeep = NSButton(checkboxWithTitle: "Keep spoken", target: nil, action: nil)
     private let styleLabel = NSTextField(labelWithString: "Style")
     private let stylePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let addButton = NSButton(title: "", target: nil, action: nil)
@@ -94,11 +99,26 @@ public final class CaptionsTabView: NSView, NSTableViewDataSource, NSTableViewDe
         styleLabel.font = Theme.Fonts.small; styleLabel.textColor = Theme.Colors.label2
         stylePopUp.controlSize = .small; stylePopUp.font = Theme.Fonts.small
         stylePopUp.target = self; stylePopUp.action = #selector(styleChanged)
-        stylePopUp.toolTip = "Applies to all captions"
+        stylePopUp.toolTip = "Style of the caption track: every caption without its own style follows it"
+        for (b, symbol, tip, sel) in [(findPrevious, "chevron.up", "Previous match (Shift+Return)", #selector(findPreviousClicked)),
+                                      (findNextButton, "chevron.down", "Next match (Return)", #selector(findNext))] {
+            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: tip)
+            b.bezelStyle = .rounded; b.controlSize = .small; b.toolTip = tip
+            b.target = self; b.action = sel
+        }
+        karaokeCheck.font = Theme.Fonts.small; karaokeCheck.controlSize = .small
+        karaokeCheck.target = self; karaokeCheck.action = #selector(karaokeChanged)
+        karaokeCheck.toolTip = "Lights the spoken word in the caption (the TikTok look), in the Program monitor and in the export"
+        karaokeKeep.font = Theme.Fonts.small; karaokeKeep.controlSize = .small
+        karaokeKeep.target = self; karaokeKeep.action = #selector(karaokeChanged)
+        karaokeKeep.toolTip = "Words that were already spoken stay lit"
+        karaokeWell.target = self; karaokeWell.action = #selector(karaokeChanged)
+        karaokeWell.toolTip = "Highlight colour"
+        karaokeWell.color = NSColor(srgbRed: 1, green: 0.86, blue: 0.1, alpha: 1)
         hint.font = Theme.Fonts.small
         hint.textColor = Theme.Colors.label3
-        for v in [scroll, findField, replaceField, matchCase, replaceButton, styleLabel, stylePopUp, addButton, exportButton,
-                  createButton, hint] { addSubview(v) }
+        for v in [scroll, findField, findPrevious, findNextButton, replaceField, matchCase, replaceButton, styleLabel,
+                  stylePopUp, karaokeCheck, karaokeWell, karaokeKeep, addButton, exportButton, createButton, hint] { addSubview(v) }
         refresh()
     }
     @available(*, unavailable) public required init?(coder: NSCoder) { fatalError() }
@@ -174,6 +194,16 @@ public final class CaptionsTabView: NSView, NSTableViewDataSource, NSTableViewDe
         if used.count == 1, let one = used.first, let i = ids.firstIndex(of: one) { stylePopUp.selectItem(at: i) }
         else { stylePopUp.addItem(withTitle: used.isEmpty ? "None" : "Mixed"); stylePopUp.selectItem(at: stylePopUp.numberOfItems - 1) }
         stylePopUp.isEnabled = !rows.isEmpty
+        let k = session?.captionKaraoke
+        karaokeCheck.state = k == nil ? .off : .on
+        karaokeCheck.isEnabled = !rows.isEmpty
+        karaokeWell.isEnabled = k != nil; karaokeKeep.isEnabled = k != nil
+        if let k {
+            karaokeWell.color = NSColor(srgbRed: k.red, green: k.green, blue: k.blue, alpha: 1)
+            karaokeKeep.state = k.keepSpoken ? .on : .off
+        }
+        findPrevious.isEnabled = !rows.isEmpty && !findField.stringValue.isEmpty
+        findNextButton.isEnabled = findPrevious.isEnabled
         replaceButton.isEnabled = !findField.stringValue.isEmpty && !rows.isEmpty
         exportButton.isEnabled = !rows.isEmpty
         addButton.isEnabled = session != nil
@@ -198,7 +228,10 @@ public final class CaptionsTabView: NSView, NSTableViewDataSource, NSTableViewDe
         let w = bounds.width
         let inner = max(w - 2 * pad, 0)
         let fieldH: CGFloat = 22
-        findField.frame = CGRect(x: pad, y: pad, width: inner, height: fieldH)
+        let arrow: CGFloat = 26
+        findField.frame = CGRect(x: pad, y: pad, width: max(inner - 2 * arrow - 2 * 2, 40), height: fieldH)
+        findNextButton.frame = CGRect(x: w - pad - arrow, y: pad, width: arrow, height: fieldH)
+        findPrevious.frame = CGRect(x: findNextButton.frame.minX - 2 - arrow, y: pad, width: arrow, height: fieldH)
         replaceButton.sizeToFit()
         let rb = replaceButton.frame.width
         replaceField.frame = CGRect(x: pad, y: pad + fieldH + 4, width: max(inner - rb - pad, 40), height: fieldH)
@@ -206,7 +239,7 @@ public final class CaptionsTabView: NSView, NSTableViewDataSource, NSTableViewDe
         matchCase.sizeToFit()
         matchCase.frame.origin = CGPoint(x: pad, y: pad + 2 * (fieldH + 4))
         let top = matchCase.frame.maxY + 4
-        let footer: CGFloat = 96
+        let footer: CGFloat = 122
         scroll.frame = CGRect(x: 0, y: top, width: w, height: max(bounds.height - footer - top, 0))
         let y = scroll.frame.maxY + pad
         hint.frame = CGRect(x: pad, y: y, width: inner, height: 28)
@@ -215,7 +248,13 @@ public final class CaptionsTabView: NSView, NSTableViewDataSource, NSTableViewDe
         styleLabel.frame.origin = CGPoint(x: pad, y: ly + 3)
         stylePopUp.frame = CGRect(x: styleLabel.frame.maxX + pad, y: ly, width: max(inner - styleLabel.frame.width - pad, 40), height: 20)
         createButton.sizeToFit(); exportButton.sizeToFit()
-        let by = ly + 26
+        let ky = ly + 26
+        karaokeCheck.sizeToFit()
+        karaokeCheck.frame.origin = CGPoint(x: pad, y: ky)
+        karaokeWell.frame = CGRect(x: karaokeCheck.frame.maxX + pad, y: ky, width: 34, height: 20)
+        karaokeKeep.sizeToFit()
+        karaokeKeep.frame.origin = CGPoint(x: karaokeWell.frame.maxX + pad, y: ky)
+        let by = ky + 26
         createButton.frame = CGRect(x: w - pad - createButton.frame.width, y: by, width: createButton.frame.width, height: 22)
         exportButton.frame = CGRect(x: createButton.frame.minX - pad - exportButton.frame.width, y: by,
                                     width: exportButton.frame.width, height: 22)
@@ -228,19 +267,34 @@ public final class CaptionsTabView: NSView, NSTableViewDataSource, NSTableViewDe
 
     @objc private func styleChanged() {
         guard let id = stylePopUp.selectedItem?.representedObject as? String else { return }
-        if session?.setCaptionStyle(styleRef: id) == true { onStatus?("Caption style applied to all captions.") }
+        if session?.setCaptionStyle(styleRef: id) == true { onStatus?("Caption track style set. Captions with their own style keep it.") }
+    }
+
+    @objc private func karaokeChanged() {
+        guard let s = session else { return }
+        if karaokeCheck.state == .off { s.setCaptionKaraoke(nil); return }
+        let c = karaokeWell.color.usingColorSpace(.sRGB) ?? karaokeWell.color
+        s.setCaptionKaraoke(KaraokeStyle(red: c.redComponent, green: c.greenComponent, blue: c.blueComponent,
+                                         keepSpoken: karaokeKeep.state == .on))
     }
 
     @objc private func findChanged() { refresh() }
 
-    /// Return in the Find field: jump to the next caption that matches.
+    /// Return in the Find field (and the down arrow): jump to the next caption that matches; Shift+Return goes back.
     @objc private func findNext() {
+        let back = NSApp.currentEvent?.modifierFlags.contains(.shift) == true
+        stepFind(forward: !back)
+    }
+
+    @objc private func findPreviousClicked() { stepFind(forward: false) }
+
+    /// From the selected caption (when one is selected) or else the playhead, so the arrows walk the list.
+    private func stepFind(forward: Bool) {
         guard let s = session, let tl = s.activeTimeline else { return }
-        let hits = tl.captionMatches(find: findField.stringValue, caseSensitive: matchCase.state == .on)
-        guard !hits.isEmpty else { return }
         let items = s.captionItems
-        let here = s.playhead
-        let next = hits.first { id in items.first { $0.id == id }.map { $0.range.start > here } ?? false } ?? hits[0]
+        let sel = selectedIDs
+        let anchor = sel.count == 1 ? (items.first { $0.id == sel[0] }?.range.start ?? s.playhead) : s.playhead
+        guard let next = tl.captionMatch(find: findField.stringValue, caseSensitive: matchCase.state == .on, from: anchor, forward: forward) else { return }
         s.select(clips: [], captions: [next])
         if let it = items.first(where: { $0.id == next }) { onSeek?(it.range.start) }
     }
@@ -282,9 +336,24 @@ public final class CaptionsTabView: NSView, NSTableViewDataSource, NSTableViewDe
         add("Split Caption at Playhead", #selector(splitAtPlayhead), enabled: atPlayhead)
         add("Merge Captions", #selector(mergeSelected), enabled: n >= 2)
         menu.addItem(.separator())
+        let styleMenu = NSMenu(title: "Style")
+        for id in CaptionPresetLibrary.builtIn.styleIDs {
+            let i = NSMenuItem(title: TextInspectorView.title(for: id), action: #selector(styleSelectedCaptions(_:)), keyEquivalent: "")
+            i.target = self; i.representedObject = id; i.isEnabled = n >= 1
+            styleMenu.addItem(i)
+        }
+        let styleHost = NSMenuItem(title: "Style", action: nil, keyEquivalent: "")
+        styleHost.submenu = styleMenu; styleHost.isEnabled = n >= 1
+        menu.addItem(styleHost)
+        add("Use Track Style", #selector(useTrackStyle), enabled: n >= 1 && (session?.selectedCaptionsHaveOwnStyle ?? false))
+        menu.addItem(.separator())
         add("Delete", #selector(deleteSelected), enabled: n >= 1)
     }
 
+    @objc private func styleSelectedCaptions(_ item: NSMenuItem) {
+        if let id = item.representedObject as? String { session?.setSelectedCaptionStyle(id) }
+    }
+    @objc private func useTrackStyle() { session?.setSelectedCaptionStyle(nil) }
     @objc private func editSelected() { if let id = selectedIDs.first { beginEditing(id) } }
     @objc private func splitAtPlayhead() { session?.splitCaption() }
     @objc private func mergeSelected() { session?.mergeSelectedCaptions() }
