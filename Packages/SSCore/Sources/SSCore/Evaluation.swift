@@ -83,14 +83,17 @@ public struct AudioSegment: Sendable, Hashable {
     /// Start of the whole clip in top-sequence time (anchor of the time-stretch grain grid, so any split of a
     /// range into render blocks gives identical samples).
     public var clipStart: Time
+    /// The clip's used media range (what retimed audio may read; nothing outside it is played).
+    public var source: TimeRange
 
     public init(clip: Clip.ID, media: UUID, track: Track.ID, timeline: TimeRange, sourceStart: Time,
                 nests: [AudioNest] = [], speed: ClipSpeed = .normal, reversed: Bool = false,
-                keepsPitch: Bool = true, clipStart: Time? = nil) {
+                keepsPitch: Bool = true, clipStart: Time? = nil, source: TimeRange? = nil) {
         self.clip = clip; self.media = media; self.track = track
         self.timeline = timeline; self.sourceStart = sourceStart; self.nests = nests
         self.speed = speed; self.reversed = reversed; self.keepsPitch = keepsPitch
         self.clipStart = clipStart ?? timeline.start
+        self.source = source ?? TimeRange(start: sourceStart, duration: timeline.duration)
     }
 
     /// Product of the enclosing nested clips' volume at top-sequence time `t` (1 when not nested).
@@ -168,7 +171,7 @@ extension Timeline {
                 } else {
                     out.append(AudioSegment(clip: c.id, media: c.media, track: track.id, timeline: r,
                                             sourceStart: innerStart, nests: nests, speed: c.speed, reversed: c.reversed,
-                                            keepsPitch: c.keepsPitch, clipStart: c.start))
+                                            keepsPitch: c.keepsPitch, clipStart: c.start, source: c.source))
                 }
             }
         }

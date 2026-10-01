@@ -119,10 +119,10 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
         return source.start + speed.scale(local)
     }
 
-    /// Timeline time (absolute) at which source time `s` is shown; the inverse of `sourceTime` for forward clips and
-    /// for reversed clips (without the one-frame offset). Used to map decoded frames back onto the timeline.
-    public func timelineTime(forSource s: Time) -> Time {
-        reversed ? start + speed.unscale(source.end - s) : start + speed.unscale(s - source.start)
+    /// Timeline time (absolute) at which source time `s` is shown; the inverse of `sourceTime`. Pass the sequence frame
+    /// duration for reversed clips (the frame shown starts one frame before the mapped end). Used to map decoded frames back onto the timeline.
+    public func timelineTime(forSource s: Time, frameDuration: Time = .zero) -> Time {
+        reversed ? start + speed.unscale(source.end - s) - frameDuration : start + speed.unscale(s - source.start)
     }
 
     public init(id: UUID = UUID(), name: String, media: UUID, kind: TrackKind,
@@ -190,6 +190,19 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
         if reversed { source.duration += d } else { source.start -= d; source.duration += d }
         animation = animation.shifted(by: g)
         effects = effects.map { $0.shifted(by: g) }
+    }
+
+    /// Moves the clip-local key times after a retime from `old` to `new` timeline duration: scaled by new/old so keys stay on
+    /// the same content; when the direction flipped (`mirror`), mirrored inside the clip as well.
+    mutating func rescaleKeys(from old: Time, to new: Time, mirror: Bool) {
+        guard old > .zero, old != new || mirror else { return }
+        let num = new.value * old.timescale, den = new.timescale * old.value
+        let f: (Time) -> Time = { t in
+            let s = Time(t.value * num, t.timescale * den)
+            return mirror ? new - s : s
+        }
+        animation = animation.remapped(f)
+        effects = effects.map { $0.remapped(f) }
     }
 
     /// Makes the clip `g` longer at its tail (negative = shorter). The source side that plays last changes by `g * speed`.

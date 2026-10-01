@@ -74,6 +74,7 @@ extension Timeline {
             let srcDur = speed.scale(newDuration)
             if c.reversed { c.source.start = c.source.end - srcDur }
             c.source.duration = srcDur
+            c.rescaleKeys(from: m.clip.duration, to: newDuration, mirror: c.reversed != m.clip.reversed)
             work[m.track].replace(c)
         }
         let change = newDuration - primary.duration
@@ -146,6 +147,22 @@ extension Timeline {
         let src = primary.source.duration
         let speed = ClipSpeed(num: src.value * tl.timescale, den: src.timescale * tl.value)
         n = max(frames(speed.unscale(src)), 1)
+        // The clamp (and rounding) may have changed the length again: neighbours and media limit it once more.
+        let perFrame = speed.scale(fd)
+        for m in group {
+            let c = m.clip
+            let others = tracks[m.track].clips.filter { !ids.contains($0.id) }
+            if edge == .tail {
+                if let next = others.filter({ $0.start >= c.timeline.end }).min(by: { $0.start < $1.start }) {
+                    n = min(n, max(floorFrames(next.start - c.start), 1))
+                }
+            } else {
+                let prevEnd = others.filter { $0.timeline.end <= c.start }.map { $0.timeline.end }.max() ?? .zero
+                n = min(n, max(floorFrames(c.timeline.end - prevEnd), 1))
+            }
+            if c.reversed { n = min(n, max(frameFloor(c.source.end, perFrame), 1)) }
+            else if let md = c.mediaDuration { n = min(n, max(frameFloor(md - c.source.start, perFrame), 1)) }
+        }
         let newDuration = fd * n
         let applied = edge == .tail ? newDuration - primary.duration : primary.duration - newDuration
         if applied == .zero && speed == primary.speed { return .zero }
@@ -156,6 +173,7 @@ extension Timeline {
             let srcDur = speed.scale(newDuration)
             if c.reversed { c.source.start = c.source.end - srcDur }
             c.source.duration = srcDur
+            c.rescaleKeys(from: m.clip.duration, to: newDuration, mirror: false)
             if edge == .head { c.start = m.clip.timeline.end - newDuration }
             work[m.track].replace(c)
         }

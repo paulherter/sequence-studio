@@ -137,7 +137,7 @@ public final class AudioFeeder: @unchecked Sendable {
     public let flushGeneration = FlushGeneration()
     private let control: Mutex<Control>
     private var sources: [UUID: any AudioSource] = [:]
-    private let retimer = AudioRetimer()
+    private let retimer: AudioRetimer
     private let mixL: UnsafeMutablePointer<Float>, mixR: UnsafeMutablePointer<Float>
     private let scratch: UnsafeMutablePointer<Float>
     private let outL: UnsafeMutablePointer<Float>, outR: UnsafeMutablePointer<Float>
@@ -151,6 +151,7 @@ public final class AudioFeeder: @unchecked Sendable {
                 resolver: @escaping Resolver) {
         precondition(sampleRate == RealtimeAudioFX.sampleRate, "AudioFeeder/RealtimeAudioFX run at 48 kHz only")
         self.sampleRate = sampleRate; self.blockFrames = blockFrames; self.ring = ring; self.resolver = resolver
+        retimer = AudioRetimer(maxFrames: blockFrames)
         var cfg = FXConfig()
         cfg.trackIDs = timeline.tracks.filter { $0.kind == .audio }.map(\.id)
         var c = Control(timeline: timeline)
@@ -344,7 +345,9 @@ public final class AudioFeeder: @unchecked Sendable {
                         try retimer.render(read: { try source.read(from: $0, count: $1, into: $2, channel: ch) },
                                            origin: Double(originT.value) / Double(originT.timescale) * Double(rate),
                                            speed: Double(seg.speed.num) / Double(seg.speed.den), reversed: seg.reversed,
-                                           keepsPitch: seg.keepsPitch, firstOutput: f0 - Self.ceilFrame(seg.clipStart, rate),
+                                           keepsPitch: seg.keepsPitch,
+                                           srcStart: Self.roundFrame(seg.source.start, rate), srcEnd: Self.roundFrame(seg.source.end, rate),
+                                           firstOutput: f0 - Self.ceilFrame(seg.clipStart, rate),
                                            count: n, into: scratch)
                     } else {
                         let got = try source.read(from: srcStart, count: n, into: scratch, channel: ch)

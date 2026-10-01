@@ -100,7 +100,9 @@ extension Timeline {
     // MARK: Slip
 
     /// Changes which part of the media shows; position and duration stay. Clamped to the media,
-    /// partners follow. Returns the applied shift of `source.start`.
+    /// partners follow. `delta` is timeline time: the content follows the pointer, so a positive `delta` shows later
+    /// source of a forward clip and earlier source of a reversed one (the source moves by `delta * speed`).
+    /// Returns the applied `delta`.
     @discardableResult
     public mutating func slip(_ id: Clip.ID, by delta: Time) throws -> Time {
         let group = try linkedGroup(id)
@@ -109,14 +111,21 @@ extension Timeline {
         for m in group {
             let c = m.clip
             if c.isGenerator || c.isStill { d = .zero; continue }        // nothing to slip
-            d = max(d, .zero - c.speed.unscale(c.source.start))
-            if let md = c.mediaDuration { d = min(d, c.speed.unscale(md - c.source.end)) }
+            let before = c.speed.unscale(c.source.start)                       // room for earlier source
+            let after = c.mediaDuration.map { c.speed.unscale($0 - c.source.end) }   // room for later source
+            if c.reversed {
+                d = min(d, before)
+                if let after { d = max(d, .zero - after) }
+            } else {
+                d = max(d, .zero - before)
+                if let after { d = min(d, after) }
+            }
         }
         if d == .zero { return .zero }
         var work = tracks
         for m in group {
             var c = m.clip
-            c.source.start += c.speed.scale(d)
+            c.source.start += c.reversed ? .zero - c.speed.scale(d) : c.speed.scale(d)
             work[m.track].replace(c)
         }
         tracks = try commit(work)

@@ -16,7 +16,7 @@ extension Timeline {
         func hit(_ track: Track) -> Clip? {
             track.clips.first { $0.timeline.contains(t) && !$0.isGenerator && !$0.isNested }
         }
-        func frame(_ c: Clip) -> MatchedFrame { MatchedFrame(clip: c, media: c.media, sourceTime: c.source.start + (t - c.start)) }
+        func frame(_ c: Clip) -> MatchedFrame { MatchedFrame(clip: c, media: c.media, sourceTime: c.sourceTime(at: t, frameDuration: frameDuration)) }
         if !selected.isEmpty {
             for tr in tracks.reversed() { if let c = hit(tr), selected.contains(c.id) { return frame(c) } }
         }
@@ -32,7 +32,7 @@ extension Timeline {
         let all = tracks.flatMap(\.clips).filter { $0.media == media && !$0.isGenerator && !$0.isNested
             && $0.source.start <= sourceTime && sourceTime < $0.source.end }
         guard !all.isEmpty else { return nil }
-        func at(_ c: Clip) -> Time { c.start + (sourceTime - c.source.start) }
+        func at(_ c: Clip) -> Time { c.timelineTime(forSource: sourceTime, frameDuration: frameDuration) }
         let pick = all.first { selected.contains($0.id) }
             ?? all.first { $0.timeline.contains(playhead) }
             ?? all.min { abs(at($0).value * playhead.timescale - playhead.value * at($0).timescale) < abs(at($1).value * playhead.timescale - playhead.value * at($1).timescale) }
