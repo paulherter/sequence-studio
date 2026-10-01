@@ -1,3 +1,4 @@
+import AppKit
 import CoreGraphics
 import Foundation
 import SQCore
@@ -398,5 +399,39 @@ private func track(_ clips: [Clip], kind: TrackKind = .video) -> Track {
                   .toggleTrimType, .moveSelectionUp, .moveSelectionDown] {
             #expect(!c.title.isEmpty)
         }
+    }
+}
+
+// MARK: Offscreen render of the disabled-clip look
+
+@MainActor @Suite struct DisabledClipRenderTests {
+    @Test func disabledClipIsDimmedAndSidesStayUntouched() throws {
+        var off = clip(5, 4); off.isEnabled = false
+        off.name = "disabled"
+        var on = clip(0, 4); on.name = "enabled"
+        let t = Timeline(name: "t", frameDuration: fd, tracks: [track([on, off])])
+        let v = TimelineView(timeline: t, frame: NSRect(x: 0, y: 0, width: 700, height: 160))
+        let win = NSWindow(contentRect: v.frame, styleMask: [.titled], backing: .buffered, defer: false)
+        win.appearance = NSAppearance(named: .darkAqua)
+        win.contentView = v
+        v.setZoom(pointsPerSecond: 60)
+        win.layoutIfNeeded()
+        let rep = try #require(v.bitmapImageRepForCachingDisplay(in: v.bounds))
+        v.cacheDisplay(in: v.bounds, to: rep)
+        if let out = ProcessInfo.processInfo.environment["SQ_RENDER_DIR"], let png = rep.representation(using: .png, properties: [:]) {
+            try png.write(to: URL(fileURLWithPath: out).appendingPathComponent("timeline-disabled-clip.png"))
+        }
+        // Middle of both clips on the V1 row: the disabled one is closer to the lane colour.
+        let row = v.geometry.rows(for: t)[0]
+        let y = Int(row.y + row.height / 2)
+        func px(_ seconds: Double) -> NSColor {
+            let x = Int(v.geometry.x(for: Time(Int64(seconds * 100), 100)))
+            return rep.colorAt(x: x, y: y)!.usingColorSpace(.deviceRGB)!
+        }
+        let lane = rep.colorAt(x: 690, y: y)!.usingColorSpace(.deviceRGB)!
+        func dist(_ a: NSColor, _ b: NSColor) -> CGFloat {
+            abs(a.redComponent - b.redComponent) + abs(a.greenComponent - b.greenComponent) + abs(a.blueComponent - b.blueComponent)
+        }
+        #expect(dist(px(7), lane) < dist(px(2), lane))
     }
 }

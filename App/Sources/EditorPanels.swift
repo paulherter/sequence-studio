@@ -253,6 +253,7 @@ final class EditorPanels {
             case .pasteInsert: self?.onCommand?(.pasteInsert)
             case .delete: self?.onCommand?(.delete)
             case .rippleDelete: self?.onCommand?(.rippleDelete)
+            case .enable: self?.onCommand?(.enableClip)
             case .link, .unlink: self?.onCommand?(.link)
             case .nest: self?.onNest?()
             case .speed: self?.onCommand?(.speedDuration)

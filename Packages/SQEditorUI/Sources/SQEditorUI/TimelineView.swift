@@ -1068,9 +1068,17 @@ public final class TimelineView: NSView {
                                                visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height),
                                                selected: selection.contains(c.id))
                 }
+                if !c.isEnabled {
+                    // Disabled (Shift+Cmd+E): the clip fades into the lane, like Premiere's greyed-out clip.
+                    Theme.Colors.lane.withAlphaComponent(Self.disabledClipFade).setFill()
+                    CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height).intersection(visibleX).fill()
+                }
             }
         }
     }
+
+    /// How much of a disabled clip is covered by the lane colour (0 = untouched, 1 = invisible).
+    static let disabledClipFade: CGFloat = 0.68
 
     private func drawPlayheadLine(clip: CGRect) {
         let x = geometry.x(for: playhead)

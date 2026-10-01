@@ -4,6 +4,8 @@ import SQCore
 /// What a context-menu item asks the host to do.
 public enum TimelineMenuAction: Sendable, Hashable, CaseIterable {
     case cut, copy, paste, pasteInsert, delete, rippleDelete, unlink, link, nest, rename
+    /// Enable / Disable Clip (Shift+Cmd+E).
+    case enable
     case setToFrameSize, scaleToFrameSize
     case editCaption, splitCaption, mergeCaptions
     /// Clip > Speed/Duration.
@@ -47,7 +49,7 @@ public enum TimelineContextMenu {
         // Generators (text) have no picture size to fit.
         let hasPictures = clips.contains { !$0.isGenerator && $0.kind == .video }
         let canRetime = clips.contains { Timeline.canRetime($0) }
-        // Premiere order. Entries for features we do not have (Enable, Reveal in Project) are left out.
+        // Premiere order. Entries for features we do not have (Reveal in Project) are left out.
         return [
             TimelineMenuItem(.cut, "Cut", enabled: hasClips, key: "x"),
             TimelineMenuItem(.copy, "Copy", enabled: hasClips, key: "c"),
@@ -56,6 +58,8 @@ public enum TimelineContextMenu {
             TimelineMenuItem(.delete, "Clear", enabled: hasAny, separatorBefore: true, key: "\u{8}", modifiers: []),
             TimelineMenuItem(.rippleDelete, "Ripple Delete", enabled: hasClips, key: "\u{8}", modifiers: [.shift]),
             linkItem.separatorBefore(true),
+            TimelineMenuItem(.enable, clips.contains { !$0.isEnabled } ? "Enable" : "Disable", enabled: hasClips,
+                             key: "e", modifiers: [.command, .shift]),
             TimelineMenuItem(.nest, "Nest…", enabled: hasClips, separatorBefore: true),
             TimelineMenuItem(.speed, "Speed/Duration…", enabled: canRetime, key: "r"),
             TimelineMenuItem(.setToFrameSize, "Set to Frame Size", enabled: hasPictures, separatorBefore: true),
