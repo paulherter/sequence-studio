@@ -163,6 +163,7 @@ public final class EffectsPanelView: TemplateListPanelView {
     public static let roundedCorners = ClipEffect.roundedCornersKind
     public static let crop = ClipEffect.cropKind
     public static let gaussianBlur = ClipEffect.gaussianBlurKind
+    public static let ultraKey = ClipEffect.ultraKeyKind
 
     public struct Entry: Sendable, Hashable {
         public var id: String, title: String, category: String, symbol: String
@@ -174,6 +175,7 @@ public final class EffectsPanelView: TemplateListPanelView {
     /// until the engine can render them.
     public static let catalog: [Entry] = [
         Entry(id: gaussianBlur, title: "Gaussian Blur", category: "Blur & Sharpen", symbol: "circle.dotted"),
+        Entry(id: ultraKey, title: "Ultra Key", category: "Keying", symbol: "person.crop.rectangle"),
         Entry(id: crop, title: "Crop", category: "Transform", symbol: "crop"),
         Entry(id: roundedCorners, title: "Rounded Corners", category: "Transform", symbol: "app"),
     ]

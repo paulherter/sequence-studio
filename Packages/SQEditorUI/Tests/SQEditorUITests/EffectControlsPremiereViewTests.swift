@@ -8,7 +8,7 @@ import SQCore
     // MARK: Effects panel
     @Test func effectsPanelListsOnlyWhatExistsUnderItsBin() {
         let rows = EffectsPanelView.rows(matching: "")
-        #expect(rows.map(\.title) == ["Blur & Sharpen", "Gaussian Blur", "Transform", "Crop", "Rounded Corners"])
+        #expect(rows.map(\.title) == ["Blur & Sharpen", "Gaussian Blur", "Keying", "Ultra Key", "Transform", "Crop", "Rounded Corners"])
         #expect(rows[0].isHeader && !rows[1].isHeader && rows[2].isHeader)
     }
 

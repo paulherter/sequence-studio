@@ -138,6 +138,10 @@ public final class Compositor: @unchecked Sendable {
         var maskSize = SIMD2<Float>(0, 0)
         /// Crop insets as fractions of `maskSize`: left, top, right, bottom.
         var crop = SIMD4<Float>(0, 0, 0, 0)
+        /// Ultra Keys: hue, half width, soft edge, spill (degrees / fractions); `keyCount` of them are used.
+        var key0 = SIMD4<Float>(0, 0, 0, 0)
+        var key1 = SIMD4<Float>(0, 0, 0, 0)
+        var keyCount: UInt32 = 0
     }
 
     public init(device: MTLDevice) throws {

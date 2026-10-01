@@ -34,6 +34,14 @@ public enum EffectCatalog {
             EffectParamSpec(key: ClipEffect.blurrinessKey, title: "Blurriness", unit: "", defaultValue: 0,
                             range: 0...1_000, step: 0.5, decimals: 1),
         ]),
+        // A compact chroma key: pick the hue to remove (green 120, blue 220), how far around it, how soft, and how much of the
+        // coloured spill on the edges to desaturate. Premiere's Ultra Key has more controls; these four do the everyday job.
+        EffectSpec(kind: ClipEffect.ultraKeyKind, title: "Ultra Key", params: [
+            EffectParamSpec(key: ClipEffect.keyHueKey, title: "Key Hue", unit: "\u{00B0}", defaultValue: 120, range: 0...360, step: 1, decimals: 0),
+            EffectParamSpec(key: ClipEffect.toleranceKey, title: "Tolerance", unit: "%", defaultValue: 40, range: 0...100, step: 1, decimals: 0),
+            EffectParamSpec(key: ClipEffect.softenKey, title: "Soften", unit: "%", defaultValue: 20, range: 0...100, step: 1, decimals: 0),
+            EffectParamSpec(key: ClipEffect.spillKey, title: "Spill Suppression", unit: "%", defaultValue: 50, range: 0...100, step: 1, decimals: 0),
+        ]),
     ]
 
     public static func spec(for kind: String) -> EffectSpec? { all.first { $0.kind == kind } }

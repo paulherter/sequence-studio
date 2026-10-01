@@ -129,8 +129,8 @@ private func track(_ clips: [Clip], kind: TrackKind = .video) -> Track {
 
     @Test func effectsPanelListsTheNewEffectsInBins() {
         let rows = EffectsPanelView.rows(matching: "")
-        #expect(rows.filter(\.isHeader).map(\.title) == ["Blur & Sharpen", "Transform"])
-        #expect(rows.filter { !$0.isHeader }.map(\.id) == [ClipEffect.gaussianBlurKind, ClipEffect.cropKind, ClipEffect.roundedCornersKind])
+        #expect(rows.filter(\.isHeader).map(\.title) == ["Blur & Sharpen", "Keying", "Transform"])
+        #expect(rows.filter { !$0.isHeader }.map(\.id) == [ClipEffect.gaussianBlurKind, ClipEffect.ultraKeyKind, ClipEffect.cropKind, ClipEffect.roundedCornersKind])
         #expect(EffectsPanelView.rows(matching: "blur").filter { !$0.isHeader }.map(\.title) == ["Gaussian Blur"])
         #expect(EffectsPanelView.catalog.allSatisfy { EffectCatalog.spec(for: $0.id) != nil })
     }

@@ -16,6 +16,10 @@ extension Compositor {
         if fx.isEmpty { return }
         var p = p0
         p.blend = layer.blendMode
+        // Ultra Keys work on the picture itself, so they ride along in whichever draw samples it (the blur pre-pass or the plain draw).
+        p.u.keyCount = UInt32(min(fx.keys.count, ChromaKey.maxPerLayer))
+        if fx.keys.count > 0 { p.u.key0 = UltraKey.vector(fx.keys[0]) }
+        if fx.keys.count > 1 { p.u.key1 = UltraKey.vector(fx.keys[1]) }
 
         if fx.blur <= 0 {
             let m = fx.pre.merged(with: fx.post)
@@ -65,7 +69,7 @@ extension Compositor {
         // padded one, the mask rectangle stays the layer's picture.
         var fin = p
         fin.tex0 = a; fin.tex1 = dummy
-        fin.u.mode = 3; fin.u.linearize = 0; fin.u.quarter = 0
+        fin.u.mode = 3; fin.u.linearize = 0; fin.u.quarter = 0; fin.u.keyCount = 0      // keyed already in the pre-pass
         fin.u.maskSize = p.u.size
         fin.u.size = SIMD2(plan.outputWidth, plan.outputHeight)
         fin.u.crop = Self.cropVector(fx.post.crop)

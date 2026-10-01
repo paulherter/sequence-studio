@@ -9,6 +9,8 @@ public struct ClipEffect: Sendable, Hashable, Codable, Identifiable {
     public static let cropLeftKey = "left", cropTopKey = "top", cropRightKey = "right", cropBottomKey = "bottom"
     public static let gaussianBlurKind = "gaussianBlur"
     public static let blurrinessKey = "blurriness"
+    public static let ultraKeyKind = "ultraKey"
+    public static let keyHueKey = "keyHue", toleranceKey = "tolerance", softenKey = "soften", spillKey = "spill"
 
     public var id: UUID
     public var kind: String

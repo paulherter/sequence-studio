@@ -1,5 +1,5 @@
 /// MSL for the compositor, compiled at runtime (SwiftPM CLI does not bundle .metal; same pattern as ColorShaderSource).
-/// `CompositeUniforms` mirrors `Compositor.Uniforms` (176 bytes).
+/// `CompositeUniforms` mirrors `Compositor.Uniforms` (224 bytes).
 enum CompositorShaderSource {
     static let msl = """
     #include <metal_stdlib>
@@ -22,6 +22,9 @@ enum CompositorShaderSource {
         uint blend;          // blend mode id (compositeFragmentBlend only): 1 multiply, 2 screen, 3 add, 4 overlay
         float2 maskSize;     // rectangle Crop / Rounded Corners work on, layer px; 0 = size
         float4 crop;         // left, top, right, bottom insets as fractions of maskSize
+        float4 key0;         // Ultra Key: hue (deg), half width (deg), soft edge (deg), spill (0...1)
+        float4 key1;
+        uint keyCount;       // keys in use (0...2)
     };
 
     constexpr sampler linearSampler(filter::linear, address::clamp_to_edge);
@@ -74,6 +77,31 @@ enum CompositorShaderSource {
         return o;
     }
 
+    // One Ultra Key on un-premultiplied linear colour: returns K (how much is keyed out) and desaturates spill in `c`.
+    // Mirrors UltraKey.key (CPU reference).
+    inline float applyChromaKey(float4 k, thread float3& c) {
+        float mx = max(c.r, max(c.g, c.b)), mn = min(c.r, min(c.g, c.b)), d = mx - mn;
+        float h = 0.0f;
+        if (d > 0.0f) {
+            if (mx == c.r) h = fmod((c.g - c.b) / d, 6.0f);
+            else if (mx == c.g) h = (c.b - c.r) / d + 2.0f;
+            else h = (c.r - c.g) / d + 4.0f;
+            h *= 60.0f;
+            if (h < 0.0f) h += 360.0f;
+        }
+        float s = mx > 0.0f ? d / mx : 0.0f;
+        float dist = fabs(h - k.x);
+        dist = min(dist, 360.0f - dist);
+        float weight = smoothstep(0.08f, 0.3f, s) * smoothstep(0.001f, 0.01f, mx);
+        float inside = 1.0f - smoothstep(k.y, k.y + k.z, dist);
+        float key = inside * weight;
+        float zone = 1.0f - smoothstep(k.y + k.z, 2.0f * k.y + k.z + 20.0f, dist);
+        float w = k.w * zone * weight * (1.0f - key);
+        float luma = dot(c, float3(0.2126f, 0.7152f, 0.0722f));
+        c = c + (float3(luma) - c) * w;
+        return key;
+    }
+
     inline float4 shadeLayer(VOut in, constant CompositeUniforms& u, texture2d<float> ty, texture2d<float> tc) {
         float cover = 1.0f;
         if (edgeAA(u)) {
@@ -120,6 +148,10 @@ enum CompositorShaderSource {
         }
         if (u.mode != 2 && u.linearize != 0) rgb = inverseOETF709(rgb);
         rgb = max(rgb, 0.0f);
+        if (u.mode != 2u && u.keyCount > 0u) {
+            texA *= 1.0f - applyChromaKey(u.key0, rgb);
+            if (u.keyCount > 1u) texA *= 1.0f - applyChromaKey(u.key1, rgb);
+        }
         float a = u.opacity * cover * texA;
         return float4(rgb * a, a);   // premultiplied
     }
