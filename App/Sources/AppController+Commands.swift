@@ -219,6 +219,7 @@ extension AppController {
         case .copy: tv.copy(nil); return true
         case .paste: tv.paste(nil); return true
         case .delete, .deleteProjectItems: tv.deleteBackward(nil); return true
+        case .find, .setPosterFrame, .clearPosterFrame, .toggleHoverScrub: return true     // Project-panel commands: not while typing
         default: return false
         }
     }

@@ -177,7 +177,7 @@ extension EditorSession {
         guard let t = activeTimeline else { return }
         let ranges = t.tracks.flatMap(\.clips).filter { selection.contains($0.id) }.map(\.timeline)
         guard let lo = ranges.map(\.start).min(), let hi = ranges.map(\.end).max() else { return }
-        attempt("Mark Selection") { $0.inOut = TimeRange(start: lo, end: hi) }
+        attempt("Mark Selection") { $0.setMarkedRange(TimeRange(start: lo, end: hi)) }
     }
 
     /// Shift+M / Cmd+Shift+M.

@@ -92,6 +92,10 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         #expect(m.commitTimecodeText("-100"))
         #expect(seeks == [s(2) + fd * 10, s(2) - fd * 5, .zero])
         #expect(!m.commitTimecodeText("+x"))
+        m.duration = s(3)
+        m.currentTime = s(2)
+        #expect(m.commitTimecodeText("+500"))
+        #expect(seeks.last == s(3) - fd)                                      // never past the last frame
     }
 }
 
@@ -209,6 +213,16 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         #expect(cmd(.char("p"), .option, .project) == .clearPosterFrame)
         #expect(cmd(.char("h"), .shift, .project) == .toggleHoverScrub)
         #expect(cmd(.char("f"), .command, .project) == .find)
+    }
+
+    @Test func menuKeysOfPanelScopedCommandsNeverCollideWithGlobalKeys() {
+        var globalKeys: [KeyBinding: EditorCommand] = [:]
+        for e in map.entries where e.scope == .global { globalKeys[e.binding] = e.command }
+        for c in EditorMenus.all.flatMap(\.commands) {
+            guard let b = map.binding(for: c) else { continue }
+            if let g = globalKeys[b] { #expect(g == c, "\(c) shows \(b) which is the global key of \(g)") }
+        }
+        #expect(map.binding(for: .playInToOut) == KeyBinding(.char("k"), .option))
     }
 
     @Test func projectKeysDoNotLeakIntoTheTimeline() {

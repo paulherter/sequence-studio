@@ -20,6 +20,7 @@ extension EditorSession {
         let hasAudio = ref.info?.audio != nil
         var endTime = Time.zero
         var noTarget = false
+        var fourPoint = false
         let done = attempt(mode == .insert ? "Insert" : "Overwrite") { tl in
             if adopts, let v = ref.info?.video {
                 tl.format = SequenceFormat(width: v.displayWidth, height: v.displayHeight,
@@ -30,21 +31,21 @@ extension EditorSession {
                 noTarget = true; throw EditError.clipNotFound
             }
             let fit = ref.info?.video.map { tl.format.fitScale(width: $0.displayWidth, height: $0.displayHeight) } ?? 1
-            // Whole sequence frames (a 24 fps clip in a 30 fps sequence, 60 in 25): round the length, stay inside the media.
-            let fd = tl.frameDuration
-            var d = source.duration.snapped(to: fd)
-            if d <= .zero { d = fd }
-            if !still, source.start + d > total { d = d - fd }
-            guard d > .zero else { throw EditError.emptyClip }
-            let placed = TimeRange(start: source.start, duration: d)
-            // Three-point rule: sequence In, else a sequence Out back-timed from the end, else the playhead.
-            let at = tl.sourceEditPlacement(sourceDuration: d, playhead: self.playhead).snapped(to: tl.frameDuration)
+            // Three-point rule (Adobe): sequence In and Out give the length, otherwise the source does; an Out alone is back-timed
+            // and cuts the source head when there is no room before it. Four marks: sequence range and source In.
+            let sm = tl.explicitMarks
+            guard let plan = Timeline.sourceEditPlan(sourceMarks: m, total: total, sequenceIn: sm.markIn, sequenceOut: sm.markOut,
+                                                     playhead: self.playhead, frameDuration: tl.frameDuration, isStill: still)
+            else { throw EditError.emptyClip }
+            fourPoint = plan.usedFourPointDefault
+            let placed = plan.source, at = plan.at, d = plan.source.duration
             try tl.threePointEdit(source: placed, media: id, name: ref.name, mediaDuration: still ? nil : total,
                                   isStill: still, initialScale: fit, targets: targets, at: at, mode: mode)
             endTime = at + d
         }
         if noTarget { setError("Target a track first (the V1 / A1 buttons in the track headers).") }
         if done { seek(to: endTime) }
+        if done, fourPoint { setError("Four marks set: used the sequence In/Out and the source In (no Fit Clip dialog yet).") }
         return done
     }
 }
@@ -83,18 +84,16 @@ extension EditorSession {
 }
 
 extension EditorSession {
-    /// Option+I: the sequence In goes back to the start (Out stays). Both cleared: no range at all.
+    /// Option+I: the sequence In goes away (Out stays). Both cleared: no range at all.
     public func clearIn() {
-        guard let io = activeTimeline?.inOut else { return }
-        let end = io.end
-        attempt("Clear In") { $0.inOut = end >= $0.duration ? nil : TimeRange(start: .zero, end: end) }
+        guard activeTimeline?.explicitMarks.markIn != nil else { return }
+        attempt("Clear In") { $0.clearIn() }
     }
 
-    /// Option+O: the sequence Out goes back to the end of the sequence (In stays).
+    /// Option+O: the sequence Out goes away (In stays, the range then runs to the end of the sequence).
     public func clearOut() {
-        guard let io = activeTimeline?.inOut else { return }
-        let start = io.start
-        attempt("Clear Out") { $0.inOut = start <= .zero ? nil : TimeRange(start: start, end: max($0.duration, start + $0.frameDuration)) }
+        guard activeTimeline?.explicitMarks.markOut != nil else { return }
+        attempt("Clear Out") { $0.clearOut() }
     }
 }
 

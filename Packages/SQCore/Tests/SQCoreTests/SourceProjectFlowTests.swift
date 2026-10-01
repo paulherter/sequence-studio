@@ -65,7 +65,7 @@ private func clip(media id: UUID, at start: Time = .zero) -> Clip {
         t.markOut(at: fd * 59)
         #expect(t.explicitMarks.markIn == nil && t.explicitMarks.markOut == fd * 60)
         t.markIn(at: fd * 30)
-        #expect(t.explicitMarks.markIn == fd * 30 && t.explicitMarks.markOut == nil)
+        #expect(t.explicitMarks.markIn == fd * 30 && t.explicitMarks.markOut == fd * 60)
         #expect(t.inOut == TimeRange(start: fd * 30, end: fd * 60))        // the Out stays
     }
 
@@ -86,11 +86,93 @@ private func clip(media id: UUID, at start: Time = .zero) -> Clip {
         #expect(t.sourceEditPlacement(sourceDuration: s(4), playhead: s(1)) == s(2))
     }
 
-    @Test func staleOutOnlyFlagIsIgnoredAfterAnotherChange() {
+    @Test func markClipAfterAnOutOnlyMarkMakesBothExplicit() {
         var t = timeline()
         t.markOut(at: fd * 59)
-        t.inOut = TimeRange(start: s(1), end: s(3))                          // something else rewrote the range
+        t.setMarkedRange(TimeRange(start: .zero, end: fd * 60))              // same numbers as the out-only range
+        #expect(t.explicitMarks.markIn == .zero && t.explicitMarks.markOut == fd * 60)
+        #expect(t.inOutKind == .both)
+    }
+
+    @Test func clearInAndOutKeepTheOtherMark() {
+        var t = timeline()
+        t.markIn(at: s(2)); t.markOut(at: s(5))
+        t.clearIn()
+        #expect(t.explicitMarks.markIn == nil && t.explicitMarks.markOut == s(5) + fd)
+        t.clearIn()                                                         // nothing left to clear
+        #expect(t.explicitMarks.markOut == s(5) + fd)
+        t.markIn(at: s(1))
+        t.clearOut()
+        #expect(t.explicitMarks.markIn == s(1) && t.explicitMarks.markOut == nil)
+        t.clearOut()
         #expect(t.explicitMarks.markIn == s(1))
+        t.markOut(at: s(3)); t.clearIn(); t.clearOut()
+        #expect(t.inOut == nil && t.inOutKind == nil)
+    }
+
+    @Test func rippleBeforeAnOutOnlyMarkKeepsItOutOnly() throws {
+        var t = timeline(duration: 10)
+        t.markOut(at: s(8) - fd)                                            // Out frame just before 8 s, no In
+        try t.addEdit(at: s(2), tracks: nil)
+        let second = t.tracks[0].clips[1].id
+        _ = try t.rippleDelete([t.tracks[0].clips[0].id])                   // removes 0..2 s, everything shifts left
+        #expect(second == t.tracks[0].clips[0].id)
+        #expect(t.explicitMarks.markIn == nil)
+        #expect(t.explicitMarks.markOut == s(6))                            // 8 s - 2 s
+        #expect(t.inOut?.start == .zero)
+    }
+
+    @Test func outOnlySurvivesSaveAndReload() throws {
+        var t = timeline()
+        t.markOut(at: s(5))
+        var p = Project(name: "P", timelines: [t])
+        let back = try ProjectFile.decode(try ProjectFile.encode(p), migrations: ProjectFile.migrations)
+        #expect(back.timelines[0].explicitMarks.markIn == nil)
+        #expect(back.timelines[0].explicitMarks.markOut == s(5) + fd)
+        p.timelines[0].markIn(at: s(1))
+        let back2 = try ProjectFile.decode(try ProjectFile.encode(p), migrations: ProjectFile.migrations)
+        #expect(back2.timelines[0].inOutKind == .both)
+    }
+}
+
+@Suite struct SourceEditPlanTests {
+    private func plan(_ m: SourceMarks, total: Int64 = 10, si: Time? = nil, so: Time? = nil, ph: Time = s(1)) -> SourceEditPlan? {
+        Timeline.sourceEditPlan(sourceMarks: m, total: s(total), sequenceIn: si, sequenceOut: so, playhead: ph, frameDuration: fd)
+    }
+
+    @Test func outOnlyBackTimesAndCutsTheSourceHeadWhenThereIsNoRoom() {
+        let m = SourceMarks(markIn: s(2), markOut: s(8))                     // 6 s of source
+        let roomy = plan(m, so: s(20))!
+        #expect(roomy.at == s(14) && roomy.source == TimeRange(start: s(2), end: s(8)))
+        let tight = plan(m, so: s(4))!                                       // only 4 s before the Out
+        #expect(tight.at == .zero)
+        #expect(tight.source == TimeRange(start: s(4), end: s(8)))           // head cut, tail kept: ends exactly at the Out
+        #expect(tight.source.duration == s(4))
+    }
+
+    @Test func sequenceInAndOutSetTheLengthAndSourceInChoosesThePart() {
+        let m = SourceMarks(markIn: s(3), markOut: nil)
+        let p = plan(m, si: s(10), so: s(14))!
+        #expect(p.at == s(10) && p.source == TimeRange(start: s(3), end: s(7)) && !p.usedFourPointDefault)
+        let none = plan(SourceMarks(), si: s(10), so: s(14))!
+        #expect(none.source == TimeRange(start: .zero, end: s(4)))
+        let outOnly = plan(SourceMarks(markIn: nil, markOut: s(9)), si: s(10), so: s(14))!
+        #expect(outOnly.source == TimeRange(start: s(5), end: s(9)))        // source Out only: ends at that Out
+    }
+
+    @Test func fourPointUsesSequenceRangeAndSourceInAndSaysSo() {
+        let p = plan(SourceMarks(markIn: s(2), markOut: s(9)), si: s(10), so: s(13))!
+        #expect(p.usedFourPointDefault && p.source == TimeRange(start: s(2), end: s(5)) && p.at == s(10))
+    }
+
+    @Test func shortSourceShortensTheClipAndPlainCasesStayAsBefore() {
+        let short = plan(SourceMarks(markIn: s(8)), si: s(0), so: s(5))!
+        #expect(short.source.duration <= s(2))
+        let inOnly = plan(SourceMarks(markIn: s(2), markOut: s(5)), si: s(7))!
+        #expect(inOnly.at == s(7) && inOnly.source.duration == s(3))
+        let none = plan(SourceMarks(markIn: s(2), markOut: s(5)), ph: s(4))!
+        #expect(none.at == s(4))
+        #expect(plan(SourceMarks(markIn: s(5), markOut: s(5))) == nil)
     }
 }
 

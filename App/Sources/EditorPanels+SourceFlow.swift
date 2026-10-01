@@ -36,7 +36,13 @@ extension EditorPanels {
         let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                self.timelineView.setCachedRanges(self.session.engine.cachedSpans)
+                // Only ask the cache when it (or the sequence) changed since the last look.
+                let key = [self.session.engine.cacheGeneration, self.session.activeTimeline?.duration.hashValue ?? 0,
+                           self.session.undoName?.hashValue ?? 0]
+                if key != self.lastCacheKey {
+                    self.lastCacheKey = key
+                    self.timelineView.setCachedRanges(self.session.engine.cachedSpans)
+                }
                 if showHUD { self.monitorModel.latencyText = self.session.engine.scrubLatencyText }
             }
         }

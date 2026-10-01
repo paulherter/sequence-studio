@@ -474,6 +474,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             if let tv = window?.firstResponder as? NSTextView, tv.isEditable || tv.isFieldEditor { return false }
             if window?.firstResponder is NSTableView { return false }
         }
+        if textResponder != nil, [.find, .setPosterFrame, .clearPosterFrame, .toggleHoverScrub].contains(c) { return false }
         // Typing in a text field: the standard editing commands belong to it.
         if textResponder != nil, [.cut, .copy, .paste, .delete, .deleteProjectItems].contains(c) { return true }
         if ([.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus), let enabled = validateInEffectControls(c) { return enabled }

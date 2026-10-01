@@ -24,23 +24,24 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         let (session, _, m) = makeSession()
         session.setSourceMarks(SourceMarks(markIn: s(2), markOut: s(5)), for: m.id)        // 3 s of source
         session.seek(to: s(20)); session.markOut()                                          // Out frame at 20 s, no In
+        let outEnd = session.activeTimeline!.inOut!.end                                     // stored end: one frame past the Out frame
         session.seek(to: s(1))
         #expect(session.sourceEdit(media: m.id, mode: .overwrite))
         let clips = session.activeTimeline!.tracks.flatMap(\.clips)
-        let fd = session.activeTimeline!.frameDuration
-        // The clip ends with the Out frame: [20 s + 1 frame - 3 s, 20 s + 1 frame).
-        #expect(clips.allSatisfy { $0.start == s(20) + fd - s(3) })
-        #expect(clips.allSatisfy { $0.timeline.end == s(20) + fd })
+        #expect(!clips.isEmpty)
+        #expect(clips.allSatisfy { $0.start == outEnd - s(3) })
+        #expect(clips.allSatisfy { $0.timeline.end == outEnd })
     }
 
     @Test func sequenceInStillWinsOverAnOut() {
         let (session, _, m) = makeSession()
         session.setSourceMarks(SourceMarks(markIn: s(2), markOut: s(5)), for: m.id)
         session.seek(to: s(4)); session.markIn()
+        let inAt = session.playhead
         session.seek(to: s(30)); session.markOut()
         session.seek(to: .zero)
         #expect(session.sourceEdit(media: m.id, mode: .overwrite))
-        #expect(session.activeTimeline!.tracks.flatMap(\.clips).allSatisfy { $0.start == s(4) })
+        #expect(session.activeTimeline!.tracks.flatMap(\.clips).allSatisfy { $0.start == inAt })
     }
 
     @Test func markInAndOutAreOneUndoStepEach() {
@@ -107,5 +108,100 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         session.setOutPoint(at: s(5))
         #expect(session.activeTimeline?.inOut == TimeRange(start: s(2), end: s(5) + session.activeTimeline!.frameDuration))
         #expect(session.undoName == "Mark Out")
+    }
+
+    @Test func reverseRangePlaybackParksOnTheInFrameForwardOnTheOutFrame() {
+        let (session, engine, m) = makeSession()
+        _ = session.sourceEdit(media: m.id, mode: .overwrite)
+        session.seek(to: s(4)); session.markIn()
+        let inAt = session.playhead
+        session.seek(to: s(6)); session.markOut()
+        let fd = session.activeTimeline!.frameDuration
+        let outFrame = session.playhead
+        session.playInToOut()
+        // J while playing In to Out: reverse inside the range reaches the In frame and stops exactly there.
+        engine.play(PlaybackRate(-1))
+        engine.simulatePlayback(advance: .zero - (engine.position - inAt))
+        #expect(!session.isPlaying)
+        #expect(session.playhead == inAt)
+        // Forward ends on the Out frame.
+        session.playInToOut()
+        engine.simulatePlayback(advance: outFrame - engine.position)
+        #expect(!session.isPlaying && session.playhead == outFrame)
+        #expect(outFrame + fd == session.activeTimeline!.inOut!.end)
+    }
+
+    @Test func reversePlayAroundReturnsToTheStart() {
+        let (session, engine, m) = makeSession()
+        _ = session.sourceEdit(media: m.id, mode: .overwrite)
+        session.seek(to: s(5))
+        let here = session.playhead
+        session.playAround(preroll: s(3), postroll: s(2))
+        engine.play(PlaybackRate(-1))
+        engine.simulatePlayback(advance: .zero - s(10))
+        #expect(!session.isPlaying)
+        #expect(session.playhead == here && session.bounds.range == nil)
+    }
+
+    @Test func changingTheActiveSequenceStopsPlaybackAndClearsTheRange() {
+        let (session, engine, m) = makeSession()
+        _ = session.sourceEdit(media: m.id, mode: .overwrite)
+        session.perform("New") { $0.timelines.append(Timeline(name: "Short", frameDuration: Time(1, 30))) }
+        session.seek(to: s(6))
+        session.playAround(preroll: s(1), postroll: s(1))
+        #expect(session.isPlaying && session.bounds.returnTo != nil)
+        let other = session.project.timelines.last!.id
+        session.setActiveTimeline(other)
+        #expect(!session.isPlaying && engine.rate.isPaused)
+        #expect(session.bounds.range == nil && session.bounds.returnTo == nil)
+        #expect(session.playhead == .zero)                                  // clamped into the empty sequence
+    }
+
+    @Test func deletingTheActiveSequenceDoesTheSame() {
+        let (session, _, m) = makeSession()
+        _ = session.sourceEdit(media: m.id, mode: .overwrite)
+        session.perform("New") { $0.timelines.append(Timeline(name: "Short", frameDuration: Time(1, 30))) }
+        session.seek(to: s(6))
+        session.playInToOut()
+        let first = session.activeTimelineID!
+        session.perform("Delete") { _ = $0.deleteSequence(first) }
+        #expect(session.activeTimelineID != first)
+        #expect(!session.isPlaying && session.bounds.range == nil)
+        #expect(session.playhead == .zero)
+    }
+
+    @Test func outOnlyEditCutsTheSourceHeadWhenThereIsNoRoom() {
+        let (session, _, m) = makeSession()
+        session.setSourceMarks(SourceMarks(markIn: s(2), markOut: s(8)), for: m.id)       // 6 s
+        session.seek(to: s(3)); session.markOut()                                          // Out frame at 3 s: 3 s + 1 frame of room
+        #expect(session.sourceEdit(media: m.id, mode: .overwrite))
+        let fd = session.activeTimeline!.frameDuration
+        let clips = session.activeTimeline!.tracks.flatMap(\.clips)
+        #expect(clips.allSatisfy { $0.start == .zero && $0.timeline.end == s(3) + fd })
+        #expect(clips.allSatisfy { $0.source.end == s(8) })
+    }
+
+    @Test func fourMarksUseTheSequenceRangeAndSaySo() {
+        let (session, _, m) = makeSession()
+        session.setSourceMarks(SourceMarks(markIn: s(1), markOut: s(9)), for: m.id)
+        session.seek(to: s(4)); session.markIn()
+        session.seek(to: s(6)); session.markOut()
+        let range = session.activeTimeline!.inOut!
+        #expect(session.sourceEdit(media: m.id, mode: .overwrite))
+        let c = session.activeTimeline!.tracks.flatMap(\.clips)[0]
+        let off = c.timeline.duration - range.duration           // the empty sequence adopts the clip's frame grid: within a frame
+        #expect(c.start == range.start && c.source.start == s(1) && (off < Time(1, 20) && Time(-1, 20) < off))
+        #expect(session.lastError?.contains("Four marks") == true)
+    }
+
+    @Test func clearInKeepsTheOutAndClearOutKeepsTheIn() {
+        let (session, _, _) = makeSession()
+        session.seek(to: s(1)); session.markIn()
+        session.seek(to: s(3)); session.markOut()
+        session.clearIn()
+        #expect(session.activeTimeline?.explicitMarks.markIn == nil && session.activeTimeline?.explicitMarks.markOut != nil)
+        session.seek(to: s(1)); session.markIn()
+        session.clearOut()
+        #expect(session.activeTimeline?.explicitMarks.markIn != nil && session.activeTimeline?.explicitMarks.markOut == nil)
     }
 }

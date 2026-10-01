@@ -123,11 +123,13 @@ public final class MonitorPanelModel {
     }
 
     /// Returns false (and does not seek) when the text is not a valid timecode. `+10` / `-5` move relative to the
-    /// current time (frames; `+1:00` is a timecode amount), never before 0 (Premiere).
+    /// current time (frames; `+1:00` is a timecode amount), never before 0 or past the last frame (Premiere).
     @discardableResult
     public func commitTimecodeText(_ text: String) -> Bool {
         if let off = timecode.parseRelative(text) {
-            onSeek?(max(.zero, currentTime + off))
+            let last = duration > .zero ? max(.zero, duration - frameDuration) : nil
+            let target = max(.zero, currentTime + off)
+            onSeek?(last.map { min(target, $0) } ?? target)
             return true
         }
         guard let t = timecode.parse(text) else { return false }

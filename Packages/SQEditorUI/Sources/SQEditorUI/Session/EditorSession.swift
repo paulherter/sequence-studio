@@ -188,11 +188,27 @@ public final class EditorSession {
 
     public func setActiveTimeline(_ id: Timeline.ID) {
         guard project.timeline(id) != nil, id != activeTimelineID else { return }
+        stopForSequenceChange()
         activeTimelineID = id
         selection = []; captionSelection = []
         syncMedia()
         pushTimeline(force: true)
+        clampPlayheadToActiveSequence()
         notify([.project, .selection])
+    }
+
+    /// A different sequence becomes active: playback stops and the Play In to Out / Play Around range and return point of
+    /// the old one are dropped (Loop stays as the user set it).
+    private func stopForSequenceChange() {
+        if isPlaying || !engine.rate.isPaused { engine.pause(); isPlaying = false; notify(.transport) }
+        bounds = PlaybackBounds(loop: bounds.loop)
+    }
+
+    /// Puts the playhead on a frame of the (new) active sequence.
+    private func clampPlayheadToActiveSequence() {
+        let end = activeTimeline?.duration ?? .zero
+        let last = max(.zero, end - frameDuration)
+        if playhead > last { seek(to: last) } else { engine.seek(to: playhead) }
     }
 
     /// Withdraws every undo step above `depth` (Type tool: an empty text box leaves no trace). No redo entries remain.
@@ -205,11 +221,16 @@ public final class EditorSession {
     public func foldUndo(fromDepth depth: Int, name: String) { history.squash(fromDepth: depth, name: name) }
 
     private func projectDidChange() {
+        let before = activeTimelineID
         if let id = activeTimelineID, project.timeline(id) == nil { activeTimelineID = nil }
-        if activeTimelineID == nil { activeTimelineID = project.activeTimeline.flatMap { project.timeline($0) }?.id ?? project.timelines.first?.id }
+        if activeTimelineID == nil {
+            activeTimelineID = project.activeTimeline.flatMap { project.timeline($0) }?.id ?? project.timelines.first?.id
+            if activeTimelineID != before { stopForSequenceChange() }
+        }
         pruneSelection()
         syncMedia()
         pushTimeline(force: false)
+        if activeTimelineID != before { clampPlayheadToActiveSequence() }
         notify([.project, .selection])
     }
 
@@ -312,8 +333,9 @@ public final class EditorSession {
             notify(.playhead)
             return
         case .stop(let at) where bounds.range != nil:
-            // The range end is exclusive: park on its last frame (the Out frame).
-            engine.pause(); isPlaying = false; playhead = max(.zero, at - frameDuration)
+            // Forward: the range end is exclusive, park on its last frame (the Out frame). Reverse stops at the In frame itself.
+            let reverse = rate.isReverse
+            engine.pause(); isPlaying = false; playhead = reverse ? at : max(.zero, at - frameDuration)
             notify([.playhead, .transport])
             return
         case .stopAndReturn(let back):
@@ -594,12 +616,12 @@ public final class EditorSession {
         guard let t = activeTimeline else { return }
         let targeted = t.tracks.filter(\.isTargeted).map(\.id)
         guard let range = t.markClipRange(at: playhead, tracks: targeted.isEmpty ? nil : targeted) else { return }
-        attempt("Mark Clip") { $0.inOut = range }
+        attempt("Mark Clip") { $0.setMarkedRange(range) }
     }
 
     public func clearInOut() {
         guard activeTimeline?.inOut != nil else { return }
-        attempt("Clear In and Out") { $0.inOut = nil }
+        attempt("Clear In and Out") { $0.setMarkedRange(nil) }
     }
 
     public func addMarkerAtPlayhead() {

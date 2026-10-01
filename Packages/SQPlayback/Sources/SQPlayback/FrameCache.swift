@@ -40,12 +40,14 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
         var used = 0
         var seq: UInt64 = 0
         var passes = 0
+        var generation = 0
         var playhead: Time = .zero
         var direction = 0
         var mapping: Mapping = { $0.pts }
 
         mutating func store(_ payload: Payload, _ key: FrameKey, cost: Int) {
             seq += 1
+            generation += 1
             entries[key] = Entry(payload: payload, cost: cost, seq: seq)
             used += cost
             let ik = IndexKey(media: key.media, scale: key.scale)
@@ -57,6 +59,7 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
         @discardableResult
         mutating func remove(_ key: FrameKey) -> Entry? {
             guard let e = entries.removeValue(forKey: key) else { return nil }
+            generation += 1
             used -= e.cost
             let ik = IndexKey(media: key.media, scale: key.scale)
             if var arr = index[ik] {
@@ -103,6 +106,8 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
 
     public var usedBytes: Int { state.withLock { $0.used } }
     public var count: Int { state.withLock { $0.entries.count } }
+    /// Bumped on every insert, removal and clear: lets a poller skip `cachedRanges` when nothing changed.
+    public var generation: Int { state.withLock { $0.generation } }
     /// Number of eviction passes started (for tests and stats).
     var evictionPasses: Int { state.withLock { $0.passes } }
 
@@ -170,7 +175,7 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
     }
 
     public func removeAll() {
-        state.withLock { $0.entries.removeAll(); $0.index.removeAll(); $0.used = 0 }
+        state.withLock { $0.entries.removeAll(); $0.index.removeAll(); $0.used = 0; $0.generation += 1 }
     }
 
     /// Scores `snap` (plus the candidate) outside the lock, then removes victims until `used <= target`.

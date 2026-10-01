@@ -44,6 +44,8 @@ public protocol ProgramEngine: AnyObject {
     var audioScrubbing: Bool { get set }
     /// Timeline spans with cached frames (ruler strip); empty for stand-ins.
     var cachedSpans: [TimeRange] { get }
+    /// Changes whenever the frame cache does (poll gate for `cachedSpans`).
+    var cacheGeneration: Int { get }
     /// Debug HUD text with the scrub latency; nil when nothing was measured or for stand-ins.
     var scrubLatencyText: String? { get }
 }
@@ -57,6 +59,7 @@ extension ProgramEngine {
     public var meterReading: (sequence: Int, peaks: [Float])? { nil }
     public var audioScrubbing: Bool { get { true } set {} }
     public var cachedSpans: [TimeRange] { [] }
+    public var cacheGeneration: Int { 0 }
     public var scrubLatencyText: String? { nil }
 }
 

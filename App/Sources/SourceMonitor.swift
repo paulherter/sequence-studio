@@ -271,7 +271,8 @@ final class SourceMonitorController {
             return
         case .stop(let at):
             // Park on the last frame (the end itself is one frame past the picture).
-            let parked = max(.zero, min(at, duration) - frameDuration)
+            // Reverse playback stops on the range start itself.
+            let parked = rate.isReverse ? max(.zero, at) : max(.zero, min(at, duration) - frameDuration)
             pause(); position = parked; model.currentTime = parked
             engine.seek(to: parked)
             return

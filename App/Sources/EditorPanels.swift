@@ -45,6 +45,7 @@ final class EditorPanels {
     private var trackHeightsFor: Timeline.ID?
     private var pagingTimeline = false
     private var wasPlaying = false
+    var lastCacheKey: [Int] = []
 
     /// A panel was clicked or received a command: move keyboard focus (and shortcut scope) there.
     var onFocus: ((PanelID) -> Void)?

@@ -372,7 +372,9 @@ extension Timeline {
         guard let r = inOut else { return }
         let floor = editPoint + min(delta, .zero)
         func shifted(_ p: Time) -> Time { p >= editPoint ? p + delta : (p >= floor ? floor : p) }
-        let n = TimeRange(start: shifted(r.start), end: shifted(r.end))
+        let outOnly = explicitMarks.markIn == nil
+        let n = TimeRange(start: outOnly ? r.start : shifted(r.start), end: shifted(r.end))
         inOut = n.isEmpty ? nil : n
+        if inOut == nil { inOutKind = nil }
     }
 }
