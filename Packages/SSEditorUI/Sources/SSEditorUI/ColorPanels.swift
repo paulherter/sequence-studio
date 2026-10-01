@@ -1,5 +1,6 @@
 import AppKit
 import SSCore
+import SSRender
 
 /// Color inspector panel of the Color page: the colour controls of the selected picture clip.
 /// Edits `Clip.color` through `session.replaceClip` (one undo step per gesture); the Program monitor follows because the
@@ -46,6 +47,7 @@ public final class ColorInspectorPanelView: NSView {
             model.onGestureBegan = { [weak self] in self?.beginGesture() }
             model.onGestureEnded = { [weak self] in self?.endGesture() }
             model.onChange = { [weak self] _ in self?.commit(id) }
+            model.onPickWhiteBalance = { [weak self] effect in self?.pickWhiteBalance(clip: id, effect: effect) }
             colorModels[id] = model
             views[id] = InspectorScroll(content: ColorInspectorView(model: model))
         }
@@ -60,6 +62,19 @@ public final class ColorInspectorPanelView: NSView {
         }
         emptyLabel.isHidden = page != nil
         needsLayout = true
+    }
+
+    /// White-balance eyedropper: the next click on the Program monitor samples the rendered frame; Temperature and Tint
+    /// are set so the picked colour becomes neutral (one undo step).
+    private func pickWhiteBalance(clip id: Clip.ID, effect: Int) {
+        ColorPickHub.shared.begin { [weak self] pos in
+            guard let self, let pos, let model = self.colorModels[id],
+                  let tex = self.session.engine.lastRenderedTexture,
+                  let rgb = FrameSampler.meanColor(of: tex, at: pos),
+                  let r = WhiteBalanceSolver.solve(picked: rgb, temperature: model.value(effect, .temperature),
+                                                   tint: model.value(effect, .tint)) else { NSSound.beep(); return }
+            model.setWhiteBalance(effect, temperature: r.temperature, tint: r.tint)
+        }
     }
 
     private var gestureDepth = 0

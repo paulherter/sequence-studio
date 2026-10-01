@@ -161,7 +161,7 @@ public final class ColorInspectorView: NSView {
         let multiple = model.effects.count > 1
         for (n, e) in model.effects.enumerated() {
             let v = ColorEffectView(effect: e.id)
-            if multiple { addEffectTitle(to: v, effect: e.id, number: n + 1) }
+            addEffectTitle(to: v, effect: e.id, number: n + 1, removable: multiple)
             for kind in ColorSectionKind.allCases {
                 v.addArrangedSubview(separator())
                 v.arrangedSubviews.last.map { $0.widthAnchor.constraint(equalTo: v.widthAnchor).isActive = true }
@@ -177,17 +177,29 @@ public final class ColorInspectorView: NSView {
         builtSignature = model.effects.map(\.id)
     }
 
-    private func addEffectTitle(to v: ColorEffectView, effect: Int, number: Int) {
+    private func addEffectTitle(to v: ColorEffectView, effect: Int, number: Int, removable: Bool) {
         let t = NSTextField(labelWithString: number == 1 ? "Colour" : "Colour \(number)")
         t.font = Theme.Fonts.bodyTitle
         t.textColor = Theme.Colors.label
-        let remove = NSButton(title: "Remove", target: self, action: #selector(removeEffect(_:)))
-        remove.controlSize = .small
-        remove.bezelStyle = .accessoryBarAction
-        remove.font = Theme.Fonts.small
-        remove.tag = effect
-        remove.setAccessibilityLabel("Remove \(t.stringValue)")
-        let row = NSStackView(views: [t, NSView(), remove])
+        var views: [NSView] = [t, NSView()]
+        let reset = NSButton(title: "Reset", target: self, action: #selector(resetEffectPressed(_:)))
+        reset.controlSize = .small
+        reset.bezelStyle = .accessoryBarAction
+        reset.font = Theme.Fonts.small
+        reset.tag = effect
+        reset.toolTip = "Reset every section of this effect"
+        reset.setAccessibilityLabel("Reset \(t.stringValue)")
+        views.append(reset)
+        if removable {
+            let remove = NSButton(title: "Remove", target: self, action: #selector(removeEffect(_:)))
+            remove.controlSize = .small
+            remove.bezelStyle = .accessoryBarAction
+            remove.font = Theme.Fonts.small
+            remove.tag = effect
+            remove.setAccessibilityLabel("Remove \(t.stringValue)")
+            views.append(remove)
+        }
+        let row = NSStackView(views: views)
         row.orientation = .horizontal
         row.alignment = .centerY
         row.edgeInsets = NSEdgeInsets(top: Theme.Spacing.sm, left: Theme.Spacing.md, bottom: Theme.Spacing.xs, right: Theme.Spacing.md)
@@ -243,10 +255,10 @@ public final class ColorInspectorView: NSView {
             let group = makeGroup(v, title: g.group ?? "")
             if g.group == "Color" {
                 let eyedropper = NSButton(image: NSImage(systemSymbolName: "eyedropper", accessibilityDescription: "White balance picker") ?? NSImage(),
-                                          target: nil, action: nil)
+                                          target: self, action: #selector(pickWhiteBalance(_:)))
                 eyedropper.isBordered = false
-                eyedropper.isEnabled = false
-                eyedropper.toolTip = "Pick white balance from the Program monitor: not available yet"
+                eyedropper.tag = v.effect
+                eyedropper.toolTip = "Click a neutral grey or white area in the Program monitor to set the white balance"
                 let l = NSTextField(labelWithString: "White Balance")
                 l.font = Theme.Fonts.small
                 l.textColor = Theme.Colors.label2
@@ -255,7 +267,6 @@ public final class ColorInspectorView: NSView {
                 row.orientation = .horizontal
                 row.alignment = .centerY
                 row.spacing = Theme.Spacing.sm
-                row.alphaValue = 0.4
                 pin(row, in: group.content, inset: Theme.Spacing.lg)
             }
             for p in g.params { pin(paramRow(v, p), in: group.content, inset: Theme.Spacing.lg) }
@@ -438,6 +449,8 @@ public final class ColorInspectorView: NSView {
 
     @objc private func addEffect() { model.addEffect() }
     @objc private func removeEffect(_ b: NSButton) { model.removeEffect(b.tag) }
+    @objc private func resetEffectPressed(_ b: NSButton) { model.resetEffect(b.tag) }
+    @objc private func pickWhiteBalance(_ b: NSButton) { model.onPickWhiteBalance?(b.tag) }
 
     @objc private func switchToggled(_ s: NSSwitch) {
         let parts = (s.identifier?.rawValue ?? "").split(separator: "|")

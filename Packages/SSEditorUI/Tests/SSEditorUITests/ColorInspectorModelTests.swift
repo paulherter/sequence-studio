@@ -115,6 +115,32 @@ import SSRender
         #expect(began == 2 && ended == 2 && m.value(e1, .tint) == 0)
     }
 
+    @Test func whiteBalanceIsOneGestureAndClamps() {
+        let m = model()
+        var began = 0, ended = 0
+        m.onGestureBegan = { began += 1 }
+        m.onGestureEnded = { ended += 1 }
+        m.setWhiteBalance(e1, temperature: -35.5, tint: 140)
+        #expect(m.value(e1, .temperature) == -35.5 && m.value(e1, .tint) == 100)
+        #expect(began == 1 && ended == 1)
+    }
+
+    @Test func resetEffectKeepsTogglesAndOtherEffects() {
+        let m = model()
+        m.addEffect()
+        m.set(e1, .contrast, 30); m.set(e1, .vignetteAmount, -2); m.set(2, .exposure, 1)
+        m.setWheel(e1, .shadows, hue: 10, amount: 0.5)
+        m.setEnabled(e1, .creative, false)
+        var began = 0
+        m.onGestureBegan = { began += 1 }
+        m.resetEffect(e1)
+        #expect(began == 1, "one undo step")
+        #expect(m.value(e1, .contrast) == 0 && m.value(e1, .vignetteAmount) == 0 && m.wheel(e1, .shadows).value.isNeutral)
+        #expect(!m.isEnabled(e1, .creative), "toggles stay")
+        #expect(m.value(2, .exposure) == 1)
+        #expect(m.lutChoice(e1, .input) == .automatic, "the first effect's Input LUT returns to automatic")
+    }
+
     @Test func wheelsAndTintsStoreHueAmountAndLuma() {
         let m = model()
         m.setWheel(e1, .shadows, hue: 210, amount: 1.4)

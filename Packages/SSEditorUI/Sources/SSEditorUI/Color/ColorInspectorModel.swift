@@ -304,6 +304,19 @@ public final class ColorInspectorModel {
         gesture { edit { $0.resetSection(kind, in: effect) } }
     }
 
+    /// Premiere's per-effect Reset: every section of one Colour effect back to its defaults (toggles stay). One undo step.
+    public func resetEffect(_ effect: Int) {
+        gesture { for k in ColorSectionKind.allCases { edit { $0.resetSection(k, in: effect) } } }
+    }
+
+    /// Sets Temperature and Tint together (white-balance eyedropper). One undo step.
+    public func setWhiteBalance(_ effect: Int, temperature: Float, tint: Float) {
+        gesture { set(effect, .temperature, temperature); set(effect, .tint, tint) }
+    }
+
+    /// The white-balance eyedropper was pressed for this effect; the host starts the pick.
+    public var onPickWhiteBalance: ((Int) -> Void)?
+
     /// Back to one default effect (keeps "interpret as").
     public func resetAll() {
         gesture {

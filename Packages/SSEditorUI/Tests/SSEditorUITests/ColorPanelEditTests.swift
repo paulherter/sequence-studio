@@ -122,9 +122,8 @@ import SSCore
         #expect(m.value(1, .vignetteAmount) == -2 && row.slider.value == -2)
         row.onReset?()
         #expect(m.value(1, .vignetteAmount) == 0)
-        // Typing into the value field commits (comma or dot).
-        row.field.stringValue = "1,5"
-        _ = row.field.sendAction(row.field.action, to: row.field.target)
+        // Scrubbing / typing in the value field is one gesture and reaches the model.
+        row.field.onBegin?(); row.field.onChange?(1.5); row.field.onEnd?(1.5)
         #expect(m.value(1, .vignetteAmount) == 1.5)
         // The switch disables the section; HSL Secondary is a disabled placeholder.
         let toggle = basic.header.toggle
