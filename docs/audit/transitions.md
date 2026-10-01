@@ -24,9 +24,9 @@ and the Claremont help book (shortcuts). "(unverified)" = from memory.
 | Double-click | "Set Transition Duration" dialog | same sheet (timecode or digits) | none | yes |
 | Effect Controls | Duration, Alignment, preview | Duration (timecode field) and Alignment while a transition is selected | preview, Start/End sliders, Border, Reverse | partly |
 | Context menu | on a cut: Apply Default Transitions; on a transition: Set Transition Duration, Clear | same | none | yes |
-| Rendering space | Cross dissolve in the sequence colour space | Linear-light working space of the compositor (Rec.709 primaries): `(1-w)A + wB` as A at full opacity plus B at opacity w. Exact for opaque pictures; a transparent overlay (V2+) fades in but its out-going side does not fade out where the incoming picture is transparent | alpha-correct two-layer dissolve | no |
+| Rendering space | Cross dissolve in the sequence colour space | Linear-light working space (Rec.709 primaries): the pair is summed as premultiplied colour `A(1-w) + Bw` in an offscreen canvas (`RenderNode.pair`, additive blend) and composited over the tracks below, so letterboxed, transparent, nested clips and V2 overlays fade correctly | none | yes |
 | Dip colour | | solid layer under the faded clips; covers the lower tracks while it dips | | no |
-| Audio | Constant Power cos/sin, Constant Gain linear | per-sample gain curves in `AudioFeeder` (shared by playback and export), 256-frame linear interpolation of the curve; both clips play into their handles | retimed (speed != 100 %, pitch kept) incoming clips are silent in the head extension: the stretcher's grain grid starts at the clip start | partly |
+| Audio | Constant Power cos/sin, Constant Gain linear | per-sample gain curves in `AudioFeeder` (shared by playback and export), 256-frame linear interpolation of the curve; both clips play into their handles | retimed clips with pitch kept play in the head extension too (grain grid extends before the clip start) | none | yes |
 | Project file | | v17: `Track.transitions`, identity migration; older builds drop them on save | none | yes |
 
 ## Weights
@@ -40,3 +40,12 @@ Audio: progress p = (t - span.start) / duration per sample time; Constant Power 
 - Export frames at 25 / 50 / 75 % of a 20-frame dissolve of pure red into pure green match the linear-light blend within 3/255 (an encoded-space blend would be 128 at the middle, linear light gives 180).
 - Playback, 1080p30 H.264 pair (both clips decoded inside the span), HostClock ticks every 8 ms, 5 s through a 1 s dissolve: 150 presented, 0 dropped; tick mean 1.44 ms (max 9.1 ms) against 1.07 ms (max 5.0 ms) for the same plain cut; decode calls 20 vs 17. Opt-in test `SQ_PERF=1` (`TransitionPlaybackTests.dissolveFiveSecondPlayAt1080p`; writing the clip takes ~110 s).
 - Not click-tested; the timeline box and Effect Controls panel were rendered offscreen once (2x) and look right.
+
+## Round 2 fixes
+
+- A clip holds at most its own length of transition frames: the earlier (head) transition keeps its request, the later one is clamped; video and audio use the same resolve.
+- Split / razor / add edit retarget the tail transition (cut or fade-out) to the right half; the head stays on the left half. Copy / paste / duplicate of clips carries the transitions between them.
+- Disabled clips never show or sound in a transition (the other side fades alone).
+- Boxes answer only to the Selection tool; the clip edge at the cut stays trimmable (6 pt slop); Shift / Cmd click keeps the clip selection.
+- Scrub hold counts dip solids as neutral and holds when a transition side is cold.
+- Evaluation cost per call (debug build, 200 clips, 50 transitions per track): videoLayers 1561 us -> 47 us, audioSegments 2555 us -> 71 us (binary search + neighbour lookup instead of resolving every transition).
