@@ -110,6 +110,17 @@ final class ProgressBox: @unchecked Sendable {
     var values: [Double] { lock.lock(); defer { lock.unlock() }; return _v }
 }
 
+/// Blocks in every frame request until the task is cancelled (a deterministic "running job", no timing).
+struct HoldSource: FrameSource {
+    let inner: TestPatternSource
+    var frameCount: Int { inner.frameCount }
+    var frameDuration: Time { inner.frameDuration }
+    func frame(at index: Int) async throws -> CVPixelBuffer {
+        try await Task.sleep(for: .seconds(3600))
+        return try await inner.frame(at: index)
+    }
+}
+
 struct SlowSource: FrameSource {
     let inner: TestPatternSource
     var frameCount: Int { inner.frameCount }

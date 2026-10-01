@@ -4,11 +4,14 @@ import SQCore
 @testable import SQExport
 
 @Suite struct ExportQueueTests {
-    func job(_ name: String, dir: URL, frames: Int = 6, slow: Bool = false, fail: Bool = false) -> ExportJob {
+    func job(_ name: String, dir: URL, frames: Int = 6, slow: Bool = false, hold: Bool = false, fail: Bool = false) -> ExportJob {
         ExportJob(name: name, settings: smallSettings(codec: .h264), outputDirectory: dir) {
             let p = TestPatternSource(width: 64, height: 112, frameCount: frames, frameDuration: Time(1, 30))
             if fail { throw ExportError.emptySource }
-            return ExportSources(video: slow ? SlowSource(inner: p) : p, audio: nil)
+            var video: any FrameSource = p
+            if slow { video = SlowSource(inner: p) }
+            if hold { video = HoldSource(inner: p) }
+            return ExportSources(video: video, audio: nil)
         }
     }
 
@@ -104,9 +107,13 @@ import SQCore
     @Test func cancelRunningJobContinuesWithNext() async throws {
         let dir = try makeTempDir(); defer { try? FileManager.default.removeItem(at: dir) }
         let q = ExportQueue()
-        let a = await q.enqueue(job("Slow", dir: dir, frames: 300, slow: true)), b = await q.enqueue(job("Next", dir: dir))
+        let a = await q.enqueue(job("Slow", dir: dir, frames: 300, hold: true)), b = await q.enqueue(job("Next", dir: dir))
+        // No wall-clock wait: the job blocks inside its first frame until it is cancelled, and the test waits for the
+        // queue's own `.running` event. (The old 10 s polling loop timed out when the cooperative pool was starved by
+        // other suites and the runner task was scheduled late; the queue itself has no race here.)
+        let events = await q.updates()
         let runner = Task { await q.runAll() }
-        #expect(await waitUntil { await q.status(a)?.state == .running })
+        for await u in events where u.id == a && u.state == .running { break }
         await q.cancel(a)
         await runner.value
         #expect(await q.status(a)?.state == .cancelled)

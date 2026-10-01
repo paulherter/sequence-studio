@@ -91,14 +91,22 @@ private func bgraRegionSum(_ pb: CVPixelBuffer, x: Range<Int>, y: Range<Int>) ->
         #expect(try await provider.frame(media: UUID(), at: .zero) == nil)
     }
 
+    /// Same media, text track removed. Two separately encoded fixtures are NOT pixel-identical (the H.264 encodes differ
+    /// slightly per run), which made the byte-exact comparisons below flaky: they must share one media file.
+    fileprivate func withoutText(_ f: Fixture) -> Fixture {
+        var tl = f.timeline
+        tl.tracks.removeAll { $0.clips.contains { $0.generator != nil } }
+        return Fixture(timeline: tl, resolver: f.resolver, textClip: f.textClip)
+    }
+
+    fileprivate func textSource(_ f: Fixture) throws -> TimelineFrameSource {
+        try TimelineFrameSource(timeline: f.timeline, provider: DecoderFrameProvider(resolver: f.resolver),
+                                width: 320, height: 180, frameDuration: fd, frameCount: 60)
+    }
+
     @Test func textLayerAppearsOnlyWhileTheClipIsActive() async throws {
         let withText = try await makeFixture(withText: true)
-        let without = try await makeFixture(withText: false)
-        func source(_ f: Fixture) throws -> TimelineFrameSource {
-            try TimelineFrameSource(timeline: f.timeline, provider: DecoderFrameProvider(resolver: f.resolver),
-                                    width: 320, height: 180, frameDuration: fd, frameCount: 60)
-        }
-        let a = try source(withText), b = try source(without)
+        let a = try textSource(withText), b = try textSource(withoutText(withText))
         let centre = 100..<220, rows = 60..<120
         // Frame 5 (0.167 s): no text yet, identical to the text-free render.
         #expect(bgraRegionSum(try await a.frame(at: 5), x: centre, y: rows) == bgraRegionSum(try await b.frame(at: 5), x: centre, y: rows))
@@ -106,6 +114,32 @@ private func bgraRegionSum(_ pb: CVPixelBuffer, x: Range<Int>, y: Range<Int>) ->
         #expect(bgraRegionSum(try await a.frame(at: 25), x: centre, y: rows) != bgraRegionSum(try await b.frame(at: 25), x: centre, y: rows))
         // Frame 50 (1.67 s): text is gone again.
         #expect(bgraRegionSum(try await a.frame(at: 50), x: centre, y: rows) == bgraRegionSum(try await b.frame(at: 50), x: centre, y: rows))
+    }
+
+    /// Export must render text synchronously: never skip the layer because the raster is not cached (playback's
+    /// "invisible until prewarmed" rule must not leak into export). Cold cache, and a task that keeps evicting the
+    /// cache and re-prewarming while frames render.
+    @Test func exportNeverSkipsTextWithColdOrThrashedRasterCache() async throws {
+        let withText = try await makeFixture(withText: true)
+        let a = try textSource(withText), b = try textSource(withoutText(withText))
+        let centre = 100..<220, rows = 60..<120
+        let ref = try #require(withText.textClip.generator)
+        let base = bgraRegionSum(try await b.frame(at: 25), x: centre, y: rows)
+
+        TextGenerator.clearCache()
+        #expect(!TextGenerator.isCached(ref: ref))
+        #expect(bgraRegionSum(try await a.frame(at: 25), x: centre, y: rows) != base, "cold cache: text missing")
+
+        let thrash = Task.detached {
+            while !Task.isCancelled { TextGenerator.clearCache(); try? TextGenerator.prewarm(ref: ref); TextGenerator.clearCache() }
+        }
+        var missing: [Int] = []
+        for i in 16..<44 {
+            TextGenerator.clearCache()
+            if bgraRegionSum(try await a.frame(at: i), x: centre, y: rows) == bgraRegionSum(try await b.frame(at: i), x: centre, y: rows) { missing.append(i) }
+        }
+        thrash.cancel()
+        #expect(missing.isEmpty, "text skipped in frames \(missing)")
     }
 
     @Test func mixedAudioSourceIsSampleAccurateAndRewindable() async throws {
