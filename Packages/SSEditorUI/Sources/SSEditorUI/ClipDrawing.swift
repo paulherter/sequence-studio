@@ -133,8 +133,6 @@ public enum ClipDrawing {
         }
     }
 
-    /// Waveform of an audio clip over its body (below the name strip when the clip is tall).
-    /// `rect` is the clip's full rectangle, `visible` the horizontal range being drawn, `source` the clip's source range.
     /// The waveform area inside a clip's full rectangle (also where the volume line moves).
     nonisolated public static func waveformRect(in rect: CGRect) -> CGRect {
         let body = rect.insetBy(dx: 0, dy: 1)
@@ -142,10 +140,12 @@ public enum ClipDrawing {
         return CGRect(x: body.minX, y: top + 1, width: body.width, height: body.maxY - top - 2)
     }
 
-    /// `volumeDB`: level in dB at seconds since the clip start (Volume line plus Audio Gain), so the waveform shows
+    /// Waveform of an audio clip over its body (below the name strip when the clip is tall).
+    /// `rect` is the clip's full rectangle, `visible` the horizontal range being drawn, `source` the clip's source range.
+    /// `volumeDB`: level in dB at source seconds since the clip's source start (Volume line plus Audio Gain), so the waveform shows
     /// what will be heard; nil draws the source as it is.
     public static func drawWaveform(data: WaveformData, media: UUID, source: TimeRange, rect: CGRect, visible: CGRect,
-                                    cache: WaveformCache?, volumeDB: (@Sendable (Double) -> Double)? = nil) {
+                                    cache: WaveformCache?, volumeDB: (@Sendable (Double) -> Double)? = nil, reversed: Bool = false) {
         guard let cg = NSGraphicsContext.current?.cgContext, rect.width >= 1 else { return }
         let wave = waveformRect(in: rect)
         guard wave.height >= 4 else { return }
@@ -153,8 +153,10 @@ public enum ClipDrawing {
         let to = min(Int((visible.maxX - wave.minX).rounded(.up)), Int(wave.width.rounded()))
         guard to > from else { return }
         let style = WaveformStyle()
-        let columns = WaveformPath.columns(.init(data: data, source: source, clipWidth: wave.width, visibleColumns: from..<to,
-                                                 style: style, volumeDB: volumeDB ?? { _ in 0 }, cache: cache.map { ($0, media) }))
+        var input = WaveformPath.Input(data: data, source: source, clipWidth: wave.width, visibleColumns: from..<to,
+                                       style: style, volumeDB: volumeDB ?? { _ in 0 }, cache: cache.map { ($0, media) })
+        input.reversed = reversed
+        let columns = WaveformPath.columns(input)
         cg.setFillColor(Theme.white(0.55).cgColor)
         cg.addPath(WaveformPath.path(columns: columns, rect: wave, style: style, firstColumn: from))
         cg.fillPath()

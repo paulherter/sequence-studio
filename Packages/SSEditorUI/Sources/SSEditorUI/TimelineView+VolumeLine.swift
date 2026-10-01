@@ -16,7 +16,8 @@ extension TimelineView {
     static func volumeDB(of clip: Clip) -> @Sendable (Double) -> Double {
         let c = clip
         return { sec in
-            let t = c.start + Time(Int64((sec * 1_000_000).rounded()), 1_000_000)
+            // `sec` counts source seconds from the clip's source start: map through speed and direction.
+            let t = c.timelineTime(forSource: c.source.start + Time(Int64((sec * 1_000_000).rounded()), 1_000_000))
             return AudioGain.db(fromLinear: c.volume(at: t))
         }
     }

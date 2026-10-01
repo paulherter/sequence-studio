@@ -43,7 +43,7 @@ public enum EditorMenus {
         .delete, .rippleDelete,
     ]))
     public static let clip = MenuSpec(title: "Clip", items: cmds([
-        .insert, .overwrite, nil, .link, nil,
+        .insert, .overwrite, nil, .speedDuration, nil, .link, nil,
         .setToFrameSize, nil,
         .audioGain, nil,
         .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation, .addKeyframe, .toggleSpeedGraph,
@@ -81,7 +81,7 @@ public enum EditorMenus {
         .separator,
         .submenu("Tools", cmds([
             .tool(.selection), .tool(.trackForward), .tool(.trackBackward), .tool(.ripple), .tool(.rolling),
-            .tool(.slip), .tool(.slide), .tool(.razor), .tool(.hand), .tool(.zoom), .tool(.type),
+            .tool(.slip), .tool(.slide), .tool(.rateStretch), .tool(.razor), .tool(.hand), .tool(.zoom), .tool(.type),
         ])),
     ])
     /// Panels in the Window menu, in menu order: one checkable item each (check = visible in the workspace).

@@ -33,7 +33,8 @@ public struct LayerGroup: Sendable, Hashable {
 /// group opacity is not the product of the inner opacities.
 public struct LayerRequest: Sendable, Hashable {
     public var clip: Clip.ID, media: UUID, track: Track.ID
-    /// `clip.source.start + (t - clip.start)`, in the clip's own (inner) timeline.
+    /// `Clip.sourceTime(at:)`: the source frame time shown at this instant (through speed and reverse), in the clip's own
+    /// (inner) timeline.
     public var sourceTime: Time
     /// Evaluated (clamped) transform of the clip at this instant.
     public var transform: ClipTransform
@@ -73,11 +74,26 @@ public struct AudioSegment: Sendable, Hashable {
     public var timeline: TimeRange, sourceStart: Time
     /// Enclosing nested audio clips, outermost first. Empty for segments of the top sequence.
     public var nests: [AudioNest]
+    /// Clip speed. Source position advances `speed` source seconds per timeline second.
+    public var speed: ClipSpeed
+    /// Reversed: audio reads the source backwards from `sourceStart` (the source time at `timeline.start`).
+    public var reversed: Bool
+    /// Time-stretch (pitch kept) when speed is not 100 %; false = resample.
+    public var keepsPitch: Bool
+    /// Start of the whole clip in top-sequence time (anchor of the time-stretch grain grid, so any split of a
+    /// range into render blocks gives identical samples).
+    public var clipStart: Time
+    /// The clip's used media range (what retimed audio may read; nothing outside it is played).
+    public var source: TimeRange
 
     public init(clip: Clip.ID, media: UUID, track: Track.ID, timeline: TimeRange, sourceStart: Time,
-                nests: [AudioNest] = []) {
+                nests: [AudioNest] = [], speed: ClipSpeed = .normal, reversed: Bool = false,
+                keepsPitch: Bool = true, clipStart: Time? = nil, source: TimeRange? = nil) {
         self.clip = clip; self.media = media; self.track = track
         self.timeline = timeline; self.sourceStart = sourceStart; self.nests = nests
+        self.speed = speed; self.reversed = reversed; self.keepsPitch = keepsPitch
+        self.clipStart = clipStart ?? timeline.start
+        self.source = source ?? TimeRange(start: sourceStart, duration: timeline.duration)
     }
 
     /// Product of the enclosing nested clips' volume at top-sequence time `t` (1 when not nested).
@@ -117,7 +133,7 @@ extension Timeline {
             } else {
                 let local = t - c.start
                 out.append(LayerRequest(clip: c.id, media: c.media, track: track.id,
-                                        sourceTime: c.isGenerator ? local : c.source.start + local,
+                                        sourceTime: c.sourceTime(at: t, frameDuration: format.frameDuration),
                                         transform: c.transform(at: t), cornerRadius: c.effects(at: t).cornerRadius,
                                         groups: groups, generator: c.generator, localTime: local, color: c.color))
             }
@@ -139,7 +155,8 @@ extension Timeline {
         for track in audio where !track.isMuted && (!anySolo || track.isSolo) {
             for c in track.clips {
                 guard let r = c.timeline.intersection(range), !r.isEmpty else { continue }
-                let innerStart = c.source.start + (r.start - c.start)
+                let a = r.start - c.start
+                let innerStart = c.reversed ? c.source.end - c.speed.scale(a) : c.source.start + c.speed.scale(a)
                 if let seqID = c.sequence {
                     guard !visiting.contains(seqID), let inner = sequences(seqID) else { continue }
                     let offset = c.start - c.source.start           // inner time + offset = outer time
@@ -148,11 +165,13 @@ extension Timeline {
                                                      nests: nests + [AudioNest(clip: c, track: track.id)],
                                                      visiting: visiting.union([seqID])) {
                         s.timeline = TimeRange(start: s.timeline.start + offset, duration: s.timeline.duration)
+                        s.clipStart += offset
                         out.append(s)
                     }
                 } else {
                     out.append(AudioSegment(clip: c.id, media: c.media, track: track.id, timeline: r,
-                                            sourceStart: innerStart, nests: nests))
+                                            sourceStart: innerStart, nests: nests, speed: c.speed, reversed: c.reversed,
+                                            keepsPitch: c.keepsPitch, clipStart: c.start, source: c.source))
                 }
             }
         }

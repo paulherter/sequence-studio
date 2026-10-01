@@ -27,6 +27,12 @@ public struct ClipEffect: Sendable, Hashable, Codable, Identifiable {
         kind == roundedCornersKind ? [radiusKey: AnimatedProperty(24.0)] : [:]
     }
 
+    func remapped(_ f: (Time) -> Time) -> ClipEffect {
+        var e = self
+        e.parameters = parameters.mapValues { $0.remapped(f) }
+        return e
+    }
+
     func shifted(by delta: Time) -> ClipEffect {
         var e = self
         e.parameters = parameters.mapValues { $0.shifted(by: delta) }

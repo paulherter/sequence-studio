@@ -73,7 +73,7 @@ public struct CommandMap: Sendable {
         add(g, ch("b"), .tool(.ripple)); add(g, ch("n"), .tool(.rolling))
         add(g, ch("y"), .tool(.slip)); add(g, ch("u"), .tool(.slide))
         add(g, ch("c"), .tool(.razor)); add(g, ch("h"), .tool(.hand))
-        add(g, ch("z"), .tool(.zoom)); add(g, ch("t"), .tool(.type))
+        add(g, ch("z"), .tool(.zoom)); add(g, ch("t"), .tool(.type)); add(g, ch("r"), .tool(.rateStretch))
         // Clipboard / history / file
         add(g, ch("c"), .command, .copy); add(g, ch("x"), .command, .cut); add(g, ch("v"), .command, .paste)
         add(g, ch("v"), [.command, .option], .pasteAttributes)
@@ -107,6 +107,7 @@ public struct CommandMap: Sendable {
         add(t, .left, [.option, .shift], .trimBackward5); add(t, .right, [.option, .shift], .trimForward5)
         add(t, ch("l"), .command, .link); add(t, ch("g"), .command, .group)
         add(t, ch("g"), .audioGain)
+        add(t, ch("r"), .command, .speedDuration)
         add(t, ch("f"), .matchFrame); add(t, ch("r"), .shift, .reverseMatchFrame)
         add(t, ch("="), .zoomIn); add(t, ch("-"), .zoomOut); add(t, ch("\\"), .zoomFit)
         // Track heights: modifier combinations only, so plain +/-/\ stay timeline zoom.

@@ -36,6 +36,8 @@ public enum WaveformPath {
         public var volumeDB: @Sendable (Double) -> Double
         /// Optional cache to reuse resampled peaks while zooming/scrolling.
         public var cache: (WaveformCache, UUID)?
+        /// Reversed clip: the picture is the mirror image of the source's peaks.
+        public var reversed = false
 
         public init(data: WaveformData, source: TimeRange, clipWidth: CGFloat, visibleColumns: Range<Int>,
                     style: WaveformStyle = .init(), volumeDB: @escaping @Sendable (Double) -> Double = { _ in 0 },
@@ -51,6 +53,12 @@ public enum WaveformPath {
         let vis = max(input.visibleColumns.lowerBound, 0)..<min(input.visibleColumns.upperBound, total)
         let lanes = input.style.channels == .stacked ? max(input.data.channelCount, 1) : 1
         guard !vis.isEmpty else { return Array(repeating: [], count: lanes) }
+        if input.reversed {                  // mirrored: compute the mirrored columns forwards, then flip them
+            var mirrored = input
+            mirrored.reversed = false
+            mirrored.visibleColumns = (total - vis.upperBound)..<(total - vis.lowerBound)
+            return columns(mirrored).map { Array($0.reversed()) }
+        }
 
         let src = input.source
         func time(_ col: Int) -> Time { src.start + Time(src.duration.value * Int64(col), src.duration.timescale * Int64(total)) }

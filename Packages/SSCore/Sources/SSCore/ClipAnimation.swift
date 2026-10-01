@@ -20,6 +20,13 @@ public struct AnimatedProperty<V: KeyframeValue>: Sendable, Hashable, Codable {
                   track: try c.decodeIfPresent(KeyframeTrack<V>.self, forKey: .track) ?? KeyframeTrack())
     }
 
+    /// Every key time through `f` (keeps ids and easing).
+    func remapped(_ f: (Time) -> Time) -> AnimatedProperty {
+        var c = self
+        c.track.keys = track.keys.map { var k = $0; k.time = f(k.time); return k }
+        return c
+    }
+
     /// Moves every key by `delta` (keeps ids and easing).
     func shifted(by delta: Time) -> AnimatedProperty {
         var c = self
@@ -79,6 +86,15 @@ public struct ClipAnimation: Sendable, Hashable, Codable {
         anchor = try c.decodeIfPresent(AnimatedProperty<Vec2>.self, forKey: .anchor) ?? anchor
         volume = try c.decodeIfPresent(AnimatedProperty<Double>.self, forKey: .volume) ?? volume
         legacyCornerRadius = try c.decodeIfPresent(AnimatedProperty<Double>.self, forKey: .cornerRadius)
+    }
+
+    /// Every key time through `f` (keeps ids and easing).
+    func remapped(_ f: (Time) -> Time) -> ClipAnimation {
+        var a = self
+        a.position = position.remapped(f); a.scale = scale.remapped(f)
+        a.rotation = rotation.remapped(f); a.opacity = opacity.remapped(f)
+        a.anchor = anchor.remapped(f); a.volume = volume.remapped(f)
+        return a
     }
 
     func shifted(by delta: Time) -> ClipAnimation {

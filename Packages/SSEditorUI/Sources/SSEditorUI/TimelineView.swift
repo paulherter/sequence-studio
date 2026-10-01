@@ -636,6 +636,7 @@ public final class TimelineView: NSView {
         .slip: ("arrow.left.and.right.square", "Slip"),
         .slide: ("arrow.left.and.right.square.fill", "Slide"),
         .hand: ("hand.raised", "Hand"),
+        .rateStretch: ("gauge.with.dots.needle.67percent", "Rate Stretch"),
         .pen: ("pencil.tip", "Pen"),
         .shape: ("rectangle", "Shape"),
         .mask: ("rectangle.dashed", "Mask"),
@@ -890,7 +891,7 @@ public final class TimelineView: NSView {
                 let x0 = geometry.x(for: c.timeline.start), x1 = geometry.x(for: c.timeline.end)
                 if x1 < clip.minX { continue }
                 if x0 > clip.maxX { break }   // clips are sorted by start
-                ClipDrawing.draw(name: c.name, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
+                ClipDrawing.draw(name: c.name + SpeedLabel.nameSuffix(for: c), rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
                                  visible: visibleX, style: .label(labelResolver.label(for: c)), isSelected: selection.contains(c.id),
                                  isOffline: offlineMedia.contains(c.media))
                 if let n = syncBadges[c.id] {
@@ -901,7 +902,7 @@ public final class TimelineView: NSView {
                                              rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
                                              visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height),
                                              cache: wf.cache,   // pixel-mapped: only the dirty columns are needed
-                                             volumeDB: Self.volumeDB(of: c))
+                                             volumeDB: Self.volumeDB(of: c), reversed: c.reversed)
                 }
                 if track.kind == .audio, VolumeLine.isAvailable(rowHeight: row.height) {
                     ClipDrawing.drawVolumeLine(clip: c, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),

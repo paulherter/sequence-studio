@@ -9,7 +9,8 @@ extension Timeline {
             throw EditError.clipNotFound
         }
         guard !tracks[ti].isLocked else { throw EditError.trackLocked }
-        guard old.start == clip.start, old.source == clip.source else { throw EditError.collision }
+        guard old.start == clip.start, old.source == clip.source, old.speed == clip.speed,
+              old.reversed == clip.reversed else { throw EditError.collision }
         tracks[ti].replace(clip)
     }
 }

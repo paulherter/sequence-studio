@@ -128,3 +128,12 @@ Premiere semantics: Scale 100 % = one upright source pixel per sequence pixel (a
 - 2026-10-01 Paul: app icon is "Klappe C1" for now (clapperboard filling the icon shape, edge-to-edge stripes, framed Aurora panel, Liquid Glass). Sources: icon-work/klappe/C1.icon, generator notes in the canvas artifact.
 
 - 2026-10-01 Paul: never abbreviate Sequence Studio as "SS"/"ss" (Nazi reference). Abbreviation is SQ/sq, project files are `.sqproj` (old `.ssproj` files must still open). Packages SSCore… → SQCore…, env vars `SS_*` → `SQ_*`, defaults keys `ss.*` → `sq.*`. Done as one mechanical rename after the night streams are merged, to avoid conflicts with open branches.
+
+## 2026-10-01 Constant clip speed (project v14)
+- `Clip.speed` is an exact ratio (`ClipSpeed` num/den, clamp 1 %...10000 %, Premiere's range), `Clip.reversed`, `Clip.keepsPitch`. `Clip.source` stays "the media range used"; timeline duration = `source.duration / speed` (`Clip.duration`). Edits choose `source.duration = frames * frameDuration * speed`, so timeline lengths stay whole frames and source ranges are exact rationals (no Double in the model).
+- Reversed: the clip's first frame is the last frame of `source`; `Clip.sourceTime(at:frameDuration:)` is the one mapping used by evaluation, planner, render and export. Head/tail handles swap for reversed clips (`Clip.headHandle`, `tailRoom`, timeline time).
+- Keyframes stay in clip-timeline time (they move with `extendHead`, not with the source).
+- Nested sequences, titles and stills are not retimed yet (`EditError.speedUnsupported`).
+- Audio: `AudioFeeder` retimes per segment with `AudioRetimer` (stateless per output sample): overlap-add time-stretch when "Maintain Audio Pitch" is on, linear resampling when off, mirrored reads for reverse. Playback and export share it (`TimelineAudioSource` uses the feeder), so they cannot disagree. The transport rate (J/K/L) still uses AVAudioUnitTimePitch, separately.
+- Video: no frame blending; the frame covering the mapped source time is shown.
+- File version: v14 (v13 belongs to the timeline stream), migration is the identity.

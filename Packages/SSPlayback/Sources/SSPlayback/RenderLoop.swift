@@ -668,7 +668,7 @@ final class RenderLoop: @unchecked Sendable {
         let byMedia = Dictionary(grouping: clips, by: \.media)
         return { key in
             guard let cs = byMedia[key.media] else { return nil }
-            for c in cs where c.source.contains(key.pts) { return c.start + (key.pts - c.source.start) }
+            for c in cs where c.source.contains(key.pts) { return c.timelineTime(forSource: key.pts) }
             return nil
         }
     }

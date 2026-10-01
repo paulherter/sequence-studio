@@ -24,15 +24,16 @@ public enum ClipSectionMode: Equatable, Sendable {
 
 /// Maps captions produced from a transcript (source time of the clip's media) onto the timeline.
 public enum CaptionMapping {
-    /// Shifts by `clip.start - clip.source.start` and keeps only what lies inside the clip (cut at its ends).
+    /// Maps source time onto the timeline through the clip's speed and direction and keeps only what lies inside the
+    /// clip's source range (cut at its ends). A reversed clip shows the captions' time span mirrored.
     /// With `frameDuration` the ranges are put on the frame grid (nearest frame, at least one frame long): spoken
     /// word times fall between frames, captions must not.
     public static func items(_ captions: [Caption], for clip: Clip, frameDuration: Time? = nil) -> [CaptionItem] {
-        let offset = clip.start - clip.source.start
-        let bounds = clip.timeline
         let items: [CaptionItem] = captions.compactMap { c in
-            let shifted = TimeRange(start: c.range.start + offset, duration: c.range.duration)
-            guard let r = shifted.intersection(bounds), !r.isEmpty else { return nil }
+            guard let s = c.range.intersection(clip.source), !s.isEmpty else { return nil }
+            let a = clip.timelineTime(forSource: s.start), b = clip.timelineTime(forSource: s.end)
+            let r = clip.reversed ? TimeRange(start: b, end: a) : TimeRange(start: a, end: b)
+            guard !r.isEmpty else { return nil }
             return CaptionItem(lines: c.lines, range: r, styleRef: c.styleRef, animationRef: c.animationRef)
         }
         guard let fd = frameDuration else { return items }
