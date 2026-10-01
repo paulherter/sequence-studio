@@ -33,9 +33,12 @@ public struct RenderLayer: @unchecked Sendable {
     /// smaller buffer that must still be drawn at the native size: scale 1 = one native pixel per sequence pixel.
     /// nil = the buffer's own size.
     public var nativeSize: (width: Int, height: Int)?
+    /// Frame Blending: the second source frame and its weight (see `FrameBlend`). Only used with `.frame` content.
+    public var blend: FrameBlend?
 
     public init(content: Content, transform: ClipTransform = .identity, colorPipeline: ColorPipeline? = nil,
-                cornerRadius: Double = 0, nativeSize: (width: Int, height: Int)? = nil) {
+                cornerRadius: Double = 0, nativeSize: (width: Int, height: Int)? = nil, blend: FrameBlend? = nil) {
+        self.blend = blend
         self.content = content; self.transform = transform; self.colorPipeline = colorPipeline
         self.cornerRadius = cornerRadius; self.nativeSize = nativeSize
     }
@@ -89,6 +92,7 @@ public enum CompositorError: Error, Sendable {
 public final class Compositor: @unchecked Sendable {
     public let device: MTLDevice
     private let convertPipeline: MTLComputePipelineState
+    private let blendPipeline: MTLComputePipelineState
     private let renderPipeline: MTLRenderPipelineState
     private let textureCache: CVMetalTextureCache
     private let colorGPU: ColorPipelineGPU
@@ -129,6 +133,7 @@ public final class Compositor: @unchecked Sendable {
             return f
         }
         convertPipeline = try device.makeComputePipelineState(function: fn("convertToRGB"))
+        blendPipeline = try device.makeComputePipelineState(function: fn("blendFrames"))
         let rp = MTLRenderPipelineDescriptor()
         rp.vertexFunction = try fn("compositeVertex")
         rp.fragmentFunction = try fn("compositeFragment")
@@ -173,6 +178,38 @@ public final class Compositor: @unchecked Sendable {
         guard r == kCVReturnSuccess, let out, let tex = CVMetalTextureGetTexture(out) else { return nil }
         retainer.textures.append(out)
         return tex
+    }
+
+    /// Converts both frames to RGB and mixes them into one pooled intermediate (source-encoded values). nil when the second
+    /// frame has another size or format family, or anything fails: the layer then shows its first frame.
+    private func blendIntermediate(a: (MTLTexture, MTLTexture), b: FrameBlend, info: PixelFormatInfo, u: Uniforms,
+                                   width w: Int, height h: Int, commandBuffer: MTLCommandBuffer, retainer: Retainer) -> MTLTexture? {
+        let pb = b.next
+        guard CVPixelBufferGetWidth(pb) == w, CVPixelBufferGetHeight(pb) == h,
+              PixelFormats.info(for: CVPixelBufferGetPixelFormatType(pb))?.layout == info.layout,
+              let b0 = planeTexture(pb, plane: 0, format: info.yFormat, retainer: retainer),
+              info.layout == .bgra8 || planeTexture(pb, plane: 1, format: info.cbcrFormat, retainer: retainer) != nil,
+              let ma = acquireIntermediate(width: w, height: h) else { return nil }
+        guard let mb = acquireIntermediate(width: w, height: h) else { release([ma]); return nil }
+        guard let mc = acquireIntermediate(width: w, height: h) else { release([ma, mb]); return nil }
+        let b1 = info.layout == .bgra8 ? dummy : CVMetalTextureGetTexture(retainer.textures.last!)!
+        retainer.pooled.append(ma); retainer.pooled.append(mb); retainer.pooled.append(mc)
+        guard let enc = commandBuffer.makeComputeCommandEncoder() else { return nil }
+        let tg = MTLSize(width: 16, height: 16, depth: 1), grid = MTLSize(width: w, height: h, depth: 1)
+        var cu = u
+        enc.setComputePipelineState(convertPipeline)
+        enc.setTexture(a.0, index: 0); enc.setTexture(a.1, index: 1); enc.setTexture(ma, index: 2)
+        enc.setBytes(&cu, length: MemoryLayout<Uniforms>.stride, index: 0)
+        enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        enc.setTexture(b0, index: 0); enc.setTexture(b1, index: 1); enc.setTexture(mb, index: 2)
+        enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        var weight = b.weight
+        enc.setComputePipelineState(blendPipeline)
+        enc.setTexture(ma, index: 0); enc.setTexture(mb, index: 1); enc.setTexture(mc, index: 2)
+        enc.setBytes(&weight, length: MemoryLayout<Float>.stride, index: 0)
+        enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        enc.endEncoding()
+        return mc
     }
 
     private func acquireIntermediate(width: Int, height: Int) -> MTLTexture? {
@@ -358,7 +395,16 @@ public final class Compositor: @unchecked Sendable {
                 geometry(&u, transform: layer.transform, canvas: format, size: SIMD2(Float(dw), Float(dh)),
                          cornerRadius: layer.cornerRadius * Self.radiusFactor(dw, dh, canvas: format))
                 var p = Prepared(u: u, tex0: t0, tex1: t1)
-                if let pipeline = layer.colorPipeline {
+                var blended: MTLTexture?
+                if let b = layer.blend, b.weight > 0,
+                   let mid = blendIntermediate(a: (t0, t1), b: b, info: info, u: u, width: w, height: h,
+                                               commandBuffer: commandBuffer, retainer: retainer) {
+                    blended = mid
+                    p.u.mode = 1; p.tex0 = mid; p.tex1 = dummy
+                }
+                if let pipeline = layer.colorPipeline, let mid = blended {
+                    if (try? colorGPU.encode(pipeline, source: mid, destination: mid, commandBuffer: commandBuffer)) != nil { p.u.linearize = 0 }
+                } else if let pipeline = layer.colorPipeline {
                     if let mid = acquireIntermediate(width: w, height: h) {
                         retainer.pooled.append(mid)
                         if let enc = commandBuffer.makeComputeCommandEncoder() {

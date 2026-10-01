@@ -51,6 +51,14 @@ enum CompositorShaderSource {
         out.write(float4(sourceEncoded(u, ty, tc, uv), 1.0f), gid);
     }
 
+    // Frame Blending: out = a * (1 - w) + b * w (all three the same size).
+    kernel void blendFrames(texture2d<float, access::read> a [[texture(0)]], texture2d<float, access::read> b [[texture(1)]],
+                            texture2d<float, access::write> out [[texture(2)]],
+                            constant float& w [[buffer(0)]], uint2 gid [[thread_position_in_grid]]) {
+        if (gid.x >= out.get_width() || gid.y >= out.get_height()) return;
+        out.write(mix(a.read(gid), b.read(gid), w), gid);
+    }
+
     struct VOut { float4 position [[position]]; float2 local; };
 
     // Edge antialiasing (mask on the layer rect) is on for rounded or rotated layers only, so axis-aligned
