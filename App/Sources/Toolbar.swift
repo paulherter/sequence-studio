@@ -41,7 +41,7 @@ final class EditorToolbar: NSObject, NSToolbarDelegate {
         case Self.importItem:
             let i = NSToolbarItem(itemIdentifier: id)
             i.label = "Import"
-            i.toolTip = "Import Media (⌘I)"
+            i.toolTip = KeyboardListing.tip("Import Media", .importMedia)
             i.image = NSImage(systemSymbolName: "square.and.arrow.down", accessibilityDescription: "Import")
             i.target = controller; i.action = #selector(AppController.toolbarImport(_:))
             return i
@@ -70,7 +70,7 @@ final class EditorToolbar: NSObject, NSToolbarDelegate {
         case Self.exportItem:
             let i = NSToolbarItem(itemIdentifier: id)
             i.label = "Export"
-            i.toolTip = "Export… (⌘M)"
+            i.toolTip = KeyboardListing.tip("Export…", .export)
             i.image = NSImage(systemSymbolName: "square.and.arrow.up", accessibilityDescription: "Export")
             i.style = .prominent
             i.target = controller; i.action = #selector(AppController.toolbarExport(_:))

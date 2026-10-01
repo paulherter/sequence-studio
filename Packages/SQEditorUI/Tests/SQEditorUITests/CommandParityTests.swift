@@ -166,7 +166,10 @@ import Testing
 
     @Test func shortcutsWindowListsEveryBindingAndFindsIt() {
         let rows = KeyboardListing.windowRows(map)
-        #expect(rows.count == map.entries.count)
+        #expect(rows.filter { $0.scope != "Menu only" }.count == map.entries.count)
+        // Commands without a key are listed too ("Linked Selection", "Show Time Remapping"), so search finds them.
+        #expect(rows.contains { $0.command == "Linked Selection" && $0.scope == "Menu only" && $0.shortcut.isEmpty })
+        for c in audited where CommandSupport.isSupported(c) { #expect(rows.contains { $0.command == c.title }, "\(c.title)") }
         // Search finds each command by its own name.
         for c in audited where !map.entries.filter({ $0.command == c }).isEmpty {
             let hits = KeyboardListing.filter(rows, query: c.title)
@@ -207,5 +210,30 @@ import Testing
         #expect(Set(rows.map(\.command)).count == rows.count)
         #expect(rows.first { $0.command == .addEdit }?.menuPath == "Sequence")
         #expect(rows.first { $0.command == .trimBackward }?.keys.count == 1)
+    }
+
+    // MARK: Tooltips carry the shortcut
+
+    @Test func monitorButtonTipsShowTheirKeys() {
+        #expect(KeyboardListing.tip("Export Frame", .exportFrame) == "Export Frame (⇧E)")
+        #expect(KeyboardListing.tip("Linked Selection", .toggleLinkedSelection) == "Linked Selection")     // no key: bare title
+        for mode in [MonitorMode.source, .program] {
+            for a in MonitorAction.buttonBar(for: mode) {
+                guard let c = a.command else { Issue.record("\(a) has no command"); continue }
+                if let k = map.binding(for: c) {
+                    #expect(a.tip("T").hasSuffix("(\(KeyboardListing.text(for: k)))"), "\(a)")
+                } else {
+                    Issue.record("\(a) runs \(c.title), which has no key to show")
+                }
+            }
+        }
+    }
+
+    /// The timeline tool column shows the tool's own key: it must be the key the map binds to that tool.
+    @Test func toolColumnKeysMatchTheMap() {
+        for t in TimelineTool.allCases where t.isAvailable {
+            guard let c = map.command(for: KeyBinding(.char(t.key)), focus: nil) else { Issue.record("\(t) key \(t.key) is unbound"); continue }
+            if case .tool = c {} else { Issue.record("\(t) key \(t.key) runs \(c)") }
+        }
     }
 }

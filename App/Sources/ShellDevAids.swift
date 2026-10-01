@@ -26,10 +26,8 @@ enum ShellDevAids {
                 }
             }
             dump(main, 0)
-            lines.append("--- shortcuts whose command is not wired:")
-            for e in c.commandMap.entries where !AppController.isSupported(e.command) || e.command == .tool(.zoom) {
-                lines.append("\(e.scope) \(KeyboardListing.text(for: e.binding)) \(e.command.title)")
-            }
+            lines.append("--- every command: title | menu | keys | wired (same table as the CommandParityTests walk)")
+            lines.append(CommandAudit.table(c.commandMap))
             NSLog("MENUDUMP\n" + lines.joined(separator: "\n"))
             exit(0)
         }

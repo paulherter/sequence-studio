@@ -61,7 +61,7 @@ import Testing
 
     @Test func shortcutsWindowSearch() {
         let rows = KeyboardListing.windowRows(map)
-        #expect(rows.count == map.entries.count)
+        #expect(rows.count >= map.entries.count)
         #expect(KeyboardListing.filter(rows, query: "").count == rows.count)
         let razor = KeyboardListing.filter(rows, query: "razor")
         #expect(razor.map(\.shortcut) == ["C"])

@@ -45,7 +45,7 @@ final class KeyboardShortcutsWindowController: NSObject, NSWindowDelegate, NSTab
         search.delegate = self
         countLabel.font = .systemFont(ofSize: 11)
         countLabel.textColor = .secondaryLabelColor
-        let note = NSTextField(labelWithString: "Premiere Pro's default shortcuts. Editing shortcuts is not available yet.")
+        let note = NSTextField(labelWithString: "Premiere Pro's default shortcuts; commands without a key are listed as menu only. Editing is not available yet.")
         note.font = .systemFont(ofSize: 11)
         note.textColor = .secondaryLabelColor
         let footer = NSStackView(views: [note, NSView(), countLabel])
@@ -86,7 +86,7 @@ final class KeyboardShortcutsWindowController: NSObject, NSWindowDelegate, NSTab
     }
 
     private func updateCount() {
-        countLabel.stringValue = rows.count == allRows.count ? "\(rows.count) shortcuts" : "\(rows.count) of \(allRows.count)"
+        countLabel.stringValue = rows.count == allRows.count ? "\(rows.count) commands" : "\(rows.count) of \(allRows.count)"
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
