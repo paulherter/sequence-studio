@@ -38,6 +38,13 @@ public actor DecoderFrameProvider: FrameProvider {
     private var stills: [UUID: StillFrame] = [:]
     private var notStill: Set<UUID> = []
 
+    private static let recentByteLimit = 256 << 20
+
+    /// The media changed (relinked, proxy switched): forget its decoder, cached frames and still.
+    public func invalidate(media: UUID) {
+        entries[media] = nil; stills[media] = nil; failed.remove(media); notStill.remove(media)
+    }
+
     public init(resolver: any MediaResolver, scale: DecodeScale = .full) {
         self.resolver = resolver; self.scale = scale
     }
@@ -91,7 +98,10 @@ public actor DecoderFrameProvider: FrameProvider {
         entries[media]?.lastIndex = idx
         entries[media]?.lastFrame = f
         entries[media]?.recent[idx] = f
-        if let n = entries[media]?.recent.count, n > 3, let far = entries[media]?.recent.keys.max(by: { abs($0 - idx) < abs($1 - idx) }) {
+        // Bounded by count and by bytes (4K frames are large): the frame farthest from the current one goes first.
+        while let e = entries[media]?.recent, e.count > 1,
+              e.count > 3 || e.values.reduce(0, { $0 + CVPixelBufferGetDataSize($1.pixelBuffer) }) > Self.recentByteLimit,
+              let far = e.keys.max(by: { abs($0 - idx) < abs($1 - idx) }) {
             entries[media]?.recent.removeValue(forKey: far)
         }
         return ProvidedFrame(buffer: f.pixelBuffer, info: e.decoder.info, start: all[idx].pts, duration: all[idx].duration)

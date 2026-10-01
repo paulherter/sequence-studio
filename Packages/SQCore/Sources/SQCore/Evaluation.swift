@@ -52,10 +52,14 @@ public struct LayerRequest: Sendable, Hashable {
     /// How a source time between two frames is shown (Time Interpolation of the clip). `.frameBlend`: mix the frame
     /// covering `sourceTime` with the next one by the fractional position (`FrameBlend` in SQRender).
     public var interpolation: TimeInterpolation
+    /// End of the clip's source range: a blend never reads a frame that starts at or after it. nil = unbounded.
+    public var sourceEnd: Time?
 
     public init(clip: Clip.ID, media: UUID, track: Track.ID, sourceTime: Time, transform: ClipTransform = .identity,
                 cornerRadius: Double = 0, groups: [LayerGroup] = [], generator: GeneratorRef? = nil,
-                localTime: Time? = nil, color: ClipColor = .default, interpolation: TimeInterpolation = .frameSampling) {
+                localTime: Time? = nil, color: ClipColor = .default, interpolation: TimeInterpolation = .frameSampling,
+                sourceEnd: Time? = nil) {
+        self.sourceEnd = sourceEnd
         self.interpolation = interpolation
         self.color = color
         self.generator = generator; self.localTime = localTime ?? sourceTime
@@ -132,7 +136,7 @@ extension Timeline {
                 guard !visiting.contains(seqID), let inner = sequences(seqID) else { continue }
                 let g = LayerGroup(clip: c.id, track: track.id, sequence: seqID, format: inner.format,
                                    transform: c.transform(at: t), cornerRadius: c.effects(at: t).cornerRadius)
-                out += inner.videoLayers(at: c.sourceTime(at: t, frameDuration: format.frameDuration), sequences: sequences,
+                out += inner.videoLayers(at: c.innerTime(atLocal: t - c.start, innerFrameDuration: inner.format.frameDuration), sequences: sequences,
                                          groups: groups + [g], visiting: visiting.union([seqID]))
             } else {
                 let local = t - c.start
@@ -140,7 +144,7 @@ extension Timeline {
                                         sourceTime: c.sourceTime(at: t, frameDuration: format.frameDuration),
                                         transform: c.transform(at: t), cornerRadius: c.effects(at: t).cornerRadius,
                                         groups: groups, generator: c.generator, localTime: local, color: c.color,
-                                        interpolation: c.timeInterpolation))
+                                        interpolation: c.timeInterpolation, sourceEnd: c.source.end))
             }
         }
         return out

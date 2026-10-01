@@ -175,7 +175,7 @@ public final class TimelineFrameSource: FrameSource {
                 var blend: FrameBlend?
                 if l.interpolation == .frameBlend, let s = f.start, let d = f.duration {
                     let w = FrameBlend.weight(sourceTime: l.sourceTime, frameStart: s, frameDuration: d)
-                    if w > 0, let n = try await provider.frame(media: l.media, at: s + d), n.buffer !== f.buffer {
+                    if w > 0, l.sourceEnd.map({ s + d < $0 }) ?? true, let n = try await provider.frame(media: l.media, at: s + d), n.buffer !== f.buffer {
                         blend = FrameBlend(next: n.buffer, weight: w)
                     }
                 }

@@ -52,8 +52,8 @@ private func hint() -> VideoTrackInfo {
             cb.commit(); cb.waitUntilCompleted()
             var px = [Float16](repeating: 0, count: 4)
             target.getBytes(&px, bytesPerRow: 8, from: MTLRegionMake2D(8, 8, 1, 1), mipmapLevel: 0)
-            let encoded = Double(w)                                      // mix of black (0) and white (1) in encoded space
-            #expect(abs(Double(px[0]) - lin709(encoded)) < 2.0 / 255, "weight \(w): got \(px[0]) want \(lin709(encoded))")
+            // black (0) and white (1) mixed in light-linear space: the result is the weight itself
+            #expect(abs(Double(px[0]) - Double(w)) < 2.0 / 255, "weight \(w): got \(px[0]) want \(w)")
         }
         // No blend object, or weight 0: the first frame alone.
         let a = solid(16, 16, 255)

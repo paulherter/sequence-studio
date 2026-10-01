@@ -105,4 +105,17 @@ private func remappedPair() -> (Timeline, UUID, Clip) {
         #expect(asked == [.zero, Time(1, 60), Time(1, 30), Time(1, 30), Time(1, 20), Time(1, 30) + Time(1, 30)])
         #expect(asked.count == 6)
     }
+
+    @Test func blendNeverReadsPastTheClipsSourceEnd() async throws {
+        let m = UUID()
+        var c = Clip(name: "s", media: m, kind: .video, source: TimeRange(start: .zero, duration: Time(1, 1)), start: .zero,
+                     mediaDuration: Time(10, 1), speed: ClipSpeed(percent: 50))
+        c.timeInterpolation = .frameBlend
+        let tl = Timeline(name: "t", format: SequenceFormat(width: 32, height: 32, frameDuration: fd), tracks: [Track(kind: .video, clips: [c])])
+        let provider = TimesProvider()
+        let src = try TimelineFrameSource(timeline: tl, provider: provider, width: 32, height: 32, frameDuration: fd, frameCount: 60)
+        for i in 0..<60 { _ = try await src.frame(at: i) }
+        #expect(!provider.requested.contains { $0 >= Time(1, 1) })              // frame 30 of the media lies outside the clip
+    }
 }
+

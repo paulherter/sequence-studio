@@ -577,7 +577,7 @@ final class RenderLoop: @unchecked Sendable {
         // The second frame must already be cached (the planner's window covers it); otherwise the first frame shows alone and
         // the missing one is requested, so the blend appears as soon as it is decoded without ever stalling the picture.
         var blend: FrameBlend?
-        if r.interpolation == .frameBlend, f + 1 < index.count {
+        if r.interpolation == .frameBlend, f + 1 < index.count, r.sourceEnd.map({ index.entries[f + 1].pts < $0 }) ?? true {
             let w = FrameBlend.weight(sourceTime: r.sourceTime, frameStart: index.entries[f].pts, frameDuration: index.entries[f].duration)
             if w > 0 {
                 if let next = cache.frame(FrameKey(media: r.media, pts: index.entries[f + 1].pts, scale: scale)), frame.pixelBuffer !== next.pixelBuffer {

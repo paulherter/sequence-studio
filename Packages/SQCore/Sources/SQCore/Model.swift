@@ -166,6 +166,17 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
         return reversed ? source.end - speed.scale(local) : source.start + speed.scale(local)
     }
 
+    /// Playing backwards at clip-local `local` (the clip's direction, or the speed track's at that instant).
+    public func playsBackwards(atLocal local: Time) -> Bool { speedKeys?.isReversed(at: local) ?? reversed }
+
+    /// Inner sequence time to show for a nested clip at clip-local `local`: the mapped instant; when playing backwards the frame
+    /// that ends there, so one INNER frame earlier (`innerFrameDuration`), which keeps video and audio agreeing when the inner and
+    /// outer frame rates differ. Identical to `source.start + local` for an unretimed clip.
+    public func innerTime(atLocal local: Time, innerFrameDuration: Time) -> Time {
+        let t = sourceInstant(atLocal: local)
+        return playsBackwards(atLocal: local) ? max(t - innerFrameDuration, source.start) : t
+    }
+
     /// The source range a stretch `[a, b]` of the clip's local time plays (nested clips: the inner time range to query).
     public func sourceRange(fromLocal a: Time, toLocal b: Time) -> TimeRange {
         if let k = speedKeys, a < b { return k.sliced(from: a, to: b).hull }
@@ -183,6 +194,16 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     /// duration for reversed clips (the frame shown starts one frame before the mapped end). Used to map decoded frames back onto the timeline.
     public func timelineTime(forSource s: Time, frameDuration: Time = .zero) -> Time {
         if let k = speedKeys {
+            // The frame starting at `s` is shown at a visit `local` (forward) or one frame earlier (reversed: its start is the
+            // position one frame later). Take the first visit/candidate that really maps back to `s` (exact for constant
+            // segments), so reversed/forward boundaries and revisited source follow the same rule as `sourceTime`.
+            let visits = k.localTimes(forSource: s)
+            for v in visits {
+                let early = v - frameDuration
+                if frameDuration > .zero, early >= .zero, k.isReversed(at: early),
+                   k.sourceTime(at: early, frameDuration: frameDuration) == s { return start + early }
+                if k.sourceTime(at: v, frameDuration: frameDuration) == s { return start + v }
+            }
             let local = k.localTime(forSource: s)
             return start + local - (k.isReversed(at: local) ? frameDuration : .zero)
         }

@@ -62,6 +62,7 @@ extension Timeline {
             var c = m.clip
             if let r = reversed { c.reversed = r }
             var want = max(frames(holdingDuration ? c.duration : speed.unscale(c.retimeSpan)), 1)
+            if let k = c.speedKeys { want = frames(k.clampedDuration(fd * want, frameDuration: fd)) }
             let perFrame = speed.scale(fd)
             // Media limits (the anchor end of the range stays, the other end moves). A remapped clip keeps the source it
             // visits, so only its length changes: no media limit.
@@ -96,7 +97,8 @@ extension Timeline {
                     }
                     scaled.origin = end
                 }
-                c.setSpeedKeys(scaled)
+                guard let fit = scaled.fitting(media: c.mediaDuration, frameDuration: fd) else { throw EditError.collision }
+                c.setSpeedKeys(fit)
                 c.rescaleKeys(from: m.clip.duration, to: newDuration, mirror: false)
                 work[m.track].replace(c)
                 continue
@@ -191,7 +193,7 @@ extension Timeline {
                 let prevEnd = others.filter { $0.timeline.end <= c.start }.map { $0.timeline.end }.max() ?? .zero
                 n = min(n, max(floorFrames(c.timeline.end - prevEnd), 1))
             }
-            if c.speedKeys != nil {}
+            if let k = c.speedKeys { n = k.clampedDuration(fd * n, frameDuration: fd).frameIndex(frameDuration: fd) }
             else if c.reversed { n = min(n, max(frameFloor(c.source.end, perFrame), 1)) }
             else if let md = c.mediaDuration { n = min(n, max(frameFloor(md - c.source.start, perFrame), 1)) }
         }
@@ -202,7 +204,8 @@ extension Timeline {
         for m in group {
             var c = m.clip
             if let keys = c.speedKeys {
-                c.setSpeedKeys(keys.scaled(toDuration: newDuration, frameDuration: fd))
+                let scaled = keys.scaled(toDuration: newDuration, frameDuration: fd)
+                c.setSpeedKeys(scaled.fitting(media: c.mediaDuration, frameDuration: fd) ?? scaled)
             } else {
                 c.speed = speed
                 let srcDur = speed.scale(newDuration)

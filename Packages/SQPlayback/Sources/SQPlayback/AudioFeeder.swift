@@ -137,6 +137,8 @@ public final class AudioFeeder: @unchecked Sendable {
     public let flushGeneration = FlushGeneration()
     private let control: Mutex<Control>
     private var sources: [UUID: any AudioSource] = [:]
+    /// Time maps of remapped clip chains, built once and reused for every block (feeder thread only); a changed clip rebuilds.
+    private var timeMaps: [[Clip.ID]: (chain: [Clip], map: AudioTimeMap)] = [:]
     private let retimer: AudioRetimer
     private let mixL: UnsafeMutablePointer<Float>, mixR: UnsafeMutablePointer<Float>
     private let scratch: UnsafeMutablePointer<Float>
@@ -329,7 +331,7 @@ public final class AudioFeeder: @unchecked Sendable {
             let clip = Self.segmentClip(seg, top: timeline, sequences: sequences)
             // A speed track (or any clip inside a retimed nested clip) goes through the time map; constant clips keep their exact path.
             let mapped = (clip?.speedKeys != nil) || seg.nests.contains { $0.clip.speedKeys != nil || !$0.clip.speed.isNormal || $0.clip.reversed }
-            let timeMap = mapped ? AudioTimeMap(chain: seg.nests.map(\.clip) + (clip.map { [$0] } ?? [])) : nil
+            let timeMap = mapped ? cachedTimeMap(chain: seg.nests.map(\.clip) + (clip.map { [$0] } ?? [])) : nil
             let retimed = mapped || !seg.speed.isNormal || seg.reversed
             let srcStart = retimed ? 0 : Self.roundFrame(seg.sourceStart + (Time(f0, rate) - seg.timeline.start), rate)
             let dstOff = Int(f0 - startFrame)
@@ -369,8 +371,17 @@ public final class AudioFeeder: @unchecked Sendable {
         }
     }
 
+    private func cachedTimeMap(chain: [Clip]) -> AudioTimeMap {
+        let key = chain.map(\.id)
+        if let hit = timeMaps[key], hit.chain == chain { return hit.map }
+        if timeMaps.count > 64 { timeMaps.removeAll() }
+        let m = AudioTimeMap(chain: chain)
+        timeMaps[key] = (chain, m)
+        return m
+    }
+
     /// Drops cached sources (media relinked or proxies switched).
-    public func invalidateSources() { sources.removeAll() }
+    public func invalidateSources() { sources.removeAll(); timeMaps.removeAll() }
 
     private static let gainChunk = 256
 

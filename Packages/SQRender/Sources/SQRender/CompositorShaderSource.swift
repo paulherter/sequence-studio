@@ -51,12 +51,15 @@ enum CompositorShaderSource {
         out.write(float4(sourceEncoded(u, ty, tc, uv), 1.0f), gid);
     }
 
-    // Frame Blending: out = a * (1 - w) + b * w (all three the same size).
+    // Frame Blending in light-linear space: out = mix(lin(a), lin(b), w). p.y = 1: the inputs are source-encoded BT.709 (apply the
+    // inverse OETF first); 0: already working-linear (the colour pipeline ran).
     kernel void blendFrames(texture2d<float, access::read> a [[texture(0)]], texture2d<float, access::read> b [[texture(1)]],
                             texture2d<float, access::write> out [[texture(2)]],
-                            constant float& w [[buffer(0)]], uint2 gid [[thread_position_in_grid]]) {
+                            constant float2& p [[buffer(0)]], uint2 gid [[thread_position_in_grid]]) {
         if (gid.x >= out.get_width() || gid.y >= out.get_height()) return;
-        out.write(mix(a.read(gid), b.read(gid), w), gid);
+        float4 x = a.read(gid), y = b.read(gid);
+        if (p.y != 0.0f) { x.rgb = inverseOETF709(x.rgb); y.rgb = inverseOETF709(y.rgb); }
+        out.write(mix(x, y, p.x), gid);
     }
 
     struct VOut { float4 position [[position]]; float2 local; };

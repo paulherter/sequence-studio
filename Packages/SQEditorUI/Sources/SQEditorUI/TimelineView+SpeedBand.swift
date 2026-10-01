@@ -103,6 +103,14 @@ extension TimelineView {
         setTimeline(t)
     }
 
+    /// Waveform mapping of a clip with a speed track: clip fraction -> source seconds since `source.start` (nil for constant clips).
+    static func sourceMap(of clip: Clip) -> (@Sendable (Double) -> Double)? {
+        guard let k = clip.speedKeys else { return nil }
+        let total = Double(k.duration.value) / Double(k.duration.timescale)
+        let base = Double(clip.source.start.value) / Double(clip.source.start.timescale)
+        return { f in k.positionApprox(atSeconds: f * total) - base }
+    }
+
     // MARK: Drawing
 
     func drawSpeedBand(clip c: Clip, rect: CGRect, visible: CGRect, selected: Bool) {

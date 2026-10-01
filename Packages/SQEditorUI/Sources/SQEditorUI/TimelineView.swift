@@ -911,7 +911,8 @@ public final class TimelineView: NSView {
                                              rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
                                              visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height),
                                              cache: wf.cache,   // pixel-mapped: only the dirty columns are needed
-                                             volumeDB: Self.volumeDB(of: c), reversed: c.reversed)
+                                             volumeDB: Self.volumeDB(of: c), reversed: c.reversed,
+                                             sourceMap: Self.sourceMap(of: c))
                 }
                 if track.kind == .video, speedBandClips.contains(c.id), SpeedBand.isAvailable(rowHeight: row.height) {
                     drawSpeedBand(clip: c, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),

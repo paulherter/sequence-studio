@@ -65,12 +65,34 @@ public struct SpeedSegment: Sendable, Hashable, Codable {
 }
 
 public struct SpeedKeys: Sendable, Hashable, Codable {
-    public var segments: [SpeedSegment]
-    public var origin: Time
+    public var segments: [SpeedSegment] { didSet { rebuild() } }
+    /// Source time at clip-local 0. When it is the rounding of an exact value (a slice or head trim of a ramp), `originExact`
+    /// carries the exact rational so the mapping stays frame-for-frame identical; assigning `origin` resets it.
+    public var origin: Time { didSet { originExact = nil; rebuild() } }
+    var originExact: Rational?
+    /// Built once per value (segments / origin changes): segment starts and exact source positions at the boundaries, so
+    /// `position(at:)` is a binary search plus one span, with no repeated gcd chains. Not part of equality or the file.
+    private var table = Table()
+
+    private struct Table: Sendable {
+        var starts: [Time] = [.zero]
+        var startsD: [Double] = [0]
+        var pos: [Rational] = []
+        var posT: [Time] = []
+        var posD: [Double] = []
+    }
 
     public init(segments: [SpeedSegment], origin: Time) {
         precondition(!segments.isEmpty)
         self.segments = segments; self.origin = origin
+        rebuild()
+    }
+
+    init(segments: [SpeedSegment], exactOrigin: Rational) {
+        precondition(!segments.isEmpty)
+        self.segments = segments; origin = exactOrigin.time
+        originExact = exactOrigin
+        rebuild()
     }
 
     /// One constant segment: what a constant-speed clip of `duration` looks like as a track.
@@ -78,49 +100,97 @@ public struct SpeedKeys: Sendable, Hashable, Codable {
         self.init(segments: [SpeedSegment(duration: duration, from: speed, reversed: reversed)], origin: origin)
     }
 
-    /// Timeline length of the clip.
-    public var duration: Time { segments.reduce(.zero) { $0 + $1.duration } }
+    var originQ: Rational { originExact ?? Rational(origin) }
 
-    /// Clip-local start of each segment, plus the end as the last element (count + 1 entries).
-    public var boundaries: [Time] {
-        var out: [Time] = [.zero]
-        for s in segments { out.append(out[out.count - 1] + s.duration) }
-        return out
+    private mutating func rebuild() {
+        var t = Table()
+        var pos = originQ, start = Time.zero
+        t.pos.append(pos)
+        for s in segments {
+            pos = pos + (s.reversed ? Rational(-1) : Rational(1)) * s.span(at: s.duration)
+            start += s.duration
+            t.pos.append(pos)
+            t.starts.append(start)
+        }
+        t.startsD = t.starts.map { Double($0.value) / Double($0.timescale) }
+        t.posT = t.pos.map(\.time)
+        t.posD = t.pos.map(\.double)
+        table = t
     }
 
-    private func index(containing local: Time) -> Int {
-        var t = Time.zero
-        for (i, s) in segments.enumerated() {
-            if local < t + s.duration { return i }
-            t += s.duration
+    public static func == (a: SpeedKeys, b: SpeedKeys) -> Bool {
+        a.segments == b.segments && a.origin == b.origin && a.originExact == b.originExact
+    }
+    public func hash(into h: inout Hasher) { h.combine(segments); h.combine(origin); h.combine(originExact) }
+
+    private enum CodingKeys: String, CodingKey { case segments, origin, originNum, originDen }
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        let segs = try c.decode([SpeedSegment].self, forKey: .segments)
+        guard !segs.isEmpty else {
+            throw DecodingError.dataCorruptedError(forKey: .segments, in: c, debugDescription: "empty speed track")
         }
-        return segments.count - 1
+        let o = try c.decode(Time.self, forKey: .origin)
+        if let n = try c.decodeIfPresent(Int64.self, forKey: .originNum), let den = try c.decodeIfPresent(Int64.self, forKey: .originDen), den > 0 {
+            self.init(segments: segs, exactOrigin: Rational(Int128(n), Int128(den)))
+        } else {
+            self.init(segments: segs, origin: o)
+        }
+    }
+    public func encode(to e: Encoder) throws {
+        var c = e.container(keyedBy: CodingKeys.self)
+        try c.encode(segments, forKey: .segments)
+        try c.encode(origin, forKey: .origin)
+        if let x = originExact {
+            let q = x.reducedToFit
+            try c.encode(Int64(q.n), forKey: .originNum); try c.encode(Int64(q.d), forKey: .originDen)
+        }
+    }
+
+    /// Timeline length of the clip.
+    public var duration: Time { table.starts[table.starts.count - 1] }
+
+    /// Clip-local start of each segment, plus the end as the last element (count + 1 entries).
+    public var boundaries: [Time] { table.starts }
+
+    /// Index of the segment shown at `local` (the last one for `local >= duration`): binary search.
+    private func index(containing local: Time) -> Int {
+        var lo = 0, hi = segments.count - 1
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            if table.starts[mid] <= local { lo = mid } else { hi = mid - 1 }
+        }
+        return lo
     }
 
     private func positionQ(at local: Time) -> Rational {
-        var pos = Rational(origin), t = Time.zero
         let x = max(local, .zero)
-        for s in segments {
-            let sign = s.reversed ? Rational(-1) : Rational(1)
-            if x >= t + s.duration {
-                pos = pos + sign * s.span(at: s.duration)
-                t += s.duration
-            } else {
-                return pos + sign * s.span(at: x - t)
-            }
-        }
-        return pos
+        if x >= duration { return table.pos[segments.count] }
+        let i = index(containing: x)
+        let s = segments[i]
+        return table.pos[i] + (s.reversed ? Rational(-1) : Rational(1)) * s.span(at: x - table.starts[i])
+    }
+
+    /// Source position in seconds as a Double, for planning and eviction (not for the presented frame): no rationals.
+    public func positionApprox(atSeconds x: Double) -> Double {
+        let n = segments.count
+        if x <= 0 { return table.posD[0] }
+        if x >= table.startsD[n] { return table.posD[n] }
+        var lo = 0, hi = n - 1
+        while lo < hi { let mid = (lo + hi + 1) / 2; if table.startsD[mid] <= x { lo = mid } else { hi = mid - 1 } }
+        let s = segments[lo]
+        let tau = x - table.startsD[lo]
+        let a = Double(s.from.num) / Double(s.from.den), b = Double(s.to.num) / Double(s.to.den)
+        let T = table.startsD[lo + 1] - table.startsD[lo]
+        let d = s.isRamp ? a * tau + (b - a) * tau * tau / (2 * T) : a * tau
+        return table.posD[lo] + (s.reversed ? -d : d)
     }
 
     /// Source time at clip-local `local` (the instant, not a frame). Clamped to `0 ... duration`.
     public func position(at local: Time) -> Time { positionQ(at: local).time }
 
     /// Source time at every boundary (`segments.count + 1` entries).
-    public var boundaryPositions: [Time] {
-        var out = [origin], pos = Rational(origin)
-        for s in segments { pos = pos + (s.reversed ? Rational(-1) : Rational(1)) * s.span(at: s.duration); out.append(pos.time) }
-        return out
-    }
+    public var boundaryPositions: [Time] { table.posT }
 
     /// Source range the track visits (within a segment the path is monotone, so the extremes sit on boundaries).
     public var hull: TimeRange {
@@ -129,7 +199,7 @@ public struct SpeedKeys: Sendable, Hashable, Codable {
     }
 
     /// Source time at the end of the track.
-    public var endPosition: Time { positionQ(at: duration).time }
+    public var endPosition: Time { table.posT[segments.count] }
 
     /// Direction of the segment shown at `local`.
     public func isReversed(at local: Time) -> Bool { segments[index(containing: local)].reversed }
@@ -152,21 +222,29 @@ public struct SpeedKeys: Sendable, Hashable, Codable {
     /// a source time). A source time the track never reaches maps to the nearest end. Ramps are solved with a Double
     /// quadratic and rounded to 1/2^20 s; constant segments are exact. Used for display mappings only.
     public func localTime(forSource s: Time) -> Time {
+        if let first = localTimes(forSource: s).first { return first }
         let pos = boundaryPositions, starts = boundaries
+        return s < hull.start ? (pos.firstIndex(of: hull.start).map { starts[$0] } ?? .zero)
+                              : (pos.lastIndex(of: hull.end).map { starts[$0] } ?? duration)
+    }
+
+    /// Every clip-local time at which the track passes source time `s`, in time order (one per segment that contains it).
+    public func localTimes(forSource s: Time) -> [Time] {
+        let pos = boundaryPositions, starts = boundaries
+        var out: [Time] = []
         for (i, seg) in segments.enumerated() {
             let p0 = pos[i], p1 = pos[i + 1]
             let lo = min(p0, p1), hi = max(p0, p1)
             guard s >= lo && s <= hi else { continue }
             let d = Rational(seg.reversed ? p0 - s : s - p0)          // unsigned distance into the segment
-            if !seg.isRamp { return starts[i] + (d / Rational(seg.from)).time }
+            if !seg.isRamp { out.append(starts[i] + (d / Rational(seg.from)).time); continue }
             let a = Rational(seg.from).double, b = Rational(seg.to).double, T = Rational(seg.duration).double
             let dd = d.double
             let tau = 2 * dd / (a + (a * a + 2 * (b - a) * dd / T).squareRoot())
             let scale: Int64 = 1 << 20
-            return starts[i] + Time(Int64((min(max(tau, 0), T) * Double(scale)).rounded()), scale)
+            out.append(starts[i] + Time(Int64((min(max(tau, 0), T) * Double(scale)).rounded()), scale))
         }
-        return s < hull.start ? (pos.firstIndex(of: hull.start).map { starts[$0] } ?? .zero)
-                              : (pos.lastIndex(of: hull.end).map { starts[$0] } ?? duration)
+        return out
     }
 
     /// The part of the track in `[a, b)` (clip-local, `0 <= a < b <= duration`), re-based so `a` becomes 0.
@@ -189,7 +267,7 @@ public struct SpeedKeys: Sendable, Hashable, Codable {
             }
             out.append(n)
         }
-        return SpeedKeys(segments: out, origin: position(at: a))
+        return SpeedKeys(segments: out, exactOrigin: positionQ(at: a))
     }
 
     /// Appends / prepends nothing: grows the track by `g` at the tail with a constant segment at the end speed and direction.
@@ -214,9 +292,9 @@ public struct SpeedKeys: Sendable, Hashable, Codable {
         let first = k.segments[0]
         let sign = first.reversed ? Rational(-1) : Rational(1)
         let lead = SpeedSegment(duration: g, from: first.from, reversed: first.reversed)
-        k.origin = (Rational(origin) - sign * lead.span(at: g)).time
+        let newOrigin = originQ - sign * lead.span(at: g)
         if !first.isRamp { k.segments[0].duration += g } else { k.segments.insert(lead, at: 0) }
-        return k
+        return SpeedKeys(segments: k.segments, exactOrigin: newOrigin)
     }
 
     /// Total path length through the source (sum of segment spans, direction ignored). The average speed is this / duration.
@@ -235,7 +313,7 @@ public struct SpeedKeys: Sendable, Hashable, Codable {
                 out[out.count - 1] = l
             } else { out.append(s) }
         }
-        return out.isEmpty ? self : SpeedKeys(segments: out, origin: origin)
+        return out.isEmpty ? self : SpeedKeys(segments: out, exactOrigin: originQ)
     }
 }
 
@@ -249,7 +327,7 @@ extension ClipSpeed {
 
 /// Exact rational in 128 bit, internal to the speed maths. Operations that would overflow shed low bits of the operands
 /// first (deterministic, only reachable with absurd inputs).
-struct Rational: Sendable {
+struct Rational: Sendable, Hashable {
     var n: Int128
     var d: Int128
 

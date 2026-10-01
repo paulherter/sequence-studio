@@ -153,8 +153,9 @@ extension SpeedKeys {
     /// Scales every segment's length so the track is `target` long (whole frames; the last segment takes the rounding), and
     /// every speed by `old/new` so each segment still covers the same source (used by the Speed/Duration dialog and Rate Stretch
     /// on a remapped clip: the whole shape gets faster or slower).
-    public func scaled(toDuration target: Time, frameDuration fd: Time) -> SpeedKeys {
+    public func scaled(toDuration requested: Time, frameDuration fd: Time) -> SpeedKeys {
         let old = duration
+        let target = clampedDuration(requested, frameDuration: fd)
         guard old > .zero, target > .zero, old != target else { return self }
         let ratio = Rational(target) / Rational(old)
         var k = self
@@ -172,5 +173,29 @@ extension SpeedKeys {
             used += d
         }
         return k
+    }
+
+    /// The shortest and longest length this track can be scaled to whole frames without any segment speed leaving
+    /// 1 % ... 10000 % (the source each segment covers is preserved).
+    public func durationLimits(frameDuration fd: Time) -> (min: Time, max: Time) {
+        var lo = Rational(1_000_000), hi = Rational(0)
+        for s in segments {
+            for v in [Rational(s.from), Rational(s.to)] {
+                if v.double < lo.double { lo = v }
+                if v.double > hi.double { hi = v }
+            }
+        }
+        let old = Rational(duration)
+        let minT = (old * hi / Rational(100)).time, maxT = (old * lo * Rational(100)).time
+        let n = Int64(segments.count)
+        let minF = max((minT.frameIndex(frameDuration: fd) + (minT > fd * minT.frameIndex(frameDuration: fd) ? 1 : 0)), n)
+        let maxF = max(maxT.frameIndex(frameDuration: fd), minF)
+        return (fd * minF, fd * maxF)
+    }
+
+    /// `t` clamped into `durationLimits`.
+    public func clampedDuration(_ t: Time, frameDuration fd: Time) -> Time {
+        let l = durationLimits(frameDuration: fd)
+        return min(max(t, l.min), l.max)
     }
 }
