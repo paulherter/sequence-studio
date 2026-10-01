@@ -1,10 +1,7 @@
 import AppKit
-import SSCore
-import SSEditorUI
+import SQCore
+import SQEditorUI
 import SwiftUI
-
-/// The project file extension, in one place.
-enum ProjectFile { static let fileExtension = "ssproj" }
 
 /// Open, save, recovery and export.
 extension AppController {
@@ -24,6 +21,12 @@ extension AppController {
         do { try await session.open(url: url); noteRecent(url); offerRelinkIfNeeded() } catch {
             presentError("Could not open “\(url.lastPathComponent)”", error)
         }
+    }
+
+    /// Finder double-click, drop on the Dock icon, "Open With": opens the first project (`.sqproj`, or a legacy `.ssproj`).
+    func application(_ sender: NSApplication, open urls: [URL]) {
+        guard let url = urls.first(where: ProjectFile.isProjectURL) else { return }
+        Task { await openProject(at: url) }
     }
 
     @objc func saveProjectAs(_ sender: Any?) { Task { await saveDocumentAs() } }

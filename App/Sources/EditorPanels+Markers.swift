@@ -1,6 +1,6 @@
 import AppKit
-import SSCore
-import SSEditorUI
+import SQCore
+import SQEditorUI
 
 /// Marker dialog (name, colour, comment) and the ruler context menu.
 extension EditorPanels {

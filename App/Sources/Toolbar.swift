@@ -1,5 +1,5 @@
 import AppKit
-import SSEditorUI
+import SQEditorUI
 
 /// Compact unified toolbar (Premiere's slim header, FEEDBACK-4 item 25): Import on the left, Edit | Color centred,
 /// workspace name and Export on the right. Icons only, no labels under them, so the bar is one slim row.
@@ -7,14 +7,14 @@ import SSEditorUI
 /// Real NSToolbar items (Liquid Glass groups on macOS 26); state is pushed in by `sync(store:)`.
 @MainActor
 final class EditorToolbar: NSObject, NSToolbarDelegate {
-    static let importItem = NSToolbarItem.Identifier("ss.import")
-    static let pageItem = NSToolbarItem.Identifier("ss.page")
-    static let exportItem = NSToolbarItem.Identifier("ss.export")
-    static let workspaceItem = NSToolbarItem.Identifier("ss.workspace")
+    static let importItem = NSToolbarItem.Identifier("sq.import")
+    static let pageItem = NSToolbarItem.Identifier("sq.page")
+    static let exportItem = NSToolbarItem.Identifier("sq.export")
+    static let workspaceItem = NSToolbarItem.Identifier("sq.workspace")
 
     unowned let controller: AppController
     private var pageGroup: NSToolbarItemGroup?
-    let toolbar = NSToolbar(identifier: "ss.main.v3")
+    let toolbar = NSToolbar(identifier: "sq.main.v3")
     /// Menu of the workspace item; the controller fills it with the workspace list.
     let workspaceMenu = NSMenu(title: "Workspace")
     private var workspacePopup: NSPopUpButton?

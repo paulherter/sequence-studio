@@ -1,7 +1,7 @@
-# SSProxy: optimized media and proxies
+# SQProxy: optimized media and proxies
 
 Pulled forward from "later": long-GOP Sony footage (XAVC S, 4 GB files) scrubs slowly.
-Standalone package `Packages/SSProxy`, depends on SSCore only (not SSMedia). May import AVFoundation/VideoToolbox.
+Standalone package `Packages/SQProxy`, depends on SQCore only (not SQMedia). May import AVFoundation/VideoToolbox.
 
 ## Slices
 a) Model: `ProxyKind`, `SourceFingerprint`, `ProxyRecord`.
@@ -11,11 +11,11 @@ d) `ProxyQueue` actor with injected transcoder protocol (fake in unit tests).
 e) `ProxyProvider`: lookup API for playback + ready notifications.
 f) Integration test on a 5 s cut of a real Sony clip (skipped if the file is missing).
 
-## Color rule (binding for SSPlayback / SSMedia)
+## Color rule (binding for SQPlayback / SQMedia)
 **Color interpretation ALWAYS comes from the ORIGINAL source file** (container tags and the Sony NRT XML sidecar,
 i.e. S-Log3). A proxy inherits the source's interpretation. The proxy's own BT.709 tag is an encoder default
 (the Sony file carries no tags) and MUST be ignored: never read primaries/transfer/matrix from a proxy file to
-interpret it. `ProxyLookup.colorInterpretation` is always `.fromSource` as a reminder; no code in SSProxy reads a
+interpret it. `ProxyLookup.colorInterpretation` is always `.fromSource` as a reminder; no code in SQProxy reads a
 proxy's tags.
 
 ## Decisions
@@ -40,7 +40,7 @@ proxy's tags.
 - Measured on C2160.MP4: avc1, max sync distance 30 -> needs proxy; its proxy (apco, distance 1) -> skipped (intra).
 - Queue job priority: `.background` (auto) < `.utility` (default, manual) < `.userInitiated`; higher starts first.
 
-## SSPlayback integration (not implemented here)
+## SQPlayback integration (not implemented here)
 Intended use: proxies are for **scrubbing** (playhead drag: instant intra-frame access). Playback and paused frames
 use the original.
 1. On import the app calls `ProxyAutoGenerator.sourceImported(url)`; manual "Generate proxy" calls `queue.enqueue`.
@@ -52,7 +52,7 @@ use the original.
    - `.paused`: always nil: exact frames come from the original, even with the toggle on.
    `lookup.scaleDivisor` tells the compositor how to keep effect coordinates in source pixel space.
 3. Sample times are identical to the source, no time remapping. Color/timecode: see the color rule above.
-4. `provider.readyEvents()` fires when a proxy finishes; SSPlayback re-resolves affected sources and swaps the
+4. `provider.readyEvents()` fires when a proxy finishes; SQPlayback re-resolves affected sources and swaps the
    decoder at the next seek/stop (never mid-frame).
 5. Export always uses the original source (provider is playback-only).
 

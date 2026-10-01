@@ -1,5 +1,5 @@
 import AppKit
-import SSEditorUI
+import SQEditorUI
 
 /// `SQ_DUMPMENU=1`: logs the whole main menu (titles, key equivalents, enabled state) and quits. For the shortcut audit.
 @MainActor

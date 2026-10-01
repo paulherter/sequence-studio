@@ -1,7 +1,7 @@
-# Phase 8: Captions core (SSTranscribe only)
+# Phase 8: Captions core (SQTranscribe only)
 
-Scope: package `SSTranscribe` (depends on SSCore for `Time`/`TimeRange`). No UI, no timeline integration, no project-file changes.
-SSTranscribe may import Speech/AVFoundation (the no-AVFoundation rule applies to SSCore only). Logic types stay pure value types and are unit-tested without Speech.
+Scope: package `SQTranscribe` (depends on SQCore for `Time`/`TimeRange`). No UI, no timeline integration, no project-file changes.
+SQTranscribe may import Speech/AVFoundation (the no-AVFoundation rule applies to SQCore only). Logic types stay pure value types and are unit-tested without Speech.
 
 ## Slices (tests first, each its own commit)
 1. **Transcript model** (`Transcript.swift`): `TranscriptWord` (id, text, `TimeRange`, `isEdited`), `Transcript` (language, words, `text`). Codable, Sendable, rational time.
@@ -16,5 +16,5 @@ Short clip cut from `~/Documents/Videos` into the scratchpad / `TestMedia/` (git
 (collected during implementation)
 - Zero-length gap between two unchanged words: RESOLVED (Paul). Inserted words are never zero-length: when the gap is zero or below `minInsertedWordDuration` (10 ms) per inserted word, the time of both neighbours plus the gap is split proportionally by character count; neighbours keep their outer start/end, all contiguous and strictly increasing.
 - `minDuration` is a soft limit only (suppresses the sentence-end break for short captions); captions are never stretched beyond their words' bounds.
-- Real-clip test: `TestMedia/` is gitignored only at repo root, not under Packages/SSTranscribe. The test looks at SS_TRANSCRIBE_CLIP, then the session scratchpad clip, then `Packages/SSTranscribe/TestMedia/de_speech_20s.m4a` (add a gitignore line if that path is used). de-DE model was already installed here; no authorization prompt appeared in `swift test`.
+- Real-clip test: `TestMedia/` is gitignored only at repo root, not under Packages/SQTranscribe. The test looks at SQ_TRANSCRIBE_CLIP, then the session scratchpad clip, then `Packages/SQTranscribe/TestMedia/de_speech_20s.m4a` (add a gitignore line if that path is used). de-DE model was already installed here; no authorization prompt appeared in `swift test`.
 - Measurement (Arbeitszeitbetrug.mp4, first 20 s): 62 words, first "Achtung" at 0.06 s, last word ends 19.98 s, starts monotonic. Attribute runs come per word, so no run splitting was needed in practice.

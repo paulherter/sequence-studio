@@ -1,6 +1,6 @@
 import AppKit
-import SSCore
-import SSEditorUI
+import SQCore
+import SQEditorUI
 
 /// Premiere-style timeline commands: clipboard, link, nudge, edge trims, markers. Kept apart from the main switch.
 extension AppController {

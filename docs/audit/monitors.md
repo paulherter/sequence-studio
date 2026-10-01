@@ -12,13 +12,13 @@ Shortcuts are the Mac mapping of Adobe's Windows list (Ctrl+Shift -> Option for 
 | Mark In / Out (I, O) | Source marks when Source has focus [A] | only sequence marks | | Yes, stored in `Project.sourceMarks`, not an undo step |
 | Go to In / Out (Shift+I / Shift+O) [A] | yes | sequence only | | Yes, per focused monitor |
 | Clear In / Out / both | Mac Option+I / Option+O / Option+X [A: Win Ctrl+Shift+I/O/X] | only both (Option+X) | Clear In, Clear Out | Yes, source and sequence; menu entries |
-| Insert `,` / Overwrite `.` [A] | Source In..Out at sequence In, else playhead; targeted tracks | Inserted the Project selection at the playhead | no Source monitor, no targets | Yes: `EditorSession.sourceEdit` (SSCore `Timeline.sourceEditRange/Position/Targets`), tests |
+| Insert `,` / Overwrite `.` [A] | Source In..Out at sequence In, else playhead; targeted tracks | Inserted the Project selection at the playhead | no Source monitor, no targets | Yes: `EditorSession.sourceEdit` (SQCore `Timeline.sourceEditRange/Position/Targets`), tests |
 | Playhead after edit | Moves to end of new clip | stayed | | Yes |
 | Three-point rule | In + Out in source, In or playhead in sequence; fourth point computed | | Our sequence In/Out always carry both ends, so a sequence Out cannot shorten the source | Partly: sequence In (else playhead) is the position, source range from marks. No four-point "Fit Clip" dialog, no sequence-Out-defined edit |
 | Source patching | Patch buttons per source channel, separate from targeting | Only `Track.isTargeted` exists | No separate patch state | Used `isTargeted` as patch + target. An untargeted kind is dropped (as Premiere). No target at all: V1 + mirrored audio. Needs the timeline stream if it adds real patches |
 | Drag video-only / audio-only icons | yes | none | | Yes: film / waveform handles under the Source picture; dragging the picture drops both. Drop honours `SourceStreams` (ghost too) |
 | Insert/Overwrite buttons | yes | n/a | | Yes, Source button bar |
-| Match Frame F / Reverse Match Frame Shift+R [A] | Opens clip under playhead in Source / moves playhead to matching frame | Commands existed, not supported | | Yes (SSCore `matchFrame`, `reverseMatchFrame`, tests): selected clip, then targeted track, then topmost video; menu + Program context menu |
+| Match Frame F / Reverse Match Frame Shift+R [A] | Opens clip under playhead in Source / moves playhead to matching frame | Commands existed, not supported | | Yes (SQCore `matchFrame`, `reverseMatchFrame`, tests): selected clip, then targeted track, then topmost video; menu + Program context menu |
 | Source markers (M in Source) | clip markers | none | Not available | No (status message) |
 | Multiple clips in Source (dropdown history) | yes | none | | No |
 | Audio-only sources (waveform view) | waveform display | black picture | | No |

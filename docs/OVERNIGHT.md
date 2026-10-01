@@ -16,7 +16,7 @@ Paul tests the result in the morning.
 3. Write `docs/audit/<stream>.md`: a table `Feature | Premiere | Sequence Studio now | Gap | Done tonight?`.
    Keep it short and factual. Mark what you could not verify.
 4. Fix and build the gaps, most valuable for everyday YouTube/TikTok cutting first. Small commits, English.
-   Edit logic: tests first (SSCore has no AppKit/AVFoundation). Time is rational, never Double. Model = value
+   Edit logic: tests first (SQCore has no AppKit/AVFoundation). Time is rational, never Double. Model = value
    types, undo = one snapshot step per user action or gesture. Swift 6 strict concurrency.
 5. Every user-visible element gets the Premiere handling: click, double-click, drag, modifier keys, context menu
    (right-click) with the entries Premiere has there (omit entries for features we don't have; never show dead
@@ -38,4 +38,4 @@ Paul tests the result in the morning.
 
 Known flaky under load (not yours to fix unless you are the stability stream):
 `AudioEngineTests.playsAtAllRatesWithoutUnderruns`, `redrawPerformance200Clips`, `CaptionsPanelModelTests.rapidEditsCoalesce`,
-SSText hanging in fontd inside `scripts/test.sh` (passes with plain `/usr/bin/swift test`).
+SQText hanging in fontd inside `scripts/test.sh` (passes with plain `/usr/bin/swift test`).

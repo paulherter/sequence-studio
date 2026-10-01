@@ -110,7 +110,7 @@ Sizes: S = under half a day, M = 1-2 days, L = more. "Verdict": same / differs /
 | Target toggle (V1/A1 block) | Toggles target; Shift adds, Opt solo (unverified) | one chip, one flag (`audit/timeline.md`) | differs | S |
 | Source patch | Separate from target, per source channel | not modelled | missing | L |
 | Sync lock toggle | Per track | header button (`audit/timeline.md`) | same | - |
-| Track lock | Padlock, hatched clips, no edits | model `isLocked` (`Model.swift:~239`), SSCore refuses | same | - |
+| Track lock | Padlock, hatched clips, no edits | model `isLocked` (`Model.swift:~239`), SQCore refuses | same | - |
 | Eye / M / S | Visibility, mute, solo | `Model.swift:266` fields | same | - |
 | Drag header bottom edge | Resize that track; Shift = all of the kind | `TrackSizing.swift:11-18` (min 18, max 240, grab 3), `TimelineView.swift:392-400,416-420` | same | - |
 | Double-click header edge | Toggle two standard heights (verify) | not handled | missing | S, verify |
@@ -183,7 +183,7 @@ Premiere's own numbers for these are not in any source we could read; measure th
 
 ## Ranked backlog (YouTube/TikTok editing first)
 
-Each item stands alone. "AC" = acceptance criteria that a unit test can check (SSCore or SSEditorUI logic, no UI).
+Each item stands alone. "AC" = acceptance criteria that a unit test can check (SQCore or SQEditorUI logic, no UI).
 
 1. **Q/W Shift and Opt variants** (S). AC: with clip A [0,10) and B [10,20) and playhead at 7, Shift+W rolls the cut to 7 (A = [0,7), B = [7,20), sequence end unchanged); Opt+W trims A to [0,7) and leaves a gap [7,10); plain W ripples B back by 3. Undo is one step each.
 2. **Cmd+Opt drag = insert copy** (S). AC: `move(copy: true)` combined with insert adds a copy at the drop time, ripples later clips by its duration, keeps the original; one undo step.

@@ -55,12 +55,12 @@ egress proxy, so only search snippets were readable. Items are tagged:
 
 - Zoom: step 2.5x per `=`/`-`, Option/Cmd+wheel exp(delta*gain), pinch gain 4.5, anchored at pointer, `\` fit toggle with
   memory, limits down to fit*0.5 and up to 4 frames across or 400 pt/frame
-  (`Packages/SSEditorUI/Sources/SSEditorUI/TimelineZoom.swift:5-26`, `TimelineView.swift:333-355`).
+  (`Packages/SQEditorUI/Sources/SQEditorUI/TimelineZoom.swift:5-26`, `TimelineView.swift:333-355`).
 - Snap radius: 8 pt for clip drags (`TimelineGeometry.swift:~60`, `defaultSnapThresholdPoints`), 10 pt for playhead
   (`PlayheadLogic.swift:28`). Both fixed pixel radius. Same model as Premiere [sourced weak].
 - Playhead follow during play: page-wise, manual scroll wins (`PlayheadLogic.swift:1-25`).
-- Scrub: `PlaybackEngine.beginScrub/scrub/endScrub`, with audio grains and 5 ms fade (`SSPlayback/PlaybackEngine.swift:130-147`).
-- Frame cache: byte-budgeted, evicts farthest from playhead, behind-direction counts double (`SSPlayback/FrameCache.swift`).
+- Scrub: `PlaybackEngine.beginScrub/scrub/endScrub`, with audio grains and 5 ms fade (`SQPlayback/PlaybackEngine.swift:130-147`).
+- Frame cache: byte-budgeted, evicts farthest from playhead, behind-direction counts double (`SQPlayback/FrameCache.swift`).
 - Not found in code: hover skimming, cache-state strip on the ruler, a momentary snap-hold key, edge autoscroll while dragging
   a clip/playhead (grep for autoscroll found nothing).
 
@@ -68,14 +68,14 @@ egress proxy, so only search snippets were readable. Items are tagged:
 
 | # | Item | Package | Effort | Notes |
 |---|---|---|---|---|
-| 1 | Cache-state strip on ruler (cached/uncached ranges from `FrameCache` index) | SSPlayback API + SSEditorUI draw | M | Resolve model. Needs a cheap "cached ranges" query on the cache. |
-| 2 | Hold-`S` momentary snap invert during drags | SSEditorUI (KeyRouter, TimelineInteraction) | S | Premiere behaviour [sourced]. |
-| 3 | Edge autoscroll while dragging clip or playhead near viewport edge | SSEditorUI | S-M | Not present. Test the pure speed-vs-distance function in a unit test. |
-| 4 | Optional hover skimming in timeline/Project panel with toggle | SSEditorUI + SSPlayback scrub path | M | FCP. Reuse `scrub(to:)` without audio grains. Rate-limit to latest request. |
-| 5 | Frame-accurate scrub latency measurements (Stats) shown in a debug HUD | SSPlayback `Stats.swift` | S | Paul judges feel; we report ms from pointer event to presented frame. |
-| 6 | Optimized/proxy media for scrub-heavy clips | SSProxy | L | Already a package; ensure scrub prefers proxy decode scale. |
-| 7 | Trim feedback: two-up live view while edge trimming | SSEditorUI + SSRender | M-L | Premiere/Resolve [recall]; verify first. |
-| 8 | Snap-point indicator line while snapped | SSEditorUI | S | Confirm whether `SnapGuides` already covers timeline (it covers the transform overlay). |
+| 1 | Cache-state strip on ruler (cached/uncached ranges from `FrameCache` index) | SQPlayback API + SQEditorUI draw | M | Resolve model. Needs a cheap "cached ranges" query on the cache. |
+| 2 | Hold-`S` momentary snap invert during drags | SQEditorUI (KeyRouter, TimelineInteraction) | S | Premiere behaviour [sourced]. |
+| 3 | Edge autoscroll while dragging clip or playhead near viewport edge | SQEditorUI | S-M | Not present. Test the pure speed-vs-distance function in a unit test. |
+| 4 | Optional hover skimming in timeline/Project panel with toggle | SQEditorUI + SQPlayback scrub path | M | FCP. Reuse `scrub(to:)` without audio grains. Rate-limit to latest request. |
+| 5 | Frame-accurate scrub latency measurements (Stats) shown in a debug HUD | SQPlayback `Stats.swift` | S | Paul judges feel; we report ms from pointer event to presented frame. |
+| 6 | Optimized/proxy media for scrub-heavy clips | SQProxy | L | Already a package; ensure scrub prefers proxy decode scale. |
+| 7 | Trim feedback: two-up live view while edge trimming | SQEditorUI + SQRender | M-L | Premiere/Resolve [recall]; verify first. |
+| 8 | Snap-point indicator line while snapped | SQEditorUI | S | Confirm whether `SnapGuides` already covers timeline (it covers the transform overlay). |
 
 ## 5. Code worth borrowing
 

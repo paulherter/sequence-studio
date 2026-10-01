@@ -1,16 +1,16 @@
 import AppKit
 import Metal
-import SSCore
-import SSEditorUI
-import SSPlayback
+import SQCore
+import SQEditorUI
+import SQPlayback
 
-/// Developer aid: `SS_PLAYTEST=<media file>` imports the clip, places it at 0, seeks and plays in the real window
+/// Developer aid: `SQ_PLAYTEST=<media file>` imports the clip, places it at 0, seeks and plays in the real window
 /// and logs what the playback engine reports (presented frames, drops, position, a readback pixel). Quits when done.
 @MainActor
 enum PlayTestDriver {
-    /// `SS_KEYTEST=1` (with SS_IMPORT): posts real Space key events into the window and logs the session state.
+    /// `SQ_KEYTEST=1` (with SQ_IMPORT): posts real Space key events into the window and logs the session state.
     static func runKeyTestIfRequested(_ c: AppController) {
-        guard ProcessInfo.processInfo.environment["SS_KEYTEST"] == "1" else { return }
+        guard ProcessInfo.processInfo.environment["SQ_KEYTEST"] == "1" else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(6))
             for i in 1...4 {
@@ -28,7 +28,7 @@ enum PlayTestDriver {
     }
 
     static func runIfRequested(_ c: AppController) {
-        guard let path = ProcessInfo.processInfo.environment["SS_PLAYTEST"] else { return }
+        guard let path = ProcessInfo.processInfo.environment["SQ_PLAYTEST"] else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1.5))
             guard let engine = c.session.engine as? PlaybackEngine else { NSLog("PLAYTEST: stub engine, no Metal"); exit(1) }

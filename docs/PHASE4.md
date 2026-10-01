@@ -1,6 +1,6 @@
-# Phase 4 — Keyframe core (SSCore)
+# Phase 4 — Keyframe core (SQCore)
 
-Scope: `Packages/SSCore`. Originally new files only; integration (see Decisions from Paul) now changes Clip/ProjectFile/Evaluation. Value types, rational `Time`, no AppKit/AVFoundation. Tests first.
+Scope: `Packages/SQCore`. Originally new files only; integration (see Decisions from Paul) now changes Clip/ProjectFile/Evaluation. Value types, rational `Time`, no AppKit/AVFoundation. Tests first.
 
 ## Model
 - `KeyframeValue` protocol: `Sendable, Hashable, Codable`; `lerp`, `+`, `-`. Conformers: `Double`, `Vec2` (x, y).
@@ -30,7 +30,7 @@ Scope: `Packages/SSCore`. Originally new files only; integration (see Decisions 
 3. Project integration done: `Clip.animation: ClipAnimation` with `AnimatedProperty<V>` (static `value` fallback + `KeyframeTrack`) for position, scale (Vec2), rotation, opacity, anchor and volume. Keyframe times are clip-local (0 = `Clip.start`); `cropped(to:)` (split/trim/clear) shifts keys so they stay on the same frames. `Timeline.videoLayers` fills `LayerRequest.transform`. File format v3 (`migrateV2toV3`, identity: old clips decode to static defaults, no keyframes). Undo = snapshots keep working since everything is value types in `Clip`.
 
 ## Open questions (for Paul)
-- Units of position/anchor: default `Vec2.zero` is meant as offset from canvas centre / anchor at clip centre, in canvas pixels. Renderer (SSRender) must agree; not wired yet.
+- Units of position/anchor: default `Vec2.zero` is meant as offset from canvas centre / anchor at clip centre, in canvas pixels. Renderer (SQRender) must agree; not wired yet.
 - Scale is stored as linked `Vec2` (x, y), default (1, 1), so non-uniform scale is possible; UI may show a single linked value. Say if it should be a plain `Double`.
 - Volume is linear gain (1 = unity), stored on every clip but only meaningful for audio; `AudioSegment` does not carry it yet (audio engine should call `Clip.volume(at:)`).
 - Trimming a clip's left edge shifts keys (same frames); keys that fall outside the remaining range are kept (clamped evaluation), not deleted.

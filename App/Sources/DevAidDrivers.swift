@@ -1,22 +1,22 @@
 import AppKit
 import Metal
-import SSCore
-import SSEditorUI
-import SSPlayback
-import SSText
+import SQCore
+import SQEditorUI
+import SQPlayback
+import SQText
 
 /// Developer aids (no screenshots, results go to NSLog; the app quits when done).
 ///
-/// - `SS_TRANSCRIBE_TEST=<media file>`: imports the clip, places it, selects it, runs Transcribe (SpeechAnalyzer de-DE on the
+/// - `SQ_TRANSCRIBE_TEST=<media file>`: imports the clip, places it, selects it, runs Transcribe (SpeechAnalyzer de-DE on the
 ///   clip's audio) through the Text panel's model, logs progress and the result, then Create Captions and the caption count.
-/// - `SS_TEXTTEST=1`: adds a text clip through the Type-tool path (`addTextClip` with a position), renders it in the real
+/// - `SQ_TEXTTEST=1`: adds a text clip through the Type-tool path (`addTextClip` with a position), renders it in the real
 ///   engine and logs whether the picture contains text pixels around the expected position; also pans/zooms the monitor.
 @MainActor
 enum DevAidDrivers {
     static func runIfRequested(_ c: AppController) {
         let env = ProcessInfo.processInfo.environment
-        if let path = env["SS_TRANSCRIBE_TEST"] { runTranscribe(c, path: path) }
-        if env["SS_TEXTTEST"] == "1" { runTextTest(c) }
+        if let path = env["SQ_TRANSCRIBE_TEST"] { runTranscribe(c, path: path) }
+        if env["SQ_TEXTTEST"] == "1" { runTextTest(c) }
         ShellDevAids.runIfRequested(c)
     }
 

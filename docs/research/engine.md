@@ -34,9 +34,9 @@ edits never invalidate. Olive's idea only applies to a *composite* (render) cach
 
 Adopt:
 - A byte-budgeted LRU for `FrameCache` that evicts by distance from playhead first, then recency (Olive/openshot evict by age only,
-  which throws away frames just ahead of the playhead). SSPlayback, S–M.
+  which throws away frames just ahead of the playhead). SQPlayback, S–M.
 - Range-based validity (`TimeRangeList`) for a future composite cache: invalidate only the edited range plus affected transitions.
-  SSPlayback + SSCore (range set type, pure value type, testable on Linux), M.
+  SQPlayback + SQCore (range set type, pure value type, testable on Linux), M.
 - Cache key = hash of (clip graph + effect params + source PTS + output size) so undo restores the cache for free (Olive). M, later.
 Borrow: Olive `app/render/diskmanager.cpp`, `playbackcache.cpp`, `framehashcache.cpp` (GPL-3.0-or-later).
 
@@ -51,7 +51,7 @@ Images are proxied via `QImageJob` to a fixed size.
 for `%width`); audio is kept from the original (`-map 0:v -map 1:a -c:v copy` pass for external proxies); alpha sources get a VP9/VP8
 profile; auto-proxy by clip size threshold; a task manager runs jobs with progress.
 
-Compare ours: `SSProxy` already exists (`ProxyPolicy`, `ProxyQueue`, `ProxyTranscoder`, `ProxyCache`).
+Compare ours: `SQProxy` already exists (`ProxyPolicy`, `ProxyQueue`, `ProxyTranscoder`, `ProxyCache`).
 Adopt/verify:
 - All-intra proxies (GOP 1) are what make scrubbing and reverse play cheap; check that our VideoToolbox proxy settings use
   intra-only (ProRes Proxy or HEVC/H.264 with keyframe interval 1). Reading `ProxyTranscoder.swift` for this is a 15-minute task. S.
@@ -74,18 +74,18 @@ flag (volatile = memory only).
 
 Adopt:
 - Mip-level min/max peak file per audio stream (e.g. 1 pair per 256 samples, then x4 levels), computed once at import in the
-  background, memory-mapped, drawn level-by-level. Pure maths: put the builder in SSCore or SSMedia (no AVFoundation needed for the
+  background, memory-mapped, drawn level-by-level. Pure maths: put the builder in SQCore or SQMedia (no AVFoundation needed for the
   reduction), unit tests on Linux. M.
 - Apply gain/fades at draw time, never in the cache (libopenshot). S.
 - Thumbnail key = (media id, source PTS rounded to a fixed grid), persistent on disk, LRU in memory; timeline asks for the nearest
-  grid frame (Kdenlive). SSMedia + SSEditorUI, M.
+  grid frame (Kdenlive). SQMedia + SQEditorUI, M.
 Borrow: Olive `audiowaveformcache.cpp` / `audiovisualwaveform.cpp` (GPL-3.0-or-later) for the mip-level layout.
 
 ## 4. Render cache (effects / export)
 
 Olive's approach (§1) is the only one with a persistent composite cache; Kdenlive has "timeline preview" (renders chunks of the timeline
 to disk, invalidated per chunk when an edit touches it). Chunk-based invalidation is simpler than per-frame hashing and what we should
-copy first. Adopt only when effects make real-time playback impossible; Phase 2 engine measures should decide. SSPlayback, L. Not now.
+copy first. Adopt only when effects make real-time playback impossible; Phase 2 engine measures should decide. SQPlayback, L. Not now.
 
 ## 5. Pitch-preserving time-stretch
 
@@ -96,7 +96,7 @@ transients outside that range (to avoid memory blowup). The speed is applied by 
 Compare ours: ARCHITECTURE.md routes audio through `AVAudioUnitTimePitch`, which is Apple's own stretcher.
 Adopt:
 - The same split: do speed by changing the read rate, correct pitch with a separate stage, bypass it when speed == 1.0 or pitch
-  preservation is off. SSPlayback, S (design already matches).
+  preservation is off. SQPlayback, S (design already matches).
 - Quality tiers by speed range as Rubber Band does: crisp/transient-friendly in 0.5–2x, smooth outside; for us: choose
   `AVAudioUnitTimePitch.overlap` accordingly and test with speech at 0.25x/4x. S.
 - Reverse and below-0.25x: mute or use grain repeat; MLT clamps. S.
@@ -116,11 +116,11 @@ with `in_offset` / `out_offset` (the transition straddles the cut: part before, 
 Compare ours: `Timeline.videoLayers(at:)` (ARCHITECTURE.md §2) already gives bottom-to-top; matches.
 Adopt:
 - Model a cross-dissolve as `in_offset`/`out_offset` around the cut (OTIO) so it needs handle media on both sides; define the
-  behaviour when handles are missing (clamp and show warning, like Premiere). SSCore, M. Tests on Linux.
-- Audio crossfade uses equal-power by default for dissolves, linear option (`mix` start/end ramps). SSAudioFX, S.
+  behaviour when handles are missing (clamp and show warning, like Premiere). SQCore, M. Tests on Linux.
+- Audio crossfade uses equal-power by default for dissolves, linear option (`mix` start/end ramps). SQAudioFX, S.
 - Composite in linear half-float (we already do), apply transition progress as a pure function `(a, b, t) -> pixel`, so effects can
-  be tested without Metal. SSRender, S.
-- OTIO import/export for interchange (Kdenlive has `src/otio`): Apache-2.0 lets us read the schema; a reader/writer in SSCore that does
+  be tested without Metal. SQRender, S.
+- OTIO import/export for interchange (Kdenlive has `src/otio`): Apache-2.0 lets us read the schema; a reader/writer in SQCore that does
   JSON only, no dependency. M. Useful for Resolve/FCP handoff.
 Borrow: OTIO schema docs and `src/opentimelineio/transition.cpp` semantics (Apache-2.0). Nothing from MLT composite needed (CPU code).
 
@@ -128,14 +128,14 @@ Borrow: OTIO schema docs and `src/opentimelineio/transition.cpp` semantics (Apac
 
 | # | Item | Package | Effort | Source |
 |---|---|---|---|---|
-| 1 | Verify proxies are all-intra; take audio from original | SSProxy | S | Shotcut, Kdenlive |
-| 2 | Playhead-distance + byte-budget eviction in `FrameCache` | SSPlayback | S–M | Olive, libopenshot (what not to do) |
-| 3 | Mip-level audio peak file, gain applied at draw time | SSMedia / SSCore | M | Olive, libopenshot |
-| 4 | Persistent thumbnail cache on a PTS grid | SSMedia, SSEditorUI | M | Kdenlive |
-| 5 | Transition model with in/out offsets and handle clamping | SSCore | M | OTIO |
-| 6 | Time-stretch quality tiers by speed, listening test | SSPlayback | S | MLT rbpitch |
-| 7 | OTIO JSON import/export | SSCore | M | OTIO |
-| 8 | Chunked timeline render cache (invalidate per range) | SSPlayback | L | Kdenlive preview, Olive |
+| 1 | Verify proxies are all-intra; take audio from original | SQProxy | S | Shotcut, Kdenlive |
+| 2 | Playhead-distance + byte-budget eviction in `FrameCache` | SQPlayback | S–M | Olive, libopenshot (what not to do) |
+| 3 | Mip-level audio peak file, gain applied at draw time | SQMedia / SQCore | M | Olive, libopenshot |
+| 4 | Persistent thumbnail cache on a PTS grid | SQMedia, SQEditorUI | M | Kdenlive |
+| 5 | Transition model with in/out offsets and handle clamping | SQCore | M | OTIO |
+| 6 | Time-stretch quality tiers by speed, listening test | SQPlayback | S | MLT rbpitch |
+| 7 | OTIO JSON import/export | SQCore | M | OTIO |
+| 8 | Chunked timeline render cache (invalidate per range) | SQPlayback | L | Kdenlive preview, Olive |
 
 ## Open questions for Paul
 - Is Rubber Band worth a GPL dependency if Apple's time-pitch is audibly worse on speech? (needs ears, not numbers)

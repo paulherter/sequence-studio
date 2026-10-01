@@ -1,7 +1,7 @@
 # Phase 3 — Color core (CPU reference)
 
-Scope of this slice: pure-Swift, CPU reference math in `Packages/SSRender/Sources/SSRender/Color/`, tests in
-`Packages/SSRender/Tests/SSRenderTests/Color/`. No Metal, no AVFoundation. The Metal shaders (later) must match these
+Scope of this slice: pure-Swift, CPU reference math in `Packages/SQRender/Sources/SQRender/Color/`, tests in
+`Packages/SQRender/Tests/SQRenderTests/Color/`. No Metal, no AVFoundation. The Metal shaders (later) must match these
 functions within tolerance; every function is written per pixel on `SIMD3<Float>` so it ports 1:1 to MSL.
 Order follows DECISIONS 2026-09-30: Correction → Conversion (LUT or automatic) → Creative LUT → (curves, wheels … later) → output.
 
@@ -66,7 +66,7 @@ Lookup: 3D = tetrahedral interpolation, 1D = linear per channel; input clamped t
 ## Decisions (Paul, 2026-09-30)
 
 1. Exposure and WB in linear; contrast, highlights, shadows, saturation in log2 around 18 % grey (perceptual).
-2. `ColorCorrection` moves to SSCore later (Phase 4 is changing the clip model now) → slice 9.
+2. `ColorCorrection` moves to SQCore later (Phase 4 is changing the clip model now) → slice 9.
 3. S-Log3 detection from Sony NonRealTimeMeta XML: sidecar `<clip>M01.XML` or embedded in the MP4 (top-level `meta` box →
    `xml ` box; ZV-E1 files have it, no sidecars). Items `CaptureGammaEquation` (`s-log3-cine`), `CaptureColorPrimaries`
    (`s-gamut3-cine`). Plus per-clip override ("Interpret Footage") → with slice 9.
@@ -76,7 +76,7 @@ Lookup: 3D = tetrahedral interpolation, 1D = linear per channel; input clamped t
 ## Slices, part 2
 
 5. Saturation in log2 (above).
-6. SSMedia `SonyMetadata.swift` (new file): NRT XML parser + reader (sidecar first, then embedded box; only top-level box
+6. SQMedia `SonyMetadata.swift` (new file): NRT XML parser + reader (sidecar first, then embedded box; only top-level box
    headers are read, no full-file scan). Tests on real clips in ~/Documents/Videos, skipped when missing.
 7. Metal color chain (`Color/ColorShaders.metal` + `ColorPipelineGPU.swift`): one compute pass per layer,
    source-encoded → working-linear, rgba16Float in/out. Uniforms from `ColorPipeline` (prepared matrices), LUTs as
@@ -85,16 +85,16 @@ Lookup: 3D = tetrahedral interpolation, 1D = linear per channel; input clamped t
 8. GPU scopes (`ScopeShaders.metal` + `Scopes.swift` + CPU reference): waveform (luma / RGB parade, IRE on Rec.709 output),
    vectorscope (709 Cb/Cr, Cb → x, Cr → y up), histogram (R, G, B, Y). Atomic counts in buffers, resolve kernel → float texture;
    graticule, skin-tone line and glow are UI.
-9. Later: move `ColorCorrection` to SSCore, per-clip source override, wire SonyMetadata → `SourceColorSpace`.
+9. Later: move `ColorCorrection` to SQCore, per-clip source override, wire SonyMetadata → `SourceColorSpace`.
 
 ## Open questions (for Paul)
 
 1. ~~**"Correction on the full log signal"** is implemented as correction in source *scene-linear* (decoded, unclipped,
    source gamut), then re-encoded before a camera LUT. Same information as the log signal, but exposure/WB are exact
    multiplications. OK, or should the sliders act directly on log code values?~~ Decided, see Decisions.
-2. **Where the correction model lives:** `ColorCorrection` is defined in SSRender for now. The per-clip model (Clip.color)
-   belongs in SSCore; move the value type there when Phase 3 touches the model?
-3. **Source detection:** Sony files are untagged. Untagged → Rec.709 by default; S-Log3 needs camera metadata (SSMedia)
+2. **Where the correction model lives:** `ColorCorrection` is defined in SQRender for now. The per-clip model (Clip.color)
+   belongs in SQCore; move the value type there when Phase 3 touches the model?
+3. **Source detection:** Sony files are untagged. Untagged → Rec.709 by default; S-Log3 needs camera metadata (SQMedia)
    or a user choice in the Source row. No detection code in this slice.
 4. **HLG→SDR look:** scene-light mapping (BT.2408 style, no OOTF) + our tone curve. QuickTime's HLG→SDR is Apple's own;
    compare side by side once an HLG clip exists (none in ~/Documents/Videos).
@@ -103,23 +103,23 @@ Lookup: 3D = tetrahedral interpolation, 1D = linear per channel; input clamped t
 6. **Embedded camera LUT:** ZV-E1 files reference the in-camera LUT (`<RelatedTo file="NeutralPaul_v5.cube" rel="LUT"/>`),
    and the MP4 `meta` box has a 442 KB `idat` item — probably that .cube. Load it automatically as the Conversion LUT
    (with the option to turn it off), or only offer it in the popup?
-   **Findings (2026-09-30, `SSMedia/EmbeddedLUT.swift`, 36 ZV-E1 clips checked):** the `meta` box (top level, after `moov`) has
+   **Findings (2026-09-30, `SQMedia/EmbeddedLUT.swift`, 36 ZV-E1 clips checked):** the `meta` box (top level, after `moov`) has
    items "Look Control data" (434,617 B, only in clips shot with a look; the `meta` box is 444,9xx B) and "Lens profile" (7,903 B,
    every clip), both `application/octet-stream`, `construction_method` 1 (idat). The 442 KB item is **not** `.cube` text: it is
    SMPTE KLV ("ELUT") wrapping a big-endian "SONYBCUB" block: file name `NeutralPaul.cube`, **33^3 LUT**, 431,244 B of big-endian
    f32 RGB triplets (red fastest, domain 0…1, values 0…1.2) plus a 3,328 B header. `EmbeddedMeta.lut(inClip:)` decodes it to
-   `.cube` text (970 KB) so SSRender's parser loads it unchanged. Clips without a look item (older ones) return nil.
+   `.cube` text (970 KB) so SQRender's parser loads it unchanged. Clips without a look item (older ones) return nil.
 
 ## Done (2026-09-30)
 
-Slices 1–4 + review fixes (commits 7fad1ed…dfe44b8), 47 SSRender tests. Reviewer re-derived S-Log3/HLG/709 constants,
+Slices 1–4 + review fixes (commits 7fad1ed…dfe44b8), 47 SQRender tests. Reviewer re-derived S-Log3/HLG/709 constants,
 S-Gamut3.Cine→709 (matches Sony's matrix) and all 6 tetrahedral branches. `.cube` also accepts Resolve `LUT_*_INPUT_RANGE`;
 `LUT_IN/OUT_VIDEO_RANGE` are parsed and stored but not applied yet. Per pixel for Metal: `PreparedCorrection.apply`,
 `ColorPipeline.process`, `Rec709Output.encode`. Conversion-LUT input = range-expanded S-Log3 (Resolve convention, 18 % grey ≈ 0.406).
 
 ## Done, part 2 (2026-09-30)
 
-Slices 5, 7, 8 + REVIEW-1 items 7–10 + GPU review hardening (753ac61…4833c72), 68 SSRender tests.
+Slices 5, 7, 8 + REVIEW-1 items 7–10 + GPU review hardening (753ac61…4833c72), 68 SQRender tests.
 - **Metal:** SwiftPM CLI neither compiles nor bundles `.metal` (no `Bundle.module` without a Package.swift change), so MSL
   lives in `ColorShaderSource.swift` / `ScopeShaderSource.swift` and is compiled at runtime (`mathMode = .safe`). Relevant for E-07's planned `Shaders.metal`.
 - **Compositor entry (E-07):** `ColorPipelineGPU(device:)` once per device, then per layer
@@ -134,7 +134,7 @@ Slices 5, 7, 8 + REVIEW-1 items 7–10 + GPU review hardening (753ac61…4833c72
   top-level in most ZV-E1 files but inside `moov` in C2157 (64-bit mdat). The embedded XML ends with a NUL (stripped before parsing).
   All 8 real clips → s-log3-cine / s-gamut3-cine in 0.3–1.5 ms. Slice 9 stays on hold until Phase 4's clip model lands.
 
-- **Slice 9 (done, engine/export/inspector wiring is the follow-up):** `ClipColor` in SSCore (`Clip.color`, carried by
+- **Slice 9 (done, engine/export/inspector wiring is the follow-up):** `ClipColor` in SQCore (`Clip.color`, carried by
   `LayerRequest.color`), `MediaInfo.detectedColorSpace/embeddedLUTName` set by `MediaImporter` via `ColorDetection.detect`,
-  project file v7 (identity). SSRender: `ColorPipeline.from(clipColor:mediaID:mediaInfo:lutProvider:)`, `LUTProvider`,
+  project file v7 (identity). SQRender: `ColorPipeline.from(clipColor:mediaID:mediaInfo:lutProvider:)`, `LUTProvider`,
   `CachingLUTProvider(file:embedded:)` (embedded loader = app glue over `EmbeddedMeta.lut(inClip:)`, not yet written).

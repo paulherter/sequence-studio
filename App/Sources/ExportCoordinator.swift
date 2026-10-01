@@ -1,8 +1,8 @@
 import AppKit
-import SSCore
-import SSEditorUI
-import SSExport
-import SSPlayback
+import SQCore
+import SQEditorUI
+import SQExport
+import SQPlayback
 import SwiftUI
 
 struct ExportSequenceMissing: LocalizedError {

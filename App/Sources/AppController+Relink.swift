@@ -1,5 +1,5 @@
 import AppKit
-import SSCore
+import SQCore
 
 /// Missing-media dialog after opening a project: offers to search a folder for the offline files and relinks them.
 extension AppController {

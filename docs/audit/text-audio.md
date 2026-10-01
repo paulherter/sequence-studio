@@ -2,7 +2,7 @@
 
 Sources: `docs/PREMIERE-BEHAVIOR.md` sections 8 and 9, the code, general Premiere knowledge. The Adobe mirror
 (`docs/reference/adobe`) had almost nothing on these topics yet; everything marked (unverified) is from memory.
-Time stays rational; all new edit logic has tests in SSCore, SSText, SSTranscribe or SSEditorUI.
+Time stays rational; all new edit logic has tests in SQCore, SQText, SQTranscribe or SQEditorUI.
 
 ## Type tool and text style
 

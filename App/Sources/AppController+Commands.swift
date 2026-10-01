@@ -1,8 +1,8 @@
 import AppKit
-import SSCore
-import SSEditorUI
+import SQCore
+import SQEditorUI
 
-/// Every `EditorCommand` that SSCore and the session already support. Others report "not available yet".
+/// Every `EditorCommand` that SQCore and the session already support. Others report "not available yet".
 extension AppController {
     static func isSupported(_ c: EditorCommand) -> Bool {
         switch c {
@@ -26,7 +26,7 @@ extension AppController {
     }
 
     func execute(_ c: EditorCommand) {
-        if ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1" { NSLog("SSKEY execute \(c) playing=\(session.isPlaying)") }
+        if ProcessInfo.processInfo.environment["SQ_KEYLOG"] == "1" { NSLog("SQKEY execute \(c) playing=\(session.isPlaying)") }
         // Editing text (a field or the timecode box): the standard commands go to the editor.
         if let tv = textResponder, forwardToText(c, tv) { return }
         if focusedPanel == .sourceMonitor, panels.source.handle(c) { return }

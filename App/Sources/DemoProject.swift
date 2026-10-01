@@ -1,8 +1,8 @@
 import Foundation
-import SSCore
-import SSEditorUI
+import SQCore
+import SQEditorUI
 
-/// Sample project for screenshots (`SS_DEMO=1`): offline media refs and a busy 29.97 fps timeline. Not shipped UI.
+/// Sample project for screenshots (`SQ_DEMO=1`): offline media refs and a busy 29.97 fps timeline. Not shipped UI.
 @MainActor
 enum DemoProject {
     static let fd = Time(1001, 30000)

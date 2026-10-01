@@ -1,6 +1,6 @@
 import AppKit
 import CoreAudio
-import SSEditorUI
+import SQEditorUI
 
 /// Settings window (⌘,): General, Playback, Media. Real AppKit controls in an NSTabView; every change is
 /// written to UserDefaults at once (`AppSettings`). Autosave interval and audio output are read at launch.

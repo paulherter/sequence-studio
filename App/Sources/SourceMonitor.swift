@@ -1,7 +1,7 @@
 import AppKit
-import SSCore
-import SSEditorUI
-import SSRender
+import SQCore
+import SQEditorUI
+import SQRender
 
 /// The Source monitor: plays one project media item on its own engine (a one-clip sequence in the media's own format)
 /// and holds the item's In/Out marks (`Project.sourceMarks`). Insert and Overwrite go through

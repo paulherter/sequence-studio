@@ -36,4 +36,4 @@ Before tonight: `Clip.timeline` duration was `source.duration`; `PlaybackRate` o
 
 Reverse costs no extra seek per frame: `PrefetchPlanner` maps timeline time to source time and decodes whole GOPs, so a reversed clip is the
 same job list as forward play with the GOPs in descending order (a GOP is decoded once and its frames cached). 7 decode calls in 5 s at 2x,
-3 at 1x. Bench: `SQ_REAL_MEDIA=1 swift test --filter SpeedRealMediaBenchTests` in `Packages/SSPlayback`.
+3 at 1x. Bench: `SQ_REAL_MEDIA=1 swift test --filter SpeedRealMediaBenchTests` in `Packages/SQPlayback`.

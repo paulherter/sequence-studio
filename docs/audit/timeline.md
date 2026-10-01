@@ -43,7 +43,7 @@ Sources: `docs/PREMIERE-BEHAVIOR.md`, the mirrored Adobe keyboard-shortcut table
 | Double-click marker in ruler | opens marker dialog | Missing | Missing | Yes |
 | Shift+M / Shift+Cmd+M next / previous marker | verified | Missing | Missing | Yes |
 | Marker duration UI, drag marker, clip markers | yes | - | - | No |
-| Gap/edge selection and sync-lock detail for locked tracks | refuses edit | SSCore refuses | none | already |
+| Gap/edge selection and sync-lock detail for locked tracks | refuses edit | SQCore refuses | none | already |
 
 ## Left open
 - Rate Stretch, source patching, Group, Enable, Speed/Duration, Paste Attributes, Duplicate (Shift+Cmd+/).

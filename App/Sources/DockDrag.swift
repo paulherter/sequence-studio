@@ -1,5 +1,5 @@
 import AppKit
-import SSEditorUI
+import SQEditorUI
 
 /// What a tab drag ended in.
 enum DockDragResult {
@@ -13,7 +13,7 @@ enum DockDragResult {
 /// movement it is a plain click; beyond that a translucent copy of the capsule follows the pointer and an overlay
 /// over the panel under the pointer shows the five drop zones (center = add as tab, edge band = split). Dropping on
 /// a tab strip adds/reorders tabs. Esc or releasing outside every panel cancels. Geometry comes from `DropZone`
-/// and `TabReorder` in SSEditorUI.
+/// and `TabReorder` in SQEditorUI.
 @MainActor
 enum DockDragSession {
     static let threshold: CGFloat = 4

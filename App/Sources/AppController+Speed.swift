@@ -1,6 +1,6 @@
 import AppKit
-import SSCore
-import SSEditorUI
+import SQCore
+import SQEditorUI
 
 extension AppController {
     /// Clip > Speed/Duration (Cmd+R): sheet for the selected clips; one undo step.

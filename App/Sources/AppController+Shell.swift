@@ -1,6 +1,6 @@
 import AppKit
-import SSCore
-import SSEditorUI
+import SQCore
+import SQEditorUI
 
 /// App-level commands (project handling, settings windows) and the rules that enable or disable menu items.
 extension AppController {
@@ -159,7 +159,7 @@ extension AppController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === recentMenu else { return }
         menu.removeAllItems()
-        let urls = NSDocumentController.shared.recentDocumentURLs.filter { $0.pathExtension == ProjectFile.fileExtension }
+        let urls = NSDocumentController.shared.recentDocumentURLs.filter(ProjectFile.isProjectURL)
         for url in urls {
             let item = NSMenuItem(title: url.deletingPathExtension().lastPathComponent, action: #selector(openRecent(_:)), keyEquivalent: "")
             item.target = self

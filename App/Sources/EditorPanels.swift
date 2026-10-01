@@ -1,9 +1,9 @@
 import AppKit
-import SSCore
-import SSEditorUI
-import SSMedia
-import SSRender
-import SSText
+import SQCore
+import SQEditorUI
+import SQMedia
+import SQRender
+import SQText
 
 /// Owns the panel views and models and keeps them in step with the `EditorSession`: session changes flow in through
 /// `sync(_:)`, user gestures flow out as session calls.

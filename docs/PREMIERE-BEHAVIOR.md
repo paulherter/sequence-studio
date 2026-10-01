@@ -38,7 +38,7 @@ Sources actually read or returned by search (cited per section as S1..):
   https://helpx.adobe.com/premiere-pro/how-to/timeline-track-controls-premiere-cc.html (snippets)
 - S13 https://www.premiumbeat.com/blog/premiere-pro-timeline-source-patching and https://www.adobe.com/learn/premiere-pro/web/premiere-pro-source-patch-cc
 
-Sequence Studio today (from docs/STATUS.md and docs/FEEDBACK-4.md): SSCore has sequence-wide ripple, trim/roll/slip/move, snapping,
+Sequence Studio today (from docs/STATUS.md and docs/FEEDBACK-4.md): SQCore has sequence-wide ripple, trim/roll/slip/move, snapping,
 link-aware edits, track lock and sync lock flags; shell has timeline, Program monitor, Effect Controls with keyframe graph, colour
 sections, text/captions, export queue, meter panel; tool column is Selection/Razor/Slip/[Pen]/[Shape]/[Mask]/Hand/Type.
 

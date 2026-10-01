@@ -1,13 +1,13 @@
 import AppKit
-import SSEditorUI
+import SQEditorUI
 
-/// Developer aid: with `SS_SNAPSHOT=<dir>` the app writes PNGs of its own window (Edit PC, Edit MacBook, Color) and quits.
+/// Developer aid: with `SQ_SNAPSHOT=<dir>` the app writes PNGs of its own window (Edit PC, Edit MacBook, Color) and quits.
 /// Renders the view hierarchy through PDF (`dataWithPDF` calls every view's draw directly), so no screen-recording
 /// permission is involved; Metal layers (the viewer) and the toolbar stay blank. Not part of the UI.
 @MainActor
 enum SnapshotDriver {
     static func runIfRequested(_ c: AppController) {
-        guard let dir = ProcessInfo.processInfo.environment["SS_SNAPSHOT"] else { return }
+        guard let dir = ProcessInfo.processInfo.environment["SQ_SNAPSHOT"] else { return }
         let url = URL(fileURLWithPath: dir, isDirectory: true)
         try? FileManager.default.createDirectory(at: url, withIntermediateDirectories: true)
         Task { @MainActor in

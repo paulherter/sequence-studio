@@ -1,9 +1,9 @@
 import AppKit
 import Metal
 import Observation
-import SSCore
-import SSEditorUI
-import SSPlayback
+import SQCore
+import SQEditorUI
+import SQPlayback
 
 /// Application delegate and owner of everything: the `EditorSession`, the window shell, the panels, the menus and the
 /// keyboard routing. Commands from the menus, the toolbar, the monitor transport and `KeyRouter` all end up in
@@ -64,7 +64,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         router = KeyRouter(map: .premiereDefault, focus: .timeline, clock: { ProcessInfo.processInfo.systemUptime })
         super.init()
         session.onChange = { [weak self] c in self?.sessionChanged(c) }
-        if !ProcessInfo.processInfo.environment.keys.contains(where: { ($0.hasPrefix("SS_") || $0.hasPrefix("SQ_")) && $0 != "SS_KEYLOG" }) {
+        if !ProcessInfo.processInfo.environment.keys.contains(where: { ($0.hasPrefix("SS_") || $0.hasPrefix("SQ_")) && $0 != "SQ_KEYLOG" }) {
             session.confirmFormatChange = { [weak self] current, proposed in self?.askChangeSequenceFormat(current, proposed) ?? true }
         }
     }
@@ -72,6 +72,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     // MARK: Launch
 
     func applicationDidFinishLaunching(_ notification: Notification) {
+        DefaultsMigration.migrateLegacyKeys()   // `ss.*` keys of older builds -> `sq.*`
         NSApp.setActivationPolicy(.regular)
         NSApp.appearance = NSAppearance(named: .darkAqua)
         panels = EditorPanels(session: session, sourceEngine: sourceEngine)
@@ -145,33 +146,33 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         window = w
     }
 
-    /// `SS_OPEN=<path.ssproj>` opens a project; `SS_NO_RECOVERY=1` skips the recovery prompt; `SS_DEMO=1` fills the untitled project with sample clips (screenshots).
+    /// `SQ_OPEN=<path.sqproj>` opens a project; `SQ_NO_RECOVERY=1` skips the recovery prompt; `SQ_DEMO=1` fills the untitled project with sample clips (screenshots).
     private func launchDocument() {
         let env = ProcessInfo.processInfo.environment
-        if let path = env["SS_OPEN"] {
+        if let path = env["SQ_OPEN"] {
             Task { await openProject(at: URL(fileURLWithPath: path)) }
-        } else if env["SS_DEMO"] == "1" {
+        } else if env["SQ_DEMO"] == "1" {
             session.newProject(DemoProject.make())
             session.seek(to: DemoProject.playhead)
             session.select(clips: DemoProject.selection(in: session))
-        } else if env["SS_NO_RECOVERY"] != "1", env["SS_IMPORT"] == nil, settings.offerRecovery {
+        } else if env["SQ_NO_RECOVERY"] != "1", env["SQ_IMPORT"] == nil, settings.offerRecovery {
             offerRecovery()
         }
-        if let list = env["SS_IMPORT"] { importAtLaunch(list.split(separator: ":").map { URL(fileURLWithPath: String($0)) }) }
+        if let list = env["SQ_IMPORT"] { importAtLaunch(list.split(separator: ":").map { URL(fileURLWithPath: String($0)) }) }
     }
 
-    /// `SS_IMPORT=<path>[:<path>…]`: imports like Cmd+I, then places the first file at 0 like a Project-panel drop. Stays open.
+    /// `SQ_IMPORT=<path>[:<path>…]`: imports like Cmd+I, then places the first file at 0 like a Project-panel drop. Stays open.
     private func importAtLaunch(_ urls: [URL]) {
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(0.5))
             await panels.projectModel.importFiles(urls)
             guard let first = urls.first, let m = session.project.media.first(where: { $0.path == first.path }) else {
-                NSLog("SS_IMPORT: nothing imported, failures=\(panels.projectModel.importFailures)"); return
+                NSLog("SQ_IMPORT: nothing imported, failures=\(panels.projectModel.importFailures)"); return
             }
             session.placeMedia([m.id], at: .zero, mode: .overwrite)
             session.select(clips: [])
             if let v = m.info?.video, let f = session.activeTimeline?.format {
-                NSLog("SS_IMPORT: \(m.name) native \(v.width)x\(v.height) rotation \(v.rotation) still \(m.info?.isStill == true) "
+                NSLog("SQ_IMPORT: \(m.name) native \(v.width)x\(v.height) rotation \(v.rotation) still \(m.info?.isStill == true) "
                       + "-> display \(v.displayWidth)x\(v.displayHeight), sequence \(f.width)x\(f.height), scale \(session.activeTimeline?.tracks.flatMap(\.clips).first { $0.media == m.id }?.animation.scale.value.x ?? -1)")
             }
         }
@@ -446,7 +447,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
 
     @objc func menuCommand(_ sender: NSMenuItem) {
         guard let c = sender.representedObject as? EditorCommand else { return }
-        if Self.keyLog { NSLog("SSKEY menuCommand \(c) event=\(String(describing: NSApp.currentEvent?.type.rawValue))") }
+        if Self.keyLog { NSLog("SQKEY menuCommand \(c) event=\(String(describing: NSApp.currentEvent?.type.rawValue))") }
         // A plain-key item (Space, J, X ...) is fired by the key monitor / KeyRouter. The same key down also reaches the
         // menu's key equivalent: running it again toggled Play twice (play, then pause at once). Clicks still run.
         if NSApp.currentEvent?.type == .keyDown, !sender.keyEquivalent.isEmpty,
@@ -529,12 +530,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         let actions = router.handle(ke)
         scheduleRouterDeadline()
         guard !actions.isEmpty else { return consumed ? nil : event }
-        if Self.keyLog { NSLog("SSKEY \(ke.key) -> \(actions)") }
+        if Self.keyLog { NSLog("SQKEY \(ke.key) -> \(actions)") }
         run(actions)
         return nil
     }
 
-    private static let keyLog = ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1"
+    private static let keyLog = ProcessInfo.processInfo.environment["SQ_KEYLOG"] == "1"
 
     private func run(_ actions: [RouterAction]) {
         for a in actions {

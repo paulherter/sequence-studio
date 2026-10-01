@@ -26,17 +26,17 @@ The generated `SequenceStudio.xcodeproj` is not committed. Test footage is not p
 
 | Package | Purpose |
 |---|---|
-| SSCore | Project model, rational time, timeline edit logic, undo snapshots, project file, autosave. No AVFoundation/AppKit. |
-| SSMedia | Media import and probing, demuxing, video/audio decoding, thumbnails, relink. |
-| SSRender | Metal compositor and presenter. |
-| SSPlayback | Playback clock, frame cache, prefetch, decode scheduling, audio engine. |
-| SSExport | Export settings, frame source, writer, loudness normalization. |
-| SSAudioFX | Audio effects, including noise suppression (RNNoise). |
-| SSProxy | Proxy media generation and cache. |
-| SSLibrary | Media library: bins, folder watching, search. |
-| SSText | Text layout and titles. |
-| SSTranscribe | Speech transcription. |
-| SSEditorUI | Theme, panel layout, timeline and monitor views. |
+| SQCore | Project model, rational time, timeline edit logic, undo snapshots, project file, autosave. No AVFoundation/AppKit. |
+| SQMedia | Media import and probing, demuxing, video/audio decoding, thumbnails, relink. |
+| SQRender | Metal compositor and presenter. |
+| SQPlayback | Playback clock, frame cache, prefetch, decode scheduling, audio engine. |
+| SQExport | Export settings, frame source, writer, loudness normalization. |
+| SQAudioFX | Audio effects, including noise suppression (RNNoise). |
+| SQProxy | Proxy media generation and cache. |
+| SQLibrary | Media library: bins, folder watching, search. |
+| SQText | Text layout and titles. |
+| SQTranscribe | Speech transcription. |
+| SQEditorUI | Theme, panel layout, timeline and monitor views. |
 
 `App/` holds the SwiftUI shell; `Tools/` holds development executables.
 

@@ -1,6 +1,6 @@
 import AppKit
-import SSCore
-import SSEditorUI
+import SQCore
+import SQEditorUI
 
 /// A menu item that runs a closure (the menu keeps the closure alive through `representedObject`).
 @MainActor

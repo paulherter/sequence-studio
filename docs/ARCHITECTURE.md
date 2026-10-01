@@ -24,7 +24,7 @@ Principles:
   the cache; only the composite changes, and we composite every display frame anyway.
 - **The render thread never waits.** On a cache miss it shows the nearest cached earlier frame of that clip (or the last presented
   composite) and counts a dropped frame. Decoding happens only in decode tasks.
-- **Time is `SSCore.Time` everywhere in our APIs.** `CMTime` / host ticks / sample counts are converted at the boundary
+- **Time is `SQCore.Time` everywhere in our APIs.** `CMTime` / host ticks / sample counts are converted at the boundary
   (`Time(cm.value, Int64(cm.timescale))`, `Time(sampleCount, 48_000)`, `Time(nanos, 1_000_000_000)`). No `Double` for positions.
 - **Failures are per clip.** A damaged file marks its media `.damaged`, the compositor draws a placeholder for that layer, playback continues.
 
@@ -32,23 +32,23 @@ Principles:
 
 | Module (Package.swift deps) | Contents |
 |---|---|
-| SSCore (none) | `SequenceFormat`, track flags, In/Out, markers, `Timeline.videoLayers(at:)` / `audioSegments(in:)`, three-point edit, add edit, `PlaybackRate`, `Shuttle`, `Bin`/`rootBin`, `SourceMarks`, `Recovery` (autosave), project file v4 |
-| SSMedia (SSCore) | `MediaInfo` probe/import, `SampleIndex`, `Demuxer`, `VideoDecoding` + `VTVideoDecoder`, `AudioSource`/`AssetAudioSource`/`MemoryAudioSource`, `Relink` (`MediaLocator`). Test target `SSMediaTestSupport` (synthetic clips) |
-| SSRender (SSCore) | `Compositor` (Metal, YCbCr → linear half float, stacking, placeholder), `Presenter` (texture → drawable, fit) |
-| SSPlayback (SSCore, SSMedia, SSRender) | `PlaybackClock` + `HostClock`/`ManualClock`, `RingBuffer`, `AudioFeeder` landed; `FrameCache`, `PrefetchPlanner`, `DecodeScheduler`, `AudioClock`, `AudioEngine`, `ScrubAudio`, `PlaybackEngine`, `PlaybackStats` not yet on main |
-| SSAudioFX (SSCore, CRNNoise) | `RealtimeAudioFX` (48 kHz track preset/volume/denoise chain), `OfflineAudioFX`, loudness, presets |
-| SSText (SSCore) | Text/caption layout |
-| SSTranscribe (SSCore) | Transcription |
-| SSLibrary (none) | Media/asset library |
-| SSProxy (SSCore) | Proxy generation |
-| SSExport (SSCore, SSRender, SSPlayback, SSTranscribe, SSAudioFX) | Export writer, settings, frame source |
-| SSEditorUI (SSCore) | Theme, workspace layout tree, timeline view + geometry, viewer view, monitor panels, command map. Testable with `swift test`. |
+| SQCore (none) | `SequenceFormat`, track flags, In/Out, markers, `Timeline.videoLayers(at:)` / `audioSegments(in:)`, three-point edit, add edit, `PlaybackRate`, `Shuttle`, `Bin`/`rootBin`, `SourceMarks`, `Recovery` (autosave), project file v4 |
+| SQMedia (SQCore) | `MediaInfo` probe/import, `SampleIndex`, `Demuxer`, `VideoDecoding` + `VTVideoDecoder`, `AudioSource`/`AssetAudioSource`/`MemoryAudioSource`, `Relink` (`MediaLocator`). Test target `SQMediaTestSupport` (synthetic clips) |
+| SQRender (SQCore) | `Compositor` (Metal, YCbCr → linear half float, stacking, placeholder), `Presenter` (texture → drawable, fit) |
+| SQPlayback (SQCore, SQMedia, SQRender) | `PlaybackClock` + `HostClock`/`ManualClock`, `RingBuffer`, `AudioFeeder` landed; `FrameCache`, `PrefetchPlanner`, `DecodeScheduler`, `AudioClock`, `AudioEngine`, `ScrubAudio`, `PlaybackEngine`, `PlaybackStats` not yet on main |
+| SQAudioFX (SQCore, CRNNoise) | `RealtimeAudioFX` (48 kHz track preset/volume/denoise chain), `OfflineAudioFX`, loudness, presets |
+| SQText (SQCore) | Text/caption layout |
+| SQTranscribe (SQCore) | Transcription |
+| SQLibrary (none) | Media/asset library |
+| SQProxy (SQCore) | Proxy generation |
+| SQExport (SQCore, SQRender, SQPlayback, SQTranscribe, SQAudioFX) | Export writer, settings, frame source |
+| SQEditorUI (SQCore) | Theme, workspace layout tree, timeline view + geometry, viewer view, monitor panels, command map. Testable with `swift test`. |
 | App | SwiftUI shell, window/toolbar, menus, `EditorSession` wiring |
 | Tools/EngineBench | Release-build executable that measures the Phase 2 acceptance criteria |
 
-SSCore stays free of AVFoundation/AppKit/Metal. SSMedia is the only module that touches `AVAsset`/`VideoToolbox`.
+SQCore stays free of AVFoundation/AppKit/Metal. SQMedia is the only module that touches `AVAsset`/`VideoToolbox`.
 
-## 3. SSCore additions (value types, tests first)
+## 3. SQCore additions (value types, tests first)
 
 ```swift
 public struct SequenceFormat: Sendable, Hashable, Codable {
@@ -89,7 +89,7 @@ public struct Shuttle: Sendable, Equatable {
 Project file: `ProjectFile.currentVersion` = 4. Migrations keyed by source version: v1→v2 (`frameDuration` → `format`, 1920×1080 / 48 kHz defaults),
 v2→v3 (clip `animation`, pass-through), v3→v4 (`rootBin`, `sourceMarks`, optional on decode, pass-through).
 
-Landed since (SSCore):
+Landed since (SQCore):
 ```swift
 public struct Bin: Sendable, Hashable, Codable, Identifiable { id, name, children: [BinItem]; bin(_:), allRefs, contains(_:), parent(of:), mediaIDs }
 public enum BinItem { /* bin / media / timeline */ }   public enum BinItemRef { /* id-only handle */ }
@@ -101,10 +101,10 @@ public struct SourceMarks: Sendable, Hashable, Codable { public var markIn: Time
 //   SessionMarker (begin/end/info, crash detection by pid), RecoveryScanner.scan() -> [RecoveryCandidate], recover(_:), dismiss(_:)
 ```
 
-## 4. SSMedia
+## 4. SQMedia
 
 ```swift
-public struct MediaInfo: Sendable, Hashable, Codable {           // stored on MediaRef (SSCore mirror type, filled by SSMedia)
+public struct MediaInfo: Sendable, Hashable, Codable {           // stored on MediaRef (SQCore mirror type, filled by SQMedia)
     public var duration: Time
     public var video: VideoTrackInfo?, audio: AudioTrackInfo?
 }
@@ -181,7 +181,7 @@ Decoding strategy:
 - Reverse play: decode GOPs back to front; each GOP lands in the cache whole, then plays backwards from cache.
 - Hardware first (`EnableHardwareAcceleratedVideoDecoder`); Sony H.264 4:2:2 has no software fallback (spike), so a failure there is a clip error, not a retry loop.
 
-## 5. SSRender
+## 5. SQRender
 
 ```swift
 public struct RenderLayer: @unchecked Sendable {          // built per display frame from LayerRequest + FrameCache
@@ -212,7 +212,7 @@ viewer) is Phase 3; Phase 2 output is "tagged Rec.709, gamma as decoded" so late
 Risk: Metal sampling of Apple lossless-compressed pixel formats (`&xf2`, `&8v0`). If `CVMetalTextureCache` rejects them,
 request the uncompressed format in the VT destination attributes (costs bandwidth, measure in EngineBench).
 
-## 6. SSPlayback
+## 6. SQPlayback
 
 ```swift
 public protocol PlaybackClock: Sendable {
@@ -301,7 +301,7 @@ media's `SampleIndex` → cache lookup (miss: `nearest`, count drop, ask schedul
 
 - Graph: `AVAudioSourceNode` (our mixer) → `AVAudioUnitTimePitch` (rate = |speed|, pitch preserved) → `mainMixerNode` → output.
   Tap on the source node output for the timeline audio meter (peak/RMS per channel).
-- Landed (main): `AudioFeeder`, `RingBuffer` in SSPlayback; `AudioSource`/`AssetAudioSource`/`MemoryAudioSource` in SSMedia; `RealtimeAudioFX` in SSAudioFX.
+- Landed (main): `AudioFeeder`, `RingBuffer` in SQPlayback; `AudioSource`/`AssetAudioSource`/`MemoryAudioSource` in SQMedia; `RealtimeAudioFX` in SQAudioFX.
   E-11: `AudioPlaying` protocol (AudioPlaying.swift, + `ManualAudio` for tests), `AudioEngine` (real graph), `AudioClock`. E-12: `ScrubAudio` (ScrubAudio.swift).
 - `AudioPlaying`: `prepare() throws` (hardware + feeder thread, idempotent, may block; `AudioEngineError.noOutputDevice`), `start()`/`stop()` (atomics;
   stop = 5 ms fade-out then silence, hardware keeps running), `setRate` (direction for the next seek, TimePitch |rate|, bypass at 1, re-reads latency),
@@ -372,7 +372,7 @@ Shared mutable state uses `Synchronization.Mutex` / `Atomic`, not `NSLock` or `D
 
 `EngineBench three-stack <sony.mp4>` · `step-back <file>` · `drift <file> --minutes 10` · `scrub <file>`.
 Headless: offscreen target paced by a 60 Hz `CAMetalDisplayLink`-equivalent timer, real audio output. Prints `PlaybackStats`
-as one table; results go into docs/STATUS.md with commit hash. Media paths come from arguments or `SS_MEDIA_DIR`
+as one table; results go into docs/STATUS.md with commit hash. Media paths come from arguments or `SQ_MEDIA_DIR`
 (default `~/Documents/Videos`), never from the repo.
 
 ## Coordinate convention

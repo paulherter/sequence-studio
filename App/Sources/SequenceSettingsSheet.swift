@@ -1,5 +1,5 @@
 import AppKit
-import SSCore
+import SQCore
 
 /// Sequence Settings and New Sequence (Premiere): frame size with presets, frame rate, audio sample rate.
 /// `present` shows it as a sheet; `completion` gets the chosen name and format on OK, nil on Cancel.

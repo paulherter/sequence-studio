@@ -1,7 +1,7 @@
-# Library core (new package `SSLibrary`)
+# Library core (new package `SQLibrary`)
 
-Standalone package, Foundation only (no AppKit/AVFoundation). No UI, no rendering, no project.yml changes. `scripts/test.sh SSLibrary` works via the `SS*` glob.
-Preset payloads are opaque versioned JSON (`Data`) tagged by kind, so SSLibrary does not depend on SSText/SSCore while those evolve; typed wrappers come at integration.
+Standalone package, Foundation only (no AppKit/AVFoundation). No UI, no rendering, no project.yml changes. `scripts/test.sh SQLibrary` works via the `SS*` glob.
+Preset payloads are opaque versioned JSON (`Data`) tagged by kind, so SQLibrary does not depend on SQText/SQCore while those evolve; typed wrappers come at integration.
 
 ## Slices (tests first, one commit each)
 1. **File classification** (`LibraryItemKind.swift`): detect kind from extension/UTType (audio, video, image, overlay = alpha video/png, LUT, font, other), case-insensitive, ignores hidden/system files.

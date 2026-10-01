@@ -1,7 +1,7 @@
 import AppKit
-import SSCore
-import SSEditorUI
-import SSExport
+import SQCore
+import SQEditorUI
+import SQExport
 
 /// Caption wiring: double-click a caption in the timeline types into it in the Text panel, SRT export, and the
 /// right-click menu of captions in the timeline.

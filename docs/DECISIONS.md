@@ -24,8 +24,8 @@
 - `Clip.mediaDuration` (optional) bounds tail extension; head extension is bounded by source start 0.
 
 
-## 2026-09-30 New package SSEditorUI
-- AppKit timeline, viewer, monitor panels, theme, workspace tree and command map live in a new package `SSEditorUI` (depends on SSCore, SSMedia, SSRender, SSPlayback) so UI logic is testable with `swift test` instead of building the app. `App` keeps the shell, lifecycle, EditorSession and menus. (Paul)
+## 2026-09-30 New package SQEditorUI
+- AppKit timeline, viewer, monitor panels, theme, workspace tree and command map live in a new package `SQEditorUI` (depends on SQCore, SQMedia, SQRender, SQPlayback) so UI logic is testable with `swift test` instead of building the app. `App` keeps the shell, lifecycle, EditorSession and menus. (Paul)
 
 ## 2026-09-30 [auto] Library open questions (LIBRARY.md 1–10)
 1. Overlay detection is lazy: the preview provider probes alpha when it first makes a thumbnail and caches `hasAlpha` with the preview; the scan stays extension-only.
@@ -35,11 +35,11 @@
 5. `FSEventsFolderWatcher` gets its manual check with the Library panel slice.
 6. Search matches the file name only (Premiere Media Browser); path/tag search after V1.
 7. Favorites keyed by folder id + relative path; a rename drops the favorite. Accepted.
-8. Preview cache gets an LRU cap of 2 GB, same pattern as SSProxy (lastAccess, evict oldest first).
+8. Preview cache gets an LRU cap of 2 GB, same pattern as SQProxy (lastAccess, evict oldest first).
 9. Preset export/import is after V1.
 10. Keep the 3 newest `.corrupt-*` backups per file, prune older ones on the next backup.
 
-## 2026-09-30 [auto] SSEditorUI U-01/U-02/T-01
+## 2026-09-30 [auto] SQEditorUI U-01/U-02/T-01
 - Theme: fixed sRGB constants (dark only), tabular digits everywhere.
 - Panels: effectControls, text, properties, programMonitor, sourceMonitor, library, effects, project, timeline (tool column + meter belong to timeline).
 - Built-in layouts: PC = [left 0.75 | right 0.25]; left = top [EffectControls/Text/Properties 0.6 | Program/Source 0.4] over timeline (0.55/0.45); right = Library over Effects/Project. MacBook = [left 0.68 | Program/Source full height]; left = top [Library/Effects 0.4 | Effect Controls 0.6] over [Project 0.25 | timeline 0.75].
@@ -54,13 +54,13 @@
 - Clips with an embedded look (Sony "Look Control data" item, decoded by `EmbeddedMeta.lut(inClip:)`) load it automatically as the Conversion LUT when the clip is imported, like Premiere's "use embedded LUT". The Conversion LUT slot shows "Embedded: <name>" with a toggle to turn it off (per clip, stored in the clip's color settings); the popup still lists it so it can be replaced by a file LUT. Clips without an embedded look keep the automatic color-managed conversion.
 
 ## 2026-09-30 [auto] Text layers are generator clips
-- Text clips are SSCore generator clips (`ClipSource.generator`, kind "text", opaque payload = SSText TextTemplate + AnimationSet, project file v6). SSCore stays free of SSText.
+- Text clips are SQCore generator clips (`ClipSource.generator`, kind "text", opaque payload = SQText TextTemplate + AnimationSet, project file v6). SQCore stays free of SQText.
 - Position/scale/rotation of a text layer come from the clip's Motion (keyframable like any clip, Premiere-like); the template itself has no position. The block is centred on the canvas before the clip transform.
 - Text in-animations are anchored to the clip start, so a split text clip replays its in-animation on the right half (accepted; revisit if it feels wrong).
 
 ## 2026-09-30 Color slice 9: per-clip color model
 - 2026-09-30 Paul: slice 9 go.
-- [auto] `ClipColor` (static, keyframe-free) on `Clip.color`; `ColorCorrection` parameters moved to SSCore (SSRender keeps the math, typealias for source compatibility). Order Correction -> Conversion LUT -> Creative LUT.
+- [auto] `ClipColor` (static, keyframe-free) on `Clip.color`; `ColorCorrection` parameters moved to SQCore (SQRender keeps the math, typealias for source compatibility). Order Correction -> Conversion LUT -> Creative LUT.
 - [auto] Conversion LUT: `nil` = none, `.automatic` (default) = embedded camera LUT when `useEmbeddedLUT` and the media has one, `.file`/`.embedded` explicit. Automatic embedded applies only while the effective source is S-Log3 (Sony look LUTs expect S-Log3 input); an explicit `.embedded` always applies.
 - [auto] `MediaInfo.detectedColorSpace` / `embeddedLUTName` filled once at import (HLG+2020 tags, else Sony NRT metadata, else Rec.709). Project file v7 = identity migration.
 - [auto] PQ / HDR10 sources are not supported in V1: they are detected as Rec.709 (TODO in `ColorDetection`). HLG is detected from the transfer tag alone (primaries missing or P3 still mean HLG/BT.2020).
@@ -92,7 +92,7 @@ Extra panel height is water-filled over the tracks (video weight 3, audio 2) up 
 
 ## 2026-10-01 Colour: Lumetri-like ordered blocks (project v11)
 - `ClipColor` = `source` + `useEmbeddedLUT` + `sections: [ColorSection]` (kinds: basicCorrection, inputLUT, creative, curves, wheels, vignette; each has `id`, `enabled`, parameters). v10 -> v11: the old correction / conversion LUT / creative LUT fields decode into Basic Correction, Input LUT, (Creative) in the old order; a bypassed slot becomes a disabled block. The look is close, not bit-identical (new maths).
-- Maths (SSRender `ColorStages`): every block works on a *tone signal* `t` = Rec.709-encoded picture signal. After the Input LUT that is the display signal itself; before it the block is wrapped (`t = OETF(source-linear)` -> maths -> inverse), so the same controls feel the same in both positions. Temperature/Tint and Exposure act on linear light (Bradford white balance in the gamut of that position, exposure = gain in stops); Contrast is linear around t = 0.45; Shadows scale the dark end multiplicatively (black stays black), Highlights add a soft-masked offset; Whites/Blacks move the white/black point (levels); Saturation around luma; Vibrance protects saturated colours and skin hues. Each tone stage is monotone on its own, so the tone curve cannot fold at any slider combination (tested with random extremes).
+- Maths (SQRender `ColorStages`): every block works on a *tone signal* `t` = Rec.709-encoded picture signal. After the Input LUT that is the display signal itself; before it the block is wrapped (`t = OETF(source-linear)` -> maths -> inverse), so the same controls feel the same in both positions. Temperature/Tint and Exposure act on linear light (Bradford white balance in the gamut of that position, exposure = gain in stops); Contrast is linear around t = 0.45; Shadows scale the dark end multiplicatively (black stays black), Highlights add a soft-masked offset; Whites/Blacks move the white/black point (levels); Saturation around luma; Vibrance protects saturated colours and skin hues. Each tone stage is monotone on its own, so the tone curve cannot fold at any slider combination (tested with random extremes).
 - Creative: look LUT + intensity, then Faded Film, Vibrance, Saturation, Shadow/Highlight Tint (+ balance). Curves: RGB (master + R/G/B), monotone cubic, baked into 64-entry tables. Wheels: lift / gamma / gain with luminance masks and per-wheel luminance slider, master saturation. Vignette: amount, midpoint, roundness, feather.
 - Not built (open): Sharpen, Hue/Sat curves, HSL Secondary, HDR White/Specular, Match.
 - GPU: the chain is split into passes (max 8 blocks, one LUT and 3 curve tables per pass; later passes run in place). CPU `ColorPipeline.process` stays the reference (GPU within 2e-4 relative).
@@ -132,7 +132,7 @@ Premiere semantics: Scale 100 % = one upright source pixel per sequence pixel (a
 - Basic Correction Auto (next to a new tone Reset, as in Premiere's Tone group): analyses the Program frame as shown, raises Exposure so the bright end sits at ~0.96 and sets Blacks (reach is limited to +-0.1 by the slider) for the dark end; added to the current values, so a second press is stable. Whites, Contrast, Highlights, Shadows are left alone. Premiere's Auto also uses frame sampling over the whole clip; ours uses the current frame only.
 - Creative look preview now shows the clip's frame at the playhead (the composite already contains the look); synthetic picture only when the playhead is outside the clip.
 - Not done: Sharpen (needs a spatial pass, the colour chain is per pixel), HSL Secondary (placeholder stays, disabled).
-- `scripts/test.sh`: per-package watchdog (default 900 s, `SQ_TEST_TIMEOUT`), kills the process tree and retries once; SSText runs `--no-parallel` like SSMedia (a stuck fontd call used to hang the whole run). Timing tests judge best-of-rounds (redraw 200 clips, audio underruns) or wait for the effect (captions debounce) instead of one noisy sample.
+- `scripts/test.sh`: per-package watchdog (default 900 s, `SQ_TEST_TIMEOUT`), kills the process tree and retries once; SQText runs `--no-parallel` like SQMedia (a stuck fontd call used to hang the whole run). Timing tests judge best-of-rounds (redraw 200 clips, audio underruns) or wait for the effect (captions debounce) instead of one noisy sample.
 
 - 2026-10-01 Paul: never abbreviate Sequence Studio as "SS"/"ss" (Nazi reference). Abbreviation is SQ/sq, project files are `.sqproj` (old `.ssproj` files must still open). Packages SSCore… → SQCore…, env vars `SS_*` → `SQ_*`, defaults keys `ss.*` → `sq.*`. Done as one mechanical rename after the night streams are merged, to avoid conflicts with open branches.
 - Review fixes (colour-stability): pixel readback (eyedropper, Auto, look preview) no longer reads the engine's reused target on a second queue or waits for the GPU. `PlaybackEngine.requestFrameCapture(key:)` has the render loop encode the readback on its own command buffer right after the frame (or on its queue behind it when idle); results arrive on the main actor; requests are coalesced per key; the look preview is one request in flight, never while playing, at most every 150 ms.

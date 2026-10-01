@@ -1,6 +1,6 @@
 import AppKit
-import SSCore
-import SSEditorUI
+import SQCore
+import SQEditorUI
 
 extension AppController {
     /// G: the Audio Gain sheet for the selected audio clips (and the audio of selected linked video clips).

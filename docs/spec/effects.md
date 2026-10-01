@@ -12,7 +12,7 @@ Job E, area `effects`. Written by the cloud job from code reading plus web hints
 - Our side was read in the code at `main` (9d6c43a). The older `docs/audit/effects.md` is partly stale; the code wins.
 
 Verdicts: same / differs / missing. Sizes: S (under a day, one package), M (a few days, 2 packages), L (engine work).
-Paths are under `Packages/` unless noted. SSEditorUI = `SSEditorUI/Sources/SSEditorUI`, SSCore = `SSCore/Sources/SSCore`.
+Paths are under `Packages/` unless noted. SQEditorUI = `SQEditorUI/Sources/SQEditorUI`, SQCore = `SQCore/Sources/SQCore`.
 
 ## 1. Effect Controls panel: properties and values
 
@@ -98,13 +98,13 @@ Paths are under `Packages/` unless noted. SSEditorUI = `SSEditorUI/Sources/SSEdi
 | Speed key split | Key splits in two with a draggable ramp between (Hint) | none | missing | L |
 | Time remap freeze frame | Hold on a time key (memory) | none | missing | L; a Freeze Frame command is a cheaper M first |
 | Add Frame Hold / Freeze Frame (Shift+E style) | Clip > Video Options > Frame Hold; Add Frame Hold (memory) | none | missing | M |
-| Audio when speed changes | Pitch kept unless unchecked | Overlap-add stretch or resample (`SSPlayback/AudioRetimer.swift`) | same | – |
+| Audio when speed changes | Pitch kept unless unchecked | Overlap-add stretch or resample (`SQPlayback/AudioRetimer.swift`) | same | – |
 
 ## 6. Transitions
 
 | User action | Premiere result | Sequence Studio today | Verdict | Fix |
 |---|---|---|---|---|
-| Drag transition onto cut | Centred on cut by default, 30 frames, cross dissolve (Hint: Adobe tutorial, lynda course) | No transition type in the model: `rg Transition` in SSCore/SSRender finds nothing | missing | L |
+| Drag transition onto cut | Centred on cut by default, 30 frames, cross dissolve (Hint: Adobe tutorial, lynda course) | No transition type in the model: `rg Transition` in SQCore/SQRender finds nothing | missing | L |
 | Apply default transition (video) | Cmd+D to the nearest cut, or selected edit (memory); one source says Shift+D, which is the Windows/old shortcut (Hint: search result) | none | missing | L |
 | Apply default audio transition | Cmd+Shift+D, Constant Power 1 s (memory) | none | missing | M after video |
 | Default duration | 30 frames video (Hint), 1 s audio; set in Preferences > General (Hint) | none | missing | S once exists |
@@ -116,35 +116,35 @@ Paths are under `Packages/` unless noted. SSEditorUI = `SSEditorUI/Sources/SSEdi
 
 ## 7. Ranked backlog (YouTube / TikTok first)
 
-Each item stands alone. "Accept" is a unit test unless stated. SSCore tests run on Linux.
+Each item stands alone. "Accept" is a unit test unless stated. SQCore tests run on Linux.
 
-1. **Fade in / Fade out presets** (S, SSCore + EditorUI). Command "Fade In/Out" writes two opacity keys (and two volume keys on audio) at clip start/end, one undo step.
+1. **Fade in / Fade out presets** (S, SQCore + EditorUI). Command "Fade In/Out" writes two opacity keys (and two volume keys on audio) at clip start/end, one undo step.
    Accept: 1 s fade on a 5 s clip gives opacity keys 0 at 0 s, 1 at 1 s; undo restores the snapshot; clips shorter than 2x fade clamp to half length.
-2. **Freeze Frame / Add Frame Hold** (M, SSCore). Splits the clip at the playhead and holds that source frame for N seconds.
+2. **Freeze Frame / Add Frame Hold** (M, SQCore). Splits the clip at the playhead and holds that source frame for N seconds.
    Accept: duration = requested rational; source range at every time of the held part equals the one frame; neighbours ripple per setting; one undo step.
-3. **Cross dissolve model + evaluation** (L, SSCore). `Transition` value on a cut: kind, duration (rational), alignment, handles used.
+3. **Cross dissolve model + evaluation** (L, SQCore). `Transition` value on a cut: kind, duration (rational), alignment, handles used.
    Accept: evaluation near a cut returns both clips with weights summing to 1; duration clamps to available handles; no overlaps appear on the track; project file round-trips.
-4. **Apply Default Transition command** (M, SSCore + EditorUI), depends on 3. Accept: nearest cut to playhead gets a 30-frame (sequence frames) dissolve; second apply replaces, not stacks.
-5. **Compositor two-layer blend** (L, SSRender), depends on 3. Accept: midpoint frame of black to white test clips is 50 % grey within 1 level.
-6. **Audio crossfade (constant power)** (M, SSCore + SSPlayback/SSExport), depends on 3. Accept: gain pair at midpoint is 0.707 each; sum of power constant across the fade.
+4. **Apply Default Transition command** (M, SQCore + EditorUI), depends on 3. Accept: nearest cut to playhead gets a 30-frame (sequence frames) dissolve; second apply replaces, not stacks.
+5. **Compositor two-layer blend** (L, SQRender), depends on 3. Accept: midpoint frame of black to white test clips is 50 % grey within 1 level.
+6. **Audio crossfade (constant power)** (M, SQCore + SQPlayback/SQExport), depends on 3. Accept: gain pair at midpoint is 0.707 each; sum of power constant across the fade.
 7. **Transition edge drag and alignment** (M, EditorUI), depends on 3. Accept: pure geometry test: drag math clamps to handles and snaps to frames.
-8. **Time Remapping model: speed keys** (L, SSCore). Piecewise speed track per clip, source time = integral, in rationals.
+8. **Time Remapping model: speed keys** (L, SQCore). Piecewise speed track per clip, source time = integral, in rationals.
    Accept: two constant segments give exact source times at boundaries; clip duration follows; reversed segments allowed; project migration keeps constant-speed clips equal.
 9. **Speed ramp UI (rubber band + split keys)** (L, EditorUI), depends on 8. Accept: geometry test for split key halves and ramp handles.
-10. **Time interpolation: Frame Blend** (M, SSRender). Accept: at 50 % speed between frames A and B, output pixel = mix by fractional source position.
-11. **Auto Bezier interpolation** (M, SSCore). Accept: moving a neighbour key recomputes handles; the curve through three keys has no overshoot beyond the key values.
-12. **Continuous Bezier interpolation** (S, SSCore). Accept: editing one handle updates the other so tangents are collinear.
-13. **Spatial interpolation default for Position** (M, SSCore). Accept: new position keys on a 3-key path produce a smooth tangent; Linear spatial choice zeroes tangents.
+10. **Time interpolation: Frame Blend** (M, SQRender). Accept: at 50 % speed between frames A and B, output pixel = mix by fractional source position.
+11. **Auto Bezier interpolation** (M, SQCore). Accept: moving a neighbour key recomputes handles; the curve through three keys has no overshoot beyond the key values.
+12. **Continuous Bezier interpolation** (S, SQCore). Accept: editing one handle updates the other so tangents are collinear.
+13. **Spatial interpolation default for Position** (M, SQCore). Accept: new position keys on a 3-key path produce a smooth tangent; Linear spatial choice zeroes tangents.
 14. **Key menu parity entries** (S, EditorUI), depends on 11-12. Accept: menu spec lists Auto Bezier, Continuous Bezier in Premiere order.
-15. **Gaussian Blur effect** (L, SSRender + SSCore). Parameter "Blurriness", animatable. Accept: radius 0 is identity; parameter round-trips; keys evaluate.
+15. **Gaussian Blur effect** (L, SQRender + SQCore). Parameter "Blurriness", animatable. Accept: radius 0 is identity; parameter round-trips; keys evaluate.
 16. **Crop effect** (M). Edges left/right/top/bottom %, Accept: 100 % total width crops to empty; keys evaluate.
-17. **Opacity blend modes** (L, SSRender). Accept: Multiply, Screen, Overlay, Add produce known pixel results on 2 test pixels.
+17. **Opacity blend modes** (L, SQRender). Accept: Multiply, Screen, Overlay, Add produce known pixel results on 2 test pixels.
 18. **Timeline rubber band for Opacity / Volume** (L, EditorUI). Accept: hit-test and drag math maps y to value and back (dB and %).
 19. **Cmd-click on rubber band adds a key** (S, EditorUI), depends on 18. Accept: one key at the clicked time with the current interpolated value.
-20. **Second instance of an effect** (M, SSCore). Accept: two Rounded Corners on one clip evaluate in order; delete removes the selected one.
+20. **Second instance of an effect** (M, SQCore). Accept: two Rounded Corners on one clip evaluate in order; delete removes the selected one.
 21. **Reorder effects by drag** (M), depends on 20. Accept: order change is one undo step and changes evaluation order.
 22. **Paste Attributes** (M). Accept: Motion, Opacity, effects chosen in a dialog copy over; keys offset by clip start; one undo step.
-23. **Volume Bypass and Channel Volume** (M, SSAudioFX). Accept: bypass gives unity gain at all times.
+23. **Volume Bypass and Channel Volume** (M, SQAudioFX). Accept: bypass gives unity gain at all times.
 24. **Mirror, Transform, Ultra Key effects** (L each, order by value: Ultra Key for green screen). Accept per effect: identity at defaults.
 25. **fx toggle for Motion / Opacity** (M). Accept: disabled Motion renders at default transform while values stay stored.
 26. **Effect header Cut / Clear entries** (S). Accept: menu spec test.
@@ -153,7 +153,7 @@ Each item stands alone. "Accept" is a unit test unless stated. SSCore tests run 
 29. **Dip to Black / Dip to White transition** (S), depends on 3. Accept: midpoint weight of the dip colour is 1.
 30. **Transition double-click shows controls** (M), depends on 3. Accept: model exposes duration and alignment fields with undo.
 31. **Preferences: default transition durations** (S), depends on 3. Accept: preference values round-trip, used by item 4.
-32. **Optical Flow interpolation** (L, SSRender). Last: large and rarely needed for short-form.
+32. **Optical Flow interpolation** (L, SQRender). Last: large and rarely needed for short-form.
 
 Items 1-2 deliver the most for short-form editing with the least engine risk. Items 3-7 are the largest visible gap against Premiere (transitions).
 Open questions for Paul: whether Auto/Continuous Bezier are wanted at all (items 11-14), and whether transitions should wait for the SQ rename to land.

@@ -15,7 +15,8 @@ Never deviate from PLAN.md silently: propose to Paul, record approved changes in
 ## Rules
 - Swift 6, strict concurrency. English for code, UI and docs.
 - Time is rational (value/timescale), never Double. Model = value types, undo = snapshots.
-- SSCore has no AVFoundation/AppKit imports. Edit logic: tests first.
+- SQCore has no AVFoundation/AppKit imports. Edit logic: tests first.
+- Never abbreviate Sequence Studio as SS: use SQ/sq (packages SQCore…, env `SQ_*`, defaults `sq.*`); project files are .sqproj (legacy .ssproj only opens and converts on save).
 - Timeline and monitors: AppKit/Metal. Shell: SwiftUI. Icons: SF Symbols are fine (native app).
 - Test media lives outside the repo (`~/Documents/Videos`, or `TestMedia/` which is gitignored). Never commit footage.
 - Borrowing code: GPL-3.0-compatible only (GPL, MIT, BSD, Apache-2.0). Read and check it first, record in docs/THIRD_PARTY.md.

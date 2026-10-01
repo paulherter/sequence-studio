@@ -1,5 +1,5 @@
 import AppKit
-import SSEditorUI
+import SQEditorUI
 
 /// Builds the main menu from `EditorMenus` (structure) and `CommandMap` (key equivalents).
 /// Every binding is a real key equivalent so macOS shows and right-aligns it. Plain keys (J K L, I O, Space, arrows...)

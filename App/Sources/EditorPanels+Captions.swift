@@ -1,6 +1,6 @@
 import AppKit
-import SSCore
-import SSEditorUI
+import SQCore
+import SQEditorUI
 
 extension EditorPanels {
     /// Right-click on a caption segment in the timeline.

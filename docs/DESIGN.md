@@ -4,7 +4,7 @@ Approved UI design (2026-09-30): https://claude.ai/artifact/6mArdzhxkp4P9abYXJHP
 Screens: 0 Tokens · 1 Edit workspace 9:16 · 2 Keyframes + easing · 3a/3b Captions · 4a/4b/4c Export · 5 Quick color + Scopes · 6 Color page.
 Behaviour and flows: docs/UX.md (§7 = visual rules). This file maps the canvas tokens (`tokens.css`) to Swift.
 
-Dark appearance only (Final Cut style). Tokens belong in the app's UI layer (e.g. a `Theme` namespace), never in SSCore.
+Dark appearance only (Final Cut style). Tokens belong in the app's UI layer (e.g. a `Theme` namespace), never in SQCore.
 "System" = use the AppKit/SwiftUI value as is; "custom" = define as a named color (asset catalog or `NSColor(srgbRed:…)`).
 
 ## Colors

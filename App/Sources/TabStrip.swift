@@ -1,5 +1,5 @@
 import AppKit
-import SSEditorUI
+import SQEditorUI
 
 /// Capsule tabs of a panel group (DESIGN.md: pane tab strip). Real NSButtons, drawn flat by the layer.
 @MainActor

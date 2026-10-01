@@ -8,16 +8,16 @@
 # on inactivity, not on total time, so a long but progressing run (build, many tests) is never cut. A second stall is
 # reported as a failure. Only this run's own process group is ever killed.
 cd "$(dirname "$0")/../Packages" || exit 1
-pkgs=("$@"); [ ${#pkgs[@]} -eq 0 ] && pkgs=(SS*)
+pkgs=("$@"); [ ${#pkgs[@]} -eq 0 ] && pkgs=(SQ*)
 idle="${SQ_TEST_IDLE:-300}"
 rc=0
 
 # run_pkg <package> <outfile>: runs swift test in its own process group; returns its status, or 124 when it stalled.
 run_pkg() {
   local p="$1" outfile="$2" extra=()
-  # SSMedia runs serially: its AVAssetReader/Writer tests block cooperative-pool threads and deadlock when run in parallel.
-  # SSText runs serially too: parallel CoreText font matching can wedge in fontd.
-  case "$p" in SSMedia|SSText) extra=(--no-parallel) ;; esac
+  # SQMedia runs serially: its AVAssetReader/Writer tests block cooperative-pool threads and deadlock when run in parallel.
+  # SQText runs serially too: parallel CoreText font matching can wedge in fontd.
+  case "$p" in SQMedia|SQText) extra=(--no-parallel) ;; esac
   : >"$outfile"
   # perl makes the child its own process group leader (setpgrp) so the whole tree can be signalled without touching others.
   perl -e 'setpgrp(0, 0); exec @ARGV' /bin/bash -c 'cd "$1" && shift && exec /usr/bin/swift test "$@"' _ "$p" "${extra[@]}" >"$outfile" 2>&1 &

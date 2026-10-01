@@ -11,13 +11,13 @@ settings:
     ARCHS: arm64
     ONLY_ACTIVE_ARCH: YES
 packages:
-  SSCore: { path: Packages/SSCore }
-  SSMedia: { path: Packages/SSMedia }
-  SSRender: { path: Packages/SSRender }
-  SSPlayback: { path: Packages/SSPlayback }
-  SSExport: { path: Packages/SSExport }
-  SSTranscribe: { path: Packages/SSTranscribe }
-  SSEditorUI: { path: Packages/SSEditorUI }
+  SQCore: { path: Packages/SQCore }
+  SQMedia: { path: Packages/SQMedia }
+  SQRender: { path: Packages/SQRender }
+  SQPlayback: { path: Packages/SQPlayback }
+  SQExport: { path: Packages/SQExport }
+  SQTranscribe: { path: Packages/SQTranscribe }
+  SQEditorUI: { path: Packages/SQEditorUI }
 targets:
   SequenceStudio:
     type: application
@@ -30,14 +30,37 @@ targets:
       properties:
         CFBundleName: Sequence Studio
         CFBundleDisplayName: Sequence Studio
+        CFBundleDocumentTypes:
+          - CFBundleTypeName: Sequence Studio Project
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Owner
+            LSTypeIsPackage: true
+            LSItemContentTypes: [de.paulherter.sequencestudio.project]
+          - CFBundleTypeName: Sequence Studio Project (legacy)
+            CFBundleTypeRole: Editor
+            LSHandlerRank: Alternate
+            LSTypeIsPackage: true
+            LSItemContentTypes: [de.paulherter.sequencestudio.project-legacy]
+        UTExportedTypeDeclarations:
+          - UTTypeIdentifier: de.paulherter.sequencestudio.project
+            UTTypeDescription: Sequence Studio Project
+            UTTypeConformsTo: [com.apple.package, public.composite-content]
+            UTTypeTagSpecification:
+              public.filename-extension: [sqproj]
+        UTImportedTypeDeclarations:
+          - UTTypeIdentifier: de.paulherter.sequencestudio.project-legacy
+            UTTypeDescription: Sequence Studio Project (legacy)
+            UTTypeConformsTo: [com.apple.package, public.composite-content]
+            UTTypeTagSpecification:
+              public.filename-extension: [ssproj]
     dependencies:
-      - package: SSCore
-      - package: SSMedia
-      - package: SSRender
-      - package: SSPlayback
-      - package: SSExport
-      - package: SSTranscribe
-      - package: SSEditorUI
+      - package: SQCore
+      - package: SQMedia
+      - package: SQRender
+      - package: SQPlayback
+      - package: SQExport
+      - package: SQTranscribe
+      - package: SQEditorUI
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.paulherter.SequenceStudio

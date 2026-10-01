@@ -1,5 +1,5 @@
 import AppKit
-import SSEditorUI
+import SQEditorUI
 
 /// NSEvent <-> `Key` (physical key identity, ANSI positions, see `Key`). Layout independent on purpose:
 /// the shortcut map is about key positions (J K L, I O), not characters.

@@ -1,6 +1,6 @@
 import AppKit
-import SSCore
-import SSEditorUI
+import SQCore
+import SQEditorUI
 
 /// Edit commands while Effect Controls has focus: copy, cut and paste work on keyframes and effects, never on timeline clips.
 extension AppController {

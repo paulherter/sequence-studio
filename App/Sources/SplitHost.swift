@@ -1,5 +1,5 @@
 import AppKit
-import SSEditorUI
+import SQEditorUI
 
 /// Builds the on-screen layout from a `Workspace` tree: one `NSSplitView` per split (1 pt black dividers), one
 /// `PanelContainerView` per tab group. The tree is rebuilt on every structural change (hide/show, tab select,

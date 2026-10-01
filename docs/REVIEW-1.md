@@ -1,6 +1,6 @@
-# Review 1: SSCore and SSRender/Color
+# Review 1: SQCore and SQRender/Color
 
-Date: 2026-09-30. Scope: committed code at `24f89a0` in `Packages/SSCore` and `Packages/SSRender/Sources/SSRender/Color`. For `ColorCorrection.swift` this is the HEAD version, not the uncommitted edits. This review is read-only and nothing was fixed.
+Date: 2026-09-30. Scope: committed code at `24f89a0` in `Packages/SQCore` and `Packages/SQRender/Sources/SQRender/Color`. For `ColorCorrection.swift` this is the HEAD version, not the uncommitted edits. This review is read-only and nothing was fixed.
 
 How each finding was checked:
 - Findings 1-4 were reproduced in a throwaway harness outside the repo.
@@ -24,7 +24,7 @@ Checked and found correct:
 ### 1. High: split/clear keep `link` on the right half, so one link group becomes four clips
 **Fixed in `0153c84`.** Split, clear, overwrite, move and insert share one old→new link map per edit. Tests: `LinkedEditTests`.
 
-`Packages/SSCore/Sources/SSCore/Model.swift:141` (`clear`), `Model.swift:164` (`split`). `Timeline.insert` (`Timeline.swift:~162`) goes through both.
+`Packages/SQCore/Sources/SQCore/Model.swift:141` (`clear`), `Model.swift:164` (`split`). `Timeline.insert` (`Timeline.swift:~162`) goes through both.
 
 The right half gets a new `id` but keeps the original `link`. Only `addEdit` relinks the halves.
 
@@ -107,7 +107,7 @@ It applies `EasingCurve.linear` or `.hold` with side `.out`. That overwrites `ou
 `KeyframeTrack.toggleHold` (`KeyframesEasing.swift:79`) changes only the interpolation, so the two paths are inconsistent.
 
 ### 7. Low: the contrast/shadows curve is discontinuous and non-monotonic near black
-`Packages/SSRender/Sources/SSRender/Color/ColorCorrection.swift:73-80` (HEAD, `apply`).
+`Packages/SQRender/Sources/SQRender/Color/ColorCorrection.swift:73-80` (HEAD, `apply`).
 
 The `y > minLuma` guard skips the curve entirely below the threshold.
 

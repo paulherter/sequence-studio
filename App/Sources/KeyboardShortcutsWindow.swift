@@ -1,5 +1,5 @@
 import AppKit
-import SSEditorUI
+import SQEditorUI
 
 /// Keyboard Shortcuts window (Cmd+Option+K): every command with its shortcut and where it is active, with a search
 /// field. Read-only: the default map is Premiere's and cannot be edited yet.

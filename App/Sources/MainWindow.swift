@@ -1,5 +1,5 @@
 import AppKit
-import SSEditorUI
+import SQEditorUI
 
 /// Window content: the workspace host fills the window, a 22 pt status bar sits below it.
 @MainActor

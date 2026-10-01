@@ -1,6 +1,6 @@
 import AppKit
-import SSCore
-import SSEditorUI
+import SQCore
+import SQEditorUI
 
 /// Volume rubber band: every drag is one undo step; right-click on a key offers Delete Keyframe.
 extension EditorPanels {

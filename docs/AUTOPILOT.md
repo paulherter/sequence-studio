@@ -16,9 +16,9 @@ commit until V1 is done. You do not write product code yourself: implementer age
 
 ## Order of work
 1. Finish Phase 2 (engine slices, then shell/timeline/monitors/shortcuts). This is the critical path.
-2. Integration, as soon as its prerequisites exist: GPU color chain + scopes into the compositor; SSText rendering;
-   keyframes in Effect Controls (graph editor, easing menu, summary rows); SSAudioFX chain in playback;
-   proxies for drag-scrubbing; SSExport FrameSource from the real renderer (+ caption burn-in);
+2. Integration, as soon as its prerequisites exist: GPU color chain + scopes into the compositor; SQText rendering;
+   keyframes in Effect Controls (graph editor, easing menu, summary rows); SQAudioFX chain in playback;
+   proxies for drag-scrubbing; SQExport FrameSource from the real renderer (+ caption burn-in);
    captions flow (Transcribe → edit → CC → Enter); Library panel; color UI + scopes; export dialog + queue.
 3. Phase 6 nesting + multiple sequences.
 4. Phase 9: tab groups + drag-to-dock, workspaces (PC/MacBook), autosave/crash recovery, relink, performance.

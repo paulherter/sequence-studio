@@ -4,9 +4,9 @@ Our engine (own VideoToolbox path, rational Time, audio master clock, Metal comp
 
 | Area | palmier-pro | Use for us |
 |---|---|---|
-| Shell | NSDocument (`VideoProject`), SwiftUI panels via NSViewRepresentable (`EditorPanel/EditorPanelGroup.swift`, `WorkspaceLayout.swift`), fixed layout | NSViewRepresentable bridge pattern; our docking stays own (SSEditorUI WorkspaceDocking) |
+| Shell | NSDocument (`VideoProject`), SwiftUI panels via NSViewRepresentable (`EditorPanel/EditorPanelGroup.swift`, `WorkspaceLayout.swift`), fixed layout | NSViewRepresentable bridge pattern; our docking stays own (SQEditorUI WorkspaceDocking) |
 | Document/undo | NSDocument UndoManager, off-main save queue (`Project/VideoProject.swift`) | Off-main serialised save queue for autosave; keep our snapshot `History` |
 | Playback | AVPlayer + time observer (`Preview/VideoEngine.swift`) | Nothing (we own frame scheduling) |
-| Viewer | AVPlayerLayer + AVVideoCompositing (`Preview/PreviewNSView.swift`) | Nothing (CAMetalLayer + SSRender Compositor) |
+| Viewer | AVPlayerLayer + AVVideoCompositing (`Preview/PreviewNSView.swift`) | Nothing (CAMetalLayer + SQRender Compositor) |
 | Drag & drop | `Timeline/TimelineView.swift` performDragOperation; `MediaPanel/MediaTab/MediaPanelDropArea.swift` DropHostingView | Directly: NSDraggingDestination registration, pasteboard payload pattern (T-06, U-05) |
 | Audio | AVAudioEngine + AVAudioPlayerNode on userInteractive queue, lock-free `ScrubAudioPendingState` (`Preview/ScrubAudioOutput.swift`) | Lock-free pending-state pattern for E-12 scrub grains; keep AVAudioSourceNode + ring buffer as clock |
