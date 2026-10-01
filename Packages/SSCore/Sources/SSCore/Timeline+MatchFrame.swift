@@ -35,7 +35,12 @@ extension Timeline {
         func at(_ c: Clip) -> Time { c.timelineTime(forSource: sourceTime, frameDuration: frameDuration) }
         let pick = all.first { selected.contains($0.id) }
             ?? all.first { $0.timeline.contains(playhead) }
-            ?? all.min { abs(at($0).value * playhead.timescale - playhead.value * at($0).timescale) < abs(at($1).value * playhead.timescale - playhead.value * at($1).timescale) }
+            ?? all.min { distance(at($0), playhead) < distance(at($1), playhead) }
         return pick.map(at)
     }
+}
+
+private func distance(_ a: Time, _ b: Time) -> Time {
+    let d = a - b
+    return d.isNegative ? -d : d
 }

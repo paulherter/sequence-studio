@@ -152,11 +152,18 @@ public enum ProjectFile {
         let tmp = file.deletingLastPathComponent().appendingPathComponent(".\(UUID().uuidString).tmp")
         try data.write(to: tmp)
         do {
+            #if canImport(Darwin)
             if fm.fileExists(atPath: file.path) {
                 _ = try fm.replaceItemAt(file, withItemAt: tmp)
             } else {
                 try fm.moveItem(at: tmp, to: file)
             }
+            #else
+            // swift-corelibs replaceItemAt fails when the target exists; rename(2) replaces atomically.
+            guard rename(tmp.path, file.path) == 0 else {
+                throw CocoaError(.fileWriteUnknown, userInfo: [NSFilePathErrorKey: file.path, NSUnderlyingErrorKey: POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)])
+            }
+            #endif
         } catch {
             try? fm.removeItem(at: tmp)
             throw error
