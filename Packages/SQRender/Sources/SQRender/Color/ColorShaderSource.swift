@@ -10,6 +10,7 @@ enum ColorShaderSource {
 
     struct ColorHeader {
         uint4 ints;   // section count, start domain (0 source-encoded, 1 source-linear, 2 display), end domain (1, 2, 3 = working-linear), source (0 S-Log3, 1 HLG, 2 Rec.709)
+        uint4 extra;  // x != 0: the texture is a quarter-turned picture (vignette geometry follows the upright picture)
     };
 
     // One block of the chain (layout mirrors ColorPipelineGPU.Sec).
@@ -376,6 +377,7 @@ enum ColorShaderSource {
         float4 px = src.read(gid);
         float2 uv = (float2(gid) + 0.5f) / float2(dst.get_width(), dst.get_height());
         float aspect = float(dst.get_width()) / float(dst.get_height());
+        if (h.extra.x != 0u) { uv = uv.yx; aspect = 1.0f / aspect; }
         dst.write(float4(processPixel(px.rgb, h, secs, curves, lut3, lut1, uv, aspect), px.a), gid);
     }
 
@@ -390,6 +392,7 @@ enum ColorShaderSource {
         float4 px = img.read(gid);
         float2 uv = (float2(gid) + 0.5f) / float2(img.get_width(), img.get_height());
         float aspect = float(img.get_width()) / float(img.get_height());
+        if (h.extra.x != 0u) { uv = uv.yx; aspect = 1.0f / aspect; }
         img.write(float4(processPixel(px.rgb, h, secs, curves, lut3, lut1, uv, aspect), px.a), gid);
     }
     """#

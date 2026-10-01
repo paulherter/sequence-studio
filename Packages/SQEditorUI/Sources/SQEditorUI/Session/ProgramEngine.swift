@@ -50,7 +50,8 @@ public protocol ProgramEngine: AnyObject {
     var scrubLatencyText: String? { get }
     /// Captions drawn over the picture in the monitor (the export burn-in is separate).
     var showsCaptions: Bool { get set }
-    /// The files behind these media changed (relink to another path): cached decoders and audio sources are reopened.
+    /// The files behind these media changed (relink to another path): opened files, decoders, cached frames and audio
+    /// sources (playback and scrub) are reopened, so picture and sound switch to the new file.
     func mediaChanged(_ ids: Set<UUID>)
 }
 
@@ -70,8 +71,6 @@ extension ProgramEngine {
 }
 
 extension PlaybackEngine: ProgramEngine {
-    /// Audio side; the video side (decoder and frame cache) joins here with the engine's own `mediaChanged`.
-    public func mediaChanged(_ ids: Set<UUID>) { audio?.mediaChanged(ids) }
     public var cachedSpans: [TimeRange] { cachedRanges() }
     public var scrubLatencyText: String? { stats.latencySummary()?.text }
     public var meterReading: (sequence: Int, peaks: [Float])? {
@@ -92,6 +91,9 @@ public final class StubProgramEngine: ProgramEngine {
     public private(set) var timelines: [Timeline] = []
     public private(set) var sequences: [Timeline.ID: Timeline] = [:]
     public private(set) var calls: [Call] = []
+    /// Every `mediaChanged` call, in order.
+    public private(set) var changedMedia: [Set<UUID>] = []
+    public func mediaChanged(_ ids: Set<UUID>) { changedMedia.append(ids) }
     public private(set) var layer: CAMetalLayer?
     public private(set) var position: Time = .zero
     public private(set) var rate: PlaybackRate = .zero

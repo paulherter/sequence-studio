@@ -20,6 +20,9 @@ import SQCore
 /// Watchdog: `sample()` reports `stalled` when running and no render call consumed audio for `stallTimeout`.
 public final class AudioClock: PlaybackClock {
     public static let stallTimeoutNanos: Int64 = 250_000_000
+    /// Before the first audio of a restart was consumed the feeder may still be opening a cold or network file and the
+    /// output is priming with silence: that is not a stall yet.
+    public static let primingTimeoutNanos: Int64 = 2_000_000_000
 
     private struct State {
         var anchor: Time = .zero
@@ -32,6 +35,7 @@ public final class AudioClock: PlaybackClock {
         var seenFrames: Int64 = 0
         var progressNanos: Int64 = 0
         var lastReturned: Time?             // monotonic guard within one anchor
+        var exhaustNanos: Int64?            // reverse: host time at which the audio down to the timeline start was all consumed
     }
     private let state = Mutex(State())
     private let control = Mutex(())
@@ -51,7 +55,9 @@ public final class AudioClock: PlaybackClock {
         let ns = audio.hostNanoseconds()
         return state.withLock { s in
             let p = position(&s, nanos: ns)
-            let stalled = !s.rate.isPaused && s.generation != .max && ns - s.progressNanos > Self.stallTimeoutNanos
+            let limit = s.base == nil ? Self.primingTimeoutNanos : Self.stallTimeoutNanos
+            // Reverse play that consumed everything down to frame 0 has nothing left to render: that is the end, not a stall.
+            let stalled = !s.rate.isPaused && s.generation != .max && s.exhaustNanos == nil && ns - s.progressNanos > limit
             return (p, stalled)
         }
     }
@@ -67,7 +73,7 @@ public final class AudioClock: PlaybackClock {
             let ns = audio.hostNanoseconds()
             let (p, wasRunning) = state.withLock { s -> (Time, Bool) in
                 let p = position(&s, nanos: ns), running = !s.rate.isPaused
-                s.anchor = p; s.rate = .zero; s.base = nil; s.lastReturned = nil
+                s.anchor = p; s.rate = .zero; s.base = nil; s.lastReturned = nil; s.exhaustNanos = nil
                 return (p, running)
             }
             if wasRunning { audio.stop() }
@@ -105,7 +111,7 @@ public final class AudioClock: PlaybackClock {
     private func restart(at position: Time, rate: PlaybackRate) {
         let wasRunning = state.withLock { s -> Bool in
             let running = !s.rate.isPaused
-            s.anchor = position; s.rate = rate; s.base = nil; s.lastReturned = nil
+            s.anchor = position; s.rate = rate; s.base = nil; s.lastReturned = nil; s.exhaustNanos = nil
             s.generation = .max
             return running
         }
@@ -146,9 +152,22 @@ public final class AudioClock: PlaybackClock {
                 heard += min(stamp.quantum, Int64(clamping: f))
             }
         }
-        let elapsed = Time(heard - s.base! - s.latency, sampleRate) - scaled(s.outputLatency, by: mag)
+        // Reverse: the feeder produces nothing below frame 0, so after the audio from the anchor down to the start was all
+        // consumed nothing more is rendered, and the output latency would keep the position above frame 0 forever (the
+        // watchdog would fail the audio). From then on the clock keeps running on host time for the rest of the latency:
+        // it decays to 0 exactly when the last audio is heard.
+        var extra = Time.zero
+        if s.rate.isReverse {
+            let total = s.anchor.value * sampleRate / s.anchor.timescale        // frames from the anchor down to 0 (floor)
+            if heard - s.base! >= total {
+                heard = s.base! + total
+                if s.exhaustNanos == nil { s.exhaustNanos = nanos }
+                extra = scaled(Time(max(0, nanos - s.exhaustNanos!), 1_000_000_000), by: mag)
+            }
+        }
+        let elapsed = Time(heard - s.base! - s.latency, sampleRate) - scaled(s.outputLatency, by: mag) + extra
         guard elapsed > .zero else { return s.anchor }
-        var p = s.rate.isReverse ? s.anchor - elapsed : s.anchor + elapsed
+        var p = s.rate.isReverse ? max(.zero, s.anchor - elapsed) : s.anchor + elapsed
         if let last = s.lastReturned { p = s.rate.isReverse ? min(p, last) : max(p, last) }
         s.lastReturned = p
         return p

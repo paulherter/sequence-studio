@@ -209,8 +209,14 @@ public final class ScrubVoice: @unchecked Sendable {
         if gen != seenGeneration {
             seenGeneration = gen
             if cur >= 0 || old >= 0 { stopFade = 0 }
+            // Only a grain of an older generation is dropped: one published for the new generation (the next scrub started
+            // within this render quantum) stays, unless a newer one has replaced it meanwhile.
             let p = pending.exchange(-1, ordering: .acquiringAndReleasing)
-            if p >= 0 { release(p) }
+            if p >= 0 {
+                let keep = info[p].generation == gen
+                    && pending.compareExchange(expected: -1, desired: p, ordering: .acquiringAndReleasing).exchanged
+                if !keep { release(p) }
+            }
         }
         if cur < 0 && old < 0 && pending.load(ordering: .relaxed) < 0 {
             l.update(repeating: 0, count: count); r.update(repeating: 0, count: count)
@@ -319,6 +325,9 @@ public final class ScrubAudio: @unchecked Sendable {
     public func setTimeline(_ timeline: Timeline, sequences: [Timeline.ID: Timeline]) {
         control.withLock { $0.timeline = timeline; $0.sequences = sequences }
     }
+
+    /// The files behind these media changed (relink): the scrub mixer reopens their sources at its next grain. Any thread.
+    public func mediaChanged(_ ids: Set<UUID>) { mixer.mediaChanged(ids) }
 
     /// Start of a drag at `position` (no sound yet).
     public func begin(at position: Time, hostNanos: Int64) {

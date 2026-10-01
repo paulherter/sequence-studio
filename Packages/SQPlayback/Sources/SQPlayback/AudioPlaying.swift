@@ -99,6 +99,7 @@ public final class ManualAudio: AudioPlaying {
         var timeline: Timeline?
         var meter = AudioMeterSnapshot()
         var restart: (@Sendable () -> Void)?
+        var changedMedia: [Set<UUID>] = []
     }
     private let state: Mutex<State>
     public let sampleRate: Int
@@ -191,6 +192,9 @@ public final class ManualAudio: AudioPlaying {
     public var underrunCount: Int { 0 }
     public func meterSnapshot() -> AudioMeterSnapshot { state.withLock { $0.meter } }
     public func setRestartHandler(_ handler: (@Sendable () -> Void)?) { state.withLock { $0.restart = handler } }
+    public func mediaChanged(_ ids: Set<UUID>) { state.withLock { $0.changedMedia.append(ids) } }
+    /// Every `mediaChanged` call, in order (tests).
+    public var changedMedia: [Set<UUID>] { state.withLock { $0.changedMedia } }
 }
 
 extension AudioPlaying {

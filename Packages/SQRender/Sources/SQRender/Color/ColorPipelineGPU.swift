@@ -67,6 +67,7 @@ public final class ColorPipelineGPU: @unchecked Sendable {
 
     struct Header {
         var ints: SIMD4<UInt32>   // count, start domain, end domain, source
+        var extra: SIMD4<UInt32> = .zero   // x: the texture is a quarter-turned picture (vignette geometry is upright)
     }
 
     struct Sec {
@@ -250,8 +251,11 @@ public final class ColorPipelineGPU: @unchecked Sendable {
     /// Throws on caller mistakes (checked every call; all checks are O(1) property reads):
     /// size mismatch, pixel format other than rgba16Float/rgba32Float, `destination` without `.shaderWrite`,
     /// `source` without `.shaderRead` (in place: the texture needs both), LUT with a wrong entry count, no encoder.
+    ///
+    /// `quarterTurned`: the texture holds a picture that is shown turned by 90 or 270 degrees (phone clips): the vignette is
+    /// the only stage that depends on position, and it must follow the shown (upright) picture, not the buffer.
     public func encode(_ pipeline: ColorPipeline, source: MTLTexture, destination: MTLTexture,
-                       commandBuffer: MTLCommandBuffer) throws {
+                       commandBuffer: MTLCommandBuffer, quarterTurned: Bool = false) throws {
         guard source.width == destination.width, source.height == destination.height else {
             throw ColorPipelineGPUError.textureSizeMismatch
         }
@@ -263,7 +267,7 @@ public final class ColorPipelineGPU: @unchecked Sendable {
         guard destination.usage.contains(.shaderWrite) else {
             throw ColorPipelineGPUError.missingTextureUsage("destination needs .shaderWrite")
         }
-        let passes = Self.passes(for: pipeline)
+        let passes = pipeline.gpuPasses
         if passes.count > 1 || inPlace {
             // Later passes (and in-place) read and write the destination.
             guard destination.usage.contains(.shaderRead) else {
@@ -290,6 +294,7 @@ public final class ColorPipelineGPU: @unchecked Sendable {
             enc.setTexture(lutTextures[i].0, index: 2)
             enc.setTexture(lutTextures[i].1, index: 3)
             var h = pass.header
+            h.extra.x = quarterTurned ? 1 : 0
             enc.setBytes(&h, length: MemoryLayout<Header>.stride, index: 0)
             var secs = pass.sections
             enc.setBytes(&secs, length: MemoryLayout<Sec>.stride * secs.count, index: 1)

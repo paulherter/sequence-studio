@@ -267,8 +267,7 @@ public final class EditorSession {
         // Always: the active sequence's sample rate can change without the media changing.
         media.update(project.media, sampleRate: activeTimeline?.format.audioSampleRate)
         guard project.media != mediaSnapshot else { return }
-        // Media whose file moved (relink to another path): the audio feeder reopens them. The video side does the same
-        // through `PlaybackEngine.mediaChanged` once that lands; both are idempotent.
+        // Media whose file moved (relink to another path, or its undo): the engine reopens them (picture, playback audio, scrub audio).
         var oldPaths: [UUID: String] = [:]
         for m in mediaSnapshot { oldPaths[m.id] = m.path }
         var moved: Set<UUID> = []
