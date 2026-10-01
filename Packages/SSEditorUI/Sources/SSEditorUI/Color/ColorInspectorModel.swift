@@ -142,6 +142,42 @@ public enum ColorParam: Int, CaseIterable, Sendable {
     }
 }
 
+/// The five Hue Saturation Curves of the Curves section (Premiere's tabs).
+public enum HueCurveKind: Int, CaseIterable, Sendable {
+    case hueVsSat, hueVsHue, hueVsLuma, lumaVsSat, satVsSat
+
+    public var title: String {
+        switch self {
+        case .hueVsSat: "Hue vs Sat"
+        case .hueVsHue: "Hue vs Hue"
+        case .hueVsLuma: "Hue vs Luma"
+        case .lumaVsSat: "Luma vs Sat"
+        case .satVsSat: "Sat vs Sat"
+        }
+    }
+    /// The hue-keyed curves wrap around and show a hue strip under the plot.
+    public var isHueKeyed: Bool { rawValue <= HueCurveKind.hueVsLuma.rawValue }
+
+    public func points(_ h: HueCurves) -> [CurvePoint] {
+        switch self {
+        case .hueVsSat: h.hueVsSat
+        case .hueVsHue: h.hueVsHue
+        case .hueVsLuma: h.hueVsLuma
+        case .lumaVsSat: h.lumaVsSat
+        case .satVsSat: h.satVsSat
+        }
+    }
+    public func set(_ pts: [CurvePoint], in h: inout HueCurves) {
+        switch self {
+        case .hueVsSat: h.hueVsSat = pts
+        case .hueVsHue: h.hueVsHue = pts
+        case .hueVsLuma: h.hueVsLuma = pts
+        case .lumaVsSat: h.lumaVsSat = pts
+        case .satVsSat: h.satVsSat = pts
+        }
+    }
+}
+
 /// A colour wheel in the panel: the three wheels of Color Wheels, or the tints of Creative.
 public enum ColorWheelSlot: Int, CaseIterable, Sendable {
     case shadows, midtones, highlights      // Color Wheels
@@ -401,6 +437,21 @@ public final class ColorInspectorModel {
 
     public func setCurves(_ effect: Int, _ curves: RGBCurves) {
         editEffect(effect) { $0.curves = curves }
+    }
+
+    // MARK: Hue Saturation Curves
+
+    public func hueCurve(_ effect: Int, _ kind: HueCurveKind) -> [CurvePoint] {
+        kind.points(color.effect(effect)?.hueCurves ?? HueCurves())
+    }
+
+    public func setHueCurve(_ effect: Int, _ kind: HueCurveKind, _ pts: [CurvePoint]) {
+        editEffect(effect) { kind.set(pts, in: &$0.hueCurves) }
+    }
+
+    /// Resets one hue curve to the flat middle line. One undo step.
+    public func resetHueCurve(_ effect: Int, _ kind: HueCurveKind) {
+        gesture { setHueCurve(effect, kind, HueCurves.flat) }
     }
 
     // MARK: LUTs (Input LUT and Creative look)

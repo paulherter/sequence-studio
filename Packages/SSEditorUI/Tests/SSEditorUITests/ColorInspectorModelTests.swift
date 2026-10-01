@@ -158,6 +158,23 @@ import SSRender
         #expect(ColorWheelSlot.highlights.hasLuma && !ColorWheelSlot.shadowTint.hasLuma)
     }
 
+    @Test func hueCurvesEditPerKindAndResetIsOneGesture() {
+        let m = model()
+        let pts = [CurvePoint(0, 0.5), CurvePoint(0.3, 0.9), CurvePoint(1, 0.5)]
+        m.setHueCurve(e1, .hueVsHue, pts)
+        #expect(m.hueCurve(e1, .hueVsHue) == pts && m.hueCurve(e1, .hueVsSat) == HueCurves.flat)
+        #expect(!m.color.isIdentity(rec709Source: true))
+        var began = 0
+        m.onGestureBegan = { began += 1 }
+        m.resetHueCurve(e1, .hueVsHue)
+        #expect(began == 1 && m.hueCurve(e1, .hueVsHue) == HueCurves.flat && m.color.isIdentity(rec709Source: true))
+        m.setHueCurve(e1, .satVsSat, pts)
+        m.resetSection(e1, .curves)
+        #expect(m.hueCurve(e1, .satVsSat) == HueCurves.flat, "the Curves reset also clears the hue curves")
+        #expect(HueCurveKind.allCases.map(\.title) == ["Hue vs Sat", "Hue vs Hue", "Hue vs Luma", "Luma vs Sat", "Sat vs Sat"])
+        #expect(HueCurveKind.hueVsLuma.isHueKeyed && !HueCurveKind.lumaVsSat.isHueKeyed)
+    }
+
     @Test func curvesRoundTrip() {
         let m = model()
         var c = m.curves(e1)

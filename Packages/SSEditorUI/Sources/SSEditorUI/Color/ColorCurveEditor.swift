@@ -54,6 +54,10 @@ public enum CurveEditing {
 public final class CurveEditorView: NSView {
     public var points: [CurvePoint] = RGBCurves.diagonal { didSet { if points != oldValue { needsDisplay = true } } }
     public var lineColor: NSColor = Theme.Colors.label { didSet { needsDisplay = true } }
+    /// RGB curves start on the diagonal; Hue Saturation Curves on the flat middle line (y = 0.5 = no change).
+    public var flatBaseline = false { didSet { needsDisplay = true } }
+    /// Optional colour strip along the bottom (the hue wheel for hue-keyed curves).
+    public var hueStrip = false { didSet { needsDisplay = true } }
     public var onBegin: (() -> Void)?
     public var onChange: (([CurvePoint]) -> Void)?
     public var onEnd: (() -> Void)?
@@ -97,8 +101,17 @@ public final class CurveEditorView: NSView {
         }
         grid.lineWidth = 0.5
         grid.stroke()
+        if hueStrip {
+            let strip = NSRect(x: r.minX, y: r.maxY - 6, width: r.width, height: 6)
+            let colors = (0...12).map { NSColor(hue: CGFloat($0) / 12, saturation: 0.85, brightness: 0.9, alpha: 1) }
+            NSGradient(colors: colors)?.draw(in: strip, angle: 0)
+        }
         let diag = NSBezierPath()
-        diag.move(to: NSPoint(x: r.minX, y: r.maxY)); diag.line(to: NSPoint(x: r.maxX, y: r.minY))
+        if flatBaseline {
+            diag.move(to: NSPoint(x: r.minX, y: r.midY)); diag.line(to: NSPoint(x: r.maxX, y: r.midY))
+        } else {
+            diag.move(to: NSPoint(x: r.minX, y: r.maxY)); diag.line(to: NSPoint(x: r.maxX, y: r.minY))
+        }
         Theme.white(0.2).setStroke()
         diag.lineWidth = 0.5
         diag.stroke()
@@ -130,7 +143,8 @@ public final class CurveEditorView: NSView {
         let r = plot
         let local = NSPoint(x: p.x - r.minX, y: p.y - r.minY)
         let hit = CurveEditing.hit(points, x: local.x, y: local.y, size: r.size)
-        if event.clickCount == 2 {
+        // Cmd-click (Premiere) or double-click removes an interior point.
+        if event.clickCount == 2 || (event.modifierFlags.contains(.command) && hit != nil) {
             onBegin?()
             if let hit { onChange?(CurveEditing.remove(points, index: hit)) }
             onEnd?()
@@ -148,12 +162,13 @@ public final class CurveEditorView: NSView {
 
     public override func mouseDragged(with event: NSEvent) {
         guard let i = dragIndex else { return }
-        let (x, y) = toData(convert(event.locationInWindow, from: nil))
+        var (x, y) = toData(convert(event.locationInWindow, from: nil))
+        if event.modifierFlags.contains(.shift), points.indices.contains(i) { x = points[i].x }   // Shift locks x
         onChange?(CurveEditing.move(points, index: i, to: x, y))
     }
 
     public override func mouseUp(with event: NSEvent) {
-        guard dragIndex != nil || event.clickCount == 2 else { return }
+        guard dragIndex != nil || event.clickCount == 2 || event.modifierFlags.contains(.command) else { return }
         if dragIndex != nil { dragIndex = nil; onEnd?() }
         needsDisplay = true
     }

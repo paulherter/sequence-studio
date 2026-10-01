@@ -18,6 +18,9 @@ final class ColorSectionView: NSStackView {
     var lutPopups: [ColorLUTSlot: LUTPopup] = [:]
     var curveEditor: CurveEditorView?
     var channelDots: ChannelDots?
+    var hueEditor: CurveEditorView?
+    var huePopup: NSPopUpButton?
+    var hueKind = HueCurveKind.hueVsSat
     var preview: LookPreviewView?
     var previewPath: String??
     var previewFrame: CGImage?
@@ -336,6 +339,32 @@ public final class ColorInspectorView: NSView {
         v.curveEditor = editor
         pin(editor, in: group.content, inset: Theme.Spacing.lg)
         pin(group, in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+
+        // Hue Saturation Curves: one curve at a time, chosen in the popup (Premiere's tabs).
+        let hueGroup = makeGroup(v, title: "Hue Saturation Curves")
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        style(popup)
+        for k in HueCurveKind.allCases { popup.addItem(withTitle: k.title) }
+        popup.target = self
+        popup.action = #selector(hueCurveKindChanged(_:))
+        popup.identifier = NSUserInterfaceItemIdentifier("\(v.effect)")
+        popup.setAccessibilityLabel("Hue Saturation Curve")
+        v.huePopup = popup
+        pin(popup, in: hueGroup.content, inset: Theme.Spacing.lg)
+        let hue = CurveEditorView(frame: NSRect(x: 0, y: 0, width: 200, height: 150))
+        hue.translatesAutoresizingMaskIntoConstraints = false
+        hue.heightAnchor.constraint(equalToConstant: 150).isActive = true
+        hue.flatBaseline = true
+        hue.points = HueCurves.flat
+        hue.onBegin = { [weak self] in self?.model.onGestureBegan?() }
+        hue.onEnd = { [weak self] in self?.model.onGestureEnded?() }
+        hue.onChange = { [weak self, weak v] pts in
+            guard let self, let v else { return }
+            self.model.setHueCurve(id, v.hueKind, pts)
+        }
+        v.hueEditor = hue
+        pin(hue, in: hueGroup.content, inset: Theme.Spacing.lg)
+        pin(hueGroup, in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
         pin(trailingReset(v), in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
     }
 
@@ -449,6 +478,13 @@ public final class ColorInspectorView: NSView {
         model.gesture { model.setSourceOverride(i == 0 ? nil : Self.sources[i - 1].1) }
     }
 
+    @objc private func hueCurveKindChanged(_ p: NSPopUpButton) {
+        guard let raw = p.identifier?.rawValue, let id = Int(raw), let kind = HueCurveKind(rawValue: p.indexOfSelectedItem),
+              let v = effectViews[id]?.sections[.curves] else { return }
+        v.hueKind = kind
+        refresh()
+    }
+
     @objc private func addEffect() { model.addEffect() }
     @objc private func removeEffect(_ b: NSButton) { model.removeEffect(b.tag) }
     @objc private func resetEffectPressed(_ b: NSButton) { model.resetEffect(b.tag) }
@@ -547,6 +583,12 @@ public final class ColorInspectorView: NSView {
                 }
             }
             preview.setStepping(!model.lookChoices.isEmpty || e.creative.look != nil)
+        }
+        if let hue = v.hueEditor, let popup = v.huePopup {
+            popup.selectItem(at: v.hueKind.rawValue)
+            hue.hueStrip = v.hueKind.isHueKeyed
+            hue.points = model.hueCurve(e.id, v.hueKind)
+            hue.lineColor = Theme.Colors.label
         }
         if let editor = v.curveEditor, let dots = v.channelDots {
             dots.selected = v.selectedChannel
