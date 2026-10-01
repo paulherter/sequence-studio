@@ -14,7 +14,8 @@ public enum AutoTone {
     public static func solve(luma: [Float], current: BasicCorrection) -> BasicCorrection? {
         let v = luma.filter { $0.isFinite }.sorted()
         guard v.count >= 16 else { return nil }
-        var lo = v[Int(Float(v.count - 1) * 0.005)], hi = v[Int(Float(v.count - 1) * 0.995)]
+        var lo = v[Int(Float(v.count - 1) * 0.005)]
+        let hi = v[Int(Float(v.count - 1) * 0.995)]
         guard hi - lo >= 0.05 else { return nil }
         var b = current
         // Exposure acts on linear light: a gain of 2^ev.
@@ -23,7 +24,6 @@ public enum AutoTone {
             let ev = min(max(log2f(gain), 0), 5 - max(current.exposure, 0))
             b.exposure = ((current.exposure + ev) * 100).rounded() / 100
             lo = TransferFunctions.bt709OETF(TransferFunctions.bt709InverseOETF(lo) * exp2f(ev))
-            hi = TransferFunctions.bt709OETF(TransferFunctions.bt709InverseOETF(hi) * exp2f(ev))
         }
         // Blacks: lower the black point to `lo` (an offset of lo - blackTarget), composed with the current levels
         // (x -> (x - bp) / (wp - bp)); the white point stays where it is.

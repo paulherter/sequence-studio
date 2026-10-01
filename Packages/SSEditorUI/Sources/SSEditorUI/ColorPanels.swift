@@ -47,7 +47,8 @@ public final class ColorInspectorPanelView: NSView {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.thumbnailScheduled = false
-                guard let id = self.clipID, let model = self.colorModels[id] else { return }
+                // Not while playing: the readback waits for the GPU and must not compete with playback.
+                guard !self.session.isPlaying, let id = self.clipID, let model = self.colorModels[id] else { return }
                 let over = self.session.singleSelectedClip.map { $0.timeline.contains(self.session.playhead) } ?? false
                 model.frameThumbnail = over ? self.session.engine.lastRenderedTexture.flatMap { FrameSampler.thumbnail(of: $0) } : nil
             }
@@ -60,7 +61,7 @@ public final class ColorInspectorPanelView: NSView {
     }
 
     public func sync(_ change: EditorSession.Change) {
-        if change.contains(.playhead) || change.contains(.project) || change.contains(.selection) { scheduleThumbnail() }
+        if change.contains(.playhead) || change.contains(.project) || change.contains(.selection) || change.contains(.transport) { scheduleThumbnail() }
         guard change.contains(.project) || change.contains(.selection) else { return }
         let ids = Set(session.activeTimeline?.tracks.flatMap { $0.clips.map(\.id) } ?? [])
         for id in colorModels.keys where !ids.contains(id) { colorModels[id] = nil; views[id] = nil }
