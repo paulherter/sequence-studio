@@ -237,7 +237,7 @@ public final class ScopesPanelView: NSView {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.refreshScheduled = false
-                if self.window != nil, let tex = self.session.engine.lastRenderedTexture { self.scopes?.update(frame: tex) }
+                if self.window != nil { self.scopes?.requestUpdate(from: self.session.engine) }
             }
         }
     }
