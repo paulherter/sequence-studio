@@ -29,6 +29,8 @@ public struct KeyframeClipboard: Sendable, Hashable, Codable {
 
     public private(set) var tracks: [PropertyID: Track]
 
+    init(tracks: [PropertyID: Track]) { self.tracks = tracks }
+
     /// Copies the selected keys (per property). `nil` if nothing is selected.
     public static func copy(from source: [PropertyID: PropertyTrack], selection: [PropertyID: Set<UUID>]) -> KeyframeClipboard? {
         var earliest: Time?
@@ -51,11 +53,12 @@ public struct KeyframeClipboard: Sendable, Hashable, Codable {
         return out.isEmpty ? nil : KeyframeClipboard(tracks: out)
     }
 
+    /// Keys outside `range` (clip-local, e.g. the clip's extent) are dropped.
     /// Pastes so the earliest copied key lands at `time`; keys at identical times are replaced.
     /// A missing target property gets a new track. Returns false and changes nothing if any
     /// target property has a different value type.
     @discardableResult
-    public func paste(into target: inout [PropertyID: PropertyTrack], at time: Time) -> Bool {
+    public func paste(into target: inout [PropertyID: PropertyTrack], at time: Time, within range: ClosedRange<Time>? = nil) -> Bool {
         for (p, clip) in tracks {
             switch (clip, target[p]) {
             case (.scalar, .vector?), (.vector, .scalar?): return false
@@ -67,12 +70,12 @@ public struct KeyframeClipboard: Sendable, Hashable, Codable {
             case .scalar(let ks):
                 var tr: KeyframeTrack<Double>
                 if case .scalar(let existing)? = target[p] { tr = existing } else { tr = KeyframeTrack() }
-                for k in ks { tr.insert(k.keyframe(at: time)) }
+                for k in ks where range?.contains(time + k.relativeTime) ?? true { tr.insert(k.keyframe(at: time)) }
                 target[p] = .scalar(tr)
             case .vector(let ks):
                 var tr: KeyframeTrack<Vec2>
                 if case .vector(let existing)? = target[p] { tr = existing } else { tr = KeyframeTrack() }
-                for k in ks { tr.insert(k.keyframe(at: time)) }
+                for k in ks where range?.contains(time + k.relativeTime) ?? true { tr.insert(k.keyframe(at: time)) }
                 target[p] = .vector(tr)
             }
         }
