@@ -188,4 +188,25 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         for ref in refs { _ = try r.stillFrame(for: ref.id) }
         #expect(r.cachedStillCount == 1)
     }
+
+    // Finding 36 (and 12): enlarging the thumbnails asks for a sharper poster instead of stretching the small one.
+    @Test func largerThumbnailSizeRequestsASharperPoster() async throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("posters-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let rep = NSBitmapImageRep(bitmapDataPlanes: nil, pixelsWide: 800, pixelsHigh: 800, bitsPerSample: 8, samplesPerPixel: 4,
+                                   hasAlpha: true, isPlanar: false, colorSpaceName: .deviceRGB, bytesPerRow: 0, bitsPerPixel: 0)!
+        let url = dir.appendingPathComponent("p.png")
+        try #require(rep.representation(using: .png, properties: [:])).write(to: url)
+        let info = MediaInfo(duration: Time(5, 1), video: VideoTrackInfo(width: 800, height: 800, codec: "image", bitDepth: 8, chroma: "4:4:4",
+                             nominalFrameDuration: Time(1, 30), isVariableFrameRate: false), isStill: true)
+        let ref = MediaRef(name: "p", path: url.path, fingerprint: MediaFingerprint(size: 1), duration: info.duration, info: info)
+        let thumbs = ProjectThumbnails()
+        thumbs.requestPoster(ref, height: 50) {}
+        for _ in 0..<200 where thumbs.cachedPoster(ref.id) == nil { try await Task.sleep(for: .milliseconds(10)) }
+        let small = try #require(thumbs.cachedPoster(ref.id)).size.height
+        thumbs.requestPoster(ref, height: 300) {}
+        for _ in 0..<200 where (thumbs.cachedPoster(ref.id)?.size.height ?? 0) <= small { try await Task.sleep(for: .milliseconds(10)) }
+        #expect((thumbs.cachedPoster(ref.id)?.size.height ?? 0) > small)
+    }
 }

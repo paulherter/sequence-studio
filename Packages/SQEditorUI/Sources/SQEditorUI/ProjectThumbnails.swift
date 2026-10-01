@@ -33,20 +33,27 @@ final class ProjectThumbnails {
         return c
     }()
     private var failed = Set<UUID>()
+    /// Height (pixels) each cached poster was made at: a larger thumbnail size asks for a sharper one.
+    private var posterHeights: [UUID: Int] = [:]
     private var pending = Set<UUID>()
     private var scrubTask: Task<Void, Never>?
 
     func cachedPoster(_ id: UUID) -> NSImage? { posters.object(forKey: id as NSUUID) }
 
     func forget(_ id: UUID) {
-        posters.removeObject(forKey: id as NSUUID); failed.remove(id); pending.remove(id)
+        posters.removeObject(forKey: id as NSUUID); posterHeights[id] = nil; failed.remove(id); pending.remove(id)
         Task { await thumbnailer.invalidate(media: id) }
     }
 
-    /// Loads the poster (async) and calls `done` on the main actor when it is there.
+    /// A failed poster is tried again (the file came back online, was relinked...).
+    func clearFailure(_ id: UUID) { failed.remove(id) }
+
+    /// Loads the poster (async) and calls `done` on the main actor when it is there. A cached poster is kept unless
+    /// the wanted height is clearly larger than the one it was made at.
     func requestPoster(_ ref: MediaRef, height: Int, done: @escaping @MainActor () -> Void) {
         let id = ref.id
-        guard cachedPoster(id) == nil, !failed.contains(id), pending.insert(id).inserted else { return }
+        if cachedPoster(id) != nil, let have = posterHeights[id], have * 4 >= height * 3 { return }
+        guard !failed.contains(id), pending.insert(id).inserted else { return }
         let url = URL(fileURLWithPath: ref.path)
         let still = ref.info?.isStill == true || ref.kind == .image
         let fd = ref.info?.video?.nominalFrameDuration ?? Time(1, 30)
@@ -54,13 +61,14 @@ final class ProjectThumbnails {
         let t = ref.posterTime ?? HoverScrub.poster(duration: total, frameDuration: fd)
         Task { [weak self, thumbnailer] in
             let cg: CGImage?
-            if ref.kind == .audio { cg = nil } else if still { cg = Self.stillThumbnail(url, height: height) } else {
+            if ref.kind == .audio { cg = nil } else if still { cg = await Self.stillThumbnail(url, height: height) } else {
                 cg = try? await thumbnailer.thumbnail(media: id, url: url, at: CMTime(value: t.value, timescale: Int32(clamping: t.timescale)),
                                                       height: height, exact: false)
             }
             guard let self else { return }
             pending.remove(id)
             if let cg {
+                posterHeights[id] = height
                 posters.setObject(NSImage(cgImage: cg, size: NSSize(width: cg.width, height: cg.height)), forKey: id as NSUUID,
                                   cost: cg.bytesPerRow * cg.height)
             } else {
@@ -84,7 +92,8 @@ final class ProjectThumbnails {
 
     func cancelScrub() { scrubTask?.cancel(); scrubTask = nil }
 
-    nonisolated private static func stillThumbnail(_ url: URL, height: Int) -> CGImage? {
+    /// Decoding a big photo takes long: off the main actor.
+    @concurrent private static func stillThumbnail(_ url: URL, height: Int) async -> CGImage? {
         guard let src = CGImageSourceCreateWithURL(url as CFURL, nil) else { return nil }
         return CGImageSourceCreateThumbnailAtIndex(src, 0, [
             kCGImageSourceCreateThumbnailFromImageAlways: true, kCGImageSourceCreateThumbnailWithTransform: true,
