@@ -131,6 +131,7 @@ public final class ClipSectionsView: NSView, NSTextViewDelegate {
     public func sync(_ change: EditorSession.Change) {
         guard change.contains(.project) || change.contains(.selection) else { return }
         let clip = session.singleSelectedClip
+        pruneAudio()
         let new = ClipSectionMode.resolve(clip)
         var changed = new != mode
         switch new {
@@ -222,8 +223,21 @@ public final class ClipSectionsView: NSView, NSTextViewDelegate {
         textModel.onAlignToFrame = { [weak self] a in self?.onAlignToFrame?(a) }
     }
 
+    /// Drops the audio inspectors of tracks that no longer exist (their ids could come back with other settings).
+    private func pruneAudio() {
+        let live = Set(session.activeTimeline?.tracks.map(\.id) ?? [])
+        for id in Array(audioHosts.keys) where !live.contains(id) {
+            audioHosts[id]?.removeFromSuperview()
+            audioHosts[id] = nil; audioModels[id] = nil; audioPresets[id] = nil
+        }
+        if let id = audioTrackID, !live.contains(id) { audioTrackID = nil }
+    }
+
     private func loadText(_ clip: Clip) {
-        guard let ref = clip.generator, let (t, anims) = try? TextGenerator.decode(ref) else { return }
+        guard let ref = clip.generator, let (t, anims) = try? TextGenerator.decode(ref) else {
+            textClipID = nil; textTemplate = nil; textEditor.string = ""      // undecodable: never edit the previous clip
+            return
+        }
         let changedClip = textClipID != clip.id
         textClipID = clip.id
         if t != textTemplate || changedClip {
@@ -249,7 +263,10 @@ public final class ClipSectionsView: NSView, NSTextViewDelegate {
     // MARK: Audio
 
     private func loadAudio(_ clip: Clip) {
-        guard let track = session.activeTimeline?.tracks.first(where: { $0.clips.contains { $0.id == clip.id } }) else { return }
+        guard let track = session.activeTimeline?.tracks.first(where: { $0.clips.contains { $0.id == clip.id } }) else {
+            audioTrackID = nil
+            return
+        }
         audioTrackID = track.id
         if audioHosts[track.id] == nil {
             let model = TrackAudioInspectorModel(preset: audioPresets[track.id] ?? .off)

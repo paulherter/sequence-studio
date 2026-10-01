@@ -222,4 +222,21 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         view.sync([.project])
         #expect(view.captionsModel(for: clip.id)?.sourceURL?.path == "/elsewhere/B.mov")
     }
+
+    // Finding 27: audio inspector views of deleted tracks stayed in the view (and their presets came back with reused ids).
+    @Test func clipSectionsPrunesDeletedAudioTracks() throws {
+        let (session, _, m) = makeSession()
+        session.placeMedia([m.id], at: .zero)
+        let audio = try #require(session.activeTimeline?.tracks.first { $0.kind == .audio }?.clips.first)
+        let view = ClipSectionsView(session: session)
+        let base = view.subviews.count
+        session.select(clips: [audio.id])
+        view.sync([.selection])
+        #expect(view.subviews.count == base + 1)
+        session.perform("Remove tracks") { p in
+            _ = try? p.edit(p.timelines[0].id) { $0.tracks.removeAll { $0.kind == .audio } }
+        }
+        view.sync([.project])
+        #expect(view.subviews.count == base)
+    }
 }
