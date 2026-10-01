@@ -1,3 +1,4 @@
+import AppKit
 import Foundation
 import Testing
 import SQCore
@@ -63,6 +64,23 @@ private let sample = Transcript(language: "de-DE", words: [
         m.transcribe(); await m.waitForTranscription()
         if case .failed(let msg) = m.state { #expect(msg.contains("no audio")) } else { Issue.record("not failed") }
         #expect(m.transcript == nil)
+    }
+
+    // Review finding 7: every observed change while the overwrite question was open queued another sheet.
+    @Test func overwriteSheetIsPresentedOnce() async throws {
+        let (m, _) = makeModel()
+        m.transcribe(); await m.waitForTranscription()
+        let view = CaptionsPanelView(model: m)
+        let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 320, height: 480), styleMask: [.titled], backing: .buffered, defer: false)
+        window.contentView = view
+        m.transcribe()                                    // raises the question: first sheet
+        await eventually { window.attachedSheet != nil }
+        for i in 0..<3 { m.language = i % 2 == 0 ? "en-US" : "de-DE"; try await Task.sleep(for: .milliseconds(30)) }   // observed changes
+        let sheet = try #require(window.attachedSheet)
+        window.endSheet(sheet, returnCode: .alertSecondButtonReturn)                                  // Cancel
+        try await Task.sleep(for: .milliseconds(400))
+        #expect(window.attachedSheet == nil)              // a queued duplicate would show up now
+        #expect(!m.needsOverwriteConfirmation)
     }
 
     @Test func noSourceCannotTranscribe() {
