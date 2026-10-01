@@ -341,6 +341,7 @@ public struct TimelineInteraction: Sendable {
         case .emptyClip: "Nothing to nest."
         case .wrongTrackKind: "Clips do not fit that track."
         case .invalidFormat: "That sequence format is not valid."
+        case .speedUnsupported: "Speed cannot be changed on that clip."
         case nil: "Nest failed."
         }
     }
