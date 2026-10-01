@@ -61,6 +61,8 @@ public struct TimelineInteraction: Sendable {
         var copyLinks: [UUID: UUID] = [:]
         /// Shift while moving: the axis the pointer moved along first.
         var axisLock = AxisLock()
+        /// Option went down before Command: a later Command makes it an insert copy, not a rearrange.
+        var copyLatched = false
     }
     /// Copies the in-flight Option-drag creates (they become the selection on commit).
     private var pendingCopies: Set<Clip.ID> = []
@@ -111,6 +113,8 @@ public struct TimelineInteraction: Sendable {
     }
 
     public mutating func cancel() {
+        snapInverted = false
+        moveHint = nil
         gesture = nil
         preview = timeline
         pendingEdits = []
@@ -151,6 +155,9 @@ public struct TimelineInteraction: Sendable {
     private func snapPoints(excluding: Set<Clip.ID>) -> [SnapPoint] {
         timeline.snapPoints(excluding: excluding, playhead: playhead, markers: markers, includeKeyframes: true)
     }
+
+    /// What the move gesture in flight does ("Insert", "Rearrange", "Copy", "Insert copy"); the view shows it as a hint.
+    public private(set) var moveHint: String?
 
     /// Hold-S: snapping flipped for the gesture in flight (Premiere's momentary snap toggle). Reset by every mouse down.
     public var snapInverted = false
@@ -290,6 +297,8 @@ public struct TimelineInteraction: Sendable {
         guard let g = gesture else { return nil }
         if g.active && g.kind != .razor { mouseDragged(p, modifiers: m) }
         defer {
+            snapInverted = false
+            moveHint = nil
             gesture = nil
             marquee = nil
             snapTime = nil
@@ -485,9 +494,15 @@ public struct TimelineInteraction: Sendable {
 
     private mutating func updateMove(_ p: CGPoint, modifiers m: GestureModifiers) {
         guard var g = gesture, let anchorID = g.clip, let anchor = clip(anchorID) else { return }
+        // Adobe: Cmd-drag = insert (the old place stays a gap), Cmd+Opt-drag = rearrange (the old place closes), Option-drag
+        // = copy; Option first and then Cmd = insert the copy.
+        if m.contains(.option) && !m.contains(.command) { g.copyLatched = true }
+        gesture = g
         let insert = m.contains(.command)
         let copying = m.contains(.option) && !insert
-        let insertCopying = m.contains(.option) && insert
+        let insertCopying = m.contains(.option) && insert && g.copyLatched
+        let rearranging = m.contains(.option) && insert && !g.copyLatched
+        moveHint = insertCopying ? "Insert copy" : rearranging ? "Rearrange" : insert ? "Insert" : copying ? "Copy" : nil
         let movers: [Clip.ID] = (!insert && selection.contains(anchorID)) ? Array(selection) : [anchorID]
         let everything = groups(Set(movers), linked: true)
         let minStart = everything.compactMap { clip($0)?.start }.min() ?? anchor.start
@@ -541,9 +556,10 @@ public struct TimelineInteraction: Sendable {
             }
             pendingCopies = []
             if d != .zero || anchorTrack != nil {
-                edits.append(.moveInsert(anchorID, to: anchor.start + d, track: anchorTrack))
+                edits.append(rearranging ? .moveInsert(anchorID, to: anchor.start + d, track: anchorTrack)
+                                         : .insertMove(anchorID, to: anchor.start + d, track: anchorTrack))
             } else { edits = [] }
-            publish(edits, "Insert Move")
+            publish(edits, rearranging ? "Rearrange" : "Insert Move")
             return
         }
 

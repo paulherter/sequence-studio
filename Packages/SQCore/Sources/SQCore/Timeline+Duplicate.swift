@@ -26,6 +26,27 @@ extension Timeline {
         self = work
     }
 
+    // MARK: Insert move (Cmd-drag)
+
+    /// Cmd-drag: an insert edit with the clip itself. The clip (and linked partners) is lifted from its old place, which
+    /// stays as a gap, and inserted at `start`: later clips on the destination and every sync-locked track move right by
+    /// its length, a clip under the drop point is split. `start` is a time of the timeline before the edit. (The version
+    /// that also closes the old gap is `moveInsert`, the Cmd+Option "rearrange".) Locked tracks refuse.
+    public mutating func insertMove(_ id: Clip.ID, to start: Time, track target: Track.ID? = nil) throws {
+        let group = try linkedGroup(id)
+        if group.contains(where: { tracks[$0.track].isLocked }) { throw EditError.trackLocked }
+        var destinations = group.map { tracks[$0.track].id }
+        if let target {
+            guard let ti = tracks.firstIndex(where: { $0.id == target }) else { throw EditError.clipNotFound }
+            guard tracks[ti].kind == group[0].clip.kind else { throw EditError.wrongTrackKind }
+            destinations[0] = target
+        }
+        var work = self
+        try work.lift(group.map(\.clip.id))
+        try work.insert(zip(group, destinations).map { (clip: $0.clip, track: $1) }, at: max(start, .zero))
+        self = work
+    }
+
     // MARK: Duplicate (Shift+Cmd+/)
 
     /// Copies the clips right after the end of the selection, on the tracks they are on (overwrite). A link survives

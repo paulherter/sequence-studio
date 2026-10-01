@@ -13,7 +13,7 @@ public enum PlayheadTrimMode: Sendable, Hashable {
 extension Timeline {
     /// Q (`.head`) / W (`.tail`) with a mode. The clip under `t` on each given track (`nil` = all unlocked tracks) gets
     /// that edge moved to `t`. `.ripple` is `rippleTrimToPlayhead`. `.roll` also moves the touching neighbour's edge
-    /// (`.collision` when the edge has no touching neighbour). `.plain` leaves a gap. Atomic; linked partners follow.
+    /// (tracks without a touching neighbour are skipped; `.collision` when none could roll). `.plain` leaves a gap. Atomic; linked partners follow.
     /// Returns the edge movement of the first trimmed clip (negative = shortened).
     @discardableResult
     public mutating func trimToPlayhead(_ edge: ClipEdge, at t: Time, tracks ids: [Track.ID]?,
@@ -39,6 +39,7 @@ extension Timeline {
         var work = self
         var first: Time?
         var done = Set<Clip.ID>()
+        var skipped = false
         for id in picks where !done.contains(id) {
             guard let m = work.find(id) else { continue }
             for g in try work.linkedGroup(id) { done.insert(g.clip.id) }
@@ -46,16 +47,16 @@ extension Timeline {
             let moved: Time
             if mode == .plain {
                 moved = try work.trim(id, edge: edge, by: delta)
-            } else if edge == .tail {
-                moved = try work.roll(id, by: delta)
             } else {
-                guard let left = work.tracks[m.track].clips.first(where: { $0.timeline.end == m.clip.start }) else {
-                    throw EditError.collision
-                }
-                moved = try work.roll(left.id, by: delta)
+                // Rolling needs a touching neighbour and a real move; tracks without one are skipped.
+                let left = work.tracks[m.track].clips.first { $0.timeline.end == m.clip.start }
+                let right = work.tracks[m.track].clips.first { $0.start == m.clip.timeline.end }
+                guard delta != .zero, edge == .tail ? right != nil : left != nil else { skipped = true; continue }
+                moved = try work.roll(edge == .tail ? id : left!.id, by: delta)
             }
             if first == nil { first = moved }
         }
+        if mode == .roll, first == nil { throw skipped ? EditError.collision : EditError.clipNotFound }
         self = work
         return first ?? .zero
     }

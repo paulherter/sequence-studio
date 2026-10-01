@@ -19,7 +19,7 @@ Sources: code read in this worktree, `docs/spec/timeline.md` backlog numbers in 
 | Zoom tool: click zooms in one increment, Alt/Opt-click out | verified | `panels.txt` (Zoom Tool). The marquee is not in that text; built as planned |
 | Zoom keys `=` and `-` | verified | table rows Zoom In / Zoom Out. The per-press factor is not stated anywhere in the text |
 | `\` fits the sequence and toggles back | unverified | no `\` row in the table; already built and kept |
-| Cmd+Opt-drag | corrected | `rearranging-clips-sequence.txt` calls Cmd+Opt-drag of a timeline clip a "rearrange" (a move that closes the old gap and inserts). Our plain Cmd-drag already does that. The plan asks for Cmd+Opt = insert a copy, built as planned (Option = copy, Command = insert). Flagged for Paul |
+| Cmd / Cmd+Opt / Option drags | corrected (re-read) | `adding-clips-sequences.txt`: holding Command while dragging switches to insert mode, later clips move forward to make room. `rearranging-clips-sequence.txt`: Command+Option-drag is a rearrange edit, the clip is placed at the new spot and only clips on the destination track shift. No Adobe line for Option-drag copy or for Option-then-Command (that one follows the coordinator's description). Built: plain = overwrite move, Cmd = insert move (old place stays a gap), Cmd+Opt = rearrange (old place closes, nothing else changes length), Option = copy, Option pressed first and then Cmd = insert copy. A status hint (Insert / Rearrange / Copy / Insert copy) shows while dragging; Copy also shows the copy cursor |
 | Target buttons: Shift / Option click | unverified | `source-patching-track-targeting.txt` has no modifier text. Built: Shift = all tracks of that kind switch to the state this one is switching to, Option = only this track of its kind |
 
 ## Inventory and result
@@ -27,7 +27,7 @@ Sources: code read in this worktree, `docs/spec/timeline.md` backlog numbers in 
 | # | Item | Existed before | Now | Tests |
 |---|---|---|---|---|
 | 1 | Q/W Shift/Opt variants | Q/W ripple only | `Timeline.trimToPlayhead(_:at:tracks:mode:)` (`.ripple/.roll/.plain`), commands `rollTrimPrevious/Next`, `trimPrevious/Next`, Sequence menu entries, one undo step each | A=[0,10) B=[10,20) at 7: roll gives [0,7),[7,20), plain leaves gap [7,10), ripple pulls B back 3; linked partners, locked track, no neighbour refused |
-| 2 | Cmd+Opt drag = insert copy | Option-drag copy and Cmd-drag insert-move existed | `Timeline.insertCopy`, `TimelineEdit.insertCopy`, gesture "Insert Copy"; copies become the selection | copy at drop, later clips ripple, original stays, links, locked refused; gesture test |
+| 2 | Cmd drag semantics, insert copy | Option-drag copy existed; Cmd-drag wrongly closed the old gap | `Timeline.insertMove` (new Cmd-drag), `moveInsert` kept as Cmd+Opt rearrange, `Timeline.insertCopy` for Option-then-Cmd; copies become the selection | copy at drop, later clips ripple, original stays, links, locked refused; gesture test |
 | 3 | Zoom tool | Z key did nothing ("not available") | `TimelineTool.zoom`, click = one `keyStep` in, Option-click out, drag a box = zoom to it; pure `TimelineZoom.zoomClick` / `zoomMarquee`; menu item now shown | anchor time fixed, clamping, marquee fits, dragged either way |
 | 4 | Zoom feel | `\` toggle with memory, zoom bar, Opt/Cmd+wheel, pinch, key step 2.5 all existed | per-press factor is the single constant `TimelineZoom.keyStep` (used by `=` `-` and the Zoom tool). **Kept at 2.5**: neither the Adobe text nor the research gives Premiere's factor, and "fit to about 1 s in at most 2 presses" needs a factor near 8 for a one minute sequence, too coarse to judge blind. From a one minute fit to a 1 s view is 5 presses today | constant pinned, steps count |
 | 5 | Enable / Disable clip | no | `Clip.isEnabled` (default true, decodes true from old files, round-trips), `Timeline.toggleEnabled` (group as one, locked refused), skipped in `videoLayers` and `audioSegments` (one filter each), dimmed in the timeline, Shift+Cmd+E, Clip menu, context menu entry | decode/round-trip, render and mix skip, edits still work on disabled clips, v18 migration is identity, project file round trip |
@@ -43,9 +43,7 @@ Already there and re-checked in code (no new work): edge and gap selection with 
 (M twice, double-click), fast zoom `\`, zoom bar, Shift+M / Shift+Cmd+M.
 
 ## Project file
-v18 owns `Clip.isEnabled`. Added only `migrateV17toV18` (identity) and its dictionary entry `17:`. `currentVersion` is **not** changed here
-(protocol: set to the highest number on merge; v17 is transitions), so files written by this branch still say 16 and carry the extra key,
-which older readers ignore.
+v18 owns `Clip.isEnabled`. Added only `migrateV17toV18` (identity) and its dictionary entry `17:`. `migrateV16toV17` is an identity placeholder ("transitions stream") so the chain is complete; `currentVersion` is 18 after merging main.
 
 ## Not done / open
 - Cursor does not follow Option for the zoom tool (zoom-in glyph only); modifier-following cursors need `flagsChanged` tracking.

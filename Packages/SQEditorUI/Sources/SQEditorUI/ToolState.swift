@@ -101,7 +101,10 @@ public enum TimelineEdit: Sendable, Equatable {
     case move(Clip.ID, to: Time, track: Track.ID?)
     /// Move with linked partners retargeted to their own tracks (mirrored track change).
     case moveGroup(Clip.ID, to: Time, track: Track.ID?, partners: [Clip.ID: Track.ID])
+    /// Cmd+Option-drag "rearrange": lifts the clip, closes its old gap, inserts it at the drop.
     case moveInsert(Clip.ID, to: Time, track: Track.ID?)
+    /// Cmd-drag: insert at the drop, the old place stays as a gap.
+    case insertMove(Clip.ID, to: Time, track: Track.ID?)
     case lift([Clip.ID])
     case rippleDelete([Clip.ID])
     case trim(Clip.ID, edge: ClipEdge, by: Time)
@@ -132,6 +135,7 @@ public enum TimelineEdit: Sendable, Equatable {
         case let .move(id, start, track): try t.move(id, to: start, track: track)
         case let .moveGroup(id, start, track, partners): try t.move(id, to: start, track: track, retarget: partners)
         case let .moveInsert(id, start, track): try t.moveInsert(id, to: start, track: track)
+        case let .insertMove(id, start, track): try t.insertMove(id, to: start, track: track)
         case .lift(let ids): try t.lift(ids)
         case .rippleDelete(let ids): _ = try t.rippleDelete(ids)
         case let .trim(id, edge, d): try t.trim(id, edge: edge, by: d)

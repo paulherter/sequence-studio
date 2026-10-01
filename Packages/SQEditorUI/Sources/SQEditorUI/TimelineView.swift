@@ -73,6 +73,10 @@ public final class TimelineView: NSView {
     /// Last pointer position and modifiers of the drag in flight, for edge autoscroll and the Hold-S snap flip.
     private var lastDrag: (point: CGPoint, modifiers: GestureModifiers)?
     private var autoscrollTimer: Timer?
+    private var resignObserver: NSObjectProtocol?
+    private var lastHint: String?
+    /// What the move gesture in flight does ("Insert", "Rearrange", "Copy", "Insert copy"); nil when it ends.
+    public var onGestureHint: ((String?) -> Void)?
     private var autoscrollLast: TimeInterval = 0
     /// Edit point the playhead is stuck to while Shift-scrubbing (snap indicator), nil otherwise.
     public private(set) var scrubSnapTime: Time?
@@ -371,12 +375,14 @@ public final class TimelineView: NSView {
         setZoom(pointsPerSecond: geometry.pointsPerSecond * TimelineZoom.pinchFactor(magnification: Double(event.magnification)), anchorX: anchor)
     }
 
-    private func gestureModifiers(_ e: NSEvent) -> GestureModifiers {
+    private func gestureModifiers(_ e: NSEvent) -> GestureModifiers { Self.gestureModifiers(e.modifierFlags) }
+
+    static func gestureModifiers(_ f: NSEvent.ModifierFlags) -> GestureModifiers {
         var m: GestureModifiers = []
-        if e.modifierFlags.contains(.shift) { m.insert(.shift) }
-        if e.modifierFlags.contains(.command) { m.insert(.command) }
-        if e.modifierFlags.contains(.option) { m.insert(.option) }
-        if e.modifierFlags.contains(.control) { m.insert(.control) }
+        if f.contains(.shift) { m.insert(.shift) }
+        if f.contains(.command) { m.insert(.command) }
+        if f.contains(.option) { m.insert(.option) }
+        if f.contains(.control) { m.insert(.control) }
         return m
     }
 
@@ -388,6 +394,11 @@ public final class TimelineView: NSView {
 
     /// Shows the in-flight gesture (`interaction.preview`) and mirrors selection and scroll changes into the view.
     private func refreshFromInteraction() {
+        if interaction.moveHint != lastHint {
+            lastHint = interaction.moveHint
+            onGestureHint?(lastHint)
+        }
+        if interaction.moveHint?.contains("opy") == true { NSCursor.dragCopy.set() }
         if interaction.geometry.scrollX != geometry.scrollX || interaction.geometry.scrollY != geometry.scrollY {
             setScroll(x: interaction.geometry.scrollX, y: interaction.geometry.scrollY)
         }
@@ -518,7 +529,7 @@ public final class TimelineView: NSView {
     private func dragMarker(to p: CGPoint) {
         guard let d = markerDrag else { return }
         let r = MarkerDrag.target(time: geometry.unsnappedTime(atX: p.x), dragging: d.id, in: timeline, playhead: playhead,
-                                  snapping: toolState.snapping, geometry: geometry)
+                                  snapping: toolState.snapping != interaction.snapInverted, geometry: geometry)
         timeline.moveMarker(d.id, to: r.time)
         setScrubSnap(r.hit?.time)
         syncChildren()
@@ -535,9 +546,15 @@ public final class TimelineView: NSView {
         if v == 0 { stopAutoscroll(); return }
         guard autoscrollTimer == nil else { return }
         autoscrollLast = ProcessInfo.processInfo.systemUptime
-        autoscrollTimer = Timer.scheduledTimer(withTimeInterval: 1.0 / 60, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.autoscrollTick() }
+        let timer = Timer(timeInterval: 1.0 / 60, repeats: true) { [weak self] timer in
+            let alive = MainActor.assumeIsolated { [weak self] in
+                self?.autoscrollTick()
+                return self != nil
+            }
+            if !alive { timer.invalidate() }                           // the view went away
         }
+        RunLoop.main.add(timer, forMode: .common)                      // keeps firing during event tracking
+        autoscrollTimer = timer
     }
 
     private func stopAutoscroll() { autoscrollTimer?.invalidate(); autoscrollTimer = nil }
@@ -546,7 +563,9 @@ public final class TimelineView: NSView {
         let now = ProcessInfo.processInfo.systemUptime
         let dt = min(now - autoscrollLast, 0.1)
         autoscrollLast = now
-        guard let l = lastDrag, isDragging else { stopAutoscroll(); return }
+        guard var l = lastDrag, isDragging else { stopAutoscroll(); return }
+        l.modifiers = Self.gestureModifiers(NSEvent.modifierFlags)      // keys pressed or released since the last mouse event
+        lastDrag = l
         let v = TimelineAutoscroll.velocity(pointerX: l.point.x, viewLeft: TimelineGeometry.contentOriginX, viewRight: bounds.width)
         guard v != 0 else { stopAutoscroll(); return }
         let before = geometry.scrollX
@@ -557,7 +576,9 @@ public final class TimelineView: NSView {
 
     /// Feeds the last pointer position to the gesture in flight again (after a scroll or a Hold-S flip).
     private func replayDrag() {
-        guard let l = lastDrag else { return }
+        guard var l = lastDrag else { return }
+        l.modifiers = Self.gestureModifiers(NSEvent.modifierFlags)
+        lastDrag = l
         if markerDrag?.moved == true { dragMarker(to: l.point); return }
         if scrubbing.active, scrubbing.began { onScrub?(scrubTime(at: l.point, shift: l.modifiers.contains(.shift))); return }
         guard !interaction.isIdle else { return }
@@ -587,6 +608,7 @@ public final class TimelineView: NSView {
     }
 
     public override func mouseUp(with event: NSEvent) {
+        defer { interaction.snapInverted = false }
         stopAutoscroll()
         lastDrag = nil
         if endVolumeDrag(at: convert(event.locationInWindow, from: nil)) { return }
@@ -597,7 +619,7 @@ public final class TimelineView: NSView {
             let p = convert(event.locationInWindow, from: nil)
             if d.moved {
                 let r = MarkerDrag.target(time: geometry.unsnappedTime(atX: p.x), dragging: d.id, in: timeline, playhead: playhead,
-                                          snapping: toolState.snapping, geometry: geometry)
+                                          snapping: toolState.snapping != interaction.snapInverted, geometry: geometry)
                 if r.time != d.original { onMarkerMoved?(d.id, r.time) } else { timeline.moveMarker(d.id, to: d.original); syncChildren(); needsDisplay = true }
             } else {
                 onSeek?(geometry.time(atX: p.x))
@@ -633,7 +655,8 @@ public final class TimelineView: NSView {
     public var onEditMarker: ((Marker.ID) -> Void)?
 
     /// Time under the pointer for a playhead drag. Shift sticks it to clip edges, markers and 0 and shows the snap line.
-    private func scrubTime(at p: CGPoint, shift: Bool) -> Time {
+    private func scrubTime(at p: CGPoint, shift shiftHeld: Bool) -> Time {
+        let shift = shiftHeld || interaction.snapInverted      // Hold-S sticks the playhead like Shift does
         guard shift else { setScrubSnap(nil); return geometry.time(atX: p.x) }
         let r = PlayheadSnap.resolve(geometry.unsnappedTime(atX: p.x), timeline: timeline, geometry: geometry)
         setScrubSnap(r.hit?.time)
@@ -658,6 +681,8 @@ public final class TimelineView: NSView {
     /// Escape during a drag.
     public func cancelGesture() {
         stopAutoscroll()
+        lastDrag = nil
+        interaction.snapInverted = false
         zoomDrag = nil
         if let d = markerDrag { timeline.moveMarker(d.id, to: d.original); markerDrag = nil; syncChildren() }
         interaction.cancel()
@@ -926,6 +951,16 @@ public final class TimelineView: NSView {
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         invalidateCursors()
+        if let o = resignObserver { NotificationCenter.default.removeObserver(o); resignObserver = nil }
+        guard let window else { stopAutoscroll(); lastDrag = nil; return }      // left its window: no timer may outlive it
+        resignObserver = NotificationCenter.default.addObserver(forName: NSWindow.didResignKeyNotification, object: window,
+                                                                queue: .main) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                self.stopAutoscroll()
+                self.setSnapInverted(false)       // a key up that happened elsewhere must not leave snapping flipped
+            }
+        }
     }
 
     /// Cursor rects per tool (see `TimelineCursorMap`): trim cursors on clip edges, razor over the tracks, ...

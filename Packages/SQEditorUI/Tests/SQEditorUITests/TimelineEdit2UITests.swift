@@ -191,35 +191,81 @@ private func track(_ clips: [Clip], kind: TrackKind = .video) -> Track {
         return r.y + r.height / 2
     }
 
-    @Test func commandOptionDragInsertsACopyAndKeepsTheOriginal() throws {
-        let a = clip(0, 1), b = clip(1, 1)                    // 24-frame clips
-        var i = rig([track([a, b])])
+    private func dragMods(_ i: inout TimelineInteraction, _ steps: [(Double, GestureModifiers)]) -> TimelineCommit? {
         let y = rowY(i, 0)
         i.mouseDown(CGPoint(x: X(10), y: y), modifiers: [])
-        i.mouseDragged(CGPoint(x: X(20), y: y), modifiers: [.command, .option])
-        i.mouseDragged(CGPoint(x: X(34), y: y), modifiers: [.command, .option])
-        let raw_c = i.mouseUp(CGPoint(x: X(34), y: y), modifiers: [.command, .option])
-        let c = try #require(raw_c)
+        for (f, m) in steps { i.mouseDragged(CGPoint(x: X(f), y: y), modifiers: m) }
+        let last = steps.last!
+        return i.mouseUp(CGPoint(x: X(last.0), y: y), modifiers: last.1)
+    }
+
+    @Test func optionThenCommandInsertsACopyAndKeepsTheOriginal() throws {
+        let a = clip(0, 1), b = clip(1, 1)                    // 24-frame clips
+        var i = rig([track([a, b])])
+        let raw = dragMods(&i, [(20, [.option]), (34, [.option, .command])])
+        let c = try #require(raw)
         #expect(c.undoName == "Insert Copy")
         let clips = c.timeline.tracks[0].clips
         #expect(clips.contains { $0.id == a.id })
         #expect(clips.count == 3)
-        #expect(c.timeline.duration == s(3))                  // b moved back by the copy's length
+        #expect(c.timeline.duration == s(3))                  // b moved right by the copy's length
         #expect(c.selection.count == 1 && !c.selection.contains(a.id))
         if case .insertCopy = c.edits.last {} else { Issue.record("expected an insertCopy edit") }
     }
 
-    @Test func commandAloneStillMovesInsteadOfCopying() throws {
+    @Test func commandThenOptionIsARearrangeThatClosesTheOldGap() throws {
+        let a = clip(0, 1), b = clip(1, 1), c3 = clip(2, 1)
+        var i = rig([track([a, b, c3])])
+        let raw = dragMods(&i, [(20, [.command]), (34 + 24, [.command, .option])])    // a to 2 s: after b
+        let c = try #require(raw)
+        #expect(c.undoName == "Rearrange")
+        #expect(c.timeline.duration == s(3))                  // nothing grows
+        #expect(c.timeline.tracks[0].clips.count == 3)
+        if case .moveInsert = c.edits.last {} else { Issue.record("expected a moveInsert edit") }
+    }
+
+    @Test func commandAloneInsertsAndLeavesTheOldPlaceAsAGap() throws {
         let a = clip(0, 1), b = clip(1, 1)
         var i = rig([track([a, b])])
+        let raw = dragMods(&i, [(20, [.command]), (34 + 24, [.command])])             // a dropped at 2 s, after b
+        let c = try #require(raw)
+        #expect(c.undoName == "Insert Move")
+        let clips = c.timeline.tracks[0].clips
+        #expect(clips.count == 2)
+        #expect(clips.first { $0.id == b.id }!.start == s(1))      // b stays: the old place of a is a gap, nothing closes
+        #expect(clips.first { $0.id == a.id }!.start == s(2))
+        if case .insertMove = c.edits.last {} else { Issue.record("expected an insertMove edit") }
+    }
+
+    @Test func moveHintNamesTheMode() {
+        let a = clip(0, 1)
+        var i = rig([track([a])])
         let y = rowY(i, 0)
         i.mouseDown(CGPoint(x: X(10), y: y), modifiers: [])
         i.mouseDragged(CGPoint(x: X(20), y: y), modifiers: [.command])
-        i.mouseDragged(CGPoint(x: X(70), y: y), modifiers: [.command])
-        let raw_c = i.mouseUp(CGPoint(x: X(70), y: y), modifiers: [.command])
-        let c = try #require(raw_c)
-        #expect(c.undoName == "Insert Move")
-        #expect(c.timeline.tracks[0].clips.count == 2)
+        #expect(i.moveHint == "Insert")
+        i.mouseDragged(CGPoint(x: X(21), y: y), modifiers: [.command, .option])
+        #expect(i.moveHint == "Rearrange")
+        i.mouseDragged(CGPoint(x: X(22), y: y), modifiers: [.option])
+        #expect(i.moveHint == "Copy")
+        i.mouseDragged(CGPoint(x: X(23), y: y), modifiers: [.option, .command])
+        #expect(i.moveHint == "Insert copy")
+        _ = i.mouseUp(CGPoint(x: X(23), y: y), modifiers: [])
+        #expect(i.moveHint == nil)
+    }
+
+    @Test func snapFlipEndsWithTheGesture() {
+        let a = clip(0, 1)
+        var i = rig([track([a])])
+        let y = rowY(i, 0)
+        i.mouseDown(CGPoint(x: X(10), y: y), modifiers: [])
+        i.snapInverted = true
+        i.mouseDragged(CGPoint(x: X(20), y: y), modifiers: [])
+        _ = i.mouseUp(CGPoint(x: X(20), y: y), modifiers: [])
+        #expect(!i.snapInverted)
+        i.snapInverted = true
+        i.cancel()
+        #expect(!i.snapInverted)
     }
 
     @Test func shiftLocksADragToTheHorizontalAxis() throws {
@@ -331,6 +377,19 @@ private func track(_ clips: [Clip], kind: TrackKind = .video) -> Track {
         #expect(ses.selection == [clips[1].id])
         #expect(ses.undo())
         #expect(ses.activeTimeline!.tracks[0].clips.count == 1)
+    }
+
+    @Test func enableNameFollowsTheLinkedGroup() {
+        // The selected video clip is enabled, its linked audio partner is not: the toggle enables, so the step says so.
+        let l = UUID()
+        let v = clip(0, 4, link: l)
+        var au = clip(0, 4, kind: .audio, link: l)
+        au.isEnabled = false
+        let ses = session([track([v]), track([au], kind: .audio)])
+        ses.select(clips: [v.id])
+        ses.toggleEnabledSelection()
+        #expect(ses.undoName == "Enable Clip")
+        #expect(ses.activeTimeline!.tracks.flatMap(\.clips).allSatisfy { $0.isEnabled })
     }
 
     @Test func enableTogglesAndNamesTheStep() {

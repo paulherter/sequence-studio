@@ -115,6 +115,7 @@ final class EditorPanels {
             guard let self, !pagingTimeline else { return }
             follow.userScrolled(whilePlaying: session.isPlaying)
         }
+        tv.onGestureHint = { [weak self] h in if let h { self?.onStatus?(h) } }
         tv.onRejection = { [weak self] m in self?.onStatus?(m) }
         tv.onTrackToggle = { [weak self] id, toggle in self?.toggleTrack(id, toggle) }
         tv.onDropMedia = { [weak self] ids, time, track, insert in

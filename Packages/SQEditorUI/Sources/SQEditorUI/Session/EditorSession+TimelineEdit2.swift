@@ -25,8 +25,10 @@ extension EditorSession {
     public func toggleEnabledSelection() {
         guard !selection.isEmpty, let t = activeTimeline else { return }
         let ids = selection
-        let anyOff = t.tracks.flatMap(\.clips).contains { ids.contains($0.id) && !$0.isEnabled }
-        attempt(anyOff ? "Enable Clip" : "Disable Clip") { _ = try $0.toggleEnabled(ids) }
+        // The name follows what the toggle really does to the linked group.
+        var probe = t
+        let enabling = (try? probe.toggleEnabled(ids)) ?? false
+        attempt(enabling ? "Enable Clip" : "Disable Clip") { _ = try $0.toggleEnabled(ids) }
     }
 
     /// Opt+Up / Opt+Down: moves the selected clips one track. Returns false when the outermost lane blocks it.

@@ -90,6 +90,54 @@ private func spans(_ t: Track) -> [[Int64]] {
     }
 }
 
+@Suite struct RollSkipsTests {
+    @Test func tracksWithoutANeighbourAreSkippedNotFatal() throws {
+        let a = clip(0, 10), b = clip(10, 10, src: 10)
+        let lone = clip(0, 20, kind: .video)
+        var tl = timeline(try track([a, b]), try track([lone]))
+        try tl.trimToPlayhead(.tail, at: s(7), tracks: nil, mode: .roll)
+        #expect(spans(tl.tracks[0]) == [[0, 7], [7, 20]])
+        #expect(spans(tl.tracks[1]) == [[0, 20]])
+    }
+
+    @Test func throwsOnlyWhenNothingCouldRoll() throws {
+        var tl = timeline(try track([clip(0, 10)]), try track([clip(0, 20)]))
+        #expect(throws: EditError.collision) { try tl.trimToPlayhead(.tail, at: s(7), tracks: nil, mode: .roll) }
+    }
+
+    @Test func playheadOnTheCutIsNothingToRoll() throws {
+        var tl = timeline(try track([clip(0, 10), clip(10, 10, src: 10)]))
+        #expect(throws: EditError.collision) { try tl.trimToPlayhead(.tail, at: s(10), tracks: nil, mode: .roll) }
+    }
+}
+
+// MARK: Cmd-drag insert move versus Cmd+Opt rearrange
+
+@Suite struct InsertMoveGapTests {
+    @Test func insertMoveLeavesTheOldGapAndPushesLaterClipsRight() throws {
+        let a = clip(0, 4), b = clip(4, 4, src: 4), c = clip(8, 4, src: 8)
+        var tl = timeline(try track([a, b, c]))
+        try tl.insertMove(a.id, to: s(6))
+        // a lifted (gap [0,4) stays), b split at 6, a lands at [6,10), the right half of b and c move right by 4.
+        #expect(spans(tl.tracks[0]) == [[4, 6], [6, 10], [10, 12], [12, 16]])
+        #expect(tl.tracks[0].clips.contains { $0.id == a.id })
+    }
+
+    @Test func rearrangeClosesTheOldGapSoNothingGrows() throws {
+        let a = clip(0, 4), b = clip(4, 4, src: 4), c = clip(8, 4, src: 8)
+        var tl = timeline(try track([a, b, c]))
+        try tl.moveInsert(a.id, to: s(6))
+        #expect(tl.duration == s(12))
+        #expect(spans(tl.tracks[0]) == [[0, 2], [2, 6], [6, 8], [8, 12]])
+    }
+
+    @Test func lockedRefuses() throws {
+        let a = clip(0, 4)
+        var tl = timeline(try track([a], locked: true))
+        #expect(throws: EditError.trackLocked) { try tl.insertMove(a.id, to: s(8)) }
+    }
+}
+
 // MARK: Cmd+Opt drag: insert a copy
 
 @Suite struct InsertCopyTests {

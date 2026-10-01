@@ -77,7 +77,7 @@ import Testing
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try ProjectFile.write(try sample(), to: dir)
         let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
-        #expect(text.contains("\"formatVersion\" : 16"))
+        #expect(text.contains("\"formatVersion\" : 18"))
         #expect(text.contains("\n"))
         #expect(text.contains("2023-11-14T22:13:20Z"))
     }
@@ -299,7 +299,7 @@ import Testing
         #expect(c.animation.position.track.isEmpty)
         try ProjectFile.write(p, to: dir)
         let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
-        #expect(text.contains("\"formatVersion\" : 16"))
+        #expect(text.contains("\"formatVersion\" : 18"))
     }
 
     @Test func v4FileLoadsWithoutNestingCaptionsOrRadius() throws {
