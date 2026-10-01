@@ -59,9 +59,17 @@ extension Timeline {
         var counts: [UUID: Int] = [:]
         for e in cb.entries { if let l = e.clip.link { counts[l, default: 0] += 1 } }
         var placements: [(clip: Clip, track: Track.ID)] = []
+        // Lanes that do not exist are created (Premiere adds tracks), so clips never stack on one track.
+        var work = self
+        for k in [TrackKind.video, .audio] {
+            let top = cb.entries.filter { $0.clip.kind == k }.map { max($0.lane + (shift[k] ?? 0), 0) }.max() ?? -1
+            while work.laneTracks(k).count <= top {
+                let at = work.tracks.lastIndex { $0.kind == k }.map { $0 + 1 } ?? work.tracks.count
+                work.tracks.insert(Track(kind: k), at: at)
+            }
+        }
         for e in cb.entries {
-            let list = laneTracks(e.clip.kind)
-            // Lanes that do not exist are clamped to the top (or bottom) track of that kind.
+            let list = work.laneTracks(e.clip.kind)
             guard !list.isEmpty else { throw EditError.wrongTrackKind }
             let lane = min(max(e.lane + (shift[e.clip.kind] ?? 0), 0), list.count - 1)
             var c = e.clip
@@ -77,18 +85,19 @@ extension Timeline {
             placements.append((c, list[lane].id))
         }
         if insert {
-            try self.insert(placements, at: t)       // `insert` keeps the relative offsets
+            var edited = work
+            try edited.insert(placements, at: t)     // `insert` keeps the relative offsets
+            self = edited
         } else {
-            var work = tracks
             var relinks: [UUID: UUID] = [:]
             for p in placements {
-                guard let i = work.firstIndex(where: { $0.id == p.track }) else { throw EditError.clipNotFound }
-                if work[i].isLocked { throw EditError.trackLocked }
+                guard let i = work.tracks.firstIndex(where: { $0.id == p.track }) else { throw EditError.clipNotFound }
+                if work.tracks[i].isLocked { throw EditError.trackLocked }
                 var c = p.clip
                 c.start = t + p.clip.start
-                try work[i].overwrite(c, relinks: &relinks)
+                try work.tracks[i].overwrite(c, relinks: &relinks)
             }
-            tracks = work
+            tracks = work.tracks
         }
         return placements.map(\.clip.id)
     }
