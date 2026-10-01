@@ -501,6 +501,7 @@ final class EditorPanels {
             }
         }
         surface.overlay.selectedKey = effectModel.selectedKeyIDs(.position).first
+        surface.overlay.uniformScale = effectModel.uniformScale
         surface.setTarget(target, snap: SnapGuides.targets(canvas: surface.sequenceSize, others: others))
     }
 
