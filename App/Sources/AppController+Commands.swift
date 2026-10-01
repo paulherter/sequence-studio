@@ -66,9 +66,9 @@ extension AppController {
             shell.statusBar.flash(panels.timelineView.toolState.snapping ? "Snapping on" : "Snapping off", seconds: 2)
         case .undo: session.undo()
         case .redo: session.redo()
-        case .zoomIn: panels.timelineView.zoomIn()
-        case .zoomOut: panels.timelineView.zoomOut()
-        case .zoomFit: panels.timelineView.zoomToFit()
+        case .zoomIn: if effectControlsHasFocus { panels.effectModel.zoomIn() } else { panels.timelineView.zoomIn() }
+        case .zoomOut: if effectControlsHasFocus { panels.effectModel.zoomOut() } else { panels.timelineView.zoomOut() }
+        case .zoomFit: if effectControlsHasFocus { panels.effectModel.zoomToFit() } else { panels.timelineView.zoomToFit() }
         case .focusPanel(let p): showPanel(p)
         case .maximizePanel:
             if let p = focusedPanel { maximizedPanel = maximizedPanel == p ? nil : p; applyWorkspace() }
@@ -98,15 +98,11 @@ extension AppController {
         case .slide: mapped = .slide
         case .razor: mapped = .razor
         case .hand: mapped = .hand
-        case .zoom, .type: mapped = nil
+        case .type: mapped = .type
+        case .zoom: mapped = nil
         }
         // The Program monitor follows: Hand pans the view, Type places text, everything else is the selection behaviour.
         panels.setMonitorTool(t == .hand ? .hand : t == .type ? .type : .select)
-        if t == .type {
-            panels.timelineView.toolState.tool = .selection
-            shell.statusBar.flash("Type Tool: click in the Program monitor", seconds: 2)
-            return
-        }
         guard let mapped else { shell.statusBar.flash("\(EditorCommand.tool(t).title) is not available yet."); return }
         panels.timelineView.toolState.tool = mapped
         shell.statusBar.flash(EditorCommand.tool(t).title, seconds: 2)

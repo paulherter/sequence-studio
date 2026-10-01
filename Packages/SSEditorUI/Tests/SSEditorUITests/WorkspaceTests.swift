@@ -12,11 +12,12 @@ import Testing
               case .split(.horizontal, let upper, _) = left[0] else { Issue.record("left"); return }
         #expect(upper[0] == .tabs(panels: [.effectControls, .text, .colorInspector], selected: .effectControls))
         #expect(upper[1] == .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor))
-        #expect(left[1] == .tabs(panels: [.timeline], selected: .timeline))
+        #expect(left[1] == Workspace.timelineWithMeter)   // meter docked right of the timeline
         guard case .split(.vertical, let right, _) = top[1] else { Issue.record("right"); return }
         #expect(right[0] == .tabs(panels: [.library], selected: .library))
         #expect(right[1] == .tabs(panels: [.effects, .project, .scopes], selected: .effects))
         #expect(Set(w.allPanels) == Set(PanelID.allCases))
+        #expect(w.isVisible(.audioMeter))
     }
 
     @Test func savedWorkspaceWithSourceSelectedOpensOnProgram() throws {
@@ -30,6 +31,32 @@ import Testing
         #expect(only.programPreferred == only)
     }
 
+    @Test func oldSavedLayoutGetsTheMeterBesideTheTimeline() throws {
+        // A workspace saved before the meter existed: timeline group and a monitor group.
+        let old = LayoutNode.split(axis: .vertical, children: [
+            .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor),
+            .tabs(panels: [.timeline], selected: .timeline),
+        ], fractions: [0.5, 0.5])
+        let data = try JSONEncoder().encode(Workspace(name: "Old", root: old))
+        let back = try JSONDecoder().decode(Workspace.self, from: data)
+        guard case .split(.vertical, let c, _) = back.root else { Issue.record("root"); return }
+        #expect(c[1] == Workspace.timelineWithMeter)
+        // Decoding again (or a layout that already has the meter) changes nothing.
+        let again = try JSONDecoder().decode(Workspace.self, from: JSONEncoder().encode(back))
+        #expect(again.root == back.root)
+    }
+
+    @Test func oldSavedColorLayoutGetsTheMeterHidden() throws {
+        let old = LayoutNode.split(axis: .vertical, children: [
+            .tabs(panels: [.programMonitor], selected: .programMonitor),
+            .tabs(panels: [.timeline], selected: .timeline),
+        ], fractions: [0.5, 0.5])
+        let data = try JSONEncoder().encode(Workspace(name: Workspace.color.name, root: old))
+        let back = try JSONDecoder().decode(Workspace.self, from: data)
+        #expect(back.allPanels.contains(.audioMeter) && back.hidden.contains(.audioMeter))
+        #expect(!back.isVisible(.audioMeter))
+    }
+
     @Test func macBookStructure() {
         let w = Workspace.editingMacBook
         guard case .split(.horizontal, let c, _) = w.root else { Issue.record("root"); return }
@@ -40,7 +67,7 @@ import Testing
         #expect(upper[0] == .tabs(panels: [.library, .effects, .scopes], selected: .library))
         #expect(upper[1] == .tabs(panels: [.effectControls, .text, .colorInspector], selected: .effectControls))
         #expect(lower[0] == .tabs(panels: [.project], selected: .project))
-        #expect(lower[1] == .tabs(panels: [.timeline], selected: .timeline))
+        #expect(lower[1] == Workspace.timelineWithMeter)
         #expect(Set(w.allPanels) == Set(PanelID.allCases))
     }
 
@@ -188,7 +215,7 @@ import Testing
             .split(axis: .vertical, children: [], fractions: []),
         ], fractions: [0.2, 0.5, 0.3])
         let w = try decode(bad)
-        #expect(w.root == .tabs(panels: [.timeline], selected: .timeline))
+        #expect(w.root == Workspace.timelineWithMeter)   // repaired to one group, then the meter is docked beside it
     }
 
     @Test func decodeOfFullyEmptyLayoutFallsBackToDefault() throws {

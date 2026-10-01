@@ -31,6 +31,18 @@ private func clip(_ n: Int, _ startFrame: Int64, _ frames: Int64, kind: TrackKin
                      bytesPerRow: 0, bitsPerPixel: 0)!
 }
 
+/// Like `render`, but the view is asked to draw only `dirty` (what AppKit does for `setNeedsDisplay(rect)`).
+@MainActor private func drawRegion(_ v: TimelineView, _ dirty: CGRect, into rep: NSBitmapImageRep) {
+    guard let base = NSGraphicsContext(bitmapImageRep: rep) else { return }
+    let cg = base.cgContext
+    cg.translateBy(x: 0, y: CGFloat(rep.pixelsHigh)); cg.scaleBy(x: 1, y: -1)
+    NSGraphicsContext.saveGraphicsState()
+    NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: true)
+    cg.clip(to: dirty)
+    v.draw(dirty)
+    NSGraphicsContext.restoreGraphicsState()
+}
+
 /// Direct draw calls of the view and its children into a flipped bitmap context (header button controls excluded:
 /// those are stock NSButtons drawn by AppKit).
 @MainActor private func render(_ v: TimelineView, _ rep: NSBitmapImageRep) {
@@ -114,6 +126,23 @@ private func clip(_ n: Int, _ startFrame: Int64, _ frames: Int64, kind: TrackKin
         // A video clip pixel (first clip of V1 is the bottom-most video row: row order V2, V1) differs from the lane colour.
         let c = try #require(rep.colorAt(x: 170, y: 22 + 20 + 16)?.usingColorSpace(.sRGB))
         #expect(c.blueComponent > c.redComponent)
+    }
+
+    /// FEEDBACK-4 item 16: repainting only the thin strip around the playhead must not erase the clip name under it.
+    @Test func thinDirtyRectKeepsTheClipName() throws {
+        var t = Timeline(name: "t", frameDuration: fd, tracks: [Track(kind: .video, name: "V1")])
+        let c = Clip(name: "Interview", media: UUID(), kind: .video, source: TimeRange(start: .zero, duration: fd * 480), start: .zero)
+        try t.tracks[0].overwrite(c)
+        let v = TimelineView(timeline: t, frame: NSRect(x: 0, y: 0, width: 1000, height: 120))
+        v.setZoom(pointsPerSecond: 23, anchorX: 162)
+        let full = makeRep(v.bounds.size)
+        render(v, full)
+        let partial = makeRep(v.bounds.size)
+        memcpy(partial.bitmapData!, full.bitmapData!, full.bytesPerRow * full.pixelsHigh)
+        // A 2 pt wide strip through the first letters of the name (name starts ~5 pt after the clip start at x 162).
+        let strip = CGRect(x: 170, y: TimelineGeometry.rulerHeight, width: 2, height: 100)
+        drawRegion(v, strip, into: partial)
+        #expect(memcmp(partial.bitmapData!, full.bitmapData!, full.bytesPerRow * full.pixelsHigh) == 0)
     }
 
     /// T-02 acceptance: a 200-clip timeline redraws in under 4 ms.

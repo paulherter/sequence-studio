@@ -14,6 +14,15 @@ public final class KeyframeGraphView: NSView {
     public var minTime = Time.zero
     public var maxTime: Time? { didSet { if !isGesturing, maxTime != oldValue { refit(); needsDisplay = true } } }
     public var easingLibrary = EasingLibrary()
+    /// Visible time window (clip-local seconds) shared with the lanes and ruler; nil = whole clip range.
+    public var visibleTime: ClosedRange<Double>? { didSet { if !isGesturing, visibleTime != oldValue { refit(); needsDisplay = true } } }
+    /// Factor from native values to the numbers shown (scale and opacity show percent).
+    public var displayScale: Double = 1 { didSet { needsDisplay = true } }
+    /// Pinch / Option-scroll zoom (factor, anchor seconds) and horizontal scroll pan (seconds), in the shared keyframe viewport.
+    public var onZoom: ((Double, Double) -> Void)?
+    public var onPan: ((Double) -> Void)?
+    /// Switches between the speed and the value graph (context menu).
+    public var onModeChange: ((GraphMode) -> Void)?
     /// Plot margins. Effect Controls sets `left` so the plot starts exactly where the keyframe lanes start.
     public var insets = GraphInsets() { didSet { needsDisplay = true } }
     /// Width of the row's left (label) area, painted as panel instead of graph background.
@@ -47,7 +56,7 @@ public final class KeyframeGraphView: NSView {
     private var shownTrack: KeyframeTrack<Double> { preview ?? track }
     private func refit() {
         let range = maxTime.map { GraphMath.seconds(minTime)...max(GraphMath.seconds($0), GraphMath.seconds(minTime)) }
-        fit = GraphFit.make(track: track, mode: mode, timeRange: range)
+        fit = GraphFit.make(track: track, mode: mode, timeRange: range, visibleTime: visibleTime)
     }
     private var geometry: KeyframeGraphGeometry { KeyframeGraphGeometry(size: bounds.size, insets: insets, fit: fit, mode: mode) }
     private var limits: GraphEditLimits { GraphEditLimits(frameDuration: frameDuration, minTime: minTime, maxTime: maxTime) }
@@ -69,7 +78,8 @@ public final class KeyframeGraphView: NSView {
 
         // Grid
         let attrs: [NSAttributedString.Key: Any] = [.font: Theme.Fonts.mini, .foregroundColor: Theme.Colors.label3]
-        for v in g.gridValues() {
+        let valueAttrs: [NSAttributedString.Key: Any] = [.font: Theme.Fonts.mini, .foregroundColor: Theme.Colors.accent]
+        for v in g.gridValues(targetCount: 3) {
             let y = g.y(value: v).rounded() + 0.5
             (v == 0 ? Theme.Colors.label3 : Theme.Colors.separator).setStroke()
             let line = NSBezierPath()
@@ -113,17 +123,18 @@ public final class KeyframeGraphView: NSView {
         }
         // Keys
         for (i, k) in KeyGlyph.glyphs(of: t).enumerated() {
-            drawGlyph(k.glyph, at: g.keyPoint(track: t, index: i), selected: selectedKeyIDs.contains(k.id))
+            drawKeyMarker(at: g.keyPoint(track: t, index: i), selected: selectedKeyIDs.contains(k.id))
         }
         NSGraphicsContext.restoreGraphicsState()
 
-        // Axis labels
-        let fmt: (Double) -> String = { abs($0) >= 100 ? String(format: "%.0f", $0) : String(format: "%.2f", $0) }
-        for v in g.gridValues() {
-            let s = NSAttributedString(string: fmt(v), attributes: attrs)
-            let size = s.size()
-            s.draw(at: NSPoint(x: plot.minX - size.width - 6, y: g.y(value: v) - size.height / 2))
-        }
+        // Axis labels: only the top and bottom of the visible range and the graph kind, in the label column.
+        let labelRight = (leadingPanelWidth > 0 ? leadingPanelWidth : plot.minX) - 10
+        let hi = NSAttributedString(string: GraphAxisLabels.format(fit.value.upperBound, scale: displayScale), attributes: valueAttrs)
+        let lo = NSAttributedString(string: GraphAxisLabels.format(fit.value.lowerBound, scale: displayScale), attributes: valueAttrs)
+        hi.draw(at: NSPoint(x: labelRight - hi.size().width, y: plot.minY - 2))
+        lo.draw(at: NSPoint(x: labelRight - lo.size().width, y: plot.maxY - lo.size().height + 2))
+        let kind = NSAttributedString(string: mode == .speed ? "Speed" : "Value", attributes: attrs)
+        kind.draw(at: NSPoint(x: labelRight - kind.size().width, y: bounds.midY - kind.size().height / 2))
 
         if let m = marquee {
             Theme.Colors.accentTint.setFill(); m.fill()
@@ -132,9 +143,12 @@ public final class KeyframeGraphView: NSView {
         }
     }
 
-    private func drawGlyph(_ glyph: KeyGlyph, at c: CGPoint, selected: Bool) {
-        KeyGlyphDrawing.draw(glyph, at: c, half: 5.5, fill: selected ? Theme.Colors.accent : Theme.Colors.keyframe,
-                             edge: Theme.black(0.55))
+    /// Keys are shown once, as the glyphs in the property row above; in the graph each key is only a small marker on
+    /// the curve (Premiere), so the row glyph and the graph never look like two keys.
+    private func drawKeyMarker(at c: CGPoint, selected: Bool) {
+        let r = NSRect(x: c.x - 3, y: c.y - 3, width: 6, height: 6)
+        (selected ? Theme.Colors.accent : Theme.Colors.keyframe).setFill()
+        r.fill()
     }
 
     // MARK: Mouse
@@ -177,6 +191,21 @@ public final class KeyframeGraphView: NSView {
         onSelectionChange?(s)
     }
 
+    // MARK: Zoom
+
+    public override func magnify(with event: NSEvent) {
+        let x = convert(event.locationInWindow, from: nil).x
+        onZoom?(KeyframeZoomInput.magnifyFactor(event.magnification), geometry.seconds(atX: x))
+    }
+
+    public override func scrollWheel(with event: NSEvent) {
+        switch KeyframeZoomInput.scroll(event) {
+        case .zoom(let f): onZoom?(f, geometry.seconds(atX: convert(event.locationInWindow, from: nil).x))
+        case .pan(let pts): onPan?(-Double(pts) / max(geometry.pointsPerSecond, 1e-6))
+        case .none: super.scrollWheel(with: event)
+        }
+    }
+
     // MARK: Easing menu
 
     public override func menu(for event: NSEvent) -> NSMenu? {
@@ -193,6 +222,12 @@ public final class KeyframeGraphView: NSView {
         let spec = EasingMenuSpec(library: easingLibrary, side: easeSide, hasSelection: !selectedKeyIDs.isEmpty)
         let menu = NSMenu(title: "Easing")
         menu.autoenablesItems = false
+        for (m, title) in [(GraphMode.speed, "Speed Graph"), (.value, "Value Graph")] {
+            let item = NSMenuItem(title: title, action: #selector(pickMode(_:)), keyEquivalent: "")
+            item.target = self; item.representedObject = ModeBox(m); item.state = mode == m ? .on : .off
+            menu.addItem(item)
+        }
+        menu.addItem(.separator())
 
         for entry in spec.entries {
             switch entry {
@@ -220,6 +255,14 @@ public final class KeyframeGraphView: NSView {
     private final class SideBox: NSObject {
         let side: EaseSide
         init(_ s: EaseSide) { side = s }
+    }
+
+    private final class ModeBox: NSObject {
+        let mode: GraphMode
+        init(_ m: GraphMode) { mode = m }
+    }
+    @objc private func pickMode(_ sender: NSMenuItem) {
+        if let b = sender.representedObject as? ModeBox { onModeChange?(b.mode) }
     }
 
     @objc private func pickSide(_ sender: NSMenuItem) {

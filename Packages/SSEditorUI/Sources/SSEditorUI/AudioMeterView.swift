@@ -108,9 +108,11 @@ public final class AudioMeterView: NSView {
 
     private func startTimerIfNeeded() {
         guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+        let t = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tick() }
         }
+        RunLoop.main.add(t, forMode: .common)   // keeps running while the user scrubs or drags
+        timer = t
     }
 
     private func tick() {
@@ -188,4 +190,71 @@ public final class AudioMeterView: NSView {
         let p = convert(event.locationInWindow, from: nil)
         if p.y <= Self.clipLED + 4, p.x >= barsOrigin { resetClip() } else { super.mouseDown(with: event) }
     }
+}
+
+
+/// Decides which engine meter readings reach the bars: a reading is fed once (by its buffer counter), so a stopped
+/// engine lets the bars fall instead of holding the last peak.
+public struct MeterFeed: Sendable {
+    private var last: (source: ObjectIdentifier, sequence: Int)?
+    public init() {}
+
+    /// `source` identifies the engine the reading came from: a new engine restarts its buffer counter, so the same
+    /// sequence number from another source is a new buffer.
+    public mutating func peaks(for reading: (source: ObjectIdentifier, sequence: Int, peaks: [Float])?) -> [Float]? {
+        guard let reading else { return nil }
+        if let last, last.source == reading.source, last.sequence == reading.sequence { return nil }
+        last = (reading.source, reading.sequence)
+        return reading.peaks
+    }
+}
+
+/// Panel content for the audio meter: the meter bars centred on the panel background, polled from the engine's
+/// meter tap (`ProgramEngine.meterReading`) at 30 Hz while the panel is in a window.
+@MainActor
+public final class AudioMeterPanelView: NSView {
+    public let meter = AudioMeterView(frame: .zero)
+    public var reading: (() -> (source: ObjectIdentifier, sequence: Int, peaks: [Float])?)?
+    private var feed = MeterFeed()
+    private var timer: Timer?
+
+    public override var isFlipped: Bool { true }
+    public override var isOpaque: Bool { true }
+
+    public override init(frame: NSRect) {
+        super.init(frame: frame)
+        addSubview(meter)
+        setAccessibilityLabel("Audio meter")
+    }
+    public required init?(coder: NSCoder) { fatalError("not used") }
+
+    public override func layout() {
+        super.layout()
+        let w = meter.intrinsicContentSize.width
+        meter.frame = CGRect(x: ((bounds.width - w) / 2).rounded(), y: Theme.Spacing.md, width: w,
+                             height: max(bounds.height - 2 * Theme.Spacing.md, 0))
+    }
+
+    public override func draw(_ dirtyRect: NSRect) {
+        Theme.Colors.panel.setFill()
+        dirtyRect.fill()
+    }
+
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        timer?.invalidate(); timer = nil
+        guard window != nil else { return }
+        let t = Timer(timeInterval: 1.0 / 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.poll() }
+        }
+        RunLoop.main.add(t, forMode: .common)
+        timer = t
+    }
+
+    /// One poll (the timer calls this; tests too).
+    func poll() {
+        if let peaks = feed.peaks(for: reading?()) { meter.update(peaks: peaks) }
+    }
+
+    isolated deinit { timer?.invalidate() }
 }

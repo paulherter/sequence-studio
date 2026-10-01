@@ -4,268 +4,74 @@ import SSCore
 import SSRender
 import UniformTypeIdentifiers
 
-/// NSSlider that resets to the default on double-click (Premiere) and brackets a drag as one gesture.
-final class ResettableSlider: NSSlider {
-    var onReset: (() -> Void)?
-    var onBegin: (() -> Void)?
-    var onEnd: (() -> Void)?
-
-    override func mouseDown(with event: NSEvent) {
-        if event.clickCount == 2 { onReset?(); return }
-        onBegin?()
-        super.mouseDown(with: event)   // runs the tracking loop; returns after mouse-up
-        onEnd?()
-    }
-}
-
-/// One slider row: title, slider, number. Double-click the slider to reset it.
-@MainActor
-final class ColorParamRow: NSStackView {
-    let param: ColorParam
-    let slider: ResettableSlider
-    let field = NSTextField(string: "")
-    var onBegin: (() -> Void)?
-    var onEnd: (() -> Void)?
-    /// A value the user chose (slider drag or typed).
-    var onSet: ((Float) -> Void)?
-    var onReset: (() -> Void)?
-
-    init(_ p: ColorParam) {
-        param = p
-        slider = ResettableSlider(value: Double(p.neutral), minValue: Double(p.range.lowerBound),
-                                  maxValue: Double(p.range.upperBound), target: nil, action: nil)
-        super.init(frame: .zero)
-        let title = NSTextField(labelWithString: p.title)
-        title.font = Theme.Fonts.small
-        title.textColor = Theme.Colors.label2
-        title.widthAnchor.constraint(equalToConstant: 82).isActive = true
-        slider.controlSize = .small
-        slider.setContentHuggingPriority(.defaultLow, for: .horizontal)
-        slider.target = self
-        slider.action = #selector(sliderMoved)
-        slider.onBegin = { [weak self] in self?.onBegin?() }
-        slider.onEnd = { [weak self] in self?.onEnd?() }
-        slider.onReset = { [weak self] in self?.onReset?() }
-        slider.setAccessibilityLabel(p.title)
-        field.controlSize = .small
-        field.font = Theme.Fonts.small
-        field.alignment = .right
-        field.isBezeled = true
-        field.bezelStyle = .roundedBezel
-        field.target = self
-        field.action = #selector(fieldEntered)
-        field.widthAnchor.constraint(equalToConstant: 48).isActive = true
-        setViews([title, slider, field], in: .leading)
-        orientation = .horizontal
-        alignment = .centerY
-        spacing = Theme.Spacing.sm
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    @objc private func sliderMoved() {
-        var v = Float(slider.doubleValue)
-        if param.decimals == 0 { v = v.rounded() }
-        onSet?(v)
-    }
-
-    @objc private func fieldEntered() {
-        onBegin?()
-        onSet?(field.floatValue)
-        onEnd?()
-    }
-
-    func show(_ v: Float) {
-        if slider.doubleValue != Double(v) { slider.doubleValue = Double(v) }
-        if field.currentEditor() == nil { field.stringValue = String(format: "%.\(param.decimals)f", v) }
-    }
-}
-
-/// Header of a block: disclosure arrow, enable checkbox, title (drag to reorder), extra control, Reset, menu.
-@MainActor
-final class ColorSectionHeader: NSStackView, NSDraggingSource {
-    let sectionID: Int
-    let disclosure = NSButton()
-    let enable = NSButton(checkboxWithTitle: "", target: nil, action: nil)
-    let title: NSTextField
-    let reset = NSButton(title: "Reset", target: nil, action: nil)
-    let moreButton = NSPopUpButton(frame: .zero, pullsDown: true)
-    private var pressPoint: NSPoint?
-
-    init(id: Int, kind: ColorSectionKind) {
-        sectionID = id
-        title = NSTextField(labelWithString: kind.title)
-        super.init(frame: .zero)
-        disclosure.setButtonType(.pushOnPushOff)
-        disclosure.bezelStyle = .disclosure
-        disclosure.title = ""
-        disclosure.controlSize = .small
-        disclosure.setAccessibilityLabel("Show \(kind.title)")
-        enable.controlSize = .small
-        enable.toolTip = "Enable / disable \(kind.title)"
-        title.font = Theme.Fonts.bodyTitle
-        title.textColor = Theme.Colors.label
-        reset.controlSize = .small
-        reset.bezelStyle = .accessoryBarAction
-        reset.font = Theme.Fonts.small
-        moreButton.controlSize = .small
-        moreButton.isBordered = false
-        moreButton.addItem(withTitle: "")
-        moreButton.item(at: 0)?.image = NSImage(systemSymbolName: "ellipsis.circle", accessibilityDescription: "More")
-        moreButton.setContentHuggingPriority(.required, for: .horizontal)
-        setViews([disclosure, enable, title, NSView(), reset, moreButton], in: .leading)
-        orientation = .horizontal
-        alignment = .centerY
-        spacing = Theme.Spacing.xs
-        toolTip = "Drag to reorder"
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    override func mouseDown(with event: NSEvent) { pressPoint = convert(event.locationInWindow, from: nil) }
-
-    override func mouseDragged(with event: NSEvent) {
-        guard let start = pressPoint else { return }
-        let p = convert(event.locationInWindow, from: nil)
-        guard hypot(p.x - start.x, p.y - start.y) > 4 else { return }
-        pressPoint = nil
-        let item = NSPasteboardItem()
-        item.setString(String(sectionID), forType: ColorSectionsStack.dragType)
-        let drag = NSDraggingItem(pasteboardWriter: item)
-        if let rep = bitmapImageRepForCachingDisplay(in: bounds) {
-            cacheDisplay(in: bounds, to: rep)
-            let img = NSImage(size: bounds.size)
-            img.addRepresentation(rep)
-            drag.setDraggingFrame(bounds, contents: img)
-        } else {
-            drag.draggingFrame = bounds
-        }
-        beginDraggingSession(with: [drag], event: event, source: self)
-    }
-
-    override func mouseUp(with event: NSEvent) { pressPoint = nil }
-
-    nonisolated func draggingSession(_ session: NSDraggingSession, sourceOperationMaskFor context: NSDraggingContext) -> NSDragOperation { .move }
-}
-
-/// The vertical stack of blocks; accepts a header dragged onto it and reports the new position.
-@MainActor
-final class ColorSectionsStack: NSStackView {
-    static let dragType = NSPasteboard.PasteboardType("com.sequencestudio.color-section")
-    /// (section id, index in the list after the section is taken out)
-    var onMove: ((Int, Int) -> Void)?
-    private var indicator: CGFloat?
-
-    override var isFlipped: Bool { true }
-
-    override init(frame: NSRect) {
-        super.init(frame: frame)
-        registerForDraggedTypes([Self.dragType])
-    }
-    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
-
-    private func sectionViews() -> [ColorSectionView] { arrangedSubviews.compactMap { $0 as? ColorSectionView } }
-
-    /// Insertion slot for a pointer at `y`: the number of other blocks whose middle lies above it.
-    static func slot(midYs: [CGFloat], y: CGFloat) -> Int { midYs.filter { $0 < y }.count }
-
-    private func dragged(_ info: NSDraggingInfo) -> Int? {
-        info.draggingPasteboard.string(forType: Self.dragType).flatMap { Int($0) }
-    }
-
-    private func layoutSlot(_ info: NSDraggingInfo) -> (id: Int, slot: Int, lineY: CGFloat)? {
-        guard let id = dragged(info) else { return nil }
-        let y = convert(info.draggingLocation, from: nil).y
-        let others = sectionViews().filter { $0.section != id }
-        let slot = Self.slot(midYs: others.map(\.frame.midY), y: y)
-        let line = slot == 0 ? (others.first?.frame.minY ?? 0) : others[slot - 1].frame.maxY
-        return (id, slot, line)
-    }
-
-    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { draggingUpdated(sender) }
-
-    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation {
-        guard let s = layoutSlot(sender) else { return [] }
-        indicator = s.lineY
-        needsDisplay = true
-        return .move
-    }
-
-    override func draggingExited(_ sender: NSDraggingInfo?) { indicator = nil; needsDisplay = true }
-    override func draggingEnded(_ sender: NSDraggingInfo) { indicator = nil; needsDisplay = true }
-
-    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
-        defer { indicator = nil; needsDisplay = true }
-        guard let s = layoutSlot(sender) else { return false }
-        onMove?(s.id, s.slot)
-        return true
-    }
-
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        if let y = indicator {
-            Theme.Colors.accent.setFill()
-            NSRect(x: 0, y: y - 1, width: bounds.width, height: 2).fill()
-        }
-    }
-}
-
-/// One block: header plus (for blocks with controls) a body that collapses.
+/// One section of one Colour effect: header with its switch, and a body that collapses.
 @MainActor
 final class ColorSectionView: NSStackView {
-    let section: Int
+    let effect: Int
     let kind: ColorSectionKind
     let header: ColorSectionHeader
     let body = NSStackView()
     var rows: [ColorParam: ColorParamRow] = [:]
+    var groups: [String: ColorGroupView] = [:]
     var wheels: [ColorWheelSlot: ColorWheelControl] = [:]
-    var lutPopup: NSPopUpButton?
-    var lutPicks: [LUTPick] = []
+    var lutPopups: [ColorLUTSlot: LUTPopup] = [:]
     var curveEditor: CurveEditorView?
-    var curveChannel: NSSegmentedControl?
+    var channelDots: ChannelDots?
+    var preview: LookPreviewView?
+    var previewPath: String??
     var selectedChannel = 0
 
-    enum LUTPick { case choice(ColorInspectorModel.LUTChoice?), chooseFile }
-
-    init(id: Int, kind: ColorSectionKind) {
-        section = id
+    init(effect: Int, kind: ColorSectionKind) {
+        self.effect = effect
         self.kind = kind
-        header = ColorSectionHeader(id: id, kind: kind)
+        header = ColorSectionHeader(title: kind.title, isGroup: false)
         super.init(frame: .zero)
         orientation = .vertical
         alignment = .leading
-        spacing = Theme.Spacing.sm
+        spacing = 0
         body.orientation = .vertical
         body.alignment = .leading
-        body.spacing = Theme.Spacing.sm
-        body.edgeInsets = NSEdgeInsets(top: 0, left: Theme.Spacing.lg, bottom: Theme.Spacing.xs, right: 0)
+        body.spacing = Theme.Spacing.xs
+        body.edgeInsets = NSEdgeInsets(top: 0, left: Theme.Spacing.lg, bottom: Theme.Spacing.md, right: Theme.Spacing.md)
         addArrangedSubview(header)
+        addArrangedSubview(body)
         header.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
-        if kind != .inputLUT {
-            addArrangedSubview(body)
-            body.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
-        } else {
-            header.disclosure.isHidden = true
-        }
+        body.widthAnchor.constraint(equalTo: widthAnchor).isActive = true
     }
     required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
 
     override var isFlipped: Bool { true }
 }
 
-/// Color page inspector: "Interpret as", a "+" menu and the ordered stack of colour blocks (Lumetri-like, modular).
-/// Default stack: Basic Correction, then the Input LUT with its popup right in the header row. Blocks collapse
-/// (disclosure arrow), enable/disable, reset, reorder (drag the title) and can be added or removed.
+/// One Colour effect: optional title row (only when the clip has several), then the fixed sections.
+@MainActor
+final class ColorEffectView: NSStackView {
+    let effect: Int
+    var sections: [ColorSectionKind: ColorSectionView] = [:]
+
+    init(effect: Int) {
+        self.effect = effect
+        super.init(frame: .zero)
+        orientation = .vertical
+        alignment = .leading
+        spacing = 0
+    }
+    required init?(coder: NSCoder) { fatalError("init(coder:) not supported") }
+    override var isFlipped: Bool { true }
+}
+
+/// Color page inspector, laid out like Premiere's Lumetri Color panel: one column of collapsible sections (Basic
+/// Correction, Creative, Curves, Color Wheels & Match, HSL Secondary, Vignette), each with its own switch. "Add Colour
+/// Effect" stacks another one (Premiere: add another Lumetri Color).
 @MainActor
 public final class ColorInspectorView: NSView {
     public let model: ColorInspectorModel
 
     private let stack = NSStackView()
     private let sourcePopup = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let addButton = NSPopUpButton(frame: .zero, pullsDown: true)
-    private let sectionsStack = ColorSectionsStack()
-    private var sectionViews: [Int: ColorSectionView] = [:]
-    private var builtSignature: [BuiltKey] = []
-
-    private struct BuiltKey: Equatable { var id: Int; var kind: ColorSectionKind; var collapsed: Bool }
+    private let effectsStack = NSStackView()
+    private var effectViews: [Int: ColorEffectView] = [:]
+    private var builtSignature: [Int] = []
 
     /// Index 0 of the source popup is "Automatic (<detected>)", then these.
     private static let sources: [(String, ColorSpaceID)] = [
@@ -275,11 +81,11 @@ public final class ColorInspectorView: NSView {
 
     public init(model: ColorInspectorModel) {
         self.model = model
-        super.init(frame: NSRect(x: 0, y: 0, width: 300, height: 640))
+        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 640))
         wantsLayer = true
         layer?.backgroundColor = Theme.Colors.panel.cgColor
         build()
-        rebuildSections()
+        rebuildEffects()
         refresh()
         observe()
     }
@@ -290,8 +96,7 @@ public final class ColorInspectorView: NSView {
     private func build() {
         stack.orientation = .vertical
         stack.alignment = .leading
-        stack.spacing = Theme.Spacing.md
-        stack.edgeInsets = NSEdgeInsets(top: Theme.Spacing.md, left: Theme.Spacing.md, bottom: Theme.Spacing.md, right: Theme.Spacing.md)
+        stack.spacing = 0
         stack.translatesAutoresizingMaskIntoConstraints = false
         addSubview(stack)
         NSLayoutConstraint.activate([
@@ -300,39 +105,38 @@ public final class ColorInspectorView: NSView {
             stack.trailingAnchor.constraint(equalTo: trailingAnchor),
         ])
 
-        // Interpret as + add menu in one row.
         style(sourcePopup)
         sourcePopup.target = self
         sourcePopup.action = #selector(sourceChanged)
+        sourcePopup.setAccessibilityLabel("Interpret footage as")
         let interpret = NSTextField(labelWithString: "Interpret as")
         interpret.font = Theme.Fonts.small
         interpret.textColor = Theme.Colors.label2
-        addButton.controlSize = .small
-        addButton.font = Theme.Fonts.small
-        addButton.addItem(withTitle: "+ Add")
-        for k in ColorSectionKind.addable {
-            let item = NSMenuItem(title: k.title, action: #selector(addSection(_:)), keyEquivalent: "")
-            item.target = self
-            item.representedObject = k.rawValue
-            addButton.menu?.addItem(item)
-        }
-        addButton.setAccessibilityLabel("Add colour block")
-        let top = NSStackView(views: [interpret, sourcePopup, addButton])
+        interpret.widthAnchor.constraint(equalToConstant: ColorParamRow.titleWidth).isActive = true
+        let top = NSStackView(views: [interpret, sourcePopup])
         top.orientation = .horizontal
         top.alignment = .centerY
         top.spacing = Theme.Spacing.sm
-        add(top)
+        top.edgeInsets = NSEdgeInsets(top: Theme.Spacing.md, left: Theme.Spacing.md, bottom: Theme.Spacing.md, right: Theme.Spacing.md)
+        stack.addArrangedSubview(top)
+        top.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
-        sectionsStack.orientation = .vertical
-        sectionsStack.alignment = .leading
-        sectionsStack.spacing = Theme.Spacing.md
-        sectionsStack.onMove = { [weak self] id, dest in self?.model.moveSection(id, to: dest) }
-        add(sectionsStack)
-    }
+        effectsStack.orientation = .vertical
+        effectsStack.alignment = .leading
+        effectsStack.spacing = 0
+        stack.addArrangedSubview(effectsStack)
+        effectsStack.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
-    private func add(_ v: NSView) {
-        stack.addArrangedSubview(v)
-        v.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -2 * Theme.Spacing.md).isActive = true
+        let add = NSButton(title: "Add Colour Effect", target: self, action: #selector(addEffect))
+        add.controlSize = .small
+        add.bezelStyle = .rounded
+        add.font = Theme.Fonts.small
+        add.image = NSImage(systemSymbolName: "plus", accessibilityDescription: nil)
+        add.imagePosition = .imageLeading
+        add.toolTip = "Stack another Colour effect on this clip"
+        let addRow = NSStackView(views: [add])
+        addRow.edgeInsets = NSEdgeInsets(top: Theme.Spacing.md, left: Theme.Spacing.md, bottom: Theme.Spacing.lg, right: Theme.Spacing.md)
+        stack.addArrangedSubview(addRow)
     }
 
     private func style(_ popup: NSPopUpButton) {
@@ -341,111 +145,227 @@ public final class ColorInspectorView: NSView {
         popup.setContentHuggingPriority(.defaultLow, for: .horizontal)
     }
 
-    private func caption(_ s: String) -> NSTextField {
-        let l = NSTextField(labelWithString: s.uppercased())
-        l.font = Theme.Fonts.mini
-        l.textColor = Theme.Colors.label3
-        return l
-    }
-
-    // MARK: Sections
-
-    private func signature() -> [BuiltKey] {
-        model.sections.map { BuiltKey(id: $0.id, kind: $0.kind, collapsed: model.isCollapsed($0.id)) }
-    }
-
-    /// Rebuilds all blocks (structure changed: add, remove, reorder, collapse).
-    private func rebuildSections() {
-        for v in sectionsStack.arrangedSubviews { sectionsStack.removeArrangedSubview(v); v.removeFromSuperview() }
-        sectionViews = [:]
-        for s in model.sections {
-            let v = makeSection(s)
-            sectionViews[s.id] = v
-            sectionsStack.addArrangedSubview(v)
-            v.widthAnchor.constraint(equalTo: sectionsStack.widthAnchor).isActive = true
-        }
-        builtSignature = signature()
-    }
-
-    private func makeSection(_ s: ColorSection) -> ColorSectionView {
-        let id = s.id
-        let v = ColorSectionView(id: id, kind: s.kind)
-        let h = v.header
-        h.enable.target = self; h.enable.action = #selector(enableToggled(_:)); h.enable.tag = id
-        h.reset.target = self; h.reset.action = #selector(resetPressed(_:)); h.reset.tag = id
-        h.disclosure.target = self; h.disclosure.action = #selector(disclosureToggled(_:)); h.disclosure.tag = id
-        h.disclosure.state = model.isCollapsed(id) ? .off : .on
-        let up = NSMenuItem(title: "Move Up", action: #selector(moveBlockUp(_:)), keyEquivalent: ""); up.tag = id; up.target = self
-        let down = NSMenuItem(title: "Move Down", action: #selector(moveBlockDown(_:)), keyEquivalent: ""); down.tag = id; down.target = self
-        h.moreButton.menu?.addItem(up); h.moreButton.menu?.addItem(down)
-        if s.kind != .inputLUT {
-            let rm = NSMenuItem(title: "Remove", action: #selector(removePressed(_:)), keyEquivalent: ""); rm.tag = id; rm.target = self
-            h.moreButton.menu?.addItem(.separator()); h.moreButton.menu?.addItem(rm)
-        }
-
-        switch s.kind {
-        case .inputLUT:
-            let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-            style(popup)
-            popup.target = self; popup.action = #selector(lutChosen(_:)); popup.tag = id
-            popup.setAccessibilityLabel("Input LUT")
-            h.insertArrangedSubview(popup, at: 3)
-            h.setCustomSpacing(Theme.Spacing.sm, after: h.title)
-            v.lutPopup = popup
-        case .basicCorrection, .vignette:
-            addParamRows(v, kind: s.kind)
-        case .creative:
-            let popup = NSPopUpButton(frame: .zero, pullsDown: false)
-            style(popup)
-            popup.target = self; popup.action = #selector(lutChosen(_:)); popup.tag = id
-            popup.setAccessibilityLabel("Look")
-            v.lutPopup = popup
-            v.body.addArrangedSubview(labelled("Look", popup))
-            addParamRows(v, kind: .creative)
-            let tints = NSStackView()
-            tints.orientation = .horizontal
-            tints.spacing = Theme.Spacing.md
-            for slot in [ColorWheelSlot.shadowTint, .highlightTint] { tints.addArrangedSubview(wheel(v, slot, showsMaster: false)) }
-            v.body.addArrangedSubview(tints)
-            append(paramRow(v, .tintBalance), to: v)
-        case .wheels:
-            let w = NSStackView()
-            w.orientation = .horizontal
-            w.spacing = Theme.Spacing.sm
-            for slot in [ColorWheelSlot.shadows, .midtones, .highlights] { w.addArrangedSubview(wheel(v, slot, showsMaster: true)) }
-            v.body.addArrangedSubview(w)
-            addParamRows(v, kind: .wheels)
-        case .curves:
-            let seg = NSSegmentedControl(labels: ["Master", "R", "G", "B"], trackingMode: .selectOne, target: self, action: #selector(curveChannelChosen(_:)))
-            seg.controlSize = .small
-            seg.selectedSegment = 0
-            seg.tag = id
-            v.curveChannel = seg
-            let editor = CurveEditorView(frame: NSRect(x: 0, y: 0, width: 200, height: 150))
-            editor.translatesAutoresizingMaskIntoConstraints = false
-            editor.heightAnchor.constraint(equalToConstant: 150).isActive = true
-            editor.onBegin = { [weak self] in self?.model.onGestureBegan?() }
-            editor.onEnd = { [weak self] in self?.model.onGestureEnded?() }
-            editor.onChange = { [weak self, weak v] pts in
-                guard let self, let v else { return }
-                var c = self.model.curves(id)
-                switch v.selectedChannel { case 1: c.red = pts; case 2: c.green = pts; case 3: c.blue = pts; default: c.master = pts }
-                self.model.setCurves(id, c)
-            }
-            v.curveEditor = editor
-            v.body.addArrangedSubview(seg)
-            v.body.addArrangedSubview(editor)
-            editor.widthAnchor.constraint(equalTo: v.body.widthAnchor, constant: -Theme.Spacing.lg).isActive = true
-        }
-        v.body.isHidden = model.isCollapsed(id)
+    private func separator() -> NSView {
+        let v = NSView()
+        v.wantsLayer = true
+        v.layer?.backgroundColor = Theme.Colors.separator.cgColor
+        v.heightAnchor.constraint(equalToConstant: 1).isActive = true
         return v
+    }
+
+    // MARK: Effects and sections
+
+    private func rebuildEffects() {
+        for v in effectsStack.arrangedSubviews { effectsStack.removeArrangedSubview(v); v.removeFromSuperview() }
+        effectViews = [:]
+        let multiple = model.effects.count > 1
+        for (n, e) in model.effects.enumerated() {
+            let v = ColorEffectView(effect: e.id)
+            if multiple { addEffectTitle(to: v, effect: e.id, number: n + 1) }
+            for kind in ColorSectionKind.allCases {
+                v.addArrangedSubview(separator())
+                v.arrangedSubviews.last.map { $0.widthAnchor.constraint(equalTo: v.widthAnchor).isActive = true }
+                let s = makeSection(effect: e.id, kind: kind, isPrimary: n == 0)
+                v.sections[kind] = s
+                v.addArrangedSubview(s)
+                s.widthAnchor.constraint(equalTo: v.widthAnchor).isActive = true
+            }
+            effectViews[e.id] = v
+            effectsStack.addArrangedSubview(v)
+            v.widthAnchor.constraint(equalTo: effectsStack.widthAnchor).isActive = true
+        }
+        builtSignature = model.effects.map(\.id)
+    }
+
+    private func addEffectTitle(to v: ColorEffectView, effect: Int, number: Int) {
+        let t = NSTextField(labelWithString: number == 1 ? "Colour" : "Colour \(number)")
+        t.font = Theme.Fonts.bodyTitle
+        t.textColor = Theme.Colors.label
+        let remove = NSButton(title: "Remove", target: self, action: #selector(removeEffect(_:)))
+        remove.controlSize = .small
+        remove.bezelStyle = .accessoryBarAction
+        remove.font = Theme.Fonts.small
+        remove.tag = effect
+        remove.setAccessibilityLabel("Remove \(t.stringValue)")
+        let row = NSStackView(views: [t, NSView(), remove])
+        row.orientation = .horizontal
+        row.alignment = .centerY
+        row.edgeInsets = NSEdgeInsets(top: Theme.Spacing.sm, left: Theme.Spacing.md, bottom: Theme.Spacing.xs, right: Theme.Spacing.md)
+        v.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: v.widthAnchor).isActive = true
+    }
+
+    private func makeSection(effect: Int, kind: ColorSectionKind, isPrimary: Bool) -> ColorSectionView {
+        let v = ColorSectionView(effect: effect, kind: kind)
+        let key = ColorPanelKey(effect, kind)
+        v.header.onToggleOpen = { [weak self] in
+            guard let self else { return }
+            self.model.setCollapsed(key, !self.model.isCollapsed(key))
+        }
+        v.header.toggle.target = self
+        v.header.toggle.action = #selector(switchToggled(_:))
+        v.header.toggle.identifier = NSUserInterfaceItemIdentifier("\(effect)|\(kind.rawValue)")
+        v.header.toggle.isEnabled = kind.isImplemented
+
+        switch kind {
+        case .basicCorrection: buildBasic(v, isPrimary: isPrimary)
+        case .creative: buildCreative(v)
+        case .curves: buildCurves(v)
+        case .wheels: buildWheels(v)
+        case .hslSecondary:
+            let note = NSTextField(labelWithString: "Not available yet.")
+            note.font = Theme.Fonts.small
+            note.textColor = Theme.Colors.label3
+            v.body.addArrangedSubview(note)
+        case .vignette: addParamGroups(v)
+        }
+        return v
+    }
+
+    private func pin(_ row: NSView, in parent: NSStackView, inset: CGFloat) {
+        parent.addArrangedSubview(row)
+        row.widthAnchor.constraint(equalTo: parent.widthAnchor, constant: -inset).isActive = true
+    }
+
+    private func buildBasic(_ v: ColorSectionView, isPrimary: Bool) {
+        let popup = makePopup(v, slot: .input, label: "Input LUT")
+        pin(labelled("Input LUT", popup), in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+        let intensity = paramRow(v, .inputLUTIntensity)
+        intensity.toolTip = isPrimary ? "The conversion LUT of the first effect always runs at full strength." : nil
+        pin(intensity, in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+
+        let reset = resetButton(v)
+        let resetRow = NSStackView(views: [NSView(), reset])
+        resetRow.orientation = .horizontal
+        pin(resetRow, in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+
+        for g in ColorParam.layout(for: .basicCorrection) {
+            let group = makeGroup(v, title: g.group ?? "")
+            if g.group == "Color" {
+                let eyedropper = NSButton(image: NSImage(systemSymbolName: "eyedropper", accessibilityDescription: "White balance picker") ?? NSImage(),
+                                          target: nil, action: nil)
+                eyedropper.isBordered = false
+                eyedropper.isEnabled = false
+                eyedropper.toolTip = "Pick white balance from the Program monitor: not available yet"
+                let l = NSTextField(labelWithString: "White Balance")
+                l.font = Theme.Fonts.small
+                l.textColor = Theme.Colors.label2
+                l.widthAnchor.constraint(equalToConstant: ColorParamRow.titleWidth).isActive = true
+                let row = NSStackView(views: [l, eyedropper, NSView()])
+                row.orientation = .horizontal
+                row.alignment = .centerY
+                row.spacing = Theme.Spacing.sm
+                row.alphaValue = 0.4
+                pin(row, in: group.content, inset: Theme.Spacing.lg)
+            }
+            for p in g.params { pin(paramRow(v, p), in: group.content, inset: Theme.Spacing.lg) }
+            pin(group, in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+        }
+    }
+
+    private func buildCreative(_ v: ColorSectionView) {
+        let popup = makePopup(v, slot: .look, label: "Look")
+        pin(labelled("Look", popup), in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+        let preview = LookPreviewView()
+        preview.translatesAutoresizingMaskIntoConstraints = false
+        preview.widthAnchor.constraint(equalToConstant: 200).isActive = true
+        preview.heightAnchor.constraint(equalToConstant: 112).isActive = true
+        preview.onStep = { [weak self] delta in self?.model.cycleLook(v.effect, by: delta) }
+        v.preview = preview
+        let previewRow = NSStackView(views: [NSView(), preview, NSView()])
+        previewRow.orientation = .horizontal
+        previewRow.distribution = .equalCentering
+        pin(previewRow, in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+        pin(paramRow(v, .lookIntensity), in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+
+        let group = makeGroup(v, title: "Adjustments")
+        pin(paramRow(v, .fadedFilm), in: group.content, inset: Theme.Spacing.lg)
+        let sharpen = ColorParamRow(nil, title: "Sharpen", range: -100...100)
+        sharpen.toolTip = "Not available yet"
+        pin(sharpen, in: group.content, inset: Theme.Spacing.lg)
+        pin(paramRow(v, .creativeVibrance), in: group.content, inset: Theme.Spacing.lg)
+        pin(paramRow(v, .creativeSaturation), in: group.content, inset: Theme.Spacing.lg)
+        let tints = NSStackView()
+        tints.orientation = .horizontal
+        tints.distribution = .equalCentering
+        for slot in [ColorWheelSlot.shadowTint, .highlightTint] { tints.addArrangedSubview(wheel(v, slot, showsMaster: false, size: 96)) }
+        pin(tints, in: group.content, inset: Theme.Spacing.lg)
+        pin(paramRow(v, .tintBalance), in: group.content, inset: Theme.Spacing.lg)
+        pin(group, in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+        pin(trailingReset(v), in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+    }
+
+    private func buildCurves(_ v: ColorSectionView) {
+        let group = makeGroup(v, title: "RGB Curves")
+        let dots = ChannelDots()
+        dots.translatesAutoresizingMaskIntoConstraints = false
+        dots.onSelect = { [weak self, weak v] i in
+            v?.selectedChannel = i
+            self?.refresh()
+        }
+        v.channelDots = dots
+        let dotsRow = NSStackView(views: [dots])
+        dotsRow.orientation = .horizontal
+        dotsRow.distribution = .equalCentering
+        pin(dotsRow, in: group.content, inset: Theme.Spacing.lg)
+        let editor = CurveEditorView(frame: NSRect(x: 0, y: 0, width: 200, height: 180))
+        editor.translatesAutoresizingMaskIntoConstraints = false
+        editor.heightAnchor.constraint(equalToConstant: 180).isActive = true
+        editor.onBegin = { [weak self] in self?.model.onGestureBegan?() }
+        editor.onEnd = { [weak self] in self?.model.onGestureEnded?() }
+        let id = v.effect
+        editor.onChange = { [weak self, weak v] pts in
+            guard let self, let v else { return }
+            var c = self.model.curves(id)
+            switch v.selectedChannel { case 1: c.red = pts; case 2: c.green = pts; case 3: c.blue = pts; default: c.master = pts }
+            self.model.setCurves(id, c)
+        }
+        v.curveEditor = editor
+        pin(editor, in: group.content, inset: Theme.Spacing.lg)
+        pin(group, in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+        pin(trailingReset(v), in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+    }
+
+    private func buildWheels(_ v: ColorSectionView) {
+        let w = NSStackView()
+        w.orientation = .horizontal
+        w.spacing = Theme.Spacing.sm
+        w.distribution = .equalSpacing
+        for slot in [ColorWheelSlot.shadows, .midtones, .highlights] { w.addArrangedSubview(wheel(v, slot, showsMaster: true, size: 92)) }
+        pin(w, in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+        addParamGroups(v)
+    }
+
+    /// Plain rows of a section (Vignette, Color Wheels saturation) plus its Reset button.
+    private func addParamGroups(_ v: ColorSectionView) {
+        for g in ColorParam.layout(for: v.kind) {
+            for p in g.params { pin(paramRow(v, p), in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md) }
+        }
+        pin(trailingReset(v), in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+    }
+
+    private func resetButton(_ v: ColorSectionView) -> NSButton {
+        let b = NSButton(title: "Reset", target: self, action: #selector(resetPressed(_:)))
+        b.controlSize = .small
+        b.bezelStyle = .rounded
+        b.font = Theme.Fonts.small
+        b.tag = v.effect
+        b.identifier = NSUserInterfaceItemIdentifier(v.kind.rawValue)
+        b.setAccessibilityLabel("Reset \(v.kind.title)")
+        return b
+    }
+
+    private func trailingReset(_ v: ColorSectionView) -> NSView {
+        let row = NSStackView(views: [NSView(), resetButton(v)])
+        row.orientation = .horizontal
+        return row
     }
 
     private func labelled(_ name: String, _ control: NSView) -> NSView {
         let l = NSTextField(labelWithString: name)
         l.font = Theme.Fonts.small
         l.textColor = Theme.Colors.label2
-        l.widthAnchor.constraint(equalToConstant: 82).isActive = true
+        l.widthAnchor.constraint(equalToConstant: ColorParamRow.titleWidth).isActive = true
         let r = NSStackView(views: [l, control])
         r.orientation = .horizontal
         r.alignment = .centerY
@@ -453,21 +373,31 @@ public final class ColorInspectorView: NSView {
         return r
     }
 
-    private func addParamRows(_ v: ColorSectionView, kind: ColorSectionKind) {
-        for g in ColorParam.layout(for: kind) {
-            if let name = g.group { v.body.addArrangedSubview(caption(name)) }
-            for p in g.params { append(paramRow(v, p), to: v) }
-        }
+    private func makePopup(_ v: ColorSectionView, slot: ColorLUTSlot, label: String) -> LUTPopup {
+        let popup = LUTPopup(frame: .zero, pullsDown: false)
+        style(popup)
+        popup.effect = v.effect
+        popup.slot = slot
+        popup.target = self
+        popup.action = #selector(lutChosen(_:))
+        popup.setAccessibilityLabel(label)
+        v.lutPopups[slot] = popup
+        return popup
     }
 
-    /// Adds a row to the block's body and sizes it to the body width (the constraint needs the shared superview).
-    private func append(_ row: NSView, to v: ColorSectionView) {
-        v.body.addArrangedSubview(row)
-        row.widthAnchor.constraint(equalTo: v.body.widthAnchor, constant: -Theme.Spacing.lg).isActive = true
+    private func makeGroup(_ v: ColorSectionView, title: String) -> ColorGroupView {
+        let g = ColorGroupView(title: title)
+        let key = ColorPanelKey(v.effect, v.kind, group: title)
+        g.header.onToggleOpen = { [weak self] in
+            guard let self else { return }
+            self.model.setCollapsed(key, !self.model.isCollapsed(key))
+        }
+        v.groups[title] = g
+        return g
     }
 
     private func paramRow(_ v: ColorSectionView, _ p: ColorParam) -> ColorParamRow {
-        let id = v.section
+        let id = v.effect
         let r = ColorParamRow(p)
         r.onBegin = { [weak self] in self?.model.onGestureBegan?() }
         r.onEnd = { [weak self] in self?.model.onGestureEnded?() }
@@ -477,14 +407,14 @@ public final class ColorInspectorView: NSView {
         return r
     }
 
-    private func wheel(_ v: ColorSectionView, _ slot: ColorWheelSlot, showsMaster: Bool) -> ColorWheelControl {
-        let id = v.section
-        let w = ColorWheelControl(frame: NSRect(x: 0, y: 0, width: 100, height: 100))
+    private func wheel(_ v: ColorSectionView, _ slot: ColorWheelSlot, showsMaster: Bool, size: CGFloat) -> ColorWheelControl {
+        let id = v.effect
+        let w = ColorWheelControl(frame: NSRect(x: 0, y: 0, width: size, height: size + 16))
         w.title = slot.title
         w.showsMaster = showsMaster
         w.translatesAutoresizingMaskIntoConstraints = false
-        w.widthAnchor.constraint(equalToConstant: showsMaster ? 82 : 76).isActive = true
-        w.heightAnchor.constraint(equalToConstant: 92).isActive = true
+        w.widthAnchor.constraint(equalToConstant: showsMaster ? size - 10 : size).isActive = true
+        w.heightAnchor.constraint(equalToConstant: size + 16).isActive = true
         w.onBegin = { [weak self] _ in self?.model.onGestureBegan?() }
         w.onEnd = { [weak self] _ in self?.model.onGestureEnded?() }
         w.onChange = { [weak self, weak w] part in
@@ -506,34 +436,29 @@ public final class ColorInspectorView: NSView {
         model.gesture { model.setSourceOverride(i == 0 ? nil : Self.sources[i - 1].1) }
     }
 
-    @objc private func addSection(_ item: NSMenuItem) {
-        guard let raw = item.representedObject as? String, let k = ColorSectionKind(rawValue: raw) else { return }
-        model.addSection(k)
+    @objc private func addEffect() { model.addEffect() }
+    @objc private func removeEffect(_ b: NSButton) { model.removeEffect(b.tag) }
+
+    @objc private func switchToggled(_ s: NSSwitch) {
+        let parts = (s.identifier?.rawValue ?? "").split(separator: "|")
+        guard parts.count == 2, let effect = Int(parts[0]), let kind = ColorSectionKind(rawValue: String(parts[1])) else { return }
+        model.setEnabled(effect, kind, s.state == .on)
     }
 
-    @objc private func enableToggled(_ b: NSButton) { model.setEnabled(b.tag, b.state == .on) }
-    @objc private func resetPressed(_ b: NSButton) { model.resetSection(b.tag) }
-    @objc private func moveBlockUp(_ i: NSMenuItem) { model.moveSection(i.tag, by: -1) }
-    @objc private func moveBlockDown(_ i: NSMenuItem) { model.moveSection(i.tag, by: 1) }
-    @objc private func removePressed(_ i: NSMenuItem) { model.removeSection(i.tag) }
-    @objc private func disclosureToggled(_ b: NSButton) { model.setCollapsed(b.tag, b.state == .off) }
-
-    @objc private func curveChannelChosen(_ s: NSSegmentedControl) {
-        guard let v = sectionViews[s.tag] else { return }
-        v.selectedChannel = s.selectedSegment
-        refresh()
+    @objc private func resetPressed(_ b: NSButton) {
+        guard let raw = b.identifier?.rawValue, let kind = ColorSectionKind(rawValue: raw) else { return }
+        model.resetSection(b.tag, kind)
     }
 
-    @objc private func lutChosen(_ popup: NSPopUpButton) {
-        guard let v = sectionViews[popup.tag] else { return }
-        switch v.lutPicks[safe: popup.indexOfSelectedItem] {
-        case .choice(let c)?: model.setLUT(v.section, c)
+    @objc private func lutChosen(_ popup: LUTPopup) {
+        switch popup.picks[safe: popup.indexOfSelectedItem] {
+        case .choice(let c)?: model.setLUT(popup.effect, popup.slot, c)
         case .chooseFile?:
             let panel = NSOpenPanel()
             panel.allowedContentTypes = [UTType(filenameExtension: "cube") ?? .data]
             panel.allowsMultipleSelection = false
             panel.message = "Choose a .cube LUT"
-            if panel.runModal() == .OK, let url = panel.url { model.setLUT(v.section, .file(url.path)) } else { refresh() }
+            if panel.runModal() == .OK, let url = panel.url { model.setLUT(popup.effect, popup.slot, .file(url.path)) } else { refresh() }
         case nil: refresh()
         }
     }
@@ -556,47 +481,66 @@ public final class ColorInspectorView: NSView {
         }
     }
 
-    /// Updates all controls from the model; rebuilds the blocks first when their structure changed.
+    /// Updates all controls from the model; rebuilds the sections first when the set of effects changed.
     public func refresh() {
-        if builtSignature != signature() { rebuildSections() }
+        if builtSignature != model.effects.map(\.id) { rebuildEffects() }
         sourcePopup.removeAllItems()
         sourcePopup.addItem(withTitle: "Automatic (\(Self.name(model.detectedSource)))")
         Self.sources.forEach { sourcePopup.addItem(withTitle: $0.0) }
         if let o = model.sourceOverride, let i = Self.sources.firstIndex(where: { $0.1 == o }) { sourcePopup.selectItem(at: i + 1) }
         else { sourcePopup.selectItem(at: 0) }
 
-        for (n, s) in model.sections.enumerated() {
-            guard let v = sectionViews[s.id] else { continue }
-            v.header.enable.state = s.enabled ? .on : .off
-            v.body.alphaValue = s.enabled ? 1 : 0.45
-            for (p, r) in v.rows { r.show(model.value(s.id, p)) }
-            for (slot, w) in v.wheels {
-                let st = model.wheel(s.id, slot)
-                w.hue = Double(st.value.hue); w.amount = Double(st.value.amount); w.master = Double(st.luma / 100)
-            }
-            if let popup = v.lutPopup { refreshLUTPopup(popup, v, s) }
-            if let editor = v.curveEditor {
-                let c = model.curves(s.id)
-                let (pts, color): ([CurvePoint], NSColor) = switch v.selectedChannel {
-                case 1: (c.red, Theme.Colors.red)
-                case 2: (c.green, Theme.Colors.green)
-                case 3: (c.blue, NSColor.systemBlue)
-                default: (c.master, Theme.Colors.label)
-                }
-                editor.points = pts
-                editor.lineColor = color
-            }
-            v.header.moreButton.menu?.items.forEach { item in
-                if item.title == "Move Up" { item.isEnabled = n > 0 }
-                if item.title == "Move Down" { item.isEnabled = n < model.sections.count - 1 }
-            }
+        for (n, e) in model.effects.enumerated() {
+            guard let ev = effectViews[e.id] else { continue }
+            for (kind, v) in ev.sections { refreshSection(v, effect: e, kind: kind, isPrimary: n == 0) }
         }
     }
 
-    private func refreshLUTPopup(_ popup: NSPopUpButton, _ v: ColorSectionView, _ s: ColorSection) {
-        let current = model.lutChoice(s.id)
-        var items: [(String, ColorSectionView.LUTPick)] = []
-        if v.kind == .inputLUT {
+    private func refreshSection(_ v: ColorSectionView, effect e: ColorEffect, kind: ColorSectionKind, isPrimary: Bool) {
+        let on = e.isEnabled(kind) && kind.isImplemented
+        let open = !model.isCollapsed(ColorPanelKey(e.id, kind))
+        v.header.toggle.state = on ? .on : .off
+        v.header.setOpen(open)
+        v.body.isHidden = !open
+        v.body.alphaValue = on || !kind.isImplemented ? 1 : 0.45
+        for (p, r) in v.rows { r.show(model.value(e.id, p)) }
+        for (title, g) in v.groups { g.setOpen(!model.isCollapsed(ColorPanelKey(e.id, kind, group: title))) }
+        for (slot, w) in v.wheels {
+            let st = model.wheel(e.id, slot)
+            w.hue = Double(st.value.hue); w.amount = Double(st.value.amount); w.master = Double(st.luma / 100)
+        }
+        for (slot, popup) in v.lutPopups { refreshLUTPopup(popup, slot: slot, effect: e.id, isPrimary: isPrimary) }
+        if kind == .basicCorrection {
+            let hasLUT = e.inputLUT != nil && e.inputLUT != .automatic
+            v.rows[.inputLUTIntensity]?.setActive(!isPrimary && hasLUT)
+        }
+        if kind == .creative, let preview = v.preview {
+            var path: String?
+            if case .file(let p)? = e.creative.look { path = p }
+            if v.previewPath != .some(path) {
+                v.previewPath = .some(path)
+                preview.image = ColorLookPreview.image(forLookPath: path)
+            }
+            preview.setStepping(!model.lookChoices.isEmpty || e.creative.look != nil)
+        }
+        if let editor = v.curveEditor, let dots = v.channelDots {
+            dots.selected = v.selectedChannel
+            let c = e.curves
+            let (pts, color): ([CurvePoint], NSColor) = switch v.selectedChannel {
+            case 1: (c.red, Theme.Colors.red)
+            case 2: (c.green, Theme.Colors.green)
+            case 3: (c.blue, NSColor.systemBlue)
+            default: (c.master, Theme.Colors.label)
+            }
+            editor.points = pts
+            editor.lineColor = color
+        }
+    }
+
+    private func refreshLUTPopup(_ popup: LUTPopup, slot: ColorLUTSlot, effect: Int, isPrimary: Bool) {
+        let current = model.lutChoice(effect, slot)
+        var items: [(String, LUTPopup.Pick)] = []
+        if slot == .input && isPrimary {
             items.append(("Automatic", .choice(.automatic)))
             if let n = model.embeddedLUTName { items.append(("Embedded: \(n)", .choice(.embedded(name: n)))) }
         } else {
@@ -604,15 +548,14 @@ public final class ColorInspectorView: NSView {
         }
         var seen = Set<String>()
         if let c = current, c.filePath != nil { items.append((c.name, .choice(c))); seen.insert(c.id) }
-        let recents = model.recentLUTs.map { ColorInspectorModel.LUTChoice.file($0) }
-        for c in recents + model.availableLUTs where c.filePath != nil && !seen.contains(c.id) {
+        for c in model.lookChoices where !seen.contains(c.id) {
             items.append((c.name, .choice(c))); seen.insert(c.id)
             if seen.count > 10 { break }
         }
         items.append(("Choose File…", .chooseFile))
-        if v.kind == .inputLUT { items.append(("None", .choice(nil))) }
+        if slot == .input && isPrimary { items.append(("None", .choice(nil))) }
         popup.removeAllItems()
-        v.lutPicks = items.map(\.1)
+        popup.picks = items.map(\.1)
         for (title, _) in items { popup.addItem(withTitle: title) }
         let i = items.firstIndex { if case .choice(let c) = $0.1 { c == current } else { false } } ?? 0
         popup.selectItem(at: i)

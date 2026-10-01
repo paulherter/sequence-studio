@@ -1,1 +1,21 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1024" height="1024" viewBox="0 0 1024 1024"><defs><linearGradient id="s" gradientUnits="userSpaceOnUse" x1="-60" y1="0" x2="1084" y2="0"><stop offset="0.000" stop-color="#d323ff"/><stop offset="0.125" stop-color="#ff238e"/><stop offset="0.250" stop-color="#ff5523"/><stop offset="0.375" stop-color="#fff123"/><stop offset="0.500" stop-color="#70ff23"/><stop offset="0.625" stop-color="#23ff73"/><stop offset="0.750" stop-color="#23eeff"/><stop offset="0.875" stop-color="#2352ff"/><stop offset="1.000" stop-color="#9123ff"/></linearGradient></defs><rect x="-60" y="520" width="1144" height="300" rx="44" fill="url(#s)"/></svg>
+<svg width="1024" height="1024" viewBox="0 0 1024 1024" fill="none" xmlns="http://www.w3.org/2000/svg">
+<g clip-path="url(#clip0_5_2)">
+<rect x="-60" y="520" width="1144" height="300" rx="44" fill="url(#paint0_linear_5_2)"/>
+</g>
+<defs>
+<linearGradient id="paint0_linear_5_2" x1="-60" y1="670" x2="1084" y2="670" gradientUnits="userSpaceOnUse">
+<stop stop-color="#D323FF"/>
+<stop offset="0.125" stop-color="#FF238E"/>
+<stop offset="0.25" stop-color="#FF5523"/>
+<stop offset="0.375" stop-color="#FFF123"/>
+<stop offset="0.5" stop-color="#70FF23"/>
+<stop offset="0.625" stop-color="#23FF73"/>
+<stop offset="0.75" stop-color="#23EEFF"/>
+<stop offset="0.875" stop-color="#2352FF"/>
+<stop offset="1" stop-color="#9123FF"/>
+</linearGradient>
+<clipPath id="clip0_5_2">
+<rect width="1024" height="1024" fill="white"/>
+</clipPath>
+</defs>
+</svg>

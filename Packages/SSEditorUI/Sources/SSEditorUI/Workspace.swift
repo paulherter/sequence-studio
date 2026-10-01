@@ -5,6 +5,8 @@ public enum PanelID: String, Sendable, Codable, Hashable, CaseIterable {
     case programMonitor, sourceMonitor
     case library, effects, project
     case timeline
+    /// Level meter right of the timeline (Premiere's audio meters).
+    case audioMeter
     /// Color page panels (also available from the Window menu on the Edit page).
     case colorInspector, scopes
 
@@ -13,6 +15,7 @@ public enum PanelID: String, Sendable, Codable, Hashable, CaseIterable {
     public var minSize: (width: Double, height: Double) {
         switch self {
         case .timeline: (320, 150)
+        case .audioMeter: (56, 100)
         case .programMonitor, .sourceMonitor: (380, 200)
         case .effectControls: (300, 120)
         case .text: (240, 140)
@@ -59,6 +62,22 @@ public indirect enum LayoutNode: Sendable, Codable, Hashable {
         }
     }
 
+    /// Layouts saved before the audio meter existed get it docked right of the timeline group; layouts that have it
+    /// (visible or hidden) are returned unchanged.
+    public var withMeterBesideTimeline: LayoutNode {
+        guard !panels.contains(.audioMeter), panels.contains(.timeline) else { return self }
+        func wrap(_ n: LayoutNode) -> LayoutNode {
+            switch n {
+            case .tabs(let p, _):
+                return p.contains(.timeline)
+                    ? .split(axis: .horizontal, children: [n, .tabs(panels: [.audioMeter], selected: .audioMeter)], fractions: [0.95, 0.05])
+                    : n
+            case .split(let a, let c, let f): return .split(axis: a, children: c.map(wrap), fractions: f)
+            }
+        }
+        return wrap(self)
+    }
+
     /// Repaired copy: empty tab groups and empty splits removed (with their fractions), `selected` inside `panels`,
     /// single-child splits collapsed, fractions one per child and summing to 1 (equal split otherwise). Nil when nothing is left.
     public var sanitized: LayoutNode? {
@@ -101,8 +120,11 @@ public struct Workspace: Sendable, Codable, Hashable {
     public init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         name = try c.decode(String.self, forKey: .name)
-        root = try c.decode(LayoutNode.self, forKey: .root).sanitized?.programPreferred ?? Workspace.editingPC.root
+        let saved = try c.decode(LayoutNode.self, forKey: .root).sanitized?.programPreferred
+        root = saved?.withMeterBesideTimeline ?? Workspace.editingPC.root
         hidden = try c.decodeIfPresent(Set<PanelID>.self, forKey: .hidden) ?? []
+        // The Color page does not show the meter by default; a layout saved before the meter existed gets it hidden there.
+        if name == Workspace.color.name, let saved, !saved.panels.contains(.audioMeter) { hidden.insert(.audioMeter) }
         maximized = try c.decodeIfPresent(PanelID.self, forKey: .maximized)
     }
 
@@ -111,6 +133,12 @@ public struct Workspace: Sendable, Codable, Hashable {
     /// Color inspector and Scopes belong to the Color page; Edit layouts hold them hidden so the Window menu can show them.
     static let colorPanels: Set<PanelID> = [.colorInspector, .scopes]
 
+    /// The timeline with the audio meter docked to its right (tools stay inside the timeline, on its left).
+    static let timelineWithMeter: LayoutNode = .split(axis: .horizontal, children: [
+        .tabs(panels: [.timeline], selected: .timeline),
+        .tabs(panels: [.audioMeter], selected: .audioMeter),
+    ], fractions: [0.95, 0.05])
+
     /// Effect Controls | Text and Program | Source on top, timeline below; Library and Effects | Project on the right, full height.
     public static let editingPC = Workspace(name: "Editing – PC", root: .split(axis: .horizontal, children: [
         .split(axis: .vertical, children: [
@@ -118,7 +146,7 @@ public struct Workspace: Sendable, Codable, Hashable {
                 .tabs(panels: [.effectControls, .text, .colorInspector], selected: .effectControls),
                 .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor),
             ], fractions: [0.6, 0.4]),
-            .tabs(panels: [.timeline], selected: .timeline),
+            Self.timelineWithMeter,
         ], fractions: [0.55, 0.45]),
         .split(axis: .vertical, children: [
             .tabs(panels: [.library], selected: .library),
@@ -135,7 +163,7 @@ public struct Workspace: Sendable, Codable, Hashable {
             ], fractions: [0.4, 0.6]),
             .split(axis: .horizontal, children: [
                 .tabs(panels: [.project], selected: .project),
-                .tabs(panels: [.timeline], selected: .timeline),
+                Self.timelineWithMeter,
             ], fractions: [0.25, 0.75]),
         ], fractions: [0.5, 0.5]),
         .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor),
@@ -154,9 +182,10 @@ public struct Workspace: Sendable, Codable, Hashable {
         ], fractions: [0.5, 0.22, 0.28]),
         .split(axis: .horizontal, children: [
             .tabs(panels: [.timeline], selected: .timeline),
+            .tabs(panels: [.audioMeter], selected: .audioMeter),
             .tabs(panels: [.project, .library, .effects], selected: .project),
-        ], fractions: [0.75, 0.25]),
-    ], fractions: [0.62, 0.38]), hidden: [.sourceMonitor, .project, .library, .effects, .effectControls, .text])
+        ], fractions: [0.70, 0.05, 0.25]),
+    ], fractions: [0.62, 0.38]), hidden: [.sourceMonitor, .project, .library, .effects, .effectControls, .text, .audioMeter])
 
     // MARK: Queries
 

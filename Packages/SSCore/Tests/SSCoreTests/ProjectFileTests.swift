@@ -77,7 +77,7 @@ import Testing
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try ProjectFile.write(try sample(), to: dir)
         let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
-        #expect(text.contains("\"formatVersion\" : 11"))
+        #expect(text.contains("\"formatVersion\" : 12"))
         #expect(text.contains("\n"))
         #expect(text.contains("2023-11-14T22:13:20Z"))
     }
@@ -129,7 +129,7 @@ import Testing
     @Test func newerVersionRefused() throws {
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try Data(#"{"formatVersion":99,"project":{}}"#.utf8).write(to: dir.appendingPathComponent("project.json"))
-        #expect(throws: ProjectFileError.newerVersion(found: 99, supported: 11)) { try ProjectFile.read(from: dir) }
+        #expect(throws: ProjectFileError.newerVersion(found: 99, supported: 12)) { try ProjectFile.read(from: dir) }
     }
 
     @Test func migrationFromFakeV0() throws {
@@ -142,7 +142,7 @@ import Testing
             p["media"] = [Any](); p["timelines"] = [Any]()
             o["project"] = p
             return o
-        }, 1: ProjectFile.migrateV1toV2, 2: ProjectFile.migrateV2toV3, 3: ProjectFile.migrateV3toV4, 4: ProjectFile.migrateV4toV5, 5: ProjectFile.migrateV5toV6, 6: ProjectFile.migrateV6toV7, 7: ProjectFile.migrateV7toV8, 8: ProjectFile.migrateV8toV9, 9: ProjectFile.migrateV9toV10, 10: ProjectFile.migrateV10toV11]
+        }, 1: ProjectFile.migrateV1toV2, 2: ProjectFile.migrateV2toV3, 3: ProjectFile.migrateV3toV4, 4: ProjectFile.migrateV4toV5, 5: ProjectFile.migrateV5toV6, 6: ProjectFile.migrateV6toV7, 7: ProjectFile.migrateV7toV8, 8: ProjectFile.migrateV8toV9, 9: ProjectFile.migrateV9toV10, 10: ProjectFile.migrateV10toV11, 11: ProjectFile.migrateV11toV12]
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try Data(v0.utf8).write(to: dir.appendingPathComponent("project.json"))
         let p = try ProjectFile.read(from: dir, migrations: migrations)
@@ -299,7 +299,7 @@ import Testing
         #expect(c.animation.position.track.isEmpty)
         try ProjectFile.write(p, to: dir)
         let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
-        #expect(text.contains("\"formatVersion\" : 11"))
+        #expect(text.contains("\"formatVersion\" : 12"))
     }
 
     @Test func v4FileLoadsWithoutNestingCaptionsOrRadius() throws {
@@ -317,6 +317,6 @@ import Testing
         #expect(c.sequence == nil && c.clipSource == .media(mid))
         #expect(c.effects.isEmpty)
         #expect(p.timelines[0].captionTracks.isEmpty)
-        #expect(ProjectFile.currentVersion == 11)
+        #expect(ProjectFile.currentVersion == 12)
     }
 }

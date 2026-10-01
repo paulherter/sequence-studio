@@ -35,6 +35,8 @@ public protocol ProgramEngine: AnyObject {
     var audioUnavailable: Bool { get }
     /// Re-presents the current frame at the viewer's current size (no decode).
     func redraw()
+    /// Linear peaks (left, right) of the last metered audio buffer and that buffer's counter; nil without audio output.
+    var meterReading: (sequence: Int, peaks: [Float])? { get }
 }
 
 extension ProgramEngine {
@@ -42,9 +44,15 @@ extension ProgramEngine {
     public func redraw() {}
     public var lastRenderedTexture: MTLTexture? { nil }
     public var audioUnavailable: Bool { false }
+    public var meterReading: (sequence: Int, peaks: [Float])? { nil }
 }
 
-extension PlaybackEngine: ProgramEngine {}
+extension PlaybackEngine: ProgramEngine {
+    public var meterReading: (sequence: Int, peaks: [Float])? {
+        guard let s = audio?.meterSnapshot() else { return nil }
+        return (s.sequence, [s.left.peak, s.right.peak])
+    }
+}
 
 /// Engine stand-in: records everything it is told and moves `position` on seek/step. Nothing is rendered.
 @MainActor

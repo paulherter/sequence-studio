@@ -3,11 +3,12 @@ import Observation
 import SSCore
 import SSRender
 
-/// One slider of the colour panel: title, range, neutral value and where it lives in a section's parameters.
+/// One slider of the colour panel: title, range, neutral value and where it lives in a Colour effect.
 /// Ranges and neutrals follow Lumetri (docs/DECISIONS.md 2026-10-01).
 public enum ColorParam: Int, CaseIterable, Sendable {
     // Basic Correction
     case temperature, tint, exposure, contrast, highlights, shadows, whites, blacks, saturation, vibrance
+    case inputLUTIntensity
     // Creative
     case lookIntensity, fadedFilm, creativeVibrance, creativeSaturation, tintBalance
     // Color Wheels (master saturation)
@@ -27,7 +28,7 @@ public enum ColorParam: Int, CaseIterable, Sendable {
         case .blacks: "Blacks"
         case .saturation, .creativeSaturation, .wheelsSaturation: "Saturation"
         case .vibrance, .creativeVibrance: "Vibrance"
-        case .lookIntensity: "Intensity"
+        case .lookIntensity, .inputLUTIntensity: "Intensity"
         case .fadedFilm: "Faded Film"
         case .tintBalance: "Tint Balance"
         case .vignetteAmount: "Amount"
@@ -37,115 +38,110 @@ public enum ColorParam: Int, CaseIterable, Sendable {
         }
     }
 
+    public var section: ColorSectionKind {
+        switch self {
+        case .temperature, .tint, .exposure, .contrast, .highlights, .shadows, .whites, .blacks, .saturation, .vibrance,
+             .inputLUTIntensity: .basicCorrection
+        case .lookIntensity, .fadedFilm, .creativeVibrance, .creativeSaturation, .tintBalance: .creative
+        case .wheelsSaturation: .wheels
+        case .vignetteAmount, .vignetteMidpoint, .vignetteRoundness, .vignetteFeather: .vignette
+        }
+    }
+
     public var range: ClosedRange<Float> {
         switch self {
         case .exposure, .vignetteAmount: -5...5
         case .saturation, .creativeSaturation, .wheelsSaturation: 0...200
-        case .lookIntensity, .fadedFilm, .vignetteMidpoint, .vignetteFeather: 0...100
+        case .lookIntensity, .inputLUTIntensity, .fadedFilm, .vignetteMidpoint, .vignetteFeather: 0...100
         default: -100...100
         }
     }
 
     public var neutral: Float {
         switch self {
-        case .saturation, .creativeSaturation, .wheelsSaturation, .lookIntensity: 100
+        case .saturation, .creativeSaturation, .wheelsSaturation, .lookIntensity, .inputLUTIntensity: 100
         case .vignetteMidpoint, .vignetteFeather: 50
         default: 0
         }
     }
 
-    public var decimals: Int { self == .exposure || self == .vignetteAmount ? 2 : 0 }
+    /// Decimals shown (Premiere shows one).
+    public var decimals: Int { self == .exposure || self == .vignetteAmount ? 2 : 1 }
 
-    /// Sliders of each block in display order; `nil` separators are group gaps in the UI.
+    /// The two-colour track behind the slider (Temperature blue -> orange, Tint green -> magenta).
+    public enum Track: Sendable { case plain, temperature, tint }
+    public var track: Track { self == .temperature ? .temperature : self == .tint ? .tint : .plain }
+
+    /// Rows of each section in display order (Premiere's Lumetri sub-groups). The Input LUT / Look popups and the
+    /// wheels are added by the view around these.
     public static func layout(for kind: ColorSectionKind) -> [(group: String?, params: [ColorParam])] {
         switch kind {
         case .basicCorrection:
-            [("White Balance", [.temperature, .tint]),
-             ("Tone", [.exposure, .contrast, .highlights, .shadows, .whites, .blacks]),
-             (nil, [.saturation, .vibrance])]
-        case .creative: [(nil, [.lookIntensity]), ("Adjustments", [.fadedFilm, .creativeVibrance, .creativeSaturation])]
+            [("Color", [.temperature, .tint, .saturation]),
+             ("Light", [.exposure, .contrast, .highlights, .shadows, .whites, .blacks])]
+        case .creative: [("Adjustments", [.fadedFilm, .creativeVibrance, .creativeSaturation])]
         case .wheels: [(nil, [.wheelsSaturation])]
         case .vignette: [(nil, [.vignetteAmount, .vignetteMidpoint, .vignetteRoundness, .vignetteFeather])]
-        case .inputLUT, .curves: []
+        case .curves, .hslSecondary: []
         }
     }
 
-    public func read(_ p: ColorSectionParams) -> Float? {
-        switch (self, p) {
-        case (.temperature, .basic(let b)): b.temperature
-        case (.tint, .basic(let b)): b.tint
-        case (.exposure, .basic(let b)): b.exposure
-        case (.contrast, .basic(let b)): b.contrast
-        case (.highlights, .basic(let b)): b.highlights
-        case (.shadows, .basic(let b)): b.shadows
-        case (.whites, .basic(let b)): b.whites
-        case (.blacks, .basic(let b)): b.blacks
-        case (.saturation, .basic(let b)): b.saturation
-        case (.vibrance, .basic(let b)): b.vibrance
-        case (.lookIntensity, .creative(let c)): c.intensity
-        case (.fadedFilm, .creative(let c)): c.fadedFilm
-        case (.creativeVibrance, .creative(let c)): c.vibrance
-        case (.creativeSaturation, .creative(let c)): c.saturation
-        case (.tintBalance, .creative(let c)): c.tintBalance
-        case (.wheelsSaturation, .wheels(let w)): w.saturation
-        case (.vignetteAmount, .vignette(let v)): v.amount
-        case (.vignetteMidpoint, .vignette(let v)): v.midpoint
-        case (.vignetteRoundness, .vignette(let v)): v.roundness
-        case (.vignetteFeather, .vignette(let v)): v.feather
-        default: nil
+    public func read(_ e: ColorEffect) -> Float {
+        switch self {
+        case .temperature: e.basic.temperature
+        case .tint: e.basic.tint
+        case .exposure: e.basic.exposure
+        case .contrast: e.basic.contrast
+        case .highlights: e.basic.highlights
+        case .shadows: e.basic.shadows
+        case .whites: e.basic.whites
+        case .blacks: e.basic.blacks
+        case .saturation: e.basic.saturation
+        case .vibrance: e.basic.vibrance
+        case .inputLUTIntensity: e.inputLUTIntensity
+        case .lookIntensity: e.creative.intensity
+        case .fadedFilm: e.creative.fadedFilm
+        case .creativeVibrance: e.creative.vibrance
+        case .creativeSaturation: e.creative.saturation
+        case .tintBalance: e.creative.tintBalance
+        case .wheelsSaturation: e.wheels.saturation
+        case .vignetteAmount: e.vignette.amount
+        case .vignetteMidpoint: e.vignette.midpoint
+        case .vignetteRoundness: e.vignette.roundness
+        case .vignetteFeather: e.vignette.feather
         }
     }
 
-    /// Clamps to `range` and writes; returns false when the parameter does not belong to `p`.
-    @discardableResult
-    public func write(_ value: Float, into p: inout ColorSectionParams) -> Bool {
+    /// Clamps to `range` and writes.
+    public func write(_ value: Float, into e: inout ColorEffect) {
         let v = min(max(value, range.lowerBound), range.upperBound)
-        switch p {
-        case .basic(var b):
-            switch self {
-            case .temperature: b.temperature = v
-            case .tint: b.tint = v
-            case .exposure: b.exposure = v
-            case .contrast: b.contrast = v
-            case .highlights: b.highlights = v
-            case .shadows: b.shadows = v
-            case .whites: b.whites = v
-            case .blacks: b.blacks = v
-            case .saturation: b.saturation = v
-            case .vibrance: b.vibrance = v
-            default: return false
-            }
-            p = .basic(b)
-        case .creative(var c):
-            switch self {
-            case .lookIntensity: c.intensity = v
-            case .fadedFilm: c.fadedFilm = v
-            case .creativeVibrance: c.vibrance = v
-            case .creativeSaturation: c.saturation = v
-            case .tintBalance: c.tintBalance = v
-            default: return false
-            }
-            p = .creative(c)
-        case .wheels(var w):
-            guard self == .wheelsSaturation else { return false }
-            w.saturation = v
-            p = .wheels(w)
-        case .vignette(var g):
-            switch self {
-            case .vignetteAmount: g.amount = v
-            case .vignetteMidpoint: g.midpoint = v
-            case .vignetteRoundness: g.roundness = v
-            case .vignetteFeather: g.feather = v
-            default: return false
-            }
-            p = .vignette(g)
-        case .inputLUT, .curves: return false
+        switch self {
+        case .temperature: e.basic.temperature = v
+        case .tint: e.basic.tint = v
+        case .exposure: e.basic.exposure = v
+        case .contrast: e.basic.contrast = v
+        case .highlights: e.basic.highlights = v
+        case .shadows: e.basic.shadows = v
+        case .whites: e.basic.whites = v
+        case .blacks: e.basic.blacks = v
+        case .saturation: e.basic.saturation = v
+        case .vibrance: e.basic.vibrance = v
+        case .inputLUTIntensity: e.inputLUTIntensity = v
+        case .lookIntensity: e.creative.intensity = v
+        case .fadedFilm: e.creative.fadedFilm = v
+        case .creativeVibrance: e.creative.vibrance = v
+        case .creativeSaturation: e.creative.saturation = v
+        case .tintBalance: e.creative.tintBalance = v
+        case .wheelsSaturation: e.wheels.saturation = v
+        case .vignetteAmount: e.vignette.amount = v
+        case .vignetteMidpoint: e.vignette.midpoint = v
+        case .vignetteRoundness: e.vignette.roundness = v
+        case .vignetteFeather: e.vignette.feather = v
         }
-        return true
     }
 }
 
-/// A colour wheel in the panel: the three wheels of a Color Wheels block, or the tints of a Creative block.
+/// A colour wheel in the panel: the three wheels of Color Wheels, or the tints of Creative.
 public enum ColorWheelSlot: Int, CaseIterable, Sendable {
     case shadows, midtones, highlights      // Color Wheels
     case shadowTint, highlightTint          // Creative
@@ -163,7 +159,20 @@ public enum ColorWheelSlot: Int, CaseIterable, Sendable {
     public var hasLuma: Bool { rawValue <= ColorWheelSlot.highlights.rawValue }
 }
 
-/// State of the Color inspector for one clip: the clip's `ClipColor` plus UI-only state (which blocks are open).
+/// Which LUT of an effect a popup edits: the Input LUT (in Basic Correction) or the Creative look.
+public enum ColorLUTSlot: Sendable { case input, look }
+
+/// UI identity of a collapsible part of the panel: a section of an effect, or one of its sub-groups.
+public struct ColorPanelKey: Hashable, Sendable {
+    public var effect: Int
+    public var kind: ColorSectionKind
+    public var group: String?
+    public init(_ effect: Int, _ kind: ColorSectionKind, group: String? = nil) {
+        self.effect = effect; self.kind = kind; self.group = group
+    }
+}
+
+/// State of the Color inspector for one clip: the clip's `ClipColor` plus UI-only state (which sections are open).
 /// All edits go through here and are reported through `onChange`; gestures (`onGestureBegan`/`Ended`) make one undo step.
 @MainActor @Observable
 public final class ColorInspectorModel {
@@ -191,8 +200,9 @@ public final class ColorInspectorModel {
     public private(set) var mediaID: UUID?
 
     public private(set) var color = ClipColor.default
-    /// Blocks that are collapsed (UI state, not stored in the clip). Blocks start expanded.
-    public private(set) var collapsed: Set<Int> = []
+    /// Sections and sub-groups that are collapsed (UI state, not stored in the clip).
+    public private(set) var collapsed: Set<ColorPanelKey> = []
+    private var knownEffects: Set<Int> = []
 
     /// LUT files the host offers in the popups (Library); `recent` are this user's last chosen files.
     public var availableLUTs: [LUTChoice] = []
@@ -207,7 +217,7 @@ public final class ColorInspectorModel {
     private var loading = false
     private var gestureDepth = 0
 
-    public init() {}
+    public init() { syncKnownEffects() }
 
     public func clipColor() -> ClipColor { color }
 
@@ -219,13 +229,14 @@ public final class ColorInspectorModel {
         body(&c)
         guard c != color else { return }
         color = c
+        syncKnownEffects()
         notify()
     }
 
-    private func editSection(_ id: Int, _ body: (inout ColorSection) -> Void) {
+    private func editEffect(_ id: Int, _ body: (inout ColorEffect) -> Void) {
         edit { c in
-            guard let i = c.sections.firstIndex(where: { $0.id == id }) else { return }
-            body(&c.sections[i])
+            guard let i = c.effects.firstIndex(where: { $0.id == id }) else { return }
+            body(&c.effects[i])
         }
     }
 
@@ -248,49 +259,52 @@ public final class ColorInspectorModel {
         self.mediaID = mediaID
         detectedSource = info?.colorSpace ?? .rec709
         embeddedLUTName = info?.embeddedLUTName
-        let ids = Set(color.sections.map(\.id))
-        if !collapsed.isSubset(of: ids) { collapsed = collapsed.intersection(ids) }
+        syncKnownEffects()
+    }
+
+    /// Forgets UI state of effects that are gone; the first time an effect is shown Basic Correction and Creative are
+    /// open and the rest closed (Premiere).
+    private func syncKnownEffects() {
+        let ids = Set(color.effects.map(\.id))
+        if !collapsed.isEmpty { collapsed = collapsed.filter { ids.contains($0.effect) } }
+        knownEffects.formIntersection(ids)
+        for id in ids.subtracting(knownEffects) {
+            for k in ColorSectionKind.allCases where k != .basicCorrection && k != .creative { collapsed.insert(ColorPanelKey(id, k)) }
+            knownEffects.insert(id)
+        }
     }
 
     // MARK: Source
 
     public func setSourceOverride(_ id: ColorSpaceID?) { edit { $0.source = id } }
 
-    // MARK: Structure (add, remove, reorder, enable, collapse)
+    // MARK: Effects and sections
 
-    public var sections: [ColorSection] { color.sections }
+    public var effects: [ColorEffect] { color.effects }
 
-    public func addSection(_ kind: ColorSectionKind) {
-        gesture { edit { _ = $0.addSection(kind) } }
+    /// Adds another Colour effect (Premiere: add another Lumetri Color). One undo step.
+    public func addEffect() {
+        gesture { edit { _ = $0.addEffect() } }
     }
 
-    public func removeSection(_ id: Int) {
-        gesture { edit { $0.removeSection(id) } }
+    public func removeEffect(_ id: Int) {
+        gesture { edit { $0.removeEffect(id) } }
     }
 
-    /// Moves a block so it ends at list index `destination` (index after the block is taken out).
-    public func moveSection(_ id: Int, to destination: Int) {
-        gesture { edit { $0.moveSection(id, to: destination) } }
+    public func setEnabled(_ effect: Int, _ kind: ColorSectionKind, _ on: Bool) {
+        guard kind.isImplemented else { return }
+        gesture { editEffect(effect) { $0.setEnabled(kind, on) } }
     }
 
-    public func moveSection(_ id: Int, by delta: Int) {
-        guard let i = color.sections.firstIndex(where: { $0.id == id }) else { return }
-        let target = i + delta
-        guard target >= 0, target < color.sections.count else { return }
-        moveSection(id, to: target)
+    public func isEnabled(_ effect: Int, _ kind: ColorSectionKind) -> Bool {
+        color.effect(effect)?.isEnabled(kind) ?? false
     }
 
-    public func setEnabled(_ id: Int, _ on: Bool) {
-        gesture { editSection(id) { $0.enabled = on } }
+    public func resetSection(_ effect: Int, _ kind: ColorSectionKind) {
+        gesture { edit { $0.resetSection(kind, in: effect) } }
     }
 
-    public func isEnabled(_ id: Int) -> Bool { color.section(id)?.enabled ?? false }
-
-    public func resetSection(_ id: Int) {
-        gesture { edit { $0.resetSection(id) } }
-    }
-
-    /// Back to the default stack (keeps "interpret as").
+    /// Back to one default effect (keeps "interpret as").
     public func resetAll() {
         gesture {
             edit { c in
@@ -301,127 +315,115 @@ public final class ColorInspectorModel {
         }
     }
 
-    public func isCollapsed(_ id: Int) -> Bool { collapsed.contains(id) }
+    public func isCollapsed(_ key: ColorPanelKey) -> Bool { collapsed.contains(key) }
 
-    public func setCollapsed(_ id: Int, _ on: Bool) {
-        if on { collapsed.insert(id) } else { collapsed.remove(id) }
+    public func setCollapsed(_ key: ColorPanelKey, _ on: Bool) {
+        if on { collapsed.insert(key) } else { collapsed.remove(key) }
     }
 
     // MARK: Sliders
 
-    public func value(_ id: Int, _ p: ColorParam) -> Float {
-        color.section(id).flatMap { p.read($0.params) } ?? p.neutral
+    public func value(_ effect: Int, _ p: ColorParam) -> Float {
+        color.effect(effect).map { p.read($0) } ?? p.neutral
     }
 
-    public func set(_ id: Int, _ p: ColorParam, _ v: Float) {
-        editSection(id) { _ = p.write(v, into: &$0.params) }
+    public func set(_ effect: Int, _ p: ColorParam, _ v: Float) {
+        editEffect(effect) { p.write(v, into: &$0) }
     }
 
-    public func resetParameter(_ id: Int, _ p: ColorParam) { gesture { set(id, p, p.neutral) } }
+    public func resetParameter(_ effect: Int, _ p: ColorParam) { gesture { set(effect, p, p.neutral) } }
 
     // MARK: Wheels
 
-    public func wheel(_ id: Int, _ slot: ColorWheelSlot) -> (value: WheelValue, luma: Float) {
-        switch color.section(id)?.params {
-        case .wheels(let w)?:
-            switch slot {
-            case .shadows: return (w.shadows, w.shadowsLuma)
-            case .midtones: return (w.midtones, w.midtonesLuma)
-            case .highlights: return (w.highlights, w.highlightsLuma)
-            default: return (WheelValue(), 0)
-            }
-        case .creative(let c)?:
-            switch slot {
-            case .shadowTint: return (c.shadowTint, 0)
-            case .highlightTint: return (c.highlightTint, 0)
-            default: return (WheelValue(), 0)
-            }
-        default: return (WheelValue(), 0)
+    public func wheel(_ effect: Int, _ slot: ColorWheelSlot) -> (value: WheelValue, luma: Float) {
+        guard let e = color.effect(effect) else { return (WheelValue(), 0) }
+        switch slot {
+        case .shadows: return (e.wheels.shadows, e.wheels.shadowsLuma)
+        case .midtones: return (e.wheels.midtones, e.wheels.midtonesLuma)
+        case .highlights: return (e.wheels.highlights, e.wheels.highlightsLuma)
+        case .shadowTint: return (e.creative.shadowTint, 0)
+        case .highlightTint: return (e.creative.highlightTint, 0)
         }
     }
 
-    public func setWheel(_ id: Int, _ slot: ColorWheelSlot, hue: Float, amount: Float) {
+    public func setWheel(_ effect: Int, _ slot: ColorWheelSlot, hue: Float, amount: Float) {
         let v = WheelValue(hue: hue, amount: min(max(amount, 0), 1))
-        editSection(id) { s in
-            switch s.params {
-            case .wheels(var w):
-                switch slot {
-                case .shadows: w.shadows = v
-                case .midtones: w.midtones = v
-                case .highlights: w.highlights = v
-                default: return
-                }
-                s.params = .wheels(w)
-            case .creative(var c):
-                switch slot {
-                case .shadowTint: c.shadowTint = v
-                case .highlightTint: c.highlightTint = v
-                default: return
-                }
-                s.params = .creative(c)
-            default: break
+        editEffect(effect) { e in
+            switch slot {
+            case .shadows: e.wheels.shadows = v
+            case .midtones: e.wheels.midtones = v
+            case .highlights: e.wheels.highlights = v
+            case .shadowTint: e.creative.shadowTint = v
+            case .highlightTint: e.creative.highlightTint = v
             }
         }
     }
 
     /// Luminance slider of a three-way wheel, -100…100.
-    public func setWheelLuma(_ id: Int, _ slot: ColorWheelSlot, _ luma: Float) {
+    public func setWheelLuma(_ effect: Int, _ slot: ColorWheelSlot, _ luma: Float) {
         let l = min(max(luma, -100), 100)
-        editSection(id) { s in
-            guard case .wheels(var w) = s.params else { return }
+        editEffect(effect) { e in
             switch slot {
-            case .shadows: w.shadowsLuma = l
-            case .midtones: w.midtonesLuma = l
-            case .highlights: w.highlightsLuma = l
-            default: return
+            case .shadows: e.wheels.shadowsLuma = l
+            case .midtones: e.wheels.midtonesLuma = l
+            case .highlights: e.wheels.highlightsLuma = l
+            default: break
             }
-            s.params = .wheels(w)
         }
     }
 
-    public func resetWheel(_ id: Int, _ slot: ColorWheelSlot) {
+    public func resetWheel(_ effect: Int, _ slot: ColorWheelSlot) {
         gesture {
-            setWheel(id, slot, hue: 0, amount: 0)
-            if slot.hasLuma { setWheelLuma(id, slot, 0) }
+            setWheel(effect, slot, hue: 0, amount: 0)
+            if slot.hasLuma { setWheelLuma(effect, slot, 0) }
         }
     }
 
     // MARK: Curves
 
-    public func curves(_ id: Int) -> RGBCurves {
-        if case .curves(let c)? = color.section(id)?.params { return c }
-        return RGBCurves()
-    }
+    public func curves(_ effect: Int) -> RGBCurves { color.effect(effect)?.curves ?? RGBCurves() }
 
-    public func setCurves(_ id: Int, _ curves: RGBCurves) {
-        editSection(id) { if case .curves = $0.params { $0.params = .curves(curves) } }
+    public func setCurves(_ effect: Int, _ curves: RGBCurves) {
+        editEffect(effect) { $0.curves = curves }
     }
 
     // MARK: LUTs (Input LUT and Creative look)
 
-    public func lutChoice(_ id: Int) -> LUTChoice? {
-        let ref: LUTRef?
-        switch color.section(id)?.params {
-        case .inputLUT(let r)?: ref = r
-        case .creative(let c)?: ref = c.look
-        default: return nil
-        }
+    public func lutChoice(_ effect: Int, _ slot: ColorLUTSlot) -> LUTChoice? {
+        guard let e = color.effect(effect) else { return nil }
+        let ref: LUTRef? = slot == .input ? e.inputLUT : e.creative.look
         return ref.map(choice)
     }
 
-    /// Sets the Input LUT (nil = none: built-in conversion) or the Creative look (nil = none).
-    public func setLUT(_ id: Int, _ c: LUTChoice?) {
+    /// Sets the Input LUT (nil = none: built-in conversion in the first effect) or the Creative look (nil = none).
+    public func setLUT(_ effect: Int, _ slot: ColorLUTSlot, _ c: LUTChoice?) {
         let r = c.flatMap(ref)
         if let path = c?.filePath { recents.add(path); recentLUTs = recents.paths }
         gesture {
-            editSection(id) { s in
-                switch s.params {
-                case .inputLUT: s.params = .inputLUT(r)
-                case .creative(var k): k.look = r == .automatic ? nil : r; s.params = .creative(k)
-                default: break
+            editEffect(effect) { e in
+                switch slot {
+                case .input: e.inputLUT = r
+                case .look: e.creative.look = r == .automatic ? nil : r
                 }
             }
         }
+    }
+
+    /// The looks the Creative popup and its arrows cycle through (after "None"): the host's LUT files, then recents.
+    public var lookChoices: [LUTChoice] {
+        var seen = Set<String>(), out: [LUTChoice] = []
+        for c in availableLUTs + recentLUTs.map(LUTChoice.file) where c.filePath != nil && seen.insert(c.id).inserted { out.append(c) }
+        return out
+    }
+
+    /// Steps the Creative look to the previous/next entry of [None] + looks (wraps around). One undo step.
+    public func cycleLook(_ effect: Int, by delta: Int) {
+        var list: [LUTChoice?] = [nil] + lookChoices
+        let current = lutChoice(effect, .look)
+        if let current, !list.contains(where: { $0 == current }) { list.append(current) }
+        let i = list.firstIndex { $0 == current } ?? 0
+        let next = ((i + delta) % list.count + list.count) % list.count
+        setLUT(effect, .look, list[next])
     }
 
     private func choice(_ r: LUTRef) -> LUTChoice {

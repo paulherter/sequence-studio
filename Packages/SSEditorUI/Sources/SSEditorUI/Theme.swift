@@ -58,7 +58,9 @@ public enum Theme {
         public static let clipCaptionEdge = Theme.hex(0x9C82E4)
         public static let clipShade = Theme.black(0.22)
         public static let onClip = Theme.hex(0xFFFFFF)
-        public static let clipSelect = Theme.hex(0xFFD60A)
+        public static let clipSelect = Theme.hex(0xFFFFFF)
+        /// Snap indicator line (timeline and playhead drags).
+        public static let snapLine = Theme.hex(0xFFD60A)
         // Timeline furniture
         public static let playhead = Theme.white(0.92)
         public static let keyframe = Theme.hex(0xD6D6D6)

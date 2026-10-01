@@ -1,7 +1,8 @@
 import AppKit
 import SSEditorUI
 
-/// Unified toolbar, exactly DESIGN screen 1: Import on the left, Edit | Color centred, Export on the right.
+/// Compact unified toolbar (Premiere's slim header, FEEDBACK-4 item 25): Import on the left, Edit | Color centred,
+/// workspace name and Export on the right. Icons only, no labels under them, so the bar is one slim row.
 /// Panels are shown and hidden from the Window menu; workspaces live there too; export progress is the ring in the status bar.
 /// Real NSToolbar items (Liquid Glass groups on macOS 26); state is pushed in by `sync(store:)`.
 @MainActor
@@ -9,21 +10,25 @@ final class EditorToolbar: NSObject, NSToolbarDelegate {
     static let importItem = NSToolbarItem.Identifier("ss.import")
     static let pageItem = NSToolbarItem.Identifier("ss.page")
     static let exportItem = NSToolbarItem.Identifier("ss.export")
+    static let workspaceItem = NSToolbarItem.Identifier("ss.workspace")
 
     unowned let controller: AppController
     private var pageGroup: NSToolbarItemGroup?
-    let toolbar = NSToolbar(identifier: "ss.main.v2")
+    let toolbar = NSToolbar(identifier: "ss.main.v3")
+    /// Menu of the workspace item; the controller fills it with the workspace list.
+    let workspaceMenu = NSMenu(title: "Workspace")
+    private var workspaceButton: NSMenuToolbarItem?
 
     init(controller: AppController) {
         self.controller = controller
         super.init()
         toolbar.delegate = self
-        toolbar.displayMode = .iconAndLabel
+        toolbar.displayMode = .iconOnly
         toolbar.allowsUserCustomization = false
     }
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.importItem, .flexibleSpace, Self.pageItem, .flexibleSpace, Self.exportItem]
+        [Self.importItem, .flexibleSpace, Self.pageItem, .flexibleSpace, Self.workspaceItem, Self.exportItem]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -48,6 +53,15 @@ final class EditorToolbar: NSObject, NSToolbarDelegate {
             g.selectedIndex = 0
             pageGroup = g
             return g
+        case Self.workspaceItem:
+            let m = NSMenuToolbarItem(itemIdentifier: id)
+            m.label = "Workspace"
+            m.toolTip = "Workspace"
+            m.menu = workspaceMenu
+            m.showsIndicator = true
+            m.title = controller.store.current.name
+            workspaceButton = m
+            return m
         case Self.exportItem:
             let i = NSToolbarItem(itemIdentifier: id)
             i.label = "Export"
@@ -64,5 +78,6 @@ final class EditorToolbar: NSObject, NSToolbarDelegate {
     /// Pushes the current page into the Edit | Color switch.
     func sync(store: WorkspaceStore) {
         pageGroup?.selectedIndex = store.page == .color ? 1 : 0
+        workspaceButton?.title = store.current.name
     }
 }

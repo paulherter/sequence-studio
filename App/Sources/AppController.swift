@@ -101,7 +101,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         w.appearance = NSAppearance(named: .darkAqua)
         w.backgroundColor = Theme.Colors.titlebar
         w.toolbar = toolbar.toolbar
-        w.toolbarStyle = .unified
+        w.toolbarStyle = .unifiedCompact
         w.titleVisibility = .visible
         w.delegate = self
         w.contentView = shell
@@ -235,6 +235,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         shell.host.apply(w)
         toolbar.sync(store: store)
         fillWorkspaceMenu(mainWorkspaceSubmenu)
+        fillWorkspaceMenu(toolbar.workspaceMenu)
         // The window never gets smaller than the layout's panels need.
         let m = w.minimumContentSize
         window?.contentMinSize = NSSize(width: max(CGFloat(m.width), 640),

@@ -134,6 +134,7 @@ public enum EditorCommand: Sendable, Hashable {
         case .effects: "Effects"
         case .project: "Project"
         case .timeline: "Timeline"
+        case .audioMeter: "Meter"
         }
     }
 }

@@ -24,10 +24,7 @@ import SSCore
         s.activeTimeline!.tracks.flatMap(\.clips).first { $0.id == id }!
     }
 
-    func basic(_ c: Clip) -> BasicCorrection? {
-        if case .basic(let b)? = c.color.sections.first(where: { $0.kind == .basicCorrection })?.params { return b }
-        return nil
-    }
+    func basic(_ c: Clip) -> BasicCorrection { c.color.effects[0].basic }
 
     @Test func inspectorEditsWriteClipColorAsOneUndoStepPerGesture() throws {
         let (session, panel, clip) = try rig()
@@ -38,23 +35,21 @@ import SSCore
         model.onGestureBegan?()
         model.set(1, .exposure, 0.5); model.set(1, .exposure, 1); model.set(1, .exposure, 1.5)
         model.onGestureEnded?()
-        #expect(basic(current(session, clip.id))?.exposure == 1.5)
+        #expect(basic(current(session, clip.id)).exposure == 1.5)
         #expect(session.undoName == "Color")
         session.undo()
-        #expect(basic(current(session, clip.id))?.exposure == 0)
+        #expect(basic(current(session, clip.id)).exposure == 0)
         #expect(!session.canUndo)
 
         // Popup-style edits are each their own gesture.
         model.gesture { model.setSourceOverride(.rec709) }
-        model.setLUT(2, .file("/tmp/x.cube"))
-        model.addSection(.creative)
-        model.setLUT(3, .file("/tmp/c.cube"))
-        model.gesture { model.set(3, .lookIntensity, 40) }
+        model.setLUT(1, .input, .file("/tmp/x.cube"))
+        model.setLUT(1, .look, .file("/tmp/c.cube"))
+        model.gesture { model.set(1, .lookIntensity, 40) }
         let c = current(session, clip.id).color
-        #expect(c.source == .rec709 && c.sections[1].params == .inputLUT(.file("/tmp/x.cube")))
-        guard case .creative(let k) = c.sections[2].params else { Issue.record("creative"); return }
-        #expect(k.look == .file("/tmp/c.cube") && k.intensity == 40)
-        for _ in 0..<5 { session.undo() }
+        #expect(c.source == .rec709 && c.effects[0].inputLUT == .file("/tmp/x.cube"))
+        #expect(c.effects[0].creative.look == .file("/tmp/c.cube") && c.effects[0].creative.intensity == 40)
+        for _ in 0..<4 { session.undo() }
         #expect(current(session, clip.id).color == .default)
     }
 
@@ -68,17 +63,17 @@ import SSCore
         #expect(model.value(1, .tint) == 0)
     }
 
-    @Test func reorderingAndWheelsReachTheClip() throws {
+    @Test func secondEffectAndWheelsReachTheClip() throws {
         let (session, panel, clip) = try rig()
         let model = try #require(panel.colorModels[clip.id])
-        model.addSection(.wheels)
-        model.moveSection(3, to: 0)
-        model.setWheel(3, .shadows, hue: 200, amount: 0.5)
-        model.setWheelLuma(3, .midtones, 30)
+        model.addEffect()
+        model.setWheel(2, .shadows, hue: 200, amount: 0.5)
+        model.setWheelLuma(2, .midtones, 30)
         let c = current(session, clip.id).color
-        #expect(c.sections.map(\.kind) == [.wheels, .basicCorrection, .inputLUT])
-        guard case .wheels(let w) = c.sections[0].params else { Issue.record("wheels"); return }
-        #expect(w.shadows == WheelValue(hue: 200, amount: 0.5) && w.midtonesLuma == 30)
+        #expect(c.effects.map(\.id) == [1, 2])
+        #expect(c.effects[1].wheels.shadows == WheelValue(hue: 200, amount: 0.5) && c.effects[1].wheels.midtonesLuma == 30)
+        session.undo(); session.undo(); session.undo()
+        #expect(current(session, clip.id).color == .default)
     }
 
     @Test func engineReceivesEditedColor() throws {
@@ -86,57 +81,87 @@ import SSCore
         let model = try #require(panel.colorModels[clip.id])
         model.gesture { model.set(1, .saturation, 50) }
         let stub = try #require(session.engine as? StubProgramEngine)
-        #expect(stub.timeline?.tracks[0].clips[0].color.sections[0].params == .basic({ var b = BasicCorrection(); b.saturation = 50; return b }()))
+        #expect(stub.timeline?.tracks[0].clips[0].color.effects[0].basic.saturation == 50)
     }
 
     @Test func resettingDefaultsIsNotAnUndoStep() throws {
         let (session, panel, clip) = try rig()
         let model = try #require(panel.colorModels[clip.id])
-        for s in model.sections { model.resetSection(s.id) }
+        for k in ColorSectionKind.allCases { model.resetSection(1, k) }
         model.resetAll()
         #expect(!session.canUndo)
         #expect(current(session, clip.id).color == .default)
         // A real edit, then reset: back to the default, two steps.
-        model.setLUT(2, nil)
-        #expect(current(session, clip.id).color.sections[1].params == .inputLUT(nil))
-        model.resetSection(2)
+        model.setLUT(1, .input, nil)
+        #expect(current(session, clip.id).color.effects[0].inputLUT == nil)
+        model.resetSection(1, .basicCorrection)
         #expect(current(session, clip.id).color == .default)
     }
 
-    @Test func viewBuildsEveryBlockKindAndFollowsStructureEdits() throws {
+    @Test func viewBuildsEverySectionAndFollowsEdits() throws {
         let m = ColorInspectorModel()
         m.recents = RecentLUTs(defaults: UserDefaults(suiteName: "ColorPanelEditTests-\(UUID())")!)
         let view = ColorInspectorView(model: m)
-        view.frame = NSRect(x: 0, y: 0, width: 300, height: 900)
-        for k in ColorSectionKind.addable { m.addSection(k) }
+        view.frame = NSRect(x: 0, y: 0, width: 320, height: 1400)
         view.refresh()
         view.layoutSubtreeIfNeeded()
-        let stack = try #require(findSubview(view, ofType: ColorSectionsStack.self))
-        #expect(stack.arrangedSubviews.count == 7)
-        // Collapsing hides the body; reordering rebuilds in the new order.
-        m.setCollapsed(1, true)
+        let sections = allSections(view)
+        #expect(sections.map(\.kind) == ColorSectionKind.allCases, "fixed sections in fixed order")
+        let basic = try #require(sections.first { $0.kind == .basicCorrection })
+        let vignette = try #require(sections.first { $0.kind == .vignette })
+        #expect(!basic.body.isHidden && vignette.body.isHidden, "Basic Correction open, Vignette closed by default")
+        #expect(basic.groups.keys.sorted() == ["Color", "Light"])
+        #expect(basic.lutPopups[.input]?.titleOfSelectedItem == "Automatic")
+        // Opening a section and editing a slider reaches the model; double-click-style reset goes back.
+        m.setCollapsed(ColorPanelKey(1, .vignette), false)
         view.refresh()
-        m.moveSection(m.sections.last!.id, to: 0)
-        view.refresh()
-        view.layoutSubtreeIfNeeded()
-        #expect((stack.arrangedSubviews.first as? ColorSectionView)?.kind == .vignette)
-        let basic = try #require(stack.arrangedSubviews.compactMap { $0 as? ColorSectionView }.first { $0.section == 1 })
-        #expect(basic.body.isHidden)
-        // A slider edit reaches the model; a double-click-style reset goes back to the default.
-        let opened = try #require(stack.arrangedSubviews.compactMap { $0 as? ColorSectionView }.first { $0.kind == .vignette })
-        let row = try #require(opened.rows[.vignetteAmount])
+        #expect(!vignette.body.isHidden)
+        let row = try #require(vignette.rows[.vignetteAmount])
         row.onBegin?(); row.onSet?(-2); row.onEnd?()
-        #expect(m.value(opened.section, .vignetteAmount) == -2)
-        row.onReset?()
-        #expect(m.value(opened.section, .vignetteAmount) == 0)
-        m.removeSection(opened.section)
         view.refresh()
-        #expect(stack.arrangedSubviews.count == 6)
+        #expect(m.value(1, .vignetteAmount) == -2 && row.slider.value == -2)
+        row.onReset?()
+        #expect(m.value(1, .vignetteAmount) == 0)
+        // Typing into the value field commits (comma or dot).
+        row.field.stringValue = "1,5"
+        _ = row.field.sendAction(row.field.action, to: row.field.target)
+        #expect(m.value(1, .vignetteAmount) == 1.5)
+        // The switch disables the section; HSL Secondary is a disabled placeholder.
+        let toggle = basic.header.toggle
+        toggle.state = .off
+        _ = toggle.sendAction(toggle.action, to: toggle.target)
+        #expect(!m.isEnabled(1, .basicCorrection))
+        let hsl = try #require(sections.first { $0.kind == .hslSecondary })
+        #expect(!hsl.header.toggle.isEnabled)
+        // A second effect appends another full set of sections.
+        m.addEffect()
+        view.refresh()
+        #expect(allSections(view).count == 2 * ColorSectionKind.allCases.count)
+        m.removeEffect(2)
+        view.refresh()
+        #expect(allSections(view).count == ColorSectionKind.allCases.count)
     }
 
-    private func findSubview<T: NSView>(_ v: NSView, ofType: T.Type) -> T? {
-        if let t = v as? T { return t }
-        for s in v.subviews { if let f = findSubview(s, ofType: T.self) { return f } }
-        return nil
+    @Test func temperatureAndTintSlidersHaveColouredTracks() throws {
+        let m = ColorInspectorModel()
+        let view = ColorInspectorView(model: m)
+        view.frame = NSRect(x: 0, y: 0, width: 320, height: 1400)
+        view.refresh()
+        let basic = try #require(allSections(view).first { $0.kind == .basicCorrection })
+        #expect(basic.rows[.temperature]?.slider.track == .temperature)
+        #expect(basic.rows[.tint]?.slider.track == .tint)
+        #expect(basic.rows[.contrast]?.slider.track == .plain)
+        // Slider maths: click position -> value, quantised to the row's precision, clamped.
+        let s = try #require(basic.rows[.exposure]?.slider)
+        s.frame = NSRect(x: 0, y: 0, width: 206, height: 18)
+        #expect(s.value(atX: s.knobX(1.25)) == 1.25)
+        #expect(s.value(atX: -50) == -5 && s.value(atX: 999) == 5)
+    }
+
+    private func allSections(_ v: NSView) -> [ColorSectionView] {
+        var out: [ColorSectionView] = []
+        if let s = v as? ColorSectionView { out.append(s) }
+        for sub in v.subviews { out += allSections(sub) }
+        return out
     }
 }

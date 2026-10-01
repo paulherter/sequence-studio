@@ -38,13 +38,13 @@ private final class MutableProvider: LUTProvider, @unchecked Sendable {
         #expect(r.pipeline(for: .default, media: UUID()) == nil)          // unknown media = Rec.709
         #expect(r.cachedCount == 0)                                       // no work, no cache
         var c = ClipColor.default
-        c.sections[0].params = .basic({ var b = BasicCorrection(); b.exposure = 1; return b }()); c.sections[0].enabled = false
+        c.effects[0].basic.exposure = 1; c.effects[0].setEnabled(.basicCorrection, false)
         #expect(r.pipelineBlocking(for: c, media: rec709ID) == nil)       // disabled correction is identity
     }
 
     @Test func lookupNeverBuildsOnTheCallingThread() async {
         let p = MutableProvider()
-        var c = ClipColor.default; c.sections[1].params = .inputLUT(.file("/x.cube"))
+        var c = ClipColor.default; c.effects[0].inputLUT = .file("/x.cube")
         p.set(.file("/x.cube"), constantLUT(0.5, title: "x"))
         let r = make(provider: p)
         #expect(r.pipeline(for: c, media: slogID) == nil)                 // miss: identity until warm
@@ -60,7 +60,7 @@ private final class MutableProvider: LUTProvider, @unchecked Sendable {
         await r.waitUntilIdle()
         #expect(warmed.withLock { $0 } == 1)
         #expect(r.pipeline(for: .default, media: slogID)?.source == .sLog3SGamut3Cine)
-        var c = ClipColor.default; c.sections[0].params = .basic({ var b = BasicCorrection(); b.tint = 10; return b }())
+        var c = ClipColor.default; c.effects[0].basic.tint = 10
         let during = r.pipeline(for: c, media: slogID)                    // not built yet: previous pipeline
         #expect(during?.source == .sLog3SGamut3Cine && during?.ops.count == 1)
         await r.waitUntilIdle()
@@ -92,9 +92,7 @@ private final class MutableProvider: LUTProvider, @unchecked Sendable {
         let p = MutableProvider()
         let ref = LUTRef.file("/a.cube")
         var c = ClipColor.default
-        let cid = c.addSection(.creative)!
-        var k = CreativeLook(); k.look = ref
-        c.sections[c.sections.firstIndex { $0.id == cid }!].params = .creative(k)
+        c.effects[0].creative.look = ref
         p.set(ref, constantLUT(0.1, title: "v1"), stamp: LUTStamp(modified: Date(timeIntervalSince1970: 1), size: 10))
         let r = make(provider: p)
         #expect(r.pipelineBlocking(for: c, media: slogID)?.creativeLUT?.title == "v1")
@@ -128,7 +126,7 @@ private final class MutableProvider: LUTProvider, @unchecked Sendable {
 
     @Test func disabledInputLUTOnLogMediaStillConverts() {
         let r = make()
-        var c = ClipColor.default; c.sections[1].enabled = false
+        var c = ClipColor.default; c.effects[0].setEnabled(.basicCorrection, false)
         let p = r.pipelineBlocking(for: c, media: slogID)
         #expect(p?.source == .sLog3SGamut3Cine && p?.conversionLUT == nil)
         #expect(p?.process(SIMD3(repeating: 0.5)) != SIMD3<Float>(repeating: TransferFunctions.bt709InverseOETF(0.5)))
