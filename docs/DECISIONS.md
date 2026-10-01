@@ -133,3 +133,5 @@ Premiere semantics: Scale 100 % = one upright source pixel per sequence pixel (a
 - Creative look preview now shows the clip's frame at the playhead (the composite already contains the look); synthetic picture only when the playhead is outside the clip.
 - Not done: Sharpen (needs a spatial pass, the colour chain is per pixel), HSL Secondary (placeholder stays, disabled).
 - `scripts/test.sh`: per-package watchdog (default 900 s, `SQ_TEST_TIMEOUT`), kills the process tree and retries once; SSText runs `--no-parallel` like SSMedia (a stuck fontd call used to hang the whole run). Timing tests judge best-of-rounds (redraw 200 clips, audio underruns) or wait for the effect (captions debounce) instead of one noisy sample.
+
+- 2026-10-01 Paul: never abbreviate Sequence Studio as "SS"/"ss" (Nazi reference). Abbreviation is SQ/sq, project files are `.sqproj` (old `.ssproj` files must still open). Packages SSCore… → SQCore…, env vars `SS_*` → `SQ_*`, defaults keys `ss.*` → `sq.*`. Done as one mechanical rename after the night streams are merged, to avoid conflicts with open branches.

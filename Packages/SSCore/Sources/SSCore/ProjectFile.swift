@@ -82,6 +82,8 @@ public enum ProjectFile {
     /// `ClipColor` decoding maps v11 `sections` (first block of each kind into the first effect, extras into further
     /// effects): identity on the JSON object.
     static func migrateV11toV12(_ obj: JSONObject) throws -> JSONObject { obj }
+    /// v13: markers gain colour, comment and duration (decoded with defaults).
+    static func migrateV12toV13(_ obj: JSONObject) throws -> JSONObject { obj }
 
     /// v13: `ColorEffect.hueCurves` (Hue vs Sat, Hue vs Hue, Hue vs Luma, Luma vs Sat, Sat vs Sat). A missing key decodes as flat
     /// (neutral) curves: identity on the JSON object.

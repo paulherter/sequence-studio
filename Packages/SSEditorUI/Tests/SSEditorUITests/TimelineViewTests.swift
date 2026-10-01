@@ -76,11 +76,13 @@ private func clip(_ n: Int, _ startFrame: Int64, _ frames: Int64, kind: TrackKin
 
     @Test func zoomCommandsAndClamp() {
         let v = TimelineView(timeline: bigTimeline(), frame: NSRect(x: 0, y: 0, width: 1600, height: 180))
+        v.setZoom(pointsPerSecond: v.zoomLimits.upperBound / 100)     // a level inside the limits
         let z0 = v.geometry.pointsPerSecond
         v.zoomIn(); #expect(v.geometry.pointsPerSecond > z0)
         v.zoomOut(); v.zoomOut(); #expect(v.geometry.pointsPerSecond < z0)
         for _ in 0..<80 { v.zoomOut() }
         #expect(v.geometry.pointsPerSecond >= TimelineView.minPointsPerSecond)
+        #expect(v.geometry.pointsPerSecond == v.zoomLimits.lowerBound)
         for _ in 0..<80 { v.zoomIn() }
         #expect(v.geometry.pointsPerSecond <= TimelineView.maxPointsPerFrame * 24 + 1e-9)
     }
@@ -100,8 +102,8 @@ private func clip(_ n: Int, _ startFrame: Int64, _ frames: Int64, kind: TrackKin
         #expect(v.geometry.scrollX == 0 && v.geometry.scrollY == 0)
         v.scroll(byX: 1e9, y: 1e9)
         #expect(v.geometry.scrollX < 1e7)
-        // Content height 22+32+32+26+26 = 138, viewport 100 -> max 38.
-        #expect(v.geometry.scrollY == 38)
+        // Content height 22+32+32+26+26 = 138 plus the zoom bar (16), viewport 100 -> max 54.
+        #expect(v.geometry.scrollY == 54)
     }
 
     @Test func playheadAndSelectionInput() {
@@ -140,7 +142,7 @@ private func clip(_ n: Int, _ startFrame: Int64, _ frames: Int64, kind: TrackKin
         let partial = makeRep(v.bounds.size)
         memcpy(partial.bitmapData!, full.bitmapData!, full.bytesPerRow * full.pixelsHigh)
         // A 2 pt wide strip through the first letters of the name (name starts ~5 pt after the clip start at x 162).
-        let strip = CGRect(x: 170, y: TimelineGeometry.rulerHeight, width: 2, height: 100)
+        let strip = CGRect(x: 170, y: TimelineGeometry.rulerHeight, width: 2, height: 80)
         drawRegion(v, strip, into: partial)
         #expect(memcmp(partial.bitmapData!, full.bitmapData!, full.bytesPerRow * full.pixelsHigh) == 0)
     }

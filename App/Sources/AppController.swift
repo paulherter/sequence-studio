@@ -18,7 +18,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     var settings: AppSettings
     private(set) lazy var settingsWindow = SettingsWindowController(controller: self)
     var maximizedPanel: PanelID?
-    var focusedPanel: PanelID? = .timeline { didSet { router.focus = focusedPanel } }
+    var focusedPanel: PanelID? = .timeline { didSet { router.focus = focusedPanel; shell.host.focusedPanel = focusedPanel } }
     var router: KeyRouter
     var menuShuttle = Shuttle()
 
@@ -27,6 +27,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     var panels: EditorPanels!
     var toolbar: EditorToolbar!
     let mainWorkspaceSubmenu = NSMenu(title: "Workspace")
+    let recentMenu = NSMenu(title: "Open Recent")
+    private(set) lazy var shortcutsWindow = KeyboardShortcutsWindowController(map: commandMap)
     var keyMonitor: Any?
     /// Set once quitting started (Save alert, then teardown): the key monitor must not touch views any more.
     var isTerminating = false
@@ -35,15 +37,21 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     let exports = ExportCoordinator()
     let audioEngine: AudioEngine
     var audioWarned = false
+    /// The Source monitor's own engine (nil members: stub when there is no Metal device).
+    let sourceEngine: any ProgramEngine
 
     override init() {
         let media = ProjectMediaResolver()
         var engine: any ProgramEngine = StubProgramEngine()
+        var srcEngine: any ProgramEngine = StubProgramEngine()
         var note: String?
         let audio = AudioEngine(media: media)
         audioEngine = audio
         if let device = MTLCreateSystemDefaultDevice() {
-            do { engine = try PlaybackEngine(device: device, media: media, audio: audio) } catch { note = "Playback engine unavailable: \(error)" }
+            do {
+                engine = try PlaybackEngine(device: device, media: media, audio: audio)
+                srcEngine = try PlaybackEngine(device: device, media: media, audio: AudioEngine(media: media))
+            } catch { note = "Playback engine unavailable: \(error)" }
         } else {
             note = "No Metal device: the Program monitor stays blank."
         }
@@ -52,9 +60,13 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         session = EditorSession(engine: engine, media: media,
                                 autosaveStore: AutosaveStore(policy: AutosavePolicy(interval: prefs.autosaveInterval)))
         engineNote = note
+        sourceEngine = srcEngine
         router = KeyRouter(map: .premiereDefault, focus: .timeline, clock: { ProcessInfo.processInfo.systemUptime })
         super.init()
         session.onChange = { [weak self] c in self?.sessionChanged(c) }
+        if !ProcessInfo.processInfo.environment.keys.contains(where: { ($0.hasPrefix("SS_") || $0.hasPrefix("SQ_")) && $0 != "SS_KEYLOG" }) {
+            session.confirmFormatChange = { [weak self] current, proposed in self?.askChangeSequenceFormat(current, proposed) ?? true }
+        }
     }
 
     // MARK: Launch
@@ -62,7 +74,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.regular)
         NSApp.appearance = NSAppearance(named: .darkAqua)
-        panels = EditorPanels(session: session)
+        panels = EditorPanels(session: session, sourceEngine: sourceEngine)
+        panels.onShowSource = { [weak self] in self?.showPanel(.sourceMonitor) }
         panels.onFocus = { [weak self] p in self?.focusedPanel = p }
         panels.clipSections.onAudioPresetChange = { [audioEngine] id, p in audioEngine.feeder.setPreset(track: id, preset: p) }
         panels.onStatus = { [weak self] m in self?.shell.statusBar.flash(m) }
@@ -106,6 +119,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         w.delegate = self
         w.contentView = shell
         shell.host.panelView = { [weak self] p in self?.panels.view(for: p) ?? NSView() }
+        shell.host.tabMenu = { [weak self] p in self?.tabContextMenu(for: p) }
+        shell.host.focusedPanel = focusedPanel
         shell.host.onSelectTab = { [weak self] p in
             self?.mutateWorkspace { $0.selectTab(p) }
             self?.focusedPanel = p
@@ -282,6 +297,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
                              ("Reset to Saved Layout", #selector(resetLayout(_:))),
                              ("Reset All Workspaces", #selector(resetAllWorkspaces(_:)))] {
             let i = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+            if sel == #selector(resetLayout(_:)) { i.keyEquivalent = "0"; i.keyEquivalentModifierMask = [.option, .shift] }
             i.target = self
             menu.addItem(i)
         }
@@ -448,6 +464,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         default: break
         }
         guard let c = item.representedObject as? EditorCommand else { return true }
+        validateTimelineOpItem(c, item)
         // Plain-key items (no Command) belong to the KeyRouter; their key equivalent only fires when the router let the event pass.
         if !item.keyEquivalent.isEmpty, !item.keyEquivalentModifierMask.contains(.command) {
             if let tv = window?.firstResponder as? NSTextView, tv.isEditable || tv.isFieldEditor { return false }
@@ -455,6 +472,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         }
         // Typing in a text field: the standard editing commands belong to it.
         if textResponder != nil, [.cut, .copy, .paste, .delete, .deleteProjectItems].contains(c) { return true }
+        if ([.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus), let enabled = validateInEffectControls(c) { return enabled }
         switch c {
         case .undo:
             item.title = session.undoName.map { "Undo \($0)" } ?? "Undo"
@@ -465,7 +483,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         case .save: return true
         case _ where (c == .delete || c == .rippleDelete) && effectControlsHasFocus:
             return !panels.effectModel.selection.isEmpty || panels.effectModel.selectedSection.map(panels.effectModel.canRemoveEffect) == true
-        default: return Self.isSupported(c)
+        default: return commandEnabled(c)
         }
     }
 
@@ -520,7 +538,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         for a in actions {
             switch a {
             case .command(let c, _): execute(c)
-            case .shuttle(let s): session.apply(shuttle: s)
+            case .shuttle(let s):
+                if focusedPanel == .sourceMonitor { panels.source.apply(shuttle: s) } else { session.apply(shuttle: s) }
             }
         }
     }

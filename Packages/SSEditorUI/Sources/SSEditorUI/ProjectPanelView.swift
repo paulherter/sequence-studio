@@ -103,16 +103,35 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
     private var layout: ProjectColumnLayout
     private var rebuildingColumns = false
     private let defaults: UserDefaults
+    /// Double-click: a media item opens in the Source monitor, a sequence becomes the active one.
+    public var onOpenMedia: ((MediaRef.ID) -> Void)?
+    public var onOpenSequence: ((Timeline.ID) -> Void)?
+    /// Context menu and drag actions that need the session: Insert / Overwrite, New Sequence From Clip, Replace Footage.
+    public var onPlace: (([MediaRef.ID], ThreePointMode) -> Void)?
+    public var onNewSequenceFromClip: ((MediaRef.ID) -> Void)?
+    public var onNewSequence: (() -> Void)?
+    public var onReplaceFootage: ((MediaRef.ID) -> Void)?
+    public var onImportRequest: (() -> Void)?
+    public enum ViewMode: String, Sendable { case list, icons }
+    public private(set) var viewMode: ViewMode
+    private let grid: ProjectIconView
+    private let viewToggle = NSSegmentedControl()
+    private let sizeSlider = NSSlider()
+    private let upButton = NSButton()
+    private let binLabel = NSTextField(labelWithString: "")
 
     public init(model: ProjectPanelModel, defaults: UserDefaults = .standard) {
         self.model = model
         self.defaults = defaults
         self.layout = ProjectColumnLayout.load(from: defaults)
+        self.viewMode = ViewMode(rawValue: defaults.string(forKey: "ProjectPanel.viewMode") ?? "") ?? .list
+        self.grid = ProjectIconView(model: model)
         super.init(frame: NSRect(x: 0, y: 0, width: 420, height: 300))
         appearance = NSAppearance(named: .darkAqua)
         wantsLayer = true
         layer?.backgroundColor = Theme.Colors.panel.cgColor
         build()
+        applyMode()
         reload()
         observe()
     }
@@ -148,6 +167,8 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         outline.draggingDestinationFeedbackStyle = .regular
         outline.onDelete = { [weak self] in self?.deleteSelection() }
         outline.onReturn = { [weak self] in self?.renameSelection() }
+        outline.target = self
+        outline.doubleAction = #selector(doubleClicked)
         let menu = NSMenu()
         menu.delegate = self
         outline.menu = menu
@@ -164,12 +185,56 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         scroll.drawsBackground = false
         scroll.translatesAutoresizingMaskIntoConstraints = false
 
-        addSubview(search); addSubview(scroll); addSubview(status)
+        grid.translatesAutoresizingMaskIntoConstraints = false
+        wireGrid()
+        viewToggle.segmentCount = 2
+        viewToggle.trackingMode = .selectOne
+        viewToggle.segmentStyle = .texturedRounded
+        for (i, (name, tip)) in [("list.bullet", "List view"), ("square.grid.2x2", "Icon view")].enumerated() {
+            viewToggle.setImage(NSImage(systemSymbolName: name, accessibilityDescription: tip), forSegment: i)
+            viewToggle.setWidth(26, forSegment: i)
+            viewToggle.setToolTip(tip, forSegment: i)
+        }
+        viewToggle.selectedSegment = viewMode == .list ? 0 : 1
+        viewToggle.target = self; viewToggle.action = #selector(viewModeChanged)
+        viewToggle.controlSize = .small
+        viewToggle.translatesAutoresizingMaskIntoConstraints = false
+        viewToggle.setAccessibilityLabel("View")
+        sizeSlider.minValue = 70; sizeSlider.maxValue = 220; sizeSlider.doubleValue = Double(grid.thumbSize)
+        sizeSlider.controlSize = .mini
+        sizeSlider.target = self; sizeSlider.action = #selector(sizeChanged)
+        sizeSlider.toolTip = "Thumbnail size"
+        sizeSlider.translatesAutoresizingMaskIntoConstraints = false
+        upButton.image = NSImage(systemSymbolName: "chevron.left", accessibilityDescription: "Up one level")
+        upButton.isBordered = false
+        upButton.bezelStyle = .accessoryBarAction
+        upButton.contentTintColor = Theme.Colors.label2
+        upButton.toolTip = "Up one level"
+        upButton.target = self; upButton.action = #selector(goUp)
+        upButton.translatesAutoresizingMaskIntoConstraints = false
+        binLabel.font = Theme.Fonts.small
+        binLabel.textColor = Theme.Colors.label2
+        binLabel.lineBreakMode = .byTruncatingHead
+        binLabel.translatesAutoresizingMaskIntoConstraints = false
+        addSubview(search); addSubview(scroll); addSubview(grid); addSubview(status)
+        addSubview(viewToggle); addSubview(sizeSlider); addSubview(upButton); addSubview(binLabel)
         let g = Theme.Spacing.sm
         NSLayoutConstraint.activate([
             search.topAnchor.constraint(equalTo: topAnchor, constant: g),
             search.leadingAnchor.constraint(equalTo: leadingAnchor, constant: g),
-            search.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -g),
+            search.trailingAnchor.constraint(equalTo: viewToggle.leadingAnchor, constant: -g),
+            viewToggle.centerYAnchor.constraint(equalTo: search.centerYAnchor),
+            viewToggle.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -g),
+            grid.topAnchor.constraint(equalTo: scroll.topAnchor), grid.bottomAnchor.constraint(equalTo: scroll.bottomAnchor),
+            grid.leadingAnchor.constraint(equalTo: scroll.leadingAnchor), grid.trailingAnchor.constraint(equalTo: scroll.trailingAnchor),
+            upButton.leadingAnchor.constraint(equalTo: leadingAnchor, constant: g),
+            upButton.centerYAnchor.constraint(equalTo: status.centerYAnchor),
+            binLabel.leadingAnchor.constraint(equalTo: upButton.trailingAnchor, constant: 2),
+            binLabel.centerYAnchor.constraint(equalTo: status.centerYAnchor),
+            binLabel.trailingAnchor.constraint(lessThanOrEqualTo: sizeSlider.leadingAnchor, constant: -g),
+            sizeSlider.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -g),
+            sizeSlider.centerYAnchor.constraint(equalTo: status.centerYAnchor),
+            sizeSlider.widthAnchor.constraint(equalToConstant: 90),
             scroll.topAnchor.constraint(equalTo: search.bottomAnchor, constant: g),
             scroll.leadingAnchor.constraint(equalTo: leadingAnchor),
             scroll.trailingAnchor.constraint(equalTo: trailingAnchor),
@@ -203,6 +268,8 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         if model.searchText.isEmpty == false { outline.expandItem(nil, expandChildren: true) }
         let rows = IndexSet(selected.compactMap { nodes[$0] }.map { outline.row(forItem: $0) }.filter { $0 >= 0 })
         outline.selectRowIndexes(rows, byExtendingSelection: false)
+        grid.reload()
+        updateBinLabel()
         if model.pendingImports > 0 {
             status.stringValue = "Importing \(model.pendingImports) file\(model.pendingImports == 1 ? "" : "s")…"
             status.textColor = Theme.Colors.label2
@@ -259,7 +326,7 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
             cell.imageView?.contentTintColor = offline ? Theme.Colors.red : Theme.Colors.label2
             (cell.subviews.compactMap { $0 as? SwatchView }.first)?.color = Theme.hex(model.label(of: n.ref).rgb)
             cell.textField?.font = Theme.Fonts.smallName
-            cell.textField?.isEditable = true
+            cell.textField?.isEditable = false     // Return / menu start a rename; a double-click opens the item
             cell.textField?.textColor = offline ? Theme.Colors.red : Theme.Colors.label
         } else {
             cell.textField?.font = Theme.Fonts.small
@@ -401,24 +468,63 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         guard let tf = obj.object as? NSTextField, tf !== search else { return }
         let row = outline.row(for: tf)
         guard row >= 0, let n = outline.item(atRow: row) as? Node else { return }
+        tf.isEditable = false
         if !model.rename(n.ref, to: tf.stringValue) { reload() }   // empty or unchanged: restore the old name
     }
 
     private func renameSelection() {
+        if viewMode == .icons { grid.beginRenameSelected(); return }
         let row = outline.selectedRow
         guard row >= 0 else { return }
+        beginRename(row: row)
+    }
+
+    private func beginRename(row: Int) {
+        (outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView)?.textField?.isEditable = true
         outline.editColumn(0, row: row, with: nil, select: true)
     }
 
+    @objc private func doubleClicked() {
+        let row = outline.clickedRow
+        guard row >= 0, let n = outline.item(atRow: row) as? Node else { return }
+        switch n.ref {
+        case .media(let id): onOpenMedia?(id)
+        case .sequence(let id): onOpenSequence?(id)
+        case .bin: if outline.isItemExpanded(n) { outline.collapseItem(n) } else { outline.expandItem(n) }
+        }
+    }
+
+    /// Selects a media item (expanding its bins) and scrolls it into view.
+    public func reveal(media id: MediaRef.ID) {
+        model.searchText = ""
+        search.stringValue = ""
+        if let parent = model.project.rootBin.parent(of: .media(id)), parent != model.project.rootBin.id {
+            var chain: [Bin.ID] = [parent]
+            while let up = model.project.rootBin.parent(of: .bin(chain.last!)), up != model.project.rootBin.id { chain.append(up) }
+            for b in chain.reversed() { if let n = nodes[.bin(b)] { outline.expandItem(n) } }
+        }
+        guard let n = nodes[.media(id)] else { return }
+        let row = outline.row(forItem: n)
+        guard row >= 0 else { return }
+        outline.selectRowIndexes([row], byExtendingSelection: false)
+        outline.scrollRowToVisible(row)
+    }
+
+    /// Selected items of the visible view.
+    private var selectedRefs: [BinItemRef] {
+        viewMode == .icons ? grid.selection : outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? Node)?.ref }
+    }
+
     private func deleteSelection() {
-        let refs = outline.selectedRowIndexes.compactMap { (outline.item(atRow: $0) as? Node)?.ref }
+        let refs = selectedRefs
         guard !refs.isEmpty else { return }
         if !model.delete(refs) { NSSound.beep() }
     }
 
     /// Media items selected in the outline, in row order (for Insert / Overwrite).
     public var selectedMediaIDs: [MediaRef.ID] {
-        outline.selectedRowIndexes.compactMap { row in
+        if viewMode == .icons { return grid.selection.compactMap { if case .media(let id) = $0 { id } else { nil } } }
+        return outline.selectedRowIndexes.compactMap { row in
             guard case .media(let id)? = (outline.item(atRow: row) as? Node)?.ref else { return nil }
             return id
         }
@@ -456,9 +562,13 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
 
     public func outlineView(_ o: NSOutlineView, pasteboardWriterForItem item: Any) -> NSPasteboardWriting? {
         guard let n = item as? Node else { return nil }
+        return pasteboardItem(n.ref)
+    }
+
+    private func pasteboardItem(_ ref: BinItemRef) -> NSPasteboardItem {
         let pb = NSPasteboardItem()
-        pb.setString(ProjectPanelModel.encodeItems([n.ref]), forType: .sequenceMediaIDs)
-        if case .media(let id) = n.ref, let m = model.project.media(id) {
+        pb.setString(ProjectPanelModel.encodeItems([ref]), forType: .sequenceMediaIDs)
+        if case .media(let id) = ref, let m = model.project.media(id) {
             pb.setString(URL(fileURLWithPath: m.path).absoluteString, forType: .fileURL)
         }
         return pb
@@ -482,6 +592,18 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         if let b = bin(of: item) { return b }
         if let n = item as? Node, let p = model.project.rootBin.parent(of: n.ref), let b = model.project.bin(p) { return b }
         return model.project.rootBin
+    }
+
+    private func dropOperation(_ info: NSDraggingInfo, target: Bin) -> NSDragOperation {
+        switch model.classifyDrop(items: droppedItems(info), files: droppedFiles(info)) {
+        case .move(let items):
+            for case .bin(let id) in items {
+                if let moving = model.project.bin(id), moving.bin(target.id) != nil { return [] }
+            }
+            return .move
+        case .importFiles: return .copy
+        case .none: return []
+        }
     }
 
     public func outlineView(_ o: NSOutlineView, validateDrop info: NSDraggingInfo, proposedItem item: Any?,
@@ -524,6 +646,75 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         }
     }
 
+    // MARK: Icon view
+
+    private func wireGrid() {
+        grid.onOpen = { [weak self] ref in
+            guard let self else { return }
+            switch ref {
+            case .media(let id): onOpenMedia?(id)
+            case .sequence(let id): onOpenSequence?(id)
+            case .bin(let id): model.browseBin = id; model.currentBin = id; grid.setSelection([])
+            }
+        }
+        grid.onDelete = { [weak self] in self?.deleteSelection() }
+        grid.onRename = { [weak self] ref, name in
+            guard let self else { return }
+            if !model.rename(ref, to: name) { reload() }
+        }
+        grid.pasteboardWriter = { [weak self] ref in self?.pasteboardItem(ref) }
+        grid.menuFill = { [weak self] menu, targets in self?.fillMenu(menu, targets: targets) }
+        grid.validateDrop = { [weak self] info, bin in
+            guard let self, let b = model.project.bin(bin) else { return [] }
+            return dropOperation(info, target: b)
+        }
+        grid.onDropOnto = { [weak self] info, bin in
+            guard let self, model.project.bin(bin) != nil else { return false }
+            switch model.classifyDrop(items: droppedItems(info), files: droppedFiles(info)) {
+            case .none: return false
+            case .move(let items): _ = model.move(items, to: bin, at: nil); return true
+            case .importFiles(let files): model.currentBin = bin; importURLs(files); return true
+            }
+        }
+    }
+
+    /// Drops the thumbnail of a relinked or replaced file so the next draw reads the new one.
+    public func forgetThumbnail(_ id: MediaRef.ID) { grid.forgetThumbnail(id); grid.reload() }
+
+    @objc private func viewModeChanged() {
+        viewMode = viewToggle.selectedSegment == 0 ? .list : .icons
+        defaults.set(viewMode.rawValue, forKey: "ProjectPanel.viewMode")
+        if viewMode == .icons { model.browseBin = model.project.rootBin.id }
+        applyMode()
+        reload()
+    }
+
+    @objc private func sizeChanged() { grid.thumbSize = CGFloat(sizeSlider.doubleValue); grid.reload() }
+
+    @objc private func goUp() {
+        guard let parent = model.project.rootBin.parent(of: .bin(model.browseBin)) else { return }
+        model.browseBin = parent
+        model.currentBin = parent
+    }
+
+    private func applyMode() {
+        let icons = viewMode == .icons
+        scroll.isHidden = icons
+        grid.isHidden = !icons
+        sizeSlider.isHidden = !icons
+        upButton.isHidden = !icons
+        binLabel.isHidden = !icons
+        status.isHidden = icons
+        updateBinLabel()
+    }
+
+    private func updateBinLabel() {
+        guard viewMode == .icons else { return }
+        let b = model.project.bin(model.browseBin) ?? model.project.rootBin
+        binLabel.stringValue = b.id == model.project.rootBin.id ? "\(model.project.media.count) items" : b.name
+        upButton.isEnabled = b.id != model.project.rootBin.id
+    }
+
     // MARK: Context menu
 
     private var menuTargets: [BinItemRef] = []
@@ -536,21 +727,64 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
             outline.selectRowIndexes([clicked], byExtendingSelection: false)
         }
         let rows = clicked >= 0 ? outline.selectedRowIndexes : []
-        menuTargets = rows.compactMap { (outline.item(atRow: $0) as? Node)?.ref }
-        menu.addItem(withTitle: "New Bin", action: #selector(menuNewBin), keyEquivalent: "").target = self
-        if !menuTargets.isEmpty {
-            menu.addItem(withTitle: "Rename", action: #selector(menuRename), keyEquivalent: "").target = self
-            menu.addItem(withTitle: "Delete", action: #selector(menuDelete), keyEquivalent: "").target = self
-            if menuTargets.contains(where: { if case .bin = $0 { false } else { true } }) {
-                menu.addItem(.separator())
-                addLabelItems(to: menu)
-            }
-            if menuTargets.contains(where: { if case .media = $0 { true } else { false } }) {
-                menu.addItem(.separator())
-                menu.addItem(withTitle: "Reveal in Finder", action: #selector(menuReveal), keyEquivalent: "").target = self
+        fillMenu(menu, targets: rows.compactMap { (outline.item(atRow: $0) as? Node)?.ref })
+    }
+
+    /// Premiere's three Project menus in one place: empty area, bin, item. Entries for features we do not have are left out.
+    private func fillMenu(_ menu: NSMenu, targets: [BinItemRef]) {
+        menuTargets = targets
+        func add(_ title: String, _ sel: Selector, enabled: Bool = true) {
+            let it = menu.addItem(withTitle: title, action: sel, keyEquivalent: "")
+            it.target = self
+            it.isEnabled = enabled
+        }
+        let media: [MediaRef.ID] = targets.compactMap { if case .media(let id) = $0 { id } else { nil } }
+        let hasBin = targets.contains { if case .bin = $0 { true } else { false } }
+        let hasSeq = targets.contains { if case .sequence = $0 { true } else { false } }
+        if targets.isEmpty {
+            add("New Bin", #selector(menuNewBin))
+            add("New Sequence…", #selector(menuNewSequence))
+            menu.addItem(.separator())
+            add("Import…", #selector(menuImport))
+            return
+        }
+        let online = !media.isEmpty && media.allSatisfy { !model.isOffline($0) }
+        if !media.isEmpty && !hasBin && !hasSeq {
+            add("Open in Source Monitor", #selector(menuOpenSource), enabled: media.count == 1 && online)
+            menu.addItem(.separator())
+            add("Insert", #selector(menuInsert), enabled: online)
+            add("Overwrite", #selector(menuOverwrite), enabled: online)
+            add("New Sequence From Clip", #selector(menuSequenceFromClip), enabled: media.count == 1 && online)
+            menu.addItem(.separator())
+        } else if hasSeq && !hasBin && media.isEmpty {
+            add("Open in Timeline", #selector(menuOpenSequence), enabled: targets.count == 1)
+            menu.addItem(.separator())
+        }
+        if hasBin && targets.count == 1 { add("New Bin", #selector(menuNewBin)); menu.addItem(.separator()) }
+        add("Rename", #selector(menuRename), enabled: targets.count == 1)
+        add("Delete", #selector(menuDelete), enabled: hasBin || !media.isEmpty)
+        if targets.contains(where: { if case .bin = $0 { false } else { true } }) {
+            menu.addItem(.separator())
+            addLabelItems(to: menu)
+        }
+        if !media.isEmpty {
+            menu.addItem(.separator())
+            add("Reveal in Finder", #selector(menuReveal))
+            if media.count == 1 {
+                add(model.isOffline(media[0]) ? "Link Media…" : "Replace Footage…", #selector(menuReplaceFootage))
             }
         }
     }
+
+    @objc private func menuNewSequence() { onNewSequence?() }
+    @objc private func menuImport() { onImportRequest?() ?? runImportPanel() }
+    @objc private func menuOpenSource() { if let id = selectedMediaIDs.first ?? mediaTargets.first { onOpenMedia?(id) } }
+    @objc private func menuOpenSequence() { if case .sequence(let id)? = menuTargets.first { onOpenSequence?(id) } }
+    @objc private func menuInsert() { onPlace?(mediaTargets, .insert) }
+    @objc private func menuOverwrite() { onPlace?(mediaTargets, .overwrite) }
+    @objc private func menuSequenceFromClip() { if let id = mediaTargets.first { onNewSequenceFromClip?(id) } }
+    @objc private func menuReplaceFootage() { if let id = mediaTargets.first { onReplaceFootage?(id) } }
+    private var mediaTargets: [MediaRef.ID] { menuTargets.compactMap { if case .media(let id) = $0 { id } else { nil } } }
 
     private func addLabelItems(to menu: NSMenu) {
         let sub = NSMenu(title: "Label")
@@ -582,9 +816,14 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         outline.selectRowIndexes(rows, byExtendingSelection: false)
     }
 
+    /// Cmd+B: a new bin in the current bin, named in place.
+    public func newBin() { menuNewBin() }
+
     @objc private func menuNewBin() {
+        if viewMode == .icons { model.currentBin = model.browseBin }
         guard let id = model.newBin(name: "Untitled Bin") else { return }
         reload()
+        if viewMode == .icons { grid.setSelection([.bin(id)]); grid.beginRenameSelected(); return }
         if let n = nodes[.bin(id)] {
             // Expand the parent so the new row is visible, then start editing.
             if let parent = model.project.rootBin.parent(of: .bin(id)), let pn = nodes[.bin(parent)] { outline.expandItem(pn) }
@@ -592,7 +831,7 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
             if row >= 0 {
                 outline.selectRowIndexes([row], byExtendingSelection: false)
                 outline.scrollRowToVisible(row)
-                outline.editColumn(0, row: row, with: nil, select: true)
+                beginRename(row: row)
             }
         }
     }

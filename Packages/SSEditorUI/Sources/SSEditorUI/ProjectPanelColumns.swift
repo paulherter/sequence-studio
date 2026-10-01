@@ -153,7 +153,7 @@ public struct ProjectColumnLayout: Sendable, Equatable, Codable {
     public private(set) var visible: [ProjectPanelModel.Column]
     public private(set) var widths: [String: Double]
 
-    public static let defaults = ProjectColumnLayout(visible: [.name, .frameRate], widths: [:])
+    public static let defaults = ProjectColumnLayout(visible: [.name, .frameRate, .duration, .format], widths: [:])
     public static let defaultsKey = "ProjectPanel.columns.v1"
 
     public init(visible: [ProjectPanelModel.Column], widths: [String: Double] = [:]) {

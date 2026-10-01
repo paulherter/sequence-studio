@@ -33,7 +33,11 @@ public final class EditorSession {
     public private(set) var playhead: Time = .zero
     public private(set) var selection: Set<Clip.ID> = []
     public private(set) var captionSelection: Set<CaptionItem.ID> = []
+    /// Clips copied with Cmd+C / Cmd+X (Paste puts them at the playhead).
+    public var clipboard: TimelineClipboard?
     public private(set) var isPlaying = false
+    /// Loop toggle and the range of "Play In to Out" (nil = whole sequence); see `PlaybackBounds`.
+    public var bounds = PlaybackBounds()
     public private(set) var lastAutosave: Date?
     /// Message of the last refused or failed action (locked track, disk error...); UI shows it in the status bar.
     public private(set) var lastError: String?
@@ -44,6 +48,9 @@ public final class EditorSession {
     @ObservationIgnored private let saveQueue: ProjectSaveQueue
     @ObservationIgnored private let clock: @Sendable () -> Date
     @ObservationIgnored public var onChange: (@MainActor (Change) -> Void)?
+    /// Asked when the first clip placed into an empty, never configured sequence differs from its format (Premiere's
+    /// "change sequence settings / keep existing" prompt). true = adopt the clip's format. nil hook = adopt silently.
+    @ObservationIgnored public var confirmFormatChange: (@MainActor (_ current: SequenceFormat, _ proposed: SequenceFormat) -> Bool)?
 
     @ObservationIgnored private var forceDirty = false
     @ObservationIgnored private var pushed: (timeline: Timeline, sequences: [Timeline.ID: Timeline])?
@@ -105,7 +112,7 @@ public final class EditorSession {
         try? SessionMarker(store: autosaveStore).begin(projectID: project.id, projectURL: fileURL, projectName: project.name)
     }
 
-    private func notify(_ c: Change) { onChange?(c) }
+    func notify(_ c: Change) { onChange?(c) }
 
     // MARK: Editing
 
@@ -222,6 +229,16 @@ public final class EditorSession {
         captionSelection.formIntersection(Set(t.captionTracks.flatMap { $0.items.map(\.id) }))
     }
 
+    /// Media that is not at its path (offline): the relink dialog's input.
+    public var missingMedia: [MediaRef] { project.missingMedia() }
+
+    /// Points offline media at found files: one undo step; the media is opened again.
+    public func relinkMedia(_ paths: [MediaRef.ID: String]) {
+        guard !paths.isEmpty else { return }
+        requestedMedia.subtract(paths.keys)       // so `syncMedia` prepares them again
+        perform("Relink Media") { $0.relink(paths) }
+    }
+
     private func syncMedia() {
         // Always: the active sequence's sample rate can change without the media changing.
         media.update(project.media, sampleRate: activeTimeline?.format.audioSampleRate)
@@ -286,6 +303,19 @@ public final class EditorSession {
         guard isPlaying else { return }
         let end = activeTimeline?.duration ?? .zero
         // Stop at the sequence end: the last presented frame is one frame before `end`, and the engine may have stopped itself.
+        let rate = engine.rate
+        switch bounds.action(at: t, rate: rate, frameDuration: frameDuration, duration: end) {
+        case .wrap(let to):
+            playhead = to
+            engine.seek(to: to); engine.play(rate)
+            notify(.playhead)
+            return
+        case .stop(let at) where bounds.range != nil:
+            engine.pause(); isPlaying = false; playhead = at
+            notify([.playhead, .transport])
+            return
+        default: break
+        }
         let atEnd = end > .zero && (t + frameDuration >= end) && engine.rate.isForward
         if atEnd || engine.rate.isPaused {
             engine.pause(); isPlaying = false
@@ -323,14 +353,14 @@ public final class EditorSession {
 
     public func playPause() {
         if ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1" { NSLog("SSKEY session.playPause isPlaying=\(isPlaying) rate=\(engine.rate)") }
-        if isPlaying || !engine.rate.isPaused { engine.pause(); isPlaying = false } else { restartIfAtEnd(); engine.play(.forward); isPlaying = true }
+        if isPlaying || !engine.rate.isPaused { engine.pause(); isPlaying = false } else { bounds.range = nil; restartIfAtEnd(); engine.play(.forward); isPlaying = true }
         notify(.transport)
     }
 
     public func apply(shuttle action: ShuttleAction) {
         switch action {
         case .setRate(let r):
-            if r.isPaused { engine.pause(); isPlaying = false } else { if r.isForward { restartIfAtEnd() }; engine.play(r); isPlaying = true }
+            if r.isPaused { engine.pause(); isPlaying = false } else { bounds.range = nil; if r.isForward { restartIfAtEnd() }; engine.play(r); isPlaying = true }
             notify(.transport)
         case .step(let n): stepFrames(n)
         case .none: break
@@ -345,12 +375,22 @@ public final class EditorSession {
     public func goToStart() { seek(to: .zero) }
     public func goToEnd() { seek(to: activeTimeline?.duration ?? .zero) }
 
+    /// Edit points Up/Down jump between: those of the targeted tracks, or of all tracks when none is targeted (Premiere).
+    private func jumpPoints() -> [Time] {
+        guard let t = activeTimeline else { return [] }
+        let targeted = t.tracks.filter(\.isTargeted)
+        guard !targeted.isEmpty else { return t.editPoints() }
+        var set = Set<Time>()
+        for tr in targeted { for c in tr.clips { set.insert(c.start); set.insert(c.timeline.end) } }
+        return set.sorted()
+    }
+
     public func goToNextEditPoint() {
-        if let t = activeTimeline?.editPoints().first(where: { $0 > playhead }) { seek(to: t) }
+        if let t = jumpPoints().first(where: { $0 > playhead }) { seek(to: t) }
     }
 
     public func goToPreviousEditPoint() {
-        if let t = activeTimeline?.editPoints().last(where: { $0 < playhead }) { seek(to: t) }
+        if let t = jumpPoints().last(where: { $0 < playhead }) { seek(to: t) }
     }
 
     public func goToIn() { if let io = activeTimeline?.inOut { seek(to: io.start) } }
@@ -424,11 +464,14 @@ public final class EditorSession {
     /// Returns false when nothing could be placed (unknown ID, refused edit).
     @discardableResult
     public func placeMedia(_ ids: [MediaRef.ID], at time: Time? = nil, videoTrack: Track.ID? = nil,
-                           mode: ThreePointMode = .overwrite) -> Bool {
+                           mode: ThreePointMode = .overwrite, adoptFormat: Bool = true, streams: SourceStreams = .both) -> Bool {
         guard let t = activeTimeline else { return false }
         let refs = ids.compactMap { project.media($0) }.filter { ($0.info?.duration ?? $0.duration) != nil }
         guard !refs.isEmpty else { return false }
-        let adopts = !t.formatLocked && t.tracks.allSatisfy { $0.clips.isEmpty }
+        var adopts = adoptFormat && !t.formatLocked && t.tracks.allSatisfy { $0.clips.isEmpty }
+        if adopts, let ask = confirmFormatChange, let proposed = formatMismatch(placing: ids) {
+            adopts = ask(t.format, proposed)
+        }
         let requested = time ?? playhead
         let marks = project.sourceMarks
         let done = attempt(mode == .insert ? "Insert" : "Overwrite") { tl in
@@ -448,8 +491,8 @@ public final class EditorSession {
                 let still = ref.info?.isStill == true
                 let source = still ? TimeRange(start: .zero, duration: total)      // stills: default length, no source marks
                                    : marks[ref.id]?.range ?? TimeRange(start: .zero, duration: total)
-                let hasVideo = ref.info?.video != nil || ref.info == nil
-                let d = tl.dropTargets(pointer: videoTrack, hasVideo: hasVideo, hasAudio: ref.info?.audio != nil)
+                let hasVideo = (ref.info?.video != nil || ref.info == nil) && streams.includesVideo
+                let d = tl.dropTargets(pointer: videoTrack, hasVideo: hasVideo, hasAudio: ref.info?.audio != nil && streams.includesAudio)
                 var targets: [Track.ID] = []
                 if let v = d.video { targets.append(v) }
                 if let a = d.audio { targets.append(a) } else if let n = d.newAudioOrdinal { targets.append(tl.ensureAudioTrack(atOrdinal: n)) }
@@ -459,6 +502,20 @@ public final class EditorSession {
             }
         }
         return done
+    }
+
+    /// The format the first of `ids` would give an empty, never configured sequence, when it differs from the current one
+    /// (size or frame rate). nil when `placeMedia` would not change the sequence format. The app asks the user first
+    /// ("change sequence settings / keep existing"), then places with `adoptFormat` accordingly.
+    public func formatMismatch(placing ids: [MediaRef.ID]) -> SequenceFormat? {
+        guard let t = activeTimeline, !t.formatLocked, t.tracks.allSatisfy({ $0.clips.isEmpty }),
+              let ref = ids.compactMap({ project.media($0) }).first(where: { ($0.info?.duration ?? $0.duration) != nil }),
+              let v = ref.info?.video else { return nil }
+        let still = ref.info?.isStill == true
+        let f = SequenceFormat(width: v.displayWidth, height: v.displayHeight,
+                               frameDuration: still ? t.format.frameDuration : v.nominalFrameDuration,
+                               audioSampleRate: t.format.audioSampleRate)
+        return f == t.format ? nil : f
     }
 
     /// New empty sequence in the active sequence's format (V1, V2, A1, A2); it becomes the active one.
@@ -617,6 +674,15 @@ public final class EditorSession {
                 self.projectDidChange()
             }
         }
+    }
+
+    /// Source Monitor In/Out of a media item. Not an undo step (Premiere keeps marks out of the edit history): the
+    /// change is folded into every history state so Undo never reverts a mark. nil clears the item's marks.
+    public func setSourceMarks(_ marks: SourceMarks?, for media: MediaRef.ID) {
+        guard project.sourceMarks[media] != (marks?.isEmpty == true ? nil : marks) else { return }
+        history.amendAll { p in p.sourceMarks[media] = (marks?.isEmpty == true) ? nil : marks }
+        forceDirty = true
+        notify(.project)
     }
 
     // MARK: Autosave and recovery

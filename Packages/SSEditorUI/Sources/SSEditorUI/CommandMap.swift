@@ -51,6 +51,7 @@ public struct CommandMap: Sendable {
         // Transport
         add(g, ch("j"), .shuttleReverse); add(g, ch("k"), .shuttleStop); add(g, ch("l"), .shuttleForward)
         add(g, .space, .playPause)
+        add(g, ch("j"), .shift, .shuttleSlowReverse); add(g, ch("l"), .shift, .shuttleSlowForward)
         add(g, .left, .stepBackward); add(g, .right, .stepForward)
         add(g, .left, .shift, .stepBackward5); add(g, .right, .shift, .stepForward5)
         add(g, .home, .goToStart); add(g, .end, .goToEnd)
@@ -58,9 +59,14 @@ public struct CommandMap: Sendable {
         add(g, ch("i"), .markIn); add(g, ch("o"), .markOut)
         add(g, ch("i"), .shift, .goToIn); add(g, ch("o"), .shift, .goToOut)
         add(g, ch("x"), .markClip); add(g, ch("x"), .option, .clearInOut)
+        add(g, ch("i"), .option, .clearIn); add(g, ch("o"), .option, .clearOut)
+        add(g, .space, .shift, .playInToOut); add(g, ch("l"), .control, .toggleLoop)
+        add(g, ch("e"), .shift, .exportFrame); add(g, ch("e"), [.command, .shift], .exportFrame); add(g, ch("b"), .command, .newBin)
         add(g, ch(";"), .lift); add(g, ch("'"), .extract)
         add(g, ch(","), .insert); add(g, ch("."), .overwrite)
         add(g, ch("m"), .addMarker)
+        add(g, ch("m"), .shift, .nextMarker); add(g, ch("m"), [.command, .shift], .previousMarker)
+        add(g, ch("/"), .markSelection)
         // Tools
         add(g, ch("v"), .tool(.selection)); add(g, ch("a"), .tool(.trackForward))
         add(g, ch("a"), .shift, .tool(.trackBackward))
@@ -71,15 +77,20 @@ public struct CommandMap: Sendable {
         // Clipboard / history / file
         add(g, ch("c"), .command, .copy); add(g, ch("x"), .command, .cut); add(g, ch("v"), .command, .paste)
         add(g, ch("v"), [.command, .option], .pasteAttributes)
+        add(g, ch("v"), [.command, .shift], .pasteInsert)
         add(g, ch("z"), .command, .undo); add(g, ch("z"), [.command, .shift], .redo)
         add(g, ch("i"), .command, .importMedia); add(g, ch("n"), .command, .newSequence)
         add(g, ch("s"), .command, .save); add(g, ch("m"), .command, .export)
+        add(g, ch("s"), [.command, .shift], .saveAs); add(g, ch("o"), .command, .openProject)
+        add(g, ch("n"), [.command, .option], .newProject)
+        add(g, ch("k"), [.command, .option], .keyboardShortcuts); add(g, ch(","), .command, .preferences)
         // Panels (Premiere set; 6 maps to Library, our closest to the audio-side panel)
         let panels: [PanelID] = [.project, .sourceMonitor, .timeline, .programMonitor, .effectControls, .library, .effects]
         for (i, p) in panels.enumerated() {
             add(g, ch(Character(String(i + 1))), .shift, .focusPanel(p))
         }
-        add(g, ch("`"), .maximizePanel)
+        add(g, ch("`"), .maximizePanel); add(g, ch("`"), .shift, .maximizeActivePanel)
+        add(g, ch("0"), [.option, .shift], .resetLayout)
 
         // Timeline
         add(t, .up, .previousEditPoint); add(t, .down, .nextEditPoint)
@@ -87,9 +98,16 @@ public struct CommandMap: Sendable {
         add(t, ch("q"), .rippleTrimPrevious); add(t, ch("w"), .rippleTrimNext); add(t, ch("e"), .extendEdit)
         add(t, .delete, .delete); add(t, .delete, .shift, .rippleDelete)
         add(t, ch("s"), .toggleSnapping)
+        add(t, ch("a"), .command, .selectAll); add(t, ch("a"), [.command, .shift], .deselectAll)
+        add(t, ch("d"), .selectClipAtPlayhead)
+        add(t, .up, .shift, .previousEditPointAnyTrack); add(t, .down, .shift, .nextEditPointAnyTrack)
+        // Nudge the selected clips (Cmd+arrows) or trim the selected edit (Opt+Shift+arrows; Opt+arrows is one frame, see AppController).
+        add(t, .left, .command, .nudgeLeft); add(t, .right, .command, .nudgeRight)
+        add(t, .left, [.command, .shift], .nudgeLeft5); add(t, .right, [.command, .shift], .nudgeRight5)
+        add(t, .left, [.option, .shift], .trimBackward5); add(t, .right, [.option, .shift], .trimForward5)
         add(t, ch("l"), .command, .link); add(t, ch("g"), .command, .group)
         add(t, ch("f"), .matchFrame); add(t, ch("r"), .shift, .reverseMatchFrame)
-        add(t, ch("="), .zoomIn); add(t, ch("+"), .zoomIn); add(t, ch("-"), .zoomOut); add(t, ch("\\"), .zoomFit)
+        add(t, ch("="), .zoomIn); add(t, ch("-"), .zoomOut); add(t, ch("\\"), .zoomFit)
         // Track heights: modifier combinations only, so plain +/-/\ stay timeline zoom.
         add(t, ch("="), .command, .videoTracksTaller); add(t, ch("-"), .command, .videoTracksShorter)
         add(t, ch("="), .option, .audioTracksTaller); add(t, ch("-"), .option, .audioTracksShorter)

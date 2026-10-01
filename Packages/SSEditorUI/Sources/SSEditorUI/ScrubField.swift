@@ -11,7 +11,7 @@ public enum ScrubKeyframeState: Sendable, Equatable {
 /// Scrubbable numeric value: accent text, drag horizontally to change, click to type.
 ///
 /// One gesture = one `onBegin` ... `onChange`* ... `onEnd` triple, so callers make exactly one undo step.
-/// Drag: pixels * `step`, Shift x10, Option x0.1; the pointer is hidden and locked while dragging.
+/// Drag: pixels * `step`, Shift x10, Option or Command x0.1 (fine); the pointer is hidden and locked while dragging.
 /// Click (no drag): inline NSTextField; Enter commits, Esc cancels, Up/Down step. Left/Right/Up/Down step
 /// when the field itself has focus.
 public final class ScrubField: NSControl, NSTextFieldDelegate {
@@ -174,7 +174,7 @@ public final class ScrubField: NSControl, NSTextFieldDelegate {
         accumulatedDX += Double(event.deltaX)
         let mods = event.modifierFlags
         let v = ScrubMath.value(start: dragStartValue, deltaPixels: accumulatedDX, step: step,
-                                shift: mods.contains(.shift), option: mods.contains(.option), range: range)
+                                shift: mods.contains(.shift), option: mods.contains(.option) || mods.contains(.command), range: range)
         apply(v)
     }
 
@@ -221,8 +221,9 @@ public final class ScrubField: NSControl, NSTextFieldDelegate {
     public override func keyDown(with event: NSEvent) {
         let mods = event.modifierFlags
         switch event.keyCode {
-        case 123, 125: stepByKey(-1, shift: mods.contains(.shift), option: mods.contains(.option))   // left, down
-        case 124, 126: stepByKey(+1, shift: mods.contains(.shift), option: mods.contains(.option))   // right, up
+        case 123, 125: stepByKey(-1, shift: mods.contains(.shift), option: mods.contains(.option) || mods.contains(.command))   // left, down
+        case 124, 126: stepByKey(+1, shift: mods.contains(.shift), option: mods.contains(.option) || mods.contains(.command))   // right, up
+        case 48: focusNeighbour(forward: !mods.contains(.shift))                                       // tab
         case 36, 76: beginEditing()                                                                   // return, enter
         default: super.keyDown(with: event)
         }
@@ -246,6 +247,36 @@ public final class ScrubField: NSControl, NSTextFieldDelegate {
     public override func viewWillMove(toWindow newWindow: NSWindow?) {
         if isDragging { endDrag() }
         super.viewWillMove(toWindow: newWindow)
+    }
+
+    // MARK: Tab order
+
+    /// The next (or previous) visible field in reading order among the fields that share this one's scroll view or window.
+    public static func neighbour(of field: ScrubField, in fields: [ScrubField], forward: Bool) -> ScrubField? {
+        func origin(_ f: ScrubField) -> (CGFloat, CGFloat) {
+            let r = f.convert(f.bounds, to: nil)
+            return (-r.maxY.rounded(), r.minX)          // window y points up: top rows first
+        }
+        let ordered = fields.filter { !$0.isHiddenOrHasHiddenAncestor }.sorted { a, b in
+            let (ay, ax) = origin(a), (by, bx) = origin(b)
+            return ay != by ? ay < by : ax < bx
+        }
+        guard let i = ordered.firstIndex(where: { $0 === field }), ordered.count > 1 else { return nil }
+        return ordered[(i + (forward ? 1 : ordered.count - 1)) % ordered.count]
+    }
+
+    private static func fields(in root: NSView) -> [ScrubField] {
+        var out: [ScrubField] = []
+        func walk(_ v: NSView) { if let f = v as? ScrubField { out.append(f) }; v.subviews.forEach(walk) }
+        walk(root)
+        return out
+    }
+
+    func focusNeighbour(forward: Bool, editing: Bool = false) {
+        guard let root = enclosingScrollView ?? window?.contentView,
+              let next = Self.neighbour(of: self, in: Self.fields(in: root), forward: forward) else { return }
+        window?.makeFirstResponder(next)
+        if editing { next.beginEditing() }
     }
 
     // MARK: Text editing
@@ -303,6 +334,12 @@ public final class ScrubField: NSControl, NSTextFieldDelegate {
             commitEditing(); return true
         case #selector(NSResponder.cancelOperation(_:)):
             cancelEditing(); return true
+        case #selector(NSResponder.insertTab(_:)), #selector(NSResponder.insertBacktab(_:)):
+            // Tab commits and opens the next field for typing, like Premiere's value fields.
+            let forward = sel == #selector(NSResponder.insertTab(_:))
+            commitEditing()
+            focusNeighbour(forward: forward, editing: true)
+            return true
         case #selector(NSResponder.moveUp(_:)), #selector(NSResponder.moveDown(_:)):
             // Step the text in place; committed on Enter / focus loss.
             let dir = sel == #selector(NSResponder.moveUp(_:)) ? 1 : -1

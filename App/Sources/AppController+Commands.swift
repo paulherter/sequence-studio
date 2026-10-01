@@ -6,19 +6,22 @@ import SSEditorUI
 extension AppController {
     static func isSupported(_ c: EditorCommand) -> Bool {
         switch c {
-        case .shuttleReverse, .shuttleStop, .shuttleForward, .playPause,
+        case .shuttleReverse, .shuttleStop, .shuttleForward, .shuttleSlowReverse, .shuttleSlowForward, .playPause,
              .stepBackward, .stepForward, .stepBackward5, .stepForward5,
              .previousEditPoint, .nextEditPoint, .goToStart, .goToEnd,
-             .markIn, .markOut, .markClip, .goToIn, .goToOut, .clearInOut, .lift, .extract, .insert, .overwrite, .addMarker,
+             .markIn, .markOut, .markClip, .goToIn, .goToOut, .clearInOut, .clearIn, .clearOut, .lift, .extract, .insert, .overwrite, .addMarker,
+             .playInToOut, .toggleLoop, .exportFrame, .newBin, .matchFrame, .reverseMatchFrame,
              .tool, .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext,
              .delete, .rippleDelete, .toggleSnapping, .undo, .redo,
-             .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel,
+             .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel, .maximizeActivePanel, .resetLayout,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .minimizeAllTracks, .expandAllTracks,
              .importMedia, .newSequence, .save, .export:
             true
+        case _ where isShellCommand(c):
+            true
         default:
-            false
+            Self.isTimelineOp(c)
         }
     }
 
@@ -26,6 +29,12 @@ extension AppController {
         if ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1" { NSLog("SSKEY execute \(c) playing=\(session.isPlaying)") }
         // Editing text (a field or the timecode box): the standard commands go to the editor.
         if let tv = textResponder, forwardToText(c, tv) { return }
+        if focusedPanel == .sourceMonitor, panels.source.handle(c) { return }
+        if executeShellCommand(c) { return }
+        if [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus, executeInEffectControls(c) { return }
+        // Timeline operations (clipboard, link, nudge, edge trims...); Effect Controls keeps its own keys while it has focus.
+        let ecOwns = [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus
+        if Self.isTimelineOp(c) || c == .previousKeyframe || c == .nextKeyframe, !ecOwns, executeTimelineOp(c) { return }
         guard Self.isSupported(c) else {
             shell.statusBar.flash("\(c.title) is not available yet.")
             return
@@ -33,6 +42,8 @@ extension AppController {
         switch c {
         case .shuttleReverse: shuttle(.j)
         case .shuttleStop: shuttle(.k)
+        case .shuttleSlowReverse: nudgeShuttle(forward: false)
+        case .shuttleSlowForward: nudgeShuttle(forward: true)
         case .shuttleForward: shuttle(.l)
         case .playPause: session.playPause()
         case .stepBackward: session.stepFrames(-1)
@@ -51,9 +62,20 @@ extension AppController {
         case .clearInOut: session.clearInOut()
         case .lift: session.liftRange()
         case .extract: session.extractRange()
+        case .clearIn: session.clearIn()
+        case .clearOut: session.clearOut()
+        case .playInToOut: session.playInToOut()
+        case .toggleLoop: session.toggleLoop(); panels.monitorModel.isLooping = session.bounds.loop
+        case .exportFrame:
+            if focusedPanel == .sourceMonitor { panels.source.exportFrame() } else { exportProgramFrame() }
+        case .newBin: showPanel(.project); panels.projectView.newBin()
+        case .matchFrame: panels.matchFrame()
+        case .reverseMatchFrame: panels.reverseMatchFrame()
         case .insert: placeSelectedMedia(.insert)
         case .overwrite: placeSelectedMedia(.overwrite)
-        case .addMarker: session.addMarkerAtPlayhead()
+        case .addMarker:
+            // M on a frame that already has a marker opens its dialog (Premiere).
+            if let r = session.markAtPlayhead(), r.openEdit { panels.editMarker(r.id) }
         case .tool(let t): selectTool(t)
         case .addEdit: session.addEditAtPlayhead()
         case .addEditAllTracks: session.addEditAtPlayhead(allTracks: true)
@@ -62,6 +84,7 @@ extension AppController {
         case .delete, .rippleDelete:
             // Effect Controls owns Delete while it has focus: keys, then the selected effect. Never the timeline clips.
             if effectControlsHasFocus { panels.effectModel.deleteSelectionOrEffect() }
+            else if deleteSelectedGap() { }
             else { session.deleteSelection(ripple: c == .rippleDelete) }
         case .toggleSnapping:
             panels.timelineView.toolState.snapping.toggle()
@@ -79,7 +102,7 @@ extension AppController {
         case .zoomFit: if effectControlsHasFocus { panels.effectModel.zoomToFit() } else { panels.timelineView.zoomToFit() }
         case .focusPanel(let p): showPanel(p)
         case .maximizePanel:
-            if let p = focusedPanel { maximizedPanel = maximizedPanel == p ? nil : p; applyWorkspace() }
+            if let p = panelUnderMouse() ?? focusedPanel { toggleMaximize(p) }
         case .importMedia:
             showPanel(.project)
             panels.projectView.runImportPanel()
@@ -90,7 +113,20 @@ extension AppController {
         }
     }
 
+    private func nudgeShuttle(forward: Bool) {
+        if focusedPanel == .sourceMonitor { panels.source.nudge(forward: forward); return }
+        session.apply(shuttle: .setRate(session.engine.rate.nudged(forward: forward)))
+    }
+
+    private func exportProgramFrame() {
+        session.stopPlayback()
+        let name = (session.activeTimeline?.name ?? "Frame") + ".png"
+        FrameExport.run(texture: session.engine.lastRenderedTexture, suggestedName: name, on: window,
+                        status: { [weak self] in self?.shell.statusBar.flash($0) })
+    }
+
     private func shuttle(_ key: ShuttleKey) {
+        if focusedPanel == .sourceMonitor { panels.source.press(key); return }
         session.apply(shuttle: menuShuttle.press(key))
         _ = menuShuttle.release(key)
     }
@@ -112,14 +148,18 @@ extension AppController {
         // The Program monitor follows: Hand pans the view, Type places text, everything else is the selection behaviour.
         panels.setMonitorTool(t == .hand ? .hand : t == .type ? .type : .select)
         guard let mapped else { shell.statusBar.flash("\(EditorCommand.tool(t).title) is not available yet."); return }
+        panels.timelineView.toolState.selectBackward = t == .trackBackward
         panels.timelineView.toolState.tool = mapped
         shell.statusBar.flash(EditorCommand.tool(t).title, seconds: 2)
     }
 
     /// Insert / Overwrite the media selected in the Project panel at the playhead.
     private func placeSelectedMedia(_ mode: ThreePointMode) {
+        // Premiere: the clip loaded in the Source monitor (its In/Out, the targeted tracks) ...
+        if panels.source.mediaID != nil, focusedPanel != .project { panels.source.edit(mode); return }
+        // ... and without one, what is selected in the Project panel.
         let ids = panels.projectView.selectedMediaIDs
-        guard !ids.isEmpty else { shell.statusBar.flash("Select media in the Project panel first."); return }
+        guard !ids.isEmpty else { shell.statusBar.flash("Open a clip in the Source monitor first (double-click it in the Project panel)."); return }
         session.placeMedia(ids, mode: mode)
     }
 
