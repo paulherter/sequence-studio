@@ -112,13 +112,12 @@ public final class KeyframeGraphView: NSView {
             let kp = g.keyPoint(track: t, index: i)
             for side in [GraphHandleSide.inSide, .outSide] {
                 guard let hp = g.handlePoint(track: t, keyID: k.id, side: side) else { continue }
-                Theme.Colors.accentRing.setStroke()
+                Theme.Colors.accent.setStroke()
                 let l = NSBezierPath()
-                l.move(to: kp); l.line(to: hp); l.lineWidth = 1; l.stroke()
-                let r = NSRect(x: hp.x - 3.5, y: hp.y - 3.5, width: 7, height: 7)
-                let dot = NSBezierPath(ovalIn: r)
-                Theme.Colors.lane.setFill(); dot.fill()
-                Theme.Colors.accent.setStroke(); dot.lineWidth = 1.5; dot.stroke()
+                l.move(to: kp); l.line(to: hp); l.lineWidth = KeyframeGraphGeometry.handleLineWidth; l.stroke()
+                let d = KeyframeGraphGeometry.handleKnobDiameter
+                let dot = NSBezierPath(ovalIn: NSRect(x: hp.x - d / 2, y: hp.y - d / 2, width: d, height: d))
+                Theme.Colors.accent.setFill(); dot.fill()
             }
         }
         // Keys

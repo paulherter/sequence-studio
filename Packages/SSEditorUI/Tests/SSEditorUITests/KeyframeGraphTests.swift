@@ -89,9 +89,9 @@ private let limits = GraphEditLimits(frameDuration: fd)
     @Test func valueHandlePositionMatchesBezierControlPoints() {
         let t = KeyframeTrack(keys: [key(idA, 0, 0, out: EaseHandle(dx: 0.25, dy: 0.5)), key(idB, 2, 100, in: EaseHandle(dx: 0.5, dy: 0.2))])
         let out = GraphMath.handlePoint(track: t, keyID: idA, side: .outSide, mode: .value)!
-        #expect(abs(out.seconds - 0.5) < 1e-9 && abs(out.value - 50) < 1e-9)
+        #expect(abs(out.seconds - 0.25) < 1e-9 && abs(out.value - 50) < 1e-9)
         let inn = GraphMath.handlePoint(track: t, keyID: idB, side: .inSide, mode: .value)!
-        #expect(abs(inn.seconds - 1.0) < 1e-9 && abs(inn.value - 80) < 1e-9)
+        #expect(abs(inn.seconds - 1.5) < 1e-9 && abs(inn.value - 80) < 1e-9)
     }
 
     @Test func speedHandleMatchesSSCoreConversion() {
@@ -99,7 +99,7 @@ private let limits = GraphEditLimits(frameDuration: fd)
         let t = KeyframeTrack(keys: [key(idA, 0, 0, out: h), key(idB, 2, 100)])
         let p = GraphMath.handlePoint(track: t, keyID: idA, side: .outSide, mode: .speed)!
         let s = h.speedHandle(valueDelta: 100, duration: Time(2, 1))
-        #expect(abs(p.value - s.speed) < 1e-9 && abs(p.seconds - 0.5) < 1e-9)
+        #expect(abs(p.value - s.speed) < 1e-9 && abs(p.seconds - 0.25) < 1e-9)
     }
 
     @Test func marqueeSelectsKeysInsideRect() {
@@ -160,13 +160,13 @@ private let limits = GraphEditLimits(frameDuration: fd)
     @Test func valueHandleDragSetsInfluenceAndOvershoot() {
         let t = KeyframeTrack(keys: [key(idA, 0, 0), key(idB, 2, 100)])
         let r = KeyframeGraphEditing.dragHandle(base: t, keyID: idA, side: .outSide,
-                                                to: GraphDataPoint(seconds: 1.0, value: 150), mode: .value)
+                                                to: GraphDataPoint(seconds: 0.5, value: 150), mode: .value)
         let h = r.key(id: idA)!.outHandle
         #expect(abs(h.dx - 0.5) < 1e-9 && abs(h.dy - 1.5) < 1e-9)          // dy free: overshoot allowed
         #expect(r.key(id: idA)!.interpolation == .bezier)
         #expect(r.key(id: idB)!.inHandle == .linear)                        // other side untouched
         let i = KeyframeGraphEditing.dragHandle(base: t, keyID: idB, side: .inSide,
-                                                to: GraphDataPoint(seconds: 1.5, value: 90), mode: .value)
+                                                to: GraphDataPoint(seconds: 1.75, value: 90), mode: .value)
         let ih = i.key(id: idB)!.inHandle
         #expect(abs(ih.dx - 0.25) < 1e-9 && abs(ih.dy - 0.1) < 1e-9)
     }
@@ -182,12 +182,12 @@ private let limits = GraphEditLimits(frameDuration: fd)
     @Test func speedHandleDragUsesSSCoreConversion() {
         let t = KeyframeTrack(keys: [key(idA, 0, 0), key(idB, 2, 100)])       // linear speed 50/s
         let r = KeyframeGraphEditing.dragHandle(base: t, keyID: idA, side: .outSide,
-                                                to: GraphDataPoint(seconds: 0.5, value: 100), mode: .speed)   // 2x speed, 25 % influence
+                                                to: GraphDataPoint(seconds: 0.25, value: 100), mode: .speed)   // 2x speed, 25 % influence
         let expected = EaseHandle(speedHandle: SpeedHandle(speed: 100, influence: 0.25), valueDelta: 100, duration: Time(2, 1))
         #expect(r.key(id: idA)!.outHandle == expected)
         // Round trip through the graph position.
         let p = GraphMath.handlePoint(track: r, keyID: idA, side: .outSide, mode: .speed)!
-        #expect(abs(p.value - 100) < 1e-9 && abs(p.seconds - 0.5) < 1e-9)
+        #expect(abs(p.value - 100) < 1e-9 && abs(p.seconds - 0.25) < 1e-9)
     }
 
     @Test func speedHandleOnFlatSegmentKeepsDyZero() {
@@ -453,5 +453,64 @@ private let limits = GraphEditLimits(frameDuration: fd)
         #expect(GraphAxisLabels.format(0.5, scale: 100) == "50.0")
         #expect(GraphAxisLabels.format(250) == "250")
         #expect(GraphAxisLabels.format(0.254) == "0.25")
+    }
+}
+
+@Suite struct GraphHandleMappingTests {
+    // Segment A(0 s) -> B(2 s): the midpoint is 1 s.
+    private func two(out: EaseHandle = EaseHandle(dx: 1.0 / 3, dy: 0), inn: EaseHandle = EaseHandle(dx: 1.0 / 3, dy: 0)) -> KeyframeTrack<Double> {
+        KeyframeTrack(keys: [key(idA, 0, 0, .bezier, out: out), key(idB, 2, 100, in: inn)])
+    }
+
+    @Test func influenceMapsLinearlyToTimeAndMaxIsTheMidpoint() {
+        for (dx, secs) in [(0.2, 0.2), (0.5, 0.5), (1.0, 1.0)] {
+            let t = two(out: EaseHandle(dx: dx, dy: 0))
+            let p = GraphMath.handlePoint(track: t, keyID: idA, side: .outSide, mode: .value)!
+            #expect(abs(p.seconds - secs) < 1e-9)                       // influence 1.0 = 1 s = midpoint of 0...2 s
+        }
+        let inn = GraphMath.handlePoint(track: two(inn: EaseHandle(dx: 1, dy: 0)), keyID: idB, side: .inSide, mode: .value)!
+        #expect(abs(inn.seconds - 1.0) < 1e-9)                          // the in-handle also reaches the midpoint
+    }
+
+    @Test func dragClampsAtTheMidpointSoHandlesNeverCross() {
+        let t = two()
+        let farOut = KeyframeGraphEditing.dragHandle(base: t, keyID: idA, side: .outSide, to: GraphDataPoint(seconds: 1.9, value: 0), mode: .speed)
+        let farIn = KeyframeGraphEditing.dragHandle(base: farOut, keyID: idB, side: .inSide, to: GraphDataPoint(seconds: 0.1, value: 0), mode: .speed)
+        #expect(farIn.key(id: idA)!.outHandle.dx == 1 && farIn.key(id: idB)!.inHandle.dx == 1)
+        let o = GraphMath.handlePoint(track: farIn, keyID: idA, side: .outSide, mode: .speed)!
+        let i = GraphMath.handlePoint(track: farIn, keyID: idB, side: .inSide, mode: .speed)!
+        #expect(abs(o.seconds - 1) < 1e-9 && abs(i.seconds - 1) < 1e-9)  // they meet at the midpoint, never cross
+    }
+
+    @Test func defaultEaseInfluenceIsOneThird() {
+        for c in [EasingCurve.easeInOut, .easeIn, .easeOut] {
+            #expect(abs(c.outHandle.dx - 1.0 / 3) < 1e-12 || c.outHandle == .linear)
+            #expect(abs(c.inHandle.dx - 1.0 / 3) < 1e-12)
+        }
+        #expect(EaseHandle.linear.dx == 1.0 / 3)
+    }
+
+    @Test func handleIsDrawnAtLeastMinLengthFromItsKey() {
+        let t = two(out: EaseHandle(dx: 0.02, dy: 0))                  // tiny influence
+        let g = geo(t, .speed)
+        let kp = g.keyPoint(track: t, index: 0), hp = g.handlePoint(track: t, keyID: idA, side: .outSide)!
+        let tp = g.handleTruePoint(track: t, keyID: idA, side: .outSide)!
+        #expect(tp.x - kp.x < KeyframeGraphGeometry.minHandleLength)
+        #expect(abs(hp.x - kp.x - KeyframeGraphGeometry.minHandleLength) < 1e-9)
+        let inP = g.handlePoint(track: two(inn: EaseHandle(dx: 0.02, dy: 0)), keyID: idB, side: .inSide)!
+        let kb = g.keyPoint(track: t, index: 1)
+        #expect(abs(kb.x - inP.x - KeyframeGraphGeometry.minHandleLength) < 1e-9)
+        // long handles are not moved
+        let long = two(out: EaseHandle(dx: 1, dy: 0))
+        #expect(g.handlePoint(track: long, keyID: idA, side: .outSide) == g.handleTruePoint(track: long, keyID: idA, side: .outSide))
+        #expect(KeyframeGraphGeometry.minHandleLength >= 24 && KeyframeGraphGeometry.handleHitRadius >= 12)
+        #expect(KeyframeGraphGeometry.handleKnobDiameter == 7 && KeyframeGraphGeometry.handleLineWidth == 1.5)
+    }
+
+    @Test func shortHandleCanBeGrabbedAtItsDrawnPosition() {
+        let t = two(out: EaseHandle(dx: 0.02, dy: 0))
+        let g = geo(t, .speed)
+        let drawn = g.handlePoint(track: t, keyID: idA, side: .outSide)!
+        #expect(g.hitTest(drawn, track: t, selected: [idA]) == .handle(idA, .outSide))
     }
 }

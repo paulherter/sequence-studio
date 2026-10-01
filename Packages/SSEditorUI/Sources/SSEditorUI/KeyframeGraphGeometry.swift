@@ -80,6 +80,11 @@ public struct GraphDataPoint: Sendable, Equatable {
 
 /// Shared pure helpers (data space).
 enum GraphMath {
+    /// A handle can reach this fraction of its segment: the midpoint between the two keys. Influence 1.0 (the maximum,
+    /// strongest ease) sits there, so the two handles of one segment can meet but never cross. (Old mapping: the
+    /// handle sat at `influence` x segment, i.e. influence 1.0 was the other key.)
+    static let handleReach = 0.5
+
     static func seconds(_ t: Time) -> Double { Double(t.value) / Double(t.timescale) }
 
     /// Segment starting at `index`: left key, right key, duration, signed value delta.
@@ -115,14 +120,14 @@ enum GraphMath {
         switch side {
         case .outSide:
             guard let s = segment(track, from: i), s.a.interpolation != .hold else { return nil }
-            let t = seconds(k.time) + s.a.outHandle.dx * seconds(s.dur)
+            let t = seconds(k.time) + s.a.outHandle.dx * handleReach * seconds(s.dur)
             let v = mode == .value
                 ? k.value + s.a.outHandle.dy * s.delta
                 : s.a.outHandle.speedHandle(valueDelta: s.delta, duration: s.dur).speed
             return GraphDataPoint(seconds: t, value: v)
         case .inSide:
             guard let s = segment(track, from: i - 1), s.a.interpolation != .hold else { return nil }
-            let t = seconds(k.time) - s.b.inHandle.dx * seconds(s.dur)
+            let t = seconds(k.time) - s.b.inHandle.dx * handleReach * seconds(s.dur)
             let v = mode == .value
                 ? k.value - s.b.inHandle.dy * s.delta
                 : s.b.inHandle.speedHandle(valueDelta: s.delta, duration: s.dur).speed
@@ -135,7 +140,12 @@ enum GraphMath {
 /// Pure: no AppKit.
 public struct KeyframeGraphGeometry: Sendable, Equatable {
     public static let keyHitRadius: CGFloat = 8
-    public static let handleHitRadius: CGFloat = 7
+    /// Hit target radius of a handle knob (24 pt wide).
+    public static let handleHitRadius: CGFloat = 12
+    /// A handle is drawn at least this far (points) from its key, whatever the zoom, so it can always be seen and grabbed.
+    public static let minHandleLength: CGFloat = 24
+    public static let handleKnobDiameter: CGFloat = 7
+    public static let handleLineWidth: CGFloat = 1.5
     public static let segmentHitDistance: CGFloat = 5
     public static let curveSamples = 48
 
@@ -181,8 +191,19 @@ public struct KeyframeGraphGeometry: Sendable, Equatable {
         point(GraphMath.keyPoint(track: track, index: index, mode: mode))
     }
 
-    public func handlePoint(track: KeyframeTrack<Double>, keyID: UUID, side: GraphHandleSide) -> CGPoint? {
+    /// Where the handle really is (its influence), without the minimum drawn length. Drags start from here.
+    public func handleTruePoint(track: KeyframeTrack<Double>, keyID: UUID, side: GraphHandleSide) -> CGPoint? {
         GraphMath.handlePoint(track: track, keyID: keyID, side: side, mode: mode).map(point)
+    }
+
+    /// Where the handle is drawn and hit-tested: the true point, pushed out to at least `minHandleLength` from its key.
+    public func handlePoint(track: KeyframeTrack<Double>, keyID: UUID, side: GraphHandleSide) -> CGPoint? {
+        guard let p = handleTruePoint(track: track, keyID: keyID, side: side),
+              let i = track.keys.firstIndex(where: { $0.id == keyID }) else { return nil }
+        let kx = keyPoint(track: track, index: i).x
+        let dir: CGFloat = side == .outSide ? 1 : -1
+        let len = (p.x - kx) * dir
+        return len >= Self.minHandleLength ? p : CGPoint(x: kx + dir * Self.minHandleLength, y: p.y)
     }
 
     /// One polyline per segment, in view coordinates.

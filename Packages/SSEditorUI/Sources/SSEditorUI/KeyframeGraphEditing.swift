@@ -79,7 +79,8 @@ public enum KeyframeGraphEditing {
 
         let timeOffset = side == .outSide ? target.seconds - GraphMath.seconds(k.time)
                                           : GraphMath.seconds(k.time) - target.seconds
-        let influence = min(max(timeOffset / secs, minInfluence), 1)
+        // The midpoint of the segment is influence 1.0 (see `GraphMath.handleReach`).
+        let influence = min(max(timeOffset / (secs * GraphMath.handleReach), minInfluence), 1)
         let old = side == .outSide ? s.a.outHandle : s.b.inHandle
 
         let handle: EaseHandle
@@ -199,7 +200,7 @@ public struct GraphGestureState: Sendable, Equatable {
             }
             return Result(selection: selection, track: t, marquee: nil, commit: false)
         case .handle(let id, let side):
-            guard let hp = geometry.handlePoint(track: base, keyID: id, side: side) else { return current }
+            guard let hp = geometry.handleTruePoint(track: base, keyID: id, side: side) else { return current }
             var dx = p.x - origin.x, dy = p.y - origin.y
             if !free {
                 if handleAxis == nil { handleAxis = GraphAxisLock.decide(dx: dx, dy: dy) }
