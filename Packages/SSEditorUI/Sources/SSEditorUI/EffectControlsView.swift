@@ -425,9 +425,13 @@ private final class PropertyRow: RowBackground, RowUpdating {
         return c == .x ? "X" : "Y"
     }
 
+    /// Click on the property name selects all its keyframes (Premiere); any click on the row focuses the property.
     override func mouseDown(with event: NSEvent) {
         model.focusedProperty = property
         if let o = owner { window?.makeFirstResponder(o) }
+        if name.frame.contains(convert(event.locationInWindow, from: nil)) {
+            model.setSelection(for: property, ids: Set(model.track(property)?.keyIDs ?? []))
+        }
         super.mouseDown(with: event)
     }
 
