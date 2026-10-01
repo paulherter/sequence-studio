@@ -148,3 +148,11 @@ Premiere semantics: Scale 100 % = one upright source pixel per sequence pixel (a
 - Audio: `AudioFeeder` retimes per segment with `AudioRetimer` (stateless per output sample): overlap-add time-stretch when "Maintain Audio Pitch" is on, linear resampling when off, mirrored reads for reverse. Playback and export share it (`TimelineAudioSource` uses the feeder), so they cannot disagree. The transport rate (J/K/L) still uses AVAudioUnitTimePitch, separately.
 - Video: no frame blending; the frame covering the mapped source time is shown.
 - File version: v14 (v13 belongs to the timeline stream), migration is the identity.
+
+## 2026-10-01 Source/project flow (round 2, project v19)
+- Out includes its own frame for Source and sequence marks (Adobe, timecode page: same In and Out = one frame). Stored half-open: `end = Out frame + one frame`. Only new marks change; Go to Out lands on the Out frame.
+- Play In to Out: Shift+Space plays with preroll/postroll (3 s / 2 s, Settings > Playback), Option+K plays the plain range, Shift+K is Play Around (returns to where it started). Option+K is bound per panel (Program, Source, Project) because the Timeline keeps it for Add Keyframe.
+- The opposite shuttle key slows one step (halves, not below 1x) and reverses at 1x; the Shift+L first speed (1.25x) stays unverified.
+- Sequence Out without In is remembered (`Timeline.outOnlyEnd`, not saved) so a Source edit is back-timed to end at the Out.
+- Source marks and Source markers are clip metadata outside the undo history; the poster frame is a normal undo step. `MediaRef.posterTime`, `MediaRef.sourceMarkers`: project v19, identity migration.
+- Deleting: a media item used in a sequence stays and the status line names the sequences; a sequence cannot be deleted when it is the last one or nested in another.

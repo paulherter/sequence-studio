@@ -51,7 +51,7 @@ final class ProjectThumbnails {
         let still = ref.info?.isStill == true || ref.kind == .image
         let fd = ref.info?.video?.nominalFrameDuration ?? Time(1, 30)
         let total = ref.info?.duration ?? ref.duration ?? .zero
-        let t = HoverScrub.poster(duration: total, frameDuration: fd)
+        let t = ref.posterTime ?? HoverScrub.poster(duration: total, frameDuration: fd)
         Task { [weak self, thumbnailer] in
             let cg: CGImage?
             if ref.kind == .audio { cg = nil } else if still { cg = Self.stillThumbnail(url, height: height) } else {

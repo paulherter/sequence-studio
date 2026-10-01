@@ -16,7 +16,9 @@ extension AppController {
              .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel, .maximizeActivePanel, .resetLayout,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .minimizeAllTracks, .expandAllTracks, .speedDuration,
-             .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing, .toggleCaptionsInMonitor:
+             .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing, .toggleCaptionsInMonitor,
+             .playInToOutRoll, .playAround, .setPosterFrame, .clearPosterFrame, .toggleHoverScrub, .find,
+             .applyVideoTransition, .applyAudioTransition, .applyDefaultTransitions:
             true
         case _ where isShellCommand(c):
             true
@@ -30,6 +32,7 @@ extension AppController {
         // Editing text (a field or the timecode box): the standard commands go to the editor.
         if let tv = textResponder, forwardToText(c, tv) { return }
         if focusedPanel == .sourceMonitor, panels.source.handle(c) { return }
+        if executeSourceFlowCommand(c) { return }
         if executeShellCommand(c) { return }
         if [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus, executeInEffectControls(c) { return }
         // Timeline operations (clipboard, link, nudge, edge trims...); Effect Controls keeps its own keys while it has focus.
@@ -84,7 +87,8 @@ extension AppController {
         case .rippleTrimNext: session.rippleTrimToPlayhead(.tail)
         case .delete, .rippleDelete:
             // Effect Controls owns Delete while it has focus: keys, then the selected effect. Never the timeline clips.
-            if effectControlsHasFocus { panels.effectModel.deleteSelectionOrEffect() }
+            if effectControlsHasFocus && session.selectedTransition == nil { panels.effectModel.deleteSelectionOrEffect() }
+            else if session.removeSelectedTransition() { }
             else if deleteSelectedGap() { }
             else { session.deleteSelection(ripple: c == .rippleDelete) }
         case .toggleSnapping:
@@ -111,6 +115,9 @@ extension AppController {
         case .newSequence: requestNewSequence()
         case .save: Task { await saveDocument() }
         case .export: showExport()
+        case .applyVideoTransition: applyTransitions(.video)
+        case .applyAudioTransition: applyTransitions(.audio)
+        case .applyDefaultTransitions: applyTransitions(.both)
         case .audioGain: requestAudioGain()
         case .toggleAudioScrubbing: toggleAudioScrubbing()
         case .toggleCaptionsInMonitor: toggleCaptionsInMonitor()
@@ -118,9 +125,20 @@ extension AppController {
         }
     }
 
+    /// Apply Video / Audio Transition (Cmd+D, Shift+Cmd+D) and Apply Default Transitions to Selection (Shift+D).
+    private func applyTransitions(_ scope: EditorSession.TransitionScope) {
+        session.stopPlayback()
+        let n = session.applyDefaultTransitions(scope: scope, edges: panels.timelineView.interaction.edgeSelection)
+        if n > 0 { shell.statusBar.flash(n == 1 ? "Transition applied." : "\(n) transitions applied.", seconds: 2) }
+        else if let m = session.lastError { shell.statusBar.flash(m) }
+    }
+
     private func nudgeShuttle(forward: Bool) {
         if focusedPanel == .sourceMonitor { panels.source.nudge(forward: forward); return }
-        session.apply(shuttle: .setRate(session.engine.rate.nudged(forward: forward)))
+        let rate = session.engine.rate.nudged(forward: forward)
+        session.apply(shuttle: .setRate(rate))
+        router.rateChanged(to: rate)          // the next J / L continues from the nudged speed
+        menuShuttle.adopt(rate)
     }
 
     private func exportProgramFrame() {
@@ -216,6 +234,7 @@ extension AppController {
         case .copy: tv.copy(nil); return true
         case .paste: tv.paste(nil); return true
         case .delete, .deleteProjectItems: tv.deleteBackward(nil); return true
+        case .find, .setPosterFrame, .clearPosterFrame, .toggleHoverScrub: return true     // Project-panel commands: not while typing
         default: return false
         }
     }

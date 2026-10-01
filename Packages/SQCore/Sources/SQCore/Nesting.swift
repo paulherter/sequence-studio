@@ -43,6 +43,7 @@ extension Project {
             }
         }
         try body(&work.timelines[i])
+        work.timelines[i].pruneTransitions()
         if work.reachableSequences(from: id).contains(id) { throw EditError.nestingCycle }
         self = work
     }

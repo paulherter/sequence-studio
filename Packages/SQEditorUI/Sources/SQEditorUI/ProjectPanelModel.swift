@@ -62,6 +62,8 @@ public final class ProjectPanelModel {
     /// Bumped on every change the view must reload for.
     public private(set) var revision = 0
 
+    /// Source In/Out set from the panel (`I` / `O` while hover scrubbing): not an undo step, the host stores the marks.
+    @ObservationIgnored public var onSourceMarks: ((MediaRef.ID, SourceMarks?) -> Void)?
     @ObservationIgnored private let probe: Probe
     @ObservationIgnored private let onEdit: EditHandler
     @ObservationIgnored private let status: @Sendable (MediaRef) -> MediaStatus
@@ -151,24 +153,113 @@ public final class ProjectPanelModel {
     /// Label colour shown for an item.
     public func label(of ref: BinItemRef) -> LabelColor { project.label(of: ref) }
 
-    /// Deletes bins (their content moves up) and media not used by any sequence. The root bin and sequences are kept.
-    /// Returns false when nothing was deleted.
+    /// What `delete` did. `blockedBy` lists the sequence names that kept items from being deleted: sequences that still
+    /// use a media item, or that nest a sequence (each name once, project order). `message` is the status line for it.
+    public struct DeleteResult: Sendable, Equatable {
+        public var changed = false
+        public var blockedBy: [String] = []
+        public var blockedItems = 0
+        public var message: String? {
+            guard blockedItems > 0 else { return nil }
+            let names = blockedBy.prefix(3).map { "\u{201C}\($0)\u{201D}" }.joined(separator: ", ") + (blockedBy.count > 3 ? " and more" : "")
+            return blockedBy.isEmpty ? "The last sequence cannot be deleted." : "Not deleted: still used in \(names)."
+        }
+    }
+
+    /// Deletes bins (their content moves up), media not used by any sequence, and sequences (never the last one, nor one
+    /// that another sequence nests). The root bin is kept. One undo step. Items that are in use stay and their sequence
+    /// names come back in `blockedBy`.
     @discardableResult
-    public func delete(_ items: [BinItemRef]) -> Bool {
-        commit("Delete") { p in
+    public func delete(_ items: [BinItemRef]) -> DeleteResult {
+        var result = DeleteResult()
+        func block(_ names: [String]) {
+            result.blockedItems += 1
+            for n in names where !result.blockedBy.contains(n) { result.blockedBy.append(n) }
+        }
+        result.changed = commit("Delete") { p in
             var changed = false
             for r in items {
                 switch r {
                 case .bin(let id): if p.deleteBin(id) { changed = true }
                 case .media(let id):
-                    let used = p.timelines.contains { $0.tracks.contains { $0.clips.contains { $0.media == id } } }
-                    guard !used, p.media.contains(where: { $0.id == id }) else { continue }
+                    guard p.media.contains(where: { $0.id == id }) else { continue }
+                    let users = p.sequenceNames(using: id)
+                    guard users.isEmpty else { block(users); continue }
                     p.media.removeAll { $0.id == id }
+                    p.sourceMarks[id] = nil
                     p.normalizeBins()
                     changed = true
-                case .sequence: continue
+                case .sequence(let id):
+                    let nesting = p.sequenceNames(nesting: id)
+                    if p.deleteSequence(id) { changed = true } else { block(nesting) }
                 }
             }
+            return changed
+        }
+        return result
+    }
+
+    // MARK: Hover marks (I / O over a thumbnail)
+
+    /// `I` (`isIn`) or `O` while hover scrubbing at `time`: writes the media's Source marks like the Source monitor does
+    /// (Out includes its own frame, so it is stored one frame later). Returns false for unknown media.
+    @discardableResult
+    public func markFromHover(isIn: Bool, media id: MediaRef.ID, time: Time) -> Bool {
+        guard let ref = project.media(id) else { return false }
+        let fd = ref.info?.video?.nominalFrameDuration ?? Time(1, 30)
+        var p = project
+        if isIn { p.setSourceIn(time, for: id) } else { p.setSourceOut(time + fd, for: id) }
+        project = p
+        revision += 1
+        onSourceMarks?(id, p.sourceMarks[id])
+        return true
+    }
+
+    // MARK: Find (Cmd+F)
+
+    /// Find criteria of the Project panel: text in the name (or label name) and/or offline items only.
+    public struct FindCriteria: Sendable, Equatable {
+        public enum Field: String, Sendable, CaseIterable { case name, label }
+        public var text = ""
+        public var field: Field = .name
+        public var offlineOnly = false
+        public init(text: String = "", field: Field = .name, offlineOnly: Bool = false) {
+            self.text = text; self.field = field; self.offlineOnly = offlineOnly
+        }
+        public var isEmpty: Bool { text.trimmingCharacters(in: .whitespaces).isEmpty && !offlineOnly }
+    }
+
+    /// Items (media and sequences, in tree order, bins skipped) that match all criteria. Empty criteria match nothing.
+    public func find(_ c: FindCriteria) -> [BinItemRef] {
+        guard !c.isEmpty else { return [] }
+        let q = c.text.trimmingCharacters(in: .whitespaces)
+        var out: [BinItemRef] = []
+        func walk(_ bin: Bin) {
+            for child in bin.children {
+                if case .bin(let b) = child { walk(b); continue }
+                let ref = child.ref
+                if c.offlineOnly {
+                    guard case .media(let id) = ref, offline.contains(id) else { continue }
+                }
+                if !q.isEmpty {
+                    let hay = c.field == .name ? project.displayName(of: ref) : project.label(of: ref).displayName
+                    guard hay.localizedCaseInsensitiveContains(q) else { continue }
+                }
+                out.append(ref)
+            }
+        }
+        walk(project.rootBin)
+        return out
+    }
+
+    // MARK: Poster frame (Cmd+P / Option+P)
+
+    /// Sets (or with nil clears) the poster frame of media items: one undo step. Items that are not media are skipped.
+    @discardableResult
+    public func setPoster(_ time: Time?, for items: [BinItemRef]) -> Bool {
+        commit(time == nil ? "Clear Poster Frame" : "Set Poster Frame") { p in
+            var changed = false
+            for r in items { if case .media(let id) = r, p.setPosterTime(time, for: id) { changed = true } }
             return changed
         }
     }

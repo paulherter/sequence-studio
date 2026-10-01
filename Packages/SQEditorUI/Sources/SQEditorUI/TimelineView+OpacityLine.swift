@@ -25,6 +25,8 @@ extension TimelineView {
     }
 
     func beginOpacityDrag(at p: CGPoint, event: NSEvent) -> Bool {
+        // A transition box sits on the clip edge and wins over the line underneath it.
+        if TransitionLayout.hitTest(p, in: timeline, geometry: geometry) != nil { return false }
         guard let t = opacityTarget(at: p),
               let hit = OpacityLine.hit(clip: t.clip, clipRect: t.rect, at: p, geometry: geometry) else { return false }
         let cmd = event.modifierFlags.contains(.command)

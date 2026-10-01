@@ -10,6 +10,9 @@ public struct TimelineClipboard: Sendable, Equatable {
         public var lane: Int
     }
     public var entries: [Entry]
+    /// Transitions whose clips are all part of the copy (a cut between two copied clips, the fades of a copied clip).
+    public var transitions: [Transition] = []
+    public init(entries: [Entry], transitions: [Transition] = []) { self.entries = entries; self.transitions = transitions }
     public var isEmpty: Bool { entries.isEmpty }
     /// Length from the earliest start to the latest end.
     public var duration: Time { entries.map { $0.offset + $0.clip.timeline.duration }.max() ?? .zero }
@@ -32,7 +35,11 @@ extension Timeline {
         }
         guard let first = entries.map(\.offset).min() else { return nil }
         for i in entries.indices { entries[i].offset = entries[i].offset - first }
-        return TimelineClipboard(entries: entries)
+        let copied = Set(entries.map(\.clip.id))
+        let kept = tracks.flatMap(\.transitions).filter { tr in
+            [tr.outgoing, tr.incoming].compactMap { $0 }.allSatisfy(copied.contains)
+        }
+        return TimelineClipboard(entries: entries, transitions: kept)
     }
 
     /// Lane a paste of `kind` lands on by default: the lowest targeted track of that kind (Premiere pastes onto the
@@ -59,6 +66,7 @@ extension Timeline {
         var counts: [UUID: Int] = [:]
         for e in cb.entries { if let l = e.clip.link { counts[l, default: 0] += 1 } }
         var placements: [(clip: Clip, track: Track.ID)] = []
+        var newID: [Clip.ID: Clip.ID] = [:]
         // Lanes that do not exist are created (Premiere adds tracks), so clips never stack on one track.
         var work = self
         for k in [TrackKind.video, .audio] {
@@ -73,7 +81,8 @@ extension Timeline {
             guard !list.isEmpty else { throw EditError.wrongTrackKind }
             let lane = min(max(e.lane + (shift[e.clip.kind] ?? 0), 0), list.count - 1)
             var c = e.clip
-            c.id = UUID()
+            newID[e.clip.id] = UUID()
+            c.id = newID[e.clip.id]!
             c.start = e.offset                       // relative; placed below
             if let l = c.link {
                 if counts[l, default: 0] > 1 {
@@ -99,6 +108,17 @@ extension Timeline {
             }
             tracks = work.tracks
         }
+        // The copied transitions follow their clips (new IDs); anything an overwrite cut apart is pruned again.
+        for old in cb.transitions {
+            var tr = old
+            tr.id = UUID()
+            tr.outgoing = old.outgoing.flatMap { newID[$0] }
+            tr.incoming = old.incoming.flatMap { newID[$0] }
+            guard (old.outgoing == nil) == (tr.outgoing == nil), (old.incoming == nil) == (tr.incoming == nil),
+                  let owner = tracks.firstIndex(where: { $0.clip(tr.outgoing ?? tr.incoming ?? UUID()) != nil }) else { continue }
+            tracks[owner].transitions.append(tr)
+        }
+        pruneTransitions()
         return placements.map(\.clip.id)
     }
 

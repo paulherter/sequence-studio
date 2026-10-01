@@ -331,6 +331,7 @@ public final class AudioFeeder: @unchecked Sendable {
             let clip = Self.segmentClip(seg, top: timeline, sequences: sequences)
             let dstOff = Int(f0 - startFrame)
             let animated = (clip?.animation.volume.isAnimated ?? false) || seg.nests.contains { $0.clip.animation.volume.isAnimated }
+                || !seg.envelopes.isEmpty || seg.nests.contains { !$0.envelopes.isEmpty }
             let gain = { (frame: Int64) -> Double in Self.gain(seg, clip: clip, atFrame: frame, rate: rate) }
             let source: any AudioSource
             do {
@@ -348,6 +349,7 @@ public final class AudioFeeder: @unchecked Sendable {
                                            keepsPitch: seg.keepsPitch,
                                            srcStart: Self.roundFrame(seg.source.start, rate), srcEnd: Self.roundFrame(seg.source.end, rate),
                                            firstOutput: f0 - Self.ceilFrame(seg.clipStart, rate),
+                                           lead: max(0, Self.ceilFrame(seg.clipStart, rate) - Self.ceilFrame(seg.timeline.start, rate)),
                                            count: n, into: scratch)
                     } else {
                         let got = try source.read(from: srcStart, count: n, into: scratch, channel: ch)
@@ -373,7 +375,7 @@ public final class AudioFeeder: @unchecked Sendable {
     /// Clip volume (evaluated in the clip's own, inner time) x enclosing nest gains, at top-sequence frame `frame`.
     private static func gain(_ seg: AudioSegment, clip: Clip?, atFrame frame: Int64, rate: Int64) -> Double {
         let outer = Time(frame, rate)
-        var g = seg.nestGain(at: outer)
+        var g = seg.nestGain(at: outer) * seg.envelopeGain(at: outer)     // transition curves, shared by playback and export
         if let clip {
             var t = outer
             for n in seg.nests { t = n.clip.source.start + (t - n.clip.start) }

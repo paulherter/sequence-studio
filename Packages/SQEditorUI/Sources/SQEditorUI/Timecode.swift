@@ -76,4 +76,22 @@ public struct Timecode: Sendable, Hashable {
         let t = frameDuration * frames
         return negative ? -t : t
     }
+
+    /// Relative entry: `+10` / `-5` (frames) or `+1:00` / `-0:10` (timecode amount, signed). Nil when `text` does not start
+    /// with a sign or the amount is invalid. The result is the signed offset.
+    public func parseRelative(_ text: String) -> Time? {
+        let s = text.trimmingCharacters(in: .whitespaces)
+        guard let sign = s.first, sign == "+" || sign == "-" else { return nil }
+        let rest = String(s.dropFirst()).trimmingCharacters(in: .whitespaces)
+        guard !rest.isEmpty else { return nil }
+        let amount: Time
+        if rest.allSatisfy({ $0.isASCII && $0.isNumber }) {
+            guard rest.count <= 7, let n = Int64(rest) else { return nil }
+            amount = frameDuration * n
+        } else {
+            guard let t = parse(rest) else { return nil }
+            amount = t
+        }
+        return sign == "-" ? .zero - amount : amount
+    }
 }

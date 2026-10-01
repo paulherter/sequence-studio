@@ -167,6 +167,7 @@ public final class TimelineFrameSource: FrameSource {
 
         func baseLayer(for l: LayerRequest) async throws -> RenderLayer {
             if let g = l.generator {
+                if g.kind == GeneratorRef.solid { return RenderLayer.solid(payload: g.payload, transform: l.transform) }
                 if g.kind == GeneratorRef.text { return try textLayer(l, g) }
                 return RenderLayer(content: .placeholder(.offline), transform: l.transform, cornerRadius: l.cornerRadius)
             }

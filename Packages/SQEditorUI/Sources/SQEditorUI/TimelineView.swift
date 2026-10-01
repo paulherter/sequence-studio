@@ -62,6 +62,21 @@ public final class TimelineView: NSView {
     public var dropItemsProvider: ((DropSource) -> [DropItem])?
     /// An effect (`com.sequencestudio.effect-id`) dropped on a clip: effect id, clip id.
     public var onDropEffect: ((String, Clip.ID) -> Void)?
+    // Transitions: state lives in `TimelineView+Transitions.swift`; the host wires these callbacks.
+    var transitionState = TransitionViewState()
+    /// A transition box was clicked (nil = deselected).
+    public var onTransitionSelect: ((Transition.ID?, _ keepClips: Bool) -> Void)?
+    /// Double-click on a transition box: the host opens "Set Transition Duration".
+    public var onTransitionDoubleClick: ((Transition.ID) -> Void)?
+    /// A drag of a transition edge or body: new values, and whether this continues the gesture's first change.
+    public var onTransitionChange: ((Transition.ID, TransitionLayout.Change, _ continues: Bool) -> Void)?
+    /// A transition (`EffectsPanelView.transitionID`) dropped on a cut or clip end.
+    public var onDropTransition: ((TransitionKind, Track.ID, TransitionPoint, TransitionAlignment) -> Void)?
+    func clearClipSelectionForTransition() {
+        selection = []; captionSelection = []
+        interaction.setSelection([]); interaction.setCaptionSelection([])
+        onSelectionChange?([], [])
+    }
     /// Live drop ghost (read-only for tests and the host).
     public private(set) var dropPreview = DropPreview()
     /// Clip highlighted while an effect is dragged over it.
@@ -190,6 +205,7 @@ public final class TimelineView: NSView {
         syncBadges = t.syncOffsets()
         geometry.frameDuration = t.frameDuration
         selection.formIntersection(Set(t.tracks.flatMap { $0.clips.map(\.id) }))
+        if let id = transitionState.selected, t.transition(id) == nil { transitionState.selected = nil }
         captionSelection.formIntersection(Set(t.captionTracks.flatMap { $0.items.map(\.id) }))
         interaction.reset(timeline: t)
         interaction.setSelection(selection)
@@ -226,6 +242,9 @@ public final class TimelineView: NSView {
         offlineMedia = ids
         needsDisplay = true
     }
+
+    /// Cache strip of the ruler (spans whose frames are decoded).
+    public func setCachedRanges(_ r: [TimeRange]) { ruler.setCachedRanges(r) }
 
     public func setPlayhead(_ t: Time) {
         guard t != playhead else { return }
@@ -431,6 +450,7 @@ public final class TimelineView: NSView {
         }
         if beginVolumeDrag(at: p, event: event) || beginOpacityDrag(at: p, event: event) { return }
         onPointerDown?()
+        if transitionMouseDown(p, event: event) { return }
         if event.clickCount == 2, case .caption(let id, _) = geometry.hitTest(p, in: timeline) {
             onEditCaptionText?(id)
             return
@@ -449,6 +469,9 @@ public final class TimelineView: NSView {
             zoomDrag = (p, p, event.modifierFlags.contains(.option))
             return
         }
+        if transitionState.selected != nil, !event.modifierFlags.contains(.shift), !event.modifierFlags.contains(.command) {
+            setSelectedTransition(nil)
+        }
         feedInteraction()
         interaction.mouseDown(p, modifiers: gestureModifiers(event))
         lastDrag = (p, gestureModifiers(event))
@@ -458,6 +481,7 @@ public final class TimelineView: NSView {
     public override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         if updateVolumeDrag(to: p) || updateOpacityDrag(to: p) { return }
+        if transitionMouseDragged(p, event: event) { return }
         if let r = resizing {
             let dy = p.y - r.startY
             switch r.zone {
@@ -616,6 +640,7 @@ public final class TimelineView: NSView {
         lastDrag = nil
         let up = convert(event.locationInWindow, from: nil)
         if endVolumeDrag(at: up) || endOpacityDrag(at: up) { return }
+        if transitionMouseUp(up, event: event) { return }
         if let z = zoomDrag { finishZoomDrag((z.start, convert(event.locationInWindow, from: nil), z.zoomOut)); return }
         if let d = markerDrag {
             markerDrag = nil
@@ -718,6 +743,9 @@ public final class TimelineView: NSView {
     private func trackedUpdate(_ info: NSDraggingInfo) -> NSDragOperation {
         guard let payload = dropped(info) else { return [] }
         let p = convert(info.draggingLocation, from: nil)
+        if case .effect(let id) = payload, let kind = EffectsPanelView.transitionKind(forID: id) {
+            return updateTransitionDrop(kind: kind, at: p) ? .copy : []
+        }
         if case .effect = payload {
             let target = clipID(at: p)
             if target != effectDropTarget { effectDropTarget = target; needsDisplay = true }
@@ -735,9 +763,10 @@ public final class TimelineView: NSView {
     }
 
     private func endDropTracking() {
-        guard dropPreview.isActive || effectDropTarget != nil else { return }
+        guard dropPreview.isActive || effectDropTarget != nil || transitionState.dropTarget != nil else { return }
         dropPreview.cancel()
         effectDropTarget = nil
+        transitionState.dropTarget = nil
         needsDisplay = true
     }
 
@@ -750,6 +779,9 @@ public final class TimelineView: NSView {
     public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
         defer { endDropTracking() }
         guard let payload = dropped(sender) else { return false }
+        if case .effect(let id) = payload, let kind = EffectsPanelView.transitionKind(forID: id) {
+            return commitTransitionDrop(kind: kind, at: convert(sender.draggingLocation, from: nil))
+        }
         if case .effect(let id) = payload {
             guard let target = clipID(at: convert(sender.draggingLocation, from: nil)) else { return false }
             onDropEffect?(id, target)
@@ -976,6 +1008,7 @@ public final class TimelineView: NSView {
         for r in TimelineCursorMap.regions(timeline: timeline, geometry: geometry, tool: toolState.tool, content: content) {
             addCursorRect(r.rect, cursor: TimelineCursors.cursor(for: r.kind))
         }
+        addTransitionCursorRects()
         // Resize cursor on the V/A boundary (full width) and on header row edges; added last so it wins.
         let rows = geometry.rows(for: timeline)
         let g = TrackSizing.grab
@@ -1030,6 +1063,7 @@ public final class TimelineView: NSView {
             clip.clip()
             drawCaptionLanes(clip: clip, visible: contentClip)
             drawLanes(rows: rows, clip: clip, visible: contentClip)
+            drawTransitions(rows: rows, clip: clip)
             drawPlayheadLine(clip: clip)
             drawGestureOverlay(clip: clip)
             drawDropOverlay(clip: clip)

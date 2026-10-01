@@ -98,9 +98,18 @@ final class ProjectIconView: NSView, NSMenuDelegate {
     private(set) var selection: [BinItemRef] = []
     private var anchor: BinItemRef?
     private var hovered: BinItemRef?
+    /// Media time under the pointer while hover scrubbing (nil when not hovering a picture).
+    private(set) var hoveredTime: Time?
+    /// The media item under the pointer while hover scrubbing.
+    var hoveredMedia: MediaRef.ID? { if case .media(let id)? = hovered { id } else { nil } }
+    /// Hover Scrub on/off (Shift+H). While off, holding Shift scrubs temporarily (Premiere).
+    var hoverScrubEnabled = true { didSet { if !hoverScrubEnabled { endHover() } } }
+    private var posterSeen: [UUID: Time?] = [:]
     var thumbSize: CGFloat = 110 { didSet { relayout() } }
 
     var onOpen: ((BinItemRef) -> Void)?
+    /// `I` / `O` over a hovered media thumbnail: media, time under the pointer.
+    var onHoverMark: ((Bool, MediaRef.ID, Time) -> Void)?
     var onSelectionChange: (() -> Void)?
     var onDelete: (() -> Void)?
     var onRename: ((BinItemRef, String) -> Void)?
@@ -175,6 +184,8 @@ final class ProjectIconView: NSView, NSMenuDelegate {
             if offline {
                 cell.imageView.image = symbol("exclamationmark.triangle", Theme.Colors.red)
             } else if let ref = model.project.media(id) {
+                if let seen = posterSeen[id], seen != ref.posterTime { thumbs.forget(id) }
+                posterSeen[id] = ref.posterTime
                 if let img = thumbs.cachedPoster(id) { cell.imageView.image = img } else {
                     cell.imageView.image = symbol(model.icon(of: .media(id)).symbol, Theme.Colors.label3)
                     if ref.kind != .audio {
@@ -270,7 +281,16 @@ final class ProjectIconView: NSView, NSMenuDelegate {
         c.beginRename()
     }
 
+    /// `I` / `O` while hovering a clip's picture sets that clip's Source In / Out at the hovered frame.
+    func handleHoverMark(isIn: Bool) -> Bool {
+        guard let h = hovered, case .media(let id) = h, let t = hoveredTime else { return false }
+        onHoverMark?(isIn, id, t)
+        return true
+    }
+
     func keyDown(_ event: NSEvent) -> Bool {
+        if event.modifierFlags.intersection([.command, .option, .control, .shift]).isEmpty,
+           let c = event.charactersIgnoringModifiers?.lowercased(), c == "i" || c == "o", handleHoverMark(isIn: c == "i") { return true }
         switch event.keyCode {
         case 51, 117: onDelete?(); return true
         case 36, 76: beginRenameSelected(); return true
@@ -296,7 +316,8 @@ final class ProjectIconView: NSView, NSMenuDelegate {
 
     // MARK: Hover scrub
 
-    fileprivate func mouseMoved(at p: NSPoint) {
+    fileprivate func mouseMoved(at p: NSPoint, shift: Bool = false) {
+        guard hoverScrubEnabled || shift else { endHover(); return }
         guard let hit = item(at: p), case .media(let id) = hit, let cell = cells[hit], let ref = model.project.media(id),
               ref.kind != .audio, ref.kind != .image, !model.isOffline(id),
               let total = ref.info?.duration ?? ref.duration, total > .zero else { endHover(); return }
@@ -307,6 +328,7 @@ final class ProjectIconView: NSView, NSMenuDelegate {
         cell.scrubLine.isHidden = false
         cell.scrubLine.frame.origin.x = cell.thumbRect.minX + (local.x - cell.thumbRect.minX)
         let t = HoverScrub.time(fraction: frac, duration: total, frameDuration: ref.info?.video?.nominalFrameDuration ?? Time(1, 30))
+        hoveredTime = t
         let height = Int(thumbSize * 9 / 16 * (window?.backingScaleFactor ?? 2))
         thumbs.scrub(ref, to: t, height: height) { [weak self] img in
             guard let self, hovered == hit else { return }
@@ -321,6 +343,7 @@ final class ProjectIconView: NSView, NSMenuDelegate {
             if case .media(let id) = h, let p = thumbs.cachedPoster(id) { c.imageView.image = p }
         }
         hovered = nil
+        hoveredTime = nil
     }
 
     // MARK: Menu
@@ -362,7 +385,7 @@ private final class IconContentView: NSView, NSDraggingSource {
         addTrackingArea(a); area = a
     }
 
-    override func mouseMoved(with event: NSEvent) { owner?.mouseMoved(at: convert(event.locationInWindow, from: nil)) }
+    override func mouseMoved(with event: NSEvent) { owner?.mouseMoved(at: convert(event.locationInWindow, from: nil), shift: event.modifierFlags.contains(.shift)) }
     override func mouseExited(with event: NSEvent) { owner?.endHover() }
 
     override func mouseDown(with event: NSEvent) {

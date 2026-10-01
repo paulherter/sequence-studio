@@ -178,7 +178,18 @@ public final class EffectsPanelView: TemplateListPanelView {
         Entry(id: ultraKey, title: "Ultra Key", category: "Keying", symbol: "person.crop.rectangle"),
         Entry(id: crop, title: "Crop", category: "Transform", symbol: "crop"),
         Entry(id: roundedCorners, title: "Rounded Corners", category: "Transform", symbol: "app"),
-    ]
+    ] + transitionEntries
+
+    /// Pasteboard / row id of a transition: `transition.<TransitionKind raw value>`.
+    public static let transitionPrefix = "transition."
+    public static func transitionID(_ k: TransitionKind) -> String { transitionPrefix + k.rawValue }
+    public static func transitionKind(forID id: String) -> TransitionKind? {
+        id.hasPrefix(transitionPrefix) ? TransitionKind(rawValue: String(id.dropFirst(transitionPrefix.count))) : nil
+    }
+    static let transitionEntries: [Entry] = TransitionKind.allCases.map { k in
+        Entry(id: transitionID(k), title: k.name, category: k.trackKind == .video ? "Video Transitions" : "Audio Transitions",
+              symbol: k.trackKind == .video ? "square.on.square" : "waveform.path")
+    }
 
     /// Rows for a search text: entries whose title or category contain it (case-insensitive), under their category.
     public static func rows(matching query: String, in entries: [Entry] = catalog) -> [Row] {
@@ -196,7 +207,7 @@ public final class EffectsPanelView: TemplateListPanelView {
 
     public init() {
         super.init(rows: Self.rows(matching: ""), buttonTitle: "",
-                   hint: "Drag onto a clip, or double-click for the selected clips.", label: "Effects", searchable: true)
+                   hint: "Drag effects onto a clip and transitions onto a cut or clip end. Double-click applies to the selection.", label: "Effects", searchable: true)
         dragType = .sequenceEffectID
         onSearch = { [weak self] q in self?.rows = Self.rows(matching: q) }
     }

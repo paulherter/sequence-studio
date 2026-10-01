@@ -121,3 +121,27 @@ private func risingCrossings(_ x: ArraySlice<Float>) -> Int {
     }
 }
 
+
+@Suite struct AudioTransitionRetimeTests {
+    /// B plays at 50 % with pitch kept; a 0.5 s crossfade centred on the cut makes B sound 0.25 s before its start.
+    @Test func retimedIncomingClipIsAudibleInTheHeadExtension() throws {
+        let ma = UUID(), mb = UUID()
+        let fd = Time(1, 30)
+        let a = Clip(name: "A", media: ma, kind: .audio, source: TimeRange(start: Time(1, 1), duration: Time(2, 1)), start: .zero, mediaDuration: Time(6, 1))
+        let b = Clip(name: "B", media: mb, kind: .audio, source: TimeRange(start: Time(2, 1), duration: Time(2, 1)), start: Time(2, 1),
+                     mediaDuration: Time(6, 1), speed: ClipSpeed(percent: 50), keepsPitch: true)
+        var track = Track(kind: .audio); try track.overwrite(a); try track.overwrite(b)
+        var t = Timeline(name: "t", format: SequenceFormat(frameDuration: fd), tracks: [track])
+        try t.addTransition(kind: .constantGain, track: track.id, outgoing: a.id, incoming: b.id, duration: fd * 15)
+        let sources: [UUID: MemoryAudioSource] = [ma: MemoryAudioSource(mono: [Float](repeating: 0, count: 6 * 48_000)), mb: sine(6 * 48_000, hz: 440)]
+        let f = AudioFeeder(timeline: t, ring: RingBuffer(capacity: 1 << 14), blockFrames: 16384) { sources[$0]! }
+        let from = Int64(1.85 * 48_000), count = 14_400                  // 1.85 s ... 2.15 s: head extension then the clip
+        var l = [Float](repeating: 0, count: count), r = l
+        l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in
+            f.mix(timeline: t, sequences: [:], startFrame: from, count: count, left: lp.baseAddress!, right: rp.baseAddress!) } }
+        func rms(_ x: ArraySlice<Float>) -> Double { sqrt(x.reduce(0) { $0 + Double($1 * $1) } / Double(x.count)) }
+        // Before the cut (1.85 + 0.12 .. 1.85 + 0.2 s): B's gain has risen above 0.5 and the stretched tone must sound.
+        #expect(rms(l[7_000..<9_000]) > 0.1, "head extension is silent")
+        #expect(rms(l[0..<1_000]) < rms(l[7_000..<9_000]))   // the fade-in is still rising
+    }
+}

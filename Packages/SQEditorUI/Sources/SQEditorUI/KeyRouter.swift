@@ -52,6 +52,9 @@ public struct KeyRouter: Sendable {
     /// Playback was stopped from outside the keyboard (a click, the transport button): the next L/J starts at 1x.
     public mutating func transportStopped() { shuttle.stopped() }
 
+    /// The playing speed was changed by something other than J/K/L (Shift+L / Shift+J): the next J/L continues from it.
+    public mutating func rateChanged(to rate: PlaybackRate) { shuttle.adopt(rate) }
+
     public mutating func handle(_ event: KeyEvent) -> [RouterAction] {
         var out = tick()
         switch event.phase {
