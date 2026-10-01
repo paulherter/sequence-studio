@@ -68,6 +68,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         panels.onStatus = { [weak self] m in self?.shell.statusBar.flash(m) }
         panels.onCommand = { [weak self] c in self?.execute(c) }
         panels.onNest = { [weak self] in self?.requestNest() }
+        wireCaptions()
         panels.onFrameSize = { [weak self] in self?.session.setToFrameSize() }
         panels.monitorModel.setQuality(settings.defaultQuality)
 

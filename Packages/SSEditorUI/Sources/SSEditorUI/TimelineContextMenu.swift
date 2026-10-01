@@ -5,6 +5,7 @@ import SSCore
 public enum TimelineMenuAction: Sendable, Hashable, CaseIterable {
     case cut, copy, paste, delete, rippleDelete, enable, unlink, link, nest, rename, revealInProject, speed
     case setToFrameSize, scaleToFrameSize
+    case editCaption, splitCaption, mergeCaptions
 }
 
 public struct TimelineMenuItem: Sendable, Equatable {
@@ -54,6 +55,19 @@ public enum TimelineContextMenu {
             TimelineMenuItem(.rename, "Rename…", enabled: clips.count == 1, separatorBefore: true),
             TimelineMenuItem(.revealInProject, "Reveal in Project", enabled: hasClips),
             TimelineMenuItem(.speed, "Speed/Duration…", enabled: false, separatorBefore: true),
+        ]
+    }
+
+    /// Menu of caption segments (right-click on a caption): edit the text, split at the playhead, merge, delete.
+    public static func captionItems(timeline: Timeline, captionSelection: Set<CaptionItem.ID>, playhead: Time) -> [TimelineMenuItem] {
+        let underPlayhead = timeline.captions(at: playhead).contains { captionSelection.isEmpty || captionSelection.contains($0.item.id) }
+        // Merging needs two or more captions of the same track.
+        let tracksOfSelection = Set(timeline.captionTracks.filter { t in t.items.contains { captionSelection.contains($0.id) } }.map(\.id))
+        return [
+            TimelineMenuItem(.editCaption, "Edit Caption Text", enabled: captionSelection.count == 1),
+            TimelineMenuItem(.splitCaption, "Split Caption at Playhead", enabled: underPlayhead, separatorBefore: true),
+            TimelineMenuItem(.mergeCaptions, "Merge Captions", enabled: captionSelection.count >= 2 && tracksOfSelection.count == 1),
+            TimelineMenuItem(.delete, "Delete", enabled: !captionSelection.isEmpty, separatorBefore: true, key: "\u{8}", modifiers: []),
         ]
     }
 

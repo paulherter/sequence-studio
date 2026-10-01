@@ -36,6 +36,22 @@ public enum CaptionMapping {
     }
 }
 
+extension CaptionMapping {
+    /// All clips that play the same media (a cut interview, or the video and audio halves of one recording): the
+    /// captions of each clip's part, in time order. Where two clips cover the same time (linked video + audio) the
+    /// first one wins, so the result never overlaps.
+    public static func items(_ captions: [Caption], forClips clips: [Clip]) -> [CaptionItem] {
+        let sorted = clips.sorted { $0.start < $1.start }
+        var out: [CaptionItem] = []
+        for clip in sorted {
+            for item in items(captions, for: clip) where !out.contains(where: { $0.range.overlaps(item.range) }) {
+                out.append(item)
+            }
+        }
+        return out.sorted { $0.range.start < $1.range.start }
+    }
+}
+
 /// Text layer templates offered in the Library (Text Templates): the built-in caption styles as ready-made titles.
 public enum TextTemplateCatalog {
     public struct Entry: Identifiable, Hashable, Sendable {

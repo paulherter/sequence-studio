@@ -202,6 +202,7 @@ final class EditorPanels {
     private func timelineMenu(at p: CGPoint) -> NSMenu? {
         let tv = timelineView
         tv.contextSelect(at: p)
+        if tv.selection.isEmpty, !tv.captionSelection.isEmpty { return captionMenu() }
         let items = TimelineContextMenu.items(timeline: tv.timeline, selection: tv.selection,
                                               captionSelection: tv.captionSelection, clipboardHasClips: false)
             .map { item -> TimelineMenuItem in

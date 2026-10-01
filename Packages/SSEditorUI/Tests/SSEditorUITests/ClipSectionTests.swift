@@ -39,6 +39,22 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         #expect(items.first?.range.start == max(inside[0].range.start + s(90), s(100)))
     }
 
+    @Test func captionsOfAllClipsOfOneMediaAreMappedAndNeverOverlap() {
+        let media = UUID()
+        // Two cuts of the same recording (source 0..4 at 0, source 10..14 at 4) plus the linked audio half of the first.
+        let a = Clip(name: "a", media: media, kind: .video, source: TimeRange(start: .zero, duration: s(4)), start: .zero)
+        let b = Clip(name: "b", media: media, kind: .video, source: TimeRange(start: s(10), duration: s(4)), start: s(4))
+        let au = Clip(name: "a", media: media, kind: .audio, source: TimeRange(start: .zero, duration: s(4)), start: .zero)
+        func word(_ x: Int64) -> TranscriptWord { TranscriptWord(text: "w\(x)", range: TimeRange(start: s(x), duration: Time(1, 2))) }
+        let captions = CaptionSegmenter.segment(Transcript(language: "en-US", words: [word(1), word(11), word(30)]),
+                                                preset: CaptionPreset(maxCharsPerLine: 20, maxLines: 1, maxDuration: s(6), minDuration: .zero,
+                                                                      pauseBreak: Time(1, 2), styleRef: "d", animationRef: "n"))
+        let items = CaptionMapping.items(captions, forClips: [b, au, a])
+        #expect(items.count == 2)                                   // word at 30 is outside both cuts; audio half adds nothing
+        #expect(items[0].range.start == s(1) && items[1].range.start == s(5))
+        #expect(zip(items, items.dropFirst()).allSatisfy { $0.range.end <= $1.range.start })
+    }
+
     @Test func textTemplatesExist() {
         #expect(!TextTemplateCatalog.all.isEmpty)
         #expect(TextTemplateCatalog.all.allSatisfy { $0.template.text == TextTemplateCatalog.placeholderText })

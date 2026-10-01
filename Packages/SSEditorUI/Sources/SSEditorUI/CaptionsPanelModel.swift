@@ -29,10 +29,13 @@ public final class CaptionsPanelModel {
     /// BCP-47 identifier of the recognition language.
     public var language: String = "de-DE"
     public var languages: [String] = CaptionsPanelModel.defaultLanguages
-    public var presets: [NamedPreset] = [NamedPreset(name: "Standard", preset: .standard)]
+    public var presets: [NamedPreset] = [NamedPreset(name: "Standard", preset: .standard),
+                                         NamedPreset(name: "Short Video", preset: .shortVideo)]
     public var selectedPresetIndex: Int = 0
     /// Audio source to transcribe (set by the host from the selected clip).
     public var sourceURL: URL?
+    /// Frame duration of the sequence: the gap in Create Captions is counted in frames.
+    public var frameDuration = Time(1, 30)
     /// Word under the playhead (nil between words).
     public private(set) var currentWordID: UUID?
     /// True when Transcribe was requested while a transcript exists: the view asks, then calls `confirmOverwrite()`.
@@ -226,12 +229,27 @@ public final class CaptionsPanelModel {
 
     // MARK: Captions
 
+    /// Create Captions dialog: changes the limits of the selected preset (for this session; presets are not persisted).
+    public func setOptions(maxCharsPerLine: Int, lines: Int, minDuration: Time, gapFrames: Int) {
+        guard presets.indices.contains(selectedPresetIndex) else { return }
+        presets[selectedPresetIndex].preset = presets[selectedPresetIndex].preset
+            .with(maxCharsPerLine: maxCharsPerLine, lines: lines, minDuration: minDuration, gapFrames: gapFrames,
+                  frameDuration: frameDuration)
+    }
+
+    /// The gap of the selected preset in frames (rounded).
+    public var gapFrames: Int {
+        guard let p = selectedPreset, frameDuration > .zero else { return 0 }
+        return Int((Double(p.gap.value) / Double(p.gap.timescale)) / (Double(frameDuration.value) / Double(frameDuration.timescale)) + 0.5)
+    }
+
+
     /// Segments the transcript with the selected preset and hands the result to `onCreateCaptions`.
     @discardableResult
     public func createCaptions() -> [Caption] {
         flushEdits()
         guard canCreateCaptions, let t = transcript, let preset = selectedPreset else { return [] }
-        let captions = CaptionSegmenter.segment(t, preset: preset)
+        let captions = CaptionSegmenter.applyTiming(CaptionSegmenter.segment(t, preset: preset), preset: preset)
         onCreateCaptions?(captions)
         return captions
     }
