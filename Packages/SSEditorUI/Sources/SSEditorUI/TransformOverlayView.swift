@@ -36,6 +36,8 @@ public final class TransformOverlayView: NSView {
     public var transform = ClipTransform.identity { didSet { if drag == nil { needsDisplay = true } } }
     public var positionTrack = KeyframeTrack<Vec2>() { didSet { needsDisplay = true } }
     public var selectedKey: UUID? { didSet { needsDisplay = true } }
+    /// The clip's Uniform Scale flag (Effect Controls): on = every handle scales proportionally.
+    public var uniformScale = true
     public var showsOverlay = true { didSet { needsDisplay = true; window?.invalidateCursorRects(for: self) } }
 
     private enum Drag {
@@ -76,7 +78,7 @@ public final class TransformOverlayView: NSView {
         let p = convert(point, from: superview)
         if drag != nil { return self }
         if pathGeometry?.hitTest(p, selectedKey: selectedKey) != nil { return self }
-        return geometry.hitTest(p, anchorAlways: NSEvent.modifierFlags.contains(.option)) != nil ? self : nil
+        return geometry.hitTest(p) != nil ? self : nil
     }
 
     public override func updateTrackingAreas() {
@@ -89,17 +91,18 @@ public final class TransformOverlayView: NSView {
 
     public override func mouseMoved(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        let hit = geometry.hitTest(p, anchorAlways: event.modifierFlags.contains(.option))
+        let hit = geometry.hitTest(p)
         if hit != hoverHit { hoverHit = hit; updateCursor(hit) }
     }
     public override func mouseExited(with event: NSEvent) { hoverHit = nil; NSCursor.arrow.set() }
 
     private func updateCursor(_ hit: TransformOverlayGeometry.Hit?) {
+        let g = geometry
         switch hit {
-        case .anchor?, .rotate?: NSCursor.crosshair.set()
-        case .handle(let h)?:
-            (h.direction.x == 0 ? NSCursor.resizeUpDown : h.direction.y == 0 ? NSCursor.resizeLeftRight : NSCursor.crosshair).set()
-        case .body?: NSCursor.openHand.set()
+        case .anchor?: NSCursor.crosshair.set()
+        case .rotate(let h)?: OverlayCursors.rotate(angle: g.viewAngle(of: h)).set()
+        case .handle(let h)?: OverlayCursors.resize(angle: g.viewAngle(of: h)).set()
+        case .body?: OverlayCursors.move.set()
         case nil: NSCursor.arrow.set()
         }
     }
@@ -121,7 +124,7 @@ public final class TransformOverlayView: NSView {
             return
         }
         let g = geometry
-        guard var hit = g.hitTest(p, anchorAlways: event.modifierFlags.contains(.option)) else { return }
+        guard var hit = g.hitTest(p) else { return }
         if hit == .body, event.clickCount == 2 { onBodyDoubleClick?(); return }
         // Option-drag on the picture moves the anchor point, not the picture (Premiere).
         if hit == .body, event.modifierFlags.contains(.option) { hit = .anchor }
@@ -144,7 +147,7 @@ public final class TransformOverlayView: NSView {
         case .body(let s, let g):
             emit(snapped(g.moved(from: s, to: p, lockAxis: shift), geo: g, disabled: flags.contains(.command), lockAxis: shift))
         case .scale(let h, let s, let g):
-            emit(g.scaled(handle: h, from: s, to: p, modifiers: .init(shift: shift, option: option)))
+            emit(g.scaled(handle: h, from: s, to: p, modifiers: .init(shift: shift, option: option, uniformScale: uniformScale)))
         case .rotate(let s, let g, let last):
             let t = g.rotated(from: s, to: p, snap: shift, continuingFrom: last)
             drag = .rotate(start: s, geo: g, last: t.rotation)
@@ -177,7 +180,7 @@ public final class TransformOverlayView: NSView {
             activeGuides = .none
         }
         needsDisplay = true
-        updateCursor(geometry.hitTest(p, anchorAlways: event.modifierFlags.contains(.option)))
+        updateCursor(geometry.hitTest(p))
     }
 
     /// Smart guides: the moved layer's edges and centre snap to the canvas and the other layers.
@@ -226,16 +229,15 @@ public final class TransformOverlayView: NSView {
             accent.setStroke(); sq.lineWidth = 1; sq.stroke()
         }
 
-        // Anchor crosshair
+        // Anchor crosshair: always drawn, white with a dark halo, ring plus cross (grab radius 10 pt).
         let a = g.anchorViewPoint
-        let arm: CGFloat = 8
+        let arm: CGFloat = 9
         let cross = NSBezierPath()
         cross.move(to: CGPoint(x: a.x - arm, y: a.y)); cross.line(to: CGPoint(x: a.x + arm, y: a.y))
         cross.move(to: CGPoint(x: a.x, y: a.y - arm)); cross.line(to: CGPoint(x: a.x, y: a.y + arm))
-        Theme.black(0.5).setStroke(); cross.lineWidth = 3; cross.stroke()
-        NSColor.white.setStroke(); cross.lineWidth = 1; cross.stroke()
-        let ring = NSBezierPath(ovalIn: CGRect(x: a.x - 4, y: a.y - 4, width: 8, height: 8))
-        NSColor.white.setStroke(); ring.lineWidth = 1; ring.stroke()
+        let ring = NSBezierPath(ovalIn: CGRect(x: a.x - 5, y: a.y - 5, width: 10, height: 10))
+        Theme.black(0.6).setStroke(); cross.lineWidth = 3.5; cross.stroke(); ring.lineWidth = 3.5; ring.stroke()
+        NSColor.white.setStroke(); cross.lineWidth = 1.5; cross.stroke(); ring.lineWidth = 1.5; ring.stroke()
     }
 
     private func drawGuides(_ g: TransformOverlayGeometry) {

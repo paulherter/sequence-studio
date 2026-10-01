@@ -36,6 +36,8 @@ public final class EditorSession {
     /// Clips copied with Cmd+C / Cmd+X (Paste puts them at the playhead).
     public var clipboard: TimelineClipboard?
     public private(set) var isPlaying = false
+    /// Loop toggle and the range of "Play In to Out" (nil = whole sequence); see `PlaybackBounds`.
+    public var bounds = PlaybackBounds()
     public private(set) var lastAutosave: Date?
     /// Message of the last refused or failed action (locked track, disk error...); UI shows it in the status bar.
     public private(set) var lastError: String?
@@ -110,7 +112,7 @@ public final class EditorSession {
         try? SessionMarker(store: autosaveStore).begin(projectID: project.id, projectURL: fileURL, projectName: project.name)
     }
 
-    private func notify(_ c: Change) { onChange?(c) }
+    func notify(_ c: Change) { onChange?(c) }
 
     // MARK: Editing
 
@@ -302,6 +304,19 @@ public final class EditorSession {
         guard isPlaying else { return }
         let end = activeTimeline?.duration ?? .zero
         // Stop at the sequence end: the last presented frame is one frame before `end`, and the engine may have stopped itself.
+        let rate = engine.rate
+        switch bounds.action(at: t, rate: rate, frameDuration: frameDuration, duration: end) {
+        case .wrap(let to):
+            playhead = to
+            engine.seek(to: to); engine.play(rate)
+            notify(.playhead)
+            return
+        case .stop(let at) where bounds.range != nil:
+            engine.pause(); isPlaying = false; playhead = at
+            notify([.playhead, .transport])
+            return
+        default: break
+        }
         let atEnd = end > .zero && (t + frameDuration >= end) && engine.rate.isForward
         if atEnd || engine.rate.isPaused {
             engine.pause(); isPlaying = false
@@ -339,14 +354,14 @@ public final class EditorSession {
 
     public func playPause() {
         if ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1" { NSLog("SSKEY session.playPause isPlaying=\(isPlaying) rate=\(engine.rate)") }
-        if isPlaying || !engine.rate.isPaused { engine.pause(); isPlaying = false } else { restartIfAtEnd(); engine.play(.forward); isPlaying = true }
+        if isPlaying || !engine.rate.isPaused { engine.pause(); isPlaying = false } else { bounds.range = nil; restartIfAtEnd(); engine.play(.forward); isPlaying = true }
         notify(.transport)
     }
 
     public func apply(shuttle action: ShuttleAction) {
         switch action {
         case .setRate(let r):
-            if r.isPaused { engine.pause(); isPlaying = false } else { if r.isForward { restartIfAtEnd() }; engine.play(r); isPlaying = true }
+            if r.isPaused { engine.pause(); isPlaying = false } else { bounds.range = nil; if r.isForward { restartIfAtEnd() }; engine.play(r); isPlaying = true }
             notify(.transport)
         case .step(let n): stepFrames(n)
         case .none: break
@@ -450,7 +465,7 @@ public final class EditorSession {
     /// Returns false when nothing could be placed (unknown ID, refused edit).
     @discardableResult
     public func placeMedia(_ ids: [MediaRef.ID], at time: Time? = nil, videoTrack: Track.ID? = nil,
-                           mode: ThreePointMode = .overwrite, adoptFormat: Bool = true) -> Bool {
+                           mode: ThreePointMode = .overwrite, adoptFormat: Bool = true, streams: SourceStreams = .both) -> Bool {
         guard let t = activeTimeline else { return false }
         let refs = ids.compactMap { project.media($0) }.filter { ($0.info?.duration ?? $0.duration) != nil }
         guard !refs.isEmpty else { return false }
@@ -477,8 +492,8 @@ public final class EditorSession {
                 let still = ref.info?.isStill == true
                 let source = still ? TimeRange(start: .zero, duration: total)      // stills: default length, no source marks
                                    : marks[ref.id]?.range ?? TimeRange(start: .zero, duration: total)
-                let hasVideo = ref.info?.video != nil || ref.info == nil
-                let d = tl.dropTargets(pointer: videoTrack, hasVideo: hasVideo, hasAudio: ref.info?.audio != nil)
+                let hasVideo = (ref.info?.video != nil || ref.info == nil) && streams.includesVideo
+                let d = tl.dropTargets(pointer: videoTrack, hasVideo: hasVideo, hasAudio: ref.info?.audio != nil && streams.includesAudio)
                 var targets: [Track.ID] = []
                 if let v = d.video { targets.append(v) }
                 if let a = d.audio { targets.append(a) } else if let n = d.newAudioOrdinal { targets.append(tl.ensureAudioTrack(atOrdinal: n)) }
@@ -660,6 +675,15 @@ public final class EditorSession {
                 self.projectDidChange()
             }
         }
+    }
+
+    /// Source Monitor In/Out of a media item. Not an undo step (Premiere keeps marks out of the edit history): the
+    /// change is folded into every history state so Undo never reverts a mark. nil clears the item's marks.
+    public func setSourceMarks(_ marks: SourceMarks?, for media: MediaRef.ID) {
+        guard project.sourceMarks[media] != (marks?.isEmpty == true ? nil : marks) else { return }
+        history.amendAll { p in p.sourceMarks[media] = (marks?.isEmpty == true) ? nil : marks }
+        forceDirty = true
+        notify(.project)
     }
 
     // MARK: Autosave and recovery

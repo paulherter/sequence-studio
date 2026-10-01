@@ -1,11 +1,12 @@
 import AppKit
 import SSCore
 import SSEditorUI
+import SSMedia
 import SSRender
 import SSText
 
 /// Owns the panel views and models and keeps them in step with the `EditorSession`: session changes flow in through
-/// `sync(_:)`, user gestures flow out as session calls. Only the Source monitor is still a placeholder.
+/// `sync(_:)`, user gestures flow out as session calls.
 @MainActor
 final class EditorPanels {
     let session: EditorSession
@@ -23,6 +24,7 @@ final class EditorPanels {
     private var textEditing: TextEditing?
     private var failedRasters = Set<GeneratorRef>()
     let monitorModel: MonitorPanelModel
+    let source: SourceMonitorController
     let monitorView: MonitorPanelView
     let projectModel: ProjectPanelModel
     let projectView: ProjectPanelView
@@ -51,9 +53,12 @@ final class EditorPanels {
     var onNest: (() -> Void)?
     /// "Set to Frame Size" / "Scale to Frame Size" of the selected clips.
     var onFrameSize: (() -> Void)?
+    /// Match Frame / double-click in the Project panel loaded the Source monitor: bring it forward.
+    var onShowSource: (() -> Void)?
 
-    init(session: EditorSession) {
+    init(session: EditorSession, sourceEngine: (any ProgramEngine)? = nil) {
         self.session = session
+        source = SourceMonitorController(session: session, engine: sourceEngine ?? StubProgramEngine())
         let fd = session.activeTimeline?.frameDuration ?? Time(1001, 30000)
         monitorModel = MonitorPanelModel(frameDuration: fd)
         monitorView = MonitorPanelView(model: monitorModel)
@@ -77,6 +82,7 @@ final class EditorPanels {
         wireTimeline()
         wireSidePanels()
         wireMonitor()
+        wireSource()
         wireOverlay()
         wireEffectControls()
         sync([.project, .selection, .playhead, .transport])
@@ -112,7 +118,8 @@ final class EditorPanels {
         tv.onRejection = { [weak self] m in self?.onStatus?(m) }
         tv.onTrackToggle = { [weak self] id, toggle in self?.toggleTrack(id, toggle) }
         tv.onDropMedia = { [weak self] ids, time, track, insert in
-            self?.session.placeMedia(ids, at: time, videoTrack: track, mode: insert ? .insert : .overwrite)
+            self?.session.placeMedia(ids, at: time, videoTrack: track, mode: insert ? .insert : .overwrite,
+                                     streams: self?.source.dragStreams ?? .both)
         }
         tv.onDropTextTemplate = { [weak self] id, time, track in
             guard let entry = TextTemplateCatalog.entry(id: id) else { return }
@@ -136,12 +143,14 @@ final class EditorPanels {
         switch source {
         case .media(let ids):
             let marks = session.project.sourceMarks
-            return ids.compactMap { id in
+            return ids.compactMap { id -> DropItem? in
                 guard let ref = session.project.media(id) else { return nil }
                 let total = ref.info?.duration ?? ref.duration
                 guard let d = marks[id]?.range?.duration ?? total else { return nil }
-                return DropItem(name: ref.name, duration: d, hasVideo: ref.info?.video != nil || ref.info == nil,
-                                hasAudio: ref.info?.audio != nil)
+                let streams = self.source.dragStreams
+                return DropItem(name: ref.name, duration: d,
+                                hasVideo: (ref.info?.video != nil || ref.info == nil) && streams.includesVideo,
+                                hasAudio: ref.info?.audio != nil && streams.includesAudio)
             }
         case .files(let urls):
             // Not probed yet: guess the streams from the extension (video files carry audio, stills do not).
@@ -304,9 +313,120 @@ final class EditorPanels {
             case .addMarker: c = .addMarker
             case .insert: c = .insert
             case .overwrite: c = .overwrite
+            case .lift: c = .lift
+            case .extract: c = .extract
+            case .exportFrame: c = .exportFrame
+            case .loop: c = .toggleLoop
+            case .playInToOut: c = .playInToOut
+            case .toggleSafeMargins: self?.toggleSafeMargins(); return
             }
             self?.onCommand?(c)
         }
+    }
+
+    func toggleSafeMargins() {
+        monitorModel.safeMargins.toggle()
+        monitorView.safeMarginsView.needsDisplay = true
+    }
+
+    private func wireSource() {
+        source.onStatus = { [weak self] m in self?.onStatus?(m) }
+        source.onStartedPlaying = { [weak self] in self?.session.stopPlayback() }
+        source.onRevealInProject = { [weak self] id in self?.projectView.reveal(media: id) }
+        projectView.onOpenMedia = { [weak self] id in
+            guard let self, source.open(id) else { return }
+            onShowSource?()
+        }
+        projectView.onOpenSequence = { [weak self] id in self?.session.setActiveTimeline(id) }
+        projectView.onPlace = { [weak self] ids, mode in self?.session.placeMedia(ids, mode: mode) }
+        projectView.onNewSequenceFromClip = { [weak self] id in self?.session.newSequence(fromMedia: id) }
+        projectView.onNewSequence = { [weak self] in self?.onCommand?(.newSequence) }
+        projectView.onReplaceFootage = { [weak self] id in self?.replaceFootage(id) }
+        monitorView.safeMarginsView.rectProvider = { [weak self] in self?.surface.mapping.canvasRect ?? .zero }
+        monitorModel.onScrubBegan = { [weak self] in self?.session.beginScrub() }
+        monitorModel.onScrub = { [weak self] t in self?.session.scrub(to: t) }
+        monitorModel.onScrubEnded = { [weak self] in self?.session.endScrub() }
+        monitorModel.contextMenuBuilder = { [weak self] menu in self?.fillProgramMenu(menu) }
+    }
+
+    /// Replace Footage / Link Media: pick a file, probe it, and let it take over the item (clips, marks, label stay).
+    private func replaceFootage(_ id: MediaRef.ID) {
+        guard let ref = session.project.media(id) else { return }
+        let panel = NSOpenPanel()
+        panel.message = "Choose the file that replaces “\(ref.name)”."
+        panel.prompt = ref.status() == .missing ? "Link" : "Replace"
+        panel.canChooseDirectories = false
+        panel.allowsMultipleSelection = false
+        panel.directoryURL = URL(fileURLWithPath: ref.path).deletingLastPathComponent()
+        guard panel.runModal() == .OK, let url = panel.url else { return }
+        Task { [weak self] in
+            guard let self else { return }
+            guard let probed = try? await MediaImporter.probe(url).0 else { onStatus?("Could not read \(url.lastPathComponent)."); return }
+            session.replaceFootage(id, with: probed)
+            waveforms.invalidate(id)
+            projectView.forgetThumbnail(id)
+            projectModel.refreshOffline()
+            if source.mediaID == id { source.open(id) }
+            onStatus?("Replaced footage with \(url.lastPathComponent).")
+        }
+    }
+
+    /// Opens the media item under the playhead in the Source monitor, parked on the same frame (F).
+    @discardableResult
+    func matchFrame() -> Bool {
+        guard let t = session.activeTimeline, let m = t.matchFrame(at: session.playhead, selected: session.selection) else {
+            onStatus?("No clip with media under the playhead to match."); return false
+        }
+        guard source.open(m.media, at: m.sourceTime) else { return false }
+        onShowSource?()
+        return true
+    }
+
+    /// Moves the playhead to the frame the Source monitor shows, inside the clip that uses it (Shift+R).
+    @discardableResult
+    func reverseMatchFrame() -> Bool {
+        guard let id = source.mediaID else { onStatus?("Open a clip in the Source monitor first."); return false }
+        guard let t = session.activeTimeline,
+              let at = t.reverseMatchFrame(media: id, sourceTime: source.currentTime, playhead: session.playhead, selected: session.selection)
+        else { onStatus?("That frame is not used in the sequence."); return false }
+        session.seek(to: at)
+        return true
+    }
+
+    private func fillProgramMenu(_ menu: NSMenu) {
+        func add(_ title: String, _ enabled: Bool = true, state: Bool? = nil, _ action: @escaping () -> Void) {
+            let it = ClosureMenuItem(title: title, action: action)
+            it.isEnabled = enabled
+            if let state { it.state = state ? .on : .off }
+            menu.addItem(it)
+        }
+        let io = session.activeTimeline?.inOut
+        add("Mark In") { [weak self] in self?.onCommand?(.markIn) }
+        add("Mark Out") { [weak self] in self?.onCommand?(.markOut) }
+        add("Go to In", io != nil) { [weak self] in self?.onCommand?(.goToIn) }
+        add("Go to Out", io != nil) { [weak self] in self?.onCommand?(.goToOut) }
+        add("Clear In and Out", io != nil) { [weak self] in self?.onCommand?(.clearInOut) }
+        menu.addItem(.separator())
+        add("Add Marker") { [weak self] in self?.onCommand?(.addMarker) }
+        add("Lift", io != nil) { [weak self] in self?.onCommand?(.lift) }
+        add("Extract", io != nil) { [weak self] in self?.onCommand?(.extract) }
+        menu.addItem(.separator())
+        add("Match Frame") { [weak self] in self?.onCommand?(.matchFrame) }
+        add("Reverse Match Frame", source.mediaID != nil) { [weak self] in self?.onCommand?(.reverseMatchFrame) }
+        add("Export Frame…") { [weak self] in self?.onCommand?(.exportFrame) }
+        menu.addItem(.separator())
+        add("Safe Margins", state: monitorModel.safeMargins) { [weak self] in self?.toggleSafeMargins() }
+        add("Loop Playback", state: session.bounds.loop) { [weak self] in self?.onCommand?(.toggleLoop) }
+        menu.addItem(.separator())
+        let zoom = NSMenu(title: "Zoom")
+        for z in MonitorZoom.presets {
+            let it = ClosureMenuItem(title: z.title) { [weak self] in self?.monitorModel.setZoom(z) }
+            it.state = monitorModel.zoom == z ? .on : .off
+            zoom.addItem(it)
+        }
+        let zi = NSMenuItem(title: "Zoom", action: nil, keyEquivalent: "")
+        zi.submenu = zoom
+        menu.addItem(zi)
     }
 
     // MARK: Program monitor overlay, Type tool
@@ -419,6 +539,7 @@ final class EditorPanels {
             }
         }
         surface.overlay.selectedKey = effectModel.selectedKeyIDs(.position).first
+        surface.overlay.uniformScale = effectModel.uniformScale
         surface.setTarget(target, snap: SnapGuides.targets(canvas: surface.sequenceSize, others: others))
     }
 
@@ -451,11 +572,7 @@ final class EditorPanels {
         case .scopes: return scopesView
         case .effects: return effectsView
         case .audioMeter: return meterView
-        case .sourceMonitor:
-            if let v = placeholders[p] { return v }
-            let v = PlaceholderPanelView(title: EditorCommand.panelTitle(p), symbol: Self.symbol(p))
-            placeholders[p] = v
-            return v
+        case .sourceMonitor: return source.view
         }
     }
 
@@ -535,6 +652,9 @@ final class EditorPanels {
         }
         // Every change re-reads the transport state, so the Play/Pause button can never lag behind the session.
         if monitorModel.isPlaying != session.isPlaying { monitorModel.isPlaying = session.isPlaying }
+        if session.isPlaying { source.pause() }
+        monitorModel.isLooping = session.bounds.loop
+        source.sync(change)
         effectModel.sync(with: session, change: change)
         updateOverlay()
         clipSections.sync(change)

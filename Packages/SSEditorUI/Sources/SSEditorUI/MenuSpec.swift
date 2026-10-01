@@ -35,7 +35,7 @@ public enum EditorMenus {
 
     /// File. The app inserts "Open Recent" after Open Project.
     public static let file = MenuSpec(title: "File", items: cmds([
-        .newProject, .newSequence, nil, .openProject, nil, .save, .saveAs, .revert, nil, .importMedia, nil, .export,
+        .newProject, .newSequence, .newBin, nil, .openProject, nil, .save, .saveAs, .revert, nil, .importMedia, nil, .export, .exportFrame,
     ]))
     public static let edit = MenuSpec(title: "Edit", items: cmds([
         .undo, .redo, nil, .cut, .copy, .paste, .pasteInsert, .pasteAttributes, nil,
@@ -59,13 +59,13 @@ public enum EditorMenus {
     public static let markers = MenuSpec(title: "Markers", items: cmds([
         .markIn, .markOut, .markClip, nil,
         .goToIn, .goToOut, nil,
-        .clearInOut, nil,
+        .clearIn, .clearOut, .clearInOut, nil,
         .addMarker, .nextMarker, .previousMarker, nil,
         .markSelection,
     ]))
     public static let view = MenuSpec(title: "View", items: [
         .submenu("Playback", cmds([
-            .playPause, nil, .shuttleReverse, .shuttleStop, .shuttleForward, nil,
+            .playPause, .playInToOut, .toggleLoop, nil, .shuttleReverse, .shuttleStop, .shuttleForward, nil,
             .stepBackward, .stepForward, .stepBackward5, .stepForward5,
         ])),
         .separator,

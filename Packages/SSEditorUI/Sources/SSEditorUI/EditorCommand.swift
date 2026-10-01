@@ -8,12 +8,15 @@ public enum EditorTool: String, Sendable, Hashable, CaseIterable {
 public enum EditorCommand: Sendable, Hashable {
     // Transport. J/K/L go through `Shuttle` (see KeyRouter), the rest is plain.
     case shuttleReverse, shuttleStop, shuttleForward
+    /// Shift+J / Shift+L: fine speed changes.
+    case shuttleSlowReverse, shuttleSlowForward
     case playPause
     case stepBackward, stepForward, stepBackward5, stepForward5
     case previousEditPoint, nextEditPoint
     case goToStart, goToEnd
     // Marking
-    case markIn, markOut, goToIn, goToOut, clearInOut, markClip
+    case markIn, markOut, goToIn, goToOut, clearInOut, markClip, clearIn, clearOut
+    case playInToOut, toggleLoop, exportFrame, newBin
     case lift, extract, insert, overwrite, addMarker
     // Tools
     case tool(EditorTool)
@@ -62,6 +65,8 @@ public enum EditorCommand: Sendable, Hashable {
         switch self {
         case .shuttleReverse: "Shuttle Reverse"
         case .shuttleStop: "Shuttle Stop"
+        case .shuttleSlowReverse: "Shuttle Slow Left"
+        case .shuttleSlowForward: "Shuttle Slow Right"
         case .shuttleForward: "Shuttle Forward"
         case .playPause: "Play/Pause"
         case .stepBackward: "Step Back 1 Frame"
@@ -78,6 +83,12 @@ public enum EditorCommand: Sendable, Hashable {
         case .goToOut: "Go to Out"
         case .clearInOut: "Clear In and Out"
         case .markClip: "Mark Clip"
+        case .clearIn: "Clear In"
+        case .clearOut: "Clear Out"
+        case .playInToOut: "Play In to Out"
+        case .toggleLoop: "Loop Playback"
+        case .exportFrame: "Export Frame…"
+        case .newBin: "New Bin"
         case .lift: "Lift"
         case .extract: "Extract"
         case .insert: "Insert"

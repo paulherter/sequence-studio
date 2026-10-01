@@ -110,13 +110,16 @@ import SSCore
         m.perform(.stepForward)
         m.perform(.insert)
         #expect(log == [.playPause, .stepForward])
-        m.mode = .source
-        m.perform(.insert)
-        m.perform(.overwrite)
+        let src = MonitorPanelModel(frameDuration: Time(1, 25), mode: .source)
+        src.onAction = { log.append($0) }
+        src.perform(.insert)
+        src.perform(.overwrite)
+        src.perform(.lift)
         #expect(log.suffix(2) == [.insert, .overwrite])
-        #expect(m.availableActions.contains(.insert))
-        m.mode = .program
-        #expect(!m.availableActions.contains(.insert))
+        #expect(src.availableActions.contains(.insert) && !src.availableActions.contains(.lift))
+        #expect(!m.availableActions.contains(.insert) && m.availableActions.contains(.lift))
+        #expect(MonitorAction.buttonBar(for: .source).first == .addMarker)
+        #expect(MonitorAction.buttonBar(for: .program).suffix(3) == [.lift, .extract, .exportFrame])
     }
 
     @MainActor @Test func zoomAndQuality() {
