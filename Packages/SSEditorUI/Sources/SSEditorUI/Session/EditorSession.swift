@@ -619,6 +619,15 @@ public final class EditorSession {
         }
     }
 
+    /// Source Monitor In/Out of a media item. Not an undo step (Premiere keeps marks out of the edit history): the
+    /// change is folded into every history state so Undo never reverts a mark. nil clears the item's marks.
+    public func setSourceMarks(_ marks: SourceMarks?, for media: MediaRef.ID) {
+        guard project.sourceMarks[media] != (marks?.isEmpty == true ? nil : marks) else { return }
+        history.amendAll { p in p.sourceMarks[media] = (marks?.isEmpty == true) ? nil : marks }
+        forceDirty = true
+        notify(.project)
+    }
+
     // MARK: Autosave and recovery
 
     /// Writes an autosave version when the project is dirty and the policy says one is due. The app calls this
