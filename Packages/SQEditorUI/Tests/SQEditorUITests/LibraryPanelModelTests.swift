@@ -263,4 +263,26 @@ private func eventually(_ cond: @MainActor () -> Bool) async -> Bool {
         view.layoutSubtreeIfNeeded()
         #expect(view.subviews.count == 1)
     }
+
+    // Review finding 11: every model change (a finished thumbnail, a favorite) reloaded the grid and dropped the selection.
+    @Test func selectionSurvivesARefresh() async throws {
+        let env = try await Env()
+        defer { env.cleanup() }
+        let view = LibraryPanelView(model: env.model)
+        view.frame = NSRect(x: 0, y: 0, width: 700, height: 440)
+        _ = await env.model.addFolder(url: env.media)
+        view.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(50))
+        func find(_ v: NSView) -> NSCollectionView? {
+            if let c = v as? NSCollectionView { return c }
+            for s in v.subviews { if let c = find(s) { return c } }
+            return nil
+        }
+        let grid = try #require(find(view))
+        grid.selectionIndexPaths = [IndexPath(item: 1, section: 0)]
+        let other = try #require(env.model.items.first)
+        env.model.toggleFavorite(other.id)                 // observed: the view refreshes
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(grid.selectionIndexPaths == [IndexPath(item: 1, section: 0)])
+    }
 }
