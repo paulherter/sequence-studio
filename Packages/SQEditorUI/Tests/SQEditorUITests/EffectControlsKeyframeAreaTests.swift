@@ -266,7 +266,7 @@ import Testing
         v.clipSections = sections
         v.frame = NSRect(x: 0, y: 0, width: 900, height: 600)
         v.layoutSubtreeIfNeeded()
-        let rows = EffectControlsLayout.rows(sections: m.visibleSections, collapsed: [], expanded: [], uniformScaleRow: true)
+        let rows = EffectControlsLayout.rows(sections: m.visibleSections, collapsed: [], expanded: [], uniformScaleRow: true, blendModeRow: true)
         #expect(sections.frame.minY == EffectControlsLayout.totalHeight(rows))
     }
 

@@ -112,10 +112,13 @@ extension Clip {
     public func transform(at t: Time) -> ClipTransform {
         let l = t - start
         let s = animation.scale.value(atLocal: l)
+        // fx toggle off: the section renders at its defaults (no evaluation at all), the stored values stay.
+        let opacity = opacityEnabled ? min(max(animation.opacity.value(atLocal: l), 0), 1) : 1
+        guard motionEnabled else { return ClipTransform(opacity: opacity) }
         return ClipTransform(position: animation.position.value(atLocal: l),
                              scale: Vec2(max(s.x, 0), max(s.y, 0)),
                              rotation: animation.rotation.value(atLocal: l),
-                             opacity: min(max(animation.opacity.value(atLocal: l), 0), 1),
+                             opacity: opacity,
                              anchor: animation.anchor.value(atLocal: l))
     }
 

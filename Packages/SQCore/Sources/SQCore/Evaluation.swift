@@ -145,7 +145,7 @@ extension Timeline {
                                         sourceTime: c.sourceTime(at: t, frameDuration: format.frameDuration),
                                         transform: c.transform(at: t), cornerRadius: fx.cornerRadius,
                                         groups: groups, generator: c.generator, localTime: local, color: c.color,
-                                        effects: fx, blendMode: c.blendMode))
+                                        effects: fx, blendMode: c.opacityEnabled ? c.blendMode : .normal))
             }
         }
         return out

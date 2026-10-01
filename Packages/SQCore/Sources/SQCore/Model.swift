@@ -86,6 +86,10 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     /// Frame hold (v22): the clip shows this one source frame (media time) for its whole length, like a still. Video
     /// only. Trims grow it freely in both directions (no media limit); `source` is nominal for a held clip.
     public var holdFrame: Time?
+    /// fx toggle of the fixed Motion / Opacity sections (v22): off = the clip renders as if they were at their defaults
+    /// (values and keys stay stored). Opacity off also means blend mode Normal.
+    public var motionEnabled: Bool = true
+    public var opacityEnabled: Bool = true
 
     /// Media, nested sequence or generator.
     public var clipSource: ClipSource {
@@ -153,7 +157,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB, blendMode, holdFrame
+        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB, blendMode, holdFrame, motionEnabled, opacityEnabled
     }
 
     public init(from d: Decoder) throws {
@@ -176,6 +180,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
         audioGainDB = try c.decodeIfPresent(Double.self, forKey: .audioGainDB) ?? 0
         blendMode = try c.decodeIfPresent(BlendMode.self, forKey: .blendMode) ?? .normal
         holdFrame = try c.decodeIfPresent(Time.self, forKey: .holdFrame)
+        motionEnabled = try c.decodeIfPresent(Bool.self, forKey: .motionEnabled) ?? true
+        opacityEnabled = try c.decodeIfPresent(Bool.self, forKey: .opacityEnabled) ?? true
         // v8 -> v9: a radius that was not the default becomes an applied Rounded Corners effect.
         if let legacy = animation.legacyCornerRadius {
             animation.legacyCornerRadius = nil
