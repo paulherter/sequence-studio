@@ -30,11 +30,45 @@ public enum ProjectFile {
         return candidate
     }
 
-    public static let currentVersion = 16
+    public static let currentVersion = 23
     public typealias JSONObject = [String: Any]
     /// Upgrades the top-level object from version N to N+1, keyed by N.
     public typealias Migrations = [Int: (JSONObject) throws -> JSONObject]
-    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7, 7: migrateV7toV8, 8: migrateV8toV9, 9: migrateV9toV10, 10: migrateV10toV11, 11: migrateV11toV12, 12: migrateV12toV13, 13: migrateV13toV14, 14: migrateV14toV15, 15: migrateV15toV16, 19: migrateV19toV20] }
+    /// Steps that change data. One entry per version, one line each, so streams that merge out of order never
+    /// collide on a line or on a key. A version without an entry here is an identity step (see `migrations`).
+    static var realMigrations: Migrations {
+        var t: Migrations = [:]
+        t[1] = migrateV1toV2
+        t[2] = migrateV2toV3
+        t[3] = migrateV3toV4
+        t[4] = migrateV4toV5
+        t[5] = migrateV5toV6
+        t[6] = migrateV6toV7
+        t[7] = migrateV7toV8
+        t[8] = migrateV8toV9
+        t[9] = migrateV9toV10
+        t[10] = migrateV10toV11
+        t[11] = migrateV11toV12
+        t[12] = migrateV12toV13
+        t[13] = migrateV13toV14
+        t[14] = migrateV14toV15
+        t[15] = migrateV15toV16
+        t[16] = migrateV16toV17
+        t[17] = migrateV17toV18
+        t[18] = migrateV18toV19
+        t[19] = migrateV19toV20
+        t[20] = migrateV20toV21
+        t[21] = migrateV21toV22
+        t[22] = migrateV22toV23
+        return t
+    }
+    /// The full chain 1..<currentVersion. Missing steps are identity: every format change since v2 only added
+    /// fields that are optional on decode.
+    public static var migrations: Migrations {
+        var t = realMigrations
+        for v in 1..<currentVersion where t[v] == nil { t[v] = { $0 } }
+        return t
+    }
 
     /// v2: `Timeline.frameDuration` moved into `Timeline.format` (defaults 1920x1080, 48 kHz).
     /// Track flags, `inOut` and `markers` are optional on decode, so nothing else changes.
@@ -86,7 +120,7 @@ public enum ProjectFile {
     /// on screen. A project that does not decode is passed on unchanged (the final decode then reports it).
     static func migrateV9toV10(_ obj: JSONObject) throws -> JSONObject {
         var o = obj
-        guard let projectObj = obj["project"],
+        guard let projectObj = obj["project"], JSONSerialization.isValidJSONObject(projectObj),
               let raw = try? JSONSerialization.data(withJSONObject: projectObj),
               var project = try? decoder().decode(Project.self, from: raw) else { return obj }
         project.migrateScaleToSourcePixels()
@@ -122,8 +156,33 @@ public enum ProjectFile {
 
     /// v20 (audio-shortform): `Track.volumeDB` / `Track.pan`, `Clip.audioTag`, `Clip.duckKeyIDs`. All optional on decode;
     /// absent = 0 dB, centre, untagged, no generated keys: identity migration. Older builds drop these fields on save.
-    /// (`currentVersion` becomes 20 at merge, when v17-v19 of the other streams are present.)
+    /// 
     static func migrateV19toV20(_ obj: JSONObject) throws -> JSONObject { obj }
+    /// v17: `Track.transitions` (cut and fade transitions). Optional on decode; absent = none: identity migration.
+    /// Older builds drop the transitions on save.
+    static func migrateV16toV17(_ obj: JSONObject) throws -> JSONObject { obj }
+
+
+    /// v18 (round 2, timeline-edit): `Clip.isEnabled` (Enable / Disable Clip). Optional on decode; absent = enabled:
+    /// identity migration. (v17 belongs to transitions; `currentVersion` is raised to the highest number on merge.)
+    static func migrateV17toV18(_ obj: JSONObject) throws -> JSONObject { obj }
+    /// v21 (stream captions-text; v17-v20 belong to the other round-2 streams): `CaptionTrack.styleRef/animationRef/karaoke`,
+    /// `CaptionItem.styleOverridden/words`, `TextStyle.allCaps`, `TextStroke.position`, `TextTemplate.highlight` (inside
+    /// text payloads). All optional on decode; absent = captions keep their own style, no word highlight, no overrides,
+    /// normal case, outside stroke: identity migration. Older builds drop these fields on save.
+    static func migrateV20toV21(_ obj: JSONObject) throws -> JSONObject { obj }
+
+    /// v22 (effects-look): `Clip.blendMode` (Opacity > Blend Mode), `Clip.holdFrame` (Frame Hold) and the fx toggles
+    /// `Clip.motionEnabled` / `opacityEnabled`. Effect instances need no new field (`ClipEffect` always had an id; the list
+    /// order is the evaluation order). All optional on decode; absent = Normal, no hold, toggles on: identity migration.
+    static func migrateV21toV22(_ obj: JSONObject) throws -> JSONObject { obj }
+
+    /// v23 (stream speed-time): `Clip.speedKeys` (time remapping: segments with ramps and an origin) and
+    /// `Clip.timeInterpolation`. Both optional on decode; absent = constant speed (`speed` / `reversed`) and frame sampling,
+    /// so every v22 clip, constant-speed clips included, decodes and plays unchanged: identity migration. Older builds drop the
+    /// speed track on save and then play the clip at its `speed` over its `source` hull.
+    static func migrateV22toV23(_ obj: JSONObject) throws -> JSONObject { obj }
+
 
     static let fileName = "project.json"
     static let autosaveDir = "Autosave"
@@ -157,7 +216,8 @@ public enum ProjectFile {
             obj = try step(obj)
             version += 1
         }
-        guard let projectObj = obj["project"],
+        // `data(withJSONObject:)` raises (not throws) for a non-container value such as `"project": 5`.
+        guard let projectObj = obj["project"], JSONSerialization.isValidJSONObject(projectObj),
               let raw = try? JSONSerialization.data(withJSONObject: projectObj),
               let project = try? decoder().decode(Project.self, from: raw) else { throw ProjectFileError.corrupt }
         return project

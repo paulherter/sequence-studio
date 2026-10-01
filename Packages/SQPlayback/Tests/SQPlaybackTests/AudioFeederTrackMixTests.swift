@@ -89,3 +89,74 @@ private func played(_ f: AudioFeeder, _ n: Int) -> (l: [Float], r: [Float]) {
         #expect(!ratios.isEmpty && ratios.allSatisfy { abs($0 - 0.5) < 1e-3 })
     }
 }
+
+/// Clip gain, track fader and pan on top of main's crossfades, time remapping and Enable/Disable: each exactly once.
+@Suite struct AudioFeederMixCombinationTests {
+    private let ma = UUID(), mb = UUID()
+    private func crossfaded(gainDB: Double = 0, volumeDB: Double = 0, pan: Double = 0) throws -> (Timeline, UUID, UUID) {
+        let fd = Time(1, 30)
+        var a = Clip(name: "A", media: ma, kind: .audio, source: TimeRange(start: Time(1, 1), duration: Time(2, 1)), start: .zero, mediaDuration: Time(6, 1))
+        var b = Clip(name: "B", media: mb, kind: .audio, source: TimeRange(start: Time(2, 1), duration: Time(2, 1)), start: Time(2, 1), mediaDuration: Time(6, 1))
+        a.audioGainDB = gainDB; b.audioGainDB = gainDB
+        var track = Track(kind: .audio); try track.overwrite(a); try track.overwrite(b)
+        track.volumeDB = volumeDB; track.pan = pan
+        var t = Timeline(name: "t", format: SequenceFormat(frameDuration: fd), tracks: [track])
+        try t.addTransition(kind: .constantGain, track: track.id, outgoing: a.id, incoming: b.id, duration: fd * 15)
+        return (t, ma, mb)
+    }
+
+    private func render(_ t: Timeline, _ ma: UUID, _ mb: UUID) -> (l: [Float], r: [Float]) {
+        let src: [UUID: MemoryAudioSource] = [ma: constant(6 * 48_000, 0.4), mb: constant(6 * 48_000, 0.4)]
+        let f = AudioFeeder(timeline: t, ring: RingBuffer(capacity: 1 << 14), blockFrames: 16384) { src[$0]! }
+        return mixed(f, t, from: Int64(1.85 * 48_000), count: 14_400)
+    }
+
+    @Test func gainAndFaderApplyOnceThroughACrossfade() throws {
+        let (t0, ma, mb) = try crossfaded()
+        let base = render(t0, ma, mb)
+        #expect(base.l.contains { $0 != 0 })
+        let (t1, _, _) = try crossfaded(gainDB: 6.0206)
+        let (t2, _, _) = try crossfaded(volumeDB: -6.0206)
+        let g = render(t1, ma, mb), v = render(t2, ma, mb)
+        for i in stride(from: 0, to: 14_400, by: 211) where base.l[i] > 1e-3 {
+            #expect(abs(g.l[i] / base.l[i] - 2) < 2e-3, "gain once at \(i)")
+            #expect(abs(v.l[i] / base.l[i] - 0.5) < 2e-3, "fader once at \(i)")
+        }
+    }
+
+    @Test func hardPanSilencesOneSideThroughACrossfade() throws {
+        let (t, ma, mb) = try crossfaded(pan: 1)
+        let o = render(t, ma, mb)
+        #expect(o.l.allSatisfy { abs($0) < 1e-6 } && o.r.contains { abs($0) > 1e-3 })
+    }
+
+    @Test func gainAndFaderApplyOnceWithTimeRemapping() {
+        let m = UUID()
+        func tl(gain: Double, fader: Double) -> Timeline {
+            var c = Clip(name: "c", media: m, kind: .audio, source: TimeRange(start: .zero, duration: Time(1, 1)), start: .zero, mediaDuration: Time(2, 1))
+            c.setSpeedKeys(SpeedKeys(segments: [SpeedSegment(duration: Time(1, 2), from: ClipSpeed(percent: 100)), SpeedSegment(duration: Time(1, 2), from: ClipSpeed(percent: 200))],
+                                     origin: .zero))
+            c.audioGainDB = gain
+            var tr = Track(kind: .audio, clips: [c]); tr.volumeDB = fader
+            return Timeline(name: "t", format: fmt, tracks: [tr])
+        }
+        let src = constant(2 * 48_000, 0.4)
+        func run(_ t: Timeline) -> [Float] { played(feeder(t, m, src), 2048).l }
+        let base = run(tl(gain: 0, fader: 0)), both = run(tl(gain: 6.0206, fader: -6.0206))
+        let ratios = (400..<1500).compactMap { base[$0] > 1e-3 ? both[$0] / base[$0] : nil }
+        #expect(!ratios.isEmpty && ratios.allSatisfy { abs($0 - 1) < 2e-3 })
+        let up = run(tl(gain: 6.0206, fader: 0))
+        let r2 = (400..<1500).compactMap { base[$0] > 1e-3 ? up[$0] / base[$0] : nil }
+        #expect(!r2.isEmpty && r2.allSatisfy { abs($0 - 2) < 2e-3 })
+    }
+
+    @Test func disabledClipIsSilentWhateverTheGain() {
+        let m = UUID()
+        var c = Clip(name: "c", media: m, kind: .audio, source: TimeRange(start: .zero, duration: frames(20_000)), start: .zero)
+        c.audioGainDB = 12; c.isEnabled = false
+        var tr = Track(kind: .audio, clips: [c]); tr.volumeDB = 6; tr.pan = 0.5
+        let t = Timeline(name: "t", format: fmt, tracks: [tr])
+        let o = mixed(feeder(t, m, constant(30_000)), t, from: 0, count: 512)
+        #expect(o.l.allSatisfy { $0 == 0 } && o.r.allSatisfy { $0 == 0 })
+    }
+}

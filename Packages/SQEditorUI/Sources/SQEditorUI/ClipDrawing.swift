@@ -145,7 +145,8 @@ public enum ClipDrawing {
     /// `volumeDB`: level in dB at source seconds since the clip's source start (Volume line plus Audio Gain), so the waveform shows
     /// what will be heard; nil draws the source as it is.
     public static func drawWaveform(data: WaveformData, media: UUID, source: TimeRange, rect: CGRect, visible: CGRect,
-                                    cache: WaveformCache?, volumeDB: (@Sendable (Double) -> Double)? = nil, reversed: Bool = false) {
+                                    cache: WaveformCache?, volumeDB: (@Sendable (Double) -> Double)? = nil, reversed: Bool = false,
+                                    sourceMap: (@Sendable (Double) -> Double)? = nil) {
         guard let cg = NSGraphicsContext.current?.cgContext, rect.width >= 1 else { return }
         let wave = waveformRect(in: rect)
         guard wave.height >= 4 else { return }
@@ -156,6 +157,7 @@ public enum ClipDrawing {
         var input = WaveformPath.Input(data: data, source: source, clipWidth: wave.width, visibleColumns: from..<to,
                                        style: style, volumeDB: volumeDB ?? { _ in 0 }, cache: cache.map { ($0, media) })
         input.reversed = reversed
+        input.sourceMap = sourceMap
         let columns = WaveformPath.columns(input)
         cg.setFillColor(Theme.white(0.55).cgColor)
         cg.addPath(WaveformPath.path(columns: columns, rect: wave, style: style, firstColumn: from))

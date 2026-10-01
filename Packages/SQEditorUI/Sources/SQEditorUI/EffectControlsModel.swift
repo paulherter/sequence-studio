@@ -4,21 +4,52 @@ import SQCore
 
 // MARK: - Sections and properties
 
-public enum EffectSection: String, CaseIterable, Sendable, Hashable {
-    case motion, opacity, roundedCorners, volume
+public enum EffectSection: Hashable, Sendable {
+    case motion, opacity, volume
+    /// One applied effect (an instance: a clip can have several of one kind).
+    case effect(ClipEffect.ID, kind: String)
+
+    public static let builtIns: [EffectSection] = [.motion, .opacity, .volume]
+
+    public var rawValue: String {
+        switch self {
+        case .motion: "motion"
+        case .opacity: "opacity"
+        case .volume: "volume"
+        case .effect(let id, let kind): "fx:\(id.uuidString):\(kind)"
+        }
+    }
+
+    public init?(rawValue: String) {
+        switch rawValue {
+        case "motion": self = .motion
+        case "opacity": self = .opacity
+        case "volume": self = .volume
+        default:
+            let parts = rawValue.split(separator: ":", maxSplits: 2).map(String.init)
+            guard parts.count == 3, parts[0] == "fx", let id = UUID(uuidString: parts[1]) else { return nil }
+            self = .effect(id, kind: parts[2])
+        }
+    }
 
     public var title: String {
         switch self {
         case .motion: "Motion"
         case .opacity: "Opacity"
-        case .roundedCorners: "Rounded Corners"
         case .volume: "Volume"
+        case .effect(_, let kind): EffectCatalog.title(for: kind)
         }
     }
 
     /// Kind of the applied effect behind this section; nil for the built-in clip properties (always present).
     public var effectKind: String? {
-        self == .roundedCorners ? ClipEffect.roundedCornersKind : nil
+        if case .effect(_, let kind) = self { return kind }
+        return nil
+    }
+
+    public var effectID: ClipEffect.ID? {
+        if case .effect(let id, _) = self { return id }
+        return nil
     }
 
     /// Animatable properties.
@@ -26,26 +57,56 @@ public enum EffectSection: String, CaseIterable, Sendable, Hashable {
         switch self {
         case .motion: [.position, .scale, .rotation, .anchor]
         case .opacity: [.opacity]
-        case .roundedCorners: [.cornerRadius]
         case .volume: [.volume]
+        case .effect(let id, let kind):
+            (EffectCatalog.spec(for: kind)?.params ?? []).map { .fx(id, kind: kind, key: $0.key) }
         }
     }
 }
 
-public enum EffectProperty: String, CaseIterable, Sendable, Hashable {
-    case position, scale, rotation, anchor, opacity, volume, cornerRadius
+public enum EffectProperty: Hashable, Sendable {
+    case position, scale, rotation, anchor, opacity, volume
+    /// A parameter of an applied effect instance.
+    case fx(ClipEffect.ID, kind: String, key: String)
+
+    public static let builtIns: [EffectProperty] = [.position, .scale, .rotation, .anchor, .opacity, .volume]
 
     public enum Kind: Sendable { case vector, uniform, scalar }
+
+    public var rawValue: String {
+        switch self {
+        case .position: "position"
+        case .scale: "scale"
+        case .rotation: "rotation"
+        case .anchor: "anchor"
+        case .opacity: "opacity"
+        case .volume: "volume"
+        case .fx(let id, let kind, let key): "fx:\(id.uuidString):\(kind):\(key)"
+        }
+    }
+
+    public init?(rawValue: String) {
+        if let b = Self.builtIns.first(where: { $0.rawValue == rawValue }) { self = b; return }
+        let parts = rawValue.split(separator: ":", maxSplits: 3).map(String.init)
+        guard parts.count == 4, parts[0] == "fx", let id = UUID(uuidString: parts[1]) else { return nil }
+        self = .fx(id, kind: parts[2], key: parts[3])
+    }
 
     public var kind: Kind {
         switch self {
         case .position, .anchor: .vector
         case .scale: .uniform
-        case .rotation, .opacity, .volume, .cornerRadius: .scalar
+        case .rotation, .opacity, .volume, .fx: .scalar
         }
     }
 
     public var id: PropertyID { PropertyID(rawValue) }
+
+    /// What the catalog says about an effect parameter.
+    var fxSpec: EffectParamSpec? {
+        if case .fx(_, let kind, let key) = self { return EffectCatalog.param(kind, key) }
+        return nil
+    }
 
     public var title: String {
         switch self {
@@ -55,7 +116,7 @@ public enum EffectProperty: String, CaseIterable, Sendable, Hashable {
         case .anchor: "Anchor Point"
         case .opacity: "Opacity"
         case .volume: "Volume"
-        case .cornerRadius: "Radius"
+        case .fx(_, _, let key): fxSpec?.title ?? key
         }
     }
 
@@ -64,7 +125,7 @@ public enum EffectProperty: String, CaseIterable, Sendable, Hashable {
         case .position, .scale, .rotation, .anchor: .motion
         case .opacity: .opacity
         case .volume: .volume
-        case .cornerRadius: .roundedCorners
+        case .fx(let id, let kind, _): .effect(id, kind: kind)
         }
     }
 
@@ -93,8 +154,8 @@ public enum EffectProperty: String, CaseIterable, Sendable, Hashable {
         switch self {
         case .scale, .opacity: "%"
         case .rotation: "\u{00B0}"
-        case .cornerRadius: "px"
         case .volume: "dB"
+        case .fx: fxSpec?.unit ?? ""
         default: ""
         }
     }
@@ -103,23 +164,24 @@ public enum EffectProperty: String, CaseIterable, Sendable, Hashable {
         case .scale, .opacity, .position, .anchor: 1
         case .rotation: 1
         case .volume: 1
-        case .cornerRadius: 0
+        case .fx: fxSpec?.decimals ?? 1
         }
     }
     public var displayStep: Double {
         switch self {
         case .volume: 0.1
-        case .position, .anchor, .cornerRadius: 1
+        case .position, .anchor: 1
         case .scale, .opacity: 0.5
         case .rotation: 0.5
+        case .fx: fxSpec?.step ?? 1
         }
     }
     public var displayRange: ClosedRange<Double> {
         switch self {
         case .opacity: 0...100
         case .scale: 0...10_000
-        case .cornerRadius: 0...10_000
         case .volume: Self.silenceDB...15
+        case .fx: fxSpec?.range ?? (-Double.greatestFiniteMagnitude)...Double.greatestFiniteMagnitude
         default: -Double.greatestFiniteMagnitude...Double.greatestFiniteMagnitude
         }
     }
@@ -223,7 +285,8 @@ public final class EffectControlsModel {
         guard let clip else { return [] }
         if clip.kind == .audio { return [.volume] }
         var out: [EffectSection] = [.motion, .opacity]
-        if clip.roundedCorners != nil { out.append(.roundedCorners) }
+        // Applied effects sit below the fixed ones, in list order (= evaluation order).
+        out += clip.effects.filter { EffectCatalog.spec(for: $0.kind) != nil }.map { .effect($0.id, kind: $0.kind) }
         return out
     }
 
@@ -317,12 +380,11 @@ public final class EffectControlsModel {
     public func scalarValue(_ p: EffectProperty) -> Double {
         guard let a = clip?.animation else { return 0 }
         let l = localPlayhead
-        if p == .cornerRadius { return Self.radius(of: clip)?.value(atLocal: l) ?? 0 }
         switch p {
         case .rotation: return a.rotation.value(atLocal: l)
         case .opacity: return a.opacity.value(atLocal: l)
         case .volume: return a.volume.value(atLocal: l)
-        case .cornerRadius: return 0
+        case .fx: return Self.param(p, in: clip)?.value(atLocal: l) ?? 0
         case .scale: return a.scale.value(atLocal: l).x
         case .position: return a.position.value(atLocal: l).x
         case .anchor: return a.anchor.value(atLocal: l).x
@@ -342,9 +404,16 @@ public final class EffectControlsModel {
 
     public func track(_ p: EffectProperty) -> PropertyTrack? { track(p, in: clip) }
 
-    /// Radius parameter of the applied Rounded Corners effect; nil when the effect is not applied.
-    static func radius(of c: Clip?) -> AnimatedProperty<Double>? {
-        c?.roundedCorners?.parameters[ClipEffect.radiusKey]
+    /// The animated value of an effect parameter; nil when that effect instance is not on the clip.
+    static func param(_ p: EffectProperty, in c: Clip?) -> AnimatedProperty<Double>? {
+        guard case .fx(let id, _, let key) = p else { return nil }
+        return c?.effects.first { $0.id == id }?.parameters[key]
+    }
+
+    /// Every property that exists on `c` right now: the fixed ones and the parameters of its applied effects.
+    static func allProperties(in c: Clip) -> [EffectProperty] {
+        EffectProperty.builtIns + c.effects.filter { EffectCatalog.spec(for: $0.kind) != nil }
+            .flatMap { e in EffectSection.effect(e.id, kind: e.kind).properties }
     }
 
     func track(_ p: EffectProperty, in c: Clip?) -> PropertyTrack? {
@@ -356,7 +425,7 @@ public final class EffectControlsModel {
         case .rotation: return .scalar(a.rotation.track)
         case .opacity: return .scalar(a.opacity.track)
         case .volume: return .scalar(a.volume.track)
-        case .cornerRadius: return Self.radius(of: c).map { .scalar($0.track) }
+        case .fx: return Self.param(p, in: c).map { .scalar($0.track) }
         }
     }
 
@@ -566,7 +635,7 @@ public final class EffectControlsModel {
         guard let c = clip else { selection = []; return }
         let tracks = Self.tracks(of: c)
         var alive = Set<SummaryMember>()
-        for p in EffectProperty.allCases {
+        for p in Self.allProperties(in: c) {
             let ids = Set(tracks[p.id]?.keyIDs ?? [])
             alive.formUnion(selection.filter { $0.property == p.id && ids.contains($0.keyID) })
         }
@@ -632,12 +701,12 @@ public final class EffectControlsModel {
         put(.position, .vector(a.position.track)); put(.scale, .vector(a.scale.track))
         put(.anchor, .vector(a.anchor.track)); put(.rotation, .scalar(a.rotation.track))
         put(.opacity, .scalar(a.opacity.track)); put(.volume, .scalar(a.volume.track))
-        if let r = radius(of: c) { put(.cornerRadius, .scalar(r.track)) }
+        for p in allProperties(in: c) { if case .fx = p, let a = param(p, in: c) { put(p, .scalar(a.track)) } }
         return out
     }
 
     func write(_ tracks: [PropertyID: PropertyTrack], into c: inout Clip) {
-        for p in EffectProperty.allCases {
+        for p in Self.allProperties(in: c) {
             let t = tracks[p.id]
             switch p {
             case .position: if case .vector(let v)? = t { c.animation.position.track = v }
@@ -646,7 +715,7 @@ public final class EffectControlsModel {
             case .rotation: if case .scalar(let s)? = t { c.animation.rotation.track = s }
             case .opacity: if case .scalar(let s)? = t { c.animation.opacity.track = s }
             case .volume: if case .scalar(let s)? = t { c.animation.volume.track = s }
-            case .cornerRadius: if case .scalar(let s)? = t { Self.withRadius(&c) { $0.track = s } }
+            case .fx: if case .scalar(let s)? = t { Self.withFX(&c, p) { $0.track = s } }
             }
         }
     }
@@ -699,7 +768,7 @@ public final class EffectControlsModel {
     public func deleteSelection() {
         guard var c = clip, !selection.isEmpty else { return }
         let local = localPlayhead
-        for p in EffectProperty.allCases {
+        for p in Self.allProperties(in: c) {
             let ids = selectedKeyIDs(p)
             guard !ids.isEmpty else { continue }
             withVector(&c, p) { Self.remove(ids, from: &$0, local: local) }
@@ -723,7 +792,7 @@ public final class EffectControlsModel {
         case .rotation: ClipAnimation().rotation
         case .opacity: ClipAnimation().opacity
         case .volume: ClipAnimation().volume
-        case .cornerRadius: ClipEffect.defaultParameters(for: ClipEffect.roundedCornersKind)[ClipEffect.radiusKey]
+        case .fx(_, let kind, let key): ClipEffect.defaultParameters(for: kind)[key]
         default: nil
         }
     }
@@ -747,7 +816,7 @@ public final class EffectControlsModel {
         case .rotation: c.animation.rotation
         case .opacity: c.animation.opacity
         case .volume: c.animation.volume
-        case .cornerRadius: radius(of: c)
+        case .fx: param(p, in: c)
         default: nil
         }
     }
@@ -817,9 +886,12 @@ public final class EffectControlsModel {
     public func resetSection(_ s: EffectSection) {
         guard var c = clip else { return }
         for p in s.properties { resetInPlace(&c, p) }
-        if let k = s.effectKind, var e = c.effect(ofKind: k), !e.enabled {
-            e.enabled = true
-            c.roundedCorners = e
+        switch s {
+        case .motion: c.motionEnabled = true
+        case .opacity: c.opacityEnabled = true; c.blendMode = .normal
+        case .volume: break
+        case .effect(let id, _):
+            if let i = c.effects.firstIndex(where: { $0.id == id }) { c.effects[i].enabled = true }
         }
         let ids = Set(s.properties.map(\.id))
         selection = selection.filter { !ids.contains($0.property) }
@@ -827,28 +899,38 @@ public final class EffectControlsModel {
     }
 
     public func isEffectEnabled(_ s: EffectSection) -> Bool {
-        guard let k = s.effectKind else { return true }
-        return clip?.effect(ofKind: k)?.enabled ?? false
+        switch s {
+        case .motion: return clip?.motionEnabled ?? true
+        case .opacity: return clip?.opacityEnabled ?? true
+        case .volume: return true
+        case .effect(let id, _): return clip?.effects.first { $0.id == id }?.enabled ?? false
+        }
     }
 
     /// fx toggle of an applied effect.
     public func setEffectEnabled(_ s: EffectSection, _ on: Bool) {
-        guard let k = s.effectKind, var c = clip, var e = c.effect(ofKind: k), e.enabled != on else { return }
-        e.enabled = on
-        c.roundedCorners = e
+        guard var c = clip, isEffectEnabled(s) != on else { return }
+        switch s {
+        case .motion: c.motionEnabled = on
+        case .opacity: c.opacityEnabled = on
+        case .volume: return
+        case .effect(let id, _):
+            guard let i = c.effects.firstIndex(where: { $0.id == id }) else { return }
+            c.effects[i].enabled = on
+        }
         commit(c, on ? "Enable \(s.title)" : "Disable \(s.title)")
     }
 
     public func canRemoveEffect(_ s: EffectSection) -> Bool {
-        guard let k = s.effectKind else { return false }
-        return clip?.effect(ofKind: k) != nil
+        guard let id = s.effectID else { return false }
+        return clip?.effects.contains { $0.id == id } ?? false
     }
 
     /// Removes the applied effect with all its values and keys: one undo step.
     @discardableResult
     public func removeEffect(_ s: EffectSection) -> Bool {
-        guard canRemoveEffect(s), var c = clip else { return false }
-        c.roundedCorners = nil
+        guard canRemoveEffect(s), var c = clip, let id = s.effectID else { return false }
+        c.removeEffect(id)
         let ids = Set(s.properties.map(\.id))
         selection = selection.filter { !ids.contains($0.property) }
         if selectedSection == s { selectedSection = nil }
@@ -867,7 +949,7 @@ public final class EffectControlsModel {
 
     public func saveCurveFromSelection(name: String) {
         guard let c = clip else { return }
-        for p in EffectProperty.allCases {
+        for p in Self.allProperties(in: c) {
             guard let id = selectedKeyIDs(p).first else { continue }
             switch track(p, in: c) {
             case .scalar(let t)?: if let k = t.key(id: id) { easingLibrary.saveCurve(from: k, name: name) }
@@ -907,16 +989,17 @@ public final class EffectControlsModel {
         case .rotation: body(&c.animation.rotation)
         case .opacity: body(&c.animation.opacity)
         case .volume: body(&c.animation.volume)
-        case .cornerRadius: Self.withRadius(&c, body)
+        case .fx: Self.withFX(&c, p, body)
         default: break
         }
     }
 
-    static func withRadius(_ c: inout Clip, _ body: (inout AnimatedProperty<Double>) -> Void) {
-        guard var e = c.roundedCorners, var r = e.parameters[ClipEffect.radiusKey] else { return }
-        body(&r)
-        e.parameters[ClipEffect.radiusKey] = r
-        c.roundedCorners = e
+    /// Mutates one effect parameter in place (nothing happens when the instance or parameter is gone).
+    static func withFX(_ c: inout Clip, _ p: EffectProperty, _ body: (inout AnimatedProperty<Double>) -> Void) {
+        guard case .fx(let id, _, let key) = p, let i = c.effects.firstIndex(where: { $0.id == id }),
+              var v = c.effects[i].parameters[key] else { return }
+        body(&v)
+        c.effects[i].parameters[key] = v
     }
 
     func withVector(_ c: inout Clip, _ p: EffectProperty, _ body: (inout AnimatedProperty<Vec2>) -> Void) {
@@ -970,6 +1053,8 @@ public struct EffectRow: Equatable, Sendable {
         case graph(EffectProperty)
         /// Uniform Scale checkbox under the Scale row (only when the view asks for it).
         case uniformScale
+        /// Blend Mode pop-up under the Opacity row (only when the view asks for it).
+        case blendMode
     }
     public var kind: Kind
     public var y: CGFloat
@@ -985,7 +1070,8 @@ public enum EffectControlsLayout {
     }
 
     public static func rows(sections: [EffectSection], collapsed: Set<EffectSection>,
-                            expanded: Set<EffectProperty>, uniformScaleRow: Bool = false) -> [EffectRow] {
+                            expanded: Set<EffectProperty>, uniformScaleRow: Bool = false,
+                            blendModeRow: Bool = false) -> [EffectRow] {
         let h = Theme.Metrics.effectControlsRow
         var out: [EffectRow] = []
         var y: CGFloat = 0
@@ -998,6 +1084,7 @@ public enum EffectControlsLayout {
                 add(.property(p), h)
                 if expanded.contains(p) { add(.graph(p), graphHeight(p)) }
                 if p == .scale && uniformScaleRow { add(.uniformScale, h) }
+                if p == .opacity && blendModeRow { add(.blendMode, h) }
             }
         }
         return out

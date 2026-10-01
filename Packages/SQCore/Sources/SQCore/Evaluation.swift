@@ -11,10 +11,15 @@ public struct LayerGroup: Sendable, Hashable {
     /// Evaluated transform (incl. opacity) and corner radius of the nested clip at this instant.
     public var transform: ClipTransform
     public var cornerRadius: Double
+    /// Crop, Rounded Corners, Gaussian Blur and Ultra Key of the nested clip, applied to the group image as a whole.
+    public var effects: ClipEffects
+    public var blendMode: BlendMode
 
     public init(clip: Clip.ID, track: Track.ID, sequence: Timeline.ID, format: SequenceFormat,
-                transform: ClipTransform = .identity, cornerRadius: Double = 0) {
+                transform: ClipTransform = .identity, cornerRadius: Double = 0,
+                effects: ClipEffects? = nil, blendMode: BlendMode = .normal) {
         self.clip = clip; self.track = track; self.sequence = sequence; self.format = format
+        self.effects = effects ?? ClipEffects(cornerRadius: cornerRadius); self.blendMode = blendMode
         self.transform = transform; self.cornerRadius = cornerRadius
     }
 }
@@ -49,11 +54,42 @@ public struct LayerRequest: Sendable, Hashable {
     public var localTime: Time
     /// The clip's static colour settings (resolved against the media by `ColorPipeline.from` in SQRender).
     public var color: ClipColor
+    /// Evaluated Crop, Rounded Corners and Gaussian Blur of the clip (`cornerRadius` above is `effects.cornerRadius`).
+    /// How a source time between two frames is shown (Time Interpolation of the clip). `.frameBlend`: mix the frame
+    /// covering `sourceTime` with the next one by the fractional position (`FrameBlend` in SQRender). Never for a held clip.
+    public var interpolation: TimeInterpolation
+    /// End of the clip's source range: a blend never reads a frame that starts at or after it. nil = unbounded.
+    public var sourceEnd: Time?
+    public var effects: ClipEffects
+    /// How this layer is combined with the ones below it.
+    public var blendMode: BlendMode
+    /// Set on the two layers of a cross dissolve (opacities already 1-w and w): the compositor sums them as premultiplied
+    /// colour instead of compositing B over A. `format` is the canvas the pair is summed in.
+    public var pair: PairInfo?
+    /// The layer belongs to a transition in progress (either side of a dissolve or dip, or a fade): the engine holds the last
+    /// frame rather than draw a half-decoded transition.
+    public var inTransition = false
+
+    public enum PairRole: Sendable, Hashable { case first, second }
+    public struct PairInfo: Sendable, Hashable {
+        public var id: Transition.ID, role: PairRole, format: SequenceFormat
+        /// Nesting depth (`groups.count`) of the sequence the pair lives in.
+        public var depth: Int
+        public init(id: Transition.ID, role: PairRole, format: SequenceFormat, depth: Int) {
+            self.id = id; self.role = role; self.format = format; self.depth = depth
+        }
+    }
 
     public init(clip: Clip.ID, media: UUID, track: Track.ID, sourceTime: Time, transform: ClipTransform = .identity,
                 cornerRadius: Double = 0, groups: [LayerGroup] = [], generator: GeneratorRef? = nil,
-                localTime: Time? = nil, color: ClipColor = .default) {
+                localTime: Time? = nil, color: ClipColor = .default,
+                effects: ClipEffects? = nil, blendMode: BlendMode = .normal,
+                interpolation: TimeInterpolation = .frameSampling, sourceEnd: Time? = nil) {
+        self.sourceEnd = sourceEnd
+        self.interpolation = interpolation
         self.color = color
+        self.effects = effects ?? ClipEffects(cornerRadius: cornerRadius)
+        self.blendMode = blendMode
         self.generator = generator; self.localTime = localTime ?? sourceTime
         self.clip = clip; self.media = media; self.track = track; self.sourceTime = sourceTime
         self.transform = transform; self.cornerRadius = cornerRadius; self.groups = groups
@@ -64,7 +100,11 @@ public struct LayerRequest: Sendable, Hashable {
 public struct AudioNest: Sendable, Hashable {
     public var clip: Clip
     public var track: Track.ID
-    public init(clip: Clip, track: Track.ID) { self.clip = clip; self.track = track }
+    /// Audio transitions of the nested clip (gain curves in the nest's own outer time).
+    public var envelopes: [TransitionEnvelope]
+    public init(clip: Clip, track: Track.ID, envelopes: [TransitionEnvelope] = []) {
+        self.clip = clip; self.track = track; self.envelopes = envelopes
+    }
 }
 
 /// One clip's contribution to a timeline range.
@@ -85,10 +125,15 @@ public struct AudioSegment: Sendable, Hashable {
     public var clipStart: Time
     /// The clip's used media range (what retimed audio may read; nothing outside it is played).
     public var source: TimeRange
+    /// Audio transition gain curves of the clip (outgoing / incoming / fade), applied per sample on top of the volume.
+    /// An outgoing or incoming segment is extended into its handle: `timeline` and `source` cover it.
+    public var envelopes: [TransitionEnvelope]
 
     public init(clip: Clip.ID, media: UUID, track: Track.ID, timeline: TimeRange, sourceStart: Time,
                 nests: [AudioNest] = [], speed: ClipSpeed = .normal, reversed: Bool = false,
-                keepsPitch: Bool = true, clipStart: Time? = nil, source: TimeRange? = nil) {
+                keepsPitch: Bool = true, clipStart: Time? = nil, source: TimeRange? = nil,
+                envelopes: [TransitionEnvelope] = []) {
+        self.envelopes = envelopes
         self.clip = clip; self.media = media; self.track = track
         self.timeline = timeline; self.sourceStart = sourceStart; self.nests = nests
         self.speed = speed; self.reversed = reversed; self.keepsPitch = keepsPitch
@@ -98,11 +143,19 @@ public struct AudioSegment: Sendable, Hashable {
 
     /// Product of the enclosing nested clips' volume at top-sequence time `t` (1 when not nested).
     /// The segment's own clip volume is separate (evaluate it in inner time).
+    /// Product of this segment's own transition curves at top-sequence time `t` (1 without transitions).
+    public func envelopeGain(at t: Time) -> Double {
+        var g = 1.0
+        for e in envelopes { g *= e.gain(at: t) }
+        return g
+    }
+
     public func nestGain(at t: Time) -> Double {
         var t = t, gain = 1.0
         for n in nests {
+            for e in n.envelopes { gain *= e.gain(at: t) }
             gain *= n.clip.volume(at: t)
-            t = n.clip.source.start + (t - n.clip.start)
+            t = n.clip.sourceInstant(atLocal: t - n.clip.start)
         }
         return gain
     }
@@ -122,20 +175,49 @@ extension Timeline {
     private func videoLayers(at t: Time, sequences: SequenceResolver, groups: [LayerGroup],
                              visiting: Set<Timeline.ID>) -> [LayerRequest] {
         var out: [LayerRequest] = []
+        let fd = format.frameDuration
         for track in tracks where track.kind == .video && track.isVisible {
-            guard let c = track.clips.first(where: { $0.timeline.contains(t) }) else { continue }
-            if let seqID = c.sequence {
-                guard !visiting.contains(seqID), let inner = sequences(seqID) else { continue }
-                let g = LayerGroup(clip: c.id, track: track.id, sequence: seqID, format: inner.format,
-                                   transform: c.transform(at: t), cornerRadius: c.effects(at: t).cornerRadius)
-                out += inner.videoLayers(at: c.source.start + (t - c.start), sequences: sequences,
-                                         groups: groups + [g], visiting: visiting.union([seqID]))
-            } else {
-                let local = t - c.start
-                out.append(LayerRequest(clip: c.id, media: c.media, track: track.id,
-                                        sourceTime: c.sourceTime(at: t, frameDuration: format.frameDuration),
-                                        transform: c.transform(at: t), cornerRadius: c.effects(at: t).cornerRadius,
-                                        groups: groups, generator: c.generator, localTime: local, color: c.color))
+            let state = track.videoEntries(at: t, frameDuration: fd)
+            if let dip = state.dip {
+                out.append(LayerRequest(clip: dip.id, media: dip.id, track: track.id, sourceTime: .zero,
+                                        groups: groups, generator: GeneratorRef.solid(rgb: dip.color), localTime: .zero))
+            }
+            // Two clips of a dissolve pair are summed first; each keeps its own effects, and the pair as a whole gets one blend
+            // mode (the incoming clip's, else the outgoing one's: see `RenderNode.tree`).
+            for (n, (c, factor)) in state.items.enumerated() {
+                var tr = c.transform(at: t)
+                tr.opacity *= factor
+                let inTransition = state.pair != nil || state.dip != nil || factor != 1
+                let pair = state.pair.map { LayerRequest.PairInfo(id: $0, role: n == 0 ? .first : .second, format: format, depth: groups.count) }
+                let fx = c.effects(at: t)
+                // A total crop leaves nothing of this clip; its partner in a pair still shows.
+                if fx.isEmpty { continue }
+                let blend = c.opacityEnabled ? c.blendMode : BlendMode.normal
+                if let seqID = c.sequence {
+                    guard !visiting.contains(seqID), let inner = sequences(seqID) else { continue }
+                    let g = LayerGroup(clip: c.id, track: track.id, sequence: seqID, format: inner.format,
+                                       transform: tr, cornerRadius: fx.cornerRadius, effects: fx, blendMode: blend)
+                    // A held nested clip shows one instant of the inner sequence.
+                    let innerTime = c.holdFrame ?? c.innerTime(atLocal: t - c.start, innerFrameDuration: inner.format.frameDuration)
+                    var inners = inner.videoLayers(at: innerTime, sequences: sequences,
+                                                   groups: groups + [g], visiting: visiting.union([seqID]))
+                    for k in inners.indices {
+                        if let pair, inners[k].pair == nil { inners[k].pair = pair }
+                        if inTransition { inners[k].inTransition = true }
+                    }
+                    out += inners
+                } else {
+                    let local = t - c.start
+                    out.append(LayerRequest(clip: c.id, media: c.media, track: track.id,
+                                            sourceTime: c.sourceTime(at: t, frameDuration: fd),
+                                            transform: tr, cornerRadius: fx.cornerRadius,
+                                            groups: groups, generator: c.generator, localTime: local, color: c.color,
+                                            effects: fx, blendMode: blend,
+                                            interpolation: c.holdFrame == nil ? c.timeInterpolation : .frameSampling,
+                                            sourceEnd: c.source.end))
+                    out[out.count - 1].pair = pair
+                    out[out.count - 1].inTransition = inTransition
+                }
             }
         }
         return out
@@ -153,25 +235,66 @@ extension Timeline {
         let anySolo = audio.contains { $0.isSolo }
         var out: [AudioSegment] = []
         for track in audio where !track.isMuted && (!anySolo || track.isSolo) {
-            for c in track.clips {
-                guard let r = c.timeline.intersection(range), !r.isEmpty else { continue }
+            // Clips that can sound in `range`: those overlapping it plus one neighbour each side (handles reach into them).
+            let first = max(0, track.clipIndex(endingAfter: range.start) - 1)
+            var last = first
+            while last < track.clips.count, track.clips[last].start < range.end { last += 1 }
+            let candidates = track.clips[first..<min(track.clips.count, last + 1)]
+            let info = track.audioTransitionInfo(frameDuration: format.frameDuration, for: Set(candidates.map(\.id)))
+            for c in candidates {
+                let x = info[c.id]
+                // A clip in a transition plays on into its handle: outgoing past its end, incoming before its start.
+                let extended = TimeRange(start: c.start - (x?.head ?? .zero), end: c.timeline.end + (x?.tail ?? .zero))
+                guard c.isEnabled, let r = extended.intersection(range), !r.isEmpty else { continue }
                 let a = r.start - c.start
-                let innerStart = c.reversed ? c.source.end - c.speed.scale(a) : c.source.start + c.speed.scale(a)
+                let innerStart = c.sourceInstant(atLocal: a)
+                let envelopes = x?.envelopes ?? []
                 if let seqID = c.sequence {
                     guard !visiting.contains(seqID), let inner = sequences(seqID) else { continue }
                     let offset = c.start - c.source.start           // inner time + offset = outer time
+                    if c.isRetimed {
+                        // Retimed nested clip: query the inner range this piece plays, map each inner piece back through the
+                        // clip's time mapping (both ends), and anchor the time-stretch grid at the nested clip's start.
+                        let innerRange = c.sourceRange(fromLocal: a, toLocal: r.end - c.start)
+                        guard !innerRange.isEmpty else { continue }
+                        for var s in inner.audioSegments(in: innerRange, sequences: sequences,
+                                                         nests: nests + [AudioNest(clip: c, track: track.id)],
+                                                         visiting: visiting.union([seqID])) {
+                            let x = c.start + c.localTime(forInstant: s.timeline.start)
+                            let y = c.start + c.localTime(forInstant: s.timeline.end)
+                            guard let piece = TimeRange(start: min(x, y), end: max(x, y)).intersection(r) else { continue }
+                            s.timeline = piece
+                            s.clipStart = c.start
+                            out.append(s)
+                        }
+                        continue
+                    }
                     let innerRange = TimeRange(start: innerStart, duration: r.duration)
                     for var s in inner.audioSegments(in: innerRange, sequences: sequences,
-                                                     nests: nests + [AudioNest(clip: c, track: track.id)],
+                                                     nests: nests + [AudioNest(clip: c, track: track.id, envelopes: envelopes)],
                                                      visiting: visiting.union([seqID])) {
                         s.timeline = TimeRange(start: s.timeline.start + offset, duration: s.timeline.duration)
                         s.clipStart += offset
                         out.append(s)
                     }
                 } else {
+                    var source = c.source
+                    if let x {
+                        // Source time consumed before / after the range: at the speed and direction of the clip's own ends
+                        // (a speed track runs on at its first / last speed).
+                        let first = c.speedKeys?.segments.first, lastSeg = c.speedKeys?.segments.last
+                        let h = (first?.from ?? c.speed).scale(x.head), tl = (lastSeg?.to ?? c.speed).scale(x.tail)
+                        let headBack = first?.reversed ?? c.reversed, tailBack = lastSeg?.reversed ?? c.reversed
+                        let lo = (headBack ? .zero : h) + (tailBack ? tl : .zero)
+                        let hi = (headBack ? h : .zero) + (tailBack ? .zero : tl)
+                        var start = max(.zero, source.start - lo), end = source.end + hi
+                        if let m = c.mediaDuration { end = min(end, m) }
+                        start = min(start, source.start); end = max(end, source.end)
+                        source = TimeRange(start: start, end: end)
+                    }
                     out.append(AudioSegment(clip: c.id, media: c.media, track: track.id, timeline: r,
                                             sourceStart: innerStart, nests: nests, speed: c.speed, reversed: c.reversed,
-                                            keepsPitch: c.keepsPitch, clipStart: c.start, source: c.source))
+                                            keepsPitch: c.keepsPitch, clipStart: c.start, source: source, envelopes: envelopes))
                 }
             }
         }

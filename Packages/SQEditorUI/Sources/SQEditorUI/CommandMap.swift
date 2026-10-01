@@ -60,11 +60,15 @@ public struct CommandMap: Sendable {
         add(g, ch("i"), .shift, .goToIn); add(g, ch("o"), .shift, .goToOut)
         add(g, ch("x"), .markClip); add(g, ch("x"), .option, .clearInOut)
         add(g, ch("i"), .option, .clearIn); add(g, ch("o"), .option, .clearOut)
-        add(g, .space, .shift, .playInToOut); add(g, ch("l"), .control, .toggleLoop)
-        add(g, ch("e"), .shift, .exportFrame); add(g, ch("e"), [.command, .shift], .exportFrame); add(g, ch("b"), .command, .newBin)
+        add(g, .space, .shift, .playInToOutRoll); add(g, ch("k"), .shift, .playAround); add(g, ch("l"), .control, .toggleLoop)
+        add(g, ch("e"), .shift, .exportFrame); add(g, ch("b"), .command, .newBin)
+        add(g, ch("e"), [.command, .shift], .enableClip)         // Premiere: Clip > Enable. (Export Frame is Shift+E only.)
+        add(g, ch("/"), [.command, .shift], .duplicate)
         add(g, ch(";"), .lift); add(g, ch("'"), .extract)
         add(g, ch(","), .insert); add(g, ch("."), .overwrite)
         add(g, ch("m"), .addMarker)
+        add(g, ch("d"), .command, .applyVideoTransition); add(g, ch("d"), [.command, .shift], .applyAudioTransition)
+        add(g, ch("d"), .shift, .applyDefaultTransitions)
         add(g, ch("m"), .shift, .nextMarker); add(g, ch("m"), [.command, .shift], .previousMarker)
         add(g, ch("/"), .markSelection)
         // Tools
@@ -96,6 +100,10 @@ public struct CommandMap: Sendable {
         add(t, .up, .previousEditPoint); add(t, .down, .nextEditPoint)
         add(t, ch("k"), .command, .addEdit); add(t, ch("k"), [.command, .shift], .addEditAllTracks)
         add(t, ch("q"), .rippleTrimPrevious); add(t, ch("w"), .rippleTrimNext); add(t, ch("e"), .extendEdit)
+        add(t, ch("q"), .shift, .rollTrimPrevious); add(t, ch("w"), .shift, .rollTrimNext)
+        add(t, ch("q"), .option, .trimPrevious); add(t, ch("w"), .option, .trimNext)
+        add(t, ch("t"), .control, .toggleTrimType)
+        add(t, .up, .option, .moveSelectionUp); add(t, .down, .option, .moveSelectionDown)
         add(t, .delete, .delete); add(t, .delete, .shift, .rippleDelete)
         add(t, ch("s"), .toggleSnapping)
         add(t, ch("a"), .command, .selectAll); add(t, ch("a"), [.command, .shift], .deselectAll)
@@ -121,11 +129,15 @@ public struct CommandMap: Sendable {
         add(t, ch("h"), [.command, .option], .toggleHoldInterpolation)
         add(t, .left, .option, .previousKeyframe); add(t, .right, .option, .nextKeyframe)
         add(t, .function(3), .shift, .toggleSpeedGraph); add(t, ch("k"), .option, .addKeyframe)
+        // Play In to Out (Option+K on the Mac; the Timeline keeps Option+K for Add Keyframe, so the key is bound per panel).
+        for scope in [CommandScope.program, .source, .project] { add(scope, ch("k"), .option, .playInToOut) }
         // Program monitor
         add(.program, .up, .previousEditPoint); add(.program, .down, .nextEditPoint)
         add(.program, ch("f"), .matchFrame); add(.program, ch("r"), .shift, .reverseMatchFrame)
         // Project panel
         add(.project, .delete, .deleteProjectItems)
+        add(.project, ch("p"), .command, .setPosterFrame); add(.project, ch("p"), .option, .clearPosterFrame)
+        add(.project, ch("h"), .shift, .toggleHoverScrub); add(.project, ch("f"), .command, .find)
         return CommandMap(entries: e)
     }()
 }

@@ -1,4 +1,5 @@
 import Foundation
+import SQCore
 
 /// Preferences of the Settings window, persisted in UserDefaults. Every read validates, so a hand-edited or stale value
 /// falls back to the default instead of reaching the app.
@@ -10,6 +11,12 @@ public struct AppSettings: Sendable, Equatable {
     public var offerRecovery: Bool
     // Playback
     public var defaultQuality: MonitorQuality
+    /// Seconds played before / after the marked range (Shift+Space) or the playhead (Shift+K Play Around). Premiere
+    /// defaults: 3 s before, 2 s after (Preferences > Playback).
+    public var prerollSeconds: Int = 3
+    public var postrollSeconds: Int = 2
+    /// Project panel Hover Scrub (Shift+H toggles).
+    public var hoverScrub: Bool = true
     /// CoreAudio device UID; nil = system default output.
     public var audioOutputUID: String?
     // Media
@@ -17,9 +24,17 @@ public struct AppSettings: Sendable, Equatable {
     public var cacheFolder: URL?
     /// Cache size cap in gigabytes.
     public var cacheCapGB: Int
+    // Text
+    /// Length of a new text layer and of a caption added by hand, in seconds (Premiere: 5 s for a title).
+    public var defaultTextSeconds: Int = 5
+    public static let textDurationChoices = [1, 2, 3, 4, 5, 8, 10, 15, 30]
 
     public static let autosaveChoices: [TimeInterval] = [60, 120, 300, 600, 900]
     public static let cacheCapChoices = [10, 20, 50, 100, 250]
+    public static let rollChoices = [0, 1, 2, 3, 4, 5, 6, 8, 10]
+
+    public var preroll: Time { Time(Int64(prerollSeconds), 1) }
+    public var postroll: Time { Time(Int64(postrollSeconds), 1) }
     public static let standard = AppSettings(autosaveInterval: 300, offerRecovery: true, defaultQuality: .full,
                                              audioOutputUID: nil, cacheFolder: nil, cacheCapGB: 50)
 
@@ -45,6 +60,10 @@ public struct AppSettings: Sendable, Equatable {
         static let audio = "settings.audioOutputUID"
         static let cache = "settings.cacheFolder"
         static let cap = "settings.cacheCapGB"
+        static let preroll = "settings.prerollSeconds"
+        static let postroll = "settings.postrollSeconds"
+        static let hoverScrub = "settings.hoverScrub"
+        static let textSeconds = "settings.defaultTextSeconds"
     }
 
     public static func load(from d: UserDefaults = .standard) -> AppSettings {
@@ -61,6 +80,13 @@ public struct AppSettings: Sendable, Equatable {
             let v = d.integer(forKey: Key.cap)
             if v >= 1, v <= 10_000 { s.cacheCapGB = v }
         }
+        if d.object(forKey: Key.preroll) != nil { let v = d.integer(forKey: Key.preroll); if (0...60).contains(v) { s.prerollSeconds = v } }
+        if d.object(forKey: Key.postroll) != nil { let v = d.integer(forKey: Key.postroll); if (0...60).contains(v) { s.postrollSeconds = v } }
+        if d.object(forKey: Key.hoverScrub) != nil { s.hoverScrub = d.bool(forKey: Key.hoverScrub) }
+        if d.object(forKey: Key.textSeconds) != nil {
+            let v = d.integer(forKey: Key.textSeconds)
+            if v >= 1, v <= 600 { s.defaultTextSeconds = v }
+        }
         return s
     }
 
@@ -71,6 +97,10 @@ public struct AppSettings: Sendable, Equatable {
         if let audioOutputUID { d.set(audioOutputUID, forKey: Key.audio) } else { d.removeObject(forKey: Key.audio) }
         if let cacheFolder { d.set(cacheFolder.path, forKey: Key.cache) } else { d.removeObject(forKey: Key.cache) }
         d.set(cacheCapGB, forKey: Key.cap)
+        d.set(prerollSeconds, forKey: Key.preroll)
+        d.set(postrollSeconds, forKey: Key.postroll)
+        d.set(hoverScrub, forKey: Key.hoverScrub)
+        d.set(defaultTextSeconds, forKey: Key.textSeconds)
     }
 }
 

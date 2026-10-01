@@ -15,7 +15,22 @@ public struct SequenceFormat: Sendable, Hashable, Codable {
         self.width = width; self.height = height
         self.frameDuration = frameDuration; self.audioSampleRate = audioSampleRate
     }
+
+    private enum CodingKeys: String, CodingKey { case width, height, frameDuration, audioSampleRate }
+
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        let fd = try c.decode(Time.self, forKey: .frameDuration)
+        guard fd > .zero else {
+            throw DecodingError.dataCorruptedError(forKey: .frameDuration, in: c,
+                debugDescription: "frame duration must be positive, got \(fd.value)/\(fd.timescale)")
+        }
+        self.init(width: try c.decode(Int.self, forKey: .width), height: try c.decode(Int.self, forKey: .height),
+                  frameDuration: fd, audioSampleRate: try c.decode(Int.self, forKey: .audioSampleRate))
+    }
 }
+
+public enum InOutKind: String, Sendable, Hashable, Codable { case inOnly, outOnly, both }
 
 public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     public var id: UUID
@@ -31,6 +46,11 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     /// False only for an auto-created sequence nobody configured: the first clip placed into it may adopt that clip's
     /// format. Sequence Settings and New Sequence lock it (Premiere). Files without the key decode as locked.
     public var formatLocked: Bool
+    /// Which ends of `inOut` the user actually marked (project v19, optional on decode). `inOut` always holds both ends;
+    /// an In without Out ends at the sequence end, an Out without In starts at 0. nil = unknown (older file): both are
+    /// taken as marked unless the range reaches the sequence end (then In only). Kept consistent by `markIn`, `markOut`,
+    /// `setMarkedRange`, `clearIn`/`clearOut` and `shiftInOut`.
+    public var inOutKind: InOutKind?
 
     public var frameDuration: Time {
         get { format.frameDuration }
@@ -57,7 +77,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         self.init(id: id, name: name, format: SequenceFormat(frameDuration: frameDuration), tracks: tracks)
     }
 
-    private enum CodingKeys: String, CodingKey { case id, name, format, tracks, inOut, markers, captionTracks, label, formatLocked }
+    private enum CodingKeys: String, CodingKey { case id, name, format, tracks, inOut, markers, captionTracks, label, formatLocked, inOutKind }
 
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
@@ -70,6 +90,7 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
         captionTracks = try c.decodeIfPresent([CaptionTrack].self, forKey: .captionTracks) ?? []
         label = try c.decodeIfPresent(LabelColor.self, forKey: .label)
         formatLocked = try c.decodeIfPresent(Bool.self, forKey: .formatLocked) ?? true
+        inOutKind = try c.decodeIfPresent(InOutKind.self, forKey: .inOutKind)
     }
 
     public func track(_ id: Track.ID) -> Track? { tracks.first { $0.id == id } }

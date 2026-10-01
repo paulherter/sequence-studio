@@ -2,7 +2,7 @@ import AppKit
 import Observation
 import SQCore
 
-/// Effect Controls panel (DESIGN.md screen 2, Premiere layout): sections Motion / Opacity / Rounded Corners / Volume,
+/// Effect Controls panel (DESIGN.md screen 2, Premiere layout): sections Motion / Opacity / the applied effects / Volume,
 /// then the Text or Audio section. Property rows with scrub fields + animate diamond + key navigation on the left,
 /// keyframe lanes on the right, separated by a draggable divider (width persisted). Ruler, clip bar and playhead sit at the
 /// top of the keyframe area, timecode and the zoom bar at the bottom. An expanded row shows its speed graph directly under
@@ -141,15 +141,16 @@ public final class EffectControlsView: NSView {
         // Nothing selected: no ruler, zoom bar or divider, just the empty state.
         for v in [ruler, zoomBar, divider, lanes, timecodeLabel] as [NSView] { v.isHidden = model.clip == nil }
         let rows = EffectControlsLayout.rows(sections: model.visibleSections, collapsed: model.collapsedSections,
-                                             expanded: model.expanded, uniformScaleRow: true)
+                                             expanded: model.expanded, uniformScaleRow: true, blendModeRow: true)
         for row in rows {
             let v: NSView
             switch row.kind {
             case .section(let s): v = SectionHeaderRow(section: s, model: model)
             case .property(let p): v = PropertyRow(property: p, model: model, owner: self)
-            case .placeholder: v = PlaceholderRow(title: "Radius")
+            case .placeholder(let s): v = PlaceholderRow(title: s.title)
             case .graph(let p): v = GraphRow(property: p, model: model)
             case .uniformScale: v = UniformScaleRow(model: model)
+            case .blendMode: v = BlendModeRow(model: model)
             }
             content.addSubview(v)
             rowViews.append((row, v))
@@ -203,6 +204,50 @@ public final class EffectControlsView: NSView {
         // Graph rows are laid out by themselves (they need the lane origin).
         for (row, v) in rowViews { if case .graph = row.kind { (v as? GraphRow)?.laneX = lw; v.needsLayout = true } }
         refresh()
+    }
+
+    // MARK: Reorder effects (drag a header)
+
+    private let dropLine = NSView()
+    private var dropTarget: Int?
+
+    /// Effect headers in list order with the vertical extent of their block (header plus property rows).
+    private func effectBlocks() -> [(section: EffectSection, frame: NSRect)] {
+        var out: [(EffectSection, NSRect)] = []
+        let total = rowViews.last.map { $0.0.y + $0.0.height } ?? 0
+        for (i, (row, _)) in rowViews.enumerated() {
+            guard case .section(let s) = row.kind, s.effectKind != nil else { continue }
+            let next = rowViews[(i + 1)...].first { if case .section = $0.0.kind { return true } else { return false } }
+            let end = next?.0.y ?? total
+            out.append((s, NSRect(x: 0, y: row.y, width: bounds.width, height: end - row.y)))
+        }
+        return out
+    }
+
+    fileprivate func reorderMoved(_ s: EffectSection, windowPoint: NSPoint) {
+        let blocks = effectBlocks()
+        guard let from = blocks.firstIndex(where: { $0.section == s }) else { return }
+        let y = content.convert(windowPoint, from: nil).y
+        let target = EffectControlsModel.dropIndex(forY: y, midpoints: blocks.map { $0.frame.minY + 9 }, dragging: from)
+        dropTarget = target
+        guard target != from else { dropLine.isHidden = true; return }
+        if dropLine.superview == nil {
+            dropLine.wantsLayer = true
+            dropLine.layer?.backgroundColor = Theme.Colors.accent.cgColor
+            content.addSubview(dropLine)
+        }
+        let lineY = target < from ? blocks[target].frame.minY : blocks[target].frame.maxY
+        dropLine.frame = NSRect(x: 0, y: lineY - 1, width: labelWidth, height: 2)
+        dropLine.isHidden = false
+    }
+
+    fileprivate func reorderEnded(_ s: EffectSection) {
+        dropLine.isHidden = true
+        let blocks = effectBlocks()
+        defer { dropTarget = nil }
+        guard let t = dropTarget, t < blocks.count, let from = blocks.firstIndex(where: { $0.section == s }), t != from,
+              let index = model.effectIndex(blocks[t].section) else { return }
+        model.moveEffect(s, toIndex: index)
     }
 
     // MARK: Stopwatch
@@ -296,7 +341,7 @@ private final class SectionHeaderRow: RowBackground, RowUpdating {
         super.init(frame: .zero)
         fill = Theme.Colors.titlebar
         addSubview(chevron); addSubview(title); addSubview(reset)
-        if section.effectKind != nil { addSubview(fx) }
+        if model.hasFXToggle(section) { addSubview(fx) }
         update()
     }
     required init?(coder: NSCoder) { fatalError() }
@@ -310,30 +355,55 @@ private final class SectionHeaderRow: RowBackground, RowUpdating {
         title.frame = NSRect(x: 28, y: (bounds.height - 14) / 2, width: max(w - 80, 0), height: 14)
     }
 
-    override func mouseDown(with event: NSEvent) {
-        model.selectedSection = section
+    private var downPoint: NSPoint?
+    private var reordering = false
+
+    private var owner: EffectControlsView? {
         var v: NSView? = self
         while let x = v, !(x is EffectControlsView) { v = x.superview }
-        if let owner = v { window?.makeFirstResponder(owner) }
+        return v as? EffectControlsView
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        model.selectedSection = section
+        if let o = owner { window?.makeFirstResponder(o) }
+        downPoint = event.locationInWindow
+        reordering = false
         super.mouseDown(with: event)
+    }
+
+    /// Dragging an effect header up or down reorders the effects (the list order is the order they are applied in).
+    override func mouseDragged(with event: NSEvent) {
+        guard section.effectKind != nil, let down = downPoint else { return }
+        if !reordering, abs(event.locationInWindow.y - down.y) > 4 { reordering = true }
+        if reordering { owner?.reorderMoved(section, windowPoint: event.locationInWindow) }
+    }
+
+    override func mouseUp(with event: NSEvent) {
+        if reordering { owner?.reorderEnded(section) }
+        reordering = false
+        downPoint = nil
+        super.mouseUp(with: event)
     }
 
     override func menu(for event: NSEvent) -> NSMenu? {
         model.selectedSection = section
         let m = NSMenu(title: section.title)
         m.autoenablesItems = false
-        if section.effectKind != nil {
+        if model.hasFXToggle(section) {
             let on = model.isEffectEnabled(section)
             m.addItem(item(on ? "Disable Effect" : "Enable Effect", #selector(toggleFX)))
-        }
-        if section.effectKind != nil, model.canRemoveEffect(section) { m.addItem(item("Copy", #selector(doCopy))) }
-        if model.canPasteEffect { m.addItem(item("Paste", #selector(doPaste))) }
-        if m.items.contains(where: { $0.title == "Copy" || $0.title == "Paste" }) { m.addItem(.separator()) }
-        m.addItem(item("Reset \(section.title)", #selector(doReset)))
-        if model.canRemoveEffect(section) {
             m.addItem(.separator())
-            m.addItem(item("Remove Effect", #selector(doRemove)))
         }
+        // Premiere's effect menu: Cut, Copy, Paste, Clear. Fixed sections cannot be cut or cleared.
+        let removable = model.canRemoveEffect(section)
+        if removable { m.addItem(item("Cut", #selector(doCut))) }
+        if removable { m.addItem(item("Copy", #selector(doCopy))) }
+        if model.canPasteEffect { m.addItem(item("Paste", #selector(doPaste))) }
+        if removable { m.addItem(item("Clear", #selector(doRemove))) }
+        if !m.items.isEmpty, m.items.last?.isSeparatorItem == false { m.addItem(.separator()) }
+        m.addItem(item("Reset \(section.title)", #selector(doReset)))
+        if removable { m.addItem(item("Duplicate Effect", #selector(doDuplicate))) }
         return m
     }
     private func item(_ t: String, _ a: Selector) -> NSMenuItem {
@@ -342,7 +412,9 @@ private final class SectionHeaderRow: RowBackground, RowUpdating {
     @objc private func toggleFX() { model.setEffectEnabled(section, !model.isEffectEnabled(section)) }
     @objc private func doReset() { model.resetSection(section) }
     @objc private func doRemove() { model.removeEffect(section) }
-    @objc private func doCopy() { model.copyEffect(section) }
+    @objc private func doCopy() { if model.copyEffect(section) { model.markEffectCopied() } }
+    @objc private func doCut() { model.cutEffect(section) }
+    @objc private func doDuplicate() { model.duplicateEffect(section) }
     @objc private func doPaste() { model.pasteEffect() }
 
     func update() {
@@ -521,6 +593,42 @@ private final class UniformScaleRow: RowBackground, RowUpdating {
     }
     @objc private func toggled() { model.setUniformScale(box.state == .on) }
     func update() { box.state = model.uniformScale ? .on : .off }
+}
+
+/// Blend Mode pop-up under the Opacity row (Premiere: Opacity > Blend Mode).
+private final class BlendModeRow: RowBackground, RowUpdating {
+    let model: EffectControlsModel
+    private let label = makeLabel("Blend Mode")
+    private let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+
+    init(model: EffectControlsModel) {
+        self.model = model
+        super.init(frame: .zero)
+        popup.controlSize = .small
+        popup.font = Theme.Fonts.small
+        for m in BlendMode.allCases { popup.addItem(withTitle: m.title) }
+        popup.target = self; popup.action = #selector(changed)
+        popup.setAccessibilityLabel("Blend Mode")
+        popup.toolTip = "How this clip is combined with the clips below it"
+        addSubview(label); addSubview(popup)
+        update()
+    }
+    required init?(coder: NSCoder) { fatalError() }
+
+    override func layout() {
+        super.layout()
+        label.frame = NSRect(x: 28, y: (bounds.height - 14) / 2, width: 76, height: 14)
+        let h = Theme.Metrics.controlHeight
+        popup.frame = NSRect(x: 104, y: (bounds.height - h) / 2, width: min(max(bounds.width - 104 - 12, 120), 170), height: h)
+    }
+    @objc private func changed() {
+        let i = popup.indexOfSelectedItem
+        if BlendMode.allCases.indices.contains(i) { model.setBlendMode(BlendMode.allCases[i]) }
+    }
+    func update() {
+        if let i = BlendMode.allCases.firstIndex(of: model.blendMode), popup.indexOfSelectedItem != i { popup.selectItem(at: i) }
+        popup.isEnabled = model.isEffectEnabled(.opacity)
+    }
 }
 
 /// Speed graph directly under its property row (Premiere): the keys are the glyphs in the row above, the graph only shows

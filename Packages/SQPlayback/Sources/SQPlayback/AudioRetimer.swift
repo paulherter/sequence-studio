@@ -57,15 +57,87 @@ final class AudioRetimer: @unchecked Sendable {
     ///   - origin: source frame at output frame 0 (forward: where the clip starts reading; reversed: the end it reads backwards from, exclusive).
     ///   - speed: source frames per output frame (> 0), at most 100.
     ///   - srcStart/srcEnd: the clip's source range in frames; reads outside it are silence.
-    ///   - firstOutput: index of `out[0]` (>= 0).
+    ///   - firstOutput: index of `out[0]`; negative inside a transition's head extension (the clip plays before its start).
+    ///   - lead: output frames before 0 that are valid (the length of that extension), so the first grain is the one covering them.
     func render(read: Read, origin: Double, speed: Double, reversed: Bool, keepsPitch: Bool, srcStart: Int64, srcEnd: Int64,
-                firstOutput: Int64, count: Int, into out: UnsafeMutablePointer<Float>) throws {
+                firstOutput: Int64, lead: Int64 = 0, count: Int, into out: UnsafeMutablePointer<Float>) throws {
         guard count > 0 else { return }
         precondition(count <= maxFrames && speed <= Double(Self.maxSpeed) + 1e-9)
         if keepsPitch && speed != 1 {
-            try stretch(read, origin, speed, reversed, srcStart, srcEnd, firstOutput, count, out)
+            try stretch(read, origin, speed, reversed, srcStart, srcEnd, firstOutput, lead, count, out)
         } else {
             try resample(read, origin, speed, reversed, srcStart, srcEnd, firstOutput, count, out)
+        }
+    }
+
+    /// Variable-speed variant for clips with a speed track (and clips inside retimed nested clips): the source position comes
+    /// from `position(o)` (media frames at output frame `o`, relative to the grid origin; `reversed` = playing backwards there)
+    /// instead of `origin +/- o * speed`. Same two algorithms and the same stateless-per-sample guarantee:
+    /// - `keepsPitch`: overlap-add grains of `2 * hop`, grain `k` starting at the source position of output frame `k * hop`;
+    /// - otherwise linear interpolation at `position(o)` (pitch follows the speed, ramps glide).
+    /// Positions beyond the work buffer (a chain faster than 100x) give silence.
+    func renderMapped(read: Read, position: (Int64) -> (frames: Double, reversed: Bool), keepsPitch: Bool,
+                      srcStart: Int64, srcEnd: Int64, firstOutput: Int64, lead: Int64 = 0, count: Int, into out: UnsafeMutablePointer<Float>) throws {
+        guard count > 0 else { return }
+        precondition(count <= maxFrames)
+        if keepsPitch {
+            try stretchMapped(read, position, srcStart, srcEnd, firstOutput, lead, count, out)
+        } else {
+            try resampleMapped(read, position, srcStart, srcEnd, firstOutput, count, out)
+        }
+    }
+
+    private func resampleMapped(_ read: Read, _ position: (Int64) -> (frames: Double, reversed: Bool), _ s0: Int64, _ s1: Int64,
+                                _ first: Int64, _ count: Int, _ out: UnsafeMutablePointer<Float>) throws {
+        var lo = Int64.max, hi = Int64.min
+        for i in 0..<count {
+            let (p0, r) = position(first + Int64(i))
+            let p = r ? p0 - 1 : p0
+            let fl = Int64(p.rounded(.down))
+            lo = min(lo, fl); hi = max(hi, fl + 1)
+        }
+        let n = Int(hi - lo) + 1
+        guard n <= workCapacity else { out.update(repeating: 0, count: count); return }
+        try fetch(read, lo, n, s0, s1, work)
+        for i in 0..<count {
+            let (p0, r) = position(first + Int64(i))
+            let p = r ? p0 - 1 : p0
+            let fl = p.rounded(.down)
+            let k = Int(Int64(fl) - lo)
+            let fr = Float(p - fl)
+            out[i] = fr == 0 ? work[k] : work[k] * (1 - fr) + work[k + 1] * fr
+        }
+    }
+
+    private func stretchMapped(_ read: Read, _ position: (Int64) -> (frames: Double, reversed: Bool), _ s0: Int64, _ s1: Int64,
+                               _ first: Int64, _ lead: Int64, _ count: Int, _ out: UnsafeMutablePointer<Float>) throws {
+        let h = Int64(Self.hop), g = 2 * Self.hop
+        out.update(repeating: 0, count: count)
+        let last = first + Int64(count) - 1
+        let kMin = Self.floorDiv(-max(lead, 0), h)       // 0 unless the clip plays before its start (transition handle)
+        let kFirst = max(kMin, Self.floorDiv(first, h) - 1), kLast = Self.floorDiv(last, h)
+        guard kFirst <= kLast else { return }
+        for k in kFirst...kLast {
+            let gStart = k * h
+            let lo = max(first, gStart), hi = min(last + 1, gStart + 2 * h)
+            guard lo < hi else { continue }
+            let (p, reversed) = position(gStart)
+            var src: Int64
+            if reversed {
+                src = Int64(p.rounded()) - Int64(g)
+                src = max(src, s0)
+                if s0 + Int64(g) <= s1 { src = min(src, s1 - Int64(g)) }
+            } else {
+                src = Int64(p.rounded())
+                if s0 + Int64(g) <= s1 { src = min(src, s1 - Int64(g)) }
+                src = max(src, s0)
+            }
+            try fetch(read, src, g, s0, s1, grain)
+            for o in lo..<hi {
+                let i = Int(o - gStart)
+                let w: Float = (k == kMin && i < Self.hop) ? 1 : Self.window[i]
+                out[Int(o - first)] += (reversed ? grain[g - 1 - i] : grain[i]) * w
+            }
         }
     }
 
@@ -91,11 +163,12 @@ final class AudioRetimer: @unchecked Sendable {
     // MARK: Time-stretch (pitch kept)
 
     private func stretch(_ read: Read, _ origin: Double, _ speed: Double, _ reversed: Bool, _ s0: Int64, _ s1: Int64,
-                         _ first: Int64, _ count: Int, _ out: UnsafeMutablePointer<Float>) throws {
+                         _ first: Int64, _ lead: Int64, _ count: Int, _ out: UnsafeMutablePointer<Float>) throws {
         let h = Int64(Self.hop), g = 2 * Self.hop
         out.update(repeating: 0, count: count)
         let last = first + Int64(count) - 1
-        let kFirst = max(Int64(0), Self.floorDiv(first, h) - 1), kLast = Self.floorDiv(last, h)
+        let kMin = Self.floorDiv(-max(lead, 0), h)       // 0 unless the clip plays before its start
+        let kFirst = max(kMin, Self.floorDiv(first, h) - 1), kLast = Self.floorDiv(last, h)
         guard kFirst <= kLast else { return }
         for k in kFirst...kLast {
             let gStart = k * h                                  // output frame of the grain's first sample
@@ -118,7 +191,7 @@ final class AudioRetimer: @unchecked Sendable {
             for o in lo..<hi {
                 let i = Int(o - gStart)
                 // Flat window on the clip's very first hop (no grain before it to overlap with).
-                let w: Float = (k == 0 && i < Self.hop) ? 1 : Self.window[i]
+                let w: Float = (k == kMin && i < Self.hop) ? 1 : Self.window[i]
                 let s = reversed ? grain[g - 1 - i] : grain[i]
                 out[Int(o - first)] += s * w
             }

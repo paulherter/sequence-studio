@@ -54,6 +54,23 @@ public final class MonitorPanelModel {
     /// Loop toggle (wrench menu) and Safe Margins overlay (Program monitor).
     public var isLooping = false
     public var safeMargins = false
+    /// Debug HUD line (scrub latency); nil = hidden.
+    public var latencyText: String?
+
+    /// Source monitor: the clips opened earlier (title popup, most recent first), the current one, and its markers (M).
+    public struct SourceItem: Sendable, Hashable {
+        public var id: UUID
+        public var name: String
+        public init(id: UUID, name: String) { self.id = id; self.name = name }
+    }
+    public var sourceItems: [SourceItem] = []
+    public var sourceCurrent: UUID?
+    public var markerTimes: [Time] = []
+    @ObservationIgnored public var onPickSource: ((UUID) -> Void)?
+    @ObservationIgnored public var onCloseSource: (() -> Void)?
+    @ObservationIgnored public var onCloseAllSources: (() -> Void)?
+    /// Project items dropped on the Source monitor (the first loads, the rest join the history).
+    @ObservationIgnored public var onDropMedia: (([UUID]) -> Void)?
 
     @ObservationIgnored public var onSeek: ((Time) -> Void)?
     @ObservationIgnored public var onAction: ((MonitorAction) -> Void)?
@@ -66,6 +83,9 @@ public final class MonitorPanelModel {
     /// Source Monitor drag: the pasteboard item for dragging the picture (`.both`) or only its video / audio.
     @ObservationIgnored public var dragItem: ((SourceStreams) -> NSPasteboardItem?)?
     @ObservationIgnored public var onDragEnded: (() -> Void)?
+    /// A mark grip on the scrub strip was dropped: `.markIn` carries the new In, `.markOut` the new stored Out (one frame
+    /// past the Out frame). Called once per drag; while dragging only `markIn` / `markOut` of the model preview it.
+    @ObservationIgnored public var onMarkEdit: ((MonitorScrubMath.Hit, Time) -> Void)?
     /// Fills the right-click menu of the picture area.
     @ObservationIgnored public var contextMenuBuilder: ((NSMenu) -> Void)?
 
@@ -102,12 +122,44 @@ public final class MonitorPanelModel {
         onAction?(action)
     }
 
-    /// Returns false (and does not seek) when the text is not a valid timecode.
+    /// Returns false (and does not seek) when the text is not a valid timecode. `+10` / `-5` move relative to the
+    /// current time (frames; `+1:00` is a timecode amount), never before 0 or past the last frame (Premiere).
     @discardableResult
     public func commitTimecodeText(_ text: String) -> Bool {
+        if let off = timecode.parseRelative(text) {
+            let last = duration > .zero ? max(.zero, duration - frameDuration) : nil
+            let target = max(.zero, currentTime + off)
+            onSeek?(last.map { min(target, $0) } ?? target)
+            return true
+        }
         guard let t = timecode.parse(text) else { return false }
         onSeek?(t)
         return true
+    }
+
+    // MARK: Mark grips (drag In / Out on the strip)
+
+    /// Drag preview: moves the In or Out to the frame `frame` (`.playhead` is ignored). Out is stored one frame past it.
+    public func previewMark(_ end: MonitorScrubMath.Hit, frame: Time) {
+        switch end {
+        case .markIn:
+            markIn = frame
+            if let o = markOut, o <= frame { markOut = nil }
+        case .markOut:
+            let out = frame + frameDuration
+            markOut = out
+            if let i = markIn, i >= out { markIn = nil }
+        case .playhead: break
+        }
+    }
+
+    /// Drop: hands the final mark to the host.
+    public func commitMark(_ end: MonitorScrubMath.Hit) {
+        switch end {
+        case .markIn: if let i = markIn { onMarkEdit?(.markIn, i) }
+        case .markOut: if let o = markOut { onMarkEdit?(.markOut, o) }
+        case .playhead: break
+        }
     }
 
     public func setZoom(_ z: MonitorZoom) { zoom = z; onZoomChange?(z) }

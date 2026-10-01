@@ -314,9 +314,9 @@ private func timeline(_ tracks: [[Clip]], kinds: [TrackKind]? = nil) throws -> T
         #expect(c.source.end <= f(30))
     }
 
-    @Test func refusesNestedGeneratorStillAndLocked() throws {
+    @Test func refusesGeneratorStillAndLocked() throws {
         var nested = clip(from: 0, frames: 30)
-        nested.sequence = UUID()
+        nested.isStill = true
         var tl = try timeline([[nested]])
         #expect(throws: EditError.speedUnsupported) { try tl.setSpeed(tl.tracks[0].clips[0].id, to: pct(200)) }
         var tl2 = try timeline([[clip(from: 0, frames: 30)]])
@@ -349,7 +349,7 @@ private func timeline(_ tracks: [[Clip]], kinds: [TrackKind]? = nil) throws -> T
         try tl.apply(SpeedChange(speed: pct(200)), to: ids)
         #expect(tl.tracks[0].clips[0].duration == f(30) && tl.tracks[1].clips[0].duration == f(30)
                 && tl.tracks[0].clips[1].duration == f(15))
-        var nested = tl.tracks[0].clips[1]; nested.sequence = UUID()
+        var nested = tl.tracks[0].clips[1]; nested.isStill = true
         var broken = tl
         broken.tracks[0] = Track(kind: .video, clips: [tl.tracks[0].clips[0], nested])
         let before = broken

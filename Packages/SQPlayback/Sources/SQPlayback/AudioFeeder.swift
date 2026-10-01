@@ -137,6 +137,8 @@ public final class AudioFeeder: @unchecked Sendable {
     public let flushGeneration = FlushGeneration()
     private let control: Mutex<Control>
     private var sources: [UUID: any AudioSource] = [:]
+    /// Time maps of remapped clip chains, built once and reused for every block (feeder thread only); a changed clip rebuilds.
+    private var timeMaps: [[Clip.ID]: (chain: [Clip], map: AudioTimeMap)] = [:]
     private let retimer: AudioRetimer
     private let mixL: UnsafeMutablePointer<Float>, mixR: UnsafeMutablePointer<Float>
     private let scratch: UnsafeMutablePointer<Float>
@@ -326,11 +328,15 @@ public final class AudioFeeder: @unchecked Sendable {
             let f1 = min(startFrame + Int64(count), Self.ceilFrame(seg.timeline.end, rate))
             guard f1 > f0 else { continue }
             let n = Int(f1 - f0)
-            let retimed = !seg.speed.isNormal || seg.reversed
-            let srcStart = retimed ? 0 : Self.roundFrame(seg.sourceStart + (Time(f0, rate) - seg.timeline.start), rate)
             let clip = Self.segmentClip(seg, top: timeline, sequences: sequences)
+            // A speed track (or any clip inside a retimed nested clip) goes through the time map; constant clips keep their exact path.
+            let mapped = (clip?.speedKeys != nil) || seg.nests.contains { $0.clip.speedKeys != nil || !$0.clip.speed.isNormal || $0.clip.reversed }
+            let timeMap = mapped ? cachedTimeMap(chain: seg.nests.map(\.clip) + (clip.map { [$0] } ?? [])) : nil
+            let retimed = mapped || !seg.speed.isNormal || seg.reversed
+            let srcStart = retimed ? 0 : Self.roundFrame(seg.sourceStart + (Time(f0, rate) - seg.timeline.start), rate)
             let dstOff = Int(f0 - startFrame)
             let animated = (clip?.animation.volume.isAnimated ?? false) || seg.nests.contains { $0.clip.animation.volume.isAnimated }
+                || !seg.envelopes.isEmpty || seg.nests.contains { !$0.envelopes.isEmpty }
             let gain = { (frame: Int64) -> Double in Self.gain(seg, clip: clip, atFrame: frame, rate: rate) }
             let source: any AudioSource
             do {
@@ -340,7 +346,16 @@ public final class AudioFeeder: @unchecked Sendable {
             let fader = Self.trackFader(timeline: timeline, track: seg.nests.first?.track ?? seg.track)
             for (ch, dst) in [dl, dr].enumerated() {
                 do {
-                    if retimed {
+                    if let timeMap {
+                        let rateD = Double(rate), grid = Self.ceilFrame(seg.clipStart, rate)
+                        try retimer.renderMapped(read: { try source.read(from: $0, count: $1, into: $2, channel: ch) },
+                                                 position: { timeMap.position(atFrame: Double(grid + $0), rate: rateD) },
+                                                 keepsPitch: seg.keepsPitch && seg.nests.allSatisfy { $0.clip.keepsPitch },
+                                                 srcStart: Self.roundFrame(seg.source.start, rate), srcEnd: Self.roundFrame(seg.source.end, rate),
+                                                 firstOutput: f0 - grid,
+                                                 lead: max(0, grid - Self.ceilFrame(seg.timeline.start, rate)),
+                                                 count: n, into: scratch)
+                    } else if retimed {
                         let a = seg.timeline.start - seg.clipStart
                         let originT = seg.reversed ? seg.sourceStart + seg.speed.scale(a) : seg.sourceStart - seg.speed.scale(a)
                         try retimer.render(read: { try source.read(from: $0, count: $1, into: $2, channel: ch) },
@@ -349,6 +364,7 @@ public final class AudioFeeder: @unchecked Sendable {
                                            keepsPitch: seg.keepsPitch,
                                            srcStart: Self.roundFrame(seg.source.start, rate), srcEnd: Self.roundFrame(seg.source.end, rate),
                                            firstOutput: f0 - Self.ceilFrame(seg.clipStart, rate),
+                                           lead: max(0, Self.ceilFrame(seg.clipStart, rate) - Self.ceilFrame(seg.timeline.start, rate)),
                                            count: n, into: scratch)
                     } else {
                         let got = try source.read(from: srcStart, count: n, into: scratch, channel: ch)
@@ -362,8 +378,17 @@ public final class AudioFeeder: @unchecked Sendable {
         }
     }
 
+    private func cachedTimeMap(chain: [Clip]) -> AudioTimeMap {
+        let key = chain.map(\.id)
+        if let hit = timeMaps[key], hit.chain == chain { return hit.map }
+        if timeMaps.count > 64 { timeMaps.removeAll() }
+        let m = AudioTimeMap(chain: chain)
+        timeMaps[key] = (chain, m)
+        return m
+    }
+
     /// Drops cached sources (media relinked or proxies switched).
-    public func invalidateSources() { sources.removeAll() }
+    public func invalidateSources() { sources.removeAll(); timeMaps.removeAll() }
 
     private static let gainChunk = 256
 
@@ -376,10 +401,10 @@ public final class AudioFeeder: @unchecked Sendable {
     /// Clip volume (evaluated in the clip's own, inner time) x enclosing nest gains, at top-sequence frame `frame`.
     private static func gain(_ seg: AudioSegment, clip: Clip?, atFrame frame: Int64, rate: Int64) -> Double {
         let outer = Time(frame, rate)
-        var g = seg.nestGain(at: outer)
+        var g = seg.nestGain(at: outer) * seg.envelopeGain(at: outer)     // transition curves, shared by playback and export
         if let clip {
             var t = outer
-            for n in seg.nests { t = n.clip.source.start + (t - n.clip.start) }
+            for n in seg.nests { t = n.clip.sourceInstant(atLocal: t - n.clip.start) }
             g *= clip.volume(at: t)
         }
         return g

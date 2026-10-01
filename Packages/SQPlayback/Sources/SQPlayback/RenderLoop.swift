@@ -133,6 +133,8 @@ final class RenderLoop: @unchecked Sendable {
         var mapping: Mapping = { $0.pts }
         var quality: DecodeScale = .full
         var zoom: ViewerZoom = .fit
+        /// Program monitor setting: draw the captions over the picture (the export burn-in does not depend on it).
+        var showCaptions = true
         /// Bumped by every invalidator; a tick renders when it differs from `renderedGeneration` and records the
         /// generation it snapshotted, so an invalidation that lands during a tick is never lost.
         var generation: UInt64 = 1
@@ -286,6 +288,14 @@ final class RenderLoop: @unchecked Sendable {
 
     var lastPresentedZoom: ViewerZoom? { state.withLock { $0.lastPresentedZoom } }
 
+    /// Shows or hides the captions in the monitor; the current frame is redrawn.
+    func setShowCaptions(_ on: Bool) {
+        state.withLock { s in
+            guard s.showCaptions != on else { return }
+            s.showCaptions = on; s.generation &+= 1
+        }
+    }
+
     func setPresenter(_ p: Presenter?) { state.withLock { $0.presenter = p; $0.generation &+= 1 } }
 
     func invalidate() { state.withLock { $0.generation &+= 1 } }
@@ -362,7 +372,15 @@ final class RenderLoop: @unchecked Sendable {
     struct TickTiming: Sendable { var ticks = 0; var total = Duration.zero; var presents = 0; var presentTotal = Duration.zero }
     let timing = Mutex(TickTiming())
 
-    private struct LayerBuild { var layers: [RenderLayer] = []; var missing = 0; var waiting = false; var misses: [(UUID, Int)] = []; var noFrame = 0 }
+    private struct LayerBuild { var layers: [RenderLayer] = []; var missing = 0; var waiting = false; var misses: [(UUID, Int)] = []; var noFrame = 0
+        /// Cold (undecoded) layers that are part of a transition, and flat colour layers (dips), which are never cold.
+        var coldInTransition = 0; var solids = 0 }
+
+    /// Whether to keep showing the last presented frame instead of compositing now. Solid dip layers do not count as
+    /// pictures; a transition with one cold side holds too (a dissolve against the grey "loading" placeholder would flash).
+    static func shouldHold(noFrame: Int, layers: Int, solids: Int, coldInTransition: Int, hasLast: Bool) -> Bool {
+        hasLast && ((noFrame > 0 && noFrame == layers - solids) || coldInTransition > 0)
+    }
 
     private func tickLocked(_ g: inout GPU, drawable: CAMetalDrawable?) -> TickOutcome? {
         let now = clock.now()
@@ -393,12 +411,17 @@ final class RenderLoop: @unchecked Sendable {
         let requests = tl.videoLayers(at: t, sequences: { sequences[$0] })
         let durations = state.withLock { $0.clipDurations }
         var b = LayerBuild()
-        for r in requests { b.layers.append(layer(for: r, scale: scale, build: &b, tl.format, durations)) }
+        for r in requests {
+            let cold = b.noFrame
+            b.layers.append(layer(for: r, scale: scale, build: &b, tl.format, durations))
+            if r.generator?.kind == GeneratorRef.solid { b.solids += 1 }
+            if r.inTransition, b.noFrame > cold { b.coldInTransition += 1 }
+        }
 
         // Every layer has no picture at all yet (far seek into undecoded media): keep showing the last presented frame
         // instead of a black placeholder; `incomplete` makes the next ticks retry until the decode lands. Bounded: a
         // decode that never lands falls through to the placeholder composite. One cold layer among others composites.
-        if b.noFrame > 0 && b.noFrame == b.layers.count && lastTime != nil {
+        if Self.shouldHold(noFrame: b.noFrame, layers: b.layers.count, solids: b.solids, coldInTransition: b.coldInTransition, hasLast: lastTime != nil) {
             let now = ContinuousClock.now
             let hold = state.withLock { s -> Bool in
                 if s.holdStart?.time != t { s.holdStart = (t, now) }
@@ -507,22 +530,36 @@ final class RenderLoop: @unchecked Sendable {
     /// Captions of the visible caption tracks at `t`, on top of the picture (Program monitor). Same rasters and the
     /// same placement as the export burn-in; a raster that is not ready yet is prepared in the background.
     private func captionNodes(_ tl: Timeline, at t: Time, build b: inout LayerBuild) -> [RenderNode] {
+        guard state.withLock({ $0.showCaptions }) else { return [] }
         let active = tl.captions(at: t)
         guard !active.isEmpty else { return [] }
         var out: [RenderNode] = []
         for a in active where !a.item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            guard let ref = try? CaptionPreview.ref(for: a.item, canvas: tl.format) else { continue }
+            // The plain caption is one raster for the whole caption; the lit word is a second layer on top (the same two
+            // layers the export burn-in draws). A lit layer that is not ready is skipped, never the caption.
+            guard let plan = try? CaptionPreview.plan(for: a.item, karaoke: tl.captionTrack(a.track)?.karaoke, canvas: tl.format, at: t)
+            else { continue }
+            let ref = plan.plain
             if textFailed.withLock({ $0.contains(ref) }) { continue }
             if !TextGenerator.isCached(ref: ref) { prewarmText(ref); b.waiting = true; continue }
             let local = t - a.item.range.start
-            guard let f = try? TextGenerator.frame(ref: ref, localTime: local, clipDuration: a.item.range.duration,
-                                                   canvas: tl.format, scale: 1) else {
-                textFailed.withLock { _ = $0.insert(ref) }
-                continue
-            }
             let base = ClipTransform(position: CaptionPreview.position(canvas: tl.format))
-            out.append(.layer(RenderLayer(content: .linearPremultiplied(f.buffer, width: f.width, height: f.height),
-                                          transform: f.layerTransform(base: base, canvas: tl.format))))
+            func layer(_ r: GeneratorRef) -> RenderNode? {
+                guard !textFailed.withLock({ $0.contains(r) }) else { return nil }
+                guard let f = try? TextGenerator.frame(ref: r, localTime: local, clipDuration: a.item.range.duration,
+                                                       canvas: tl.format, scale: 1) else {
+                    textFailed.withLock { _ = $0.insert(r) }
+                    return nil
+                }
+                return .layer(RenderLayer(content: .linearPremultiplied(f.buffer, width: f.width, height: f.height),
+                                          transform: f.layerTransform(base: base, canvas: tl.format)))
+            }
+            guard let plainNode = layer(ref) else { continue }
+            out.append(plainNode)
+            if let n = plan.next { prewarmText(n) }
+            if let lit = plan.lit {
+                if TextGenerator.isCached(ref: lit), let node = layer(lit) { out.append(node) } else { prewarmText(lit) }
+            }
         }
         return out
     }
@@ -542,11 +579,18 @@ final class RenderLoop: @unchecked Sendable {
         return d
     }
 
+    /// The layer with the clip's effects (Crop, Rounded Corners, Gaussian Blur) and blend mode attached.
     private func layer(for r: LayerRequest, scale: DecodeScale, build b: inout LayerBuild,
                        _ format: SequenceFormat, _ durations: [Clip.ID: Time]) -> RenderLayer {
+        baseLayer(for: r, scale: scale, build: &b, format, durations).applying(r)
+    }
+
+    private func baseLayer(for r: LayerRequest, scale: DecodeScale, build b: inout LayerBuild,
+                           _ format: SequenceFormat, _ durations: [Clip.ID: Time]) -> RenderLayer {
         func placeholder(_ k: PlaceholderKind) -> RenderLayer {
             RenderLayer(content: .placeholder(k), transform: r.transform, cornerRadius: r.cornerRadius)
         }
+        if let g = r.generator, g.kind == GeneratorRef.solid { return RenderLayer.solid(payload: g.payload, transform: r.transform) }
         if let g = r.generator {
             return g.kind == GeneratorRef.text ? textLayer(r, g, canvas: format, durations: durations, build: &b) : placeholder(.offline)
         }
@@ -573,9 +617,23 @@ final class RenderLoop: @unchecked Sendable {
             width: Int(dims.width), height: Int(dims.height),
             codec: "", bitDepth: 8, chroma: "4:2:0", nominalFrameDuration: frame.duration, isVariableFrameRate: false,
             rotation: d.rotation)
+        // Frame Blending: the next source frame and the fractional position, when the source time lies between two frames.
+        // The second frame must already be cached (the planner's window covers it); otherwise the first frame shows alone and
+        // the missing one is requested, so the blend appears as soon as it is decoded without ever stalling the picture.
+        var blend: FrameBlend?
+        if r.interpolation == .frameBlend, f + 1 < index.count, r.sourceEnd.map({ index.entries[f + 1].pts < $0 }) ?? true {
+            let w = FrameBlend.weight(sourceTime: r.sourceTime, frameStart: index.entries[f].pts, frameDuration: index.entries[f].duration)
+            if w > 0 {
+                if let next = cache.frame(FrameKey(media: r.media, pts: index.entries[f + 1].pts, scale: scale)), frame.pixelBuffer !== next.pixelBuffer {
+                    blend = FrameBlend(next: next.pixelBuffer, weight: w)
+                } else {
+                    b.misses.append((r.media, f + 1))
+                }
+            }
+        }
         return RenderLayer(content: .frame(frame.pixelBuffer, colorHint: info), transform: r.transform,
                            colorPipeline: media.resolver.colorResolver?.pipeline(for: r.color, media: r.media),
-                           cornerRadius: r.cornerRadius, nativeSize: (info.width, info.height))
+                           cornerRadius: r.cornerRadius, nativeSize: (info.width, info.height), blend: blend)
     }
 
     /// Frame showing `sourceTime`; before the first frame -> 0, at/after the end -> last. Requires a non-empty index.
@@ -669,7 +727,7 @@ final class RenderLoop: @unchecked Sendable {
         func walk(_ t: Timeline) {
             guard visited.insert(t.id).inserted else { return }
             for track in t.tracks where track.kind == .video {
-                for c in track.clips where !c.isGenerator {
+                for c in track.clips where c.isEnabled && !c.isGenerator {
                     if let s = c.sequence { if let inner = sequences[s] { walk(inner) } } else { out.append((c.color, c.media)) }
                 }
             }
@@ -684,7 +742,7 @@ final class RenderLoop: @unchecked Sendable {
         func walk(_ t: Timeline) {
             guard visited.insert(t.id).inserted else { return }
             for track in t.tracks where track.kind == .video {
-                for c in track.clips where !c.isGenerator {
+                for c in track.clips where c.isEnabled && !c.isGenerator {
                     if let s = c.sequence { if let inner = sequences[s] { walk(inner) } } else { out.insert(c.media) }
                 }
             }
@@ -695,11 +753,14 @@ final class RenderLoop: @unchecked Sendable {
 
     /// FrameKey -> top-level timeline time of the first clip showing that source frame (eviction distance).
     static func mapping(_ tl: Timeline) -> Mapping {
-        let clips = tl.tracks.filter { $0.kind == .video }.flatMap(\.clips).filter { !$0.isNested && !$0.isGenerator }
+        let clips = tl.tracks.filter { $0.kind == .video }.flatMap(\.clips).filter { $0.isEnabled && !$0.isNested && !$0.isGenerator }
         let byMedia = Dictionary(grouping: clips, by: \.media)
         return { key in
             guard let cs = byMedia[key.media] else { return nil }
-            for c in cs where c.source.contains(key.pts) { return c.timelineTime(forSource: key.pts) }
+            for c in cs {
+                if let h = c.holdFrame { if key.pts == h { return c.start }; continue }     // a held clip shows one frame
+                if c.source.contains(key.pts) { return c.timelineTime(forSource: key.pts) }
+            }
             return nil
         }
     }

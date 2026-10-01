@@ -27,6 +27,8 @@ public actor DecoderFrameProvider: FrameProvider {
         var executor: QueueExecutor
         var lastIndex: Int?
         var lastFrame: DecodedFrame?
+        /// A few recent frames by index (Frame Blending asks for a frame and its successor alternately).
+        var recent: [Int: DecodedFrame] = [:]
     }
     private let resolver: any MediaResolver
     private let scale: DecodeScale
@@ -35,6 +37,13 @@ public actor DecoderFrameProvider: FrameProvider {
     /// Still-image media (decoded once by the resolver) and media known not to be stills.
     private var stills: [UUID: StillFrame] = [:]
     private var notStill: Set<UUID> = []
+
+    private static let recentByteLimit = 256 << 20
+
+    /// The media changed (relinked, proxy switched): forget its decoder, cached frames and still.
+    public func invalidate(media: UUID) {
+        entries[media] = nil; stills[media] = nil; failed.remove(media); notStill.remove(media)
+    }
 
     public init(resolver: any MediaResolver, scale: DecodeScale = .full) {
         self.resolver = resolver; self.scale = scale
@@ -77,14 +86,24 @@ public actor DecoderFrameProvider: FrameProvider {
         let all = e.index.entries
         // Frame presented at `sourceTime`, clamped to the media (a clip may run past its last frame).
         let idx = e.index.frame(at: sourceTime) ?? (sourceTime < all[0].pts ? 0 : all.count - 1)
+        if let hit = e.recent[idx] {
+            return ProvidedFrame(buffer: hit.pixelBuffer, info: e.decoder.info, start: all[idx].pts, duration: all[idx].duration)
+        }
         if let last = e.lastFrame, e.lastIndex == idx {
-            return ProvidedFrame(buffer: last.pixelBuffer, info: e.decoder.info)
+            return ProvidedFrame(buffer: last.pixelBuffer, info: e.decoder.info, start: all[idx].pts, duration: all[idx].duration)
         }
         let dec = e.decoder
         let frames = try await withTaskExecutorPreference(e.executor) { try await dec.decode(idx...idx) }
         guard let f = frames.first else { return nil }
         entries[media]?.lastIndex = idx
         entries[media]?.lastFrame = f
-        return ProvidedFrame(buffer: f.pixelBuffer, info: e.decoder.info)
+        entries[media]?.recent[idx] = f
+        // Bounded by count and by bytes (4K frames are large): the frame farthest from the current one goes first.
+        while let e = entries[media]?.recent, e.count > 1,
+              e.count > 3 || e.values.reduce(0, { $0 + CVPixelBufferGetDataSize($1.pixelBuffer) }) > Self.recentByteLimit,
+              let far = e.keys.max(by: { abs($0 - idx) < abs($1 - idx) }) {
+            entries[media]?.recent.removeValue(forKey: far)
+        }
+        return ProvidedFrame(buffer: f.pixelBuffer, info: e.decoder.info, start: all[idx].pts, duration: all[idx].duration)
     }
 }

@@ -7,13 +7,27 @@ import Foundation
 /// chooses the source range to fit it (`source.duration = frames * frameDuration * speed`, exact rational), so
 /// edit points never drift.
 extension Timeline {
-    /// Clips that can be retimed: media clips. Nested sequences, generators and stills have no constant speed yet.
-    public static func canRetime(_ c: Clip) -> Bool { !c.isNested && !c.isGenerator && !c.isStill }
+    /// Clips that can be retimed: media clips and nested sequences (their length is the inner sequence's duration, refreshed
+    /// with `refreshNestedDurations` before the edit). Generators (text) and stills have no time axis.
+    public static func canRetime(_ c: Clip) -> Bool { !c.isGenerator && !c.isStill }
+
+    /// Brings the inner-duration limit (`mediaDuration`) of nested clips up to date: it is derived from the inner sequence at
+    /// edit time, because a stored value goes stale when the inner sequence is edited. `inner` = the sequence's current duration.
+    public mutating func refreshNestedDurations(_ inner: (Timeline.ID) -> Time?) {
+        for ti in tracks.indices {
+            for c in tracks[ti].clips {
+                guard let seq = c.sequence, let d = inner(seq), d != c.mediaDuration else { continue }
+                var n = c
+                n.mediaDuration = d
+                tracks[ti].replace(n)
+            }
+        }
+    }
 
     /// Whole frames of `t` (nearest).
     private func frames(_ t: Time) -> Int64 { t.snapped(to: frameDuration).frameIndex(frameDuration: frameDuration) }
 
-    private func retimeGroup(_ id: Clip.ID) throws -> [Member] {
+    func retimeGroup(_ id: Clip.ID) throws -> [Member] {
         let group = try linkedGroup(id)
         if group.contains(where: { tracks[$0.track].isLocked }) { throw EditError.trackLocked }
         if group.contains(where: { !Self.canRetime($0.clip) }) { throw EditError.speedUnsupported }
@@ -47,10 +61,13 @@ extension Timeline {
         for m in group {
             var c = m.clip
             if let r = reversed { c.reversed = r }
-            var want = max(frames(holdingDuration ? c.duration : speed.unscale(c.source.duration)), 1)
+            var want = max(frames(holdingDuration ? c.duration : speed.unscale(c.retimeSpan)), 1)
+            if let k = c.speedKeys { want = frames(k.clampedDuration(fd * want, frameDuration: fd)) }
             let perFrame = speed.scale(fd)
-            // Media limits (the anchor end of the range stays, the other end moves).
-            if c.reversed {
+            // Media limits (the anchor end of the range stays, the other end moves). A remapped clip keeps the source it
+            // visits, so only its length changes: no media limit.
+            if c.speedKeys != nil {
+            } else if c.reversed {
                 // start' = end - dur >= 0
                 want = min(want, max(frameFloor(c.source.end, perFrame), 1))
             } else if let md = c.mediaDuration {
@@ -70,6 +87,22 @@ extension Timeline {
             var c = m.clip
             if let r = reversed { c.reversed = r }
             if let k = keepsPitch { c.keepsPitch = k }
+            if let keys = c.speedKeys {
+                // Remapped: the whole shape plays faster or slower; Reverse flips every segment.
+                var scaled = keys.scaled(toDuration: newDuration, frameDuration: fd)
+                if c.reversed != m.clip.reversed {
+                    let end = scaled.endPosition
+                    scaled.segments = scaled.segments.reversed().map {
+                        SpeedSegment(duration: $0.duration, from: $0.to, to: $0.from, reversed: !$0.reversed)
+                    }
+                    scaled.origin = end
+                }
+                guard let fit = scaled.fitting(media: c.mediaDuration, frameDuration: fd) else { throw EditError.collision }
+                c.setSpeedKeys(fit)
+                c.rescaleKeys(from: m.clip.duration, to: newDuration, mirror: false)
+                work[m.track].replace(c)
+                continue
+            }
             c.speed = speed
             let srcDur = speed.scale(newDuration)
             if c.reversed { c.source.start = c.source.end - srcDur }
@@ -113,7 +146,7 @@ extension Timeline {
         guard let c = find(id)?.clip else { throw EditError.clipNotFound }
         let d = max(frames(duration), 1)
         let target = frameDuration * d
-        let src = c.source.duration
+        let src = c.retimeSpan
         let speed = ClipSpeed(num: src.value * target.timescale, den: src.timescale * target.value)
         return try setSpeed(id, to: speed, reversed: reversed, keepsPitch: keepsPitch, ripple: ripple)
     }
@@ -144,7 +177,7 @@ extension Timeline {
         }
         // Speed from the primary's source range; the clamp may change the length again.
         let tl = fd * n
-        let src = primary.source.duration
+        let src = primary.retimeSpan
         let speed = ClipSpeed(num: src.value * tl.timescale, den: src.timescale * tl.value)
         n = max(frames(speed.unscale(src)), 1)
         // The clamp (and rounding) may have changed the length again: neighbours and media limit it once more.
@@ -160,19 +193,25 @@ extension Timeline {
                 let prevEnd = others.filter { $0.timeline.end <= c.start }.map { $0.timeline.end }.max() ?? .zero
                 n = min(n, max(floorFrames(c.timeline.end - prevEnd), 1))
             }
-            if c.reversed { n = min(n, max(frameFloor(c.source.end, perFrame), 1)) }
+            if let k = c.speedKeys { n = k.clampedDuration(fd * n, frameDuration: fd).frameIndex(frameDuration: fd) }
+            else if c.reversed { n = min(n, max(frameFloor(c.source.end, perFrame), 1)) }
             else if let md = c.mediaDuration { n = min(n, max(frameFloor(md - c.source.start, perFrame), 1)) }
         }
         let newDuration = fd * n
         let applied = edge == .tail ? newDuration - primary.duration : primary.duration - newDuration
-        if applied == .zero && speed == primary.speed { return .zero }
+        if applied == .zero && speed == primary.speed && primary.speedKeys == nil { return .zero }
         var work = tracks
         for m in group {
             var c = m.clip
-            c.speed = speed
-            let srcDur = speed.scale(newDuration)
-            if c.reversed { c.source.start = c.source.end - srcDur }
-            c.source.duration = srcDur
+            if let keys = c.speedKeys {
+                let scaled = keys.scaled(toDuration: newDuration, frameDuration: fd)
+                c.setSpeedKeys(scaled.fitting(media: c.mediaDuration, frameDuration: fd) ?? scaled)
+            } else {
+                c.speed = speed
+                let srcDur = speed.scale(newDuration)
+                if c.reversed { c.source.start = c.source.end - srcDur }
+                c.source.duration = srcDur
+            }
             c.rescaleKeys(from: m.clip.duration, to: newDuration, mirror: false)
             if edge == .head { c.start = m.clip.timeline.end - newDuration }
             work[m.track].replace(c)
@@ -195,9 +234,12 @@ public struct SpeedChange: Sendable, Equatable {
     public var ripple: Bool
     /// Speed typed with the link between speed and duration broken: the clip keeps its length and shows more or less media.
     public var holdingDuration: Bool
+    /// Time Interpolation (Frame Sampling / Frame Blending), stored on the clip. nil = unchanged.
+    public var timeInterpolation: TimeInterpolation?
 
     public init(speed: ClipSpeed? = nil, duration: Time? = nil, reversed: Bool? = nil, keepsPitch: Bool? = nil,
-                ripple: Bool = false, holdingDuration: Bool = false) {
+                ripple: Bool = false, holdingDuration: Bool = false, timeInterpolation: TimeInterpolation? = nil) {
+        self.timeInterpolation = timeInterpolation
         self.speed = speed; self.duration = duration; self.reversed = reversed; self.keepsPitch = keepsPitch
         self.ripple = ripple; self.holdingDuration = holdingDuration
     }
@@ -208,11 +250,27 @@ extension Timeline {
     @discardableResult
     public mutating func apply(_ change: SpeedChange, to id: Clip.ID) throws -> Time {
         guard let c = find(id)?.clip else { throw EditError.clipNotFound }
+        var work = self
+        let result: Time
         if let d = change.duration {
-            return try setDuration(id, to: d, reversed: change.reversed, keepsPitch: change.keepsPitch, ripple: change.ripple)
+            result = try work.setDuration(id, to: d, reversed: change.reversed, keepsPitch: change.keepsPitch, ripple: change.ripple)
+        } else {
+            result = try work.setSpeed(id, to: change.speed ?? c.averageSpeed, reversed: change.reversed, keepsPitch: change.keepsPitch,
+                                       ripple: change.ripple, holdingDuration: change.holdingDuration)
         }
-        return try setSpeed(id, to: change.speed ?? c.speed, reversed: change.reversed, keepsPitch: change.keepsPitch,
-                            ripple: change.ripple, holdingDuration: change.holdingDuration)
+        if let ti = change.timeInterpolation { try work.setTimeInterpolation(id, ti) }
+        self = work
+        return result
+    }
+
+    /// Time Interpolation of a clip and its linked partners.
+    public mutating func setTimeInterpolation(_ id: Clip.ID, _ ti: TimeInterpolation) throws {
+        let group = try retimeGroup(id)
+        for m in group where m.clip.timeInterpolation != ti {
+            var c = m.clip
+            c.timeInterpolation = ti
+            tracks[m.track].replace(c)
+        }
     }
 
     /// Applies `change` to every clip of `ids` (a linked pair counts once). Refuses the whole edit when any clip cannot be

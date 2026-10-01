@@ -14,7 +14,7 @@ import SQMedia
 @MainActor struct SpeedRealMediaBenchTests {
     static let clipURL = URL(fileURLWithPath: NSHomeDirectory() + "/Documents/Videos/iOS 26 Hier/ios26hier.mp4")
 
-    static func run(label: String, speed: ClipSpeed, reversed: Bool, sourceSeconds: Int64, from: Int64 = 0, withAudio: Bool = true) async throws {
+    static func run(label: String, speed: ClipSpeed, reversed: Bool, sourceSeconds: Int64, from: Int64 = 0, withAudio: Bool = true, keys: SpeedKeys? = nil) async throws {
         guard FileManager.default.fileExists(atPath: clipURL.path) else { print("[speed \(label)] media missing"); return }
         let device = try #require(MTLCreateSystemDefaultDevice())
         let demuxer = try await AVDemuxer(url: clipURL)
@@ -27,8 +27,10 @@ import SQMedia
         let engine = try PlaybackEngine(device: device, media: resolver, audio: audio)
         let dur = index.duration
         func clip(_ kind: TrackKind) -> Clip {
-            Clip(name: "A", media: media, kind: kind, source: TimeRange(start: Time(from, 1), duration: Time(sourceSeconds, 1)),
-                 start: .zero, mediaDuration: dur, speed: speed, reversed: reversed)
+            var c = Clip(name: "A", media: media, kind: kind, source: TimeRange(start: Time(from, 1), duration: Time(sourceSeconds, 1)),
+                         start: .zero, mediaDuration: dur, speed: speed, reversed: reversed)
+            if let keys { c.setSpeedKeys(SpeedKeys(segments: keys.segments, origin: Time(from, 1))) }
+            return c
         }
         var tracks = [Track(kind: .video, clips: [clip(.video)])]
         if withAudio { tracks.append(Track(kind: .audio, clips: [clip(.audio)])) }
@@ -68,4 +70,19 @@ import SQMedia
     @Test func third() async throws { try await Self.run(label: "33.33%", speed: ClipSpeed(percent: 33.33), reversed: false, sourceSeconds: 10) }
     @Test func reversed() async throws { try await Self.run(label: "reverse", speed: .normal, reversed: true, sourceSeconds: 20) }
     @Test func reversedDouble() async throws { try await Self.run(label: "reverse 2x", speed: ClipSpeed(percent: 200), reversed: true, sourceSeconds: 40) }
+
+    /// Speed ramps (Time Remapping): 100 % -> 400 % over 2 s (14 s of source in 5 s), and 100 % -> 25 % (slow motion).
+    static func ramp(_ a: Double, _ b: Double, hold: Int64) -> SpeedKeys {
+        SpeedKeys(segments: [SpeedSegment(duration: Time(1, 1), from: .normal),
+                             SpeedSegment(duration: Time(2, 1), from: ClipSpeed(percent: a), to: ClipSpeed(percent: b)),
+                             SpeedSegment(duration: Time(hold, 1), from: ClipSpeed(percent: b))], origin: .zero)
+    }
+    @Test func rampUp() async throws {
+        try await Self.run(label: "ramp 100->400", speed: .normal, reversed: false, sourceSeconds: 14,
+                           keys: Self.ramp(100, 400, hold: 2))
+    }
+    @Test func rampDown() async throws {
+        try await Self.run(label: "ramp 100->25", speed: .normal, reversed: false, sourceSeconds: 4,
+                           keys: Self.ramp(100, 25, hold: 2))
+    }
 }

@@ -22,6 +22,8 @@ final class EditorPanels {
     private var overlayGesture: (target: OverlayTarget, start: ClipTransform)?
     private struct TextEditing { var clip: Clip.ID; var template: TextTemplate; var animations: AnimationSet?; var isNew: Bool; var depth = 0; var first = true }
     private var textEditing: TextEditing?
+    /// A caption being typed into in the Program monitor (see `EditorPanels+Captions.swift`).
+    var captionEditing: CaptionEdit?
     private var failedRasters = Set<GeneratorRef>()
     let monitorModel: MonitorPanelModel
     let source: SourceMonitorController
@@ -30,6 +32,9 @@ final class EditorPanels {
     let projectView: ProjectPanelView
     let effectModel = EffectControlsModel()
     let effectView: EffectControlsView
+    /// Effect Controls with the transition view over it while a transition is selected.
+    let transitionView = TransitionControlsView()
+    lazy var effectContainer = EffectControlsContainerView(effects: effectView, transition: transitionView)
     let libraryModel = LibraryServices.makeModel()
     let libraryView: LibraryPanelView
     let clipSections: ClipSectionsView
@@ -45,6 +50,7 @@ final class EditorPanels {
     private var trackHeightsFor: Timeline.ID?
     private var pagingTimeline = false
     private var wasPlaying = false
+    var lastCacheKey: [Int] = []
 
     /// A panel was clicked or received a command: move keyboard focus (and shortcut scope) there.
     var onFocus: ((PanelID) -> Void)?
@@ -85,6 +91,7 @@ final class EditorPanels {
         wireSource()
         wireOverlay()
         wireEffectControls()
+        wireTransitions()
         sync([.project, .selection, .playhead, .transport])
     }
 
@@ -115,6 +122,7 @@ final class EditorPanels {
             guard let self, !pagingTimeline else { return }
             follow.userScrolled(whilePlaying: session.isPlaying)
         }
+        tv.onGestureHint = { [weak self] h in if let h { self?.onStatus?(h) } }
         tv.onRejection = { [weak self] m in self?.onStatus?(m) }
         tv.onTrackToggle = { [weak self] id, toggle in self?.toggleTrack(id, toggle) }
         tv.onDropMedia = { [weak self] ids, time, track, insert in
@@ -128,12 +136,15 @@ final class EditorPanels {
         tv.onDropFiles = { [weak self] urls, time, track, insert in self?.dropFiles(urls, at: time, track: track, insert: insert) }
         tv.dropItemsProvider = { [weak self] source in self?.dropItems(for: source) ?? [] }
         tv.onDropEffect = { [weak self] id, clip in
-            guard let self, id == EffectsPanelView.roundedCorners else { return }
-            if !session.addRoundedCorners(to: [clip]) { onStatus?("Rounded Corners need a video clip that does not have it yet.") }
+            guard let self else { return }
+            if !session.addEffect(kind: id, to: [clip]) { onStatus?("\(EffectCatalog.title(for: id)) needs a video clip.") }
         }
         tv.contextMenuProvider = { [weak self] p in self?.timelineMenu(at: p) }
         wireVolumeLine()
+        wireSpeedBand()
+        wireOpacityLine()
         tv.onEditMarker = { [weak self] id in self?.editMarker(id) }
+        tv.onMarkerMoved = { [weak self] id, time in self?.session.moveMarker(id, to: time) }
         tv.onToggleChange = { [weak self] snap, linked in
             self?.onStatus?("Snapping \(snap ? "on" : "off"), Linked Selection \(linked ? "on" : "off")")
         }
@@ -189,12 +200,23 @@ final class EditorPanels {
             session.addTextClip(template: entry.template)
         }
         effectsView.onApply = { [weak self] id in
-            guard let self, id == EffectsPanelView.roundedCorners else { return }
-            if !session.addRoundedCorners() { onStatus?("Select a video clip without Rounded Corners first.") }
+            guard let self else { return }
+            // Double-click on a transition: the selected edit, else the edit at the playhead on the targeted tracks.
+            if let kind = EffectsPanelView.transitionKind(forID: id) {
+                session.applyDefaultTransitions(scope: kind.trackKind == .video ? .video : .audio,
+                                                edges: timelineView.interaction.edgeSelection, kind: kind)
+                return
+            }
+            if !session.addEffect(kind: id, to: session.selection) { onStatus?("Select a video clip first, then double-click \(EffectCatalog.title(for: id)).") }
         }
     }
 
     private func toggleTrack(_ id: Track.ID, _ toggle: TrackToggle) {
+        if toggle == .target, let flags = NSApp.currentEvent?.modifierFlags,
+           !flags.intersection([.shift, .option]).isEmpty {
+            session.toggleTarget(id, shift: flags.contains(.shift), option: flags.contains(.option))   // Shift: all of the kind, Option: only this
+            return
+        }
         let name: String
         switch toggle {
         case .visible: name = "Toggle Track Output"
@@ -220,6 +242,8 @@ final class EditorPanels {
     private func timelineMenu(at p: CGPoint) -> NSMenu? {
         let tv = timelineView
         if let k = tv.volumeKey(at: p) { return volumeKeyMenu(clip: k.clip, key: k.key) }
+        if let k = tv.speedKeyHit(at: p) { return speedKeyMenu(clip: k.clip, hit: k.key) }
+        if let m = transitionMenu(at: p) { return m }
         tv.contextSelect(at: p)
         if tv.selection.isEmpty, !tv.captionSelection.isEmpty { return captionMenu() }
         let hasClipboard = session.clipboard != nil
@@ -239,7 +263,7 @@ final class EditorPanels {
         default:
             return nil
         }
-        return TimelineContextMenu.makeMenu(items: items, labelHandler: { [weak self] l in self?.session.setLabel(l) }) { [weak self] action in
+        let menu = TimelineContextMenu.makeMenu(items: items, labelHandler: { [weak self] l in self?.session.setLabel(l) }) { [weak self] action in
             switch action {
             case .cut: self?.onCommand?(.cut)
             case .copy: self?.onCommand?(.copy)
@@ -247,16 +271,20 @@ final class EditorPanels {
             case .pasteInsert: self?.onCommand?(.pasteInsert)
             case .delete: self?.onCommand?(.delete)
             case .rippleDelete: self?.onCommand?(.rippleDelete)
+            case .enable: self?.onCommand?(.enableClip)
             case .link, .unlink: self?.onCommand?(.link)
             case .nest: self?.onNest?()
             case .speed: self?.onCommand?(.speedDuration)
             case .audioGain: self?.onCommand?(.audioGain)
             case .removeSilences: self?.onCommand?(.removeSilences)
+            case .timeRemapping: self?.onCommand?(.toggleTimeRemapping)
             case .setToFrameSize, .scaleToFrameSize: self?.onFrameSize?()
             case .rename: self?.renameSelectedClip()
             case .label, .editCaption, .splitCaption, .mergeCaptions: break   // captions have their own menu (`captionMenu`)
             }
         }
+        addEditPointItems(to: menu, at: p)
+        return menu
     }
 
     /// Rename sheet for the one selected clip.
@@ -345,6 +373,7 @@ final class EditorPanels {
         projectView.onOpenSequence = { [weak self] id in self?.session.setActiveTimeline(id) }
         projectView.onPlace = { [weak self] ids, mode in self?.session.placeMedia(ids, mode: mode) }
         projectView.onNewSequenceFromClip = { [weak self] id in self?.session.newSequence(fromMedia: id) }
+        wireSourceFlow()
         projectView.onNewSequence = { [weak self] in self?.onCommand?(.newSequence) }
         projectView.onReplaceFootage = { [weak self] id in self?.replaceFootage(id) }
         monitorView.safeMarginsView.rectProvider = { [weak self] in self?.surface.mapping.canvasRect ?? .zero }
@@ -451,8 +480,17 @@ final class EditorPanels {
         surface.onTypeClick = { [weak self] pos in self?.typeToolClick(pos) }
         surface.onTypeBox = { [weak self] centre, box in self?.typeToolBox(centre, box) }
         surface.onStyleToggle = { [weak self] t in self?.toggleEditedStyle(t) }
-        surface.onTextEdited = { [weak self] text in self?.textEdited(text) }
-        surface.onTextEditEnded = { [weak self] text in self?.textEditEnded(text) }
+        surface.onTextEdited = { [weak self] text in
+            guard let self, !captionEdited(text) else { return }   // a caption edited in the monitor, else the text layer
+            textEdited(text)
+        }
+        surface.onTextEditEnded = { [weak self] text in
+            guard let self, !captionEditEnded(text) else { return }
+            textEditEnded(text)
+        }
+        surface.captionHitTest = { [weak self] p in self?.captionHit(p) ?? false }
+        surface.onCaptionDoubleClick = { [weak self] p in self?.beginCaptionEditing(at: p) }
+        clipSections.onAlignToFrame = { [weak self] a in self?.alignSelectedText(a) }
     }
 
     /// One gesture = one undo step; the values land in Effect Controls live (same clip, same playhead).
@@ -505,7 +543,8 @@ final class EditorPanels {
         template.box = box
         if box != nil { template.text = "Text"; template.style.alignment = .left }
         let depth = session.undoDepth
-        guard session.addTextClip(template: template, position: position) != nil else { return }
+        guard session.addTextClip(template: template, duration: Time(Int64(AppSettings.load().defaultTextSeconds), 1),
+                                  position: position) != nil else { return }
         session.seek(to: session.playhead)   // an empty sequence clamped the engine to 0: show the new text now
         updateOverlay()
         beginTextEditing(selectAll: true, isNew: true, depth: depth)
@@ -514,14 +553,7 @@ final class EditorPanels {
     /// Topmost visible text clip under the playhead whose drawn rectangle contains `p` (sequence px from the centre).
     private func textClip(at p: Vec2) -> Clip.ID? {
         guard let tl = session.activeTimeline else { return nil }
-        for track in tl.tracks.filter({ $0.kind == .video && $0.isVisible }).reversed() {
-            for c in track.clips {
-                guard let ref = c.generator, ref.kind == GeneratorRef.text,
-                      let o = OverlayTarget.make(clip: c, project: session.project, timeline: tl, at: session.playhead) else { continue }
-                if LayerBounds.rect(size: o.size, transform: o.displayTransform).contains(CGPoint(x: p.x, y: p.y)) { return c.id }
-            }
-        }
-        return nil
+        return TextHitTest.topmostTextClip(at: p, in: tl, project: session.project, time: session.playhead)
     }
 
     /// Cmd+B / Cmd+I while editing: bold toggles between Bold and Regular, italic on and off, for the whole layer.
@@ -622,7 +654,7 @@ final class EditorPanels {
         case .timeline: return timelineView
         case .programMonitor: return monitorView
         case .project: return projectView
-        case .effectControls: return effectView
+        case .effectControls: return effectContainer
         case .library: return libraryView
         case .text: return textView
         case .colorInspector: return colorView
@@ -713,6 +745,7 @@ final class EditorPanels {
         monitorModel.isLooping = session.bounds.loop
         source.sync(change)
         effectModel.sync(with: session, change: change)
+        syncTransitions(change)
         updateOverlay()
         clipSections.sync(change)
         textView.sync(change)

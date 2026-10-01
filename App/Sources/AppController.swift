@@ -15,7 +15,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     let engineNote: String?
     let commandMap = CommandMap.premiereDefault
     var store = WorkspaceStore.load()
-    var settings: AppSettings
+    var settings: AppSettings { didSet { panels?.applySettings(settings) } }
     private(set) lazy var settingsWindow = SettingsWindowController(controller: self)
     var maximizedPanel: PanelID?
     var focusedPanel: PanelID? = .timeline { didSet { router.focus = focusedPanel; shell.host.focusedPanel = focusedPanel } }
@@ -86,6 +86,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         restoreAudioScrubbing()
         panels.onFrameSize = { [weak self] in self?.session.setToFrameSize() }
         panels.monitorModel.setQuality(settings.defaultQuality)
+        panels.applySettings(settings)
 
         shell.statusBar.onTasksClicked = { [weak self] v in self?.toggleTasks(v) }
         exports.queueModel.start()
@@ -473,6 +474,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
             if let tv = window?.firstResponder as? NSTextView, tv.isEditable || tv.isFieldEditor { return false }
             if window?.firstResponder is NSTableView { return false }
         }
+        if textResponder != nil, [.find, .setPosterFrame, .clearPosterFrame, .toggleHoverScrub].contains(c) { return false }
         // Typing in a text field: the standard editing commands belong to it.
         if textResponder != nil, [.cut, .copy, .paste, .delete, .deleteProjectItems].contains(c) { return true }
         if ([.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus), let enabled = validateInEffectControls(c) { return enabled }
@@ -486,7 +488,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         case .save: return true
         case _ where (c == .delete || c == .rippleDelete) && effectControlsHasFocus:
             return !panels.effectModel.selection.isEmpty || panels.effectModel.selectedSection.map(panels.effectModel.canRemoveEffect) == true
-        default: return commandEnabled(c)
+        default: return effectsLookEnabled(c) ?? commandEnabled(c)
         }
     }
 
@@ -520,6 +522,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         // (isFieldEditor but not editable) must not swallow Space/J/K/L: that was the "Space does nothing" regression.
         if let tv = window.firstResponder as? NSTextView, tv.isEditable { return event }
         guard let ke = KeyMapping.keyEvent(from: event) else { return event }
+        if handleSnapHold(ke) { return nil }
         // Command shortcuts belong to the menus (key equivalents).
         if ke.modifiers.contains(.command) { return event }
         // Lists keep their arrow and delete keys.

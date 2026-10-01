@@ -27,6 +27,8 @@ import SQRender
     public var quality: DecodeScale = .full { didSet { loop.setQuality(quality) } }
     /// Program monitor zoom used by the present path. A change re-presents the current frame (no decode).
     public var viewerZoom: ViewerZoom = .fit { didSet { if viewerZoom != oldValue { loop.setZoom(viewerZoom) } } }
+    /// Captions drawn over the picture in the monitor (Premiere: Closed Captions Display). Export is not affected.
+    public var showsCaptions = true { didSet { if showsCaptions != oldValue { loop.setShowCaptions(showsCaptions) } } }
     /// Called with the new position after a frame was presented (coalesced, at most display rate).
     public var onPositionChange: (@MainActor (Time) -> Void)?
 
@@ -149,6 +151,14 @@ import SQRender
     public func endScrub() { stopScrubAudio() }
 
     public var stats: PlaybackStats { loop.stats }
+
+    /// Timeline spans whose frames are in the cache (the ruler's cache strip); a pure query, empty without a timeline.
+    public var cacheGeneration: Int { loop.cache.generation }
+
+    public func cachedRanges() -> [TimeRange] {
+        guard let tl = timeline else { return [] }
+        return loop.cache.cachedRanges(frameDuration: tl.format.frameDuration)
+    }
 
     /// Last composited frame (rgba16Float, sequence size, working linear). Headless readback for tests/bench.
     public var lastRenderedTexture: MTLTexture? { loop.lastRendered?.texture }

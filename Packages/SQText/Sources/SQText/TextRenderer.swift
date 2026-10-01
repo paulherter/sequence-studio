@@ -24,7 +24,9 @@ public enum TextRendererError: Error, Sendable { case bufferCreationFailed(Int32
 /// Rasterizes `TextLayout` output with Core Graphics / Core Text (see docs/PHASE7.md "Text renderer").
 public enum TextRenderer {
     /// Returns nil for empty text / empty ink.
-    public static func render(text: String, style: TextStyle, maxWidth: Double?, boxHeight: Double? = nil, scale: Double = 1) throws -> TextRaster? {
+    /// - Parameter highlight: words of the text drawn in another fill colour (karaoke); stroke and shadow are unchanged.
+    public static func render(text: String, style: TextStyle, maxWidth: Double?, boxHeight: Double? = nil, scale: Double = 1,
+                              highlight: TextHighlight? = nil) throws -> TextRaster? {
         let layout = TextLayout.layout(text: text, style: style, maxWidth: maxWidth, boxHeight: boxHeight)
         let ink = layout.inkBounds
         let s = max(0.01, scale)
@@ -38,7 +40,7 @@ public enum TextRenderer {
                                    bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else {
             throw TextRendererError.contextCreationFailed
         }
-        draw(layout: layout, style: style, into: ctx8, scale: s, space: srgb)
+        draw(layout: layout, style: style, highlight: highlight, into: ctx8, scale: s, space: srgb)
         guard let image = ctx8.makeImage() else { throw TextRendererError.contextCreationFailed }
 
         let attrs: [CFString: Any] = [kCVPixelBufferIOSurfacePropertiesKey: [:] as [String: Any],
@@ -54,7 +56,7 @@ public enum TextRenderer {
                                    bytesPerRow: CVPixelBufferGetBytesPerRow(buffer), space: linear, bitmapInfo: info) else {
             throw TextRendererError.contextCreationFailed
         }
-        draw(layout: layout, style: style, into: ctxF, scale: s, space: srgb)
+        draw(layout: layout, style: style, highlight: highlight, into: ctxF, scale: s, space: srgb)
 
         return TextRaster(layout: layout, scale: s, originX: ink.x, originY: ink.y,
                           pixelWidth: w, pixelHeight: h, image: image, linearBuffer: buffer)
@@ -65,15 +67,15 @@ public enum TextRenderer {
     }
 
     /// `space` is the colorspace the style's sRGB colors are expressed in (CG converts to the context's space).
-    private static func draw(layout: TextLayoutResult, style: TextStyle, into ctx: CGContext, scale s: Double,
-                             space: CGColorSpace) {
+    private static func draw(layout: TextLayoutResult, style: TextStyle, highlight: TextHighlight?, into ctx: CGContext,
+                             scale s: Double, space: CGColorSpace) {
         let ink = layout.inkBounds
         ctx.clear(CGRect(x: 0, y: 0, width: ctx.width, height: ctx.height))
         ctx.setAllowsAntialiasing(true); ctx.setShouldAntialias(true)
         ctx.setAllowsFontSmoothing(false); ctx.setShouldSmoothFonts(false)
 
         // CG shadow offsets are in device space, y up; layout offsets are y down. blur = full radius in layout px.
-        if let sh = style.shadow {
+        if let sh = style.shadow, highlight?.onlyLit != true {
             ctx.setShadow(offset: CGSize(width: sh.offsetX * s, height: -sh.offsetY * s), blur: sh.blur * s,
                           color: cg(sh.color, space))
         }
@@ -83,7 +85,7 @@ public enum TextRenderer {
         ctx.scaleBy(x: CGFloat(s), y: CGFloat(-s))
         ctx.translateBy(x: CGFloat(-ink.x), y: CGFloat(-ink.y))
 
-        if let bg = style.background, let r = layout.backgroundRect {
+        if let bg = style.background, let r = layout.backgroundRect, highlight?.onlyLit != true {
             let rect = CGRect(x: r.x, y: r.y, width: r.width, height: r.height)
             let rad = min(bg.cornerRadius, min(rect.width, rect.height) / 2)
             ctx.setFillColor(cg(bg.color, space))
@@ -99,22 +101,53 @@ public enum TextRenderer {
             let attr = NSAttributedString(string: l.text, attributes: attrs)
             return (CTLineCreateWithAttributedString(attr), l)
         }
-        func drawLines(_ mode: CGTextDrawingMode) {
+        func drawLines(_ mode: CGTextDrawingMode, _ set: [(CTLine, TextLine)]) {
             ctx.setTextDrawingMode(mode)
-            for (ct, l) in lines {
+            for (ct, l) in set {
                 ctx.textMatrix = CGAffineTransform(scaleX: 1, y: -1)   // text space is y up, CTM is y down
                 ctx.textPosition = CGPoint(x: l.x, y: l.y + l.baseline)
                 CTLineDraw(ct, ctx)
             }
         }
-        if let st = style.stroke, st.width > 0 {
+        // Karaoke: the lit words carry their own foreground colour, everything else follows the context fill. Words are
+        // counted over all lines in reading order, so the same highlight means the same words in the monitor and export.
+        // The word spans come from the layout (found once on the original text), so the same highlight means the same words
+        // in the monitor and in the export, and a word the wrap broke across lines is lit on both lines. Every run gets an
+        // explicit colour (CTLineDraw leaves the last run's colour in the context). `onlyLit` draws just the lit words.
+        let onlyLit = highlight?.onlyLit == true
+        let fillLines: [(CTLine, TextLine)]
+        if let h = highlight, !h.words.isEmpty {
+            let lit = h.words.compactMap { layout.wordSpans.indices.contains($0) ? layout.wordSpans[$0] : nil }
+            let clear = CGColor(colorSpace: space, components: [0, 0, 0, 0])!
+            let base = onlyLit ? clear : cg(style.color, space)
+            fillLines = lines.map { (_, l) in
+                var attrs = TextLayout.attributes(font: font, tracking: style.tracking)
+                attrs[NSAttributedString.Key(kCTForegroundColorAttributeName as String)] = base
+                let attr = NSMutableAttributedString(string: l.text, attributes: attrs)
+                let lineRange = NSRange(location: l.location, length: (l.text as NSString).length)
+                for span in lit {
+                    let x = NSIntersectionRange(span, lineRange)
+                    guard x.length > 0 else { continue }
+                    attr.addAttribute(NSAttributedString.Key(kCTForegroundColorAttributeName as String), value: cg(h.color, space),
+                                      range: NSRange(location: x.location - l.location, length: x.length))
+                }
+                return (CTLineCreateWithAttributedString(attr), l)
+            }
+        } else { fillLines = onlyLit ? [] : lines }
+
+        let stroke = onlyLit ? nil : style.stroke.flatMap { $0.width > 0 ? $0 : nil }
+        func strokePass(_ st: TextStroke) {
             ctx.setStrokeColor(cg(st.color, space))
-            ctx.setLineWidth(CGFloat(st.width * 2))   // outer stroke: the inner half is covered by the fill
+            // Outside: twice the width, the inner half is covered by the fill drawn after it. Centred: the width itself,
+            // drawn over the fill.
+            ctx.setLineWidth(CGFloat(st.position == .outside ? st.width * 2 : st.width))
             ctx.setLineJoin(.round); ctx.setLineCap(.round)
-            drawLines(.stroke)
+            drawLines(.stroke, lines)
         }
+        if let st = stroke, st.position == .outside { strokePass(st) }
         ctx.setFillColor(cg(style.color, space))
-        drawLines(.fill)
+        drawLines(.fill, fillLines)
+        if let st = stroke, st.position == .centre { strokePass(st) }
         ctx.endTransparencyLayer()
     }
 }

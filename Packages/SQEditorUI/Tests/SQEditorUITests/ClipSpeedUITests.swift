@@ -178,11 +178,11 @@ private func mk(_ start: Int64, from: Int64 = 0, _ frames: Int64, kind: TrackKin
         _ = depth
     }
 
-    @Test func nestedAndEmptySelectionsAreRefused() throws {
-        var nested = mk(0, 48)
-        nested.sequence = UUID()
-        let s = try session([[nested]], kinds: [.video])
-        s.select(clips: [nested.id])
+    @Test func stillsAndEmptySelectionsAreRefused() throws {
+        var still = mk(0, 48)
+        still.isStill = true
+        let s = try session([[still]], kinds: [.video])
+        s.select(clips: [still.id])
         #expect(!s.canSetSpeed && s.speedDialogModel() == nil && !s.applySpeed(SpeedChange(speed: pct(200))))
     }
 

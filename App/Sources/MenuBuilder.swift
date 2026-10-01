@@ -38,7 +38,6 @@ enum MenuBuilder {
     /// Wired and worth a menu item.
     static func isVisible(_ c: EditorCommand) -> Bool {
         if EditorMenus.alwaysShown.contains(c) { return true }
-        if c == .tool(.zoom) { return false }          // the Zoom tool is not implemented yet
         return AppController.isSupported(c)
     }
 

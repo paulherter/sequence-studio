@@ -50,7 +50,13 @@ extension Project {
                     if let total, !c.isStill {
                         if c.source.start >= total { timelines[ti].tracks[tri].remove(c.id); continue }
                         if c.source.end > total {
-                            if c.speed.isNormal && !c.reversed {
+                            if let keys = c.speedKeys {
+                                // Remapped: cut the tail until the whole speed track lies inside the shortened media.
+                                guard let fit = keys.fitting(media: total, frameDuration: timelines[ti].frameDuration) else {
+                                    timelines[ti].tracks[tri].remove(c.id); continue
+                                }
+                                n.setSpeedKeys(fit)
+                            } else if c.speed.isNormal && !c.reversed {
                                 n.source = TimeRange(start: c.source.start, end: total)
                             } else {
                                 // Retimed: keep the length a whole number of timeline frames at the clip's speed. The end
@@ -86,5 +92,32 @@ extension Project {
             if let i = m.markIn, let o = m.markOut, o <= i { m.markOut = nil }
         }
         sourceMarks[id] = m.isEmpty ? nil : m
+    }
+}
+
+extension Project {
+    /// Names of the sequences that hold clips of `media`, in project order (empty = unused).
+    public func sequenceNames(using media: MediaRef.ID) -> [String] {
+        timelines.filter { $0.tracks.contains { $0.clips.contains { $0.media == media && !$0.isNested && !$0.isGenerator } } }.map(\.name)
+    }
+
+    /// Names of the other sequences that nest sequence `id` as a clip.
+    public func sequenceNames(nesting id: Timeline.ID) -> [String] {
+        timelines.filter { $0.id != id && $0.tracks.contains { $0.clips.contains { $0.sequence == id } } }.map(\.name)
+    }
+
+    /// Deletes a sequence. Refused (false) for the last sequence, for an unknown id and for a sequence another sequence
+    /// nests (`sequenceNames(nesting:)` names those). `activeTimeline` moves to the neighbour when the active one goes.
+    /// The caller wraps this in one undo step.
+    @discardableResult
+    public mutating func deleteSequence(_ id: Timeline.ID) -> Bool {
+        guard timelines.count > 1, let i = timelines.firstIndex(where: { $0.id == id }),
+              sequenceNames(nesting: id).isEmpty else { return false }
+        timelines.remove(at: i)
+        if activeTimeline == id || !timelines.contains(where: { $0.id == activeTimeline }) {
+            activeTimeline = timelines[min(i, timelines.count - 1)].id
+        }
+        normalizeBins()
+        return true
     }
 }

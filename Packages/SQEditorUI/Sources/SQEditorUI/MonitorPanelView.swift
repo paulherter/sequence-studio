@@ -10,6 +10,8 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
     /// Host inserts the viewer (Metal) view here; it should fill the slot.
     public let viewerSlot = NSView()
 
+    private let hudLabel = NSTextField(labelWithString: "")
+    private let sourcePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let timecodeField = TimecodeField(string: "")
     private let optionsPopup = NSPopUpButton(frame: .zero, pullsDown: true)
     /// Safe-margin guides over the picture; `rectProvider` returns the picture's rect in the viewer slot.
@@ -66,6 +68,18 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
         safeMarginsView.autoresizingMask = [.width, .height]
         safeMarginsView.isHidden = true
         viewerSlot.addSubview(safeMarginsView)
+        hudLabel.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        hudLabel.textColor = Theme.Colors.label2
+        hudLabel.backgroundColor = Theme.hex(0x000000).withAlphaComponent(0.55)
+        hudLabel.drawsBackground = true
+        hudLabel.isHidden = true
+        hudLabel.setAccessibilityLabel("Scrub latency")
+        hudLabel.translatesAutoresizingMaskIntoConstraints = false
+        viewerSlot.addSubview(hudLabel)
+        NSLayoutConstraint.activate([
+            hudLabel.leadingAnchor.constraint(equalTo: viewerSlot.leadingAnchor, constant: 6),
+            hudLabel.topAnchor.constraint(equalTo: viewerSlot.topAnchor, constant: 6),
+        ])
         if model.mode == .source {
             let drag = StreamDragView(streams: .both)
             drag.model = model
@@ -87,6 +101,9 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
         timecodeField.action = #selector(commitTimecode)
         timecodeField.setAccessibilityLabel("Timecode")
         timecodeField.setContentHuggingPriority(.required, for: .horizontal)
+        timecodeField.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // The field has no intrinsic width: without a floor a tight header collapses it to nothing.
+        timecodeField.widthAnchor.constraint(greaterThanOrEqualToConstant: 106).isActive = true
 
         for l in [durationLabel, inOutLabel] {
             l.font = Theme.Fonts.small
@@ -120,7 +137,20 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
         optionsPopup.menu?.delegate = self
         timecodeField.onDrag = { [weak self] phase, frames in self?.timecodeDrag(phase, frames) }
         timecodeField.toolTip = "Click to type a timecode, drag to scrub"
-        for v in [timecodeField, durationLabel, spacer, optionsPopup, zoomPopup, qualityPopup] { header.addArrangedSubview(v) }
+        if model.mode == .source {
+            sourcePopup.controlSize = .small
+            sourcePopup.font = Theme.Fonts.small
+            sourcePopup.setAccessibilityLabel("Source clip")
+            sourcePopup.toolTip = "Clips opened in the Source monitor"
+            sourcePopup.target = self; sourcePopup.action = #selector(sourcePicked(_:))
+            sourcePopup.widthAnchor.constraint(lessThanOrEqualToConstant: 105).isActive = true
+            sourcePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 56).isActive = true
+            sourcePopup.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(100), for: .horizontal)
+            registerForDraggedTypes([.sequenceMediaIDs])
+        }
+        let headerViews: [NSView] = [timecodeField, durationLabel, spacer] + (model.mode == .source ? [sourcePopup] : [])
+            + [optionsPopup, zoomPopup, qualityPopup]
+        for v in headerViews { header.addArrangedSubview(v) }
         header.translatesAutoresizingMaskIntoConstraints = false
 
         transport.orientation = .horizontal
@@ -213,6 +243,9 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
         }
         qualityPopup.selectItem(at: MonitorQuality.allCases.firstIndex(of: model.quality) ?? 0)
         scrubBar.needsDisplay = true
+        hudLabel.stringValue = model.latencyText ?? ""
+        hudLabel.isHidden = model.latencyText == nil
+        if model.mode == .source { applySourcePopup() }
         safeMarginsView.isHidden = !model.safeMargins
         safeMarginsView.needsDisplay = true
         let available = Set(model.availableActions)
@@ -227,6 +260,51 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
             play.toolTip = title
             play.setAccessibilityLabel(title)
         }
+    }
+
+    // MARK: Source clip popup and drops
+
+    /// Title popup: the clips opened before (most recent first), then Close / Close All.
+    private func applySourcePopup() {
+        let items = model.sourceItems, current = model.sourceCurrent
+        sourcePopup.removeAllItems()
+        if items.isEmpty {
+            sourcePopup.addItem(withTitle: "No clip")
+            sourcePopup.isEnabled = false
+            return
+        }
+        sourcePopup.isEnabled = true
+        for it in items {
+            sourcePopup.addItem(withTitle: it.name)
+            sourcePopup.lastItem?.representedObject = it.id
+        }
+        if let c = current, let i = items.firstIndex(where: { $0.id == c }) { sourcePopup.selectItem(at: i) }
+        sourcePopup.menu?.addItem(.separator())
+        let close = sourcePopup.menu?.addItem(withTitle: "Close", action: #selector(sourceClose), keyEquivalent: "")
+        close?.target = self
+        let all = sourcePopup.menu?.addItem(withTitle: "Close All", action: #selector(sourceCloseAll), keyEquivalent: "")
+        all?.target = self
+    }
+
+    @objc private func sourcePicked(_ sender: NSPopUpButton) {
+        if let id = sender.selectedItem?.representedObject as? UUID { model.onPickSource?(id) }
+    }
+    @objc private func sourceClose() { model.onCloseSource?() }
+    @objc private func sourceCloseAll() { model.onCloseAllSources?() }
+
+    private func droppedMedia(_ info: NSDraggingInfo) -> [UUID] {
+        let raw = info.draggingPasteboard.string(forType: .sequenceMediaIDs) ?? ""
+        return ProjectPanelModel.decodeItems(raw).compactMap { if case .media(let id) = $0 { id } else { nil } }
+    }
+
+    public override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation {
+        model.mode == .source && !droppedMedia(sender).isEmpty ? .copy : []
+    }
+    public override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let ids = droppedMedia(sender)
+        guard model.mode == .source, !ids.isEmpty else { return false }
+        model.onDropMedia?(ids)
+        return true
     }
 
     @objc private func transportPressed(_ sender: NSButton) {
@@ -258,7 +336,7 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
             let head = menu.addItem(withTitle: "", action: nil, keyEquivalent: "")
             head.image = NSImage(systemSymbolName: "wrench.and.screwdriver", accessibilityDescription: "Settings")
             addToggle(menu, "Loop Playback", .loop, on: model.isLooping)
-            if model.mode == .program { addToggle(menu, "Play In to Out", .playInToOut, on: nil) }
+            addToggle(menu, "Play In to Out", .playInToOut, on: nil)
             if model.mode == .program { addToggle(menu, "Safe Margins", .toggleSafeMargins, on: model.safeMargins) }
         } else if menu === viewerSlot.menu {
             menu.removeAllItems()

@@ -22,10 +22,16 @@ public enum EditorCommand: Sendable, Hashable {
     case tool(EditorTool)
     // Editing
     case addEdit, addEditAllTracks, rippleTrimPrevious, rippleTrimNext, extendEdit
+    /// Q/W variants: Shift = rolling (the cut moves), Option = plain trim (the gap stays).
+    case rollTrimPrevious, rollTrimNext, trimPrevious, trimNext
+    /// Clip > Enable (Shift+Cmd+E), Edit > Duplicate (Shift+Cmd+/), Ctrl+T trim type, Opt+Up/Down lane move.
+    case enableClip, duplicate, toggleTrimType, moveSelectionUp, moveSelectionDown
     case delete, rippleDelete, deleteProjectItems
     case toggleSnapping, matchFrame, reverseMatchFrame, link, group
     /// Clip > Speed/Duration (Cmd+R).
     case speedDuration
+    /// Clip > Show Time Remapping: toggles the speed band on the selected video clips. Remove Time Remapping resets them to 100 %.
+    case toggleTimeRemapping, removeTimeRemapping
     // Clipboard / history
     case copy, cut, paste, pasteAttributes, undo, redo
     // Timeline selection, nudge, edit trims (Premiere: Cmd+Left/Right nudge, Opt+Shift+Left/Right trim 5 frames)
@@ -53,6 +59,15 @@ public enum EditorCommand: Sendable, Hashable {
     case audioGainDown, audioGainUp, audioGainDown6, audioGainUp6
     case matchLoudness, autoDuck, removeSilences
     case tagDialogue, tagMusic, tagSFX
+    // Clip > Video Options (effects-look): fade presets on the picture, frame holds
+    case videoFadeIn, videoFadeOut, addFrameHold, insertFrameHold
+    // Source and Project flow: Play In to Out with preroll/postroll (Shift+Space), Play Around (Shift+K), poster frame
+    // (Cmd+P / Option+P), Hover Scrub (Shift+H), Find (Cmd+F).
+    case playInToOutRoll, playAround, setPosterFrame, clearPosterFrame, toggleHoverScrub, find
+    // Transitions (Sequence menu): Cmd+D, Shift+Cmd+D, Shift+D
+    case applyVideoTransition, applyAudioTransition, applyDefaultTransitions
+    // Captions
+    case toggleCaptionsInMonitor
 
     /// Auto-repeat (key held) re-fires these; everything else ignores repeats.
     public var isRepeatable: Bool {
@@ -120,6 +135,15 @@ public enum EditorCommand: Sendable, Hashable {
         case .rippleTrimPrevious: "Ripple Trim Previous Edit to Playhead"
         case .rippleTrimNext: "Ripple Trim Next Edit to Playhead"
         case .extendEdit: "Extend Selected Edit to Playhead"
+        case .rollTrimPrevious: "Roll Previous Edit to Playhead"
+        case .rollTrimNext: "Roll Next Edit to Playhead"
+        case .trimPrevious: "Trim Previous Edit to Playhead"
+        case .trimNext: "Trim Next Edit to Playhead"
+        case .enableClip: "Enable"
+        case .duplicate: "Duplicate"
+        case .toggleTrimType: "Toggle Trim Type"
+        case .moveSelectionUp: "Move Selection Up"
+        case .moveSelectionDown: "Move Selection Down"
         case .delete: "Delete"
         case .rippleDelete: "Ripple Delete"
         case .deleteProjectItems: "Delete"
@@ -129,6 +153,8 @@ public enum EditorCommand: Sendable, Hashable {
         case .link: "Link"
         case .group: "Group"
         case .speedDuration: "Speed/Duration…"
+        case .toggleTimeRemapping: "Show Time Remapping"
+        case .removeTimeRemapping: "Remove Time Remapping"
         case .copy: "Copy"
         case .cut: "Cut"
         case .paste: "Paste"
@@ -196,6 +222,20 @@ public enum EditorCommand: Sendable, Hashable {
         case .tagDialogue: "Dialogue"
         case .tagMusic: "Music"
         case .tagSFX: "SFX"
+        case .videoFadeIn: "Fade In"
+        case .videoFadeOut: "Fade Out"
+        case .addFrameHold: "Add Frame Hold"
+        case .insertFrameHold: "Insert Frame Hold Segment"
+        case .playInToOutRoll: "Play In to Out with Preroll/Postroll"
+        case .playAround: "Play Around"
+        case .setPosterFrame: "Set Poster Frame"
+        case .clearPosterFrame: "Clear Poster Frame"
+        case .toggleHoverScrub: "Hover Scrub"
+        case .find: "Find…"
+        case .applyVideoTransition: "Apply Video Transition"
+        case .applyAudioTransition: "Apply Audio Transition"
+        case .applyDefaultTransitions: "Apply Default Transitions to Selection"
+        case .toggleCaptionsInMonitor: "Show Captions in Program Monitor"
         }
     }
 

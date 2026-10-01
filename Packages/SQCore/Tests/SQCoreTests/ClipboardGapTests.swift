@@ -180,12 +180,13 @@ private func starts(_ t: Track) -> [Int64] { t.clips.map { $0.start.value / $0.s
         #expect(tl.tracks[0].clips[0].link == nil)
     }
 
-    @Test func pasteClampsToExistingLanes() throws {
+    @Test func pasteCreatesMissingLanes() throws {
         let a = clip(0, 5), b = clip(10, 5)
         var tl = timeline([track([a]), track([b])])
         let cb = tl.clipboard(copying: [a.id, b.id])!
-        try tl.paste(cb, at: s(30), lanes: [.video: 1])    // second clip would need a third lane
-        #expect(starts(tl.tracks[1]).contains(30) && starts(tl.tracks[1]).contains(40))
+        try tl.paste(cb, at: s(30), lanes: [.video: 1])    // second clip needs a third lane
+        #expect(starts(tl.tracks[1]) == [10, 30])
+        #expect(tl.tracks.count == 3 && starts(tl.tracks[2]) == [40])
     }
 }
 }

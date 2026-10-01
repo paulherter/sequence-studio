@@ -3,7 +3,7 @@ import Foundation
 import SQCore
 
 public enum TimelineCursorKind: Sendable, Hashable {
-    case trimIn, trimOut, rippleIn, rippleOut, rateIn, rateOut, roll, slip, slide, razor, hand
+    case trimIn, trimOut, rippleIn, rippleOut, rateIn, rateOut, roll, slip, slide, razor, hand, zoom
 }
 
 /// Which cursor shows where, per tool. Pure: the view turns these regions into cursor rects.
@@ -25,9 +25,10 @@ public enum TimelineCursorMap {
             if !c.isNull, c.width >= 0.5, c.height >= 0.5 { out.append(Region(rect: c, kind: kind)) }
         }
         switch tool {
-        case .razor, .hand:
+        case .razor, .hand, .zoom:
             let top = rows.first!.y, bottom = rows.last!.maxY
-            add(CGRect(x: content.minX, y: top, width: content.width, height: bottom - top), tool == .razor ? .razor : .hand)
+            add(CGRect(x: content.minX, y: top, width: content.width, height: bottom - top),
+                tool == .razor ? .razor : tool == .zoom ? .zoom : .hand)
         case .trackSelectForward, .pen, .shape, .mask, .type:
             break
         case .selection, .rippleEdit, .rateStretch, .rollEdit, .slip, .slide:

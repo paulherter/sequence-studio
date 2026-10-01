@@ -111,6 +111,7 @@ extension Timeline {
         for m in group {
             let c = m.clip
             if c.isGenerator || c.isStill { d = .zero; continue }        // nothing to slip
+            if c.speedKeys != nil { d = .zero; continue }                // remapped: the source range is the speed track
             let before = c.speed.unscale(c.source.start)                       // room for earlier source
             let after = c.mediaDuration.map { c.speed.unscale($0 - c.source.end) }   // room for later source
             if c.reversed {

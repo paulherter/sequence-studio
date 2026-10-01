@@ -59,6 +59,10 @@ public struct TimelineInteraction: Sendable {
         /// Option-drag: identities of the copies, stable for the whole gesture.
         var copyIDs: [Clip.ID: Clip.ID] = [:]
         var copyLinks: [UUID: UUID] = [:]
+        /// Shift while moving: the axis the pointer moved along first.
+        var axisLock = AxisLock()
+        /// Option went down before Command: a later Command makes it an insert copy, not a rearrange.
+        var copyLatched = false
     }
     /// Copies the in-flight Option-drag creates (they become the selection on commit).
     private var pendingCopies: Set<Clip.ID> = []
@@ -109,6 +113,8 @@ public struct TimelineInteraction: Sendable {
     }
 
     public mutating func cancel() {
+        snapInverted = false
+        moveHint = nil
         gesture = nil
         preview = timeline
         pendingEdits = []
@@ -147,13 +153,21 @@ public struct TimelineInteraction: Sendable {
     private func clipX(_ c: Clip) -> (CGFloat, CGFloat) { (geometry.x(for: c.timeline.start), geometry.x(for: c.timeline.end)) }
 
     private func snapPoints(excluding: Set<Clip.ID>) -> [SnapPoint] {
-        timeline.snapPoints(excluding: excluding, playhead: playhead, markers: markers)
+        timeline.snapPoints(excluding: excluding, playhead: playhead, markers: markers, includeKeyframes: true)
     }
+
+    /// What the move gesture in flight does ("Insert", "Rearrange", "Copy", "Insert copy"); the view shows it as a hint.
+    public private(set) var moveHint: String?
+
+    /// Hold-S: snapping flipped for the gesture in flight (Premiere's momentary snap toggle). Reset by every mouse down.
+    public var snapInverted = false
+    private var snappingOn: Bool { toolState.snapping != snapInverted }
 
     // MARK: Mouse
 
     public mutating func mouseDown(_ p: CGPoint, modifiers m: GestureModifiers) {
         cancel()
+        snapInverted = false
         let hit = geometry.hitTest(p, in: timeline)
         let downTime = geometry.time(atX: p.x)
         var g = Gesture(kind: .click, downPoint: p, downTime: downTime)
@@ -283,6 +297,8 @@ public struct TimelineInteraction: Sendable {
         guard let g = gesture else { return nil }
         if g.active && g.kind != .razor { mouseDragged(p, modifiers: m) }
         defer {
+            snapInverted = false
+            moveHint = nil
             gesture = nil
             marquee = nil
             snapTime = nil
@@ -397,6 +413,7 @@ public struct TimelineInteraction: Sendable {
         case .wrongTrackKind: "Clips do not fit that track."
         case .invalidFormat: "That sequence format is not valid."
         case .speedUnsupported: "Speed cannot be changed on that clip."
+        case .notACut, .insufficientMedia: "That transition cannot be applied here."
         case nil: "Nest failed."
         }
     }
@@ -478,15 +495,25 @@ public struct TimelineInteraction: Sendable {
 
     private mutating func updateMove(_ p: CGPoint, modifiers m: GestureModifiers) {
         guard var g = gesture, let anchorID = g.clip, let anchor = clip(anchorID) else { return }
+        // Adobe: Cmd-drag = insert (the old place stays a gap), Cmd+Opt-drag = rearrange (the old place closes), Option-drag
+        // = copy; Option first and then Cmd = insert the copy.
+        if m.contains(.option) && !m.contains(.command) { g.copyLatched = true }
+        gesture = g
         let insert = m.contains(.command)
         let copying = m.contains(.option) && !insert
+        let insertCopying = m.contains(.option) && insert && g.copyLatched
+        let rearranging = m.contains(.option) && insert && !g.copyLatched
+        moveHint = insertCopying ? "Insert copy" : rearranging ? "Rearrange" : insert ? "Insert" : copying ? "Copy" : nil
         let movers: [Clip.ID] = (!insert && selection.contains(anchorID)) ? Array(selection) : [anchorID]
         let everything = groups(Set(movers), linked: true)
         let minStart = everything.compactMap { clip($0)?.start }.min() ?? anchor.start
 
-        var d = travel(p, g)
+        // Shift locks the move to the axis the pointer left along first: time or track.
+        if m.contains(.shift) { g.axisLock.update(dx: p.x - g.downPoint.x, dy: p.y - g.downPoint.y) } else { g.axisLock.reset() }
+        let lock = g.axisLock.axis
+        var d = lock == .vertical ? .zero : travel(p, g)
         snapTime = nil
-        if toolState.snapping {
+        if snappingOn, lock != .vertical {
             let r = snapMove(start: anchor.start + d, duration: anchor.timeline.duration,
                              to: snapPoints(excluding: everything), threshold: geometry.snapThreshold(),
                              frameDuration: geometry.frameDuration)
@@ -498,7 +525,8 @@ public struct TimelineInteraction: Sendable {
         let rows = geometry.rows(for: timeline)
         let anchorRow = rows.firstIndex { $0.track == trackID(of: anchorID) } ?? 0
         if g.stickyRow == nil { g.stickyRow = anchorRow }
-        let drop = dropRow(kind: anchor.kind, y: p.y, rows: rows, sticky: g.stickyRow)
+        let dropY = lock == .horizontal && rows.indices.contains(anchorRow) ? rows[anchorRow].y + rows[anchorRow].height / 2 : p.y
+        let drop = dropRow(kind: anchor.kind, y: dropY, rows: rows, sticky: g.stickyRow)
         if !drop.isNew { g.stickyRow = drop.index }
         gesture = g
 
@@ -514,10 +542,25 @@ public struct TimelineInteraction: Sendable {
             } else if drop.index != anchorRow {
                 anchorTrack = rows[drop.index].track
             }
+            if insertCopying {
+                // Cmd+Option: insert a copy at the drop point, the original stays.
+                let grp = group(anchorID, linked: true)
+                for member in grp where g.copyIDs[member] == nil { g.copyIDs[member] = UUID() }
+                var link = UUID()
+                if let l = anchor.link { link = g.copyLinks[l] ?? link; g.copyLinks[l] = link }
+                let spec = CopySpec(ids: g.copyIDs.filter { grp.contains($0.key) }, link: link)
+                gesture = g
+                pendingCopies = Set(g.copyIDs.filter { grp.contains($0.key) }.values)
+                edits.append(.insertCopy(anchorID, to: anchor.start + d, track: anchorTrack, spec: spec))
+                publish(edits, "Insert Copy")
+                return
+            }
+            pendingCopies = []
             if d != .zero || anchorTrack != nil {
-                edits.append(.moveInsert(anchorID, to: anchor.start + d, track: anchorTrack))
+                edits.append(rearranging ? .moveInsert(anchorID, to: anchor.start + d, track: anchorTrack)
+                                         : .insertMove(anchorID, to: anchor.start + d, track: anchorTrack))
             } else { edits = [] }
-            publish(edits, "Insert Move")
+            publish(edits, rearranging ? "Rearrange" : "Insert Move")
             return
         }
 
@@ -596,7 +639,7 @@ public struct TimelineInteraction: Sendable {
         guard let g = gesture, let id = g.caption, let item = captionItem(id) else { return }
         var d = travel(p, g)
         snapTime = nil
-        if toolState.snapping {
+        if snappingOn {
             let r = snapMove(start: item.range.start + d, duration: item.range.duration, to: snapPoints(excluding: []),
                              threshold: geometry.snapThreshold(), frameDuration: geometry.frameDuration)
             d += r.delta
@@ -660,7 +703,7 @@ public struct TimelineInteraction: Sendable {
         guard let g = gesture, let id = g.clip, let c = clip(id) else { return }
         var d = travel(p, g)
         snapTime = nil
-        if toolState.snapping {
+        if snappingOn {
             let r = snapMove(start: c.start + d, duration: c.timeline.duration,
                              to: snapPoints(excluding: group(id, linked: true)), threshold: geometry.snapThreshold(),
                              frameDuration: geometry.frameDuration)
@@ -673,7 +716,7 @@ public struct TimelineInteraction: Sendable {
     /// `delta` of an edge at `edgeTime`, pulled onto a snap point when snapping is on.
     private mutating func snappedDelta(_ delta: Time, from edgeTime: Time, excluding: Set<Clip.ID>) -> Time {
         snapTime = nil
-        guard toolState.snapping else { return delta }
+        guard snappingOn else { return delta }
         let r = snap(edgeTime + delta, to: snapPoints(excluding: excluding), threshold: geometry.snapThreshold(),
                      frameDuration: geometry.frameDuration)
         snapTime = r.hit?.time
@@ -685,7 +728,7 @@ public struct TimelineInteraction: Sendable {
     private mutating func razorPreview(at p: CGPoint, clip id: Clip.ID?, modifiers m: GestureModifiers) {
         var t = geometry.time(atX: p.x)
         snapTime = nil
-        if toolState.snapping {
+        if snappingOn {
             let r = snap(t, to: snapPoints(excluding: []), threshold: geometry.snapThreshold(),
                          frameDuration: geometry.frameDuration)
             t = r.time

@@ -6,7 +6,21 @@ import SQExport
 /// Caption wiring: double-click a caption in the timeline types into it in the Text panel, SRT export, and the
 /// right-click menu of captions in the timeline.
 extension AppController {
+    /// View > Show Captions in Program Monitor (Premiere: Closed Captions Display). Only the monitor: the export burn-in
+    /// has its own switch. Remembered between launches.
+    func toggleCaptionsInMonitor() {
+        let on = !session.engine.showsCaptions
+        session.engine.showsCaptions = on
+        UserDefaults.standard.set(on, forKey: "sq.showCaptionsInMonitor")
+        shell.statusBar.flash(on ? "Captions shown in the Program monitor" : "Captions hidden in the Program monitor", seconds: 2)
+    }
+
+    func restoreCaptionsInMonitor() {
+        if let v = UserDefaults.standard.object(forKey: "sq.showCaptionsInMonitor") as? Bool { session.engine.showsCaptions = v }
+    }
+
     func wireCaptions() {
+        restoreCaptionsInMonitor()
         panels.timelineView.onEditCaptionText = { [weak self] id in
             guard let self else { return }
             showPanel(.text)
