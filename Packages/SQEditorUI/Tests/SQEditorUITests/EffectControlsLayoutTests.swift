@@ -24,8 +24,11 @@ import SQCore
     }
 
     @Test func roundedCornersHasRadiusRow() {
-        let rows = EffectControlsLayout.rows(sections: [.roundedCorners], collapsed: [], expanded: [])
-        #expect(rows.map(\.kind) == [.section(.roundedCorners), .property(.cornerRadius)])
+        var c = Clip(name: "c", media: UUID(), kind: .video, source: TimeRange(start: .zero, duration: Time(1, 1)), start: .zero)
+        c.roundedCorners = .roundedCorners()
+        let section = EffectSection.roundedCorners(of: c)
+        let rows = EffectControlsLayout.rows(sections: [section], collapsed: [], expanded: [])
+        #expect(rows.map(\.kind) == [.section(section), .property(.radius(of: c))])
     }
 
     @Test func rowAt() {

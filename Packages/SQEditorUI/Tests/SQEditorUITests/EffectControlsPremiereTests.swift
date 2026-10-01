@@ -222,7 +222,7 @@ import SQCore
         m.selectedSection = .motion
         #expect(!m.canCutFocused)
         var c = m.clip!; c.roundedCorners = .roundedCorners(); m.setClip(c)
-        m.selectedSection = .roundedCorners
+        m.selectedSection = .roundedCorners(of: c)
         #expect(m.canCutFocused)
     }
 
@@ -258,12 +258,12 @@ import SQCore
     @Test func effectCopiesToAnotherClip() {
         var a = clip(); a.roundedCorners = .roundedCorners(radius: 40)
         let src = model(a)
-        #expect(src.copyEffect(.roundedCorners))
+        #expect(src.copyEffect(.roundedCorners(of: a)))
         let dst = model(clip())
         dst.effectClipboard = src.effectClipboard
         #expect(dst.canPasteEffect)
         #expect(dst.pasteEffect())
-        #expect(dst.scalarValue(.cornerRadius) == 40)
+        #expect(dst.scalarValue(.radius(of: dst.clip!)) == 40)
         #expect(dst.clip!.roundedCorners!.id != a.roundedCorners!.id)
     }
 }

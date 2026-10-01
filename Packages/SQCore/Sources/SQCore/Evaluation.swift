@@ -11,10 +11,15 @@ public struct LayerGroup: Sendable, Hashable {
     /// Evaluated transform (incl. opacity) and corner radius of the nested clip at this instant.
     public var transform: ClipTransform
     public var cornerRadius: Double
+    /// Crop, Rounded Corners, Gaussian Blur and Ultra Key of the nested clip, applied to the group image as a whole.
+    public var effects: ClipEffects
+    public var blendMode: BlendMode
 
     public init(clip: Clip.ID, track: Track.ID, sequence: Timeline.ID, format: SequenceFormat,
-                transform: ClipTransform = .identity, cornerRadius: Double = 0) {
+                transform: ClipTransform = .identity, cornerRadius: Double = 0,
+                effects: ClipEffects? = nil, blendMode: BlendMode = .normal) {
         self.clip = clip; self.track = track; self.sequence = sequence; self.format = format
+        self.effects = effects ?? ClipEffects(cornerRadius: cornerRadius); self.blendMode = blendMode
         self.transform = transform; self.cornerRadius = cornerRadius
     }
 }
@@ -49,6 +54,10 @@ public struct LayerRequest: Sendable, Hashable {
     public var localTime: Time
     /// The clip's static colour settings (resolved against the media by `ColorPipeline.from` in SQRender).
     public var color: ClipColor
+    /// Evaluated Crop, Rounded Corners and Gaussian Blur of the clip (`cornerRadius` above is `effects.cornerRadius`).
+    public var effects: ClipEffects
+    /// How this layer is combined with the ones below it.
+    public var blendMode: BlendMode
     /// Set on the two layers of a cross dissolve (opacities already 1-w and w): the compositor sums them as premultiplied
     /// colour instead of compositing B over A. `format` is the canvas the pair is summed in.
     public var pair: PairInfo?
@@ -68,8 +77,11 @@ public struct LayerRequest: Sendable, Hashable {
 
     public init(clip: Clip.ID, media: UUID, track: Track.ID, sourceTime: Time, transform: ClipTransform = .identity,
                 cornerRadius: Double = 0, groups: [LayerGroup] = [], generator: GeneratorRef? = nil,
-                localTime: Time? = nil, color: ClipColor = .default) {
+                localTime: Time? = nil, color: ClipColor = .default,
+                effects: ClipEffects? = nil, blendMode: BlendMode = .normal) {
         self.color = color
+        self.effects = effects ?? ClipEffects(cornerRadius: cornerRadius)
+        self.blendMode = blendMode
         self.generator = generator; self.localTime = localTime ?? sourceTime
         self.clip = clip; self.media = media; self.track = track; self.sourceTime = sourceTime
         self.transform = transform; self.cornerRadius = cornerRadius; self.groups = groups
@@ -162,16 +174,24 @@ extension Timeline {
                 out.append(LayerRequest(clip: dip.id, media: dip.id, track: track.id, sourceTime: .zero,
                                         groups: groups, generator: GeneratorRef.solid(rgb: dip.color), localTime: .zero))
             }
+            // Two clips of a dissolve pair are summed first; each keeps its own effects, and the pair as a whole gets one blend
+            // mode (the incoming clip's, else the outgoing one's: see `RenderNode.tree`).
             for (n, (c, factor)) in state.items.enumerated() {
                 var tr = c.transform(at: t)
                 tr.opacity *= factor
                 let inTransition = state.pair != nil || state.dip != nil || factor != 1
                 let pair = state.pair.map { LayerRequest.PairInfo(id: $0, role: n == 0 ? .first : .second, format: format, depth: groups.count) }
+                let fx = c.effects(at: t)
+                // A total crop leaves nothing of this clip; its partner in a pair still shows.
+                if fx.isEmpty { continue }
+                let blend = c.opacityEnabled ? c.blendMode : BlendMode.normal
                 if let seqID = c.sequence {
                     guard !visiting.contains(seqID), let inner = sequences(seqID) else { continue }
                     let g = LayerGroup(clip: c.id, track: track.id, sequence: seqID, format: inner.format,
-                                       transform: tr, cornerRadius: c.effects(at: t).cornerRadius)
-                    var inners = inner.videoLayers(at: c.source.start + (t - c.start), sequences: sequences,
+                                       transform: tr, cornerRadius: fx.cornerRadius, effects: fx, blendMode: blend)
+                    // A held nested clip shows one instant of the inner sequence.
+                    let innerTime = c.holdFrame ?? (c.source.start + (t - c.start))
+                    var inners = inner.videoLayers(at: innerTime, sequences: sequences,
                                                    groups: groups + [g], visiting: visiting.union([seqID]))
                     for k in inners.indices {
                         if let pair, inners[k].pair == nil { inners[k].pair = pair }
@@ -182,8 +202,9 @@ extension Timeline {
                     let local = t - c.start
                     out.append(LayerRequest(clip: c.id, media: c.media, track: track.id,
                                             sourceTime: c.sourceTime(at: t, frameDuration: fd),
-                                            transform: tr, cornerRadius: c.effects(at: t).cornerRadius,
-                                            groups: groups, generator: c.generator, localTime: local, color: c.color))
+                                            transform: tr, cornerRadius: fx.cornerRadius,
+                                            groups: groups, generator: c.generator, localTime: local, color: c.color,
+                                            effects: fx, blendMode: blend))
                     out[out.count - 1].pair = pair
                     out[out.count - 1].inTransition = inTransition
                 }

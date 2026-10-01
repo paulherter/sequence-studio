@@ -22,14 +22,14 @@ import SQCore
 
     @Test func cornerRadiusWritesAppliedEffect() {
         let (m, _) = makeModel()
-        #expect(!m.setValue(.cornerRadius, to: 24))          // not applied: nothing to edit
         #expect(m.clip!.effects.isEmpty)
         var c = m.clip!; c.roundedCorners = .roundedCorners(radius: 0); m.setClip(c)
-        m.setValue(.cornerRadius, to: 24)
+        let radius = EffectProperty.radius(of: c)
+        m.setValue(radius, to: 24)
         #expect(m.clip!.roundedCorners!.parameters[ClipEffect.radiusKey]!.value(atLocal: .zero) == 24)
-        #expect(m.scalarValue(.cornerRadius) == 24)
-        #expect(m.toggleStopwatch(.cornerRadius) == .added)
-        #expect(m.isAnimated(.cornerRadius))
+        #expect(m.scalarValue(radius) == 24)
+        #expect(m.toggleStopwatch(radius) == .added)
+        #expect(m.isAnimated(radius))
     }
 
     // MARK: Sections
@@ -37,7 +37,7 @@ import SQCore
         let (v, _) = makeModel()
         #expect(v.visibleSections == [.motion, .opacity])       // effects only once applied
         var c = v.clip!; c.roundedCorners = .roundedCorners(); v.setClip(c)
-        #expect(v.visibleSections == [.motion, .opacity, .roundedCorners])
+        #expect(v.visibleSections == [.motion, .opacity, .roundedCorners(of: v.clip!)])
         let (a, _) = makeModel(kind: .audio)
         #expect(a.visibleSections == [.volume])
     }
@@ -389,37 +389,39 @@ import SQCore
         m.resetSection(.motion)
         #expect(log.edits.count == 1)
         #expect(m.clip!.animation.rotation.value == 0 && m.clip!.animation.scale.value == Vec2(1, 1))
-        m.setEffectEnabled(.roundedCorners, false)
-        m.resetSection(.roundedCorners)
+        let rc = EffectSection.roundedCorners(of: m.clip!)
+        m.setEffectEnabled(rc, false)
+        m.resetSection(rc)
         #expect(m.clip!.roundedCorners!.enabled)
         #expect(m.clip!.roundedCorners!.parameters[ClipEffect.radiusKey]!.value == 24)
     }
 
     @Test func toggleAndRemoveEffect() {
         let (m, log) = rig()
-        m.setEffectEnabled(.roundedCorners, false)
-        #expect(!m.isEffectEnabled(.roundedCorners) && m.clip!.roundedCorners != nil)
+        let rc = EffectSection.roundedCorners(of: m.clip!)
+        m.setEffectEnabled(rc, false)
+        #expect(!m.isEffectEnabled(rc) && m.clip!.roundedCorners != nil)
         #expect(m.clip!.effects(at: Time(6, 1)) == ClipEffects.none)
-        #expect(m.removeEffect(.roundedCorners))
-        #expect(m.clip!.effects.isEmpty && !m.visibleSections.contains(.roundedCorners))
+        #expect(m.removeEffect(rc))
+        #expect(m.clip!.effects.isEmpty && !m.visibleSections.contains(rc))
         #expect(!m.removeEffect(.motion))                   // built-in: not removable
         #expect(log.edits.last?.1 == "Remove Rounded Corners")
     }
 
     @Test func deleteKeyRemovesSelectedEffectWhenNoKeysSelected() {
         let (m, _) = rig()
-        m.selectedSection = .roundedCorners
+        m.selectedSection = .roundedCorners(of: m.clip!)
         m.deleteSelectionOrEffect()
         #expect(m.clip!.effects.isEmpty)
     }
 
     @Test func selectedSectionClearsOnClipChangeOrWhenEffectGoes() {
         let (m, _) = rig()
-        m.selectedSection = .roundedCorners
+        m.selectedSection = .roundedCorners(of: m.clip!)
         var c = m.clip!; c.roundedCorners = nil; m.setClip(c)            // effect gone
         #expect(m.selectedSection == nil)
         c.roundedCorners = .roundedCorners(); m.setClip(c)
-        m.selectedSection = .roundedCorners
+        m.selectedSection = .roundedCorners(of: c)
         var other = c; other.id = UUID(); m.setClip(other)                // different clip
         #expect(m.selectedSection == nil)
     }

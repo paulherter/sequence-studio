@@ -16,7 +16,9 @@ extension EffectControlsModel {
 
     func saveTwirl() {
         guard let k = twirlKind else { return }
-        let st = TwirlState(collapsed: collapsedSections.map(\.rawValue).sorted(), expanded: expanded.map(\.rawValue).sorted())
+        // Only the fixed sections are remembered: effect instances have ids that belong to one clip.
+        let st = TwirlState(collapsed: collapsedSections.filter { $0.effectKind == nil }.map(\.rawValue).sorted(),
+                            expanded: expanded.filter { $0.section.effectKind == nil }.map(\.rawValue).sorted())
         twirlMemory[k] = st
         if let d = twirlDefaults, let data = try? JSONEncoder().encode(st) { d.set(data, forKey: Self.twirlDefaultsKey(k)) }
     }
@@ -158,7 +160,7 @@ extension EffectControlsModel {
     }
     private func markCopied(keys: Bool) -> Bool { lastCopyWasKeys = keys; return true }
 
-    public var canCopyFocused: Bool { !selection.isEmpty || selectedSection.map { clip?.effect(ofKind: $0.effectKind ?? "") != nil } == true }
+    public var canCopyFocused: Bool { !selection.isEmpty || selectedSection.map(canRemoveEffect) == true }
     public var canPasteFocused: Bool { lastCopyWasKeys ? canPasteKeys : canPasteEffect }
 
     /// Cmd+V: what was copied last, keys at the playhead or the effect onto this clip.
@@ -178,23 +180,22 @@ extension EffectControlsModel {
     // MARK: Copy / paste effects
 
     public func copyEffect(_ s: EffectSection) -> Bool {
-        guard let k = s.effectKind, let e = clip?.effect(ofKind: k) else { return false }
+        guard let id = s.effectID, let e = clip?.effects.first(where: { $0.id == id }) else { return false }
         effectClipboard = e
         return true
     }
 
     public var canPasteEffect: Bool {
         guard let e = effectClipboard, let c = clip else { return false }
-        return c.kind == .video && e.kind == ClipEffect.roundedCornersKind
+        return c.kind == .video && EffectCatalog.spec(for: e.kind) != nil
     }
 
-    /// Adds the copied effect to the clip, or replaces the values of the one it already has.
+    /// Adds the copied effect to the clip as a new instance behind the existing ones (Premiere adds, it does not replace).
     @discardableResult
     public func pasteEffect() -> Bool {
-        guard canPasteEffect, var c = clip, let e = effectClipboard else { return false }
-        var copy = e
-        if let existing = c.effect(ofKind: e.kind) { copy.id = existing.id } else { copy.id = UUID() }
-        c.roundedCorners = copy
+        guard canPasteEffect, var c = clip, var e = effectClipboard else { return false }
+        e.id = UUID()
+        c.effects.append(e)
         commit(c, "Paste Effect")
         return true
     }

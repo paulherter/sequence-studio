@@ -24,6 +24,9 @@ public final class TimelineView: NSView {
     /// Volume rubber band edit of an audio clip: the clip as edited so far; one drag = began, changed..., ended.
     public var onVolumeEdit: ((Clip, VolumeEditPhase) -> Void)?
     var volumeDrag: VolumeDrag?
+    /// Opacity rubber band on video clips (Cmd-click adds a key); same phases as `onVolumeEdit`.
+    public var onOpacityEdit: ((Clip, VolumeEditPhase) -> Void)?
+    var opacityDrag: OpacityDrag?
     /// Frames by which linked clips are out of sync (red badge on the clip); refreshed whenever `timeline` changes.
     var syncBadges: [Clip.ID: Int64] = [:]
     /// Builds the right-click menu for a point in view coordinates (see `TimelineContextMenu`). Nil = no menu.
@@ -445,7 +448,7 @@ public final class TimelineView: NSView {
             resizing = (zone, p.y, geometry.rows(for: timeline))
             return
         }
-        if beginVolumeDrag(at: p, event: event) { return }
+        if beginVolumeDrag(at: p, event: event) || beginOpacityDrag(at: p, event: event) { return }
         onPointerDown?()
         if transitionMouseDown(p, event: event) { return }
         if event.clickCount == 2, case .caption(let id, _) = geometry.hitTest(p, in: timeline) {
@@ -477,7 +480,7 @@ public final class TimelineView: NSView {
 
     public override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        if updateVolumeDrag(to: p) { return }
+        if updateVolumeDrag(to: p) || updateOpacityDrag(to: p) { return }
         if transitionMouseDragged(p, event: event) { return }
         if let r = resizing {
             let dy = p.y - r.startY
@@ -635,8 +638,9 @@ public final class TimelineView: NSView {
         defer { interaction.snapInverted = false }
         stopAutoscroll()
         lastDrag = nil
-        if endVolumeDrag(at: convert(event.locationInWindow, from: nil)) { return }
-        if transitionMouseUp(convert(event.locationInWindow, from: nil), event: event) { return }
+        let up = convert(event.locationInWindow, from: nil)
+        if endVolumeDrag(at: up) || endOpacityDrag(at: up) { return }
+        if transitionMouseUp(up, event: event) { return }
         if let z = zoomDrag { finishZoomDrag((z.start, convert(event.locationInWindow, from: nil), z.zoomOut)); return }
         if let d = markerDrag {
             markerDrag = nil
@@ -1131,6 +1135,14 @@ public final class TimelineView: NSView {
                                              visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height),
                                              cache: wf.cache,   // pixel-mapped: only the dirty columns are needed
                                              volumeDB: Self.volumeDB(of: c), reversed: c.reversed)
+                }
+                if track.kind == .video {
+                    let full = CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height)
+                    let vis = CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height)
+                    if OpacityLine.isVisible(clip: c, selected: selection.contains(c.id), rowHeight: row.height) {
+                        ClipDrawing.drawOpacityLine(clip: c, rect: full, visible: vis, selected: selection.contains(c.id))
+                    }
+                    if FXBadge.state(for: c) == .applied { ClipDrawing.drawFXBadge(rect: full, visible: vis) }
                 }
                 if track.kind == .audio, VolumeLine.isAvailable(rowHeight: row.height) {
                     ClipDrawing.drawVolumeLine(clip: c, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),

@@ -47,6 +47,10 @@ public enum EditorMenus {
         .insert, .overwrite, nil, .setPosterFrame, .clearPosterFrame, nil, .speedDuration, nil, .enableClip, .link, nil,
         .setToFrameSize, nil,
         .audioGain, nil,
+    ]) + [
+        .submenu("Video Options", cmds([.addFrameHold, .insertFrameHold, nil, .videoFadeIn, .videoFadeOut])),
+        .separator,
+    ] + cmds([
         .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation, .addKeyframe, .toggleSpeedGraph,
     ]))
     public static let sequence = MenuSpec(title: "Sequence", items: cmds([
@@ -100,5 +104,6 @@ public enum EditorMenus {
     /// Commands that stay visible in their menu even when not wired (the standard text editing commands: a text field
     /// handles them) and commands that are menu-only (no default key in Premiere).
     public static let alwaysShown: Set<EditorCommand> = [.undo, .redo, .cut, .copy, .paste, .delete]
-    public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection, .toggleAudioScrubbing, .toggleCaptionsInMonitor]
+    public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection, .toggleAudioScrubbing, .toggleCaptionsInMonitor,
+                                                       .videoFadeIn, .videoFadeOut, .addFrameHold, .insertFrameHold]
 }

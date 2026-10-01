@@ -8,18 +8,19 @@ import SQCore
     // MARK: Effects panel
     @Test func effectsPanelListsOnlyWhatExistsUnderItsBin() {
         let rows = EffectsPanelView.rows(matching: "")
-        #expect(rows.map(\.title) == ["Video Effects", "Rounded Corners",
+        #expect(rows.map(\.title) == ["Blur & Sharpen", "Gaussian Blur", "Keying", "Ultra Key", "Transform", "Crop", "Rounded Corners",
                                       "Video Transitions", "Cross Dissolve", "Dip to Black", "Dip to White",
                                       "Audio Transitions", "Constant Power", "Constant Gain"])
-        #expect(rows[0].isHeader && !rows[1].isHeader)
+        #expect(rows[0].isHeader && !rows[1].isHeader && rows[2].isHeader)
     }
 
     @Test func effectsSearchFiltersAndDropsEmptyBins() {
-        #expect(EffectsPanelView.rows(matching: "round").map(\.title) == ["Video Effects", "Rounded Corners"])
+        #expect(EffectsPanelView.rows(matching: "round").map(\.title) == ["Transform", "Rounded Corners"])
         #expect(EffectsPanelView.rows(matching: "ROUND").count == 2)
         #expect(EffectsPanelView.rows(matching: "dissolve").map(\.title) == ["Video Transitions", "Cross Dissolve"])
         #expect(EffectsPanelView.rows(matching: "nothing like it").isEmpty)
-        #expect(EffectsPanelView.rows(matching: "video").count == 6)       // matches the bin names: effects and transitions
+        #expect(EffectsPanelView.rows(matching: "transform").count == 3)   // matches the bin name: the bin and its two effects
+        #expect(EffectsPanelView.rows(matching: "video").count == 4)       // the Video Transitions bin and its three
     }
 
     // MARK: Tab order

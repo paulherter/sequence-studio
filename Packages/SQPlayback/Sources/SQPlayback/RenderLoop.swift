@@ -579,8 +579,14 @@ final class RenderLoop: @unchecked Sendable {
         return d
     }
 
+    /// The layer with the clip's effects (Crop, Rounded Corners, Gaussian Blur) and blend mode attached.
     private func layer(for r: LayerRequest, scale: DecodeScale, build b: inout LayerBuild,
                        _ format: SequenceFormat, _ durations: [Clip.ID: Time]) -> RenderLayer {
+        baseLayer(for: r, scale: scale, build: &b, format, durations).applying(r)
+    }
+
+    private func baseLayer(for r: LayerRequest, scale: DecodeScale, build b: inout LayerBuild,
+                           _ format: SequenceFormat, _ durations: [Clip.ID: Time]) -> RenderLayer {
         func placeholder(_ k: PlaceholderKind) -> RenderLayer {
             RenderLayer(content: .placeholder(k), transform: r.transform, cornerRadius: r.cornerRadius)
         }
@@ -737,7 +743,10 @@ final class RenderLoop: @unchecked Sendable {
         let byMedia = Dictionary(grouping: clips, by: \.media)
         return { key in
             guard let cs = byMedia[key.media] else { return nil }
-            for c in cs where c.source.contains(key.pts) { return c.timelineTime(forSource: key.pts) }
+            for c in cs {
+                if let h = c.holdFrame { if key.pts == h { return c.start }; continue }     // a held clip shows one frame
+                if c.source.contains(key.pts) { return c.timelineTime(forSource: key.pts) }
+            }
             return nil
         }
     }
