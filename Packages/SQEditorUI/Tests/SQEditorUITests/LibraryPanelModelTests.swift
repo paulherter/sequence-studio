@@ -227,6 +227,18 @@ private func eventually(_ cond: @MainActor () -> Bool) async -> Bool {
         #expect(env.model.pendingPreviewCount == 0)
     }
 
+    // Review finding 40: thumbnails of a removed folder stayed in the model.
+    @Test func removingAFolderDropsItsThumbnails() async throws {
+        let env = try await Env()
+        defer { env.cleanup() }
+        let folder = await env.model.addFolder(url: env.media)
+        let clip = try #require(env.model.items.first { $0.entry.name == "b_clip.mp4" })
+        env.model.itemDidAppear(clip)
+        #expect(await eventually { env.model.thumbnails[clip.id] != nil })
+        await env.model.removeFolder(folder.id)
+        #expect(env.model.thumbnails.isEmpty)
+    }
+
     @Test func noPreviewForLutAndFont() async throws {
         let env = try await Env()
         defer { env.cleanup() }

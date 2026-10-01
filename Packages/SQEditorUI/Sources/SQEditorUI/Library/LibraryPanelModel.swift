@@ -136,6 +136,9 @@ public final class LibraryPanelModel {
     public func removeFolder(_ id: UUID) async {
         await index.remove(id)
         if selection == .folder(id) { selection = .favorites }
+        for key in Array(thumbnails.keys) where key.folderID == id { thumbnails[key] = nil }
+        for key in Array(failedPreviews) where key.folderID == id { failedPreviews.remove(key) }
+        for key in Array(previewTasks.keys) where key.folderID == id { cancelPreview(key) }
         await reloadFolders()
         onFoldersChanged?(folders.map(\.folder))
     }
