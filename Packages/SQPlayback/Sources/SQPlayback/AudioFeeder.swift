@@ -337,6 +337,7 @@ public final class AudioFeeder: @unchecked Sendable {
                 if let s = sources[seg.media] { source = s } else { source = try resolver(seg.media); sources[seg.media] = source }
             } catch { failedReads.add(1, ordering: .relaxed); continue }
             let (dl, dr) = destination(seg.nests.first?.track ?? seg.track)
+            let fader = Self.trackFader(timeline: timeline, track: seg.nests.first?.track ?? seg.track)
             for (ch, dst) in [dl, dr].enumerated() {
                 do {
                     if retimed {
@@ -354,7 +355,9 @@ public final class AudioFeeder: @unchecked Sendable {
                         if got < n { (scratch + got).update(repeating: 0, count: n - got) }
                     }
                 } catch { failedReads.add(1, ordering: .relaxed); continue }
-                Self.accumulate(scratch, into: dst + dstOff, count: n, firstFrame: f0, rate: rate, animated: animated, gain: gain)
+                let side = ch == 0 ? fader.left : fader.right      // track fader x pan (same path for playback, scrub and export)
+                Self.accumulate(scratch, into: dst + dstOff, count: n, firstFrame: f0, rate: rate, animated: animated,
+                                gain: side == 1 ? gain : { gain($0) * side })
             }
         }
     }
