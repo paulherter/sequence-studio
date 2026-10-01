@@ -217,7 +217,7 @@ private func drag(_ i: inout TimelineInteraction, _ a: CGPoint, _ b: CGPoint) ->
         let two = TimelineContextMenu.items(timeline: tl, selection: [a.id, b.id], clipboardHasClips: false)
         #expect(enabled(two) == [.cut, .copy, .delete, .rippleDelete, .link, .enable, .nest, .label, .setToFrameSize, .scaleToFrameSize, .speed, .timeRemapping])
         // No dead entries: features we do not have are not listed.
-        #expect(two.count == 14)
+        #expect(two.count == 15)
     }
 
     @Test func menuShowsUnlinkForLinkedClips() {
