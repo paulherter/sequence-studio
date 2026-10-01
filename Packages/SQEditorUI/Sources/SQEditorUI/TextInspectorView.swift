@@ -50,6 +50,11 @@ public final class TextInspectorView: NSView {
 
     private var colorSessionOpen = false
     private var colorSessionEnd: Task<Void, Never>?
+
+    isolated deinit {
+        colorSessionEnd?.cancel()
+        if colorSessionOpen { model.endEditing() }       // the timer will never run: close the undo step now
+    }
     private static let weights: [(String, FontWeight)] = [
         ("Thin", .thin), ("Light", .light), ("Regular", .regular), ("Medium", .medium),
         ("Semibold", .semibold), ("Bold", .bold), ("Heavy", .heavy), ("Black", .black),
