@@ -89,3 +89,63 @@ Fehlt noch: Audio-Übergänge, Untertitel direkt im Monitor bearbeiten, Schalter
 
 ## Umbenennung
 Projektdateien heißen jetzt `.sqproj`. Eine alte `.ssproj`-Datei öffnen und speichern: Es entsteht eine neue `.sqproj` daneben, die alte bleibt liegen.
+
+# Zweite Runde (Morgen des 2. Oktober)
+
+Geprüft durch Tests und Review. In der App ausprobiert hat es noch niemand.
+
+## Übergänge
+1. Zwei Clips nebeneinander, beide am Schnitt um etwa 15 Bilder trimmen, Playhead an den Schnitt, Cmd+D: Cross Dissolve. Durchscrubben.
+2. Shift+Cmd+D macht die Audio-Überblendung, Shift+D beides.
+3. „Dip to Black" aus dem Effects-Panel auf einen Schnitt ziehen: links, Mitte oder rechts vom Schnitt bestimmt die Ausrichtung.
+4. Den Kasten anklicken, die rechte Kante ziehen (mit Shift nur eine Seite), den Kasten selbst ziehen, Doppelklick für die Dauer.
+5. Cmd+D an einem Schnitt ohne Reserve: Meldung in der Statuszeile.
+6. Einen Clip mit Übergang mit dem Razor schneiden: Der Übergang bleibt am Schnitt.
+
+## Timeline-Schnitt
+1. Playhead in den ersten von zwei aneinanderliegenden Clips, Shift+W (der Schnitt springt zum Playhead, Länge bleibt), dann Opt+W (Lücke bleibt).
+2. Clip ziehen: normal überschreibt, mit Cmd fügt ein (Lücke am alten Platz), mit Cmd+Option sortiert um, mit Option kopiert. Die Statuszeile zeigt die Art an.
+3. Z drücken: Klick zoomt hinein, Opt-Klick heraus, Kasten ziehen zoomt auf den Bereich.
+4. Clip wählen, Shift+Cmd+E: wird grau und in der Wiedergabe schwarz und stumm.
+5. Shift+Cmd+/ dupliziert die Auswahl dahinter.
+6. Schnittkante anklicken, Ctrl+T mehrmals: wechselt zwischen normalem Trim, Ripple und Rolling.
+7. Opt+Hoch und Opt+Runter verschiebt den Clip um eine Spur.
+8. Clip an den Rand der Timeline ziehen: Die Ansicht scrollt mit. S während des Ziehens kehrt Snapping um.
+
+## Source-Monitor und Projekt
+1. L L L, dann J J J: 4-fach, 2-fach, 1-fach, dann rückwärts.
+2. In und Out setzen: Die Dauer zählt das Out-Bild mit.
+3. In der Sequenz nur ein Out setzen, dann `.` aus dem Source-Monitor: Der Clip endet am Out.
+4. Source-Monitor: X markiert den ganzen Clip, M setzt Marker, die In/Out-Griffe auf der Leiste lassen sich ziehen. Titel-Popup zeigt die letzten Clips.
+5. Shift+Leertaste spielt In bis Out mit Vor- und Nachlauf, Shift+K spielt um den Playhead herum und springt zurück.
+6. Im Timecode-Feld `+10` oder `-5` tippen.
+7. Projekt-Panel: mit der Maus über einen Clip, I und O drücken, Cmd+P setzt das Titelbild, Cmd+F sucht. Sequenz löschen.
+
+## Untertitel und Text
+1. Clip transkribieren, „Create Captions" mit „Short Video", im Captions-Reiter „Word Highlight" anhaken, abspielen: Das gesprochene Wort wird gelb.
+2. Einen Untertitel verschieben und trimmen: Die Hervorhebung stimmt weiter.
+3. Export mit eingebrannten Untertiteln: Die Hervorhebung sieht aus wie im Monitor.
+4. Einem Untertitel per Rechtsklick einen eigenen Stil geben, dann den Spur-Stil ändern: Die anderen ändern sich, dieser nicht.
+5. View > Show Captions in Program Monitor.
+6. Untertitel im Programm-Monitor doppelklicken und tippen.
+7. Textclip: All Caps, Kontur außen oder mittig, sechs Ausrichten-Knöpfe.
+
+## Effekte
+1. Clip > Video Options > Fade In und Fade Out.
+2. Gaussian Blur zweimal anwenden, beide Werte setzen, eine Kopfzeile über die andere ziehen.
+3. Crop anwenden und „Left" animieren.
+4. Oberen Clip über einen anderen legen, Blend Mode auf Multiply.
+5. Cmd-Klick auf die weiße Linie eines ausgewählten Videoclips: Deckkraft-Keyframe.
+6. Clip > Video Options > Insert Frame Hold Segment, dann Undo.
+7. Clip mit Effekten kopieren, anderen wählen, Cmd+Opt+V.
+8. Ultra Key auf Greenscreen-Material.
+
+## Tempo und Zeit
+1. Videoclip wählen, Clip > Show Time Remapping, an zwei Stellen Cmd-Klick auf die Linie.
+2. Den mittleren Teil hochziehen (etwa 400 %): Der Clip wird kürzer.
+3. Die rechte Hälfte eines Punkts nach rechts ziehen: Rampe.
+4. Abspielen: Bild und Ton folgen der Rampe.
+5. Cmd+R auf einem verlangsamten Clip, Time Interpolation auf Frame Blending.
+6. Speed/Duration auf einer verschachtelten Sequenz.
+
+Fehlt noch: weiche Tempo-Kurven, Optical Flow, Wischblenden, Trim-Modus per Doppelklick, Gruppieren, Source Patching, Sharpen, HSL Secondary. Das Audio-Paket (Fade-Griffe, Ducking, Pan, Lautheit) ist noch in Arbeit.
