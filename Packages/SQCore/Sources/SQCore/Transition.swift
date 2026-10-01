@@ -457,7 +457,8 @@ extension Timeline {
         if let customBefore { tr.customBefore = fd * max(0, customBefore.frameIndex(frameDuration: fd)) }
         if let duration { tr.duration = snapped(duration) }
         let fit = tracks[ti].maxTransitionFrames(tr, frameDuration: fd)
-        if fit >= 1 { tr.duration = min(tr.duration, fd * fit) }
+        guard fit >= 1 else { throw EditError.insufficientMedia }       // never store a transition the next prune would delete
+        tr.duration = min(tr.duration, fd * fit)
         tracks[ti].transitions[ni] = tr
     }
 

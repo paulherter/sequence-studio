@@ -213,7 +213,10 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
 
     /// The source range a stretch `[a, b]` of the clip's local time plays (nested clips: the inner time range to query).
     public func sourceRange(fromLocal a: Time, toLocal b: Time) -> TimeRange {
-        if let k = speedKeys, a < b { return k.sliced(from: a, to: b).hull }
+        if let k = speedKeys, a < b {
+            let lo = max(a, .zero), hi = min(b, k.duration)
+            if lo < hi { return k.sliced(from: lo, to: hi).hull }       // a window wholly in a transition handle: extended mapping below
+        }
         let x = sourceInstant(atLocal: a), y = sourceInstant(atLocal: b)
         return TimeRange(start: min(x, y), end: max(x, y))
     }

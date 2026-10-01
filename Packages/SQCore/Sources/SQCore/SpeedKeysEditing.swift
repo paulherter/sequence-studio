@@ -144,7 +144,7 @@ extension SpeedKeys {
         let l = segments[b - 1], r = segments[b]
         guard l.reversed == r.reversed else { return nil }
         let dur = l.duration + r.duration
-        let avg = (Rational(l.span) + Rational(r.span)) / Rational(dur)
+        let avg = (l.span(at: l.duration) + r.span(at: r.duration)) / Rational(dur)
         var k = self
         k.segments.replaceSubrange((b - 1)...b, with: [SpeedSegment(duration: dur, from: ClipSpeed(rational: avg), reversed: l.reversed)])
         return k

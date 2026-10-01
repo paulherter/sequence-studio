@@ -99,7 +99,7 @@ extension Timeline {
                 }
                 guard let fit = scaled.fitting(media: c.mediaDuration, frameDuration: fd) else { throw EditError.collision }
                 c.setSpeedKeys(fit)
-                c.rescaleKeys(from: m.clip.duration, to: newDuration, mirror: false)
+                c.rescaleKeys(from: m.clip.duration, to: newDuration, mirror: c.reversed != m.clip.reversed)
                 work[m.track].replace(c)
                 continue
             }
