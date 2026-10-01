@@ -4,12 +4,7 @@ import SQEditorUI
 
 /// Clip look commands: Fade In / Fade Out (video), Frame Hold, Paste Attributes. Kept apart from the main switch.
 extension AppController {
-    static func isEffectsLookOp(_ c: EditorCommand) -> Bool {
-        switch c {
-        case .videoFadeIn, .videoFadeOut, .addFrameHold, .insertFrameHold, .pasteAttributes: true
-        default: false
-        }
-    }
+    static func isEffectsLookOp(_ c: EditorCommand) -> Bool { CommandSupport.isEffectsLookOp(c) }
 
     /// True when the command was handled here.
     func executeEffectsLookOp(_ c: EditorCommand) -> Bool {

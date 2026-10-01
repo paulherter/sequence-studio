@@ -4,21 +4,9 @@ import SQEditorUI
 
 /// Premiere-style timeline commands: clipboard, link, nudge, edge trims, markers. Kept apart from the main switch.
 extension AppController {
-    static func isTimelineOp(_ c: EditorCommand) -> Bool {
-        switch c {
-        case .selectClipAtPlayhead, .deselectAll, .nextEditPointAnyTrack, .previousEditPointAnyTrack,
-             .copy, .cut, .paste, .pasteInsert, .selectAll, .link, .toggleLinkedSelection, .markSelection,
-             .nextMarker, .previousMarker, .nudgeLeft, .nudgeRight, .nudgeLeft5, .nudgeRight5,
-             .trimBackward5, .trimForward5, .extendEdit, .rollTrimPrevious, .rollTrimNext, .trimPrevious, .trimNext,
-             .enableClip, .duplicate, .toggleTrimType, .moveSelectionUp, .moveSelectionDown:
-            true
-        default:
-            false
-        }
-    }
+    static func isTimelineOp(_ c: EditorCommand) -> Bool { CommandSupport.isTimelineOp(c) }
 
-    /// True when the command was handled here. Opt+Left/Right (bound to keyframe navigation) trims the selected
-    /// edit by one frame when an edge is selected, like Premiere's Trim Backward/Forward.
+    /// True when the command was handled here.
     func executeTimelineOp(_ c: EditorCommand) -> Bool {
         let tv = panels.timelineView
         let edges = tv.interaction.edgeSelection
@@ -61,12 +49,8 @@ extension AppController {
         case .moveSelectionUp, .moveSelectionDown:
             if session.selection.isEmpty { shell.statusBar.flash("Select clips to move.") }
             else if !session.moveSelectionLane(up: c == .moveSelectionUp) { shell.statusBar.flash("The clips cannot go further \(c == .moveSelectionUp ? "up" : "down").") }
-        case .previousKeyframe:
-            guard let e = edges else { return false }
-            session.trimEdges(e, frames: -1)
-        case .nextKeyframe:
-            guard let e = edges else { return false }
-            session.trimEdges(e, frames: 1)
+        case .trimBackward: if let e = edges { session.trimEdges(e, frames: -1) } else { needEdit() }
+        case .trimForward: if let e = edges { session.trimEdges(e, frames: 1) } else { needEdit() }
         default: return false
         }
         return true
@@ -98,6 +82,7 @@ extension AppController {
     /// Menu state: check marks for Snap and Linked Selection.
     func validateTimelineOpItem(_ c: EditorCommand, _ item: NSMenuItem) {
         switch c {
+        case .link: item.title = session.linkMenuState.unlink ? "Unlink" : "Link"
         case .toggleSnapping: item.state = panels.timelineView.toolState.snapping ? .on : .off
         case .toggleLinkedSelection: item.state = panels.timelineView.toolState.linkedSelection ? .on : .off
         case .toggleCaptionsInMonitor: item.state = session.engine.showsCaptions ? .on : .off
