@@ -77,7 +77,7 @@ import Testing
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try ProjectFile.write(try sample(), to: dir)
         let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
-        #expect(text.contains("\"formatVersion\" : 16"))
+        #expect(text.contains("\"formatVersion\" : 17"))
         #expect(text.contains("\n"))
         #expect(text.contains("2023-11-14T22:13:20Z"))
     }
@@ -129,7 +129,7 @@ import Testing
     @Test func newerVersionRefused() throws {
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try Data(#"{"formatVersion":99,"project":{}}"#.utf8).write(to: dir.appendingPathComponent("project.json"))
-        #expect(throws: ProjectFileError.newerVersion(found: 99, supported: 16)) { try ProjectFile.read(from: dir) }
+        #expect(throws: ProjectFileError.newerVersion(found: 99, supported: 17)) { try ProjectFile.read(from: dir) }
     }
 
     @Test func migrationFromFakeV0() throws {
@@ -142,7 +142,7 @@ import Testing
             p["media"] = [Any](); p["timelines"] = [Any]()
             o["project"] = p
             return o
-        }, 1: ProjectFile.migrateV1toV2, 2: ProjectFile.migrateV2toV3, 3: ProjectFile.migrateV3toV4, 4: ProjectFile.migrateV4toV5, 5: ProjectFile.migrateV5toV6, 6: ProjectFile.migrateV6toV7, 7: ProjectFile.migrateV7toV8, 8: ProjectFile.migrateV8toV9, 9: ProjectFile.migrateV9toV10, 10: ProjectFile.migrateV10toV11, 11: ProjectFile.migrateV11toV12, 12: ProjectFile.migrateV12toV13, 13: ProjectFile.migrateV13toV14, 14: ProjectFile.migrateV14toV15, 15: ProjectFile.migrateV15toV16]
+        }, 1: ProjectFile.migrateV1toV2, 2: ProjectFile.migrateV2toV3, 3: ProjectFile.migrateV3toV4, 4: ProjectFile.migrateV4toV5, 5: ProjectFile.migrateV5toV6, 6: ProjectFile.migrateV6toV7, 7: ProjectFile.migrateV7toV8, 8: ProjectFile.migrateV8toV9, 9: ProjectFile.migrateV9toV10, 10: ProjectFile.migrateV10toV11, 11: ProjectFile.migrateV11toV12, 12: ProjectFile.migrateV12toV13, 13: ProjectFile.migrateV13toV14, 14: ProjectFile.migrateV14toV15, 15: ProjectFile.migrateV15toV16, 16: ProjectFile.migrateV16toV17]
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try Data(v0.utf8).write(to: dir.appendingPathComponent("project.json"))
         let p = try ProjectFile.read(from: dir, migrations: migrations)
@@ -299,7 +299,7 @@ import Testing
         #expect(c.animation.position.track.isEmpty)
         try ProjectFile.write(p, to: dir)
         let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
-        #expect(text.contains("\"formatVersion\" : 16"))
+        #expect(text.contains("\"formatVersion\" : 17"))
     }
 
     @Test func v4FileLoadsWithoutNestingCaptionsOrRadius() throws {
@@ -317,7 +317,7 @@ import Testing
         #expect(c.sequence == nil && c.clipSource == .media(mid))
         #expect(c.effects.isEmpty)
         #expect(p.timelines[0].captionTracks.isEmpty)
-        #expect(ProjectFile.currentVersion == 16)
+        #expect(ProjectFile.currentVersion == 17)
     }
 
     @Test func v15FileLoadsAndKeepsSpeedWithoutGain() throws {
@@ -336,5 +336,30 @@ import Testing
         var g = c; g.audioGainDB = 6
         let back = try JSONDecoder().decode(Clip.self, from: JSONEncoder().encode(g))
         #expect(back.audioGainDB == 6 && back.reversed)
+    }
+
+    @Test func v16FileLoadsWithoutTransitionsAndTransitionsRoundTrip() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
+        let pid = UUID(), tid = UUID(), mid = UUID()
+        let json = #"""
+        {"formatVersion":16,"project":{"id":"\#(pid)","name":"V16","media":[],"activeTimeline":"\#(tid)",
+        "timelines":[{"id":"\#(tid)","name":"T","format":{"width":1920,"height":1080,"frameDuration":{"value":1,"timescale":30},"audioSampleRate":48000},
+        "tracks":[{"id":"\#(UUID())","kind":"video","clips":[{"id":"\#(UUID())","name":"c","media":"\#(mid)","kind":"video",
+        "source":{"start":{"value":0,"timescale":1},"duration":{"value":4,"timescale":1}},"start":{"value":0,"timescale":1}}]}]}]}}
+        """#
+        try Data(json.utf8).write(to: dir.appendingPathComponent("project.json"))
+        var p = try ProjectFile.read(from: dir)
+        #expect(p.timelines[0].tracks[0].transitions.isEmpty)
+        let fd = Time(1, 30)
+        let a = Clip(name: "a", media: mid, kind: .video, source: TimeRange(start: Time(1, 1), duration: Time(2, 1)), start: .zero, mediaDuration: Time(10, 1))
+        let b = Clip(name: "b", media: mid, kind: .video, source: TimeRange(start: Time(1, 1), duration: Time(2, 1)), start: Time(2, 1), mediaDuration: Time(10, 1))
+        var t = Track(kind: .video); try t.overwrite(a); try t.overwrite(b)
+        p.timelines[0].tracks = [t]
+        let id = try p.timelines[0].addTransition(kind: .dipToWhite, track: t.id, outgoing: a.id, incoming: b.id, duration: fd * 20, alignment: .custom, customBefore: fd * 4)
+        try ProjectFile.write(p, to: dir)
+        let back = try ProjectFile.read(from: dir)
+        let tr = try #require(back.timelines[0].tracks[0].transitions.first)
+        #expect(tr.id == id && tr.kind == .dipToWhite && tr.duration == fd * 20 && tr.alignment == .custom && tr.customBefore == fd * 4)
+        #expect(back.timelines[0].tracks[0].transitions == p.timelines[0].tracks[0].transitions)
     }
 }

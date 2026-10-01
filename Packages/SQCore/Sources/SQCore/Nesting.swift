@@ -35,6 +35,7 @@ extension Project {
         guard let i = timelines.firstIndex(where: { $0.id == id }) else { throw EditError.timelineNotFound }
         var work = self
         try body(&work.timelines[i])
+        work.timelines[i].pruneTransitions()
         if work.reachableSequences(from: id).contains(id) { throw EditError.nestingCycle }
         self = work
     }
