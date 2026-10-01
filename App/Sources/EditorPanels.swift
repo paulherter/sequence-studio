@@ -115,6 +115,7 @@ final class EditorPanels {
             guard let self, !pagingTimeline else { return }
             follow.userScrolled(whilePlaying: session.isPlaying)
         }
+        tv.onGestureHint = { [weak self] h in if let h { self?.onStatus?(h) } }
         tv.onRejection = { [weak self] m in self?.onStatus?(m) }
         tv.onTrackToggle = { [weak self] id, toggle in self?.toggleTrack(id, toggle) }
         tv.onDropMedia = { [weak self] ids, time, track, insert in
@@ -134,6 +135,7 @@ final class EditorPanels {
         tv.contextMenuProvider = { [weak self] p in self?.timelineMenu(at: p) }
         wireVolumeLine()
         tv.onEditMarker = { [weak self] id in self?.editMarker(id) }
+        tv.onMarkerMoved = { [weak self] id, time in self?.session.moveMarker(id, to: time) }
         tv.onToggleChange = { [weak self] snap, linked in
             self?.onStatus?("Snapping \(snap ? "on" : "off"), Linked Selection \(linked ? "on" : "off")")
         }
@@ -195,6 +197,11 @@ final class EditorPanels {
     }
 
     private func toggleTrack(_ id: Track.ID, _ toggle: TrackToggle) {
+        if toggle == .target, let flags = NSApp.currentEvent?.modifierFlags,
+           !flags.intersection([.shift, .option]).isEmpty {
+            session.toggleTarget(id, shift: flags.contains(.shift), option: flags.contains(.option))   // Shift: all of the kind, Option: only this
+            return
+        }
         let name: String
         switch toggle {
         case .visible: name = "Toggle Track Output"
@@ -247,6 +254,7 @@ final class EditorPanels {
             case .pasteInsert: self?.onCommand?(.pasteInsert)
             case .delete: self?.onCommand?(.delete)
             case .rippleDelete: self?.onCommand?(.rippleDelete)
+            case .enable: self?.onCommand?(.enableClip)
             case .link, .unlink: self?.onCommand?(.link)
             case .nest: self?.onNest?()
             case .speed: self?.onCommand?(.speedDuration)

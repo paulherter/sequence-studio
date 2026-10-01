@@ -10,6 +10,7 @@ public enum TimelineCursors {
         let c: NSCursor
         switch kind {
         case .hand: c = .openHand
+        case .zoom: c = .zoomIn
         case .razor: c = razor()
         default: c = glyph(kind)
         }

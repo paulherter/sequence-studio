@@ -81,6 +81,9 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var reversed: Bool = false
     /// Audio: keep the pitch when speed is not 100 % (time-stretch); false = resample (pitch follows speed).
     public var keepsPitch: Bool = true
+    /// Clip > Enable (Shift+Cmd+E). A disabled clip stays on the timeline and in every edit but is skipped by the
+    /// picture and the audio mix (v18). Files without the key decode as enabled.
+    public var isEnabled: Bool = true
 
     /// Media, nested sequence or generator.
     public var clipSource: ClipSource {
@@ -146,7 +149,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB
+        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB, isEnabled
     }
 
     public init(from d: Decoder) throws {
@@ -167,6 +170,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   reversed: try c.decodeIfPresent(Bool.self, forKey: .reversed) ?? false,
                   keepsPitch: try c.decodeIfPresent(Bool.self, forKey: .keepsPitch) ?? true)
         audioGainDB = try c.decodeIfPresent(Double.self, forKey: .audioGainDB) ?? 0
+        isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         // v8 -> v9: a radius that was not the default becomes an applied Rounded Corners effect.
         if let legacy = animation.legacyCornerRadius {
             animation.legacyCornerRadius = nil

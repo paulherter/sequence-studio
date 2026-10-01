@@ -32,6 +32,17 @@ public enum EdgeEdits {
         sel.edges.contains { r in partner(of: r, in: t).map { sel.edges.contains($0) } ?? false }
     }
 
+    /// Ctrl+T: the next trim type of the selected edit. Order: regular trim, ripple, rolling (only where the edit has a
+    /// clip on both sides), then regular again. Premiere's Adobe text only says "the next type in the order"; this order
+    /// is ours. The selected edges stay, except that rolling selects both sides and leaving it keeps the first edge.
+    public static func cycled(_ sel: EdgeSelection, in t: Timeline) -> EdgeSelection {
+        guard let first = sel.edges.first else { return sel }
+        if isRoll(sel, in: t) { return EdgeSelection(edges: [first], ripple: false) }
+        if !sel.ripple { return EdgeSelection(edges: sel.edges, ripple: true) }
+        if let p = partner(of: first, in: t) { return EdgeSelection(edges: [first, p], ripple: false) }
+        return EdgeSelection(edges: sel.edges, ripple: false)
+    }
+
     /// Moves the selected edges by `delta` (timeline direction: positive = later). Regular trim, ripple trim with
     /// Cmd-selected edges, rolling edit when both sides of an edit are selected.
     public static func trim(_ sel: EdgeSelection, by delta: Time, in t: Timeline) -> [TimelineEdit] {
