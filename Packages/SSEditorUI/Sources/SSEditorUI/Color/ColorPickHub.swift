@@ -7,7 +7,7 @@ import SSRender
 
 extension Notification.Name {
     /// Posted when the colour picker (white-balance eyedropper) starts or ends, so the Program monitor can show a crosshair.
-    static let colorPickStateChanged = Notification.Name("SSColorPickStateChanged")
+    static let colorPickStateChanged = Notification.Name("SQColorPickStateChanged")
 }
 
 /// Meeting point between a colour control that wants a pixel (white-balance eyedropper) and the Program monitor
