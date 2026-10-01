@@ -189,6 +189,8 @@ final class SourceMonitorController {
         }
     }
 
+    func nudge(forward: Bool) { play(rate: engine.rate.nudged(forward: forward)) }
+
     func press(_ key: ShuttleKey) { apply(shuttle: shuttle.press(key)); _ = shuttle.release(key) }
 
     func playInToOut() {
@@ -266,6 +268,8 @@ final class SourceMonitorController {
         case .toggleLoop: bounds.loop.toggle(); model.isLooping = bounds.loop
         case .shuttleReverse: press(.j)
         case .shuttleStop: press(.k)
+        case .shuttleSlowReverse: nudge(forward: false)
+        case .shuttleSlowForward: nudge(forward: true)
         case .shuttleForward: press(.l)
         case .addMarker: onStatus?("Markers on source clips are not available yet.")
         default: return false

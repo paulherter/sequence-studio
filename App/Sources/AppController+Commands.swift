@@ -6,7 +6,7 @@ import SSEditorUI
 extension AppController {
     static func isSupported(_ c: EditorCommand) -> Bool {
         switch c {
-        case .shuttleReverse, .shuttleStop, .shuttleForward, .playPause,
+        case .shuttleReverse, .shuttleStop, .shuttleForward, .shuttleSlowReverse, .shuttleSlowForward, .playPause,
              .stepBackward, .stepForward, .stepBackward5, .stepForward5,
              .previousEditPoint, .nextEditPoint, .goToStart, .goToEnd,
              .markIn, .markOut, .markClip, .goToIn, .goToOut, .clearInOut, .clearIn, .clearOut, .lift, .extract, .insert, .overwrite, .addMarker,
@@ -35,6 +35,8 @@ extension AppController {
         switch c {
         case .shuttleReverse: shuttle(.j)
         case .shuttleStop: shuttle(.k)
+        case .shuttleSlowReverse: nudgeShuttle(forward: false)
+        case .shuttleSlowForward: nudgeShuttle(forward: true)
         case .shuttleForward: shuttle(.l)
         case .playPause: session.playPause()
         case .stepBackward: session.stepFrames(-1)
@@ -99,6 +101,11 @@ extension AppController {
         case .export: showExport()
         default: break
         }
+    }
+
+    private func nudgeShuttle(forward: Bool) {
+        if focusedPanel == .sourceMonitor { panels.source.nudge(forward: forward); return }
+        session.apply(shuttle: .setRate(session.engine.rate.nudged(forward: forward)))
     }
 
     private func exportProgramFrame() {

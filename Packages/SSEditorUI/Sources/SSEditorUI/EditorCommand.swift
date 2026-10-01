@@ -8,6 +8,8 @@ public enum EditorTool: String, Sendable, Hashable, CaseIterable {
 public enum EditorCommand: Sendable, Hashable {
     // Transport. J/K/L go through `Shuttle` (see KeyRouter), the rest is plain.
     case shuttleReverse, shuttleStop, shuttleForward
+    /// Shift+J / Shift+L: fine speed changes.
+    case shuttleSlowReverse, shuttleSlowForward
     case playPause
     case stepBackward, stepForward, stepBackward5, stepForward5
     case previousEditPoint, nextEditPoint
@@ -53,6 +55,8 @@ public enum EditorCommand: Sendable, Hashable {
         switch self {
         case .shuttleReverse: "Shuttle Reverse"
         case .shuttleStop: "Shuttle Stop"
+        case .shuttleSlowReverse: "Shuttle Slow Left"
+        case .shuttleSlowForward: "Shuttle Slow Right"
         case .shuttleForward: "Shuttle Forward"
         case .playPause: "Play/Pause"
         case .stepBackward: "Step Back 1 Frame"

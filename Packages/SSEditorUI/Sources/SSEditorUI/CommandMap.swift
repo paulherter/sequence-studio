@@ -51,6 +51,7 @@ public struct CommandMap: Sendable {
         // Transport
         add(g, ch("j"), .shuttleReverse); add(g, ch("k"), .shuttleStop); add(g, ch("l"), .shuttleForward)
         add(g, .space, .playPause)
+        add(g, ch("j"), .shift, .shuttleSlowReverse); add(g, ch("l"), .shift, .shuttleSlowForward)
         add(g, .left, .stepBackward); add(g, .right, .stepForward)
         add(g, .left, .shift, .stepBackward5); add(g, .right, .shift, .stepForward5)
         add(g, .home, .goToStart); add(g, .end, .goToEnd)
