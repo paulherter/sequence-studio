@@ -36,8 +36,8 @@ extension EditorPanels {
         let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated {
                 guard let self else { return }
-                timelineView.setCachedRanges(session.engine.cachedSpans)
-                if showHUD { monitorModel.latencyText = session.engine.scrubLatencyText }
+                self.timelineView.setCachedRanges(self.session.engine.cachedSpans)
+                if showHUD { self.monitorModel.latencyText = self.session.engine.scrubLatencyText }
             }
         }
         RunLoop.main.add(t, forMode: .common)
