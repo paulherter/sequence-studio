@@ -77,7 +77,7 @@ import Testing
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try ProjectFile.write(try sample(), to: dir)
         let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
-        #expect(text.contains("\"formatVersion\" : 16"))
+        #expect(text.contains("\"formatVersion\" : 19"))
         #expect(text.contains("\n"))
         #expect(text.contains("2023-11-14T22:13:20Z"))
     }
@@ -129,20 +129,21 @@ import Testing
     @Test func newerVersionRefused() throws {
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try Data(#"{"formatVersion":99,"project":{}}"#.utf8).write(to: dir.appendingPathComponent("project.json"))
-        #expect(throws: ProjectFileError.newerVersion(found: 99, supported: 16)) { try ProjectFile.read(from: dir) }
+        #expect(throws: ProjectFileError.newerVersion(found: 99, supported: ProjectFile.currentVersion)) { try ProjectFile.read(from: dir) }
     }
 
     @Test func migrationFromFakeV0() throws {
         // v0 stored "title"; v1 calls it "name" and has no media/timelines.
         let v0 = #"{"formatVersion":0,"project":{"id":"\#(UUID().uuidString)","title":"Old"}}"#
-        let migrations: ProjectFile.Migrations = [0: { obj in
+        var migrations = ProjectFile.migrations
+        migrations[0] = { obj in
             var o = obj
             var p = o["project"] as! [String: Any]
             p["name"] = p.removeValue(forKey: "title")
             p["media"] = [Any](); p["timelines"] = [Any]()
             o["project"] = p
             return o
-        }, 1: ProjectFile.migrateV1toV2, 2: ProjectFile.migrateV2toV3, 3: ProjectFile.migrateV3toV4, 4: ProjectFile.migrateV4toV5, 5: ProjectFile.migrateV5toV6, 6: ProjectFile.migrateV6toV7, 7: ProjectFile.migrateV7toV8, 8: ProjectFile.migrateV8toV9, 9: ProjectFile.migrateV9toV10, 10: ProjectFile.migrateV10toV11, 11: ProjectFile.migrateV11toV12, 12: ProjectFile.migrateV12toV13, 13: ProjectFile.migrateV13toV14, 14: ProjectFile.migrateV14toV15, 15: ProjectFile.migrateV15toV16]
+        }
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try Data(v0.utf8).write(to: dir.appendingPathComponent("project.json"))
         let p = try ProjectFile.read(from: dir, migrations: migrations)
@@ -299,7 +300,7 @@ import Testing
         #expect(c.animation.position.track.isEmpty)
         try ProjectFile.write(p, to: dir)
         let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
-        #expect(text.contains("\"formatVersion\" : 16"))
+        #expect(text.contains("\"formatVersion\" : 19"))
     }
 
     @Test func v4FileLoadsWithoutNestingCaptionsOrRadius() throws {
@@ -317,7 +318,7 @@ import Testing
         #expect(c.sequence == nil && c.clipSource == .media(mid))
         #expect(c.effects.isEmpty)
         #expect(p.timelines[0].captionTracks.isEmpty)
-        #expect(ProjectFile.currentVersion == 16)
+        #expect(ProjectFile.currentVersion == 19)
     }
 
     @Test func v15FileLoadsAndKeepsSpeedWithoutGain() throws {

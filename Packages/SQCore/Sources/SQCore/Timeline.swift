@@ -31,6 +31,9 @@ public struct Timeline: Sendable, Hashable, Codable, Identifiable {
     /// False only for an auto-created sequence nobody configured: the first clip placed into it may adopt that clip's
     /// format. Sequence Settings and New Sequence lock it (Premiere). Files without the key decode as locked.
     public var formatLocked: Bool
+    /// Set by Mark Out when no In existed: `inOut` is then (0, outOnlyEnd) and only the Out is a real mark (back-timed
+    /// edits, see `sourceEditPlacement`). Not saved. Counts only while `inOut` still equals (0, outOnlyEnd).
+    public var outOnlyEnd: Time?
 
     public var frameDuration: Time {
         get { format.frameDuration }
