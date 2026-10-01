@@ -1,6 +1,6 @@
 import Foundation
 
-public enum SnapKind: Sendable, Hashable { case clipEdge, playhead, marker, frame }
+public enum SnapKind: Sendable, Hashable { case clipEdge, playhead, marker, frame, inOut, keyframe }
 
 public struct SnapPoint: Sendable, Hashable {
     public var time: Time
@@ -22,19 +22,45 @@ public struct SnapPoint: Sendable, Hashable {
 }
 
 extension Timeline {
-    /// Snap targets: start and end of every clip not in `excluding`, the playhead, markers and 0.
-    /// Sorted and deduplicated by time.
-    public func snapPoints(excluding: Set<Clip.ID> = [], playhead: Time? = nil, markers: [Time] = []) -> [SnapPoint] {
+    /// Snap targets: start and end of every clip not in `excluding`, the playhead, markers, the In and Out marks and 0.
+    /// With `includeKeyframes` the keyframe times (transform, opacity, volume and effect parameters) of the clips not in
+    /// `excluding` count too. Sorted and deduplicated by time.
+    public func snapPoints(excluding: Set<Clip.ID> = [], playhead: Time? = nil, markers: [Time] = [],
+                           includeKeyframes: Bool = false) -> [SnapPoint] {
         var pts = [SnapPoint(time: .zero, kind: .clipEdge)]
         if let playhead { pts.append(SnapPoint(time: playhead, kind: .playhead)) }
         pts += markers.map { SnapPoint(time: $0, kind: .marker) }
+        if let io = inOut {
+            pts.append(SnapPoint(time: io.start, kind: .inOut))
+            pts.append(SnapPoint(time: io.end, kind: .inOut))
+        }
         for track in tracks {
             for c in track.clips where !excluding.contains(c.id) {
                 pts.append(SnapPoint(time: c.timeline.start, kind: .clipEdge))
                 pts.append(SnapPoint(time: c.timeline.end, kind: .clipEdge))
+                if includeKeyframes {
+                    for k in c.keyframeTimes where c.timeline.contains(c.start + k) {
+                        pts.append(SnapPoint(time: c.start + k, kind: .keyframe))
+                    }
+                }
             }
         }
         return SnapPoint.normalized(pts)
+    }
+}
+
+extension Clip {
+    /// Clip-local times of every key on the transform, opacity, volume and effect parameters.
+    public var keyframeTimes: [Time] {
+        var out: [Time] = []
+        out += animation.position.track.keys.map(\.time)
+        out += animation.scale.track.keys.map(\.time)
+        out += animation.rotation.track.keys.map(\.time)
+        out += animation.opacity.track.keys.map(\.time)
+        out += animation.anchor.track.keys.map(\.time)
+        out += animation.volume.track.keys.map(\.time)
+        for e in effects { for p in e.parameters.values { out += p.track.keys.map(\.time) } }
+        return out
     }
 }
 

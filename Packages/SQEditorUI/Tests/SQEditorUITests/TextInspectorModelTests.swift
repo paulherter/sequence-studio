@@ -32,6 +32,25 @@ import SQText
         #expect(m.style.size == 62)
     }
 
+    @Test func allCapsAndStrokePositionAreOneEditEach() {
+        let (m, log) = make()
+        m.setAllCaps(true)
+        #expect(m.style.allCaps && log.events == ["begin", "change", "end"])
+        m.setStrokeEnabled(true)
+        m.setStrokePosition(.centre)
+        #expect(m.style.stroke?.position == .centre)
+        m.setStrokePosition(.centre)                      // no change, no event
+        #expect(log.events.filter { $0 == "change" }.count == 3)
+    }
+
+    @Test func alignButtonsGoToTheHost() {
+        let (m, _) = make()
+        var got: [FrameAlignment] = []
+        m.onAlignToFrame = { got.append($0) }
+        for a in FrameAlignment.allCases { m.alignToFrame(a) }
+        #expect(got == [.left, .centerHorizontally, .right, .top, .centerVertically, .bottom])
+    }
+
     @Test func premiereTextControlsEditTheStyle() {
         let (m, _) = make()
         m.setTracking(12); m.setItalic(true); m.setVerticalAlignment(.bottom)

@@ -38,12 +38,12 @@ public enum EditorMenus {
         .newProject, .newSequence, .newBin, nil, .openProject, nil, .save, .saveAs, .revert, nil, .importMedia, nil, .export, .exportFrame,
     ]))
     public static let edit = MenuSpec(title: "Edit", items: cmds([
-        .undo, .redo, nil, .cut, .copy, .paste, .pasteInsert, .pasteAttributes, nil,
+        .undo, .redo, nil, .cut, .copy, .paste, .pasteInsert, .pasteAttributes, nil, .duplicate, nil,
         .selectAll, .deselectAll, nil,
         .delete, .rippleDelete,
     ]))
     public static let clip = MenuSpec(title: "Clip", items: cmds([
-        .insert, .overwrite, nil, .speedDuration, nil, .link, nil,
+        .insert, .overwrite, nil, .speedDuration, nil, .enableClip, .link, nil,
         .setToFrameSize, nil,
         .audioGain, nil,
     ]) + [
@@ -55,7 +55,8 @@ public enum EditorMenus {
     public static let sequence = MenuSpec(title: "Sequence", items: cmds([
         .sequenceSettings, nil,
         .lift, .extract, nil,
-        .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext, .extendEdit, nil,
+        .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext, .trimPrevious, .trimNext,
+        .rollTrimPrevious, .rollTrimNext, .extendEdit, .toggleTrimType, nil,
         .toggleSnapping, .toggleLinkedSelection, nil,
         .matchFrame, .reverseMatchFrame, nil,
         .previousEditPoint, .nextEditPoint, .goToStart, .goToEnd,
@@ -77,6 +78,7 @@ public enum EditorMenus {
         .command(.zoomIn), .command(.zoomOut), .command(.zoomFit),
         .separator,
         .command(.toggleAudioScrubbing),
+        .command(.toggleCaptionsInMonitor),
         .separator,
         .submenu("Track Height", cmds([
             .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter, nil,
@@ -100,6 +102,6 @@ public enum EditorMenus {
     /// Commands that stay visible in their menu even when not wired (the standard text editing commands: a text field
     /// handles them) and commands that are menu-only (no default key in Premiere).
     public static let alwaysShown: Set<EditorCommand> = [.undo, .redo, .cut, .copy, .paste, .delete]
-    public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection, .toggleAudioScrubbing,
+    public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection, .toggleAudioScrubbing, .toggleCaptionsInMonitor,
                                                        .videoFadeIn, .videoFadeOut, .addFrameHold, .insertFrameHold]
 }

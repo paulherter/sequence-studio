@@ -4,6 +4,9 @@ import Foundation
 /// Pure zoom maths of the timeline (no AppKit): steps, gains, anchoring, limits, the zoom bar. Scale is points per second.
 public enum TimelineZoom {
     /// One `=` / `-` press (Premiere's steps are coarse). From fit to frame level takes `steps(from:to:)` presses.
+    /// This is the only knob for the key feel: the Zoom tool click and the `=` / `-` keys both use it. Paul asked
+    /// (FEEDBACK-5 #1) for "fit to about 1 s in at most 2 presses"; that needs a factor near 8 for a one-minute
+    /// sequence, which is too coarse to judge without the Mac in hand, so it stays at 2.5 until it is tried.
     public static let keyStep: Double = 2.5
     /// Option + two-finger scroll: scale = exp(delta * gain). A normal swipe (~300 pt) covers the whole range.
     public static let preciseScrollGain: Double = 0.02
@@ -44,6 +47,28 @@ public enum TimelineZoom {
     public static func steps(from: Double, to: Double) -> Int {
         guard from > 0, to > from else { return 0 }
         return Int((log(to / from) / log(keyStep)).rounded(.up))
+    }
+
+    // MARK: Zoom tool
+
+    /// Zoom tool click: one `keyStep` in, Option-click one out, the time under `anchorX` (content coordinates, 0 = left
+    /// edge of the content area) staying fixed. The scale is clamped to `range`.
+    public static func zoomClick(scale: Double, scrollX: Double, anchorX: Double, zoomOut: Bool,
+                                 range: ClosedRange<Double>) -> (scale: Double, scrollX: Double) {
+        let new = clamp(zoomOut ? scale / keyStep : scale * keyStep, to: range)
+        return (new, max(anchoredScroll(oldScale: scale, newScale: new, scrollX: scrollX, anchorX: anchorX), 0))
+    }
+
+    /// Zoom tool marquee: the scale and scrollX that make the seconds `start...end` fill `viewport` points. A tiny
+    /// marquee clamps at the highest zoom; the scroll never goes below 0.
+    public static func zoomMarquee(startSeconds: Double, endSeconds: Double, viewport: Double,
+                                   range: ClosedRange<Double>) -> (scale: Double, scrollX: Double) {
+        let lo = min(startSeconds, endSeconds), hi = max(startSeconds, endSeconds)
+        let span = max(hi - lo, 1e-6)
+        let scale = clamp(viewport / span, to: range)
+        // Centre the marquee when the clamp left room.
+        let shown = viewport / scale
+        return (scale, max((lo - (shown - span) / 2) * scale, 0))
     }
 
     public static func isFit(scale: Double, fit: Double) -> Bool { abs(scale - fit) <= fit * 0.001 }

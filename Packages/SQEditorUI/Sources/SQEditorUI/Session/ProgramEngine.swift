@@ -42,6 +42,8 @@ public protocol ProgramEngine: AnyObject {
     var meterReading: (sequence: Int, peaks: [Float])? { get }
     /// Dragging the playhead and stepping play short audio grains (Premiere "audio scrubbing").
     var audioScrubbing: Bool { get set }
+    /// Captions drawn over the picture in the monitor (the export burn-in is separate).
+    var showsCaptions: Bool { get set }
 }
 
 extension ProgramEngine {
@@ -52,6 +54,7 @@ extension ProgramEngine {
     public var audioUnavailable: Bool { false }
     public var meterReading: (sequence: Int, peaks: [Float])? { nil }
     public var audioScrubbing: Bool { get { true } set {} }
+    public var showsCaptions: Bool { get { true } set {} }
 }
 
 extension PlaybackEngine: ProgramEngine {

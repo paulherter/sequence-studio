@@ -133,6 +133,8 @@ final class RenderLoop: @unchecked Sendable {
         var mapping: Mapping = { $0.pts }
         var quality: DecodeScale = .full
         var zoom: ViewerZoom = .fit
+        /// Program monitor setting: draw the captions over the picture (the export burn-in does not depend on it).
+        var showCaptions = true
         /// Bumped by every invalidator; a tick renders when it differs from `renderedGeneration` and records the
         /// generation it snapshotted, so an invalidation that lands during a tick is never lost.
         var generation: UInt64 = 1
@@ -285,6 +287,14 @@ final class RenderLoop: @unchecked Sendable {
     }
 
     var lastPresentedZoom: ViewerZoom? { state.withLock { $0.lastPresentedZoom } }
+
+    /// Shows or hides the captions in the monitor; the current frame is redrawn.
+    func setShowCaptions(_ on: Bool) {
+        state.withLock { s in
+            guard s.showCaptions != on else { return }
+            s.showCaptions = on; s.generation &+= 1
+        }
+    }
 
     func setPresenter(_ p: Presenter?) { state.withLock { $0.presenter = p; $0.generation &+= 1 } }
 
@@ -507,22 +517,36 @@ final class RenderLoop: @unchecked Sendable {
     /// Captions of the visible caption tracks at `t`, on top of the picture (Program monitor). Same rasters and the
     /// same placement as the export burn-in; a raster that is not ready yet is prepared in the background.
     private func captionNodes(_ tl: Timeline, at t: Time, build b: inout LayerBuild) -> [RenderNode] {
+        guard state.withLock({ $0.showCaptions }) else { return [] }
         let active = tl.captions(at: t)
         guard !active.isEmpty else { return [] }
         var out: [RenderNode] = []
         for a in active where !a.item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            guard let ref = try? CaptionPreview.ref(for: a.item, canvas: tl.format) else { continue }
+            // The plain caption is one raster for the whole caption; the lit word is a second layer on top (the same two
+            // layers the export burn-in draws). A lit layer that is not ready is skipped, never the caption.
+            guard let plan = try? CaptionPreview.plan(for: a.item, karaoke: tl.captionTrack(a.track)?.karaoke, canvas: tl.format, at: t)
+            else { continue }
+            let ref = plan.plain
             if textFailed.withLock({ $0.contains(ref) }) { continue }
             if !TextGenerator.isCached(ref: ref) { prewarmText(ref); b.waiting = true; continue }
             let local = t - a.item.range.start
-            guard let f = try? TextGenerator.frame(ref: ref, localTime: local, clipDuration: a.item.range.duration,
-                                                   canvas: tl.format, scale: 1) else {
-                textFailed.withLock { _ = $0.insert(ref) }
-                continue
-            }
             let base = ClipTransform(position: CaptionPreview.position(canvas: tl.format))
-            out.append(.layer(RenderLayer(content: .linearPremultiplied(f.buffer, width: f.width, height: f.height),
-                                          transform: f.layerTransform(base: base, canvas: tl.format))))
+            func layer(_ r: GeneratorRef) -> RenderNode? {
+                guard !textFailed.withLock({ $0.contains(r) }) else { return nil }
+                guard let f = try? TextGenerator.frame(ref: r, localTime: local, clipDuration: a.item.range.duration,
+                                                       canvas: tl.format, scale: 1) else {
+                    textFailed.withLock { _ = $0.insert(r) }
+                    return nil
+                }
+                return .layer(RenderLayer(content: .linearPremultiplied(f.buffer, width: f.width, height: f.height),
+                                          transform: f.layerTransform(base: base, canvas: tl.format)))
+            }
+            guard let plainNode = layer(ref) else { continue }
+            out.append(plainNode)
+            if let n = plan.next { prewarmText(n) }
+            if let lit = plan.lit {
+                if TextGenerator.isCached(ref: lit), let node = layer(lit) { out.append(node) } else { prewarmText(lit) }
+            }
         }
         return out
     }
@@ -675,7 +699,7 @@ final class RenderLoop: @unchecked Sendable {
         func walk(_ t: Timeline) {
             guard visited.insert(t.id).inserted else { return }
             for track in t.tracks where track.kind == .video {
-                for c in track.clips where !c.isGenerator {
+                for c in track.clips where c.isEnabled && !c.isGenerator {
                     if let s = c.sequence { if let inner = sequences[s] { walk(inner) } } else { out.append((c.color, c.media)) }
                 }
             }
@@ -690,7 +714,7 @@ final class RenderLoop: @unchecked Sendable {
         func walk(_ t: Timeline) {
             guard visited.insert(t.id).inserted else { return }
             for track in t.tracks where track.kind == .video {
-                for c in track.clips where !c.isGenerator {
+                for c in track.clips where c.isEnabled && !c.isGenerator {
                     if let s = c.sequence { if let inner = sequences[s] { walk(inner) } } else { out.insert(c.media) }
                 }
             }
@@ -701,7 +725,7 @@ final class RenderLoop: @unchecked Sendable {
 
     /// FrameKey -> top-level timeline time of the first clip showing that source frame (eviction distance).
     static func mapping(_ tl: Timeline) -> Mapping {
-        let clips = tl.tracks.filter { $0.kind == .video }.flatMap(\.clips).filter { !$0.isNested && !$0.isGenerator }
+        let clips = tl.tracks.filter { $0.kind == .video }.flatMap(\.clips).filter { $0.isEnabled && !$0.isNested && !$0.isGenerator }
         let byMedia = Dictionary(grouping: clips, by: \.media)
         return { key in
             guard let cs = byMedia[key.media] else { return nil }

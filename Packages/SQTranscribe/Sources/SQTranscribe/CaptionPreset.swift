@@ -17,6 +17,12 @@ public struct CaptionPreset: Sendable, Hashable, Codable {
     /// Smallest time between the end of a caption and the start of the next one (Premiere: gap in frames).
     public var gap: Time
 
+    /// Premiere's name for the gap between captions.
+    public var minGap: Time {
+        get { gap }
+        set { gap = max(.zero, newValue) }
+    }
+
     public init(maxCharsPerLine: Int, maxLines: Int, maxDuration: Time, minDuration: Time,
                 pauseBreak: Time, styleRef: String, animationRef: String, gap: Time = .zero) {
         self.maxCharsPerLine = maxCharsPerLine

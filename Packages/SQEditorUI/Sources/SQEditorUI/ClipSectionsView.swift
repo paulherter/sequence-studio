@@ -77,6 +77,8 @@ public final class ClipSectionsView: NSView, NSTextViewDelegate {
     /// Track audio preset chosen here, by track. Forwarded to the audio engine via `onAudioPresetChange`.
     public private(set) var audioPresets: [Track.ID: TrackAudioPreset] = [:]
     public var onAudioPresetChange: ((Track.ID, TrackAudioPreset) -> Void)?
+    /// One of the six align buttons of the Text section: the host moves the selected text clip against the frame.
+    public var onAlignToFrame: ((FrameAlignment) -> Void)?
     /// The height this view wants changed (another section or another track); the host re-lays out.
     public var onHeightChange: (() -> Void)?
     public private(set) var mode: ClipSectionMode = .none
@@ -217,6 +219,7 @@ public final class ClipSectionsView: NSView, NSTextViewDelegate {
             textGestureOpen = true
         }
         textModel.onEndEditing = { [weak self] in self?.textGestureOpen = false }
+        textModel.onAlignToFrame = { [weak self] a in self?.onAlignToFrame?(a) }
     }
 
     private func loadText(_ clip: Clip) {

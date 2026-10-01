@@ -90,6 +90,9 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     /// (values and keys stay stored). Opacity off also means blend mode Normal.
     public var motionEnabled: Bool = true
     public var opacityEnabled: Bool = true
+    /// Clip > Enable (Shift+Cmd+E). A disabled clip stays on the timeline and in every edit but is skipped by the
+    /// picture and the audio mix (v18). Files without the key decode as enabled.
+    public var isEnabled: Bool = true
 
     /// Media, nested sequence or generator.
     public var clipSource: ClipSource {
@@ -157,7 +160,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB, blendMode, holdFrame, motionEnabled, opacityEnabled
+        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB, isEnabled, blendMode, holdFrame, motionEnabled, opacityEnabled
     }
 
     public init(from d: Decoder) throws {
@@ -178,6 +181,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   reversed: try c.decodeIfPresent(Bool.self, forKey: .reversed) ?? false,
                   keepsPitch: try c.decodeIfPresent(Bool.self, forKey: .keepsPitch) ?? true)
         audioGainDB = try c.decodeIfPresent(Double.self, forKey: .audioGainDB) ?? 0
+        isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
         blendMode = try c.decodeIfPresent(BlendMode.self, forKey: .blendMode) ?? .normal
         holdFrame = try c.decodeIfPresent(Time.self, forKey: .holdFrame)
         motionEnabled = try c.decodeIfPresent(Bool.self, forKey: .motionEnabled) ?? true

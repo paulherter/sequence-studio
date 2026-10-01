@@ -135,15 +135,15 @@ import Testing
     @Test func migrationFromFakeV0() throws {
         // v0 stored "title"; v1 calls it "name" and has no media/timelines.
         let v0 = #"{"formatVersion":0,"project":{"id":"\#(UUID().uuidString)","title":"Old"}}"#
-        let v0step: ProjectFile.Migrations = [0: { obj in
+        var migrations = ProjectFile.migrations
+        migrations[0] = { obj in
             var o = obj
             var p = o["project"] as! [String: Any]
             p["name"] = p.removeValue(forKey: "title")
             p["media"] = [Any](); p["timelines"] = [Any]()
             o["project"] = p
             return o
-        }]
-        let migrations = ProjectFile.migrations.merging(v0step) { $1 }
+        }
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try Data(v0.utf8).write(to: dir.appendingPathComponent("project.json"))
         let p = try ProjectFile.read(from: dir, migrations: migrations)
@@ -318,7 +318,7 @@ import Testing
         #expect(c.sequence == nil && c.clipSource == .media(mid))
         #expect(c.effects.isEmpty)
         #expect(p.timelines[0].captionTracks.isEmpty)
-        #expect(ProjectFile.currentVersion >= 16)
+        #expect(ProjectFile.currentVersion >= 18)
     }
 
     @Test func v15FileLoadsAndKeepsSpeedWithoutGain() throws {
