@@ -45,19 +45,43 @@ extension SpeedKeys {
         return k.normalized()
     }
 
-    /// Splits the key at `boundary` into two halves with a ramp of `2 * half` between them (Premiere's "split key"): `half`
-    /// frames come off each neighbour. nil when a neighbour is not a constant segment of at least `half + 1` frame, or the
-    /// two neighbours play in different directions (a ramp cannot pass through a stop).
+    /// Splits the key at `boundary` into two halves with a ramp between them (Premiere's "split key"): `half` frames come off
+    /// each neighbour (ramp of `2 * half`, centred). See `splittingKey(atBoundary:takeLeft:takeRight:)`.
     public func splittingKey(atBoundary b: Int, half: Time, frameDuration fd: Time) -> SpeedKeys? {
-        guard b >= 1, b < segments.count, half >= fd else { return nil }
+        splittingKey(atBoundary: b, takeLeft: half, takeRight: half, frameDuration: fd)
+    }
+
+    /// Splits the key at `boundary` into two halves: the ramp takes `takeLeft` from the segment before and `takeRight` from the
+    /// one after (dragging only the right half to the right gives `takeRight` only, like Premiere). Both neighbours must be
+    /// constant segments that keep at least one frame and play in the same direction (a ramp cannot pass through a stop);
+    /// the ramp is at least one frame. nil otherwise.
+    public func splittingKey(atBoundary b: Int, takeLeft: Time, takeRight: Time, frameDuration fd: Time) -> SpeedKeys? {
+        guard b >= 1, b < segments.count else { return nil }
         let l = segments[b - 1], r = segments[b]
-        guard !l.isRamp, !r.isRamp, l.reversed == r.reversed, l.from != r.from,
-              l.duration > half, r.duration > half else { return nil }
+        let tl = takeLeft.snapped(to: fd), tr = takeRight.snapped(to: fd)
+        guard tl >= .zero, tr >= .zero, tl + tr >= fd, !l.isRamp, !r.isRamp, l.reversed == r.reversed, l.from != r.from,
+              l.duration - tl >= fd, r.duration - tr >= fd else { return nil }
         var k = self
-        k.segments[b - 1].duration = l.duration - half
-        k.segments[b].duration = r.duration - half
-        k.segments.insert(SpeedSegment(duration: half * 2, from: l.from, to: r.from, reversed: l.reversed), at: b)
+        k.segments[b - 1].duration = l.duration - tl
+        k.segments[b].duration = r.duration - tr
+        k.segments.insert(SpeedSegment(duration: tl + tr, from: l.from, to: r.from, reversed: l.reversed), at: b)
         return k
+    }
+
+    /// Removes the speed transition `i`: the change of speed becomes instant in the middle of where the ramp was (Premiere:
+    /// deleting a half of a split key reverts the transition).
+    public func removingRamp(atSegment i: Int, frameDuration fd: Time) -> SpeedKeys? {
+        guard segments.indices.contains(i), segments[i].isRamp else { return nil }
+        var k = self
+        let ramp = segments[i]
+        let half = Time(ramp.duration.value, ramp.duration.timescale * 2).snapped(to: fd)
+        let leftGets = min(half, ramp.duration)
+        let rightGets = ramp.duration - leftGets
+        var parts: [SpeedSegment] = []
+        parts.append(SpeedSegment(duration: leftGets, from: ramp.from, reversed: ramp.reversed))
+        if rightGets > .zero { parts.append(SpeedSegment(duration: rightGets, from: ramp.to, reversed: ramp.reversed)) }
+        k.segments.replaceSubrange(i...i, with: parts)
+        return k.normalized()
     }
 
     /// Changes the width of ramp `i` to `width` (whole frames), taking the difference from the neighbours evenly (all from one
@@ -97,6 +121,19 @@ extension SpeedKeys {
         var k = self
         k.segments[b - 1].duration = l + d
         k.segments[b].duration = r - d
+        return k
+    }
+
+    /// Moves a whole speed transition by `delta` (snapped to frames): the segment before grows by it, the one after shrinks;
+    /// the ramp keeps its width. Each neighbour keeps at least one frame.
+    public func movingRamp(atSegment i: Int, by delta: Time, frameDuration fd: Time) -> SpeedKeys? {
+        guard segments.indices.contains(i), segments[i].isRamp, i >= 1, i + 1 < segments.count else { return nil }
+        var d = snappedFrames(delta, fd)
+        d = min(d, segments[i + 1].duration - fd); d = max(d, fd - segments[i - 1].duration)
+        guard d != .zero else { return nil }
+        var k = self
+        k.segments[i - 1].duration += d
+        k.segments[i + 1].duration -= d
         return k
     }
 
