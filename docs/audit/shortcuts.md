@@ -29,6 +29,8 @@ Scopes: Everywhere = global, TL = Timeline panel, PM = Program monitor, SM = Sou
 | Keyboard Shortcuts | Opt+Cmd+K | Cmd+Opt+K | Match |
 | Settings | Cmd+, | none (macOS convention) | Addition |
 | Audio Gain | G | G | Match |
+| Audio Gain -1 dB / +1 dB | [ / ] (TL) | none found in the Adobe mirror | Addition (not pinned by the Adobe test; unverified) |
+| Audio Gain -6 dB / +6 dB | Shift+[ / Shift+] (TL) | none found in the Adobe mirror | Addition (unverified) |
 | Speed/Duration | Cmd+R | Cmd+R | Match |
 | Insert / Overwrite | , / . | , / . | Match |
 | Enable | Shift+Cmd+E | Shift+Cmd+E | Match |

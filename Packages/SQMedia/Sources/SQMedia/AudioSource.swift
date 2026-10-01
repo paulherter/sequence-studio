@@ -10,13 +10,20 @@ public protocol AudioSource: Sendable {
     /// Returns the number of frames written; fewer than `count` only at the end of the media (0 past the end).
     /// The caller zero-fills the rest. Blocking; call from the feeder thread, never from the render thread.
     func read(from sourceFrame: Int64, count: Int, into buffer: UnsafeMutablePointer<Float>, channel: Int) throws -> Int
+    /// The media itself has one channel (it is delivered as identical left and right). Decides the pan law.
+    var isMono: Bool { get }
+}
+
+extension AudioSource {
+    public var isMono: Bool { false }
 }
 
 /// In-memory stereo PCM. Used for tests and for short generated sources.
 public final class MemoryAudioSource: AudioSource {
     public let left: [Float], right: [Float]
-    public init(left: [Float], right: [Float]) { self.left = left; self.right = right }
-    public convenience init(mono: [Float]) { self.init(left: mono, right: mono) }
+    public let isMono: Bool
+    public init(left: [Float], right: [Float]) { self.left = left; self.right = right; isMono = false }
+    public init(mono: [Float]) { left = mono; right = mono; isMono = true }
 
     public func read(from sourceFrame: Int64, count: Int, into buffer: UnsafeMutablePointer<Float>, channel: Int) throws -> Int {
         let data = channel == 0 ? left : right
@@ -34,6 +41,7 @@ public final class MemoryAudioSource: AudioSource {
 /// Keeps a small cache of 1 s blocks; sequential forward reads continue the reader, backward or distant reads restart it.
 public final class AssetAudioSource: AudioSource, @unchecked Sendable {
     public let sampleRate: Int
+    public let isMono: Bool
     private let asset: AVURLAsset
     private let track: AVAssetTrack
     private let state = Mutex(State())
@@ -55,11 +63,15 @@ public final class AssetAudioSource: AudioSource, @unchecked Sendable {
     public static func open(url: URL, sampleRate: Int) async throws -> AssetAudioSource {
         let asset = AVURLAsset(url: url)
         guard let track = try await asset.loadTracks(withMediaType: .audio).first else { throw MediaError.unreadable }
-        return AssetAudioSource(asset: asset, track: track, sampleRate: sampleRate)
+        var channels = 2
+        if let d = try? await track.load(.formatDescriptions).first, let asbd = CMAudioFormatDescriptionGetStreamBasicDescription(d) {
+            channels = Int(asbd.pointee.mChannelsPerFrame)
+        }
+        return AssetAudioSource(asset: asset, track: track, sampleRate: sampleRate, isMono: channels == 1)
     }
 
-    private init(asset: AVURLAsset, track: AVAssetTrack, sampleRate: Int) {
-        self.asset = asset; self.track = track; self.sampleRate = sampleRate
+    private init(asset: AVURLAsset, track: AVAssetTrack, sampleRate: Int, isMono: Bool) {
+        self.asset = asset; self.track = track; self.sampleRate = sampleRate; self.isMono = isMono
     }
 
     public func read(from sourceFrame: Int64, count: Int, into buffer: UnsafeMutablePointer<Float>, channel: Int) throws -> Int {

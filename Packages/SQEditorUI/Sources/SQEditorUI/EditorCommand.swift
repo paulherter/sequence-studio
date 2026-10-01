@@ -54,6 +54,10 @@ public enum EditorCommand: Sendable, Hashable {
     case easyEase, easeIn, easeOut, toggleHoldInterpolation
     // Audio
     case audioGain, toggleAudioScrubbing
+    /// `[` / `]` change the Audio Gain of the selected audio clips by 1 dB, with Shift by 6 dB.
+    case audioGainDown, audioGainUp, audioGainDown6, audioGainUp6
+    case matchLoudness, autoDuck, removeSilences
+    case tagDialogue, tagMusic, tagSFX
     // Clip > Video Options (effects-look): fade presets on the picture, frame holds
     case videoFadeIn, videoFadeOut, addFrameHold, insertFrameHold
     // Source and Project flow: Play In to Out with preroll/postroll (Shift+Space), Play Around (Shift+K), poster frame
@@ -71,7 +75,7 @@ public enum EditorCommand: Sendable, Hashable {
              .previousEditPoint, .nextEditPoint, .nextEditPointAnyTrack, .previousEditPointAnyTrack, .zoomIn, .zoomOut,
              .nudgeLeft, .nudgeRight, .nudgeLeft5, .nudgeRight5, .trimBackward, .trimForward, .trimBackward5, .trimForward5,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
-             .undo, .redo: true
+             .undo, .redo, .audioGainDown, .audioGainUp, .audioGainDown6, .audioGainUp6: true
         default: false
         }
     }
@@ -204,6 +208,16 @@ public enum EditorCommand: Sendable, Hashable {
         case .toggleHoldInterpolation: "Toggle Hold Interpolation"
         case .audioGain: "Audio Gain…"
         case .toggleAudioScrubbing: "Audio Scrubbing"
+        case .audioGainDown: "Decrease Audio Gain by 1 dB"
+        case .audioGainUp: "Increase Audio Gain by 1 dB"
+        case .audioGainDown6: "Decrease Audio Gain by 6 dB"
+        case .audioGainUp6: "Increase Audio Gain by 6 dB"
+        case .matchLoudness: "Match Loudness"
+        case .autoDuck: "Auto Duck Music"
+        case .removeSilences: "Remove Silences…"
+        case .tagDialogue: "Dialogue"
+        case .tagMusic: "Music"
+        case .tagSFX: "SFX"
         case .videoFadeIn: "Fade In"
         case .videoFadeOut: "Fade Out"
         case .addFrameHold: "Add Frame Hold"

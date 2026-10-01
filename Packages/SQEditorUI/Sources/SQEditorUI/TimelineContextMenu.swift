@@ -7,11 +7,11 @@ public enum TimelineMenuAction: Sendable, Hashable, CaseIterable {
     /// Enable / Disable Clip (Shift+Cmd+E).
     case enable
     case setToFrameSize
-    /// Audio Gain… (G) on audio clips.
-    case audioGain
     case editCaption, splitCaption, mergeCaptions
     /// Clip > Speed/Duration.
     case speed
+    /// Clip > Audio Options > Audio Gain, and the short-form pause remover.
+    case audioGain, removeSilences
     /// Show Clip Keyframes > Time Remapping (the speed band on the clip).
     case timeRemapping
     /// Opens the label colour submenu (its choices go to `makeMenu`'s `labelHandler`).
@@ -69,12 +69,13 @@ public enum TimelineContextMenu {
                              key: "e", modifiers: [.command, .shift]),
             TimelineMenuItem(.nest, "Nest…", enabled: hasClips, separatorBefore: true),
             TimelineMenuItem(.speed, "Speed/Duration…", enabled: canRetime, key: "r"),
+            TimelineMenuItem(.audioGain, "Audio Gain…", enabled: hasAudio, key: "g", modifiers: []),
+            TimelineMenuItem(.removeSilences, "Remove Silences…", enabled: hasAudio),   // hidden by `FeatureFlags.removeSilences`
             TimelineMenuItem(.timeRemapping, "Show Time Remapping", enabled: hasVideoMedia),
             TimelineMenuItem(.setToFrameSize, "Set to Frame Size", enabled: hasPictures, separatorBefore: true),
-            TimelineMenuItem(.audioGain, "Audio Gain…", enabled: hasAudio, key: "g", modifiers: []),
             TimelineMenuItem(.label, "Label", enabled: hasClips, separatorBefore: true),
             TimelineMenuItem(.rename, "Rename…", enabled: clips.count == 1),
-        ]
+        ].filter { FeatureFlags.removeSilences || $0.action != .removeSilences }
     }
 
     /// Menu of caption segments (right-click on a caption): edit the text, split at the playhead, merge, delete.

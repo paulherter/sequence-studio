@@ -76,8 +76,8 @@ struct MultibandCompressor {
             x1 = Crossover(freq: s.crossoversHz[0], sampleRate: sampleRate)
             x2 = Crossover(freq: s.crossoversHz[1], sampleRate: sampleRate)
             x3 = Crossover(freq: s.crossoversHz[2], sampleRate: sampleRate)
-            preGain = AudioGain.linear(fromDB: s.preGainDB)
-            makeup = AudioGain.linear(fromDB: s.makeupGainDB)
+            preGain = GainMath.linear(fromDB: s.preGainDB)
+            makeup = GainMath.linear(fromDB: s.makeupGainDB)
             // Detector decay follows the band's lowest frequency (one period), bounded to 3...20 ms,
             // so the peak ripple stays small without slowing the detector down.
             let lowEdges = [s.crossoversHz[0] / 2, s.crossoversHz[0], s.crossoversHz[1], s.crossoversHz[2]]
@@ -90,7 +90,7 @@ struct MultibandCompressor {
                 st.hold = exp(-1 / (holdS * sampleRate))
                 st.attack = exp(-1 / (max(0.0001, b.attackMs / 1000) * sampleRate))
                 st.release = exp(-1 / (max(0.0001, b.releaseMs / 1000) * sampleRate))
-                st.gain = AudioGain.linear(fromDB: b.gainDB)
+                st.gain = GainMath.linear(fromDB: b.gainDB)
                 return st
             }
             b0 = make(0); b1 = make(1); b2 = make(2); b3 = make(3)

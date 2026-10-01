@@ -91,11 +91,11 @@ public struct LoudnessMeter: Sendable {
     }
 
     /// Per-channel sample peak in dBFS.
-    public var samplePeakDB: [Double] { samplePeak.map(AudioGain.dB(fromLinear:)) }
+    public var samplePeakDB: [Double] { samplePeak.map(GainMath.dB(fromLinear:)) }
 
     /// Per-channel true peak in dBTP (4x oversampled).
     public var truePeakDB: [Double] {
-        zip(truePeak, samplePeak).map { AudioGain.dB(fromLinear: max($0.peak, $1)) }
+        zip(truePeak, samplePeak).map { GainMath.dB(fromLinear: max($0.peak, $1)) }
     }
 }
 
