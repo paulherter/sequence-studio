@@ -132,10 +132,23 @@ public struct SessionMarker: Sendable {
 
     /// Kernel start time of a process (proc_pidinfo); nil when the process does not exist.
     public static func startTime(of pid: Int32) -> Date? {
+        #if canImport(Darwin)
         var info = proc_bsdinfo()
         let size = Int32(MemoryLayout<proc_bsdinfo>.size)
         guard proc_pidinfo(pid, PROC_PIDTBSDINFO, 0, &info, size) == size else { return nil }
         return Date(timeIntervalSince1970: TimeInterval(info.pbi_start_tvsec) + TimeInterval(info.pbi_start_tvusec) / 1_000_000)
+        #else
+        // Linux: field 22 of /proc/<pid>/stat is the start time in clock ticks after boot.
+        guard let stat = try? String(contentsOfFile: "/proc/\(pid)/stat", encoding: .utf8),
+              let close = stat.lastIndex(of: ")"),
+              let sys = try? String(contentsOfFile: "/proc/stat", encoding: .utf8),
+              let btimeLine = sys.split(separator: "\n").first(where: { $0.hasPrefix("btime ") }),
+              let btime = TimeInterval(btimeLine.dropFirst(6)) else { return nil }
+        // After "(comm)" the fields start at number 3, so starttime is index 19 of the remainder.
+        let rest = stat[stat.index(after: close)...].split(separator: " ")
+        guard rest.count > 19, let ticks = TimeInterval(rest[19]) else { return nil }
+        return Date(timeIntervalSince1970: btime + ticks / TimeInterval(sysconf(Int32(_SC_CLK_TCK))))
+        #endif
     }
 
     public func begin(projectID: UUID, projectURL: URL?, projectName: String,

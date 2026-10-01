@@ -151,7 +151,7 @@ import Testing
         #expect(throws: ProjectFileError.corrupt) { try ProjectFile.read(from: dir, migrations: [1: ProjectFile.migrateV1toV2, 2: ProjectFile.migrateV2toV3]) }
     }
 
-    @Test func failedWriteKeepsOldFile() throws {
+    @Test(.enabled(if: geteuid() != 0, "root ignores read-only directories")) func failedWriteKeepsOldFile() throws {
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         let p = try sample()
         try ProjectFile.write(p, to: dir)
