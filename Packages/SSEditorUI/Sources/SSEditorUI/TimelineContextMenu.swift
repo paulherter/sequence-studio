@@ -3,8 +3,10 @@ import SSCore
 
 /// What a context-menu item asks the host to do.
 public enum TimelineMenuAction: Sendable, Hashable, CaseIterable {
-    case cut, copy, paste, delete, rippleDelete, enable, unlink, link, nest, rename, revealInProject, speed
+    case cut, copy, paste, pasteInsert, delete, rippleDelete, unlink, link, nest, rename
     case setToFrameSize, scaleToFrameSize
+    /// Opens the label colour submenu (its choices go to `makeMenu`'s `labelHandler`).
+    case label
 }
 
 public struct TimelineMenuItem: Sendable, Equatable {
@@ -15,6 +17,8 @@ public struct TimelineMenuItem: Sendable, Equatable {
     public var separatorBefore: Bool
     public var key: String
     public var modifiers: NSEvent.ModifierFlags
+
+    public func separatorBefore(_ on: Bool) -> TimelineMenuItem { var c = self; c.separatorBefore = on; return c }
 
     public init(_ action: TimelineMenuAction, _ title: String, enabled: Bool, separatorBefore: Bool = false,
                 key: String = "", modifiers: NSEvent.ModifierFlags = .command) {
@@ -39,31 +43,62 @@ public enum TimelineContextMenu {
             : TimelineMenuItem(.unlink, "Unlink", enabled: true, key: "l")
         // Generators (text) have no picture size to fit.
         let hasPictures = clips.contains { !$0.isGenerator && $0.kind == .video }
+        // Premiere order. Entries for features we do not have (Enable, Speed/Duration, Reveal in Project) are left out.
         return [
             TimelineMenuItem(.cut, "Cut", enabled: hasClips, key: "x"),
             TimelineMenuItem(.copy, "Copy", enabled: hasClips, key: "c"),
             TimelineMenuItem(.paste, "Paste", enabled: clipboardHasClips, key: "v"),
-            TimelineMenuItem(.delete, "Delete", enabled: hasAny, separatorBefore: true, key: "\u{8}", modifiers: []),
+            TimelineMenuItem(.pasteInsert, "Paste Insert", enabled: clipboardHasClips, key: "v", modifiers: [.command, .shift]),
+            TimelineMenuItem(.delete, "Clear", enabled: hasAny, separatorBefore: true, key: "\u{8}", modifiers: []),
             TimelineMenuItem(.rippleDelete, "Ripple Delete", enabled: hasClips, key: "\u{8}", modifiers: [.shift]),
-            // No enabled flag in the model yet.
-            TimelineMenuItem(.enable, "Enable", enabled: false, separatorBefore: true),
-            linkItem,
+            linkItem.separatorBefore(true),
             TimelineMenuItem(.nest, "Nest…", enabled: hasClips, separatorBefore: true),
             TimelineMenuItem(.setToFrameSize, "Set to Frame Size", enabled: hasPictures, separatorBefore: true),
             TimelineMenuItem(.scaleToFrameSize, "Scale to Frame Size", enabled: hasPictures),
-            TimelineMenuItem(.rename, "Rename…", enabled: clips.count == 1, separatorBefore: true),
-            TimelineMenuItem(.revealInProject, "Reveal in Project", enabled: hasClips),
-            TimelineMenuItem(.speed, "Speed/Duration…", enabled: false, separatorBefore: true),
+            TimelineMenuItem(.label, "Label", enabled: hasClips, separatorBefore: true),
+            TimelineMenuItem(.rename, "Rename…", enabled: clips.count == 1),
         ]
+    }
+
+    /// Right-click on a gap between clips: Premiere offers Ripple Delete (closes the gap).
+    public static func gapItems(clipboardHasClips: Bool) -> [TimelineMenuItem] {
+        [TimelineMenuItem(.rippleDelete, "Ripple Delete", enabled: true, key: "\u{8}", modifiers: [.shift]),
+         TimelineMenuItem(.paste, "Paste", enabled: clipboardHasClips, separatorBefore: true, key: "v"),
+         TimelineMenuItem(.pasteInsert, "Paste Insert", enabled: clipboardHasClips, key: "v", modifiers: [.command, .shift])]
+    }
+
+    /// Right-click on empty track space.
+    public static func emptyItems(clipboardHasClips: Bool) -> [TimelineMenuItem] {
+        [TimelineMenuItem(.paste, "Paste", enabled: clipboardHasClips, key: "v"),
+         TimelineMenuItem(.pasteInsert, "Paste Insert", enabled: clipboardHasClips, key: "v", modifiers: [.command, .shift])]
     }
 
     /// Builds an NSMenu; `handler` runs on the main actor with the chosen action.
     @MainActor
-    public static func makeMenu(items: [TimelineMenuItem], handler: @escaping @MainActor (TimelineMenuAction) -> Void) -> NSMenu {
+    public static func makeMenu(items: [TimelineMenuItem], labelHandler: (@MainActor (LabelColor?) -> Void)? = nil,
+                                handler: @escaping @MainActor (TimelineMenuAction) -> Void) -> NSMenu {
         let menu = TimelineNSMenu(handler: handler)
         menu.autoenablesItems = false
         for it in items {
             if it.separatorBefore { menu.addItem(.separator()) }
+            if it.action == .label {
+                let host = NSMenuItem(title: it.title, action: nil, keyEquivalent: "")
+                host.isEnabled = it.isEnabled && labelHandler != nil
+                let sub = NSMenu(title: it.title)
+                sub.autoenablesItems = false
+                menu.labelTarget = TimelineLabelTarget(handler: labelHandler)
+                for (i, c) in ([nil] + LabelColor.allCases.map(Optional.some)).enumerated() {
+                    let mi = NSMenuItem(title: c?.displayName ?? "Default", action: #selector(TimelineLabelTarget.fire(_:)), keyEquivalent: "")
+                    mi.target = menu.labelTarget
+                    mi.tag = i
+                    if let c { mi.image = Self.swatch(c) }
+                    sub.addItem(mi)
+                    if i == 0 { sub.addItem(.separator()) }
+                }
+                host.submenu = sub
+                menu.addItem(host)
+                continue
+            }
             let mi = NSMenuItem(title: it.title, action: #selector(TimelineMenuTarget.fire(_:)), keyEquivalent: it.key)
             mi.keyEquivalentModifierMask = it.modifiers
             mi.isEnabled = it.isEnabled
@@ -84,10 +119,34 @@ final class TimelineMenuTarget: NSObject {
     }
 }
 
+@MainActor
+final class TimelineLabelTarget: NSObject {
+    let handler: (@MainActor (LabelColor?) -> Void)?
+    init(handler: (@MainActor (LabelColor?) -> Void)?) { self.handler = handler }
+    @objc func fire(_ sender: NSMenuItem) {
+        let all: [LabelColor?] = [nil] + LabelColor.allCases.map(Optional.some)
+        if all.indices.contains(sender.tag) { handler?(all[sender.tag]) }
+    }
+}
+
+extension TimelineContextMenu {
+    @MainActor static func swatch(_ c: LabelColor) -> NSImage {
+        let img = NSImage(size: NSSize(width: 12, height: 12), flipped: false) { r in
+            let rgb = c.rgb
+            NSColor(srgbRed: CGFloat((rgb >> 16) & 0xFF) / 255, green: CGFloat((rgb >> 8) & 0xFF) / 255,
+                    blue: CGFloat(rgb & 0xFF) / 255, alpha: 1).setFill()
+            NSBezierPath(roundedRect: r.insetBy(dx: 1, dy: 1), xRadius: 3, yRadius: 3).fill()
+            return true
+        }
+        return img
+    }
+}
+
 /// Keeps the (weakly referenced) item target alive as long as the menu.
 @MainActor
 final class TimelineNSMenu: NSMenu {
     let target: TimelineMenuTarget
+    var labelTarget: TimelineLabelTarget?
     init(handler: @escaping @MainActor (TimelineMenuAction) -> Void) {
         target = TimelineMenuTarget(handler: handler)
         super.init(title: "")
