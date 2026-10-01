@@ -184,4 +184,9 @@ Native decoded formats: Sony `x422` (10-bit 4:2:2, VT hands out the Apple-compre
 **Stream speed (overnight 2026-10-01):** constant clip speed end to end (SQCore model + edits, project v14, audio retime, Speed/Duration dialog Cmd+R, Rate Stretch tool R, timeline badge). Audit and numbers: docs/audit/speed.md. Open: speed ramps, nested/still retiming, frame blending.
 
 **Rename SS -> SQ (2026-10-01):** packages, env vars, defaults keys (migrated at launch by `DefaultsMigration`), project files `.sqproj`; legacy `.ssproj` opens, Save writes a sibling `.sqproj` and says so in the status line. Waveform cache magic is now `SQWF` (old caches rebuild).
+<<<<<<< HEAD
 **Stream transitions (overnight 2026-10-01):** transitions end to end: SQCore model (cut / head / tail, Cross Dissolve, Dip to Black/White, Constant Power/Gain, handle clamping, project v17), two-layer linear-light blend in playback and export, audio crossfade curves in the shared feeder, UI (Cmd+D, Shift+Cmd+D, Shift+D, Effects panel drag with alignment, timeline box with click / Delete / edge and body drag / double-click dialog, Effect Controls Duration + Alignment, context menus, default length in Settings). Audit and numbers: docs/audit/transitions.md. Open: wipes and other kinds, repeated frames for short handles, copy/paste of transitions, alpha-correct dissolve for transparent overlays.
+=======
+
+**Cloud Job G, SQCore findings 3 to 11 (2026-10-01):** details per finding in `docs/cloud/review-SQCore.md`. Fixed 3 (ripple shifts markers and In/Out), 5, 6, 7, 8, 9, 10, 11; 4 not reproduced. Mac side to do: route every timeline edit through `Project.edit` (finding 6 only refreshes nested media length there); paste can now add tracks, so the timeline view must handle a track count that changes in one undo step; a corrupt zero frame duration now fails project open as "corrupt". Not built on Mac, Linux only (`swift test` in Packages/SQCore: 575 pass).
+>>>>>>> main

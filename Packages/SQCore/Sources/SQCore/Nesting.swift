@@ -34,6 +34,14 @@ extension Project {
     public mutating func edit(_ id: Timeline.ID, _ body: (inout Timeline) throws -> Void) throws {
         guard let i = timelines.firstIndex(where: { $0.id == id }) else { throw EditError.timelineNotFound }
         var work = self
+        // A nested clip's media is the inner sequence as it is now, not as it was when nested.
+        for ti in work.timelines[i].tracks.indices {
+            for var c in work.timelines[i].tracks[ti].clips {
+                guard let inner = c.sequence, let d = timeline(inner)?.duration, c.mediaDuration != d else { continue }
+                c.mediaDuration = d
+                work.timelines[i].tracks[ti].replace(c)
+            }
+        }
         try body(&work.timelines[i])
         work.timelines[i].pruneTransitions()
         if work.reachableSequences(from: id).contains(id) { throw EditError.nestingCycle }
