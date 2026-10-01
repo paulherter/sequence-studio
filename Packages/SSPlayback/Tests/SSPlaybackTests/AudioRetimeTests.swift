@@ -104,7 +104,7 @@ private func risingCrossings(_ x: ArraySlice<Float>) -> Int {
         let m = UUID()
         for (speed, rev) in [(200, false), (200, true), (50, false), (100, true)] {
             func clip(gain: Double, volume: Double) -> Clip {
-                var c = retimedClip(m, srcLen: 4000, speed: ClipSpeed(percent: speed), reversed: rev, keepsPitch: false)
+                var c = retimedClip(m, srcLen: 4000, speed: ClipSpeed(percent: Double(speed)), reversed: rev, keepsPitch: false)
                 c.audioGainDB = gain
                 c.animation.volume = AnimatedProperty(volume)
                 return c
