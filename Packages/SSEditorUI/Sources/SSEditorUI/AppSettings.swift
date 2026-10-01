@@ -110,4 +110,34 @@ public enum KeyboardListing {
         }
         .sorted { ($0.command, $0.shortcut) < ($1.command, $1.shortcut) }
     }
+
+    /// Human name of the scope a binding is active in.
+    public static func scopeName(_ s: CommandScope) -> String {
+        switch s {
+        case .global: "Everywhere"
+        case .timeline: "Timeline"
+        case .program: "Program Monitor"
+        case .source: "Source Monitor"
+        case .project: "Project Panel"
+        }
+    }
+
+    /// Rows of the Keyboard Shortcuts window: every binding, sorted by command name, scopes in plain words.
+    public static func windowRows(_ map: CommandMap) -> [Row] {
+        map.entries.map { Row(command: $0.command.title, shortcut: text(for: $0.binding), scope: scopeName($0.scope)) }
+            .sorted { ($0.command, $0.shortcut) < ($1.command, $1.shortcut) }
+    }
+
+    /// Case-insensitive search over command, scope and shortcut; modifier symbols also match their names
+    /// ("cmd shift z" finds ⇧⌘Z). Every word of the query must match.
+    public static func filter(_ rows: [Row], query: String) -> [Row] {
+        let words = query.lowercased().split(whereSeparator: \.isWhitespace).map(String.init)
+        guard !words.isEmpty else { return rows }
+        return rows.filter { r in
+            let keys = r.shortcut.replacingOccurrences(of: "⌃", with: " control ").replacingOccurrences(of: "⌥", with: " option alt ")
+                .replacingOccurrences(of: "⇧", with: " shift ").replacingOccurrences(of: "⌘", with: " command cmd ")
+            let hay = (r.command + " " + r.scope + " " + r.shortcut + " " + keys).lowercased()
+            return words.allSatisfy { hay.contains($0) }
+        }
+    }
 }

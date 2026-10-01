@@ -57,7 +57,7 @@ private func rates(_ a: [RouterAction]) -> [ShuttleAction] {
         #expect(g(c("c"), .command) == .copy); #expect(g(c("x"), .command) == .cut); #expect(g(c("v"), .command) == .paste)
         #expect(g(c("v"), [.command, .option]) == .pasteAttributes)
         #expect(g(c("z"), .command) == .undo); #expect(g(c("z"), [.command, .shift]) == .redo)
-        #expect(g(c("\\")) == .zoomFit); #expect(g(c("+")) == .zoomIn); #expect(g(c("-")) == .zoomOut)
+        #expect(g(c("\\")) == .zoomFit); #expect(g(c("=")) == .zoomIn); #expect(g(c("-")) == .zoomOut)
         #expect(g(c("i"), .command) == .importMedia); #expect(g(c("n"), .command) == .newSequence)
         #expect(g(c("s"), .command) == .save); #expect(g(c("m"), .command) == .export)
         #expect(g(c("`")) == .maximizePanel)
@@ -95,15 +95,15 @@ private func rates(_ a: [RouterAction]) -> [ShuttleAction] {
 
     @Test func menusResolve() {
         for menu in EditorMenus.all {
-            let cmds = menu.items.compactMap { if case .command(let c) = $0 { c } else { nil } }
+            let cmds = menu.commands
             #expect(!cmds.isEmpty)
             #expect(Set(cmds).count == cmds.count, "duplicate in \(menu.title)")
             for c in cmds {
                 #expect(!c.title.isEmpty)
-                #expect(map.binding(for: c) != nil, "no key for \(c)")
+                #expect(map.binding(for: c) != nil || EditorMenus.menuOnly.contains(c), "no key for \(c)")
             }
         }
-        #expect(EditorMenus.all.map(\.title) == ["File", "Edit", "Clip", "Sequence", "View", "Window"])
+        #expect(EditorMenus.all.map(\.title) == ["File", "Edit", "Clip", "Sequence", "Markers", "View", "Window"])
     }
 }
 

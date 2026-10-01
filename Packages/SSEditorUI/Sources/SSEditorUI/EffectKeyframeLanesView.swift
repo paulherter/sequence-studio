@@ -22,12 +22,11 @@ public final class EffectKeyframeLanesView: NSView {
     }
 
     private enum Drag {
-        case keys(downX: CGFloat, downTime: Time, started: Bool, hit: Hit, shift: Bool, wasSelected: Bool)
+        case keys(downX: CGFloat, downTime: Time, started: Bool, hit: Hit, shift: Bool, wasSelected: Bool, duplicate: Bool)
         case marquee(origin: CGPoint, base: Set<SummaryMember>, shift: Bool)
     }
     private var drag: Drag?
     private var marquee: CGRect?
-    private var easeSide = EaseSide.both
 
     public init(model: EffectControlsModel) {
         self.model = model
@@ -151,6 +150,7 @@ public final class EffectKeyframeLanesView: NSView {
         let shift = event.modifierFlags.contains(.shift)
         let h = hit(at: p)
         if h == .none {
+            if let row = EffectControlsLayout.row(at: p.y, in: rows), case .property(let prop) = row.kind { model.focusedProperty = prop }
             let base = shift ? model.selection : []
             if !shift { model.clearSelection() }
             drag = .marquee(origin: p, base: base, shift: shift)
@@ -159,21 +159,26 @@ public final class EffectKeyframeLanesView: NSView {
         let was = isSelected(h)
         if shift { select(h, extend: true) } else if !was { select(h, extend: false) }
         drag = .keys(downX: p.x, downTime: geometry.time(at: p.x, frameDuration: model.frameDuration),
-                     started: false, hit: h, shift: shift, wasSelected: was)
+                     started: false, hit: h, shift: shift, wasSelected: was, duplicate: false)
     }
 
     public override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         switch drag {
-        case .keys(let downX, let downTime, let started, let h, let shift, let was)?:
-            guard !shift else { return }
+        case .keys(let downX, let downTime, let started, let h, let shift, let was, let dup)?:
+            var duplicate = dup
             if !started {
                 guard abs(p.x - downX) >= Self.dragThreshold else { return }
                 model.beginGesture()
-                drag = .keys(downX: downX, downTime: downTime, started: true, hit: h, shift: shift, wasSelected: was)
+                duplicate = event.modifierFlags.contains(.option)      // Option-drag leaves copies behind
+                drag = .keys(downX: downX, downTime: downTime, started: true, hit: h, shift: shift, wasSelected: was, duplicate: duplicate)
             }
             let now = geometry.time(at: p.x, frameDuration: model.frameDuration)
-            model.moveSelection(by: now - downTime)
+            var delta = now - downTime
+            if event.modifierFlags.contains(.shift) {                 // Shift snaps to the playhead and other keys
+                delta = model.snappedMoveDelta(delta, thresholdSeconds: Double(KeyframeSnap.thresholdPoints) / max(geometry.pointsPerSecond, 1e-6))
+            }
+            model.moveSelection(by: delta, duplicate: duplicate)
         case .marquee(let origin, let base, let shift)?:
             let r = NSRect(x: min(origin.x, p.x), y: min(origin.y, p.y), width: abs(p.x - origin.x), height: abs(p.y - origin.y))
             marquee = r
@@ -185,7 +190,7 @@ public final class EffectKeyframeLanesView: NSView {
 
     public override func mouseUp(with event: NSEvent) {
         defer { drag = nil; marquee = nil; needsDisplay = true }
-        guard case .keys(_, _, let started, let h, let shift, let was)? = drag else { return }
+        guard case .keys(_, _, let started, let h, let shift, let was, _)? = drag else { return }
         if started { model.endKeyMove() }       // one undo step; the moved keys are deselected
         else if was && !shift { select(h, extend: false) }   // plain click on a selected key collapses the selection to it
     }
@@ -230,61 +235,78 @@ public final class EffectKeyframeLanesView: NSView {
         }
     }
 
-    // MARK: Easing menu (same entries as the graph view)
+    // MARK: Right-click menu (Premiere: temporal interpolation, copy, paste, delete)
 
     public override func menu(for event: NSEvent) -> NSMenu? {
         let h = hit(at: convert(event.locationInWindow, from: nil))
         if h != .none, !isSelected(h) { select(h, extend: false) }
-        return makeEasingMenu()
+        if h != .none, case .key(let p, _, _) = h { model.focusedProperty = p }
+        return makeKeyMenu(onKey: h != .none)
     }
 
-    public func makeEasingMenu() -> NSMenu {
+    /// Entries only for what exists: on a key the six interpolations, saved curves, Copy, Paste, Delete; on empty
+    /// space only Paste when something is on the clipboard.
+    public func makeKeyMenu(onKey: Bool) -> NSMenu? {
         let has = !model.selection.isEmpty
-        let spec = EasingMenuSpec(library: model.easingLibrary, side: easeSide, hasSelection: has)
-        let menu = NSMenu(title: "Easing")
+        let menu = NSMenu(title: "Keyframe")
         menu.autoenablesItems = false
-        for entry in spec.entries {
-            switch entry {
-            case .header(let title):
-                menu.addItem(NSMenuItem.sectionHeader(title: title))
-            case .side(let s, let title, let checked):
-                let item = NSMenuItem(title: title, action: #selector(pickSide(_:)), keyEquivalent: "")
-                item.target = self; item.representedObject = SideBox(s); item.state = checked ? .on : .off
-                menu.addItem(item)
-            case .curve(let c, let enabled):
-                let item = NSMenuItem(title: c.name, action: #selector(applyCurve(_:)), keyEquivalent: "")
-                item.target = self; item.representedObject = c; item.isEnabled = enabled
-                menu.addItem(item)
-            case .separator:
-                menu.addItem(.separator())
-            case .saveCurve(let enabled):
-                let item = NSMenuItem(title: "Save Curve\u{2026}", action: #selector(saveCurve(_:)), keyEquivalent: "")
-                item.target = self; item.isEnabled = enabled
+        if onKey && has {
+            for choice in KeyInterpolationChoice.allCases {
+                let item = NSMenuItem(title: choice.title, action: #selector(applyChoice(_:)), keyEquivalent: "")
+                item.target = self; item.representedObject = ChoiceBox(choice)
                 menu.addItem(item)
             }
+            menu.addItem(.separator())
+            let more = NSMenuItem(title: "Saved Curves", action: nil, keyEquivalent: "")
+            let sub = NSMenu(title: "Saved Curves")
+            sub.autoenablesItems = false
+            for c in [EasingCurve.fastStart, .fastEnd] + model.easingLibrary.userCurves {
+                let item = NSMenuItem(title: c.name, action: #selector(applyCurve(_:)), keyEquivalent: "")
+                item.target = self; item.representedObject = c
+                sub.addItem(item)
+            }
+            sub.addItem(.separator())
+            let save = NSMenuItem(title: "Save Curve\u{2026}", action: #selector(saveCurve(_:)), keyEquivalent: "")
+            save.target = self
+            sub.addItem(save)
+            more.submenu = sub
+            menu.addItem(more)
+            menu.addItem(.separator())
+            let copy = NSMenuItem(title: "Copy", action: #selector(copyKeys(_:)), keyEquivalent: "")
+            copy.target = self
+            menu.addItem(copy)
         }
-        menu.addItem(.separator())
-        let del = NSMenuItem(title: "Delete Keyframes", action: #selector(deleteKeys(_:)), keyEquivalent: "")
-        del.target = self; del.isEnabled = has
-        menu.addItem(del)
-        return menu
+        if model.canPasteKeys {
+            let paste = NSMenuItem(title: "Paste", action: #selector(pasteKeys(_:)), keyEquivalent: "")
+            paste.target = self
+            menu.addItem(paste)
+        }
+        if onKey && has {
+            menu.addItem(.separator())
+            let del = NSMenuItem(title: "Delete", action: #selector(deleteKeys(_:)), keyEquivalent: "")
+            del.target = self
+            menu.addItem(del)
+        }
+        return menu.items.isEmpty ? nil : menu
     }
 
-    private final class SideBox: NSObject {
-        let side: EaseSide
-        init(_ s: EaseSide) { side = s }
+    private final class ChoiceBox: NSObject {
+        let choice: KeyInterpolationChoice
+        init(_ c: KeyInterpolationChoice) { choice = c }
     }
 
-    @objc private func pickSide(_ sender: NSMenuItem) {
-        if let b = sender.representedObject as? SideBox { easeSide = b.side }
+    @objc private func applyChoice(_ sender: NSMenuItem) {
+        if let b = sender.representedObject as? ChoiceBox { model.applyInterpolation(b.choice) }
     }
     @objc private func applyCurve(_ sender: NSMenuItem) {
-        if let c = sender.representedObject as? EasingCurve { model.applyEasing(c, side: easeSide) }
+        if let c = sender.representedObject as? EasingCurve { model.applyEasing(c, side: .both) }
     }
     @objc private func saveCurve(_ sender: NSMenuItem) {
         guard let name = namePrompt("Curve")?.trimmingCharacters(in: .whitespaces), !name.isEmpty else { return }
         model.saveCurveFromSelection(name: name)
     }
+    @objc private func copyKeys(_ sender: Any?) { model.copyKeys() }
+    @objc private func pasteKeys(_ sender: Any?) { model.pasteKeys() }
     @objc private func deleteKeys(_ sender: NSMenuItem) { model.deleteSelection() }
 
     @MainActor private static func runNameAlert(_ suggestion: String) -> String? {

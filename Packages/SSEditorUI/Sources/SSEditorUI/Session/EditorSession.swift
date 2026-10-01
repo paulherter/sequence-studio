@@ -44,6 +44,9 @@ public final class EditorSession {
     @ObservationIgnored private let saveQueue: ProjectSaveQueue
     @ObservationIgnored private let clock: @Sendable () -> Date
     @ObservationIgnored public var onChange: (@MainActor (Change) -> Void)?
+    /// Asked when the first clip placed into an empty, never configured sequence differs from its format (Premiere's
+    /// "change sequence settings / keep existing" prompt). true = adopt the clip's format. nil hook = adopt silently.
+    @ObservationIgnored public var confirmFormatChange: (@MainActor (_ current: SequenceFormat, _ proposed: SequenceFormat) -> Bool)?
 
     @ObservationIgnored private var forceDirty = false
     @ObservationIgnored private var pushed: (timeline: Timeline, sequences: [Timeline.ID: Timeline])?
@@ -220,6 +223,16 @@ public final class EditorSession {
         guard let t = activeTimeline else { selection = []; captionSelection = []; return }
         selection.formIntersection(Set(t.tracks.flatMap { $0.clips.map(\.id) }))
         captionSelection.formIntersection(Set(t.captionTracks.flatMap { $0.items.map(\.id) }))
+    }
+
+    /// Media that is not at its path (offline): the relink dialog's input.
+    public var missingMedia: [MediaRef] { project.missingMedia() }
+
+    /// Points offline media at found files: one undo step; the media is opened again.
+    public func relinkMedia(_ paths: [MediaRef.ID: String]) {
+        guard !paths.isEmpty else { return }
+        requestedMedia.subtract(paths.keys)       // so `syncMedia` prepares them again
+        perform("Relink Media") { $0.relink(paths) }
     }
 
     private func syncMedia() {
@@ -425,11 +438,14 @@ public final class EditorSession {
     /// Returns false when nothing could be placed (unknown ID, refused edit).
     @discardableResult
     public func placeMedia(_ ids: [MediaRef.ID], at time: Time? = nil, videoTrack: Track.ID? = nil,
-                           mode: ThreePointMode = .overwrite) -> Bool {
+                           mode: ThreePointMode = .overwrite, adoptFormat: Bool = true) -> Bool {
         guard let t = activeTimeline else { return false }
         let refs = ids.compactMap { project.media($0) }.filter { ($0.info?.duration ?? $0.duration) != nil }
         guard !refs.isEmpty else { return false }
-        let adopts = !t.formatLocked && t.tracks.allSatisfy { $0.clips.isEmpty }
+        var adopts = adoptFormat && !t.formatLocked && t.tracks.allSatisfy { $0.clips.isEmpty }
+        if adopts, let ask = confirmFormatChange, let proposed = formatMismatch(placing: ids) {
+            adopts = ask(t.format, proposed)
+        }
         let requested = time ?? playhead
         let marks = project.sourceMarks
         let done = attempt(mode == .insert ? "Insert" : "Overwrite") { tl in
@@ -460,6 +476,20 @@ public final class EditorSession {
             }
         }
         return done
+    }
+
+    /// The format the first of `ids` would give an empty, never configured sequence, when it differs from the current one
+    /// (size or frame rate). nil when `placeMedia` would not change the sequence format. The app asks the user first
+    /// ("change sequence settings / keep existing"), then places with `adoptFormat` accordingly.
+    public func formatMismatch(placing ids: [MediaRef.ID]) -> SequenceFormat? {
+        guard let t = activeTimeline, !t.formatLocked, t.tracks.allSatisfy({ $0.clips.isEmpty }),
+              let ref = ids.compactMap({ project.media($0) }).first(where: { ($0.info?.duration ?? $0.duration) != nil }),
+              let v = ref.info?.video else { return nil }
+        let still = ref.info?.isStill == true
+        let f = SequenceFormat(width: v.displayWidth, height: v.displayHeight,
+                               frameDuration: still ? t.format.frameDuration : v.nominalFrameDuration,
+                               audioSampleRate: t.format.audioSampleRate)
+        return f == t.format ? nil : f
     }
 
     /// New empty sequence in the active sequence's format (V1, V2, A1, A2); it becomes the active one.

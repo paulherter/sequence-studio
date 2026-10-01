@@ -13,6 +13,9 @@ final class WorkspaceHostView: NSView {
     /// Tab drag outcomes; delivered asynchronously, after the drag session has ended.
     var onDock: ((PanelID, PanelID, DropZone) -> Void)?
     var onMoveTab: ((PanelID, Int) -> Void)?
+    var tabMenu: ((PanelID) -> NSMenu?)?
+    /// The panel with keyboard focus gets the focus outline.
+    var focusedPanel: PanelID? { didSet { updateFocus() } }
     private var dragging = false
 
     override var isFlipped: Bool { true }
@@ -25,6 +28,11 @@ final class WorkspaceHostView: NSView {
         v.autoresizingMask = [.width, .height]
         addSubview(v)
         needsLayout = true
+        updateFocus()
+    }
+
+    private func updateFocus() {
+        for c in containers() { c.isFocused = c.selected == focusedPanel }
     }
 
     /// All tab groups currently on screen.
@@ -61,6 +69,7 @@ final class WorkspaceHostView: NSView {
             let c = PanelContainerView(panels: panels, selected: selected,
                                        content: panelView?(selected) ?? NSView()) { [weak self] p in self?.onSelectTab?(p) }
             c.strip.onPress = { [weak self] p, button, event in self?.tabPressed(p, button, event) }
+            c.strip.tabMenu = tabMenu
             return c
         case .split(let axis, let children, let fractions):
             let split = DividerSplitView(path: path, fractions: fractions,
