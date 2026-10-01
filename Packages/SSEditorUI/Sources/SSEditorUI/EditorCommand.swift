@@ -33,9 +33,12 @@ public enum EditorCommand: Sendable, Hashable {
     case videoTracksTaller, videoTracksShorter, audioTracksTaller, audioTracksShorter
     case minimizeAllTracks, expandAllTracks
     case focusPanel(PanelID)
-    case maximizePanel
+    case maximizePanel, maximizeActivePanel, resetLayout
     // File
     case importMedia, newSequence, save, export
+    case newProject, openProject, saveAs, revert, sequenceSettings, setToFrameSize
+    // App
+    case keyboardShortcuts, preferences
     // Keyframes (proposal in UX section 3)
     case easyEase, easeIn, easeOut, toggleHoldInterpolation
     case previousKeyframe, nextKeyframe, toggleSpeedGraph, addKeyframe
@@ -137,11 +140,21 @@ public enum EditorCommand: Sendable, Hashable {
         case .minimizeAllTracks: "Minimize All Tracks"
         case .expandAllTracks: "Expand All Tracks"
         case .focusPanel(let p): "Show " + Self.panelTitle(p)
-        case .maximizePanel: "Maximize Panel"
+        case .maximizePanel: "Maximize or Restore Panel Under Pointer"
+        case .maximizeActivePanel: "Maximize or Restore Active Panel"
+        case .resetLayout: "Reset to Saved Layout"
         case .importMedia: "Import Media…"
         case .newSequence: "New Sequence…"
         case .save: "Save"
         case .export: "Export…"
+        case .newProject: "New Project"
+        case .openProject: "Open Project…"
+        case .saveAs: "Save As…"
+        case .revert: "Revert"
+        case .sequenceSettings: "Sequence Settings…"
+        case .setToFrameSize: "Set to Frame Size"
+        case .keyboardShortcuts: "Keyboard Shortcuts…"
+        case .preferences: "Settings…"
         case .easyEase: "Easy Ease"
         case .easeIn: "Ease In"
         case .easeOut: "Ease Out"

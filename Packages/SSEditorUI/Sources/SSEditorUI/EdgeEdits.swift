@@ -38,13 +38,20 @@ public enum EdgeEdits {
         guard delta != .zero else { return [] }
         var out: [TimelineEdit] = []
         var done = Set<EdgeRef>()
+        // Edits act on the whole link group: one per group and kind, or the delta would apply twice.
+        var seen = Set<String>()
+        func fresh(_ ref: EdgeRef, _ kind: String) -> Bool {
+            guard let l = clip(ref.clip, in: t)?.clip.link else { return true }
+            return seen.insert("\(l)-\(kind)").inserted
+        }
         for r in sel.edges where !done.contains(r) {
             if let p = partner(of: r, in: t), sel.edges.contains(p) {
                 done.insert(r); done.insert(p)
                 let left = r.edge == .tail ? r : p
-                out.append(.roll(left.clip, by: delta))
+                if fresh(left, "roll") { out.append(.roll(left.clip, by: delta)) }
             } else {
                 done.insert(r)
+                guard fresh(r, r.edge == .head ? "head" : "tail") else { continue }
                 out.append(sel.ripple ? .rippleTrim(r.clip, edge: r.edge, by: delta) : .trim(r.clip, edge: r.edge, by: delta))
             }
         }

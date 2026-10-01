@@ -89,7 +89,12 @@ public struct TimelineInteraction: Sendable {
 
     public mutating func setEdgeSelection(_ e: EdgeSelection?) { edgeSelection = e; if e != nil { gapSelection = nil } }
 
-    public mutating func setSelection(_ ids: Set<Clip.ID>) { selection = ids }
+    /// Programmatic selection (Cmd+A, paste, undo...). A non-empty selection replaces any edge or gap selection;
+    /// an empty echo after an edge click leaves it alone.
+    public mutating func setSelection(_ ids: Set<Clip.ID>) {
+        selection = ids
+        if !ids.isEmpty { clearEdgeAndGap() }
+    }
     public mutating func setCaptionSelection(_ ids: Set<CaptionItem.ID>) { captionSelection = ids }
 
     /// Caption item under a view point (for double-click to edit text), nil elsewhere.
@@ -608,6 +613,11 @@ public struct TimelineInteraction: Sendable {
         let d = snappedDelta(travel(p, g), from: edgeTime, excluding: group(id, linked: true))
         let ripple = g.kind == .rippleTrim
         let edit: TimelineEdit = ripple ? .rippleTrim(id, edge: g.edge, by: d) : .trim(id, edge: g.edge, by: d)
+        // Several selected edges move together, like the keyboard trims.
+        if let sel = edgeSelection, sel.edges.count > 1 {
+            publish(EdgeEdits.trim(sel, by: d, in: timeline), ripple ? "Ripple Trim" : "Trim Clip")
+            return
+        }
         publish(d == .zero ? [] : [edit], ripple ? "Ripple Trim" : "Trim Clip")
     }
 
@@ -617,6 +627,10 @@ public struct TimelineInteraction: Sendable {
         if g.edge == .tail { left = c } else { left = track.clips.first { $0.timeline.end == c.start } }
         guard let left else { publish([], "Roll Edit"); return }
         let d = snappedDelta(travel(p, g), from: left.timeline.end, excluding: group(left.id, linked: true))
+        if let sel = edgeSelection, sel.edges.count > 2 {
+            publish(EdgeEdits.trim(sel, by: d, in: timeline), "Roll Edit")
+            return
+        }
         publish(d == .zero ? [] : [.roll(left.id, by: d)], "Roll Edit")
     }
 

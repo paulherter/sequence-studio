@@ -12,10 +12,12 @@ extension AppController {
              .markIn, .markOut, .markClip, .goToIn, .goToOut, .clearInOut, .lift, .extract, .insert, .overwrite, .addMarker,
              .tool, .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext,
              .delete, .rippleDelete, .toggleSnapping, .undo, .redo,
-             .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel,
+             .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel, .maximizeActivePanel, .resetLayout,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .minimizeAllTracks, .expandAllTracks,
              .importMedia, .newSequence, .save, .export:
+            true
+        case _ where isShellCommand(c):
             true
         default:
             Self.isTimelineOp(c)
@@ -26,6 +28,7 @@ extension AppController {
         if ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1" { NSLog("SSKEY execute \(c) playing=\(session.isPlaying)") }
         // Editing text (a field or the timecode box): the standard commands go to the editor.
         if let tv = textResponder, forwardToText(c, tv) { return }
+        if executeShellCommand(c) { return }
         if [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus, executeInEffectControls(c) { return }
         // Timeline operations (clipboard, link, nudge, edge trims...); Effect Controls keeps its own keys while it has focus.
         let ecOwns = [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus
@@ -86,7 +89,7 @@ extension AppController {
         case .zoomFit: if effectControlsHasFocus { panels.effectModel.zoomToFit() } else { panels.timelineView.zoomToFit() }
         case .focusPanel(let p): showPanel(p)
         case .maximizePanel:
-            if let p = focusedPanel { maximizedPanel = maximizedPanel == p ? nil : p; applyWorkspace() }
+            if let p = panelUnderMouse() ?? focusedPanel { toggleMaximize(p) }
         case .importMedia:
             showPanel(.project)
             panels.projectView.runImportPanel()

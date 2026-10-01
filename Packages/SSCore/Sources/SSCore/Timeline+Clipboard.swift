@@ -61,8 +61,9 @@ extension Timeline {
         var placements: [(clip: Clip, track: Track.ID)] = []
         for e in cb.entries {
             let list = laneTracks(e.clip.kind)
-            let lane = e.lane + (shift[e.clip.kind] ?? 0)
-            guard list.indices.contains(lane) else { throw EditError.clipNotFound }
+            // Lanes that do not exist are clamped to the top (or bottom) track of that kind.
+            guard !list.isEmpty else { throw EditError.wrongTrackKind }
+            let lane = min(max(e.lane + (shift[e.clip.kind] ?? 0), 0), list.count - 1)
             var c = e.clip
             c.id = UUID()
             c.start = e.offset                       // relative; placed below
@@ -123,6 +124,19 @@ extension Timeline {
         for m in members {
             var c = m.clip; c.link = l
             tracks[m.track].replace(c)
+        }
+        dropOrphanLinks()
+    }
+
+    /// Clears `link` on clips whose link group has fewer than two members.
+    public mutating func dropOrphanLinks() {
+        var counts: [UUID: Int] = [:]
+        for t in tracks { for c in t.clips { if let l = c.link { counts[l, default: 0] += 1 } } }
+        for i in tracks.indices {
+            for c in tracks[i].clips where c.link.map({ counts[$0, default: 0] < 2 }) == true {
+                var n = c; n.link = nil
+                tracks[i].replace(n)
+            }
         }
     }
 

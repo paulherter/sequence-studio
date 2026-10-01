@@ -22,4 +22,19 @@ import Testing
         t.updateMarker(id) { $0.color = .blue; $0.comment = "c"; $0.name = "n" }
         #expect(t.markers[0].color == .blue && t.markers[0].comment == "c" && t.markers[0].name == "n")
     }
+
+    @Test func v12FileLoadsWithMarkerDefaults() throws {
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("ss-v12-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let pid = UUID(), tid = UUID(), mid = UUID()
+        let json = #"""
+        {"formatVersion":12,"project":{"id":"\#(pid)","name":"Old","media":[],"activeTimeline":"\#(tid)",
+        "timelines":[{"id":"\#(tid)","name":"T","format":{"width":1920,"height":1080,"frameDuration":{"value":1,"timescale":30},"audioSampleRate":48000},
+        "tracks":[],"markers":[{"id":"\#(mid)","time":{"value":3,"timescale":1},"name":"M"}]}]}}
+        """#
+        try Data(json.utf8).write(to: dir.appendingPathComponent("project.json"))
+        let p = try ProjectFile.read(from: dir)
+        #expect(p.timelines[0].markers[0].name == "M" && p.timelines[0].markers[0].color == .green)
+    }
 }

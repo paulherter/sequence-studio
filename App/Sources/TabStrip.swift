@@ -6,6 +6,8 @@ import SSEditorUI
 final class TabStrip: NSView {
     private var buttons: [(PanelID, TabButton)] = []
     var onSelect: ((PanelID) -> Void)?
+    /// Right-click menu of a tab (Close Panel, Maximize Panel).
+    var tabMenu: ((PanelID) -> NSMenu?)?
     /// A tab was pressed: the owner runs the click-or-drag session (`DockDragSession`).
     var onPress: ((PanelID, NSView, NSEvent) -> Void)?
 
@@ -80,6 +82,11 @@ private final class TabButton: NSButton {
         (superview as? TabStrip)?.pressed(self, event)
     }
 
+    override func menu(for event: NSEvent) -> NSMenu? {
+        guard let strip = superview as? TabStrip, let p = PanelID(rawValue: identifier?.rawValue ?? "") else { return nil }
+        return strip.tabMenu?(p)
+    }
+
     override var intrinsicContentSize: NSSize {
         let w = (title as NSString).size(withAttributes: [.font: Theme.Fonts.small]).width
         return NSSize(width: ceil(w) + 20, height: 22)
@@ -108,8 +115,12 @@ final class PanelContainerView: NSView {
     let selected: PanelID
     let strip: TabStrip
     private let content: NSView
+    private let outline = FocusOutlineView()
 
     override var isFlipped: Bool { true }
+
+    /// The panel that has keyboard focus: drawn with a blue outline (Premiere's active-panel highlight).
+    var isFocused = false { didSet { if isFocused != oldValue { outline.isHidden = !isFocused; outline.needsDisplay = true } } }
 
     init(panels: [PanelID], selected: PanelID, content: NSView, onSelect: @escaping (PanelID) -> Void) {
         self.panels = panels; self.selected = selected; self.content = content
@@ -123,6 +134,8 @@ final class PanelContainerView: NSView {
         content.removeFromSuperview()
         content.autoresizingMask = []
         addSubview(content)
+        outline.isHidden = true
+        addSubview(outline)              // last: above the panel content, never takes clicks
     }
     @available(*, unavailable) required init?(coder: NSCoder) { fatalError() }
 
@@ -130,5 +143,19 @@ final class PanelContainerView: NSView {
         super.layout()
         strip.frame = CGRect(x: 0, y: 0, width: bounds.width, height: TabStrip.height)
         content.frame = CGRect(x: 0, y: TabStrip.height, width: bounds.width, height: max(bounds.height - TabStrip.height, 0))
+        outline.frame = bounds
+    }
+}
+
+/// 2 pt accent outline just inside a panel group.
+@MainActor
+private final class FocusOutlineView: NSView {
+    override var isFlipped: Bool { true }
+    override func hitTest(_ point: NSPoint) -> NSView? { nil }
+    override func draw(_ dirtyRect: NSRect) {
+        Theme.Colors.accent.withAlphaComponent(0.9).setStroke()
+        let path = NSBezierPath(rect: bounds.insetBy(dx: 1, dy: 1))
+        path.lineWidth = 2
+        path.stroke()
     }
 }

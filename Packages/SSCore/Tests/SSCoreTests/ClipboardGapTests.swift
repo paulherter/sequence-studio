@@ -78,7 +78,6 @@ private func starts(_ t: Track) -> [Int64] { t.clips.map { $0.start.value / $0.s
         var tl = timeline([locked])
         let cb = tl.clipboard(copying: [a.id])!
         #expect(throws: EditError.trackLocked) { try tl.paste(cb, at: s(20)) }
-        #expect(throws: EditError.clipNotFound) { try tl.paste(cb, at: s(20), lanes: [.video: 3]) }
     }
 }
 
@@ -163,4 +162,30 @@ private func starts(_ t: Track) -> [Int64] { t.clips.map { $0.start.value / $0.s
         #expect(starts(tl.tracks[0]) == [0, 4])
         #expect(tl.tracks[0].clips[0].timeline.duration == s(4))
     }
+
+@Suite struct LinkCleanupTests {
+    @Test func linkingOrphansNoOldPartner() throws {
+        let l = UUID()
+        let v = clip(0, 10, link: l), a = clip(0, 10, kind: .audio, link: l), x = clip(20, 5)
+        var tl = timeline([track([v, x]), track([a], kind: .audio)])
+        try tl.link([v.id, x.id])
+        #expect(tl.tracks[1].clips[0].link == nil)
+        #expect(tl.tracks[0].clips[0].link == tl.tracks[0].clips[1].link)
+    }
+
+    @Test func dropOrphanLinksClearsSingleMembers() {
+        let l = UUID()
+        var tl = timeline([track([clip(0, 5, link: l)])])
+        tl.dropOrphanLinks()
+        #expect(tl.tracks[0].clips[0].link == nil)
+    }
+
+    @Test func pasteClampsToExistingLanes() throws {
+        let a = clip(0, 5), b = clip(10, 5)
+        var tl = timeline([track([a]), track([b])])
+        let cb = tl.clipboard(copying: [a.id, b.id])!
+        try tl.paste(cb, at: s(30), lanes: [.video: 1])    // second clip would need a third lane
+        #expect(starts(tl.tracks[1]).contains(30) && starts(tl.tracks[1]).contains(40))
+    }
+}
 }

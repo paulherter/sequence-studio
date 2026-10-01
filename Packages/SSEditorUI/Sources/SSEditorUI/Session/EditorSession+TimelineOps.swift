@@ -113,6 +113,7 @@ extension EditorSession {
             guard let i = t.tracks.firstIndex(where: { $0.id == id }) else { return }
             if t.tracks[i].isLocked { throw EditError.trackLocked }
             t.tracks.remove(at: i)
+            t.dropOrphanLinks()
         }
     }
 

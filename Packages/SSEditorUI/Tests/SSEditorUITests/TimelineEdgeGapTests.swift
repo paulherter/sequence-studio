@@ -115,4 +115,48 @@ private func click(_ i: inout TimelineInteraction, _ p: CGPoint, _ m: GestureMod
         #expect(EdgeEdits.extend(EdgeSelection(edges: [head]), to: fd * 25, in: t) == [.trim(f.c2.id, edge: .head, by: fd * 5)])
         #expect(EdgeEdits.trim(EdgeSelection(edges: [tail]), by: .zero, in: t).isEmpty)
     }
+
+@Suite struct TimelineReviewFixTests {
+    @Test func programmaticSelectionClearsEdgeAndGapButEmptyEchoKeepsThem() {
+        let f = Fixture()
+        var i = f.interaction()
+        click(&i, CGPoint(x: X(40) - 1, y: yV1))
+        i.setSelection([])
+        #expect(i.edgeSelection != nil)
+        i.setSelection([f.c1.id])
+        #expect(i.edgeSelection == nil)
+        click(&i, CGPoint(x: X(50), y: yV1))
+        #expect(i.gapSelection != nil)
+        i.setSelection([f.c3.id])
+        #expect(i.gapSelection == nil)
+    }
+
+    @Test func linkedEdgesTrimOncePerGroup() {
+        let l = UUID()
+        var v = mk(0, 20), a = mk(0, 20)
+        v.link = l; a.link = l
+        let t = Timeline(name: "t", frameDuration: fd, tracks: [Track(kind: .video, clips: [v]), Track(kind: .video, clips: [a])])
+        let sel = EdgeSelection(edges: [EdgeRef(clip: v.id, edge: .tail), EdgeRef(clip: a.id, edge: .tail)])
+        #expect(EdgeEdits.trim(sel, by: fd * -2, in: t).count == 1)
+    }
+
+    @Test func draggingAMultiEdgeSelectionTrimsAllEdges() throws {
+        var c1 = mk(0, 20), c2 = mk(20, 20)
+        c1.link = nil; c2.link = nil
+        let v1 = Track(kind: .video, clips: [c1])
+        let v2 = Track(kind: .video, clips: [mk(0, 20)])
+        let t = Timeline(name: "t", frameDuration: fd, tracks: [v1, v2])
+        var i = TimelineInteraction(timeline: t, geometry: TimelineGeometry(frameDuration: fd, pointsPerFrame: 4))
+        i.toolState = ToolState(tool: .selection, snapping: false, linkedSelection: true)
+        let rows = i.geometry.rows(for: t)
+        let yA = rows[0].y + 10, yB = rows[1].y + 10
+        click(&i, CGPoint(x: X(20) - 1, y: yA))
+        i.mouseDown(CGPoint(x: X(20) - 1, y: yB), modifiers: .shift)
+        i.mouseUp(CGPoint(x: X(20) - 1, y: yB), modifiers: .shift)
+        #expect(i.edgeSelection?.edges.count == 2)
+        let c = try #require(drag(&i, from: CGPoint(x: X(20) - 1, y: yB), to: CGPoint(x: X(15) - 1, y: yB)))
+        #expect(c.timeline.tracks[0].clips[0].timeline.end == fd * 15)
+        #expect(c.timeline.tracks[1].clips[0].timeline.end == fd * 15)
+    }
+}
 }
