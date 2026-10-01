@@ -25,6 +25,7 @@ enum CompositorShaderSource {
         float4 key0;         // Ultra Key: hue (deg), half width (deg), soft edge (deg), spill (0...1)
         float4 key1;
         uint keyCount;       // keys in use (0...2)
+        uint roundFirst;     // 1 = round the whole frame first, then crop (Rounded Corners before Crop)
     };
 
     constexpr sampler linearSampler(filter::linear, address::clamp_to_edge);
@@ -111,9 +112,21 @@ enum CompositorShaderSource {
             float2 hi = 0.5f * ms - u.crop.zw * ms;
             float2 c = 0.5f * (lo + hi);
             float2 h = 0.5f * (hi - lo);
-            float r = min(u.cornerRadius, min(h.x, h.y));
-            float2 q = abs(in.local - c) - h + r;
-            float d = length(max(q, 0.0f)) + min(max(q.x, q.y), 0.0f) - r;   // signed distance, layer px
+            float d;
+            if (u.roundFirst != 0u) {
+                // Rounded Corners, then Crop: intersection of the rounded full frame and the straight crop rectangle.
+                float2 h0 = 0.5f * ms;
+                float r0 = min(u.cornerRadius, min(h0.x, h0.y));
+                float2 q0 = abs(in.local) - h0 + r0;
+                float d0 = length(max(q0, 0.0f)) + min(max(q0.x, q0.y), 0.0f) - r0;
+                float2 q1 = abs(in.local - c) - h;
+                float d1 = length(max(q1, 0.0f)) + min(max(q1.x, q1.y), 0.0f);
+                d = max(d0, d1);
+            } else {
+                float r = min(u.cornerRadius, min(h.x, h.y));
+                float2 q = abs(in.local - c) - h + r;
+                d = length(max(q, 0.0f)) + min(max(q.x, q.y), 0.0f) - r;      // signed distance, layer px
+            }
             float w = 1.0f / max(min(u.scale.x, u.scale.y), 1e-4f);          // layer px per screen px (not dfdx: a 2x2 quad edge skews it)
             cover = clamp(0.5f - d / w, 0.0f, 1.0f);
         }
@@ -126,6 +139,13 @@ enum CompositorShaderSource {
         }
         if (u.mode == 3) {
             float4 g = ty.sample(linearSampler, uv);   // premultiplied, already working-linear
+            if (u.keyCount > 0u && g.a > 0.0f) {
+                // Ultra Key after a blur (or another pass): key the straight colour, premultiply again.
+                float3 c = g.rgb / g.a;
+                float a = g.a * (1.0f - applyChromaKey(u.key0, c));
+                if (u.keyCount > 1u) a *= 1.0f - applyChromaKey(u.key1, c);
+                g = float4(c * a, a);
+            }
             float k = u.opacity * cover;
             return g * k;
         }

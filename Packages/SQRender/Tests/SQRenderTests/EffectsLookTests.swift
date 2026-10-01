@@ -256,7 +256,7 @@ private func near(_ a: SIMD4<Float>, _ e: SIMD4<Float>, _ tol: Float, _ note: St
     @Test func planShrinksLargeSigmaAndPadsTheMargin() {
         let small = GaussianBlur.Plan(layerWidth: 1920, layerHeight: 1080, sigma: 6)
         #expect(small.factor == 1 && small.radius == 18)
-        #expect(small.textureWidth == 1920 + 36)
+        #expect(small.textureWidth == 1984 && small.textureWidth % 64 == 0 && small.contentWidth == 1920)
         let big = GaussianBlur.Plan(layerWidth: 1920, layerHeight: 1080, sigma: 100)
         #expect(big.factor == 17)
         #expect(big.sigma <= 6 && big.radius <= 18)

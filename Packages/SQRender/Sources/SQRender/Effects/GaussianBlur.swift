@@ -62,9 +62,12 @@ public enum GaussianBlur {
             var f = max(1, Int((sigma / GaussianBlur.maxDirectSigma).rounded(.up)))
             while true {
                 let s = Float(sigma / Double(f))
-                let r = max(1, Int((3 * s).rounded(.up)))
-                let tw = Int((layerWidth / Double(f)).rounded(.up)) + 2 * r
-                let th = Int((layerHeight / Double(f)).rounded(.up)) + 2 * r
+                let r = sigma > 0 ? max(1, Int((3 * s).rounded(.up))) : 0
+                // Rounded up to a multiple of 64 so a sigma that animates keeps asking for the same few texture sizes and the
+                // pool can reuse them; the picture inside keeps its exact size, centred.
+                func up(_ v: Int) -> Int { (v + 63) / 64 * 64 }
+                let tw = up(Int((layerWidth / Double(f)).rounded(.up)) + 2 * r)
+                let th = up(Int((layerHeight / Double(f)).rounded(.up)) + 2 * r)
                 if max(tw, th) <= GaussianBlur.maxTextureSize || f > 4096 {
                     factor = f; self.sigma = s; radius = r
                     textureWidth = tw; textureHeight = th

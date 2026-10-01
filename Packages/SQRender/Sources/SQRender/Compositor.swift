@@ -116,6 +116,8 @@ public final class Compositor: @unchecked Sendable {
     /// Frames that could not be sampled (unknown / unsupported compressed format) and were drawn as `.damaged`.
     /// The caller should then request an uncompressed format (`PixelFormats.uncompressedEquivalent`).
     public private(set) var unsupportedFrameCount = 0
+    /// Intermediate textures ever allocated (the pool reuses same-sized ones): a steady animation must not keep growing this.
+    public private(set) var intermediateAllocations = 0
 
     struct Uniforms {
         var m = matrix_identity_float3x3
@@ -142,6 +144,8 @@ public final class Compositor: @unchecked Sendable {
         var key0 = SIMD4<Float>(0, 0, 0, 0)
         var key1 = SIMD4<Float>(0, 0, 0, 0)
         var keyCount: UInt32 = 0
+        /// 1 = Rounded Corners came before Crop: round the whole frame, then cut straight crop edges into it.
+        var roundFirst: UInt32 = 0
     }
 
     public init(device: MTLDevice) throws {
@@ -229,6 +233,7 @@ public final class Compositor: @unchecked Sendable {
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: width, height: height, mipmapped: false)
         d.usage = [.shaderRead, .shaderWrite, .renderTarget]
         d.storageMode = .private
+        queueLock.lock(); intermediateAllocations += 1; queueLock.unlock()
         return device.makeTexture(descriptor: d)
     }
 

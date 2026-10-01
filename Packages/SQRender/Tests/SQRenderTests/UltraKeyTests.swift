@@ -62,13 +62,14 @@ private func makeStrip(_ colors: [(UInt8, UInt8, UInt8)]) -> CVPixelBuffer {
         #expect(after < before)
     }
 
-    @Test func twoKeysComposeAndTheThirdIsIgnoredByTheEvaluation() {
+    @Test func twoKeysComposeAndAThirdGetsItsOwnPass() {
         let blue = ChromaKey(hue: 220, halfWidth: 36, soft: 13, spill: 0)
         let both = UltraKey.apply(rgb: SIMD3(0.05, 0.05, 0.7), alpha: 1, keys: [green, blue])
         #expect(both.alpha < 0.01)
         var c = Clip(name: "v", media: UUID(), kind: .video, source: TimeRange(start: .zero, duration: Time(4, 1)), start: .zero)
         for _ in 0..<3 { _ = c.addEffect(kind: ClipEffect.ultraKeyKind) }
-        #expect(c.effects(at: Time(1, 1)).keys.count == ChromaKey.maxPerLayer)
+        #expect(c.effects(at: Time(1, 1)).keys.count == 3)                 // all three apply: the third in a pass of its own
+        #expect(c.effects(at: Time(1, 1)).segments.map(\.keys.count) == [ChromaKey.maxPerLayer, 1])
     }
 
     @Test func gpuMatchesCPU() throws {

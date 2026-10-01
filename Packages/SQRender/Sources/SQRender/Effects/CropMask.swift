@@ -13,9 +13,17 @@ public enum CropMask {
     }
 
     /// Signed distance (layer px, negative inside) of `p` to the kept rectangle with rounded corners.
-    public static func signedDistance(_ p: SIMD2<Float>, size: SIMD2<Float>, crop: CropInsets, cornerRadius: Float) -> Float {
+    public static func signedDistance(_ p: SIMD2<Float>, size: SIMD2<Float>, crop: CropInsets, cornerRadius: Float,
+                                      roundFirst: Bool = false) -> Float {
         let (lo, hi) = keptRect(size: size, crop: crop)
         let c = 0.5 * (lo + hi), h = 0.5 * (hi - lo)
+        if roundFirst {
+            // Rounded Corners, then Crop: the rounded full frame intersected with the straight crop rectangle.
+            let d0 = signedDistance(p, size: size, crop: .none, cornerRadius: cornerRadius)
+            let q1 = simd_abs(p - c) - h
+            let d1 = simd_length(simd_max(q1, SIMD2(repeating: 0))) + min(max(q1.x, q1.y), 0)
+            return max(d0, d1)
+        }
         let r = min(cornerRadius, min(h.x, h.y))
         let q = simd_abs(p - c) - h + SIMD2(repeating: r)
         let outside = simd_length(simd_max(q, SIMD2(repeating: 0)))
@@ -23,20 +31,22 @@ public enum CropMask {
     }
 
     /// Coverage 0...1 at `p` for an axis-aligned layer drawn at scale 1 (one layer px per screen px).
-    public static func coverage(_ p: SIMD2<Float>, size: SIMD2<Float>, crop: CropInsets, cornerRadius: Float) -> Float {
-        let d = signedDistance(p, size: size, crop: crop, cornerRadius: cornerRadius)
+    public static func coverage(_ p: SIMD2<Float>, size: SIMD2<Float>, crop: CropInsets, cornerRadius: Float,
+                                roundFirst: Bool = false) -> Float {
+        let d = signedDistance(p, size: size, crop: crop, cornerRadius: cornerRadius, roundFirst: roundFirst)
         return min(max(0.5 - d, 0), 1)
     }
 
     /// Applies the mask to premultiplied pixels (row-major, `width` x `height`), pixel centres sampled.
     /// Identity crop and radius 0 touch nothing.
-    public static func apply(_ px: inout [SIMD4<Float>], width: Int, height: Int, crop: CropInsets, cornerRadius: Float) {
+    public static func apply(_ px: inout [SIMD4<Float>], width: Int, height: Int, crop: CropInsets, cornerRadius: Float,
+                             roundFirst: Bool = false) {
         guard !crop.isIdentity || cornerRadius > 0 else { return }
         let size = SIMD2(Float(width), Float(height))
         for y in 0..<height {
             for x in 0..<width {
                 let p = SIMD2(Float(x) + 0.5, Float(y) + 0.5) - 0.5 * size
-                px[y * width + x] *= coverage(p, size: size, crop: crop, cornerRadius: cornerRadius)
+                px[y * width + x] *= coverage(p, size: size, crop: crop, cornerRadius: cornerRadius, roundFirst: roundFirst)
             }
         }
     }

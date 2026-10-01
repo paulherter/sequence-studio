@@ -112,4 +112,44 @@ private func oetf709(_ l: Double) -> Double {
         clip.blendMode = .normal
         #expect(try await frame(clip) == plain)
     }
+
+    /// [Rounded Corners, Crop] and [Crop, Rounded Corners] are different pictures, and export equals playback for both.
+    @Test func effectOrderMattersAndExportEqualsPlayback() async throws {
+        let device = try #require(MTLCreateSystemDefaultDevice())
+        let media = UUID()
+        let resolver = StaticMediaResolver(stills: [media: try solidStill(64, 36, r: 1, g: 0.6, b: 0.3)])
+        let dur = TimeRange(start: .zero, duration: Time(2, 1))
+        var results: [[Int]] = []
+        for roundedFirst in [true, false] {
+            var c = Clip(name: "c", media: media, kind: .video, source: dur, start: .zero, isStill: true)
+            let order = roundedFirst ? [ClipEffect.roundedCornersKind, ClipEffect.cropKind] : [ClipEffect.cropKind, ClipEffect.roundedCornersKind]
+            for kind in order {
+                let id = c.addEffect(kind: kind)!
+                if kind == ClipEffect.cropKind { c.setParameter(id, ClipEffect.cropLeftKey, to: 25) }
+                else { c.setParameter(id, ClipEffect.radiusKey, to: 12) }
+            }
+            let tl = Timeline(name: "t", format: SequenceFormat(width: 64, height: 36, frameDuration: fd),
+                              tracks: [Track(kind: .video, clips: [c])])
+            let source = try TimelineFrameSource(timeline: tl, provider: DecoderFrameProvider(resolver: resolver),
+                                                 width: 64, height: 36, frameDuration: fd, frameCount: 2)
+            let exported = try await source.frame(at: 0)
+            let engine = try PlaybackEngine(device: device, media: resolver, clock: ManualClock())
+            engine.setTimeline(tl)
+            engine.seek(to: .zero)
+            await engine.waitForDecodes()
+            #expect(engine.tick())
+            let tex = try #require(engine.lastRenderedTexture)
+            let pixels = playbackPixels(tex, device: device)
+            var row: [Int] = []
+            for (x, y) in [(17, 1), (40, 18), (20, 34)] {
+                let i = (y * tex.width + x) * 4
+                let want = (0..<3).map { Int((oetf709(Double(pixels[i + $0])) * 255).rounded()) }
+                let e = exportPixel(exported, x, y)
+                #expect(abs(e.r - want[0]) <= 3 && abs(e.g - want[1]) <= 3 && abs(e.b - want[2]) <= 3, "(\(x),\(y)) export \(e) vs \(want)")
+                row.append(e.r)
+            }
+            results.append(row)
+        }
+        #expect(results[0][0] > 200 && results[1][0] < 30, "top-left of the crop: round-first keeps it, crop-first cuts it: \(results)")
+    }
 }
