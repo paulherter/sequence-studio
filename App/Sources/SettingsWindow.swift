@@ -14,6 +14,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let qualityPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let prerollPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let postrollPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
+    private let textDurationPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let cachePath = NSTextField(labelWithString: "")
     private let usedLabel = NSTextField(labelWithString: "")
 
@@ -97,7 +98,10 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
         autosavePopUp.target = self; autosavePopUp.action = #selector(changed)
         recoveryCheck.target = self; recoveryCheck.action = #selector(changed)
+        for s in AppSettings.textDurationChoices { textDurationPopUp.addItem(withTitle: s == 1 ? "1 second" : "\(s) seconds"); textDurationPopUp.lastItem?.tag = s }
+        textDurationPopUp.target = self; textDurationPopUp.action = #selector(changed)
         return column([row("Autosave", autosavePopUp), row("Recovery", recoveryCheck),
+                       row("New text length", textDurationPopUp),
                        note("Changed projects are saved to a recovery copy; your project file is only written when you save. The interval applies the next time Sequence Studio starts.")])
     }
 
@@ -131,6 +135,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         qualityPopUp.selectItem(at: MonitorQuality.allCases.firstIndex(of: s.defaultQuality) ?? 0)
         prerollPopUp.selectItem(at: AppSettings.rollChoices.firstIndex(of: s.prerollSeconds) ?? 3)
         postrollPopUp.selectItem(at: AppSettings.rollChoices.firstIndex(of: s.postrollSeconds) ?? 2)
+        textDurationPopUp.selectItem(withTag: s.defaultTextSeconds)
+        if textDurationPopUp.selectedItem == nil { textDurationPopUp.selectItem(withTag: 5) }
         cachePath.stringValue = s.effectiveCacheFolder.path
         refreshUsed()
     }
@@ -142,6 +148,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         if let raw = qualityPopUp.selectedItem?.representedObject as? String, let q = MonitorQuality(rawValue: raw) { s.defaultQuality = q }
         s.prerollSeconds = AppSettings.rollChoices[max(prerollPopUp.indexOfSelectedItem, 0)]
         s.postrollSeconds = AppSettings.rollChoices[max(postrollPopUp.indexOfSelectedItem, 0)]
+        if let t = textDurationPopUp.selectedItem?.tag, t > 0 { s.defaultTextSeconds = t }
         controller.settings = s
         s.save()
     }

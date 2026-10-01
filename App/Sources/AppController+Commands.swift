@@ -16,7 +16,7 @@ extension AppController {
              .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel, .maximizeActivePanel, .resetLayout,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .minimizeAllTracks, .expandAllTracks, .speedDuration,
-             .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing,
+             .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing, .toggleCaptionsInMonitor,
              .playInToOutRoll, .playAround, .setPosterFrame, .clearPosterFrame, .toggleHoverScrub, .find:
             true
         case _ where isShellCommand(c):
@@ -114,6 +114,7 @@ extension AppController {
         case .export: showExport()
         case .audioGain: requestAudioGain()
         case .toggleAudioScrubbing: toggleAudioScrubbing()
+        case .toggleCaptionsInMonitor: toggleCaptionsInMonitor()
         default: break
         }
     }
@@ -152,7 +153,7 @@ extension AppController {
         case .hand: mapped = .hand
         case .type: mapped = .type
         case .rateStretch: mapped = .rateStretch
-        case .zoom: mapped = nil
+        case .zoom: mapped = .zoom
         }
         // The Program monitor follows: Hand pans the view, Type places text, everything else is the selection behaviour.
         panels.setMonitorTool(t == .hand ? .hand : t == .type ? .type : .select)

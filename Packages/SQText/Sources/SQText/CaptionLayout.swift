@@ -16,11 +16,12 @@ public enum CaptionLayout {
     }
 
     public static func template(text: String, style: TextStyle, canvasWidth: Double, canvasHeight: Double,
-                                widthFraction: Double = widthFraction) -> TextTemplate {
+                                widthFraction: Double = widthFraction, highlight: TextHighlight? = nil) -> TextTemplate {
         var s = style
         s.alignment = .center
         s.verticalAlignment = .bottom
         var t = TextTemplate(name: "Caption", text: text, style: s)
+        t.highlight = highlight
         t.box = box(canvasWidth: canvasWidth, canvasHeight: canvasHeight, widthFraction: widthFraction)
         return t
     }

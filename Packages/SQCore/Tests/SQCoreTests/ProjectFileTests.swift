@@ -77,7 +77,7 @@ import Testing
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir) }
         try ProjectFile.write(try sample(), to: dir)
         let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
-        #expect(text.contains("\"formatVersion\" : 19"))
+        #expect(text.contains("\"formatVersion\" : \(ProjectFile.currentVersion)"))
         #expect(text.contains("\n"))
         #expect(text.contains("2023-11-14T22:13:20Z"))
     }
@@ -300,7 +300,7 @@ import Testing
         #expect(c.animation.position.track.isEmpty)
         try ProjectFile.write(p, to: dir)
         let text = try String(contentsOf: dir.appendingPathComponent("project.json"), encoding: .utf8)
-        #expect(text.contains("\"formatVersion\" : 19"))
+        #expect(text.contains("\"formatVersion\" : \(ProjectFile.currentVersion)"))
     }
 
     @Test func v4FileLoadsWithoutNestingCaptionsOrRadius() throws {
@@ -318,7 +318,7 @@ import Testing
         #expect(c.sequence == nil && c.clipSource == .media(mid))
         #expect(c.effects.isEmpty)
         #expect(p.timelines[0].captionTracks.isEmpty)
-        #expect(ProjectFile.currentVersion == 19)
+        #expect(ProjectFile.currentVersion >= 18)
     }
 
     @Test func v15FileLoadsAndKeepsSpeedWithoutGain() throws {

@@ -24,6 +24,10 @@ public struct AppSettings: Sendable, Equatable {
     public var cacheFolder: URL?
     /// Cache size cap in gigabytes.
     public var cacheCapGB: Int
+    // Text
+    /// Length of a new text layer and of a caption added by hand, in seconds (Premiere: 5 s for a title).
+    public var defaultTextSeconds: Int = 5
+    public static let textDurationChoices = [1, 2, 3, 4, 5, 8, 10, 15, 30]
 
     public static let autosaveChoices: [TimeInterval] = [60, 120, 300, 600, 900]
     public static let cacheCapChoices = [10, 20, 50, 100, 250]
@@ -59,6 +63,7 @@ public struct AppSettings: Sendable, Equatable {
         static let preroll = "settings.prerollSeconds"
         static let postroll = "settings.postrollSeconds"
         static let hoverScrub = "settings.hoverScrub"
+        static let textSeconds = "settings.defaultTextSeconds"
     }
 
     public static func load(from d: UserDefaults = .standard) -> AppSettings {
@@ -78,6 +83,10 @@ public struct AppSettings: Sendable, Equatable {
         if d.object(forKey: Key.preroll) != nil { let v = d.integer(forKey: Key.preroll); if (0...60).contains(v) { s.prerollSeconds = v } }
         if d.object(forKey: Key.postroll) != nil { let v = d.integer(forKey: Key.postroll); if (0...60).contains(v) { s.postrollSeconds = v } }
         if d.object(forKey: Key.hoverScrub) != nil { s.hoverScrub = d.bool(forKey: Key.hoverScrub) }
+        if d.object(forKey: Key.textSeconds) != nil {
+            let v = d.integer(forKey: Key.textSeconds)
+            if v >= 1, v <= 600 { s.defaultTextSeconds = v }
+        }
         return s
     }
 
@@ -91,6 +100,7 @@ public struct AppSettings: Sendable, Equatable {
         d.set(prerollSeconds, forKey: Key.preroll)
         d.set(postrollSeconds, forKey: Key.postroll)
         d.set(hoverScrub, forKey: Key.hoverScrub)
+        d.set(defaultTextSeconds, forKey: Key.textSeconds)
     }
 }
 

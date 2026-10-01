@@ -522,6 +522,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         // (isFieldEditor but not editable) must not swallow Space/J/K/L: that was the "Space does nothing" regression.
         if let tv = window.firstResponder as? NSTextView, tv.isEditable { return event }
         guard let ke = KeyMapping.keyEvent(from: event) else { return event }
+        if handleSnapHold(ke) { return nil }
         // Command shortcuts belong to the menus (key equivalents).
         if ke.modifiers.contains(.command) { return event }
         // Lists keep their arrow and delete keys.

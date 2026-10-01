@@ -48,6 +48,8 @@ public protocol ProgramEngine: AnyObject {
     var cacheGeneration: Int { get }
     /// Debug HUD text with the scrub latency; nil when nothing was measured or for stand-ins.
     var scrubLatencyText: String? { get }
+    /// Captions drawn over the picture in the monitor (the export burn-in is separate).
+    var showsCaptions: Bool { get set }
 }
 
 extension ProgramEngine {
@@ -61,6 +63,7 @@ extension ProgramEngine {
     public var cachedSpans: [TimeRange] { [] }
     public var cacheGeneration: Int { 0 }
     public var scrubLatencyText: String? { nil }
+    public var showsCaptions: Bool { get { true } set {} }
 }
 
 extension PlaybackEngine: ProgramEngine {
