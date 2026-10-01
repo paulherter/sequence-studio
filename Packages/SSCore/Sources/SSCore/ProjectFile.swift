@@ -8,11 +8,11 @@ public enum ProjectFileError: Error, Equatable {
 
 /// Package directory `Name.ssproj/` with `project.json` and `Autosave/`.
 public enum ProjectFile {
-    public static let currentVersion = 13
+    public static let currentVersion = 15
     public typealias JSONObject = [String: Any]
     /// Upgrades the top-level object from version N to N+1, keyed by N.
     public typealias Migrations = [Int: (JSONObject) throws -> JSONObject]
-    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7, 7: migrateV7toV8, 8: migrateV8toV9, 9: migrateV9toV10, 10: migrateV10toV11, 11: migrateV11toV12, 12: migrateV12toV13] }
+    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7, 7: migrateV7toV8, 8: migrateV8toV9, 9: migrateV9toV10, 10: migrateV10toV11, 11: migrateV11toV12, 12: migrateV12toV13, 13: migrateV13toV14, 14: migrateV14toV15] }
 
     /// v2: `Timeline.frameDuration` moved into `Timeline.format` (defaults 1920x1080, 48 kHz).
     /// Track flags, `inOut` and `markers` are optional on decode, so nothing else changes.
@@ -84,6 +84,13 @@ public enum ProjectFile {
     static func migrateV11toV12(_ obj: JSONObject) throws -> JSONObject { obj }
     /// v13: markers gain colour, comment and duration (decoded with defaults).
     static func migrateV12toV13(_ obj: JSONObject) throws -> JSONObject { obj }
+
+    /// v14: hue curves (colour stream). Optional on decode: identity migration.
+    static func migrateV13toV14(_ obj: JSONObject) throws -> JSONObject { obj }
+
+    /// v15: `Clip.speed` (ratio), `Clip.reversed`, `Clip.keepsPitch`. All optional on decode; absent = 100 %, not reversed,
+    /// pitch kept: identity migration.
+    static func migrateV14toV15(_ obj: JSONObject) throws -> JSONObject { obj }
 
     static let fileName = "project.json"
     static let autosaveDir = "Autosave"

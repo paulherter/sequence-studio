@@ -12,6 +12,8 @@ public enum EditError: Error, Equatable {
     case nestingCycle
     case timelineNotFound
     case invalidFormat
+    /// Speed/Duration on a clip that has no constant speed (nested sequence, generator, still).
+    case speedUnsupported
 }
 
 /// What a clip plays: imported media, or another sequence of the project (nested sequence).
@@ -46,7 +48,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var kind: TrackKind
     /// Portion of the media used.
     public var source: TimeRange
-    /// Position on the track; duration equals `source.duration` until speed changes exist.
+    /// Position on the track. Timeline duration is `duration` = `source.duration / speed`.
     public var start: Time
     /// Linked A/V partners share a link ID.
     public var link: UUID?
@@ -70,6 +72,13 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var isStill: Bool = false
     /// Explicitly applied effects (v9), in render order. Empty = none applied (nothing shows in Effect Controls).
     public var effects: [ClipEffect] = []
+    /// Constant speed (v13). 100 % = `.normal`. Only media clips are retimed (nested sequences, generators and stills
+    /// stay at 100 %; `Timeline.setSpeed` refuses them).
+    public var speed: ClipSpeed = .normal
+    /// Plays the source range backwards (v13). The clip's first frame is the last frame of `source`.
+    public var reversed: Bool = false
+    /// Audio: keep the pitch when speed is not 100 % (time-stretch); false = resample (pitch follows speed).
+    public var keepsPitch: Bool = true
 
     /// Media, nested sequence or generator.
     public var clipSource: ClipSource {
@@ -78,16 +87,51 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
     public var isNested: Bool { sequence != nil }
     public var isGenerator: Bool { generator != nil }
-    /// How far the head can still grow (source handle before `source.start`); nil = unbounded (generator).
-    var headHandle: Time? { isGenerator || isStill ? nil : source.start }
+    /// Length on the timeline: the source range played at `speed`.
+    public var duration: Time { speed.isNormal ? source.duration : speed.unscale(source.duration) }
 
-    public var timeline: TimeRange { TimeRange(start: start, duration: source.duration) }
+    /// How far the head can still grow, in timeline time (the source handle that plays first, divided by `speed`:
+    /// before `source.start`, or after `source.end` for a reversed clip); nil = unbounded.
+    var headHandle: Time? {
+        if isGenerator || isStill { return nil }
+        if reversed { return mediaDuration.map { speed.unscale($0 - source.end) } }
+        return speed.unscale(source.start)
+    }
+    /// How far the tail can still grow, in timeline time; nil = unbounded.
+    var tailRoom: Time? {
+        if isGenerator || isStill { return mediaDuration.map { speed.unscale($0 - source.end) } }
+        if reversed { return speed.unscale(source.start) }
+        return mediaDuration.map { speed.unscale($0 - source.end) }
+    }
+
+    public var timeline: TimeRange { TimeRange(start: start, duration: duration) }
+
+    /// Source time shown at timeline time `t` (absolute). Forward: `source.start + local * speed`. Reversed: the clip
+    /// plays `source` backwards, so the frame shown for the timeline frame [local, local + frameDuration) is the one
+    /// ending at `source.end - local * speed`; its start is `source.end - (local + frameDuration) * speed`.
+    /// Generators have no time axis: `local`. Clamped into `source` for reversed clips.
+    public func sourceTime(at t: Time, frameDuration: Time) -> Time {
+        let local = t - start
+        if isGenerator { return local }
+        if reversed {
+            return max(source.end - speed.scale(local + frameDuration), source.start)
+        }
+        return source.start + speed.scale(local)
+    }
+
+    /// Timeline time (absolute) at which source time `s` is shown; the inverse of `sourceTime`. Pass the sequence frame
+    /// duration for reversed clips (the frame shown starts one frame before the mapped end). Used to map decoded frames back onto the timeline.
+    public func timelineTime(forSource s: Time, frameDuration: Time = .zero) -> Time {
+        reversed ? start + speed.unscale(source.end - s) - frameDuration : start + speed.unscale(s - source.start)
+    }
 
     public init(id: UUID = UUID(), name: String, media: UUID, kind: TrackKind,
                 source: TimeRange, start: Time, link: UUID? = nil, mediaDuration: Time? = nil,
                 animation: ClipAnimation = ClipAnimation(), sequence: Timeline.ID? = nil,
                 generator: GeneratorRef? = nil, color: ClipColor = .default, label: LabelColor? = nil,
-                isStill: Bool = false, effects: [ClipEffect] = []) {
+                isStill: Bool = false, effects: [ClipEffect] = [],
+                speed: ClipSpeed = .normal, reversed: Bool = false, keepsPitch: Bool = true) {
+        self.speed = speed; self.reversed = reversed; self.keepsPitch = keepsPitch
         self.isStill = isStill
         self.effects = effects
         self.label = label
@@ -100,7 +144,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill
+        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch
     }
 
     public init(from d: Decoder) throws {
@@ -116,7 +160,10 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   color: try c.decodeIfPresent(ClipColor.self, forKey: .color) ?? .default,
                   label: try c.decodeIfPresent(LabelColor.self, forKey: .label),
                   isStill: try c.decodeIfPresent(Bool.self, forKey: .isStill) ?? false,
-                  effects: try c.decodeIfPresent([ClipEffect].self, forKey: .effects) ?? [])
+                  effects: try c.decodeIfPresent([ClipEffect].self, forKey: .effects) ?? [],
+                  speed: try c.decodeIfPresent(ClipSpeed.self, forKey: .speed) ?? .normal,
+                  reversed: try c.decodeIfPresent(Bool.self, forKey: .reversed) ?? false,
+                  keepsPitch: try c.decodeIfPresent(Bool.self, forKey: .keepsPitch) ?? true)
         // v8 -> v9: a radius that was not the default becomes an applied Rounded Corners effect.
         if let legacy = animation.legacyCornerRadius {
             animation.legacyCornerRadius = nil
@@ -135,20 +182,47 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
         link = n
     }
 
-    /// Moves `source.start` by `d` and shifts the clip-local keys by -d, so keys stay on the same
-    /// source frames (Premiere). Keys pushed outside 0...duration are kept, like in `cropped`.
-    /// Not for slip: there keys stay at the same position in the clip.
-    mutating func shiftSourceStart(by d: Time) {
-        source.start += d
-        animation = animation.shifted(by: .zero - d)
-        effects = effects.map { $0.shifted(by: .zero - d) }
+    /// Makes the clip `g` longer at its head (negative = shorter) without moving `start` (the caller moves it).
+    /// The source side that plays first changes by `g * speed`; keys stay on the same frames, so they shift by `g`
+    /// (clip-local keys are timeline time). Keys pushed outside 0...duration are kept, like in `cropped`.
+    mutating func extendHead(by g: Time) {
+        let d = speed.scale(g)
+        if reversed { source.duration += d } else { source.start -= d; source.duration += d }
+        animation = animation.shifted(by: g)
+        effects = effects.map { $0.shifted(by: g) }
     }
 
-    /// Keeps the part of the clip inside `range` (timeline coordinates), source offset follows.
+    /// Moves the clip-local key times after a retime from `old` to `new` timeline duration: scaled by new/old so keys stay on
+    /// the same content; when the direction flipped (`mirror`), mirrored inside the clip as well.
+    mutating func rescaleKeys(from old: Time, to new: Time, mirror: Bool) {
+        guard old > .zero, old != new || mirror else { return }
+        let num = new.value * old.timescale, den = new.timescale * old.value
+        let f: (Time) -> Time = { t in
+            let s = Time(t.value * num, t.timescale * den)
+            return mirror ? new - s : s
+        }
+        animation = animation.remapped(f)
+        effects = effects.map { $0.remapped(f) }
+    }
+
+    /// Makes the clip `g` longer at its tail (negative = shorter). The source side that plays last changes by `g * speed`.
+    mutating func extendTail(by g: Time) {
+        let d = speed.scale(g)
+        if reversed { source.start -= d }
+        source.duration += d
+    }
+
+    /// Keeps the part of the clip inside `range` (timeline coordinates); the source range follows through speed and
+    /// direction, keys stay on the same frames.
     func cropped(to range: TimeRange) -> Clip? {
         guard let r = timeline.intersection(range) else { return nil }
         var c = self
-        c.source = TimeRange(start: source.start + (r.start - start), duration: r.duration)
+        let a = r.start - start, len = speed.scale(r.duration)
+        if reversed {
+            c.source = TimeRange(start: source.end - speed.scale(a) - len, duration: len)
+        } else {
+            c.source = TimeRange(start: source.start + speed.scale(a), duration: len)
+        }
         c.start = r.start
         c.animation = animation.shifted(by: start - r.start)   // keep keys on the same frames
         c.effects = effects.map { $0.shifted(by: start - r.start) }

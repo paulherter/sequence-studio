@@ -128,7 +128,7 @@ extension EffectControlsModel {
     public func snappedMoveDelta(_ delta: Time, thresholdSeconds: Double) -> Time {
         guard let c = workingClip else { return delta }
         let all = Self.tracks(of: c)
-        var moving: [Time] = [], fixed: [Time] = [.zero, c.source.duration]
+        var moving: [Time] = [], fixed: [Time] = [.zero, c.duration]
         if playheadInClip { fixed.append(localPlayhead) }
         for (p, t) in all {
             for k in t.times {

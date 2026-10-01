@@ -5,6 +5,8 @@ import SSCore
 public enum TimelineMenuAction: Sendable, Hashable, CaseIterable {
     case cut, copy, paste, pasteInsert, delete, rippleDelete, unlink, link, nest, rename
     case setToFrameSize, scaleToFrameSize
+    /// Clip > Speed/Duration.
+    case speed
     /// Opens the label colour submenu (its choices go to `makeMenu`'s `labelHandler`).
     case label
 }
@@ -43,7 +45,8 @@ public enum TimelineContextMenu {
             : TimelineMenuItem(.unlink, "Unlink", enabled: true, key: "l")
         // Generators (text) have no picture size to fit.
         let hasPictures = clips.contains { !$0.isGenerator && $0.kind == .video }
-        // Premiere order. Entries for features we do not have (Enable, Speed/Duration, Reveal in Project) are left out.
+        let canRetime = clips.contains { Timeline.canRetime($0) }
+        // Premiere order. Entries for features we do not have (Enable, Reveal in Project) are left out.
         return [
             TimelineMenuItem(.cut, "Cut", enabled: hasClips, key: "x"),
             TimelineMenuItem(.copy, "Copy", enabled: hasClips, key: "c"),
@@ -53,6 +56,7 @@ public enum TimelineContextMenu {
             TimelineMenuItem(.rippleDelete, "Ripple Delete", enabled: hasClips, key: "\u{8}", modifiers: [.shift]),
             linkItem.separatorBefore(true),
             TimelineMenuItem(.nest, "Nest…", enabled: hasClips, separatorBefore: true),
+            TimelineMenuItem(.speed, "Speed/Duration…", enabled: canRetime, key: "r"),
             TimelineMenuItem(.setToFrameSize, "Set to Frame Size", enabled: hasPictures, separatorBefore: true),
             TimelineMenuItem(.scaleToFrameSize, "Scale to Frame Size", enabled: hasPictures),
             TimelineMenuItem(.label, "Label", enabled: hasClips, separatorBefore: true),

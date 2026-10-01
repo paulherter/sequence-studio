@@ -69,19 +69,19 @@ extension Timeline {
             let next = others.first { $0.start >= c.timeline.end }
             if d < .zero {
                 if let p = prev, p.timeline.end == c.start {
-                    d = max(d, .zero - (p.source.duration - frame))
+                    d = max(d, .zero - (p.duration - frame))
                 } else {
                     d = max(d, .zero - (c.start - (prev?.timeline.end ?? .zero)))
                 }
                 if let n = next, n.start == c.timeline.end, let h = n.headHandle { d = max(d, .zero - h) }
             } else if d > .zero {
                 if let n = next, n.start == c.timeline.end {
-                    d = min(d, n.source.duration - frame)
+                    d = min(d, n.duration - frame)
                 } else if let n = next {
                     d = min(d, n.start - c.timeline.end)
                 }
-                if let p = prev, p.timeline.end == c.start, let md = p.mediaDuration {
-                    d = min(d, md - p.source.end)
+                if let p = prev, p.timeline.end == c.start, let room = p.tailRoom {
+                    d = min(d, room)
                 }
             }
         }
@@ -91,11 +91,11 @@ extension Timeline {
             let c = m.clip
             let others = tracks[m.track].clips.filter { !ids.contains($0.id) }
             if var p = others.last(where: { $0.timeline.end <= c.start }), p.timeline.end == c.start {
-                p.source.duration += d
+                p.extendTail(by: d)
                 work[m.track].replace(p)
             }
             if var n = others.first(where: { $0.start >= c.timeline.end }), n.start == c.timeline.end {
-                n.start += d; n.shiftSourceStart(by: d); n.source.duration -= d
+                n.start += d; n.extendHead(by: .zero - d)
                 work[m.track].replace(n)
             }
             var moved = c

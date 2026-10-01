@@ -227,7 +227,7 @@ public final class EffectControlsModel {
         return out
     }
 
-    public var duration: Time { clip?.source.duration ?? .zero }
+    public var duration: Time { clip?.duration ?? .zero }
     var durationSeconds: Double { Double(duration.value) / Double(max(duration.timescale, 1)) }
 
     // MARK: Zoom (keyframe area)
@@ -277,7 +277,7 @@ public final class EffectControlsModel {
     /// Clip-local times the playhead sticks to while Shift is held: every key of every property, plus the clip ends.
     public func snapTargets() -> [Time] {
         guard let c = clip else { return [] }
-        var out: [Time] = [.zero, c.source.duration]
+        var out: [Time] = [.zero, c.duration]
         for t in Self.tracks(of: c).values { out += t.times.map(\.time) }
         return out
     }
@@ -661,7 +661,7 @@ public final class EffectControlsModel {
         guard !members.isEmpty else { return .zero }
         let times = members.flatMap { m in (s.tracks[m.property]?.times ?? []).filter { $0.id == m.keyID }.map(\.time) }
         let lo = times.min() ?? .zero, hi = times.max() ?? .zero
-        let clamped = min(max(delta, .zero - lo), c.source.duration - hi)
+        let clamped = min(max(delta, .zero - lo), c.duration - hi)
         let applied = duplicate ? s.moveDuplicating(members, by: clamped) : s.move(members, by: clamped)
         var out = c
         write(s.tracks, into: &out)
