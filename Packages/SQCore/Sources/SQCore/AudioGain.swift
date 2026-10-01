@@ -83,10 +83,19 @@ extension Clip {
         return k.id
     }
 
+    /// Closest two volume keys may get (one sample at 48 kHz).
+    public static let minKeyGap = Time(1, 48_000)
+
     /// Moves a volume key to clip-local `time` (kept inside the clip) and level `gainDB` (silence below the floor,
     /// at most +15 dB).
     public mutating func moveVolumeKey(_ id: UUID, toLocal time: Time, gainDB: Double) {
-        let t = min(max(time, .zero), source.duration)
+        var t = min(max(time, .zero), duration)
+        // A key never crosses or lands on its neighbours (that would reorder the line or delete the neighbour).
+        let keys = animation.volume.track.keys
+        if let i = keys.firstIndex(where: { $0.id == id }) {
+            if i > 0 { t = max(t, keys[i - 1].time + Self.minKeyGap) }
+            if i + 1 < keys.count { t = min(t, keys[i + 1].time - Self.minKeyGap) }
+        }
         animation.volume.track.move(id, to: t)
         animation.volume.track.set(id, value: AudioGain.linear(fromDB: min(gainDB, AudioGain.maxVolumeDB)))
     }

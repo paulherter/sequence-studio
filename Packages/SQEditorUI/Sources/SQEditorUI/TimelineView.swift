@@ -24,6 +24,7 @@ public final class TimelineView: NSView {
     /// Volume rubber band edit of an audio clip: the clip as edited so far; one drag = began, changed..., ended.
     public var onVolumeEdit: ((Clip, VolumeEditPhase) -> Void)?
     var volumeDrag: VolumeDrag?
+    var fadeDrag: FadeDrag?
     /// Time Remapping speed band edit: the clip and its speed track as edited so far; one drag = began, changed..., ended.
     public var onSpeedEdit: ((SpeedEdit) -> Void)?
     var speedDrag: SpeedDrag?
@@ -1161,7 +1162,7 @@ public final class TimelineView: NSView {
                 if track.kind == .audio, VolumeLine.isAvailable(rowHeight: row.height) {
                     ClipDrawing.drawVolumeLine(clip: c, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
                                                visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height),
-                                               selected: selection.contains(c.id))
+                                               selected: selection.contains(c.id), hiddenHandles: hiddenFadeHandles(of: c))
                 }
                 if !c.isEnabled {
                     // Disabled (Shift+Cmd+E): the clip fades into the lane, like Premiere's greyed-out clip.

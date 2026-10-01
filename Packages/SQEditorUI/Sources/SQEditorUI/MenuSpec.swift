@@ -46,8 +46,13 @@ public enum EditorMenus {
     public static let clip = MenuSpec(title: "Clip", items: cmds([
         .insert, .overwrite, nil, .setPosterFrame, .clearPosterFrame, nil, .speedDuration, .toggleTimeRemapping, .removeTimeRemapping, nil, .enableClip, .link, nil,
         .setToFrameSize, nil,
-        .audioGain, nil,
     ]) + [
+        .submenu("Audio Options", cmds([
+            .audioGain, .audioGainDown, .audioGainUp, nil,
+            .matchLoudness, .autoDuck,
+        ] + (FeatureFlags.removeSilences ? [.removeSilences] : []) + [
+            nil, .tagDialogue, .tagMusic, .tagSFX,
+        ])),
         .submenu("Video Options", cmds([.addFrameHold, .insertFrameHold, nil, .videoFadeIn, .videoFadeOut])),
         .separator,
     ] + cmds([
@@ -105,5 +110,6 @@ public enum EditorMenus {
     public static let alwaysShown: Set<EditorCommand> = [.undo, .redo, .cut, .copy, .paste, .delete]
     public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection, .toggleAudioScrubbing, .toggleCaptionsInMonitor,
                                                        .videoFadeIn, .videoFadeOut, .addFrameHold, .insertFrameHold,
-                                                       .toggleTimeRemapping, .removeTimeRemapping, .toggleHoldInterpolation]
+                                                       .toggleTimeRemapping, .removeTimeRemapping, .toggleHoldInterpolation,
+                                                       .matchLoudness, .autoDuck, .removeSilences, .tagDialogue, .tagMusic, .tagSFX]
 }

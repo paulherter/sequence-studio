@@ -19,6 +19,7 @@ public enum CommandSupport {
              .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing, .toggleCaptionsInMonitor,
              .playInToOutRoll, .playAround, .setPosterFrame, .clearPosterFrame, .toggleHoverScrub, .find,
              .applyVideoTransition, .applyAudioTransition, .applyDefaultTransitions,
+             .audioGainDown, .audioGainUp, .audioGainDown6, .audioGainUp6, .matchLoudness, .autoDuck, .tagDialogue, .tagMusic, .tagSFX,
              .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation, .deleteProjectItems:
             true
         default: false

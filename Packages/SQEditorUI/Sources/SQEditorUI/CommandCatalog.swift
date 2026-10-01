@@ -18,7 +18,8 @@ public enum CommandCatalog {
         .expandAllTracks, .maximizePanel, .maximizeActivePanel, .resetLayout, .importMedia, .newSequence, .save, .export,
         .newProject, .openProject, .saveAs, .revert, .sequenceSettings, .setToFrameSize, .keyboardShortcuts, .preferences,
         .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation,
-        .audioGain, .toggleAudioScrubbing, .videoFadeIn, .videoFadeOut, .addFrameHold, .insertFrameHold,
+        .audioGain, .toggleAudioScrubbing, .audioGainDown, .audioGainUp, .audioGainDown6, .audioGainUp6,
+        .matchLoudness, .autoDuck, .tagDialogue, .tagMusic, .tagSFX, .videoFadeIn, .videoFadeOut, .addFrameHold, .insertFrameHold,
         .playInToOutRoll, .playAround, .setPosterFrame, .clearPosterFrame, .toggleHoverScrub, .find, .applyVideoTransition,
         .applyAudioTransition, .applyDefaultTransitions, .toggleCaptionsInMonitor
     ]

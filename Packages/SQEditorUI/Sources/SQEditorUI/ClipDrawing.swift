@@ -185,7 +185,7 @@ public enum ClipDrawing {
     }
 
     /// The volume rubber band over the waveform: a thin line with a diamond on every key.
-    public static func drawVolumeLine(clip: Clip, rect: CGRect, visible: CGRect, selected: Bool) {
+    public static func drawVolumeLine(clip: Clip, rect: CGRect, visible: CGRect, selected: Bool, hiddenHandles: Set<FadeHandle> = []) {
         guard let cg = NSGraphicsContext.current?.cgContext else { return }
         let pts = VolumeLine.points(clip: clip, clipRect: rect, visible: visible)
         guard pts.count >= 2 else { return }
@@ -204,6 +204,19 @@ public enum ClipDrawing {
             d.addLine(to: CGPoint(x: k.x, y: k.y + 4)); d.addLine(to: CGPoint(x: k.x - 4, y: k.y)); d.closeSubpath()
             cg.addPath(d); cg.fillPath()
             cg.addPath(d); cg.strokePath()
+        }
+        // Fade handles (head and tail): small squares near the top corners.
+        let h = VolumeLine.fadeHandlePoints(clip: clip, clipRect: rect)
+        if rect.width >= 4 * VolumeLine.handleSize {
+            let size = VolumeLine.handleSize
+            for (which, c) in [(FadeHandle.head, h.head), (FadeHandle.tail, h.tail)] where !hiddenHandles.contains(which) {
+                let r = CGRect(x: c.x - size / 2, y: c.y - size / 2, width: size, height: size)
+                let path = CGPath(roundedRect: r, cornerWidth: 1.5, cornerHeight: 1.5, transform: nil)
+                cg.setFillColor(Theme.white(selected ? 0.95 : 0.7).cgColor)
+                cg.addPath(path); cg.fillPath()
+                cg.setStrokeColor(Theme.black(0.6).cgColor)
+                cg.addPath(path); cg.strokePath()
+            }
         }
         cg.restoreGState()
     }
