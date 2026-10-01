@@ -237,6 +237,7 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
     /// `clear` with a shared old-link to new-link map: right halves cut from one linked group, on this
     /// or other tracks, get the same new link, so each side stays linked with its own partners.
     mutating func clear(_ hole: TimeRange, relinks: inout [UUID: UUID]) {
+        guard !hole.isEmpty else { return }
         var out: [Clip] = []
         for c in clips {
             if !c.timeline.overlaps(hole) { out.append(c); continue }
