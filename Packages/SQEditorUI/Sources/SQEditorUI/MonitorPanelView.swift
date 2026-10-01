@@ -10,6 +10,7 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
     /// Host inserts the viewer (Metal) view here; it should fill the slot.
     public let viewerSlot = NSView()
 
+    private let hudLabel = NSTextField(labelWithString: "")
     private let sourcePopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let timecodeField = TimecodeField(string: "")
     private let optionsPopup = NSPopUpButton(frame: .zero, pullsDown: true)
@@ -67,6 +68,18 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
         safeMarginsView.autoresizingMask = [.width, .height]
         safeMarginsView.isHidden = true
         viewerSlot.addSubview(safeMarginsView)
+        hudLabel.font = NSFont.monospacedSystemFont(ofSize: 10, weight: .regular)
+        hudLabel.textColor = Theme.Colors.label2
+        hudLabel.backgroundColor = Theme.hex(0x000000).withAlphaComponent(0.55)
+        hudLabel.drawsBackground = true
+        hudLabel.isHidden = true
+        hudLabel.setAccessibilityLabel("Scrub latency")
+        hudLabel.translatesAutoresizingMaskIntoConstraints = false
+        viewerSlot.addSubview(hudLabel)
+        NSLayoutConstraint.activate([
+            hudLabel.leadingAnchor.constraint(equalTo: viewerSlot.leadingAnchor, constant: 6),
+            hudLabel.topAnchor.constraint(equalTo: viewerSlot.topAnchor, constant: 6),
+        ])
         if model.mode == .source {
             let drag = StreamDragView(streams: .both)
             drag.model = model
@@ -88,6 +101,9 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
         timecodeField.action = #selector(commitTimecode)
         timecodeField.setAccessibilityLabel("Timecode")
         timecodeField.setContentHuggingPriority(.required, for: .horizontal)
+        timecodeField.setContentCompressionResistancePriority(.required, for: .horizontal)
+        // The field has no intrinsic width: without a floor a tight header collapses it to nothing.
+        timecodeField.widthAnchor.constraint(greaterThanOrEqualToConstant: 106).isActive = true
 
         for l in [durationLabel, inOutLabel] {
             l.font = Theme.Fonts.small
@@ -127,12 +143,14 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
             sourcePopup.setAccessibilityLabel("Source clip")
             sourcePopup.toolTip = "Clips opened in the Source monitor"
             sourcePopup.target = self; sourcePopup.action = #selector(sourcePicked(_:))
-            sourcePopup.widthAnchor.constraint(lessThanOrEqualToConstant: 170).isActive = true
-            sourcePopup.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
-            header.addArrangedSubview(sourcePopup)
+            sourcePopup.widthAnchor.constraint(lessThanOrEqualToConstant: 105).isActive = true
+            sourcePopup.widthAnchor.constraint(greaterThanOrEqualToConstant: 56).isActive = true
+            sourcePopup.setContentCompressionResistancePriority(NSLayoutConstraint.Priority(100), for: .horizontal)
             registerForDraggedTypes([.sequenceMediaIDs])
         }
-        for v in [timecodeField, durationLabel, spacer, optionsPopup, zoomPopup, qualityPopup] { header.addArrangedSubview(v) }
+        let headerViews: [NSView] = [timecodeField, durationLabel, spacer] + (model.mode == .source ? [sourcePopup] : [])
+            + [optionsPopup, zoomPopup, qualityPopup]
+        for v in headerViews { header.addArrangedSubview(v) }
         header.translatesAutoresizingMaskIntoConstraints = false
 
         transport.orientation = .horizontal
@@ -225,6 +243,8 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
         }
         qualityPopup.selectItem(at: MonitorQuality.allCases.firstIndex(of: model.quality) ?? 0)
         scrubBar.needsDisplay = true
+        hudLabel.stringValue = model.latencyText ?? ""
+        hudLabel.isHidden = model.latencyText == nil
         if model.mode == .source { applySourcePopup() }
         safeMarginsView.isHidden = !model.safeMargins
         safeMarginsView.needsDisplay = true

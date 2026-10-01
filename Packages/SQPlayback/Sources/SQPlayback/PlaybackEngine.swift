@@ -150,6 +150,12 @@ import SQRender
 
     public var stats: PlaybackStats { loop.stats }
 
+    /// Timeline spans whose frames are in the cache (the ruler's cache strip); a pure query, empty without a timeline.
+    public func cachedRanges() -> [TimeRange] {
+        guard let tl = timeline else { return [] }
+        return loop.cache.cachedRanges(frameDuration: tl.format.frameDuration)
+    }
+
     /// Last composited frame (rgba16Float, sequence size, working linear). Headless readback for tests/bench.
     public var lastRenderedTexture: MTLTexture? { loop.lastRendered?.texture }
 

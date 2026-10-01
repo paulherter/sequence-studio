@@ -6,6 +6,7 @@ import SQEditorUI
 /// preferences that reach the panels. Kept out of `EditorPanels.swift` so merges stay small.
 extension EditorPanels {
     func wireSourceFlow() {
+        startCachePolling()
         projectView.onNotice = { [weak self] m in self?.onStatus?(m) }
         projectModel.onSourceMarks = { [weak self] id, marks in self?.session.setSourceMarks(marks, for: id) }
         projectView.sourcePosition = { [weak self] in
@@ -26,6 +27,20 @@ extension EditorPanels {
             case .playhead: break
             }
         }
+    }
+
+    /// Twice a second: the ruler's cache strip follows the frame cache, and with `SQ_HUD=1` the Program monitor shows the
+    /// scrub latency (dev aid; Paul judges the feel, this reports milliseconds).
+    func startCachePolling() {
+        let showHUD = ProcessInfo.processInfo.environment["SQ_HUD"] == "1"
+        let t = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self else { return }
+                timelineView.setCachedRanges(session.engine.cachedSpans)
+                if showHUD { monitorModel.latencyText = session.engine.scrubLatencyText }
+            }
+        }
+        RunLoop.main.add(t, forMode: .common)
     }
 
     private func openInSource(_ id: MediaRef.ID, at time: Time?) {

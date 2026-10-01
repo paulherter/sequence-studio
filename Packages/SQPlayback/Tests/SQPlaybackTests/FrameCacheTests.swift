@@ -187,3 +187,17 @@ private func key(_ sec: Int64, _ m: UUID = media, _ s: DecodeScale = .full) -> F
         #expect(r.count == 1 && r[0].start == .zero && r[0].end == Time(4, 24) + Time(1, 30))
     }
 }
+
+@Suite struct LatencySummaryTests {
+    @Test func summarisesMillisecondsAndWindow() {
+        var s = PlaybackStats()
+        #expect(s.latencySummary() == nil)
+        s.stepLatencies = (1...10).map { .milliseconds($0 * 10) }          // 10 ... 100 ms
+        let r = s.latencySummary()!
+        #expect(r.count == 10 && r.last == 100 && r.max == 100)
+        #expect(abs(r.median - 50) < 0.001 && abs(r.p95 - 100) < 0.001)
+        #expect(r.text == "scrub 100 ms (median 50, p95 100, n 10)")
+        #expect(s.latencySummary(window: 3)?.count == 3)
+        #expect(s.latencySummary(window: 3)?.median == 90)
+    }
+}

@@ -54,6 +54,8 @@ public final class MonitorPanelModel {
     /// Loop toggle (wrench menu) and Safe Margins overlay (Program monitor).
     public var isLooping = false
     public var safeMargins = false
+    /// Debug HUD line (scrub latency); nil = hidden.
+    public var latencyText: String?
 
     /// Source monitor: the clips opened earlier (title popup, most recent first), the current one, and its markers (M).
     public struct SourceItem: Sendable, Hashable {

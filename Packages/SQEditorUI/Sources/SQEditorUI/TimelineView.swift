@@ -210,6 +210,9 @@ public final class TimelineView: NSView {
         needsDisplay = true
     }
 
+    /// Cache strip of the ruler (spans whose frames are decoded).
+    public func setCachedRanges(_ r: [TimeRange]) { ruler.setCachedRanges(r) }
+
     public func setPlayhead(_ t: Time) {
         guard t != playhead else { return }
         let old = geometry.x(for: playhead)

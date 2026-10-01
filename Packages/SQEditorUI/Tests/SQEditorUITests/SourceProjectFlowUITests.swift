@@ -194,3 +194,69 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         #expect(a !== b)
     }
 }
+
+@Suite struct SourceFlowShortcutTests {
+    private let map = CommandMap.premiereDefault
+    private func cmd(_ k: Key, _ m: KeyModifiers = [], _ focus: PanelID?) -> EditorCommand? { map.command(for: KeyBinding(k, m), focus: focus) }
+
+    @Test func adobeMacDefaults() {
+        // Shift+Space = Play In to Out with preroll/postroll, Option+K = plain Play In to Out, Shift+K = Play Around.
+        #expect(cmd(.space, .shift, .programMonitor) == .playInToOutRoll)
+        #expect(cmd(.char("k"), .shift, .timeline) == .playAround)
+        #expect(cmd(.char("k"), .option, .programMonitor) == .playInToOut)
+        #expect(cmd(.char("k"), .option, .sourceMonitor) == .playInToOut)
+        #expect(cmd(.char("p"), .command, .project) == .setPosterFrame)
+        #expect(cmd(.char("p"), .option, .project) == .clearPosterFrame)
+        #expect(cmd(.char("h"), .shift, .project) == .toggleHoverScrub)
+        #expect(cmd(.char("f"), .command, .project) == .find)
+    }
+
+    @Test func projectKeysDoNotLeakIntoTheTimeline() {
+        #expect(cmd(.char("p"), .command, .timeline) == nil)
+        #expect(cmd(.char("h"), .shift, .timeline) == nil)
+    }
+
+    @Test func nudgedSpeedContinuesFromTheRouter() {
+        var r = KeyRouter(map: map, focus: .programMonitor, clock: { 0 })
+        r.rateChanged(to: PlaybackRate(5, 4))
+        let actions = r.handle(KeyEvent(.char("j"), []))
+        let rates: [PlaybackRate] = actions.compactMap { if case .shuttle(.setRate(let x)) = $0 { x } else { nil } }
+        #expect(rates == [PlaybackRate(1)])
+    }
+}
+
+@Suite struct RollSettingsTests {
+    @Test func defaultsAreThreeAndTwoSeconds() {
+        #expect(AppSettings.standard.preroll == Time(3, 1) && AppSettings.standard.postroll == Time(2, 1))
+        #expect(AppSettings.standard.hoverScrub)
+    }
+
+    @Test func roundTripAndInvalidValues() {
+        let name = "sq-roll-\(UUID().uuidString)"
+        let d = UserDefaults(suiteName: name)!
+        d.removePersistentDomain(forName: name)
+        var s = AppSettings.standard
+        s.prerollSeconds = 5; s.postrollSeconds = 0; s.hoverScrub = false
+        s.save(to: d)
+        let back = AppSettings.load(from: d)
+        #expect(back.prerollSeconds == 5 && back.postrollSeconds == 0 && !back.hoverScrub)
+        d.set(-3, forKey: "settings.prerollSeconds"); d.set(900, forKey: "settings.postrollSeconds")
+        let bad = AppSettings.load(from: d)
+        #expect(bad.prerollSeconds == 3 && bad.postrollSeconds == 2)
+    }
+}
+
+@MainActor @Suite struct CacheStripTests {
+    @Test func rulerKeepsSpansAndStubEnginesHaveNone() {
+        let g = TimelineGeometry(frameDuration: Time(1, 30), pointsPerSecond: 100)
+        let ruler = RulerView(geometry: g)
+        ruler.frame = NSRect(x: 0, y: 0, width: 800, height: 24)
+        #expect(ruler.cachedRanges.isEmpty)
+        ruler.setCachedRanges([TimeRange(start: .zero, end: s(2))])
+        #expect(ruler.cachedRanges == [TimeRange(start: .zero, end: s(2))])
+        #expect(StubProgramEngine().cachedSpans.isEmpty && StubProgramEngine().scrubLatencyText == nil)
+        // Drawing with a strip must not crash.
+        let rep = ruler.bitmapImageRepForCachingDisplay(in: ruler.bounds)!
+        ruler.cacheDisplay(in: ruler.bounds, to: rep)
+    }
+}
