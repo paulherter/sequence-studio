@@ -125,19 +125,3 @@ extension Clip {
         return audioGainDB == 0 ? v : v * pow(10, audioGainDB / 20)
     }
 }
-
-/// Evaluated clip effects at one instant (siblings of `ClipTransform`, already clamped).
-public struct ClipEffects: Sendable, Hashable {
-    /// Canvas pixels, >= 0. The compositor also limits it to half the shorter side of the clip's frame.
-    public var cornerRadius: Double
-    public init(cornerRadius: Double = 0) { self.cornerRadius = cornerRadius }
-    public static let none = ClipEffects()
-}
-
-extension Clip {
-    /// Effects at timeline time `t`.
-    public func effects(at t: Time) -> ClipEffects {
-        guard let e = roundedCorners, e.enabled, let r = e.parameters[ClipEffect.radiusKey] else { return .none }
-        return ClipEffects(cornerRadius: max(r.value(atLocal: t - start), 0))
-    }
-}
