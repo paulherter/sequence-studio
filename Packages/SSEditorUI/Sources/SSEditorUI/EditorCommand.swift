@@ -13,7 +13,8 @@ public enum EditorCommand: Sendable, Hashable {
     case previousEditPoint, nextEditPoint
     case goToStart, goToEnd
     // Marking
-    case markIn, markOut, goToIn, goToOut, clearInOut, markClip
+    case markIn, markOut, goToIn, goToOut, clearInOut, markClip, clearIn, clearOut
+    case playInToOut, toggleLoop, exportFrame, newBin
     case lift, extract, insert, overwrite, addMarker
     // Tools
     case tool(EditorTool)
@@ -68,6 +69,12 @@ public enum EditorCommand: Sendable, Hashable {
         case .goToOut: "Go to Out"
         case .clearInOut: "Clear In and Out"
         case .markClip: "Mark Clip"
+        case .clearIn: "Clear In"
+        case .clearOut: "Clear Out"
+        case .playInToOut: "Play In to Out"
+        case .toggleLoop: "Loop Playback"
+        case .exportFrame: "Export Frame…"
+        case .newBin: "New Bin"
         case .lift: "Lift"
         case .extract: "Extract"
         case .insert: "Insert"

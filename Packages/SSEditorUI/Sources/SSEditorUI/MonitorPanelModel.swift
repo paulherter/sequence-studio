@@ -1,4 +1,5 @@
 import Foundation
+import AppKit
 import Observation
 import SSCore
 import SSMedia
@@ -28,11 +29,19 @@ public enum MonitorZoom: Sendable, Hashable {
 
 public enum MonitorAction: Sendable, Hashable, CaseIterable {
     case markIn, markOut, goToIn, goToOut, stepBack, stepForward, playPause, addMarker, insert, overwrite
+    case lift, extract, exportFrame, loop, playInToOut, toggleSafeMargins
+
+    /// Transport button bar, left to right (Premiere's default order; Loop, Play In to Out and Safe Margins live in
+    /// the wrench menu). Insert / Overwrite belong to the Source monitor, Lift / Extract to the Program monitor.
+    public static func buttonBar(for mode: MonitorMode) -> [MonitorAction] {
+        let edit: [MonitorAction] = mode == .source ? [.insert, .overwrite] : [.lift, .extract]
+        return [.addMarker, .markIn, .markOut, .goToIn, .stepBack, .playPause, .stepForward, .goToOut] + edit + [.exportFrame]
+    }
 }
 
 @MainActor @Observable
 public final class MonitorPanelModel {
-    public var mode: MonitorMode = .program
+    public let mode: MonitorMode
     public var currentTime: Time = .zero
     public var duration: Time = .zero
     public var markIn: Time?
@@ -42,13 +51,25 @@ public final class MonitorPanelModel {
     public private(set) var quality: MonitorQuality = .full
     public var frameDuration: Time
     public var dropFrame = false
+    /// Loop toggle (wrench menu) and Safe Margins overlay (Program monitor).
+    public var isLooping = false
+    public var safeMargins = false
 
     @ObservationIgnored public var onSeek: ((Time) -> Void)?
     @ObservationIgnored public var onAction: ((MonitorAction) -> Void)?
     @ObservationIgnored public var onZoomChange: ((MonitorZoom) -> Void)?
     @ObservationIgnored public var onQualityChange: ((MonitorQuality) -> Void)?
+    /// Dragging the timecode scrubs; hosts that need to stop playback or play scrub audio use these, else `onSeek`.
+    @ObservationIgnored public var onScrubBegan: (() -> Void)?
+    @ObservationIgnored public var onScrub: ((Time) -> Void)?
+    @ObservationIgnored public var onScrubEnded: (() -> Void)?
+    /// Source Monitor drag: the pasteboard item for dragging the picture (`.both`) or only its video / audio.
+    @ObservationIgnored public var dragItem: ((SourceStreams) -> NSPasteboardItem?)?
+    @ObservationIgnored public var onDragEnded: (() -> Void)?
+    /// Fills the right-click menu of the picture area.
+    @ObservationIgnored public var contextMenuBuilder: ((NSMenu) -> Void)?
 
-    public init(frameDuration: Time) { self.frameDuration = frameDuration }
+    public init(frameDuration: Time, mode: MonitorMode = .program) { self.frameDuration = frameDuration; self.mode = mode }
 
     public var timecode: Timecode { Timecode(frameDuration: frameDuration, dropFrame: dropFrame) }
     public var timecodeText: String { timecode.format(currentTime) }
@@ -62,7 +83,18 @@ public final class MonitorPanelModel {
     }
 
     public var availableActions: [MonitorAction] {
-        MonitorAction.allCases.filter { mode == .source || ($0 != .insert && $0 != .overwrite) }
+        MonitorAction.allCases.filter { a in
+            switch a {
+            case .insert, .overwrite: mode == .source
+            case .lift, .extract, .toggleSafeMargins: mode == .program
+            default: true
+            }
+        }
+    }
+
+    /// Time `frames` frames away from `t` (never before zero), for dragging the timecode.
+    public func time(offsetFrom t: Time, frames: Int) -> Time {
+        max(.zero, (t + frameDuration * Int64(frames)).snapped(to: frameDuration))
     }
 
     public func perform(_ action: MonitorAction) {

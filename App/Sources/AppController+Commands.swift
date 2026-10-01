@@ -9,7 +9,8 @@ extension AppController {
         case .shuttleReverse, .shuttleStop, .shuttleForward, .playPause,
              .stepBackward, .stepForward, .stepBackward5, .stepForward5,
              .previousEditPoint, .nextEditPoint, .goToStart, .goToEnd,
-             .markIn, .markOut, .markClip, .goToIn, .goToOut, .clearInOut, .lift, .extract, .insert, .overwrite, .addMarker,
+             .markIn, .markOut, .markClip, .goToIn, .goToOut, .clearInOut, .clearIn, .clearOut, .lift, .extract, .insert, .overwrite, .addMarker,
+             .playInToOut, .toggleLoop, .exportFrame, .newBin, .matchFrame, .reverseMatchFrame,
              .tool, .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext,
              .delete, .rippleDelete, .toggleSnapping, .undo, .redo,
              .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel,
@@ -26,6 +27,7 @@ extension AppController {
         if ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1" { NSLog("SSKEY execute \(c) playing=\(session.isPlaying)") }
         // Editing text (a field or the timecode box): the standard commands go to the editor.
         if let tv = textResponder, forwardToText(c, tv) { return }
+        if focusedPanel == .sourceMonitor, panels.source.handle(c) { return }
         guard Self.isSupported(c) else {
             shell.statusBar.flash("\(c.title) is not available yet.")
             return
@@ -51,6 +53,15 @@ extension AppController {
         case .clearInOut: session.clearInOut()
         case .lift: session.liftRange()
         case .extract: session.extractRange()
+        case .clearIn: session.clearIn()
+        case .clearOut: session.clearOut()
+        case .playInToOut: session.playInToOut()
+        case .toggleLoop: session.toggleLoop(); panels.monitorModel.isLooping = session.bounds.loop
+        case .exportFrame:
+            if focusedPanel == .sourceMonitor { panels.source.exportFrame() } else { exportProgramFrame() }
+        case .newBin: showPanel(.project); panels.projectView.newBin()
+        case .matchFrame: panels.matchFrame()
+        case .reverseMatchFrame: panels.reverseMatchFrame()
         case .insert: placeSelectedMedia(.insert)
         case .overwrite: placeSelectedMedia(.overwrite)
         case .addMarker: session.addMarkerAtPlayhead()
@@ -90,7 +101,14 @@ extension AppController {
         }
     }
 
+    private func exportProgramFrame() {
+        let name = (session.activeTimeline?.name ?? "Frame") + ".png"
+        FrameExport.run(texture: session.engine.lastRenderedTexture, suggestedName: name, on: window,
+                        status: { [weak self] in self?.shell.statusBar.flash($0) })
+    }
+
     private func shuttle(_ key: ShuttleKey) {
+        if focusedPanel == .sourceMonitor { panels.source.press(key); return }
         session.apply(shuttle: menuShuttle.press(key))
         _ = menuShuttle.release(key)
     }
@@ -118,8 +136,11 @@ extension AppController {
 
     /// Insert / Overwrite the media selected in the Project panel at the playhead.
     private func placeSelectedMedia(_ mode: ThreePointMode) {
+        // Premiere: the clip loaded in the Source monitor (its In/Out, the targeted tracks) ...
+        if panels.source.mediaID != nil, focusedPanel != .project { panels.source.edit(mode); return }
+        // ... and without one, what is selected in the Project panel.
         let ids = panels.projectView.selectedMediaIDs
-        guard !ids.isEmpty else { shell.statusBar.flash("Select media in the Project panel first."); return }
+        guard !ids.isEmpty else { shell.statusBar.flash("Open a clip in the Source monitor first (double-click it in the Project panel)."); return }
         session.placeMedia(ids, mode: mode)
     }
 

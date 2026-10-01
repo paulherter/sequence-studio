@@ -40,3 +40,34 @@ extension EditorSession {
         return done
     }
 }
+
+extension EditorSession {
+    /// Play In to Out: plays the sequence In..Out range (the whole sequence without marks), stops at Out, or loops.
+    public func playInToOut() {
+        guard let t = activeTimeline else { return }
+        let range = t.inOut.flatMap { $0.isEmpty ? nil : $0 }
+        let start = range?.start ?? .zero
+        if isPlaying { stopPlayback() }
+        seek(to: start)
+        apply(shuttle: .setRate(.forward))
+        bounds.range = range           // after apply: starting playback clears the range
+    }
+
+    public func toggleLoop() { bounds.loop.toggle() }
+}
+
+extension EditorSession {
+    /// Option+I: the sequence In goes back to the start (Out stays). Both cleared: no range at all.
+    public func clearIn() {
+        guard let io = activeTimeline?.inOut else { return }
+        let end = io.end
+        attempt("Clear In") { $0.inOut = end >= $0.duration ? nil : TimeRange(start: .zero, end: end) }
+    }
+
+    /// Option+O: the sequence Out goes back to the end of the sequence (In stays).
+    public func clearOut() {
+        guard let io = activeTimeline?.inOut else { return }
+        let start = io.start
+        attempt("Clear Out") { $0.inOut = start <= .zero ? nil : TimeRange(start: start, end: max($0.duration, start + $0.frameDuration)) }
+    }
+}

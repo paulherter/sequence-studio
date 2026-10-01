@@ -103,6 +103,9 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
     private var layout: ProjectColumnLayout
     private var rebuildingColumns = false
     private let defaults: UserDefaults
+    /// Double-click: a media item opens in the Source monitor, a sequence becomes the active one.
+    public var onOpenMedia: ((MediaRef.ID) -> Void)?
+    public var onOpenSequence: ((Timeline.ID) -> Void)?
 
     public init(model: ProjectPanelModel, defaults: UserDefaults = .standard) {
         self.model = model
@@ -148,6 +151,8 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         outline.draggingDestinationFeedbackStyle = .regular
         outline.onDelete = { [weak self] in self?.deleteSelection() }
         outline.onReturn = { [weak self] in self?.renameSelection() }
+        outline.target = self
+        outline.doubleAction = #selector(doubleClicked)
         let menu = NSMenu()
         menu.delegate = self
         outline.menu = menu
@@ -259,7 +264,7 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
             cell.imageView?.contentTintColor = offline ? Theme.Colors.red : Theme.Colors.label2
             (cell.subviews.compactMap { $0 as? SwatchView }.first)?.color = Theme.hex(model.label(of: n.ref).rgb)
             cell.textField?.font = Theme.Fonts.smallName
-            cell.textField?.isEditable = true
+            cell.textField?.isEditable = false     // Return / menu start a rename; a double-click opens the item
             cell.textField?.textColor = offline ? Theme.Colors.red : Theme.Colors.label
         } else {
             cell.textField?.font = Theme.Fonts.small
@@ -401,13 +406,45 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         guard let tf = obj.object as? NSTextField, tf !== search else { return }
         let row = outline.row(for: tf)
         guard row >= 0, let n = outline.item(atRow: row) as? Node else { return }
+        tf.isEditable = false
         if !model.rename(n.ref, to: tf.stringValue) { reload() }   // empty or unchanged: restore the old name
     }
 
     private func renameSelection() {
         let row = outline.selectedRow
         guard row >= 0 else { return }
+        beginRename(row: row)
+    }
+
+    private func beginRename(row: Int) {
+        (outline.view(atColumn: 0, row: row, makeIfNecessary: true) as? NSTableCellView)?.textField?.isEditable = true
         outline.editColumn(0, row: row, with: nil, select: true)
+    }
+
+    @objc private func doubleClicked() {
+        let row = outline.clickedRow
+        guard row >= 0, let n = outline.item(atRow: row) as? Node else { return }
+        switch n.ref {
+        case .media(let id): onOpenMedia?(id)
+        case .sequence(let id): onOpenSequence?(id)
+        case .bin: if outline.isItemExpanded(n) { outline.collapseItem(n) } else { outline.expandItem(n) }
+        }
+    }
+
+    /// Selects a media item (expanding its bins) and scrolls it into view.
+    public func reveal(media id: MediaRef.ID) {
+        model.searchText = ""
+        search.stringValue = ""
+        if let parent = model.project.rootBin.parent(of: .media(id)), parent != model.project.rootBin.id {
+            var chain: [Bin.ID] = [parent]
+            while let up = model.project.rootBin.parent(of: .bin(chain.last!)), up != model.project.rootBin.id { chain.append(up) }
+            for b in chain.reversed() { if let n = nodes[.bin(b)] { outline.expandItem(n) } }
+        }
+        guard let n = nodes[.media(id)] else { return }
+        let row = outline.row(forItem: n)
+        guard row >= 0 else { return }
+        outline.selectRowIndexes([row], byExtendingSelection: false)
+        outline.scrollRowToVisible(row)
     }
 
     private func deleteSelection() {
@@ -582,6 +619,9 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         outline.selectRowIndexes(rows, byExtendingSelection: false)
     }
 
+    /// Cmd+B: a new bin in the current bin, named in place.
+    public func newBin() { menuNewBin() }
+
     @objc private func menuNewBin() {
         guard let id = model.newBin(name: "Untitled Bin") else { return }
         reload()
@@ -592,7 +632,7 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
             if row >= 0 {
                 outline.selectRowIndexes([row], byExtendingSelection: false)
                 outline.scrollRowToVisible(row)
-                outline.editColumn(0, row: row, with: nil, select: true)
+                beginRename(row: row)
             }
         }
     }

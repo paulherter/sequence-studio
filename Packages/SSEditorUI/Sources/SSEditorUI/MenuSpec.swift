@@ -18,7 +18,7 @@ public enum EditorMenus {
     }
 
     public static let file = MenuSpec(title: "File", items: cmds([
-        .newSequence, .importMedia, nil, .save, nil, .export,
+        .newSequence, .newBin, .importMedia, nil, .save, nil, .export, .exportFrame,
     ]))
     public static let edit = MenuSpec(title: "Edit", items: cmds([
         .undo, .redo, nil, .cut, .copy, .paste, .pasteAttributes, nil,
@@ -29,14 +29,14 @@ public enum EditorMenus {
         .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation, .addKeyframe, .toggleSpeedGraph,
     ]))
     public static let sequence = MenuSpec(title: "Sequence", items: cmds([
-        .markIn, .markOut, .goToIn, .goToOut, .clearInOut, .markClip, nil,
+        .markIn, .markOut, .goToIn, .goToOut, .clearIn, .clearOut, .clearInOut, .markClip, nil,
         .lift, .extract, nil,
         .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext, .extendEdit, nil,
         .previousEditPoint, .nextEditPoint, .goToStart, .goToEnd, nil,
         .addMarker, .matchFrame, .reverseMatchFrame,
     ]))
     public static let view = MenuSpec(title: "View", items: cmds([
-        .playPause, .shuttleReverse, .shuttleStop, .shuttleForward, nil,
+        .playPause, .playInToOut, .toggleLoop, .shuttleReverse, .shuttleStop, .shuttleForward, nil,
         .stepBackward, .stepForward, .stepBackward5, .stepForward5, nil,
         .zoomIn, .zoomOut, .zoomFit, nil,
         .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
