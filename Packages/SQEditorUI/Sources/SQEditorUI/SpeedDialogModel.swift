@@ -13,6 +13,7 @@ public enum SpeedLabel {
 
     /// " [200%]" appended to the clip name; empty for a clip at 100 % that is not reversed.
     public static func nameSuffix(for clip: Clip) -> String {
+        if clip.speedKeys != nil { return " [Remapped]" }
         guard !clip.speed.isNormal || clip.reversed else { return "" }
         return " [" + text(speed: clip.speed, reversed: clip.reversed) + "]"
     }
@@ -35,25 +36,33 @@ public struct SpeedDialogModel: Equatable, Sendable {
     public var isLinked = true
     public var reversed: Bool
     public var keepsPitch: Bool
+    /// Time Interpolation (video clips only; the picker is hidden for audio).
+    public var timeInterpolation: TimeInterpolation
+    public let hasVideo: Bool
     public var ripple = false
     private enum Edited { case none, speed, duration }
     private var edited = Edited.none
     private let originalSpeed: ClipSpeed
     private let originalReversed: Bool
     private let originalKeepsPitch: Bool
+    private let originalInterpolation: TimeInterpolation
 
     /// `clips` = the selected retimable clips (at least one).
     public init(clips: [Clip], frameDuration: Time) {
         let first = clips[0]
         self.frameDuration = frameDuration
-        sourceDuration = first.source.duration
+        sourceDuration = first.retimeSpan
         clipCount = clips.count
         hasAudio = clips.contains { $0.kind == .audio }
-        percent = first.speed.percent
+        hasVideo = clips.contains { $0.kind == .video }
+        let avg = first.averageSpeed
+        percent = avg.percent
         duration = first.duration
         reversed = first.reversed
         keepsPitch = first.keepsPitch
-        originalSpeed = first.speed; originalReversed = first.reversed; originalKeepsPitch = first.keepsPitch
+        timeInterpolation = first.timeInterpolation
+        originalInterpolation = first.timeInterpolation
+        originalSpeed = avg; originalReversed = first.reversed; originalKeepsPitch = first.keepsPitch
     }
 
     public var canEditDuration: Bool { clipCount == 1 }
@@ -84,19 +93,22 @@ public struct SpeedDialogModel: Equatable, Sendable {
 
     /// True when OK would change something.
     public var hasChanges: Bool {
-        edited != .none || reversed != originalReversed || keepsPitch != originalKeepsPitch
+        edited != .none || reversed != originalReversed || keepsPitch != originalKeepsPitch || timeInterpolation != originalInterpolation
     }
 
     /// The edit to apply to every selected clip.
     public var change: SpeedChange {
         switch edited {
         case .duration:
-            return SpeedChange(duration: duration, reversed: reversed, keepsPitch: keepsPitch, ripple: ripple)
+            return SpeedChange(duration: duration, reversed: reversed, keepsPitch: keepsPitch, ripple: ripple, timeInterpolation: interpolationChange)
         case .speed:
             return SpeedChange(speed: speed, reversed: reversed, keepsPitch: keepsPitch, ripple: ripple,
-                               holdingDuration: !isLinked && canEditDuration)
+                               holdingDuration: !isLinked && canEditDuration, timeInterpolation: interpolationChange)
         case .none:
-            return SpeedChange(speed: originalSpeed, reversed: reversed, keepsPitch: keepsPitch, ripple: ripple)
+            return SpeedChange(speed: originalSpeed, reversed: reversed, keepsPitch: keepsPitch, ripple: ripple,
+                               timeInterpolation: interpolationChange)
         }
     }
+
+    private var interpolationChange: TimeInterpolation? { timeInterpolation != originalInterpolation ? timeInterpolation : nil }
 }

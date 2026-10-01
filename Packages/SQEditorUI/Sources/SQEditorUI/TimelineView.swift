@@ -24,6 +24,11 @@ public final class TimelineView: NSView {
     /// Volume rubber band edit of an audio clip: the clip as edited so far; one drag = began, changed..., ended.
     public var onVolumeEdit: ((Clip, VolumeEditPhase) -> Void)?
     var volumeDrag: VolumeDrag?
+    /// Time Remapping speed band edit: the clip and its speed track as edited so far; one drag = began, changed..., ended.
+    public var onSpeedEdit: ((SpeedEdit) -> Void)?
+    var speedDrag: SpeedDrag?
+    /// Video clips that show the speed band (view state, not saved).
+    public internal(set) var speedBandClips: Set<Clip.ID> = []
     /// Opacity rubber band on video clips (Cmd-click adds a key); same phases as `onVolumeEdit`.
     public var onOpacityEdit: ((Clip, VolumeEditPhase) -> Void)?
     var opacityDrag: OpacityDrag?
@@ -448,6 +453,7 @@ public final class TimelineView: NSView {
             resizing = (zone, p.y, geometry.rows(for: timeline))
             return
         }
+        if beginSpeedDrag(at: p, event: event) { return }
         if beginVolumeDrag(at: p, event: event) || beginOpacityDrag(at: p, event: event) { return }
         onPointerDown?()
         if transitionMouseDown(p, event: event) { return }
@@ -480,6 +486,7 @@ public final class TimelineView: NSView {
 
     public override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
+        if updateSpeedDrag(to: p) { return }
         if updateVolumeDrag(to: p) || updateOpacityDrag(to: p) { return }
         if transitionMouseDragged(p, event: event) { return }
         if let r = resizing {
@@ -638,6 +645,7 @@ public final class TimelineView: NSView {
         defer { interaction.snapInverted = false }
         stopAutoscroll()
         lastDrag = nil
+        if endSpeedDrag(at: convert(event.locationInWindow, from: nil)) { return }
         let up = convert(event.locationInWindow, from: nil)
         if endVolumeDrag(at: up) || endOpacityDrag(at: up) { return }
         if transitionMouseUp(up, event: event) { return }
@@ -1066,6 +1074,7 @@ public final class TimelineView: NSView {
             drawTransitions(rows: rows, clip: clip)
             drawPlayheadLine(clip: clip)
             drawGestureOverlay(clip: clip)
+            drawSpeedTip()
             drawDropOverlay(clip: clip)
             NSGraphicsContext.restoreGraphicsState()
         }
@@ -1134,12 +1143,17 @@ public final class TimelineView: NSView {
                                              rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
                                              visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height),
                                              cache: wf.cache,   // pixel-mapped: only the dirty columns are needed
-                                             volumeDB: Self.volumeDB(of: c), reversed: c.reversed)
+                                             volumeDB: Self.volumeDB(of: c), reversed: c.reversed,
+                                             sourceMap: Self.sourceMap(of: c))
+                }
+                if track.kind == .video, speedBandClips.contains(c.id), SpeedBand.isAvailable(rowHeight: row.height) {
+                    drawSpeedBand(clip: c, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
+                                  visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height), selected: selection.contains(c.id))
                 }
                 if track.kind == .video {
                     let full = CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height)
                     let vis = CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height)
-                    if OpacityLine.isVisible(clip: c, selected: selection.contains(c.id), rowHeight: row.height) {
+                    if OpacityLine.isVisible(clip: c, selected: selection.contains(c.id), rowHeight: row.height), !speedBandClips.contains(c.id) {
                         ClipDrawing.drawOpacityLine(clip: c, rect: full, visible: vis, selected: selection.contains(c.id))
                     }
                     if FXBadge.state(for: c) == .applied { ClipDrawing.drawFXBadge(rect: full, visible: vis) }

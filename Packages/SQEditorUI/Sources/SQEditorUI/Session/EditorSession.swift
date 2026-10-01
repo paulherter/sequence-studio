@@ -288,7 +288,7 @@ public final class EditorSession {
         case .clipNotFound, .timelineNotFound: "The clip no longer exists."
         case .wrongTrackKind: "That clip does not belong on this track."
         case .emptyClip: "Nothing to edit."
-        case .speedUnsupported: "Speed cannot be changed on that clip (nested sequences, titles and stills)."
+        case .speedUnsupported: "Speed cannot be changed on that clip (titles and stills)."
         case .notACut: "Transitions go on a cut between two clips that touch, or on a clip edge."
         case .insufficientMedia: "Not enough media beyond the cut for a transition. Trim the clips to leave handles."
         default: error.localizedDescription

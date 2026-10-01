@@ -18,7 +18,8 @@ extension TimelineView {
               row.kind == .video, OpacityLine.isAvailable(rowHeight: row.height),
               let track = timeline.track(row.track), !track.isLocked else { return nil }
         guard let clip = track.clips.first(where: { geometry.x(for: $0.timeline.start) - 6 <= p.x && p.x < geometry.x(for: $0.timeline.end) + 6 }),
-              OpacityLine.isVisible(clip: clip, selected: selection.contains(clip.id), rowHeight: row.height)
+              OpacityLine.isVisible(clip: clip, selected: selection.contains(clip.id), rowHeight: row.height),
+              !speedBandClips.contains(clip.id)                    // one band at a time: the speed band wins
         else { return nil }
         let x0 = geometry.x(for: clip.timeline.start), x1 = geometry.x(for: clip.timeline.end)
         return (clip, track.id, CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height))

@@ -10,6 +10,8 @@ public enum TimelineMenuAction: Sendable, Hashable, CaseIterable {
     case editCaption, splitCaption, mergeCaptions
     /// Clip > Speed/Duration.
     case speed
+    /// Show Clip Keyframes > Time Remapping (the speed band on the clip).
+    case timeRemapping
     /// Opens the label colour submenu (its choices go to `makeMenu`'s `labelHandler`).
     case label
 }
@@ -49,6 +51,7 @@ public enum TimelineContextMenu {
         // Generators (text) have no picture size to fit.
         let hasPictures = clips.contains { !$0.isGenerator && $0.kind == .video }
         let canRetime = clips.contains { Timeline.canRetime($0) }
+        let hasVideoMedia = clips.contains { Timeline.canRetime($0) && $0.kind == .video }
         // Premiere order. Entries for features we do not have (Reveal in Project) are left out.
         return [
             TimelineMenuItem(.cut, "Cut", enabled: hasClips, key: "x"),
@@ -62,6 +65,7 @@ public enum TimelineContextMenu {
                              key: "e", modifiers: [.command, .shift]),
             TimelineMenuItem(.nest, "Nest…", enabled: hasClips, separatorBefore: true),
             TimelineMenuItem(.speed, "Speed/Duration…", enabled: canRetime, key: "r"),
+            TimelineMenuItem(.timeRemapping, "Show Time Remapping", enabled: hasVideoMedia),
             TimelineMenuItem(.setToFrameSize, "Set to Frame Size", enabled: hasPictures, separatorBefore: true),
             TimelineMenuItem(.scaleToFrameSize, "Scale to Frame Size", enabled: hasPictures),
             TimelineMenuItem(.label, "Label", enabled: hasClips, separatorBefore: true),

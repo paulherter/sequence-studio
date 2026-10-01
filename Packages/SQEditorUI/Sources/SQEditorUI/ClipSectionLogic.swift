@@ -32,7 +32,7 @@ public enum CaptionMapping {
         let items: [CaptionItem] = captions.compactMap { c in
             guard let s = c.range.intersection(clip.source), !s.isEmpty else { return nil }
             let a = clip.timelineTime(forSource: s.start), b = clip.timelineTime(forSource: s.end)
-            let r = clip.reversed ? TimeRange(start: b, end: a) : TimeRange(start: a, end: b)
+            let r = TimeRange(start: min(a, b), end: max(a, b))            // reversed or remapped: either order
             guard !r.isEmpty else { return nil }
             return CaptionItem(lines: c.lines, range: r, styleRef: c.styleRef, animationRef: c.animationRef,
                                words: timelineWords(c.words, in: r, clip: clip))

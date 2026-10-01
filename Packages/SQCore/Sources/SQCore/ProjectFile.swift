@@ -30,7 +30,7 @@ public enum ProjectFile {
         return candidate
     }
 
-    public static let currentVersion = 22
+    public static let currentVersion = 23
     public typealias JSONObject = [String: Any]
     /// Upgrades the top-level object from version N to N+1, keyed by N.
     public typealias Migrations = [Int: (JSONObject) throws -> JSONObject]
@@ -58,6 +58,7 @@ public enum ProjectFile {
         t[18] = migrateV18toV19
         t[20] = migrateV20toV21
         t[21] = migrateV21toV22
+        t[22] = migrateV22toV23
         return t
     }
     /// The full chain 1..<currentVersion. Missing steps are identity: every format change since v2 only added
@@ -170,6 +171,13 @@ public enum ProjectFile {
     /// `Clip.motionEnabled` / `opacityEnabled`. Effect instances need no new field (`ClipEffect` always had an id; the list
     /// order is the evaluation order). All optional on decode; absent = Normal, no hold, toggles on: identity migration.
     static func migrateV21toV22(_ obj: JSONObject) throws -> JSONObject { obj }
+
+    /// v23 (stream speed-time): `Clip.speedKeys` (time remapping: segments with ramps and an origin) and
+    /// `Clip.timeInterpolation`. Both optional on decode; absent = constant speed (`speed` / `reversed`) and frame sampling,
+    /// so every v22 clip, constant-speed clips included, decodes and plays unchanged: identity migration. Older builds drop the
+    /// speed track on save and then play the clip at its `speed` over its `source` hull.
+    static func migrateV22toV23(_ obj: JSONObject) throws -> JSONObject { obj }
+
 
     static let fileName = "project.json"
     static let autosaveDir = "Autosave"

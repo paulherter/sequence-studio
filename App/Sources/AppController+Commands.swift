@@ -15,7 +15,7 @@ extension AppController {
              .delete, .rippleDelete, .toggleSnapping, .undo, .redo,
              .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel, .maximizeActivePanel, .resetLayout,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
-             .minimizeAllTracks, .expandAllTracks, .speedDuration,
+             .minimizeAllTracks, .expandAllTracks, .speedDuration, .toggleTimeRemapping, .removeTimeRemapping,
              .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing, .toggleCaptionsInMonitor,
              .playInToOutRoll, .playAround, .setPosterFrame, .clearPosterFrame, .toggleHoverScrub, .find,
              .applyVideoTransition, .applyAudioTransition, .applyDefaultTransitions:
@@ -95,6 +95,8 @@ extension AppController {
             panels.timelineView.toolState.snapping.toggle()
             shell.statusBar.flash(panels.timelineView.toolState.snapping ? "Snapping on" : "Snapping off", seconds: 2)
         case .speedDuration: requestSpeedDuration()
+        case .toggleTimeRemapping: toggleTimeRemapping()
+        case .removeTimeRemapping: removeTimeRemapping()
         case .undo: session.undo()
         case .redo: session.redo()
         case .videoTracksTaller: panels.timelineView.sizeTracks(.video, direction: 1)

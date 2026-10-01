@@ -12,6 +12,7 @@ public final class SpeedDurationSheet: NSObject, NSTextFieldDelegate {
     private let linkButton = NSButton()
     private let reverseBox = NSButton(checkboxWithTitle: "Reverse Speed", target: nil, action: nil)
     private let pitchBox = NSButton(checkboxWithTitle: "Maintain Audio Pitch", target: nil, action: nil)
+    private let interpolationPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let rippleBox = NSButton(checkboxWithTitle: "Ripple Edit, Shifting Trailing Clips", target: nil, action: nil)
 
     init(model: SpeedDialogModel, timecode: Timecode) {
@@ -79,7 +80,14 @@ public final class SpeedDurationSheet: NSObject, NSTextFieldDelegate {
         let top = NSStackView(views: [fields, linkButton])
         top.orientation = .horizontal; top.spacing = 8; top.alignment = .centerY
 
-        let boxes = NSStackView(views: [reverseBox, pitchBox, rippleBox])
+        for t in TimeInterpolation.allCases { interpolationPopUp.addItem(withTitle: t.title) }
+        interpolationPopUp.target = self; interpolationPopUp.action = #selector(optionsChanged)
+        interpolationPopUp.toolTip = "Frame Sampling repeats the nearest frame; Frame Blending mixes the two frames around the moment (smoother slow motion)."
+        interpolationPopUp.setAccessibilityLabel("Time Interpolation")
+        let interpolationRow = NSStackView(views: [label("Interpolation:"), interpolationPopUp])
+        interpolationRow.orientation = .horizontal; interpolationRow.spacing = 6; interpolationRow.alignment = .centerY
+        interpolationRow.isHidden = !model.hasVideo
+        let boxes = NSStackView(views: [interpolationRow, reverseBox, pitchBox, rippleBox])
         boxes.orientation = .vertical; boxes.spacing = 6; boxes.alignment = .leading
         let all = NSStackView(views: [top, boxes])
         all.orientation = .vertical; all.spacing = 14; all.alignment = .leading
@@ -101,6 +109,7 @@ public final class SpeedDurationSheet: NSObject, NSTextFieldDelegate {
         reverseBox.state = model.reversed ? .on : .off
         pitchBox.state = model.keepsPitch ? .on : .off
         rippleBox.state = model.ripple ? .on : .off
+        interpolationPopUp.selectItem(at: TimeInterpolation.allCases.firstIndex(of: model.timeInterpolation) ?? 0)
     }
 
     /// Reads whichever field is being edited into the model.
@@ -126,5 +135,6 @@ public final class SpeedDurationSheet: NSObject, NSTextFieldDelegate {
         model.reversed = reverseBox.state == .on
         model.keepsPitch = pitchBox.state == .on
         model.ripple = rippleBox.state == .on
+        model.timeInterpolation = TimeInterpolation.allCases[max(interpolationPopUp.indexOfSelectedItem, 0)]
     }
 }

@@ -40,6 +40,8 @@ public struct RenderLayer: @unchecked Sendable {
     public var effects: ClipEffects
     /// Opacity > Blend Mode. Normal = plain alpha-over.
     public var blendMode: BlendMode
+    /// Frame Blending: the second source frame and its weight (see `FrameBlend`). Only used with `.frame` content.
+    public var blend: FrameBlend?
 
     /// A solid layer from a `GeneratorRef.solid` payload (RGB bytes).
     public static func solid(payload: Data, transform: ClipTransform = .identity) -> RenderLayer {
@@ -49,7 +51,8 @@ public struct RenderLayer: @unchecked Sendable {
 
     public init(content: Content, transform: ClipTransform = .identity, colorPipeline: ColorPipeline? = nil,
                 cornerRadius: Double = 0, nativeSize: (width: Int, height: Int)? = nil,
-                effects: ClipEffects = .none, blendMode: BlendMode = .normal) {
+                effects: ClipEffects = .none, blendMode: BlendMode = .normal, blend: FrameBlend? = nil) {
+        self.blend = blend
         self.content = content; self.transform = transform; self.colorPipeline = colorPipeline
         self.cornerRadius = cornerRadius; self.nativeSize = nativeSize
         self.effects = effects; self.blendMode = blendMode
@@ -157,6 +160,7 @@ public enum CompositorError: Error, Sendable {
 public final class Compositor: @unchecked Sendable {
     public let device: MTLDevice
     private let convertPipeline: MTLComputePipelineState
+    private let frameBlendPipeline: MTLComputePipelineState
     let renderPipeline: MTLRenderPipelineState
     /// Same fragment with programmable blending (reads the destination); nil on GPUs without framebuffer fetch.
     let blendPipeline: MTLRenderPipelineState?
@@ -216,6 +220,7 @@ public final class Compositor: @unchecked Sendable {
             return f
         }
         convertPipeline = try device.makeComputePipelineState(function: fn("convertToRGB"))
+        frameBlendPipeline = try device.makeComputePipelineState(function: fn("blendFrames"))
         let rp = MTLRenderPipelineDescriptor()
         rp.vertexFunction = try fn("compositeVertex")
         rp.fragmentFunction = try fn("compositeFragment")
@@ -277,6 +282,48 @@ public final class Compositor: @unchecked Sendable {
         guard r == kCVReturnSuccess, let out, let tex = CVMetalTextureGetTexture(out) else { return nil }
         retainer.textures.append(out)
         return tex
+    }
+
+    /// Converts both frames to RGB, takes both to working-linear (the layer's colour pipeline, or the inverse BT.709 OETF without
+    /// one) and mixes them there into one pooled intermediate, so the blend is a light-linear mix like the compositor's own maths
+    /// and playback and export agree. nil when the second frame has another size or format family, or anything fails: the
+    /// layer then shows its first frame. The result is working-linear: draw it with `linearize = 0`.
+    private func blendIntermediate(a: (MTLTexture, MTLTexture), b: FrameBlend, info: PixelFormatInfo, u: Uniforms, pipeline: ColorPipeline?,
+                                   width w: Int, height h: Int, commandBuffer: MTLCommandBuffer, retainer: Retainer) -> MTLTexture? {
+        let pb = b.next
+        guard CVPixelBufferGetWidth(pb) == w, CVPixelBufferGetHeight(pb) == h,
+              PixelFormats.info(for: CVPixelBufferGetPixelFormatType(pb))?.layout == info.layout,
+              let b0 = planeTexture(pb, plane: 0, format: info.yFormat, retainer: retainer),
+              info.layout == .bgra8 || planeTexture(pb, plane: 1, format: info.cbcrFormat, retainer: retainer) != nil,
+              let ma = acquireIntermediate(width: w, height: h) else { return nil }
+        guard let mb = acquireIntermediate(width: w, height: h) else { release([ma]); return nil }
+        guard let mc = acquireIntermediate(width: w, height: h) else { release([ma, mb]); return nil }
+        let b1 = info.layout == .bgra8 ? dummy : CVMetalTextureGetTexture(retainer.textures.last!)!
+        retainer.pooled.append(ma); retainer.pooled.append(mb); retainer.pooled.append(mc)
+        guard let enc = commandBuffer.makeComputeCommandEncoder() else { return nil }
+        let tg = MTLSize(width: 16, height: 16, depth: 1), grid = MTLSize(width: w, height: h, depth: 1)
+        var cu = u
+        enc.setComputePipelineState(convertPipeline)
+        enc.setTexture(a.0, index: 0); enc.setTexture(a.1, index: 1); enc.setTexture(ma, index: 2)
+        enc.setBytes(&cu, length: MemoryLayout<Uniforms>.stride, index: 0)
+        enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        enc.setTexture(b0, index: 0); enc.setTexture(b1, index: 1); enc.setTexture(mb, index: 2)
+        enc.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        enc.endEncoding()
+        var linearize: UInt32 = 1
+        if let pipeline {
+            guard (try? colorGPU.encode(pipeline, source: ma, destination: ma, commandBuffer: commandBuffer)) != nil,
+                  (try? colorGPU.encode(pipeline, source: mb, destination: mb, commandBuffer: commandBuffer)) != nil else { return nil }
+            linearize = 0
+        }
+        guard let enc2 = commandBuffer.makeComputeCommandEncoder() else { return nil }
+        var params = SIMD2<Float>(b.weight, Float(linearize))
+        enc2.setComputePipelineState(frameBlendPipeline)
+        enc2.setTexture(ma, index: 0); enc2.setTexture(mb, index: 1); enc2.setTexture(mc, index: 2)
+        enc2.setBytes(&params, length: MemoryLayout<SIMD2<Float>>.stride, index: 0)
+        enc2.dispatchThreads(grid, threadsPerThreadgroup: tg)
+        enc2.endEncoding()
+        return mc
     }
 
     func acquireIntermediate(width: Int, height: Int) -> MTLTexture? {
@@ -525,7 +572,15 @@ public final class Compositor: @unchecked Sendable {
                          cornerRadius: layer.cornerRadius * Self.radiusFactor(dw, dh, canvas: format))
                 var p = Prepared(u: u, tex0: t0, tex1: t1)
                 p.radiusFactor = Self.radiusFactor(dw, dh, canvas: format)
-                if let pipeline = layer.colorPipeline {
+                var blended: MTLTexture?
+                if let b = layer.blend, b.weight > 0,
+                   let mid = blendIntermediate(a: (t0, t1), b: b, info: info, u: u, pipeline: layer.colorPipeline, width: w, height: h,
+                                               commandBuffer: commandBuffer, retainer: retainer) {
+                    blended = mid
+                    p.u.mode = 1; p.tex0 = mid; p.tex1 = dummy; p.u.linearize = 0     // already working-linear
+                }
+                if blended != nil {
+                } else if let pipeline = layer.colorPipeline {
                     if let mid = acquireIntermediate(width: w, height: h) {
                         retainer.pooled.append(mid)
                         if let enc = commandBuffer.makeComputeCommandEncoder() {

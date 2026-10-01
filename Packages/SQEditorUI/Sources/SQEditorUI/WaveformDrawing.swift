@@ -38,6 +38,9 @@ public enum WaveformPath {
         public var cache: (WaveformCache, UUID)?
         /// Reversed clip: the picture is the mirror image of the source's peaks.
         public var reversed = false
+        /// Clip with a speed track: source seconds since `source.start` at a fraction 0...1 of the clip's width. When set, every
+        /// column reads the peaks of the source it plays (variable speed, direction changes) instead of the linear mapping.
+        public var sourceMap: (@Sendable (Double) -> Double)?
 
         public init(data: WaveformData, source: TimeRange, clipWidth: CGFloat, visibleColumns: Range<Int>,
                     style: WaveformStyle = .init(), volumeDB: @escaping @Sendable (Double) -> Double = { _ in 0 },
@@ -53,6 +56,7 @@ public enum WaveformPath {
         let vis = max(input.visibleColumns.lowerBound, 0)..<min(input.visibleColumns.upperBound, total)
         let lanes = input.style.channels == .stacked ? max(input.data.channelCount, 1) : 1
         guard !vis.isEmpty else { return Array(repeating: [], count: lanes) }
+        if let map = input.sourceMap { return mappedColumns(input, map: map, total: total, vis: vis, lanes: lanes) }
         if input.reversed {                  // mirrored: compute the mirrored columns forwards, then flip them
             var mirrored = input
             mirrored.reversed = false
@@ -95,6 +99,32 @@ public enum WaveformPath {
                     lo = max(lo, -1); hi = min(hi, 1)
                 }
                 out[lane].append(WaveformColumn(lo: lo, hi: hi, clipped: clipped))
+            }
+        }
+        return out
+    }
+
+    /// Columns of a clip with a speed track: column `i` shows the peaks of the source range between the mapped times of its two edges.
+    static func mappedColumns(_ input: Input, map: @Sendable (Double) -> Double, total: Int, vis: Range<Int>, lanes: Int) -> [[WaveformColumn]] {
+        var out = Array(repeating: [WaveformColumn](), count: lanes)
+        let base = Double(input.source.start.value) / Double(input.source.start.timescale)
+        let fine: Int64 = 1_000_000
+        func t(_ sec: Double) -> Time { Time(Int64(((base + sec) * Double(fine)).rounded()), fine) }
+        for col in vis {
+            let a = map(Double(col) / Double(total)), b = map(Double(col + 1) / Double(total))
+            let lo = min(a, b), hi = max(max(a, b), min(a, b) + 1e-6)
+            let peaks = input.data.peaks(in: TimeRange(start: t(lo), end: t(hi)), buckets: 1)
+            let db = input.volumeDB(map((Double(col) + 0.5) / Double(total)))
+            let gain = Float(db <= -120 ? 0 : pow(10, db / 20))
+            for lane in 0..<lanes {
+                var l = Float.greatestFiniteMagnitude, h = -Float.greatestFiniteMagnitude
+                if peaks.isEmpty { l = 0; h = 0 }
+                else if input.style.channels == .stacked { let p = peaks[min(lane, peaks.count - 1)][0]; l = p.min; h = p.max }
+                else { for ch in peaks { l = min(l, ch[0].min); h = max(h, ch[0].max) } }
+                l *= gain; h *= gain
+                let clipped = max(abs(l), abs(h)) > 1
+                if input.style.shape == .rectified { h = min(max(abs(l), abs(h)), 1); l = 0 } else { l = max(l, -1); h = min(h, 1) }
+                out[lane].append(WaveformColumn(lo: l, hi: h, clipped: clipped))
             }
         }
         return out

@@ -24,6 +24,7 @@ extension Clip {
         h.start = newStart
         h.source = TimeRange(start: frame, duration: duration)
         h.speed = .normal
+        h.speedKeys = nil
         h.reversed = false
         h.holdFrame = frame
         if keepsAnimation {

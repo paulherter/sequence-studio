@@ -44,7 +44,7 @@ public enum EditorMenus {
         .find,
     ]))
     public static let clip = MenuSpec(title: "Clip", items: cmds([
-        .insert, .overwrite, nil, .setPosterFrame, .clearPosterFrame, nil, .speedDuration, nil, .enableClip, .link, nil,
+        .insert, .overwrite, nil, .setPosterFrame, .clearPosterFrame, nil, .speedDuration, .toggleTimeRemapping, .removeTimeRemapping, nil, .enableClip, .link, nil,
         .setToFrameSize, nil,
         .audioGain, nil,
     ]) + [
@@ -105,5 +105,6 @@ public enum EditorMenus {
     /// handles them) and commands that are menu-only (no default key in Premiere).
     public static let alwaysShown: Set<EditorCommand> = [.undo, .redo, .cut, .copy, .paste, .delete]
     public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection, .toggleAudioScrubbing, .toggleCaptionsInMonitor,
-                                                       .videoFadeIn, .videoFadeOut, .addFrameHold, .insertFrameHold]
+                                                       .videoFadeIn, .videoFadeOut, .addFrameHold, .insertFrameHold,
+                                                       .toggleTimeRemapping, .removeTimeRemapping]
 }

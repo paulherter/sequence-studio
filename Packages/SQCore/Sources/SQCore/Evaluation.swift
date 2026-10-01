@@ -55,6 +55,11 @@ public struct LayerRequest: Sendable, Hashable {
     /// The clip's static colour settings (resolved against the media by `ColorPipeline.from` in SQRender).
     public var color: ClipColor
     /// Evaluated Crop, Rounded Corners and Gaussian Blur of the clip (`cornerRadius` above is `effects.cornerRadius`).
+    /// How a source time between two frames is shown (Time Interpolation of the clip). `.frameBlend`: mix the frame
+    /// covering `sourceTime` with the next one by the fractional position (`FrameBlend` in SQRender). Never for a held clip.
+    public var interpolation: TimeInterpolation
+    /// End of the clip's source range: a blend never reads a frame that starts at or after it. nil = unbounded.
+    public var sourceEnd: Time?
     public var effects: ClipEffects
     /// How this layer is combined with the ones below it.
     public var blendMode: BlendMode
@@ -78,7 +83,10 @@ public struct LayerRequest: Sendable, Hashable {
     public init(clip: Clip.ID, media: UUID, track: Track.ID, sourceTime: Time, transform: ClipTransform = .identity,
                 cornerRadius: Double = 0, groups: [LayerGroup] = [], generator: GeneratorRef? = nil,
                 localTime: Time? = nil, color: ClipColor = .default,
-                effects: ClipEffects? = nil, blendMode: BlendMode = .normal) {
+                effects: ClipEffects? = nil, blendMode: BlendMode = .normal,
+                interpolation: TimeInterpolation = .frameSampling, sourceEnd: Time? = nil) {
+        self.sourceEnd = sourceEnd
+        self.interpolation = interpolation
         self.color = color
         self.effects = effects ?? ClipEffects(cornerRadius: cornerRadius)
         self.blendMode = blendMode
@@ -147,7 +155,7 @@ public struct AudioSegment: Sendable, Hashable {
         for n in nests {
             for e in n.envelopes { gain *= e.gain(at: t) }
             gain *= n.clip.volume(at: t)
-            t = n.clip.source.start + (t - n.clip.start)
+            t = n.clip.sourceInstant(atLocal: t - n.clip.start)
         }
         return gain
     }
@@ -190,7 +198,7 @@ extension Timeline {
                     let g = LayerGroup(clip: c.id, track: track.id, sequence: seqID, format: inner.format,
                                        transform: tr, cornerRadius: fx.cornerRadius, effects: fx, blendMode: blend)
                     // A held nested clip shows one instant of the inner sequence.
-                    let innerTime = c.holdFrame ?? (c.source.start + (t - c.start))
+                    let innerTime = c.holdFrame ?? c.innerTime(atLocal: t - c.start, innerFrameDuration: inner.format.frameDuration)
                     var inners = inner.videoLayers(at: innerTime, sequences: sequences,
                                                    groups: groups + [g], visiting: visiting.union([seqID]))
                     for k in inners.indices {
@@ -204,7 +212,9 @@ extension Timeline {
                                             sourceTime: c.sourceTime(at: t, frameDuration: fd),
                                             transform: tr, cornerRadius: fx.cornerRadius,
                                             groups: groups, generator: c.generator, localTime: local, color: c.color,
-                                            effects: fx, blendMode: blend))
+                                            effects: fx, blendMode: blend,
+                                            interpolation: c.holdFrame == nil ? c.timeInterpolation : .frameSampling,
+                                            sourceEnd: c.source.end))
                     out[out.count - 1].pair = pair
                     out[out.count - 1].inTransition = inTransition
                 }
@@ -237,11 +247,28 @@ extension Timeline {
                 let extended = TimeRange(start: c.start - (x?.head ?? .zero), end: c.timeline.end + (x?.tail ?? .zero))
                 guard c.isEnabled, let r = extended.intersection(range), !r.isEmpty else { continue }
                 let a = r.start - c.start
-                let innerStart = c.reversed ? c.source.end - c.speed.scale(a) : c.source.start + c.speed.scale(a)
+                let innerStart = c.sourceInstant(atLocal: a)
                 let envelopes = x?.envelopes ?? []
                 if let seqID = c.sequence {
                     guard !visiting.contains(seqID), let inner = sequences(seqID) else { continue }
                     let offset = c.start - c.source.start           // inner time + offset = outer time
+                    if c.isRetimed {
+                        // Retimed nested clip: query the inner range this piece plays, map each inner piece back through the
+                        // clip's time mapping (both ends), and anchor the time-stretch grid at the nested clip's start.
+                        let innerRange = c.sourceRange(fromLocal: a, toLocal: r.end - c.start)
+                        guard !innerRange.isEmpty else { continue }
+                        for var s in inner.audioSegments(in: innerRange, sequences: sequences,
+                                                         nests: nests + [AudioNest(clip: c, track: track.id)],
+                                                         visiting: visiting.union([seqID])) {
+                            let x = c.start + c.localTime(forInstant: s.timeline.start)
+                            let y = c.start + c.localTime(forInstant: s.timeline.end)
+                            guard let piece = TimeRange(start: min(x, y), end: max(x, y)).intersection(r) else { continue }
+                            s.timeline = piece
+                            s.clipStart = c.start
+                            out.append(s)
+                        }
+                        continue
+                    }
                     let innerRange = TimeRange(start: innerStart, duration: r.duration)
                     for var s in inner.audioSegments(in: innerRange, sequences: sequences,
                                                      nests: nests + [AudioNest(clip: c, track: track.id, envelopes: envelopes)],
@@ -253,8 +280,13 @@ extension Timeline {
                 } else {
                     var source = c.source
                     if let x {
-                        let h = c.speed.scale(x.head), tl = c.speed.scale(x.tail)
-                        let lo = c.reversed ? tl : h, hi = c.reversed ? h : tl      // source time consumed before / after the range
+                        // Source time consumed before / after the range: at the speed and direction of the clip's own ends
+                        // (a speed track runs on at its first / last speed).
+                        let first = c.speedKeys?.segments.first, lastSeg = c.speedKeys?.segments.last
+                        let h = (first?.from ?? c.speed).scale(x.head), tl = (lastSeg?.to ?? c.speed).scale(x.tail)
+                        let headBack = first?.reversed ?? c.reversed, tailBack = lastSeg?.reversed ?? c.reversed
+                        let lo = (headBack ? .zero : h) + (tailBack ? tl : .zero)
+                        let hi = (headBack ? h : .zero) + (tailBack ? .zero : tl)
                         var start = max(.zero, source.start - lo), end = source.end + hi
                         if let m = c.mediaDuration { end = min(end, m) }
                         start = min(start, source.start); end = max(end, source.end)

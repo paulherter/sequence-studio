@@ -40,6 +40,8 @@ extension AppController {
         case .lift, .extract, .goToIn, .goToOut, .clearInOut: return session.activeTimeline?.inOut != nil
         case .insert, .overwrite: return !(panels?.projectView.selectedMediaIDs.isEmpty ?? true)
         case .setToFrameSize, .enableClip, .duplicate, .moveSelectionUp, .moveSelectionDown: return !session.selection.isEmpty
+        case .toggleTimeRemapping: return session.canToggleTimeRemapping
+        case .removeTimeRemapping: return session.canRemoveTimeRemapping
         case .delete, .rippleDelete: return !session.selection.isEmpty || !session.captionSelection.isEmpty || session.selectedTransition != nil
         case .sequenceSettings: return session.activeTimeline != nil
         default: return true
