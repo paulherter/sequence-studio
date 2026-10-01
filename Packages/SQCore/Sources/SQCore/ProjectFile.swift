@@ -34,7 +34,7 @@ public enum ProjectFile {
     public typealias JSONObject = [String: Any]
     /// Upgrades the top-level object from version N to N+1, keyed by N.
     public typealias Migrations = [Int: (JSONObject) throws -> JSONObject]
-    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7, 7: migrateV7toV8, 8: migrateV8toV9, 9: migrateV9toV10, 10: migrateV10toV11, 11: migrateV11toV12, 12: migrateV12toV13, 13: migrateV13toV14, 14: migrateV14toV15, 15: migrateV15toV16] }
+    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7, 7: migrateV7toV8, 8: migrateV8toV9, 9: migrateV9toV10, 10: migrateV10toV11, 11: migrateV11toV12, 12: migrateV12toV13, 13: migrateV13toV14, 14: migrateV14toV15, 15: migrateV15toV16, 17: migrateV17toV18] }
 
     /// v2: `Timeline.frameDuration` moved into `Timeline.format` (defaults 1920x1080, 48 kHz).
     /// Track flags, `inOut` and `markers` are optional on decode, so nothing else changes.
@@ -119,6 +119,10 @@ public enum ProjectFile {
     /// `TextShadow.restingAngle` (inside text payloads), `CaptionPreset.gap`. All optional on decode; absent = no gain,
     /// no tracking, upright, point text, no gap: identity migration. Older builds drop these fields on save.
     static func migrateV15toV16(_ obj: JSONObject) throws -> JSONObject { obj }
+
+    /// v18 (round 2, timeline-edit): `Clip.isEnabled` (Enable / Disable Clip). Optional on decode; absent = enabled:
+    /// identity migration. (v17 belongs to transitions; `currentVersion` is raised to the highest number on merge.)
+    static func migrateV17toV18(_ obj: JSONObject) throws -> JSONObject { obj }
 
     static let fileName = "project.json"
     static let autosaveDir = "Autosave"
