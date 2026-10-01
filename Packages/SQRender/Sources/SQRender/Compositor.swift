@@ -63,6 +63,9 @@ public struct RenderLayer: @unchecked Sendable {
 public indirect enum RenderNode: @unchecked Sendable {
     case layer(RenderLayer)
     case group(format: SequenceFormat, transform: ClipTransform, opacity: Double, cornerRadius: Double, children: [RenderNode])
+    /// A group whose nested clip has Crop, Blur, Ultra Key or a blend mode (the plain `.group` is the common case).
+    case styledGroup(format: SequenceFormat, transform: ClipTransform, opacity: Double, cornerRadius: Double,
+                     children: [RenderNode], effects: ClipEffects, blendMode: BlendMode)
 
     /// Builds the tree from flat `LayerRequest`s (bottom -> top) and their prepared layers (`layers[i]` belongs to
     /// `requests[i]`). Consecutive layers sharing the same `groups` prefix (same nested clip) form one group,
@@ -84,8 +87,15 @@ public indirect enum RenderNode: @unchecked Sendable {
             var t = g.transform
             let opacity = t.opacity
             t.opacity = 1
-            out.append(.group(format: g.format, transform: t, opacity: opacity, cornerRadius: g.cornerRadius,
-                              children: build(Array(items[i..<j]), depth: depth + 1)))
+            let kids = build(Array(items[i..<j]), depth: depth + 1)
+            let plain = g.blendMode == .normal && g.effects.segments.count <= 1 && g.effects.pre.crop.isIdentity
+                && g.effects.keys.isEmpty && !g.effects.pre.roundFirst
+            if plain {
+                out.append(.group(format: g.format, transform: t, opacity: opacity, cornerRadius: g.cornerRadius, children: kids))
+            } else {
+                out.append(.styledGroup(format: g.format, transform: t, opacity: opacity, cornerRadius: g.cornerRadius,
+                                        children: kids, effects: g.effects, blendMode: g.blendMode))
+            }
             i = j
         }
         return out
@@ -322,6 +332,22 @@ public final class Compositor: @unchecked Sendable {
                     finishLayer(p, layer: layer, format: format, commandBuffer: commandBuffer, retainer: retainer, into: &prepared)
                 }
             case .group(let gf, let transform, let opacity, let radius, let children):
+                try encodeGroup(gf, transform, opacity, radius, children, effects: .none, blend: .normal, format: format,
+                                commandBuffer: commandBuffer, retainer: retainer, into: &prepared)
+            case .styledGroup(let gf, let transform, let opacity, let radius, let children, let fx, let blend):
+                try encodeGroup(gf, transform, opacity, radius, children, effects: fx, blend: blend, format: format,
+                                commandBuffer: commandBuffer, retainer: retainer, into: &prepared)
+            }
+        }
+        try drawPrepared(prepared, into: target, commandBuffer: commandBuffer, clear: clear)
+    }
+
+    /// Composites a nested sequence's children into an offscreen image and queues it as one layer, with the nested clip's effects.
+    private func encodeGroup(_ gf: SequenceFormat, _ transform: ClipTransform, _ opacity: Double, _ radius: Double,
+                             _ children: [RenderNode], effects: ClipEffects, blend: BlendMode, format: SequenceFormat,
+                             commandBuffer: MTLCommandBuffer, retainer: Retainer, into prepared: inout [Prepared]) throws {
+        do {
+            do {
                 guard let tex = acquireIntermediate(width: gf.width, height: gf.height) else {
                     throw CompositorError.resourceAllocation
                 }
@@ -333,9 +359,16 @@ public final class Compositor: @unchecked Sendable {
                 geometry(&u, transform: transform, canvas: format, size: SIMD2(Float(gf.width), Float(gf.height)),
                          cornerRadius: radius * Self.radiusFactor(gf.width, gf.height, canvas: format))
                 u.opacity = Float(min(1, max(0, transform.opacity * opacity)))
-                prepared.append(Prepared(u: u, tex0: tex, tex1: dummy))
+                var p = Prepared(u: u, tex0: tex, tex1: dummy)
+                p.radiusFactor = Self.radiusFactor(gf.width, gf.height, canvas: format)
+                let styled = RenderLayer(content: .placeholder(.loading), cornerRadius: radius, effects: effects, blendMode: blend)
+                finishLayer(p, layer: styled, format: format, commandBuffer: commandBuffer, retainer: retainer, into: &prepared)
             }
         }
+    }
+
+    private func drawPrepared(_ prepared: [Prepared], into target: MTLTexture, commandBuffer: MTLCommandBuffer,
+                              clear: MTLClearColor) throws {
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = target
         pass.colorAttachments[0].loadAction = .clear

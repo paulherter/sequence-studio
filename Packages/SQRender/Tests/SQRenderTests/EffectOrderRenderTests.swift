@@ -183,4 +183,57 @@ private func worst(_ a: [SIMD3<Float>], _ b: [SIMD3<Float>]) -> Float {
         NSLog("SQBLURSWITCH same side %.5f, across %.5f", below, across)
         #expect(across < 0.01, "step across the switch \(across) (same side \(below))")
     }
+
+    // MARK: Nested-sequence groups
+
+    private func groupRender(effects: ClipEffects, blend: BlendMode, under: (UInt8, UInt8, UInt8)? = nil) throws -> [SIMD3<Float>] {
+        let (dev, q, comp) = try #require(setup())
+        let w = 64, h = 64
+        let inner = makeBGRA(w, h) { _, _ in (255, 255, 255) }
+        let info = VideoTrackInfo(width: w, height: h, codec: "x", bitDepth: 8, chroma: "4:4:4", nominalFrameDuration: Time(1, 25), isVariableFrameRate: false)
+        let f = SequenceFormat(width: w, height: h, frameDuration: Time(1, 25))
+        var nodes: [RenderNode] = []
+        if let u = under { nodes.append(.layer(RenderLayer(content: .frame(makeBGRA(w, h) { _, _ in u }, colorHint: info)))) }
+        nodes.append(.styledGroup(format: f, transform: .identity, opacity: 1, cornerRadius: 0,
+                                  children: [.layer(RenderLayer(content: .frame(inner, colorHint: info)))], effects: effects, blendMode: blend))
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: w, height: h, mipmapped: false)
+        d.usage = [.renderTarget, .shaderRead]; d.storageMode = .shared
+        let t = dev.makeTexture(descriptor: d)!
+        let cb = q.makeCommandBuffer()!
+        try comp.render(nodes: nodes, format: f, into: t, commandBuffer: cb)
+        cb.commit(); cb.waitUntilCompleted()
+        var px = [Float16](repeating: 0, count: w * h * 4)
+        t.getBytes(&px, bytesPerRow: w * 8, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
+        var out: [SIMD3<Float>] = []
+        for i in 0..<(w * h) {
+            let r = Float(px[i * 4]), g = Float(px[i * 4 + 1]), b = Float(px[i * 4 + 2])
+            out.append(SIMD3<Float>(r, g, b))
+        }
+        return out
+    }
+
+    @Test func aNestedClipsCropAppliesToTheGroupImage() throws {
+        var fx = ClipEffects()
+        fx.pre = EffectMasks(crop: CropInsets(left: 0.25, top: 0, right: 0, bottom: 0))
+        let out = try groupRender(effects: fx, blend: .normal)
+        #expect(out[32 * 64 + 8].x < 0.01 && out[32 * 64 + 40].x > 0.99)
+    }
+
+    @Test func aNestedClipsBlurSpreadsTheGroupImage() throws {
+        var fx = ClipEffects(); fx.blur = 6
+        fx.post = EffectMasks(crop: CropInsets(left: 0.5, top: 0, right: 0, bottom: 0))     // cut at the middle after the blur
+        let out = try groupRender(effects: fx, blend: .normal)
+        let row = (0..<64).map { out[32 * 64 + $0].x }
+        #expect(row[10] < 0.01)                         // cut away
+        #expect(row[34] > 0.95)                         // blurred but white inside, away from the group image's own edges
+        #expect(row[63] < 0.6 && row[63] > 0.3)         // the group image edge blurs against transparent: it fades there
+    }
+
+    @Test func aNestedClipsBlendModeUsesTheBackdrop() throws {
+        let out = try groupRender(effects: .none, blend: .multiply, under: (128, 64, 200))
+        let bg: [Int] = [128, 64, 200]
+        // White multiplied with the backdrop leaves the backdrop (linearised).
+        func lin(_ v: Int) -> Float { let e = Float(v) / 255; return e < 0.081242858 ? e / 4.5 : powf((e + 0.09929682680944) / 1.09929682680944, 1 / 0.45) }
+        #expect(abs(out[32 * 64 + 32].x - lin(bg[0])) < 0.01 && abs(out[32 * 64 + 32].z - lin(bg[2])) < 0.01)
+    }
 }

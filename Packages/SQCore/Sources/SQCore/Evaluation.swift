@@ -11,10 +11,15 @@ public struct LayerGroup: Sendable, Hashable {
     /// Evaluated transform (incl. opacity) and corner radius of the nested clip at this instant.
     public var transform: ClipTransform
     public var cornerRadius: Double
+    /// Crop, Rounded Corners, Gaussian Blur and Ultra Key of the nested clip, applied to the group image as a whole.
+    public var effects: ClipEffects
+    public var blendMode: BlendMode
 
     public init(clip: Clip.ID, track: Track.ID, sequence: Timeline.ID, format: SequenceFormat,
-                transform: ClipTransform = .identity, cornerRadius: Double = 0) {
+                transform: ClipTransform = .identity, cornerRadius: Double = 0,
+                effects: ClipEffects? = nil, blendMode: BlendMode = .normal) {
         self.clip = clip; self.track = track; self.sequence = sequence; self.format = format
+        self.effects = effects ?? ClipEffects(cornerRadius: cornerRadius); self.blendMode = blendMode
         self.transform = transform; self.cornerRadius = cornerRadius
     }
 }
@@ -133,9 +138,14 @@ extension Timeline {
             guard let c = track.clips.first(where: { $0.timeline.contains(t) }) else { continue }
             if let seqID = c.sequence {
                 guard !visiting.contains(seqID), let inner = sequences(seqID) else { continue }
+                let fx = c.effects(at: t)
+                if fx.isEmpty { continue }                    // a total crop leaves nothing of the nested picture
                 let g = LayerGroup(clip: c.id, track: track.id, sequence: seqID, format: inner.format,
-                                   transform: c.transform(at: t), cornerRadius: c.effects(at: t).cornerRadius)
-                out += inner.videoLayers(at: c.source.start + (t - c.start), sequences: sequences,
+                                   transform: c.transform(at: t), cornerRadius: fx.cornerRadius, effects: fx,
+                                   blendMode: c.opacityEnabled ? c.blendMode : .normal)
+                // A held nested clip shows one instant of the inner sequence.
+                let innerTime = c.holdFrame ?? (c.source.start + (t - c.start))
+                out += inner.videoLayers(at: innerTime, sequences: sequences,
                                          groups: groups + [g], visiting: visiting.union([seqID]))
             } else {
                 let local = t - c.start
