@@ -33,6 +33,8 @@ public final class EditorSession {
     public private(set) var playhead: Time = .zero
     public private(set) var selection: Set<Clip.ID> = []
     public private(set) var captionSelection: Set<CaptionItem.ID> = []
+    /// Clips copied with Cmd+C / Cmd+X (Paste puts them at the playhead).
+    public var clipboard: TimelineClipboard?
     public private(set) var isPlaying = false
     public private(set) var lastAutosave: Date?
     /// Message of the last refused or failed action (locked track, disk error...); UI shows it in the status bar.

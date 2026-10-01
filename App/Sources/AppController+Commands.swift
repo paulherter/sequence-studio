@@ -18,7 +18,7 @@ extension AppController {
              .importMedia, .newSequence, .save, .export:
             true
         default:
-            false
+            Self.isTimelineOp(c)
         }
     }
 
@@ -26,6 +26,7 @@ extension AppController {
         if ProcessInfo.processInfo.environment["SS_KEYLOG"] == "1" { NSLog("SSKEY execute \(c) playing=\(session.isPlaying)") }
         // Editing text (a field or the timecode box): the standard commands go to the editor.
         if let tv = textResponder, forwardToText(c, tv) { return }
+        if Self.isTimelineOp(c) || c == .previousKeyframe || c == .nextKeyframe, !effectControlsHasFocus, executeTimelineOp(c) { return }
         guard Self.isSupported(c) else {
             shell.statusBar.flash("\(c.title) is not available yet.")
             return
@@ -62,6 +63,7 @@ extension AppController {
         case .delete, .rippleDelete:
             // Effect Controls owns Delete while it has focus: keys, then the selected effect. Never the timeline clips.
             if effectControlsHasFocus { panels.effectModel.deleteSelectionOrEffect() }
+            else if deleteSelectedGap() { }
             else { session.deleteSelection(ripple: c == .rippleDelete) }
         case .toggleSnapping:
             panels.timelineView.toolState.snapping.toggle()

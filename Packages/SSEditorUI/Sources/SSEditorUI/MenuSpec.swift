@@ -21,7 +21,7 @@ public enum EditorMenus {
         .newSequence, .importMedia, nil, .save, nil, .export,
     ]))
     public static let edit = MenuSpec(title: "Edit", items: cmds([
-        .undo, .redo, nil, .cut, .copy, .paste, .pasteAttributes, nil,
+        .undo, .redo, nil, .cut, .copy, .paste, .pasteInsert, .pasteAttributes, nil, .selectAll, nil,
         .delete, .rippleDelete, nil, .toggleSnapping,
     ]))
     public static let clip = MenuSpec(title: "Clip", items: cmds([
@@ -33,7 +33,8 @@ public enum EditorMenus {
         .lift, .extract, nil,
         .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext, .extendEdit, nil,
         .previousEditPoint, .nextEditPoint, .goToStart, .goToEnd, nil,
-        .addMarker, .matchFrame, .reverseMatchFrame,
+        .toggleLinkedSelection, .markSelection, nil,
+        .addMarker, .nextMarker, .previousMarker, .matchFrame, .reverseMatchFrame,
     ]))
     public static let view = MenuSpec(title: "View", items: cmds([
         .playPause, .shuttleReverse, .shuttleStop, .shuttleForward, nil,

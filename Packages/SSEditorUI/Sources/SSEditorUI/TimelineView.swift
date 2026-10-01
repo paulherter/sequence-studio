@@ -76,6 +76,11 @@ public final class TimelineView: NSView {
     /// Any click inside the view (ruler, clips, empty space), before it is handled: the host stops playback here.
     public var onPointerDown: (() -> Void)?
     private var toolButtons: [(tool: TimelineTool, button: NSButton)] = []
+    /// Snap (magnet) and Linked Selection (chain) toggles at the bottom of the tool column, like Premiere's timeline header.
+    private var toggleButtons: [(kind: ToggleKind, button: NSButton)] = []
+    private enum ToggleKind { case snap, linked }
+    /// The user flipped Snap or Linked Selection with its button (the host may show a status message).
+    public var onToggleChange: ((_ snapping: Bool, _ linkedSelection: Bool) -> Void)?
 
     // MARK: Track heights
 
@@ -597,7 +602,46 @@ public final class TimelineView: NSView {
             addSubview(b)
             toolButtons.append((tool, b))
         }
+        buildToggleButtons()
         syncToolButtons()
+    }
+
+    private func buildToggleButtons() {
+        let specs: [(ToggleKind, String, String, String)] = [
+            (.snap, "magnet", "Snap (S)", "Snap"),
+            (.linked, "link", "Linked Selection", "Linked Selection"),
+        ]
+        for (kind, symbol, tip, title) in specs {
+            let b = NSButton(frame: .zero)
+            b.setButtonType(.pushOnPushOff)
+            b.isBordered = false
+            b.imagePosition = .imageOnly
+            b.image = NSImage(systemSymbolName: symbol, accessibilityDescription: title)
+                ?? NSImage(systemSymbolName: kind == .snap ? "scope" : "link", accessibilityDescription: title)
+            b.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .regular)
+            b.toolTip = tip
+            b.setAccessibilityLabel(title)
+            b.wantsLayer = true
+            b.layer?.cornerRadius = 5
+            b.focusRingType = .none
+            b.target = self
+            b.action = #selector(toggleButtonClicked(_:))
+            b.tag = toggleButtons.count
+            addSubview(b)
+            toggleButtons.append((kind, b))
+        }
+    }
+
+    @objc private func toggleButtonClicked(_ sender: NSButton) {
+        guard toggleButtons.indices.contains(sender.tag) else { return }
+        var s = toolState
+        switch toggleButtons[sender.tag].kind {
+        case .snap: s.snapping.toggle()
+        case .linked: s.linkedSelection.toggle()
+        }
+        toolState = s
+        window?.makeFirstResponder(self)
+        onToggleChange?(s.snapping, s.linkedSelection)
     }
 
     @objc private func toolButtonClicked(_ sender: NSButton) {
@@ -618,6 +662,12 @@ public final class TimelineView: NSView {
             b.contentTintColor = on ? Theme.Colors.accent : (tool.isAvailable ? Theme.Colors.label2 : Theme.Colors.label3)
             b.layer?.backgroundColor = (on ? Theme.Colors.accentTint : NSColor.clear).cgColor
         }
+        for (kind, b) in toggleButtons {
+            let on = kind == .snap ? toolState.snapping : toolState.linkedSelection
+            b.state = on ? .on : .off
+            b.contentTintColor = on ? Theme.Colors.accent : Theme.Colors.label3
+            b.layer?.backgroundColor = (on ? Theme.Colors.accentTint : NSColor.clear).cgColor
+        }
     }
 
     private func layoutToolButtons() {
@@ -629,6 +679,14 @@ public final class TimelineView: NSView {
             b.frame = CGRect(x: (TimelineGeometry.toolColumnWidth - Self.toolButtonSize) / 2, y: y,
                              width: Self.toolButtonSize, height: Self.toolButtonSize)
             y += step
+        }
+        // Toggles sit at the bottom of the column; hidden when the column is too short to hold them below the tools.
+        var ty = bounds.height - 4 - Self.toolButtonSize
+        for (_, b) in toggleButtons.reversed() {
+            b.isHidden = ty < y + 4
+            b.frame = CGRect(x: (TimelineGeometry.toolColumnWidth - Self.toolButtonSize) / 2, y: ty,
+                             width: Self.toolButtonSize, height: Self.toolButtonSize)
+            ty -= step
         }
     }
 
@@ -789,6 +847,26 @@ public final class TimelineView: NSView {
             let x = geometry.x(for: t).rounded()
             Theme.Colors.snapLine.setFill()
             CGRect(x: x - 0.5, y: clip.minY, width: 1, height: clip.height).fill()
+        }
+        let rows = geometry.rows(for: timeline)
+        if let g = interaction.gapSelection, let row = rows.first(where: { $0.track == g.track }) {
+            let r = CGRect(x: geometry.x(for: g.range.start), y: row.y + 1, width: geometry.x(for: g.range.end) - geometry.x(for: g.range.start),
+                           height: row.height - 2)
+            Theme.Colors.accentTint.setFill()
+            r.fill()
+            Theme.Colors.accent.setStroke()
+            NSBezierPath(rect: r.insetBy(dx: 0.5, dy: 0.5)).stroke()
+        }
+        if let e = interaction.edgeSelection {
+            (e.ripple ? NSColor.systemOrange : Theme.Colors.accent).setFill()
+            for ref in e.edges {
+                guard let t = EdgeEdits.time(of: ref, in: timeline),
+                      let row = rows.first(where: { r in timeline.track(r.track)?.clips.contains { $0.id == ref.clip } == true }) else { continue }
+                let x = geometry.x(for: t).rounded()
+                let bar = ref.edge == .head ? CGRect(x: x, y: row.y + 1, width: 3, height: row.height - 2)
+                                            : CGRect(x: x - 3, y: row.y + 1, width: 3, height: row.height - 2)
+                bar.fill()
+            }
         }
         if let m = interaction.marquee {
             Theme.Colors.accentTint.setFill()

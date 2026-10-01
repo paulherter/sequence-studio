@@ -23,6 +23,9 @@ public enum EditorCommand: Sendable, Hashable {
     case toggleSnapping, matchFrame, reverseMatchFrame, link, group
     // Clipboard / history
     case copy, cut, paste, pasteAttributes, undo, redo
+    // Timeline selection, nudge, edit trims (Premiere: Cmd+Left/Right nudge, Opt+Shift+Left/Right trim 5 frames)
+    case pasteInsert, selectAll, toggleLinkedSelection, markSelection, nextMarker, previousMarker
+    case nudgeLeft, nudgeRight, nudgeLeft5, nudgeRight5, trimBackward5, trimForward5
     // View / window
     case zoomIn, zoomOut, zoomFit
     // Track heights (Premiere: Cmd+=/- video, Option+=/- audio, Shift+= expand all, Shift+- minimize all)
@@ -41,6 +44,7 @@ public enum EditorCommand: Sendable, Hashable {
         switch self {
         case .stepBackward, .stepForward, .stepBackward5, .stepForward5,
              .previousEditPoint, .nextEditPoint, .zoomIn, .zoomOut,
+             .nudgeLeft, .nudgeRight, .nudgeLeft5, .nudgeRight5, .trimBackward5, .trimForward5,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .undo, .redo, .previousKeyframe, .nextKeyframe: true
         default: false
@@ -104,6 +108,18 @@ public enum EditorCommand: Sendable, Hashable {
         case .cut: "Cut"
         case .paste: "Paste"
         case .pasteAttributes: "Paste Attributes"
+        case .pasteInsert: "Paste Insert"
+        case .selectAll: "Select All"
+        case .toggleLinkedSelection: "Linked Selection"
+        case .markSelection: "Mark Selection"
+        case .nextMarker: "Go to Next Marker"
+        case .previousMarker: "Go to Previous Marker"
+        case .nudgeLeft: "Nudge Clip Selection Left"
+        case .nudgeRight: "Nudge Clip Selection Right"
+        case .nudgeLeft5: "Nudge Clip Selection Left Five Frames"
+        case .nudgeRight5: "Nudge Clip Selection Right Five Frames"
+        case .trimBackward5: "Trim Backward Five Frames"
+        case .trimForward5: "Trim Forward Five Frames"
         case .undo: "Undo"
         case .redo: "Redo"
         case .zoomIn: "Zoom In"

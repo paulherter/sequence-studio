@@ -320,7 +320,13 @@ public struct TimelineInteraction: Sendable {
         switch geometry.hitTest(p, in: timeline) {
         case .clip(let id, _):
             captionSelection = []
+            clearEdgeAndGap()
             if !selection.contains(id) { selection = group(id, linked: linked(m)) }
+        case .gap(let track, let t):
+            if let r = timeline.gap(on: track, at: t) {
+                selection = []; captionSelection = []; edgeSelection = nil
+                gapSelection = GapSelection(track: track, range: r)
+            }
         case .caption(let id, _):
             selection = []
             if !captionSelection.contains(id) { captionSelection = [id] }

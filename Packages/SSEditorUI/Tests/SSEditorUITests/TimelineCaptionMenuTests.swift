@@ -213,11 +213,11 @@ private func drag(_ i: inout TimelineInteraction, _ a: CGPoint, _ b: CGPoint) ->
         let none = TimelineContextMenu.items(timeline: tl, selection: [], clipboardHasClips: false)
         #expect(enabled(none).isEmpty)
         let one = TimelineContextMenu.items(timeline: tl, selection: [a.id], clipboardHasClips: true)
-        #expect(enabled(one) == [.cut, .copy, .paste, .delete, .rippleDelete, .nest, .rename, .revealInProject, .setToFrameSize, .scaleToFrameSize])
+        #expect(enabled(one) == [.cut, .copy, .paste, .pasteInsert, .delete, .rippleDelete, .nest, .rename, .label, .setToFrameSize, .scaleToFrameSize])
         let two = TimelineContextMenu.items(timeline: tl, selection: [a.id, b.id], clipboardHasClips: false)
-        #expect(enabled(two) == [.cut, .copy, .delete, .rippleDelete, .link, .nest, .revealInProject, .setToFrameSize, .scaleToFrameSize])
-        #expect(two.contains { $0.action == .enable && !$0.isEnabled })
-        #expect(two.contains { $0.action == .speed && !$0.isEnabled })
+        #expect(enabled(two) == [.cut, .copy, .delete, .rippleDelete, .link, .nest, .label, .setToFrameSize, .scaleToFrameSize])
+        // No dead entries: features we do not have are not listed.
+        #expect(two.count == 12)
     }
 
     @Test func menuShowsUnlinkForLinkedClips() {
@@ -233,6 +233,14 @@ private func drag(_ i: inout TimelineInteraction, _ a: CGPoint, _ b: CGPoint) ->
         let f = Fx()
         let items = TimelineContextMenu.items(timeline: f.tl, selection: [], captionSelection: [f.c1.id], clipboardHasClips: false)
         #expect(enabled(items) == [.delete])
+    }
+
+    @Test func gapAndEmptyMenus() {
+        let gap = TimelineContextMenu.gapItems(clipboardHasClips: false)
+        #expect(gap.first?.action == .rippleDelete && gap.first?.isEnabled == true)
+        #expect(!gap.contains { $0.action == .paste && $0.isEnabled })
+        let empty = TimelineContextMenu.emptyItems(clipboardHasClips: true)
+        #expect(empty.map(\.action) == [.paste, .pasteInsert] && empty.allSatisfy(\.isEnabled))
     }
 
     @MainActor @Test func nsMenuMirrorsSpec() {
