@@ -31,6 +31,9 @@ public protocol ProgramEngine: AnyObject {
     var onPositionChange: (@MainActor (Time) -> Void)? { get set }
     /// Last composited frame (feeds the scopes); nil when nothing was rendered or the engine is a stand-in.
     var lastRenderedTexture: MTLTexture? { get }
+    /// Asynchronous readback of the finished composite (eyedropper, Auto, thumbnails); coalesced per key, never blocks.
+    /// Stand-ins never call `encode`.
+    func requestFrameCapture(key: String, _ encode: @escaping FrameCaptureEncoder)
     /// True when audio output could not start (playback continues on the host clock).
     var audioUnavailable: Bool { get }
     /// Re-presents the current frame at the viewer's current size (no decode).
@@ -43,6 +46,7 @@ extension ProgramEngine {
     /// Default: nothing to redraw (stand-ins).
     public func redraw() {}
     public var lastRenderedTexture: MTLTexture? { nil }
+    public func requestFrameCapture(key: String, _ encode: @escaping FrameCaptureEncoder) {}
     public var audioUnavailable: Bool { false }
     public var meterReading: (sequence: Int, peaks: [Float])? { nil }
 }

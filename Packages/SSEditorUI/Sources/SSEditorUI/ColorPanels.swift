@@ -36,37 +36,86 @@ public final class ColorInspectorPanelView: NSView {
     }
     @available(*, unavailable) public required init?(coder: NSCoder) { fatalError() }
 
-    private var thumbnailScheduled = false
+    // MARK: Look preview
 
-    /// Refreshes the Creative look preview from the Program monitor's frame shortly after the last request (coalesced).
-    /// Only while the playhead is over the shown clip; otherwise the synthetic picture is used.
-    private func scheduleThumbnail() {
-        guard window != nil, !thumbnailScheduled else { return }
-        thumbnailScheduled = true
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.12) { [weak self] in
-            MainActor.assumeIsolated {
-                guard let self else { return }
-                self.thumbnailScheduled = false
-                // Not while playing: the readback waits for the GPU and must not compete with playback.
-                guard !self.session.isPlaying, let id = self.clipID, let model = self.colorModels[id] else { return }
-                let over = self.session.singleSelectedClip.map { $0.timeline.contains(self.session.playhead) } ?? false
-                model.frameThumbnail = over ? self.session.engine.lastRenderedTexture.flatMap { FrameSampler.thumbnail(of: $0) } : nil
+    private var thumbnailInFlight: Date?
+    private var thumbnailDirty = false
+    private var thumbnailRetry = false
+    private var lastThumbnailRequest = Date.distantPast
+    static let thumbnailMinInterval: TimeInterval = 0.15
+
+    /// Refreshes the Creative look preview from the Program monitor frame. The engine serves the request from the render
+    /// that follows the edit (or the current frame when idle), one request in flight at a time (changes meanwhile mark it
+    /// dirty and cause one more request), never while playing, at most every 150 ms while scrubbing.
+    private func requestThumbnail() {
+        guard window != nil, !session.isPlaying, let id = clipID, let model = colorModels[id] else { return }
+        guard let clip = session.singleSelectedClip, clip.timeline.contains(session.playhead) else {
+            model.frameThumbnail = nil
+            return
+        }
+        if let t = thumbnailInFlight, Date().timeIntervalSince(t) < 1.5 { thumbnailDirty = true; return }   // expired = lost
+        let wait = Self.thumbnailMinInterval - Date().timeIntervalSince(lastThumbnailRequest)
+        if wait > 0 {
+            thumbnailDirty = true
+            guard !thumbnailRetry else { return }
+            thumbnailRetry = true
+            DispatchQueue.main.asyncAfter(deadline: .now() + wait) { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.thumbnailRetry = false
+                    if self.thumbnailDirty { self.thumbnailDirty = false; self.requestThumbnail() }
+                }
             }
+            return
+        }
+        thumbnailDirty = false
+        thumbnailInFlight = Date()
+        lastThumbnailRequest = Date()
+        FrameSampler.sampleScaled(engine: session.engine, width: 200, key: "color.thumbnail") { [weak self] r in
+            guard let self else { return }
+            self.thumbnailInFlight = nil
+            if let id = self.clipID, let model = self.colorModels[id], !self.session.isPlaying {
+                model.frameThumbnail = r.flatMap { FrameSampler.image(width: $0.width, height: $0.height, linear: $0.linear) }
+            }
+            if self.thumbnailDirty { self.thumbnailDirty = false; self.requestThumbnail() }
         }
     }
 
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
-        if window != nil { scheduleThumbnail() }
+        if window != nil { requestThumbnail() }
+    }
+
+    /// Why the eyedropper and Auto cannot measure the selected clip alone right now (nil = they can). They read the
+    /// Program monitor's composite, so anything else visible there, or later Colour effects, would be measured too.
+    static func samplingBlockReason(timeline: Timeline, clip: Clip, playhead: Time) -> String? {
+        guard clip.timeline.contains(playhead) else { return "Move the playhead over the clip to measure it." }
+        if timeline.videoLayers(at: playhead).count > 1 {
+            return "Other layers are visible at the playhead; the measurement would include them. Hide the other tracks or move the playhead."
+        }
+        if clip.color.effects.count > 1 { return "This clip has more than one Colour effect; the measurement would include the later ones." }
+        return nil
+    }
+
+    private func refreshSamplingBlock() {
+        guard let id = clipID, let model = colorModels[id], let clip = session.singleSelectedClip, let t = session.activeTimeline else { return }
+        let r = Self.samplingBlockReason(timeline: t, clip: clip, playhead: session.playhead)
+        if model.samplingBlock != r { model.samplingBlock = r }
     }
 
     public func sync(_ change: EditorSession.Change) {
-        if change.contains(.playhead) || change.contains(.project) || change.contains(.selection) || change.contains(.transport) { scheduleThumbnail() }
+        defer {
+            if change.contains(.playhead) || change.contains(.project) || change.contains(.selection) || change.contains(.transport) {
+                refreshSamplingBlock()
+                requestThumbnail()
+            }
+        }
         guard change.contains(.project) || change.contains(.selection) else { return }
         let ids = Set(session.activeTimeline?.tracks.flatMap { $0.clips.map(\.id) } ?? [])
         for id in colorModels.keys where !ids.contains(id) { colorModels[id] = nil; views[id] = nil }
         let clip = session.singleSelectedClip
-        clipID = clip.flatMap { $0.kind == .audio ? nil : $0.id }
+        // Audio has no picture; text/generator layers are not run through the colour chain by the renderer.
+        clipID = clip.flatMap { $0.kind == .audio || $0.isGenerator ? nil : $0.id }
         if let id = clipID, views[id] == nil {
             let model = ColorInspectorModel()
             model.onGestureBegan = { [weak self] in self?.beginGesture() }
@@ -94,25 +143,30 @@ public final class ColorInspectorPanelView: NSView {
         needsLayout = true
     }
 
-    /// White-balance eyedropper: the next click on the Program monitor samples the rendered frame; Temperature and Tint
-    /// are set so the picked colour becomes neutral (one undo step).
+    /// White-balance eyedropper: the next click on the Program monitor samples the rendered frame (asynchronously, from the
+    /// render loop); Temperature and Tint are set so the picked colour becomes neutral (one undo step).
     private func pickWhiteBalance(clip id: Clip.ID, effect: Int) {
+        guard colorModels[id]?.samplingBlock == nil else { NSSound.beep(); return }
         ColorPickHub.shared.begin { [weak self] pos in
-            guard let self, let pos, let model = self.colorModels[id],
-                  let tex = self.session.engine.lastRenderedTexture,
-                  let rgb = FrameSampler.meanColor(of: tex, at: pos),
-                  let r = WhiteBalanceSolver.solve(picked: rgb, temperature: model.value(effect, .temperature),
-                                                   tint: model.value(effect, .tint)) else { NSSound.beep(); return }
-            model.setWhiteBalance(effect, temperature: r.temperature, tint: r.tint)
+            guard let self, let pos else { return }
+            FrameSampler.sampleColor(engine: self.session.engine, at: pos) { [weak self] rgb in
+                guard let self, let model = self.colorModels[id], let rgb,
+                      let r = WhiteBalanceSolver.solve(picked: rgb, temperature: model.value(effect, .temperature),
+                                                       tint: model.value(effect, .tint)) else { NSSound.beep(); return }
+                model.setWhiteBalance(effect, temperature: r.temperature, tint: r.tint)
+            }
         }
     }
 
-    /// Basic Correction Auto: analyses the Program frame as shown (when the playhead is over the clip).
+    /// Basic Correction Auto: analyses the Program frame as shown (asynchronously; only when the clip is alone there).
     private func autoTone(clip id: Clip.ID, effect: Int) {
-        guard let model = colorModels[id], let clip = session.singleSelectedClip, clip.id == id, clip.timeline.contains(session.playhead),
-              let tex = session.engine.lastRenderedTexture, let luma = FrameSampler.lumaSamples(of: tex),
-              let e = model.color.effect(effect), let b = AutoTone.solve(luma: luma, current: e.basic) else { NSSound.beep(); return }
-        model.setAutoTone(effect, b)
+        guard colorModels[id]?.samplingBlock == nil else { NSSound.beep(); return }
+        FrameSampler.sampleScaled(engine: session.engine, width: 96, key: "color.auto") { [weak self] r in
+            guard let self, let model = self.colorModels[id], let r, model.samplingBlock == nil,
+                  let e = model.color.effect(effect),
+                  let b = AutoTone.solve(luma: FrameSampler.displayLuma(r.linear), current: e.basic) else { NSSound.beep(); return }
+            model.setAutoTone(effect, b)
+        }
     }
 
     private var gestureDepth = 0

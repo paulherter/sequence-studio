@@ -19,25 +19,49 @@ import Testing
 
     @Test func meanColorReadsThePatchUnderThePosition() throws {
         let t = try texture()
-        let l = try #require(FrameSampler.meanColor(of: t, at: SIMD2(0.25, 0.5)))
+        let l = try #require(FrameSampler.meanColorNow(of: t, at: SIMD2(0.25, 0.5)))
         #expect(abs(l.x - 0.5) < 1e-3 && abs(l.y - 0.25) < 1e-3 && abs(l.z - 0.125) < 1e-3)
-        let r = try #require(FrameSampler.meanColor(of: t, at: SIMD2(0.9, 0.5)))
+        let r = try #require(FrameSampler.meanColorNow(of: t, at: SIMD2(0.9, 0.5)))
         #expect(abs(r.x - 1) < 1e-3)
         // Edges clamp instead of reading outside the texture.
-        #expect(FrameSampler.meanColor(of: t, at: SIMD2(0, 0)) != nil && FrameSampler.meanColor(of: t, at: SIMD2(1, 1)) != nil)
+        #expect(FrameSampler.meanColorNow(of: t, at: SIMD2(0, 0)) != nil && FrameSampler.meanColorNow(of: t, at: SIMD2(1, 1)) != nil)
     }
 
-    @Test func thumbnailKeepsAspectAndTone() throws {
+    @Test func scaledReadbackKeepsAspectAndImageAndLumaAreDisplayEncoded() throws {
         let t = try texture()
-        let img = try #require(FrameSampler.thumbnail(of: t, width: 32))
+        let (w, h, lin) = try #require(FrameSampler.scaledNow(of: t, width: 32))
+        #expect(w == 32 && h == 16 && lin.count == 32 * 16)
+        let img = try #require(FrameSampler.image(width: w, height: h, linear: lin))
         #expect(img.width == 32 && img.height == 16)
+        let l = FrameSampler.displayLuma(lin)
+        #expect(l.allSatisfy { $0.isFinite } && l.max()! > 0.95 && l.min()! < 0.6, "right half white, left half darker")
     }
 
-    @Test func lumaSamplesAreDisplayEncodedAndCoverTheFrame() throws {
-        let t = try texture()
-        let l = try #require(FrameSampler.lumaSamples(of: t, width: 32))
-        #expect(l.count == 32 * 16 && l.allSatisfy { $0.isFinite })
-        #expect(l.max()! > 0.95 && l.min()! < 0.6, "right half white, left half darker")
+    @Test func patchRectangleClampsToTheTexture() {
+        #expect(FrameSampler.patch(width: 64, height: 32, at: SIMD2(0, 0), radius: 2)! == (0, 0, 3, 3))
+        #expect(FrameSampler.patch(width: 64, height: 32, at: SIMD2(1, 1), radius: 2)! == (61, 29, 3, 3))
+        #expect(FrameSampler.patch(width: 64, height: 32, at: SIMD2(0.5, 0.5), radius: 2)! == (30, 14, 5, 5))
+        #expect(FrameSampler.patch(width: 64, height: 32, at: SIMD2(.nan, 0.5), radius: 2) == nil)
+    }
+
+    @Test func clickPositionFollowsMonitorZoomAndPan() {
+        let seq = CGSize(width: 1920, height: 1080)
+        let fit = MonitorViewMapping(viewSize: CGSize(width: 960, height: 540), backingScale: 2, sequenceSize: seq, zoom: .fit)
+        let c = ColorPickHub.position(forClick: CGPoint(x: 480, y: 270), mapping: fit)
+        #expect(abs(c.x - 0.5) < 1e-6 && abs(c.y - 0.5) < 1e-6, "centre of a fitted picture")
+        // 200 % zoom centred on the sequence centre: the picture is 2x the view size and its centre sits at the view centre.
+        let zoomed = MonitorViewMapping(viewSize: CGSize(width: 800, height: 450), backingScale: 2, sequenceSize: seq, zoom: .view(scale: 1, centerX: 0, centerY: 0))
+        let r = zoomed.canvasRect
+        #expect(r.width > 800, "zoomed picture is larger than the view")
+        let mid = ColorPickHub.position(forClick: CGPoint(x: 400, y: 225), mapping: zoomed)
+        #expect(abs(mid.x - 0.5) < 1e-6 && abs(mid.y - 0.5) < 1e-6)
+        // Panned to the picture's right edge: the view centre now shows a point far right of the picture centre.
+        let panned = MonitorViewMapping(viewSize: CGSize(width: 800, height: 450), backingScale: 2, sequenceSize: seq, zoom: .view(scale: 1, centerX: 800, centerY: 0))
+        let edge = ColorPickHub.position(forClick: CGPoint(x: 400, y: 225), mapping: panned)
+        #expect(edge.x > 0.8 && edge.x < 1 && abs(edge.y - 0.5) < 1e-6, "got \(edge)")
+        // A click on the letterbox of a fitted picture lies outside 0...1 (the pick is cancelled).
+        let outside = ColorPickHub.position(forClick: CGPoint(x: 5, y: 5), mapping: MonitorViewMapping(viewSize: CGSize(width: 960, height: 900), backingScale: 2, sequenceSize: seq, zoom: .fit))
+        #expect(outside.y < 0 || outside.y > 1)
     }
 
     @Test func halfConversionMatchesFloat16() {

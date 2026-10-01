@@ -380,4 +380,35 @@ import SSCore
         let a = p.apply(SIMD3(0.8, 0.30, 0.31), pre: false), b = p.apply(SIMD3(0.8, 0.31, 0.30), pre: false)
         #expect(simd_length(a - b) < 0.035, "the inputs themselves differ by 0.014")
     }
+
+    // MARK: Hue curve wrap and degenerate point lists
+
+    @Test func hueCurveSeamUsesTheFirstPointAndStaysContinuous() {
+        // End points with different y (a hand-edited or old file): the curve wraps through the first point's y at hue 0.
+        let t = PreparedHueCurves.periodic([CurvePoint(0, 0.8), CurvePoint(0.5, 0.5), CurvePoint(1, 0.2)], 64)
+        #expect(abs(t[0] - 0.8) < 1e-3)
+        #expect(abs(t[63] - t[0]) < 0.1 && abs(t[1] - t[0]) < 0.1, "no jump across the seam: \(t[63]) -> \(t[0]) -> \(t[1])")
+        // Locked end points (what the model writes): the seam is smooth and symmetric.
+        let l = PreparedHueCurves.periodic([CurvePoint(0, 0.8), CurvePoint(0.5, 0.5), CurvePoint(1, 0.8)], 64)
+        #expect(abs(l[0] - 0.8) < 1e-3 && abs(l[63] - l[1]) < 0.02)
+    }
+
+    @Test func singleOrMissingPointsMeanAFlatCurveNeverTheDiagonal() {
+        #expect(PreparedHueCurves.periodic([CurvePoint(0.3, 0.8)], 64).allSatisfy { abs($0 - 0.8) < 1e-6 })
+        #expect(PreparedHueCurves.periodic([], 64).allSatisfy { $0 == 0.5 })
+        #expect(PreparedHueCurves.periodic([CurvePoint(1, 0.7)], 64).allSatisfy { abs($0 - 0.7) < 1e-6 })
+        #expect(PreparedHueCurves.linear([CurvePoint(0.5, 0.7)], 64).allSatisfy { abs($0 - 0.7) < 1e-6 }, "Luma vs Sat with one point")
+        #expect(PreparedHueCurves.linear([], 64).allSatisfy { $0 == 0.5 })
+        // A real curve is unchanged by the refactor: sampled like CurveMath.
+        let pts = [CurvePoint(0, 0.2), CurvePoint(0.4, 0.9), CurvePoint(1, 0.5)]
+        let a = PreparedHueCurves.linear(pts, 64), b = CurveMath.sample(pts, 64)
+        #expect(zip(a, b).allSatisfy { abs($0 - $1) < 1e-6 })
+    }
+
+    @Test func gpuAndCpuSmoothstepAreTheSameFunction() {
+        for x in stride(from: Float(-0.2), through: 1.4, by: 0.07) {
+            let t = min(max((x - 0.1) / (0.7 - 0.1), 0), 1)
+            #expect(ToneMath.smooth(0.1, 0.7, x) == t * t * (3 - 2 * t))
+        }
+    }
 }

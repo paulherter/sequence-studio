@@ -19,6 +19,8 @@ final class ColorSectionView: NSStackView {
     var curveEditor: CurveEditorView?
     var channelDots: ChannelDots?
     var hueEditor: CurveEditorView?
+    var eyedropper: NSButton?
+    var autoButton: NSButton?
     var huePopup: NSPopUpButton?
     var hueKind = HueCurveKind.hueVsSat
     var preview: LookPreviewView?
@@ -275,6 +277,7 @@ public final class ColorInspectorView: NSView {
                                           target: self, action: #selector(pickWhiteBalance(_:)))
                 eyedropper.isBordered = false
                 eyedropper.tag = v.effect
+                v.eyedropper = eyedropper
                 eyedropper.toolTip = "Click a neutral grey or white area in the Program monitor to set the white balance"
                 let l = NSTextField(labelWithString: "White Balance")
                 l.font = Theme.Fonts.small
@@ -296,6 +299,7 @@ public final class ColorInspectorView: NSView {
                     b.tag = v.effect
                 }
                 reset.toolTip = "Reset Exposure, Contrast, Highlights, Shadows, Whites and Blacks"
+                v.autoButton = auto
                 auto.toolTip = "Set Exposure and Blacks from the Program monitor picture"
                 let row = NSStackView(views: [NSView(), reset, auto])
                 row.orientation = .horizontal
@@ -558,6 +562,7 @@ public final class ColorInspectorView: NSView {
             _ = model.recentLUTs
             _ = model.detectedSource
             _ = model.frameThumbnail
+            _ = model.samplingBlock
             _ = model.embeddedLUTName
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
@@ -597,6 +602,11 @@ public final class ColorInspectorView: NSView {
         }
         for (slot, popup) in v.lutPopups { refreshLUTPopup(popup, slot: slot, effect: e.id, isPrimary: isPrimary) }
         if kind == .basicCorrection {
+            let block = model.samplingBlock
+            v.eyedropper?.isEnabled = block == nil
+            v.eyedropper?.toolTip = block ?? "Click a neutral grey or white area in the Program monitor to set the white balance"
+            v.autoButton?.isEnabled = block == nil
+            v.autoButton?.toolTip = block ?? "Set Exposure and Blacks from the Program monitor picture"
             let hasLUT = e.inputLUT != nil && e.inputLUT != .automatic
             v.rows[.inputLUTIntensity]?.setActive(!isPrimary && hasLUT)
         }

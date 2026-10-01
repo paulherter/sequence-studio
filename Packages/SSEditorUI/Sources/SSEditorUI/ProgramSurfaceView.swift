@@ -113,9 +113,7 @@ public final class ProgramSurfaceView: NSView, NSTextViewDelegate {
     public override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
         if ColorPickHub.shared.isPicking {
-            let r = mapping.canvasRect
-            ColorPickHub.shared.complete(at: r.width > 0 && r.height > 0
-                ? SIMD2(Double((p.x - r.minX) / r.width), Double((p.y - r.minY) / r.height)) : SIMD2(-1, -1))
+            ColorPickHub.shared.complete(at: ColorPickHub.position(forClick: p, mapping: mapping))
             return
         }
         switch tool {

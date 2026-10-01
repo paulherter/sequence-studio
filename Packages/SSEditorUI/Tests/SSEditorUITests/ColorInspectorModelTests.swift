@@ -173,6 +173,27 @@ import SSRender
         #expect(ColorWheelSlot.highlights.hasLuma && !ColorWheelSlot.shadowTint.hasLuma)
     }
 
+    @Test func hueKeyedCurvesKeepBothEndPointsAtTheSameY() {
+        let m = model()
+        // Moving the last end point drags the first one with it (the curve wraps around the colour wheel).
+        m.setHueCurve(e1, .hueVsSat, [CurvePoint(0, 0.5), CurvePoint(0.4, 0.8), CurvePoint(1, 0.9)])
+        var c = m.hueCurve(e1, .hueVsSat)
+        #expect(c.first!.y == 0.9 && c.last!.y == 0.9 && c[1] == CurvePoint(0.4, 0.8))
+        // Moving the first end point drags the last one.
+        m.setHueCurve(e1, .hueVsSat, [CurvePoint(0, 0.2), c[1], c.last!])
+        c = m.hueCurve(e1, .hueVsSat)
+        #expect(c.first!.y == 0.2 && c.last!.y == 0.2)
+        // Interior edits leave the ends alone.
+        m.setHueCurve(e1, .hueVsSat, [c[0], CurvePoint(0.5, 0.3), c[2]])
+        #expect(m.hueCurve(e1, .hueVsSat).map(\.y) == [0.2, 0.3, 0.2])
+        // Luma vs Sat and Sat vs Sat are not cyclic: free end points.
+        m.setHueCurve(e1, .lumaVsSat, [CurvePoint(0, 0.1), CurvePoint(1, 0.9)])
+        #expect(m.hueCurve(e1, .lumaVsSat).map(\.y) == [0.1, 0.9])
+        // Fewer than two points stay as they are (the maths treats one point as a flat curve).
+        m.setHueCurve(e1, .hueVsHue, [CurvePoint(0.3, 0.8)])
+        #expect(m.hueCurve(e1, .hueVsHue) == [CurvePoint(0.3, 0.8)])
+    }
+
     @Test func hueCurvesEditPerKindAndResetIsOneGesture() {
         let m = model()
         let pts = [CurvePoint(0, 0.5), CurvePoint(0.3, 0.9), CurvePoint(1, 0.5)]

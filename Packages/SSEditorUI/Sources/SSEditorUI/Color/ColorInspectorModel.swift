@@ -235,6 +235,8 @@ public final class ColorInspectorModel {
     /// Name of the camera look LUT embedded in the clip's media, if any.
     public private(set) var embeddedLUTName: String?
     public private(set) var mediaID: UUID?
+    /// Why the eyedropper and Auto are unavailable (they would measure more than this clip); nil = available.
+    public var samplingBlock: String?
     /// The clip's frame at the playhead (with its current look) for the Creative preview; nil = use the synthetic picture.
     public var frameThumbnail: CGImage?
 
@@ -463,8 +465,20 @@ public final class ColorInspectorModel {
         kind.points(color.effect(effect)?.hueCurves ?? HueCurves())
     }
 
+    /// Writes one hue curve. Hue-keyed curves wrap around the colour wheel, so their first and last point are the same
+    /// place: when one of them moved vertically the other follows (an edit of the last point wins when both changed).
     public func setHueCurve(_ effect: Int, _ kind: HueCurveKind, _ pts: [CurvePoint]) {
-        editEffect(effect) { kind.set(pts, in: &$0.hueCurves) }
+        editEffect(effect) { e in
+            var new = pts
+            if kind.isHueKeyed, new.count >= 2 {
+                let old = kind.points(e.hueCurves)
+                if let lo = old.first, let hi = old.last, old.count >= 2 {
+                    if new[new.count - 1].y != hi.y { new[0].y = new[new.count - 1].y }
+                    else if new[0].y != lo.y { new[new.count - 1].y = new[0].y }
+                } else { new[new.count - 1].y = new[0].y }
+            }
+            kind.set(new, in: &e.hueCurves)
+        }
     }
 
     /// Resets one hue curve to the flat middle line. One undo step.

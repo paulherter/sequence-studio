@@ -187,26 +187,37 @@ private func run(_ engine: AudioEngine, _ clock: AudioClock, rate: PlaybackRate,
 @Suite(.serialized) struct AudioEngineSmokeTests {
     @Test(.enabled(if: hasOutputDevice(), "no audio output device"))
     func playsAtAllRatesWithoutUnderruns() async throws {
-        // Real-time audio: a busy machine (parallel builds, other test runs) can starve the render thread or the sleeps
-        // that time the run. A real regression underruns or drifts in every attempt; a busy moment does not. Up to 3 attempts.
-        var problems: [String] = []
+        // Real-time audio on a busy machine (parallel builds, other test runs). Timing checks (clock speed, restart time) get
+        // up to 3 attempts: the sleeps that time a run can overshoot, a real drift fails every attempt. Underruns and failed
+        // reads are not timing: one dirty attempt can be a starved render thread on a loaded machine, so one is tolerated and
+        // logged, but a second dirty attempt fails the test (a real underrun bug shows up in every run).
+        var timing: [String] = []
+        var dirty = 0
         for attempt in 1...3 {
-            problems = try await scenario()
-            if problems.isEmpty { return }
-            print("[E-11] attempt \(attempt) disturbed: \(problems)")
+            let r = try await scenario()
+            if !r.hard.isEmpty {
+                dirty += 1
+                print("[E-11] attempt \(attempt): \(r.hard)")
+                #expect(dirty < 2, "underruns or failed reads in \(dirty) attempts; last: \(r.hard)")
+                if dirty >= 2 { return }
+                continue
+            }
+            timing = r.timing
+            if timing.isEmpty { return }
+            print("[E-11] attempt \(attempt) timing disturbed: \(timing)")
         }
-        #expect(problems.isEmpty, "all 3 attempts failed; last: \(problems)")
+        #expect(timing.isEmpty, "timing off in the attempts; last: \(timing)")
     }
 
-    private func scenario() async throws -> [String] {
+    private func scenario() async throws -> (timing: [String], hard: [String]) {
         let (engine, clock) = try await makeEngine()
         defer { engine.shutdown() }
-        var problems: [String] = []
-        problems += try await run(engine, clock, rate: .forward, from: Time(1, 1), seconds: 1)
-        problems += try await run(engine, clock, rate: PlaybackRate(2), from: Time(1, 1), seconds: 1)
-        problems += try await run(engine, clock, rate: PlaybackRate(8), from: .zero, seconds: 1)
-        problems += try await run(engine, clock, rate: .reverse, from: Time(9, 1), seconds: 1)
-        problems += try await run(engine, clock, rate: PlaybackRate(1, 4), from: Time(2, 1), seconds: 1)
+        var timing: [String] = [], hard: [String] = []
+        timing += try await run(engine, clock, rate: .forward, from: Time(1, 1), seconds: 1)
+        timing += try await run(engine, clock, rate: PlaybackRate(2), from: Time(1, 1), seconds: 1)
+        timing += try await run(engine, clock, rate: PlaybackRate(8), from: .zero, seconds: 1)
+        timing += try await run(engine, clock, rate: .reverse, from: Time(9, 1), seconds: 1)
+        timing += try await run(engine, clock, rate: PlaybackRate(1, 4), from: Time(2, 1), seconds: 1)
         // Device configuration change: engine restarts, clock re-seeks at its position and keeps running.
         clock.start(at: Time(3, 1), rate: .forward)
         try await Task.sleep(for: .milliseconds(300))
@@ -214,13 +225,13 @@ private func run(_ engine: AudioEngine, _ clock: AudioClock, rate: PlaybackRate,
         engine.handleConfigurationChange()
         try await Task.sleep(for: .milliseconds(500))
         let after = clock.now()
-        if !(secs(after - before) > 0.3 && secs(after - before) < 0.6) { problems.append("moved \(secs(after - before)) s across the restart") }
-        if clock.sample().stalled { problems.append("clock stalled after the restart") }
+        if !(secs(after - before) > 0.3 && secs(after - before) < 0.6) { timing.append("moved \(secs(after - before)) s across the restart") }
+        if clock.sample().stalled { timing.append("clock stalled after the restart") }
         clock.stop()
-        if engine.underrunCount != 0 { problems.append("underruns: \(engine.underrunCount)") }
-        if !(engine.meterSnapshot().sequence > 0) { problems.append("meter never ran") }
-        if engine.feeder.failedReads.load(ordering: .relaxed) != 0 { problems.append("failed reads") }
-        return problems
+        if engine.underrunCount != 0 { hard.append("underruns: \(engine.underrunCount)") }
+        if !(engine.meterSnapshot().sequence > 0) { hard.append("meter never ran") }
+        if engine.feeder.failedReads.load(ordering: .relaxed) != 0 { hard.append("failed reads") }
+        return (timing, hard)
     }
 
     /// Opt-in (SS_LONG_TESTS=1): 60 s real time, 12 s per rate, no underruns.

@@ -12,7 +12,8 @@ public final class ColorClipboard {
 
 extension EditorSession {
     /// Pastes the Colour effects of `other` onto the selected picture clips (or `ids`): one undo step for all of them.
-    /// Audio clips are skipped, and the target keeps its own footage interpretation (`ClipColor.pasting(effectsOf:)`).
+    /// Audio clips and generator clips (text) are skipped: the renderer applies `Clip.color` to media and stills only, so a
+    /// colour on a text layer would do nothing. The target keeps its own footage interpretation (`ClipColor.pasting(effectsOf:)`).
     /// Returns how many clips changed.
     @discardableResult
     public func pasteColor(_ other: ClipColor, to ids: Set<Clip.ID>? = nil) -> Int {
@@ -20,7 +21,7 @@ extension EditorSession {
         var changed = 0
         let applied = attempt("Paste Colour") { t in
             for track in t.tracks where track.kind == .video {
-                for var clip in track.clips where targets.contains(clip.id) {
+                for var clip in track.clips where targets.contains(clip.id) && !clip.isGenerator {
                     let c = clip.color.pasting(effectsOf: other)
                     guard c != clip.color else { continue }
                     clip.color = c

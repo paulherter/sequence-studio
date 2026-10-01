@@ -151,6 +151,10 @@ import SSRender
     /// Last composited frame (rgba16Float, sequence size, working linear). Headless readback for tests/bench.
     public var lastRenderedTexture: MTLTexture? { loop.lastRendered?.texture }
 
+    /// Asynchronous readback of the finished composite (eyedropper, Auto, thumbnails): see `FrameCaptureEncoder`.
+    /// Coalesced per `key` (a newer request with the same key replaces the pending one); never blocks the caller.
+    public func requestFrameCapture(key: String, _ encode: @escaping FrameCaptureEncoder) { loop.requestCapture(key: key, encode) }
+
     /// One render-loop iteration, synchronously (headless tests / bench). Returns true when a frame was presented.
     @discardableResult public func tick() -> Bool {
         guard let o = loop.tick() else { return false }
