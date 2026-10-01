@@ -1,10 +1,8 @@
 import Foundation
 import SSCore
 
-/// Marker colours as in Premiere's marker dialog.
-public enum MarkerColorChoice: String, Sendable, CaseIterable {
-    case green, red, purple, orange, yellow, white, blue, cyan
-}
+/// Marker colours as in Premiere's marker dialog (stored on `Marker`).
+public typealias MarkerColorChoice = MarkerColor
 
 /// One table row. `color`, `duration` and `comment` are display values; they fall back to defaults
 /// until `Marker` stores them (file format bump), then `MarkersPanelModel.rows` reads them.
@@ -50,10 +48,10 @@ public final class MarkersPanelModel {
 
     public var rows: [MarkerRow] {
         markers.map { m in
-            MarkerRow(id: m.id, color: .green, name: m.name, time: m.time,
+            MarkerRow(id: m.id, color: m.color, name: m.name, time: m.time,
                       inTimecode: Self.timecode(m.time, frameDuration: frameDuration),
-                      duration: .zero, durationTimecode: Self.timecode(.zero, frameDuration: frameDuration),
-                      comment: "")
+                      duration: m.duration, durationTimecode: Self.timecode(m.duration, frameDuration: frameDuration),
+                      comment: m.comment)
         }
     }
 

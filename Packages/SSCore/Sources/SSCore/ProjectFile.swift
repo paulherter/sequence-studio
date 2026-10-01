@@ -82,8 +82,7 @@ public enum ProjectFile {
     /// `ClipColor` decoding maps v11 `sections` (first block of each kind into the first effect, extras into further
     /// effects): identity on the JSON object.
     static func migrateV11toV12(_ obj: JSONObject) throws -> JSONObject { obj }
-
-    /// v13: marker fields (timeline stream). Optional on decode: identity migration.
+    /// v13: markers gain colour, comment and duration (decoded with defaults).
     static func migrateV12toV13(_ obj: JSONObject) throws -> JSONObject { obj }
 
     /// v14: `Clip.speed` (ratio), `Clip.reversed`, `Clip.keepsPitch`. All optional on decode; absent = 100 %, not reversed,

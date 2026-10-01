@@ -20,6 +20,10 @@ public struct TimelineInteraction: Sendable {
     public private(set) var selection: Set<Clip.ID> = []
     /// Selected caption items (separate from clips; a click on one kind clears the other).
     public private(set) var captionSelection: Set<CaptionItem.ID> = []
+    /// Selected clip edges (click on a head or tail); a click elsewhere clears them.
+    public private(set) var edgeSelection: EdgeSelection?
+    /// Selected gap between two clips (Delete closes it).
+    public private(set) var gapSelection: GapSelection?
     /// What the view should draw: `timeline` with the in-flight gesture applied.
     public private(set) var preview: Timeline
     /// Edits of the in-flight gesture.
@@ -52,7 +56,12 @@ public struct TimelineInteraction: Sendable {
         var baseSelection: Set<Clip.ID> = []
         var reduceTo: Set<Clip.ID>?
         var scrollOrigin = CGPoint.zero
+        /// Option-drag: identities of the copies, stable for the whole gesture.
+        var copyIDs: [Clip.ID: Clip.ID] = [:]
+        var copyLinks: [UUID: UUID] = [:]
     }
+    /// Copies the in-flight Option-drag creates (they become the selection on commit).
+    private var pendingCopies: Set<Clip.ID> = []
     private var gesture: Gesture?
     /// No gesture in flight (the view may start a track resize).
     public var isIdle: Bool { gesture == nil }
@@ -71,9 +80,21 @@ public struct TimelineInteraction: Sendable {
         selection.formIntersection(alive)
         let aliveCaptions = Set(timeline.captionTracks.flatMap(\.items).map(\.id))
         captionSelection.formIntersection(aliveCaptions)
+        edgeSelection = edgeSelection.flatMap { EdgeEdits.pruned($0, in: timeline) }
+        if let g = gapSelection, timeline.gap(on: g.track, at: g.range.start) != g.range { gapSelection = nil }
     }
 
-    public mutating func setSelection(_ ids: Set<Clip.ID>) { selection = ids }
+    /// Clears edge and gap selection (they are exclusive with clip selection).
+    private mutating func clearEdgeAndGap() { edgeSelection = nil; gapSelection = nil }
+
+    public mutating func setEdgeSelection(_ e: EdgeSelection?) { edgeSelection = e; if e != nil { gapSelection = nil } }
+
+    /// Programmatic selection (Cmd+A, paste, undo...). A non-empty selection replaces any edge or gap selection;
+    /// an empty echo after an edge click leaves it alone.
+    public mutating func setSelection(_ ids: Set<Clip.ID>) {
+        selection = ids
+        if !ids.isEmpty { clearEdgeAndGap() }
+    }
     public mutating func setCaptionSelection(_ ids: Set<CaptionItem.ID>) { captionSelection = ids }
 
     /// Caption item under a view point (for double-click to edit text), nil elsewhere.
@@ -96,6 +117,7 @@ public struct TimelineInteraction: Sendable {
         marquee = nil
         isRejected = false
         rejectionMessage = nil
+        pendingCopies = []
     }
 
     // MARK: Lookup helpers
@@ -136,6 +158,8 @@ public struct TimelineInteraction: Sendable {
         let downTime = geometry.time(atX: p.x)
         var g = Gesture(kind: .click, downPoint: p, downTime: downTime)
         let tool = toolState.tool
+        let hadEdges = edgeSelection
+        clearEdgeAndGap()
 
         if tool == .hand {
             g.kind = .hand
@@ -162,22 +186,39 @@ public struct TimelineInteraction: Sendable {
             if !m.contains(.shift) { captionSelection = [] }
             let grp = group(id, linked: linked(m))
             if zone != .body {
-                g.kind = .trim
+                // Premiere: a click on an edge selects the edge (not the clip). Cmd = ripple trim; Shift adds the edge
+                // (both sides of an edit = rolling edit).
                 g.edge = zone == .head ? .head : .tail
-                if !selection.contains(id) { selection = m.contains(.shift) ? selection.union(grp) : grp }
+                let ref = EdgeRef(clip: id, edge: g.edge)
+                var sel = EdgeSelection(edges: [ref], ripple: m.contains(.command))
+                if m.contains(.shift), let had = hadEdges, had.ripple == sel.ripple {
+                    sel.edges = had.edges.contains(ref) ? had.edges.filter { $0 != ref } : had.edges + [ref]
+                } else if let had = hadEdges, had.edges.contains(ref), !m.contains(.command) {
+                    sel = had                         // dragging an already selected edge keeps the selection
+                }
+                selection = []
+                edgeSelection = sel.edges.isEmpty ? nil : sel
+                if let e = edgeSelection {
+                    g.kind = EdgeEdits.isRoll(e, in: timeline) ? .roll : (e.ripple ? .rippleTrim : .trim)
+                }
             } else if m.contains(.shift) {
                 if selection.contains(id) { selection.subtract(grp) } else { selection.formUnion(grp) }
             } else {
                 g.kind = .move
                 if selection.contains(id) { g.reduceTo = grp } else { selection = grp }
             }
-        case (.selection, .gap), (.selection, .none):
+        case (.selection, .gap(let track, let t)):
+            if !m.contains(.shift) { selection = []; captionSelection = [] }
+            if let r = timeline.gap(on: track, at: t) { gapSelection = GapSelection(track: track, range: r); selection = [] }
+            g.kind = .marquee
+            g.baseSelection = selection
+        case (.selection, .none):
             if !m.contains(.shift) { selection = []; captionSelection = [] }
             g.kind = .marquee
             g.baseSelection = selection
         case (.trackSelectForward, .clip(let id, _)):
             selectForward(from: timeline.tracks.first { $0.clips.contains { $0.id == id } }?.id,
-                          pivot: clip(id)?.start ?? .zero, allTracks: m.contains(.shift), linked: linked(m))
+                          pivot: (toolState.selectBackward ? clip(id)?.timeline.end : clip(id)?.start) ?? .zero, allTracks: m.contains(.shift), linked: linked(m))
         case (.trackSelectForward, .gap(let track, let t)):
             selectForward(from: track, pivot: t, allTracks: m.contains(.shift), linked: linked(m))
         case (.rippleEdit, .clip(let id, let zone)), (.rollEdit, .clip(let id, let zone)):
@@ -249,9 +290,11 @@ public struct TimelineInteraction: Sendable {
             pendingUndoName = nil
             isRejected = false
             preview = timeline
+            pendingCopies = []
         }
         if !g.active, let r = g.reduceTo { selection = r }
         guard g.active, !isRejected, !pendingEdits.isEmpty, let name = pendingUndoName, preview != timeline else { return nil }
+        if !pendingCopies.isEmpty { selection = pendingCopies.intersection(preview.tracks.flatMap(\.clips).map(\.id)) }
         let commit = TimelineCommit(timeline: preview, edits: pendingEdits, undoName: name, selection: selection,
                                     captionSelection: captionSelection)
         timeline = preview
@@ -288,7 +331,13 @@ public struct TimelineInteraction: Sendable {
         switch geometry.hitTest(p, in: timeline) {
         case .clip(let id, _):
             captionSelection = []
+            clearEdgeAndGap()
             if !selection.contains(id) { selection = group(id, linked: linked(m)) }
+        case .gap(let track, let t):
+            if let r = timeline.gap(on: track, at: t) {
+                selection = []; captionSelection = []; edgeSelection = nil
+                gapSelection = GapSelection(track: track, range: r)
+            }
         case .caption(let id, _):
             selection = []
             if !captionSelection.contains(id) { captionSelection = [id] }
@@ -356,8 +405,9 @@ public struct TimelineInteraction: Sendable {
 
     private mutating func selectForward(from track: Track.ID?, pivot: Time, allTracks: Bool, linked: Bool) {
         var ids = Set<Clip.ID>()
+        let backward = toolState.selectBackward
         for t in timeline.tracks where allTracks || t.id == track {
-            for c in t.clips where c.timeline.end > pivot { ids.insert(c.id) }
+            for c in t.clips where backward ? c.start < pivot : c.timeline.end > pivot { ids.insert(c.id) }
         }
         selection = linked ? groups(ids, linked: true) : ids
     }
@@ -367,6 +417,7 @@ public struct TimelineInteraction: Sendable {
         let rect = CGRect(x: min(g.downPoint.x, p.x), y: min(g.downPoint.y, p.y),
                           width: abs(p.x - g.downPoint.x), height: abs(p.y - g.downPoint.y))
         marquee = rect
+        gapSelection = nil
         var hits = Set<Clip.ID>()
         for row in geometry.rows(for: timeline) {
             guard let t = timeline.track(row.track) else { continue }
@@ -428,6 +479,7 @@ public struct TimelineInteraction: Sendable {
     private mutating func updateMove(_ p: CGPoint, modifiers m: GestureModifiers) {
         guard var g = gesture, let anchorID = g.clip, let anchor = clip(anchorID) else { return }
         let insert = m.contains(.command)
+        let copying = m.contains(.option) && !insert
         let movers: [Clip.ID] = (!insert && selection.contains(anchorID)) ? Array(selection) : [anchorID]
         let everything = groups(Set(movers), linked: true)
         let minStart = everything.compactMap { clip($0)?.start }.min() ?? anchor.start
@@ -516,15 +568,26 @@ public struct TimelineInteraction: Sendable {
             var partners: [Clip.ID: Track.ID] = [:]
             for other in grp where other != c.id { if let t = dest(of: other) { partners[other] = t } }
             guard d != .zero || own != nil || !partners.isEmpty else { continue }
+            if copying {
+                // Option-drag: originals stay, copies land at the drop position (Premiere).
+                for member in grp where g.copyIDs[member] == nil { g.copyIDs[member] = UUID() }
+                var link = UUID()
+                if let l = c.link { link = g.copyLinks[l] ?? link; g.copyLinks[l] = link }
+                let spec = CopySpec(ids: g.copyIDs.filter { grp.contains($0.key) }, link: link)
+                moves.append(.copyGroup(c.id, to: c.start + d, track: own, partners: partners, spec: spec))
+                continue
+            }
             moves.append(partners.isEmpty ? .move(c.id, to: c.start + d, track: own)
                                           : .moveGroup(c.id, to: c.start + d, track: own, partners: partners))
         }
         gesture = g
+        pendingCopies = copying && !moves.isEmpty ? Set(g.copyIDs.values) : []
         var edits: [TimelineEdit] = []
         for kind in [TrackKind.video, .audio] {
             if let top = usedNew[kind] { edits += (g.newTracks[kind] ?? []).prefix(top + 1).map { .addTrack($0) } }
         }
-        publish(moves.isEmpty ? [] : edits + moves, groupCount > 1 ? "Move Clips" : "Move Clip")
+        publish(moves.isEmpty ? [] : edits + moves,
+                copying ? (groupCount > 1 ? "Copy Clips" : "Copy Clip") : (groupCount > 1 ? "Move Clips" : "Move Clip"))
     }
 
     // MARK: Captions
@@ -557,6 +620,11 @@ public struct TimelineInteraction: Sendable {
         let d = snappedDelta(travel(p, g), from: edgeTime, excluding: group(id, linked: true))
         let ripple = g.kind == .rippleTrim
         let edit: TimelineEdit = ripple ? .rippleTrim(id, edge: g.edge, by: d) : .trim(id, edge: g.edge, by: d)
+        // Several selected edges move together, like the keyboard trims.
+        if let sel = edgeSelection, sel.edges.count > 1 {
+            publish(EdgeEdits.trim(sel, by: d, in: timeline), ripple ? "Ripple Trim" : "Trim Clip")
+            return
+        }
         publish(d == .zero ? [] : [edit], ripple ? "Ripple Trim" : "Trim Clip")
     }
 
@@ -574,6 +642,10 @@ public struct TimelineInteraction: Sendable {
         if g.edge == .tail { left = c } else { left = track.clips.first { $0.timeline.end == c.start } }
         guard let left else { publish([], "Roll Edit"); return }
         let d = snappedDelta(travel(p, g), from: left.timeline.end, excluding: group(left.id, linked: true))
+        if let sel = edgeSelection, sel.edges.count > 2 {
+            publish(EdgeEdits.trim(sel, by: d, in: timeline), "Roll Edit")
+            return
+        }
         publish(d == .zero ? [] : [.roll(left.id, by: d)], "Roll Edit")
     }
 

@@ -33,6 +33,8 @@ public final class EditorSession {
     public private(set) var playhead: Time = .zero
     public private(set) var selection: Set<Clip.ID> = []
     public private(set) var captionSelection: Set<CaptionItem.ID> = []
+    /// Clips copied with Cmd+C / Cmd+X (Paste puts them at the playhead).
+    public var clipboard: TimelineClipboard?
     public private(set) var isPlaying = false
     public private(set) var lastAutosave: Date?
     /// Message of the last refused or failed action (locked track, disk error...); UI shows it in the status bar.
@@ -359,12 +361,22 @@ public final class EditorSession {
     public func goToStart() { seek(to: .zero) }
     public func goToEnd() { seek(to: activeTimeline?.duration ?? .zero) }
 
+    /// Edit points Up/Down jump between: those of the targeted tracks, or of all tracks when none is targeted (Premiere).
+    private func jumpPoints() -> [Time] {
+        guard let t = activeTimeline else { return [] }
+        let targeted = t.tracks.filter(\.isTargeted)
+        guard !targeted.isEmpty else { return t.editPoints() }
+        var set = Set<Time>()
+        for tr in targeted { for c in tr.clips { set.insert(c.start); set.insert(c.timeline.end) } }
+        return set.sorted()
+    }
+
     public func goToNextEditPoint() {
-        if let t = activeTimeline?.editPoints().first(where: { $0 > playhead }) { seek(to: t) }
+        if let t = jumpPoints().first(where: { $0 > playhead }) { seek(to: t) }
     }
 
     public func goToPreviousEditPoint() {
-        if let t = activeTimeline?.editPoints().last(where: { $0 < playhead }) { seek(to: t) }
+        if let t = jumpPoints().last(where: { $0 < playhead }) { seek(to: t) }
     }
 
     public func goToIn() { if let io = activeTimeline?.inOut { seek(to: io.start) } }

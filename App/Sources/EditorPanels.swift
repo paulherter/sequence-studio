@@ -125,6 +125,10 @@ final class EditorPanels {
             if !session.addRoundedCorners(to: [clip]) { onStatus?("Rounded Corners need a video clip that does not have it yet.") }
         }
         tv.contextMenuProvider = { [weak self] p in self?.timelineMenu(at: p) }
+        tv.onEditMarker = { [weak self] id in self?.editMarker(id) }
+        tv.onToggleChange = { [weak self] snap, linked in
+            self?.onStatus?("Snapping \(snap ? "on" : "off"), Linked Selection \(linked ? "on" : "off")")
+        }
     }
 
     /// Length and streams of what is being dragged, for the ghost. Files not imported yet get the 5 s placeholder.
@@ -188,6 +192,7 @@ final class EditorPanels {
         case .solo: name = "Toggle Solo"
         case .lock: name = "Toggle Track Lock"
         case .target: name = "Toggle Track Target"
+        case .syncLock: name = "Toggle Sync Lock"
         }
         try? session.performTimeline(name) { t in
             guard let i = t.tracks.firstIndex(where: { $0.id == id }) else { return }
@@ -197,6 +202,7 @@ final class EditorPanels {
             case .solo: t.tracks[i].isSolo.toggle()
             case .lock: t.tracks[i].isLocked.toggle()
             case .target: t.tracks[i].isTargeted.toggle()
+            case .syncLock: t.tracks[i].syncLock.toggle()
             }
         }
     }
@@ -204,23 +210,54 @@ final class EditorPanels {
     private func timelineMenu(at p: CGPoint) -> NSMenu? {
         let tv = timelineView
         tv.contextSelect(at: p)
-        let items = TimelineContextMenu.items(timeline: tv.timeline, selection: tv.selection,
-                                              captionSelection: tv.captionSelection, clipboardHasClips: false)
-            .map { item -> TimelineMenuItem in
-                var i = item
-                // Clipboard, link and rename have no session command yet.
-                if [.cut, .copy, .paste, .link, .unlink, .rename, .revealInProject].contains(item.action) { i.isEnabled = false }
-                return i
-            }
-        return TimelineContextMenu.makeMenu(items: items) { [weak self] action in
+        let hasClipboard = session.clipboard != nil
+        let items: [TimelineMenuItem]
+        switch tv.geometry.hitTest(p, in: tv.timeline) {
+        case .clip, .caption:
+            items = TimelineContextMenu.items(timeline: tv.timeline, selection: tv.selection,
+                                              captionSelection: tv.captionSelection, clipboardHasClips: hasClipboard)
+        case .gap where tv.interaction.gapSelection != nil:
+            items = TimelineContextMenu.gapItems(clipboardHasClips: hasClipboard)
+        case .gap, .captionGap:
+            items = TimelineContextMenu.emptyItems(clipboardHasClips: hasClipboard)
+        case .header(let id):
+            return trackHeaderMenu(for: id)
+        case .ruler:
+            return rulerMenu(at: p)
+        default:
+            return nil
+        }
+        return TimelineContextMenu.makeMenu(items: items, labelHandler: { [weak self] l in self?.session.setLabel(l) }) { [weak self] action in
             switch action {
+            case .cut: self?.onCommand?(.cut)
+            case .copy: self?.onCommand?(.copy)
+            case .paste: self?.onCommand?(.paste)
+            case .pasteInsert: self?.onCommand?(.pasteInsert)
             case .delete: self?.onCommand?(.delete)
             case .rippleDelete: self?.onCommand?(.rippleDelete)
+            case .link, .unlink: self?.onCommand?(.link)
             case .nest: self?.onNest?()
             case .speed: self?.onCommand?(.speedDuration)
             case .setToFrameSize, .scaleToFrameSize: self?.onFrameSize?()
-            default: break
+            case .rename: self?.renameSelectedClip()
+            case .label: break
             }
+        }
+    }
+
+    /// Rename sheet for the one selected clip.
+    private func renameSelectedClip() {
+        guard let window = timelineView.window, let clip = session.singleSelectedClip, session.selection.count == 1 else { return }
+        let alert = NSAlert()
+        alert.messageText = "Rename Clip"
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 260, height: 24))
+        field.stringValue = clip.name
+        alert.accessoryView = field
+        alert.addButton(withTitle: "OK")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        alert.beginSheetModal(for: window) { [weak self] response in
+            MainActor.assumeIsolated { if response == .alertFirstButtonReturn { self?.session.renameSelectedClip(to: field.stringValue) } }
         }
     }
 

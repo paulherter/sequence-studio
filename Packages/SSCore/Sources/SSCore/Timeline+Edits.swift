@@ -2,6 +2,14 @@ import Foundation
 
 public enum MoveMode: Sendable { case overwrite }
 
+/// Option-drag duplicate: identities of the copies (original ID to copy ID; missing = fresh) and the link the copied
+/// group shares. Given by the caller so a replayed edit always yields the same IDs.
+public struct CopySpec: Sendable, Hashable {
+    public var ids: [Clip.ID: Clip.ID]
+    public var link: UUID
+    public init(ids: [Clip.ID: Clip.ID] = [:], link: UUID = UUID()) { self.ids = ids; self.link = link }
+}
+
 /// Non-ripple edits: nothing outside the edited clips (and what they cover) shifts.
 extension Timeline {
     private func requireUnlocked(_ group: [Member]) throws {
@@ -122,7 +130,8 @@ extension Timeline {
     /// cut or removed. Clamped so nothing starts before 0. Returns the applied delta.
     @discardableResult
     public mutating func move(_ id: Clip.ID, to start: Time, track target: Track.ID? = nil,
-                              retarget: [Clip.ID: Track.ID] = [:], mode: MoveMode = .overwrite) throws -> Time {
+                              retarget: [Clip.ID: Track.ID] = [:], mode: MoveMode = .overwrite,
+                              copy: CopySpec? = nil) throws -> Time {
         let group = try linkedGroup(id)
         try requireUnlocked(group)
         var destinations = group.map(\.track)
@@ -144,10 +153,15 @@ extension Timeline {
         for m in group { d = max(d, .zero - m.clip.start) }
         if d == .zero && destinations == group.map(\.track) { return .zero }
         var work = tracks
-        for m in group { work[m.track].remove(m.clip.id) }
+        // Copy (Option-drag): the originals stay, the copies get new identities and one new link per group.
+        if copy == nil { for m in group { work[m.track].remove(m.clip.id) } }
         var relinks: [UUID: UUID] = [:]
         for (m, ti) in zip(group, destinations) {
             var c = m.clip
+            if let copy {
+                c.id = copy.ids[m.clip.id] ?? UUID()
+                if c.link != nil { c.link = copy.link }
+            }
             c.start += d
             try work[ti].overwrite(c, relinks: &relinks)
         }
