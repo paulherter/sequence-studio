@@ -48,7 +48,8 @@ public final class EffectKeyframeLanesView: NSView {
     public override func draw(_ dirtyRect: NSRect) {
         Theme.Colors.lane.setFill(); bounds.fill()
         let geo = geometry
-        for row in rows where row.y + row.height >= dirtyRect.minY && row.y <= dirtyRect.maxY {
+        let visible = rows.filter { $0.y + $0.height >= dirtyRect.minY && $0.y <= dirtyRect.maxY }
+        for row in visible {
             let r = NSRect(x: 0, y: row.y, width: bounds.width, height: row.height)
             switch row.kind {
             case .graph: Theme.Colors.content.setFill(); r.fill()
@@ -57,7 +58,15 @@ public final class EffectKeyframeLanesView: NSView {
             }
             Theme.Colors.separator.setFill()
             NSRect(x: 0, y: r.maxY - 1, width: r.width, height: 1).fill()
-
+        }
+        // Playhead line first, from the top to the very bottom (also below the last row): keys are drawn over it, so a
+        // key at the playhead stays one solid shape.
+        if model.playheadInClip {
+            let x = (geo.x(for: model.localPlayhead)).rounded() + 0.5
+            Theme.Colors.playhead.setFill()
+            NSRect(x: x - 0.5, y: 0, width: 1, height: bounds.height).fill()
+        }
+        for row in visible {
             let cy = row.y + row.height / 2
             switch row.kind {
             case .property(let p):
@@ -74,11 +83,6 @@ public final class EffectKeyframeLanesView: NSView {
                 }
             default: break
             }
-        }
-        if model.playheadInClip {
-            let x = (geo.x(for: model.localPlayhead)).rounded() + 0.5
-            Theme.Colors.playhead.setFill()
-            NSRect(x: x - 0.5, y: 0, width: 1, height: bounds.height).fill()
         }
         if let m = marquee {
             Theme.Colors.accentTint.setFill(); m.fill()
@@ -97,12 +101,10 @@ public final class EffectKeyframeLanesView: NSView {
         return KeyGlyph.merged(glyphs)
     }
 
-    /// Premiere-style: diamond halves = linear, hourglass halves = eased, square halves = hold.
-    /// Left half = incoming, right half = outgoing. Selected = accent.
+    /// One solid shape per key: diamond = linear, circle = any easing, square = hold. Selected = accent fill.
     private func drawGlyph(_ glyph: KeyGlyph, at c: NSPoint, selected: Bool, summary: Bool) {
-        KeyGlyphDrawing.draw(glyph, at: c, half: summary ? 6.5 : 6,
-                             fill: selected ? Theme.Colors.accent : (summary ? Theme.Colors.label2 : Theme.Colors.keyframe),
-                             edge: Theme.Colors.divider)
+        KeyGlyphDrawing.draw(glyph, at: c, size: summary ? 14 : 13,
+                             fill: selected ? Theme.Colors.accent : (summary ? Theme.Colors.label2 : Theme.Colors.keyframe))
     }
 
     // MARK: Hit testing
@@ -310,20 +312,19 @@ extension PropertyTrack {
 }
 
 enum KeyGlyphDrawing {
-    static func draw(_ glyph: KeyGlyph, at c: NSPoint, half h: CGFloat, fill: NSColor, edge: NSColor, lineWidth: CGFloat = 1.5) {
-        // One filled shape (both halves in one path, so no anti-aliasing seam), outlined without the seam between the halves.
-        let all = NSBezierPath()
-        let outline = NSBezierPath()
-        for poly in glyph.polygons(at: c, h: h) {
-            let open = NSBezierPath()
-            for (i, p) in poly.enumerated() { i == 0 ? open.move(to: p) : open.line(to: p) }
-            outline.append(open)
-            let closed = open.copy() as! NSBezierPath
-            closed.close()
-            all.append(closed)
-        }
-        fill.setFill(); all.fill()
-        edge.setStroke(); outline.lineWidth = lineWidth; outline.lineJoinStyle = .round; outline.lineCapStyle = .round
-        outline.stroke()
+    /// One closed path, fill only.
+    static func path(_ shape: KeyShape, at c: NSPoint, size: CGFloat) -> NSBezierPath {
+        if shape == .circle { return NSBezierPath(ovalIn: shape.bounds(at: c, size: size)) }
+        let pts = shape.corners(at: c, size: size)
+        let path = NSBezierPath()
+        path.move(to: pts[0])
+        for p in pts.dropFirst() { path.line(to: p) }
+        path.close()
+        return path
+    }
+
+    static func draw(_ glyph: KeyGlyph, at c: NSPoint, size: CGFloat, fill: NSColor) {
+        fill.setFill()
+        path(glyph.shape, at: c, size: size).fill()
     }
 }

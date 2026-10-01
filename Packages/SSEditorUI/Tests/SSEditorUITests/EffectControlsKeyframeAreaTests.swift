@@ -301,10 +301,43 @@ import Testing
         let g = KeyGlyph.glyphs(of: KeyframeTrack(keys: [a, b])).map(\.glyph)
         #expect(g[0] == KeyGlyph(incoming: .eased, outgoing: .eased))
         #expect(g[1] == KeyGlyph(incoming: .linear, outgoing: .linear))
-        // one polygon per half, centred on the key (no vertical offset)
-        let polys = g[0].polygons(at: CGPoint(x: 50, y: 12), h: 6)
-        #expect(polys.count == 2)
-        let ys = polys.flatMap { $0 }.map(\.y)
-        #expect(ys.min() == 6 && ys.max() == 18)
+        #expect(g[0].shape == .circle && g[1].shape == .diamond)
+    }
+
+    // MARK: Empty area below the last row
+
+    @Test func lanesCoverTheEmptyAreaBelowTheLastRow() {
+        let (_, v) = setupView()
+        let lanes = all(EffectKeyframeLanesView.self, in: v)[0]
+        let scroll = all(NSScrollView.self, in: v)[0]
+        #expect(lanes.frame.height >= scroll.frame.height)                // playhead line, zoom and clicks reach the bottom
+        #expect(lanes.hit(at: CGPoint(x: 100, y: lanes.frame.height - 5)) == .none)
+    }
+
+    @Test func clickInTheEmptyAreaDeselectsKeys() {
+        let (m, v) = setupView()
+        m.toggleStopwatch(.opacity)
+        m.selectKey(.opacity, id: m.clip!.animation.opacity.track.keys[0].id, extend: false)
+        #expect(!m.selection.isEmpty)
+        let win = NSWindow(contentRect: v.frame, styleMask: [.titled], backing: .buffered, defer: true)
+        win.contentView = v
+        v.layoutSubtreeIfNeeded()
+        let lanes = all(EffectKeyframeLanesView.self, in: v)[0]
+        let p = lanes.convert(CGPoint(x: 120, y: lanes.bounds.height - 8), to: nil)
+        let e = NSEvent.mouseEvent(with: .leftMouseDown, location: p, modifierFlags: [], timestamp: 0,
+                                   windowNumber: win.windowNumber, context: nil, eventNumber: 0, clickCount: 1, pressure: 1)!
+        lanes.mouseDown(with: e)
+        lanes.mouseUp(with: e)
+        #expect(m.selection.isEmpty)
+    }
+
+    @Test func zoomInputInTheEmptyAreaUsesTheSharedViewport() {
+        let (m, v) = setupView()
+        let lanes = all(EffectKeyframeLanesView.self, in: v)[0]
+        // The lanes view maps x through the model viewport everywhere, including below the last row.
+        let before = lanes.geometry.pointsPerSecond
+        m.zoomIn()
+        #expect(lanes.geometry.pointsPerSecond > before)
+        #expect(lanes.geometry == m.laneGeometry(width: lanes.bounds.width))
     }
 }

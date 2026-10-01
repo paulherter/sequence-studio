@@ -195,7 +195,9 @@ public final class EffectControlsView: NSView {
             let isGraph = { if case .graph = row.kind { return true } else { return false } }()
             v.frame = NSRect(x: 0, y: row.y, width: isGraph ? bounds.width : lw, height: row.height)
         }
-        lanes.frame = NSRect(x: lw, y: 0, width: lanesW, height: rowsH)
+        // The lanes cover the whole scrollable height: the empty area under the last row still shows the playhead line,
+        // zooms / pans and deselects like the rest of the keyframe area.
+        lanes.frame = NSRect(x: lw, y: 0, width: lanesW, height: content.frame.height)
         // Graph rows are laid out by themselves (they need the lane origin).
         for (row, v) in rowViews { if case .graph = row.kind { (v as? GraphRow)?.laneX = lw; v.needsLayout = true } }
         refresh()

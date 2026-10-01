@@ -2,14 +2,11 @@ import CoreGraphics
 import Foundation
 import SSCore
 
-/// Shape of one half of a keyframe glyph (Premiere): the left half reflects how the curve arrives at the key,
-/// the right half how it leaves.
+/// How the curve arrives at / leaves a key (per side).
 public enum KeyHalf: Sendable, Hashable {
-    /// Half diamond.
     case linear
     /// Ease / bezier: half hourglass (triangle pointing at the centre).
     case eased
-    /// Half square.
     case hold
 }
 
@@ -52,26 +49,35 @@ public struct KeyGlyph: Sendable, Hashable {
         return KeyGlyph(incoming: side(glyphs.map(\.incoming)), outgoing: side(glyphs.map(\.outgoing)))
     }
 
-    /// Polygon of one half in glyph space, `h` = half size; the right half is returned, the left one mirrored in x.
-    /// Points are (x, y) offsets from the glyph centre, y down.
-    public static func polygon(_ half: KeyHalf, side: GlyphSide, h: CGFloat) -> [CGPoint] {
-        let s: CGFloat = side == .right ? 1 : -1
-        let pts: [CGPoint]
-        switch half {
-        case .linear: pts = [CGPoint(x: 0, y: -h), CGPoint(x: h, y: 0), CGPoint(x: 0, y: h)]
-        // Right half of an hourglass: flat top and bottom, waist at the centre.
-        case .eased: pts = [CGPoint(x: 0, y: -h), CGPoint(x: h, y: -h), CGPoint(x: 0, y: 0), CGPoint(x: h, y: h), CGPoint(x: 0, y: h)]
-        case .hold: pts = [CGPoint(x: 0, y: -h), CGPoint(x: h, y: -h), CGPoint(x: h, y: h), CGPoint(x: 0, y: h)]
-        }
-        return pts.map { CGPoint(x: $0.x * s, y: $0.y) }
-    }
-
-    /// Both halves as one outline around `c` (the two halves are drawn as two closed polygons).
-    public func polygons(at c: CGPoint, h: CGFloat) -> [[CGPoint]] {
-        [(incoming, GlyphSide.left), (outgoing, .right)].map { half, side in
-            Self.polygon(half, side: side, h: h).map { CGPoint(x: c.x + $0.x, y: c.y + $0.y) }
-        }
+    /// The one solid shape a key is drawn as (hold beats easing beats linear).
+    public var shape: KeyShape {
+        if incoming == .hold || outgoing == .hold { return .square }
+        if incoming == .eased || outgoing == .eased { return .circle }
+        return .diamond
     }
 }
 
-public enum GlyphSide: Sendable { case left, right }
+/// Premiere-like key shapes, each drawn as ONE solid filled closed shape: linear = diamond, any easing = circle,
+/// hold = square. No half shapes, no strokes between parts.
+public enum KeyShape: Sendable, Hashable {
+    case diamond, circle, square
+
+    /// Bounding box of the shape centred on `c`; `size` is the full width/height. The circle and square are a bit
+    /// smaller than the diamond's tips so all three look the same size.
+    public func bounds(at c: CGPoint, size: CGFloat) -> CGRect {
+        let s = self == .diamond ? size : size * 0.82
+        return CGRect(x: c.x - s / 2, y: c.y - s / 2, width: s, height: s)
+    }
+
+    /// Corner points (diamond, square); empty for the circle.
+    public func corners(at c: CGPoint, size: CGFloat) -> [CGPoint] {
+        let r = bounds(at: c, size: size)
+        switch self {
+        case .diamond: return [CGPoint(x: r.midX, y: r.minY), CGPoint(x: r.maxX, y: r.midY),
+                               CGPoint(x: r.midX, y: r.maxY), CGPoint(x: r.minX, y: r.midY)]
+        case .square: return [CGPoint(x: r.minX, y: r.minY), CGPoint(x: r.maxX, y: r.minY),
+                              CGPoint(x: r.maxX, y: r.maxY), CGPoint(x: r.minX, y: r.maxY)]
+        case .circle: return []
+        }
+    }
+}

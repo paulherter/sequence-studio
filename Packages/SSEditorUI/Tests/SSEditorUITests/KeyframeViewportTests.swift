@@ -123,11 +123,4 @@ import Testing
         #expect(KeyframeZoomInput.magnifyFactor(0.25) == 1.25)
         #expect(KeyframeZoomInput.magnifyFactor(-5) > 0)
     }
-
-    @Test func hourglassGlyphIsBiggerThanAPointAndSymmetric() {
-        let right = KeyGlyph.polygon(.eased, side: .right, h: 6)
-        #expect(right.contains(CGPoint(x: 6, y: -6)) && right.contains(CGPoint(x: 6, y: 6)) && right.contains(.zero))
-        let left = KeyGlyph.polygon(.eased, side: .left, h: 6)
-        #expect(left.contains(CGPoint(x: -6, y: -6)))
-    }
 }

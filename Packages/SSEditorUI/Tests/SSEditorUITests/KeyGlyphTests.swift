@@ -43,10 +43,25 @@ import SSCore
         #expect(KeyGlyph.merged([h, h]) == h)
     }
 
-    @Test func polygonsMirrorAroundCentre() {
-        let p = KeyGlyph(incoming: .eased, outgoing: .linear).polygons(at: CGPoint(x: 10, y: 10), h: 4)
-        #expect(p[1].contains(CGPoint(x: 14, y: 10)))          // right diamond tip
-        #expect(p[0].contains(CGPoint(x: 6, y: 6)))            // left hourglass corner
+    @Test func shapeIsOneSolidShapePerKey() {
+        #expect(KeyGlyph.linear.shape == .diamond)
+        #expect(KeyGlyph(incoming: .eased, outgoing: .linear).shape == .circle)     // any easing, either side
+        #expect(KeyGlyph(incoming: .linear, outgoing: .eased).shape == .circle)
+        #expect(KeyGlyph(incoming: .eased, outgoing: .eased).shape == .circle)
+        #expect(KeyGlyph(incoming: .hold, outgoing: .hold).shape == .square)
+        #expect(KeyGlyph(incoming: .eased, outgoing: .hold).shape == .square)       // hold wins
+    }
+
+    @Test func shapesAreCentredAndSimilarInSize() {
+        let c = CGPoint(x: 50, y: 12)
+        for s in [KeyShape.diamond, .circle, .square] {
+            let b = s.bounds(at: c, size: 13)
+            #expect(abs(b.midX - 50) < 1e-9 && abs(b.midY - 12) < 1e-9)
+            #expect(b.width >= 10 && b.width <= 13)
+        }
+        #expect(KeyShape.diamond.corners(at: c, size: 13).count == 4)
+        #expect(KeyShape.square.corners(at: c, size: 13).count == 4)
+        #expect(KeyShape.circle.corners(at: c, size: 13).isEmpty)
     }
 }
 
