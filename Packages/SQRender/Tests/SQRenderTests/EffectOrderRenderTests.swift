@@ -236,4 +236,57 @@ private func worst(_ a: [SIMD3<Float>], _ b: [SIMD3<Float>]) -> Float {
         func lin(_ v: Int) -> Float { let e = Float(v) / 255; return e < 0.081242858 ? e / 4.5 : powf((e + 0.09929682680944) / 1.09929682680944, 1 / 0.45) }
         #expect(abs(out[32 * 64 + 32].x - lin(bg[0])) < 0.01 && abs(out[32 * 64 + 32].z - lin(bg[2])) < 0.01)
     }
+
+    // MARK: Transition pairs
+
+    private func pairRender(firstFX: ClipEffects = .none, secondFX: ClipEffects = .none, firstBlend: BlendMode = .normal,
+                            secondBlend: BlendMode = .normal) throws -> [SIMD3<Float>] {
+        let (dev, q, comp) = try #require(setup())
+        let w = 64, h = 64
+        let info = VideoTrackInfo(width: w, height: h, codec: "x", bitDepth: 8, chroma: "4:4:4", nominalFrameDuration: Time(1, 25), isVariableFrameRate: false)
+        let f = SequenceFormat(width: w, height: h, frameDuration: Time(1, 25))
+        func layer(_ c: (UInt8, UInt8, UInt8), _ opacity: Double, _ fx: ClipEffects, _ blend: BlendMode) -> LayerRequest {
+            LayerRequest(clip: UUID(), media: UUID(), track: UUID(), sourceTime: .zero, effects: fx, blendMode: blend)
+        }
+        let pid = UUID()
+        var ra = layer((255, 0, 0), 0.5, firstFX, firstBlend), rb = layer((0, 0, 255), 0.5, secondFX, secondBlend)
+        ra.pair = LayerRequest.PairInfo(id: pid, role: .first, format: f, depth: 0)
+        rb.pair = LayerRequest.PairInfo(id: pid, role: .second, format: f, depth: 0)
+        func rl(_ c: (UInt8, UInt8, UInt8), _ fx: ClipEffects, _ blend: BlendMode) -> RenderLayer {
+            var t = ClipTransform(); t.opacity = 0.5
+            return RenderLayer(content: .frame(makeBGRA(w, h) { _, _ in c }, colorHint: info), transform: t, effects: fx, blendMode: blend)
+        }
+        let under = RenderLayer(content: .frame(makeBGRA(w, h) { _, _ in (128, 128, 128) }, colorHint: info))
+        let tree = RenderNode.tree(requests: [LayerRequest(clip: UUID(), media: UUID(), track: UUID(), sourceTime: .zero), ra, rb],
+                                   layers: [under, rl((255, 0, 0), firstFX, firstBlend), rl((0, 0, 255), secondFX, secondBlend)])
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: w, height: h, mipmapped: false)
+        d.usage = [.renderTarget, .shaderRead]; d.storageMode = .shared
+        let t = dev.makeTexture(descriptor: d)!
+        let cb = q.makeCommandBuffer()!
+        try comp.render(nodes: tree, format: f, into: t, commandBuffer: cb)
+        cb.commit(); cb.waitUntilCompleted()
+        var px = [Float16](repeating: 0, count: w * h * 4)
+        t.getBytes(&px, bytesPerRow: w * 8, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
+        var out: [SIMD3<Float>] = []
+        for i in 0..<(w * h) { out.append(SIMD3<Float>(Float(px[i * 4]), Float(px[i * 4 + 1]), Float(px[i * 4 + 2]))) }
+        return out
+    }
+
+    @Test func eachSideOfAPairKeepsItsOwnCrop() throws {
+        var fa = ClipEffects(); fa.pre = EffectMasks(crop: CropInsets(left: 0.5, top: 0, right: 0, bottom: 0))
+        let out = try pairRender(firstFX: fa)
+        let left = out[32 * 64 + 8], right = out[32 * 64 + 56]
+        #expect(left.x < right.x - 0.05)                   // A (red) is cropped away on the left half: less red there
+        #expect(left.z > 0.1)                               // B (blue) still shows there, over the grey backdrop
+    }
+
+    @Test func theIncomingClipsBlendModeAppliesToThePairResult() throws {
+        let normal = try pairRender()
+        let multiplied = try pairRender(firstBlend: .normal, secondBlend: .multiply)
+        let c = 32 * 64 + 32
+        #expect(multiplied[c].x < normal[c].x * 0.9 + 1e-6 && multiplied[c].x != normal[c].x)    // pair x grey backdrop, not B x A
+        // Outgoing clip's mode is used when the incoming one is Normal.
+        let outgoing = try pairRender(firstBlend: .multiply, secondBlend: .normal)
+        #expect(abs(outgoing[c].x - multiplied[c].x) < 1e-6 && abs(outgoing[c].z - multiplied[c].z) < 1e-6)
+    }
 }

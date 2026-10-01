@@ -79,7 +79,7 @@ public indirect enum RenderNode: @unchecked Sendable {
     /// letterboxed, transparent and nested pictures, on any track (a plain "over" of B on A would not fade A out where B is empty).
     case pair(format: SequenceFormat, first: [RenderNode], second: [RenderNode])
     /// Wraps one node (a pair or group result) that is composited with a blend mode against what is below it.
-    indirect case blended(RenderNode, BlendMode)
+    case blended(RenderNode, BlendMode)
 
     /// Builds the tree from flat `LayerRequest`s (bottom -> top) and their prepared layers (`layers[i]` belongs to
     /// `requests[i]`). Consecutive layers sharing the same `groups` prefix (same nested clip) form one group,

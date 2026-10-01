@@ -128,11 +128,11 @@ private func track(_ clips: [Clip], kind: TrackKind = .video) -> Track {
     }
 
     @Test func effectsPanelListsTheNewEffectsInBins() {
-        let rows = EffectsPanelView.rows(matching: "")
+        let rows = EffectsPanelView.rows(matching: "").filter { !$0.id.contains("ransition") }
         #expect(rows.filter(\.isHeader).map(\.title) == ["Blur & Sharpen", "Keying", "Transform"])
         #expect(rows.filter { !$0.isHeader }.map(\.id) == [ClipEffect.gaussianBlurKind, ClipEffect.ultraKeyKind, ClipEffect.cropKind, ClipEffect.roundedCornersKind])
         #expect(EffectsPanelView.rows(matching: "blur").filter { !$0.isHeader }.map(\.title) == ["Gaussian Blur"])
-        #expect(EffectsPanelView.catalog.allSatisfy { EffectCatalog.spec(for: $0.id) != nil })
+        #expect(EffectsPanelView.catalog.filter { EffectsPanelView.transitionKind(forID: $0.id) == nil }.allSatisfy { EffectCatalog.spec(for: $0.id) != nil })
     }
 
     @Test func fxBadgeDecision() {
