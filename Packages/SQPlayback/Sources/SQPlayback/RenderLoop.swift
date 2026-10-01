@@ -705,7 +705,10 @@ final class RenderLoop: @unchecked Sendable {
         let byMedia = Dictionary(grouping: clips, by: \.media)
         return { key in
             guard let cs = byMedia[key.media] else { return nil }
-            for c in cs where c.source.contains(key.pts) { return c.timelineTime(forSource: key.pts) }
+            for c in cs {
+                if let h = c.holdFrame { if key.pts == h { return c.start }; continue }     // a held clip shows one frame
+                if c.source.contains(key.pts) { return c.timelineTime(forSource: key.pts) }
+            }
             return nil
         }
     }

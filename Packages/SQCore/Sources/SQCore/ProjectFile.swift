@@ -34,10 +34,19 @@ public enum ProjectFile {
     public typealias JSONObject = [String: Any]
     /// Upgrades the top-level object from version N to N+1, keyed by N.
     public typealias Migrations = [Int: (JSONObject) throws -> JSONObject]
-    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7, 7: migrateV7toV8, 8: migrateV8toV9, 9: migrateV9toV10, 10: migrateV10toV11, 11: migrateV11toV12, 12: migrateV12toV13, 13: migrateV13toV14, 14: migrateV14toV15, 15: migrateV15toV16,
-        // 16...20 belong to the other round-2 streams (their blocks replace these placeholders on merge).
-        16: placeholderMigration, 17: placeholderMigration, 18: placeholderMigration, 19: placeholderMigration, 20: placeholderMigration,
-        21: migrateV21toV22] }
+    /// The step table. Every version below `currentVersion` has a step: identity by default (versions another stream owns
+    /// and that only add optional fields), overridden by the real steps below. Merging dictionaries instead of one literal
+    /// means two streams that both name a version cannot trap on a duplicate key.
+    public static var migrations: Migrations {
+        var table: Migrations = [:]
+        for v in 1..<currentVersion { table[v] = placeholderMigration }
+        return table.merging(realMigrations) { _, real in real }
+    }
+
+    static var realMigrations: Migrations {
+        [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7, 7: migrateV7toV8, 8: migrateV8toV9, 9: migrateV9toV10, 10: migrateV10toV11, 11: migrateV11toV12, 12: migrateV12toV13, 13: migrateV13toV14, 14: migrateV14toV15, 15: migrateV15toV16,
+         21: migrateV21toV22]
+    }
 
     /// v2: `Timeline.frameDuration` moved into `Timeline.format` (defaults 1920x1080, 48 kHz).
     /// Track flags, `inOut` and `markers` are optional on decode, so nothing else changes.

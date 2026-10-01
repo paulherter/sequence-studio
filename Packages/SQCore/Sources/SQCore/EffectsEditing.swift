@@ -61,8 +61,9 @@ extension Clip {
     }
 
     /// Moves an opacity key to clip-local `time` (kept inside the clip) and `value` (0...1).
-    public mutating func moveOpacityKey(_ id: UUID, toLocal time: Time, value: Double) {
-        let t = min(max(time, .zero), duration)
+    public mutating func moveOpacityKey(_ id: UUID, toLocal time: Time, value: Double, frameDuration: Time? = nil) {
+        var t = min(max(time, .zero), duration)
+        if let fd = frameDuration { t = min(max(t.snapped(to: fd), .zero), duration) }
         animation.opacity.track.move(id, to: t)
         animation.opacity.track.set(id, value: min(max(value, 0), 1))
     }
@@ -92,9 +93,10 @@ extension Clip {
     /// Fade preset on the picture (Opacity keys): `.head` fades in from 0, `.tail` fades out to 0, over `duration`
     /// (clamped to half the clip). The opacity the clip has at the other end of the fade is kept as its target, and keys
     /// inside the fade span are replaced, so applying a fade again changes it.
-    public mutating func applyVideoFade(_ edge: ClipEdge, duration requested: Time) {
+    public mutating func applyVideoFade(_ edge: ClipEdge, duration requested: Time, frameDuration: Time? = nil) {
         let len = duration
-        let d = OpacityFade.clamped(requested, clipDuration: len)
+        var d = OpacityFade.clamped(requested, clipDuration: len)
+        if let fd = frameDuration { d = min(d.snapped(to: fd), len) }       // keys sit on frames
         guard d > .zero else { return }
         switch edge {
         case .head:
@@ -122,6 +124,8 @@ extension Clip {
         var out = self
         switch kind {
         case .video:
+            out.motionEnabled = source.motionEnabled
+            out.opacityEnabled = source.opacityEnabled
             out.animation.position = source.animation.position
             out.animation.scale = source.animation.scale
             out.animation.rotation = source.animation.rotation
@@ -129,7 +133,19 @@ extension Clip {
             out.animation.opacity = source.animation.opacity
             out.blendMode = source.blendMode
             out.color = source.color
-            out.effects += source.effects.map { $0.copy() }
+            // Other effects: a kind the target has as many times as the source replaces those instances one by one (so
+            // pasting twice does not stack copies); otherwise the copies are added behind the existing ones.
+            var kinds: [String] = []
+            for e in source.effects where !kinds.contains(e.kind) { kinds.append(e.kind) }
+            for kind in kinds {
+                let srcs = source.effects.filter { $0.kind == kind }
+                let dsts = out.effects.indices.filter { out.effects[$0].kind == kind }
+                if dsts.count == srcs.count {
+                    for (i, d) in dsts.enumerated() { out.effects[d] = srcs[i].copy() }
+                } else {
+                    out.effects += srcs.map { $0.copy() }
+                }
+            }
         case .audio:
             out.animation.volume = source.animation.volume
             out.audioGainDB = source.audioGainDB
@@ -160,11 +176,12 @@ extension Timeline {
     /// Fade In / Fade Out preset on the given video clips: one call, one undo step. Audio clips are skipped; refuses when
     /// none of the clips is a video clip.
     public mutating func fadeVideo(_ ids: [Clip.ID], edge: ClipEdge, duration: Time) throws {
+        let fd = frameDuration
         var work = self
         var changed = 0
         for id in ids {
             guard var c = work.find(id)?.clip, c.kind == .video else { continue }
-            c.applyVideoFade(edge, duration: duration)
+            c.applyVideoFade(edge, duration: duration, frameDuration: fd)
             try work.replaceClip(c)
             changed += 1
         }

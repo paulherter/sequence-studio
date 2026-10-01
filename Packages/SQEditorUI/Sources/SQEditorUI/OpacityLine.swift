@@ -115,7 +115,8 @@ public struct OpacityLineGesture {
         var c = startClip
         let lane = OpacityLine.lane(in: clipRect)
         if let id = keyID {
-            c.moveOpacityKey(id, toLocal: geometry.time(atX: p.x) - c.start, value: OpacityLine.opacity(forY: p.y, in: lane))
+            c.moveOpacityKey(id, toLocal: geometry.time(atX: p.x) - c.start, value: OpacityLine.opacity(forY: p.y, in: lane),
+                              frameDuration: geometry.frameDuration)
         } else if case .line(let t) = hit {
             c.shiftOpacityLine(atLocal: t, by: OpacityLine.opacity(forY: p.y, in: lane) - OpacityLine.opacity(forY: start.y, in: lane))
         }

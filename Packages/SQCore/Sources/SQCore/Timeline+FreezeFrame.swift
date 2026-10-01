@@ -1,34 +1,41 @@
 import Foundation
 
 extension Clip {
-    /// Static copy of the animation at timeline time `t`: what a held frame shows (no keys).
+    /// Static copy of the raw animation values at timeline time `t` (the stored values, whatever the fx toggles say).
     func frozenAnimation(at t: Time) -> ClipAnimation {
         var a = animation
-        let tr = transform(at: t)
-        a.position = AnimatedProperty(tr.position)
-        a.scale = AnimatedProperty(tr.scale)
-        a.rotation = AnimatedProperty(tr.rotation)
-        a.opacity = AnimatedProperty(tr.opacity)
-        a.anchor = AnimatedProperty(tr.anchor)
+        let l = t - start
+        a.position = AnimatedProperty(animation.position.value(atLocal: l))
+        a.scale = AnimatedProperty(animation.scale.value(atLocal: l))
+        a.rotation = AnimatedProperty(animation.rotation.value(atLocal: l))
+        a.opacity = AnimatedProperty(animation.opacity.value(atLocal: l))
+        a.anchor = AnimatedProperty(animation.anchor.value(atLocal: l))
         return a
     }
 
-    /// A held clip: shows source frame `frame` for `duration` from `start`. Everything that makes the picture look the way
-    /// it did at `at` (transform, effects, colour, blend) is frozen as static values.
-    func holding(frame: Time, at t: Time, start: Time, duration: Time) -> Clip {
+    /// A held clip: shows source frame `frame` for `duration` from `start`. Like Premiere's Frame Hold (Hold Filters off) it
+    /// freezes the picture only: Motion, Opacity and effect keys keep animating, so a Fade Out at the tail survives. Keys
+    /// stay on the same timeline frames (`keepsAnimation`). An inserted segment (`keepsAnimation` false) is a pause in
+    /// time, so it shows the values of the original at `t` as static ones. The fx toggles and the blend mode are kept.
+    func holding(frame: Time, at t: Time, start newStart: Time, duration: Time, keepsAnimation: Bool) -> Clip {
         var h = self
         h.id = UUID()
         h.link = nil
-        h.start = start
+        h.start = newStart
         h.source = TimeRange(start: frame, duration: duration)
         h.speed = .normal
         h.reversed = false
         h.holdFrame = frame
-        h.animation = frozenAnimation(at: t)
-        h.effects = effects.map { e in
-            var f = e
-            f.parameters = e.parameters.mapValues { AnimatedProperty($0.value(atLocal: t - self.start)) }
-            return f
+        if keepsAnimation {
+            h.animation = animation.shifted(by: start - newStart)
+            h.effects = effects.map { $0.shifted(by: start - newStart) }
+        } else {
+            h.animation = frozenAnimation(at: t)
+            h.effects = effects.map { e in
+                var f = e
+                f.parameters = e.parameters.mapValues { AnimatedProperty($0.value(atLocal: t - self.start)) }
+                return f
+            }
         }
         return h
     }
@@ -59,7 +66,7 @@ extension Timeline {
         let target = try holdTarget(clipID, at: t)
         if tracks[target.track].isLocked { throw EditError.trackLocked }
         let held = target.clip.sourceTime(at: t, frameDuration: frameDuration)
-        let hold = target.clip.holding(frame: held, at: t, start: t, duration: duration)
+        let hold = target.clip.holding(frame: held, at: t, start: t, duration: duration, keepsAnimation: false)
         var work = tracks
         var relinks: [UUID: UUID] = [:]
         for i in work.indices where i == target.track || work[i].followsRipple {
@@ -86,7 +93,7 @@ extension Timeline {
         guard let piece = work[target.track].clips.first(where: { $0.start == t && $0.timeline.end == target.clip.timeline.end }) else {
             throw EditError.clipNotFound
         }
-        var hold = target.clip.holding(frame: held, at: t, start: t, duration: piece.timeline.duration)
+        var hold = target.clip.holding(frame: held, at: t, start: t, duration: piece.timeline.duration, keepsAnimation: true)
         hold.id = piece.id
         hold.link = piece.link
         work[target.track].replace(hold)
