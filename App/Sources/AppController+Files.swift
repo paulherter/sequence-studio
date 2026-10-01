@@ -3,11 +3,14 @@ import SSCore
 import SSEditorUI
 import SwiftUI
 
+/// The project file extension, in one place.
+enum ProjectFile { static let fileExtension = "ssproj" }
+
 /// Open, save, recovery and export.
 extension AppController {
     @objc func openProject(_ sender: Any?) {
         let panel = NSOpenPanel()
-        panel.message = "Choose a Sequence Studio project (.ssproj)"
+        panel.message = "Choose a Sequence Studio project"
         panel.canChooseFiles = true
         panel.canChooseDirectories = true
         panel.allowsMultipleSelection = false
@@ -37,14 +40,14 @@ extension AppController {
     @discardableResult
     func saveDocumentAs() async -> Bool {
         let panel = NSSavePanel()
-        panel.nameFieldStringValue = session.project.name + ".ssproj"
+        panel.nameFieldStringValue = session.project.name + "." + ProjectFile.fileExtension
         panel.canCreateDirectories = true
         panel.prompt = "Save"
         let ok: Bool = await withCheckedContinuation { c in
             panel.begin { c.resume(returning: $0 == .OK) }
         }
         guard ok, var url = panel.url else { return false }
-        if url.pathExtension != "ssproj" { url.appendPathExtension("ssproj") }
+        if url.pathExtension != ProjectFile.fileExtension { url.appendPathExtension(ProjectFile.fileExtension) }
         do { try await session.saveAs(to: url); noteRecent(url); return true } catch { presentError("Could not save", error); return false }
     }
 

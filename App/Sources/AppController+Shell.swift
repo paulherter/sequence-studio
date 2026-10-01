@@ -159,7 +159,7 @@ extension AppController: NSMenuDelegate {
     func menuNeedsUpdate(_ menu: NSMenu) {
         guard menu === recentMenu else { return }
         menu.removeAllItems()
-        let urls = NSDocumentController.shared.recentDocumentURLs.filter { $0.pathExtension == "ssproj" }
+        let urls = NSDocumentController.shared.recentDocumentURLs.filter { $0.pathExtension == ProjectFile.fileExtension }
         for url in urls {
             let item = NSMenuItem(title: url.deletingPathExtension().lastPathComponent, action: #selector(openRecent(_:)), keyEquivalent: "")
             item.target = self

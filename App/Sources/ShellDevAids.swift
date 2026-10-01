@@ -1,11 +1,11 @@
 import AppKit
 import SSEditorUI
 
-/// `SS_DUMPMENU=1`: logs the whole main menu (titles, key equivalents, enabled state) and quits. For the shortcut audit.
+/// `SQ_DUMPMENU=1`: logs the whole main menu (titles, key equivalents, enabled state) and quits. For the shortcut audit.
 @MainActor
 enum ShellDevAids {
     static func runIfRequested(_ c: AppController) {
-        guard ProcessInfo.processInfo.environment["SS_DUMPMENU"] == "1" else { return }
+        guard ProcessInfo.processInfo.environment["SQ_DUMPMENU"] == "1" else { return }
         Task { @MainActor in
             try? await Task.sleep(for: .seconds(1))
             guard let main = NSApp.mainMenu else { exit(2) }

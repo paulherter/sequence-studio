@@ -1,7 +1,7 @@
 # Audit: shell (menus, shortcuts, panels, sequence, export, project, preferences)
 
 Verified against Adobe's shortcut reference (docs/reference/adobe/keyboard-shortcuts.txt) where marked (v). "(u)" = could not verify.
-Menu dump for checking: `SS_DUMPMENU=1 SS_NO_RECOVERY=1 <app binary>` (logs every item, key, enabled state, and shortcuts whose command is not wired).
+Menu dump for checking: `SQ_DUMPMENU=1 SS_NO_RECOVERY=1 <app binary>` (logs every item, key, enabled state, and shortcuts whose command is not wired).
 
 | Feature | Premiere | Sequence Studio now | Gap | Done tonight? |
 |---|---|---|---|---|

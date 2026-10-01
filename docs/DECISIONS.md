@@ -126,3 +126,5 @@ Premiere semantics: Scale 100 % = one upright source pixel per sequence pixel (a
 - v11 migration: first block of each kind fills effect 1, further blocks become effect 2, 3, ...; block order is not kept; a bypassed Input LUT becomes "none". A bypassed Basic Correction with a live Input LUT migrates as an enabled, neutral Basic Correction so the LUT survives (the bypassed slider values are dropped). v10 sliders already ran before the conversion LUT, same as now, so no reordering is needed.
 
 - 2026-10-01 Paul: app icon is "Klappe C1" for now (clapperboard filling the icon shape, edge-to-edge stripes, framed Aurora panel, Liquid Glass). Sources: icon-work/klappe/C1.icon, generator notes in the canvas artifact.
+
+- 2026-10-01 Paul: never abbreviate Sequence Studio as "SS"/"ss" (Nazi reference). Abbreviation is SQ/sq, project files are `.sqproj` (old `.ssproj` files must still open). Packages SSCore… → SQCore…, env vars `SS_*` → `SQ_*`, defaults keys `ss.*` → `sq.*`. Done as one mechanical rename after the night streams are merged, to avoid conflicts with open branches.
