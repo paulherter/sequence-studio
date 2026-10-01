@@ -67,6 +67,16 @@ import SSCore
         #expect(abs(up.offsetX) < 1e-9 && up.offsetY > 4.99)
     }
 
+    @Test func angleSurvivesZeroDistance() throws {
+        let s = TextShadow(color: .black, angle: 60, distance: 0, blur: 2)
+        #expect(abs(s.angle - 60) < 1e-9)
+        let back = try JSONDecoder().decode(TextShadow.self, from: JSONEncoder().encode(s))
+        #expect(abs(back.angle - 60) < 1e-9)
+        let again = TextShadow(color: .black, angle: back.angle, distance: 8, blur: 2)
+        #expect(abs(again.angle - 60) < 1e-6)
+        #expect(TextShadow(color: .black, offsetX: 0, offsetY: 0, blur: 0).angle == 135)
+    }
+
     @Test func oldStyleJSONDecodes() throws {
         let json = #"{"fontName":"Helvetica","size":40,"weight":400,"color":{"red":1,"green":1,"blue":1,"alpha":1},"alignment":"center","lineSpacing":0}"#
         let s = try JSONDecoder().decode(TextStyle.self, from: Data(json.utf8))

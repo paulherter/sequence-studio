@@ -56,6 +56,8 @@ public struct TextShadow: Sendable, Hashable, Codable {
     public var color: RGBAColor
     /// Offset in layout space (sequence pixels, y down): positive `offsetY` moves the shadow down.
     public var offsetX: Double, offsetY: Double, blur: Double
+    /// The light angle remembered while the distance is 0 (the offset alone cannot carry it); nil = never set.
+    public var restingAngle: Double?
     public init(color: RGBAColor, offsetX: Double, offsetY: Double, blur: Double) {
         self.color = color; self.offsetX = offsetX; self.offsetY = offsetY; self.blur = max(0, blur)
     }
@@ -65,10 +67,13 @@ public struct TextShadow: Sendable, Hashable, Codable {
     public init(color: RGBAColor, angle: Double, distance: Double, blur: Double) {
         let a = angle * .pi / 180
         self.init(color: color, offsetX: -cos(a) * distance, offsetY: sin(a) * distance, blur: blur)
+        var n = angle.truncatingRemainder(dividingBy: 360)
+        if n < 0 { n += 360 }
+        restingAngle = n
     }
     /// Light angle in degrees, 0..<360 (135 when there is no offset).
     public var angle: Double {
-        guard distance > 1e-9 else { return 135 }
+        guard distance > 1e-9 else { return restingAngle ?? 135 }
         var d = atan2(offsetY, -offsetX) * 180 / .pi
         if d < 0 { d += 360 }
         return d
