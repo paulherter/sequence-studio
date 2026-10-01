@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import Observation
 import SSCore
 import SSRender
@@ -17,8 +18,14 @@ final class ColorSectionView: NSStackView {
     var lutPopups: [ColorLUTSlot: LUTPopup] = [:]
     var curveEditor: CurveEditorView?
     var channelDots: ChannelDots?
+    var hueEditor: CurveEditorView?
+    var eyedropper: NSButton?
+    var autoButton: NSButton?
+    var huePopup: NSPopUpButton?
+    var hueKind = HueCurveKind.hueVsSat
     var preview: LookPreviewView?
     var previewPath: String??
+    var previewFrame: CGImage?
     var selectedChannel = 0
 
     init(effect: Int, kind: ColorSectionKind) {
@@ -121,6 +128,18 @@ public final class ColorInspectorView: NSView {
         stack.addArrangedSubview(top)
         top.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
+        let copy = NSButton(title: "Copy Colour", target: self, action: #selector(copyColor))
+        let paste = NSButton(title: "Paste Colour", target: self, action: #selector(pasteColor))
+        for b in [copy, paste] { b.controlSize = .small; b.bezelStyle = .rounded; b.font = Theme.Fonts.small }
+        copy.toolTip = "Copy this clip's Colour effects"
+        paste.toolTip = "Paste the copied Colour effects onto the selected clips (their footage interpretation stays)"
+        let copyRow = NSStackView(views: [copy, paste, NSView()])
+        copyRow.orientation = .horizontal
+        copyRow.spacing = Theme.Spacing.sm
+        copyRow.edgeInsets = NSEdgeInsets(top: 0, left: Theme.Spacing.md, bottom: Theme.Spacing.sm, right: Theme.Spacing.md)
+        stack.addArrangedSubview(copyRow)
+        copyRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
         effectsStack.orientation = .vertical
         effectsStack.alignment = .leading
         effectsStack.spacing = 0
@@ -161,7 +180,7 @@ public final class ColorInspectorView: NSView {
         let multiple = model.effects.count > 1
         for (n, e) in model.effects.enumerated() {
             let v = ColorEffectView(effect: e.id)
-            if multiple { addEffectTitle(to: v, effect: e.id, number: n + 1) }
+            addEffectTitle(to: v, effect: e.id, number: n + 1, removable: multiple)
             for kind in ColorSectionKind.allCases {
                 v.addArrangedSubview(separator())
                 v.arrangedSubviews.last.map { $0.widthAnchor.constraint(equalTo: v.widthAnchor).isActive = true }
@@ -177,17 +196,29 @@ public final class ColorInspectorView: NSView {
         builtSignature = model.effects.map(\.id)
     }
 
-    private func addEffectTitle(to v: ColorEffectView, effect: Int, number: Int) {
+    private func addEffectTitle(to v: ColorEffectView, effect: Int, number: Int, removable: Bool) {
         let t = NSTextField(labelWithString: number == 1 ? "Colour" : "Colour \(number)")
         t.font = Theme.Fonts.bodyTitle
         t.textColor = Theme.Colors.label
-        let remove = NSButton(title: "Remove", target: self, action: #selector(removeEffect(_:)))
-        remove.controlSize = .small
-        remove.bezelStyle = .accessoryBarAction
-        remove.font = Theme.Fonts.small
-        remove.tag = effect
-        remove.setAccessibilityLabel("Remove \(t.stringValue)")
-        let row = NSStackView(views: [t, NSView(), remove])
+        var views: [NSView] = [t, NSView()]
+        let reset = NSButton(title: "Reset", target: self, action: #selector(resetEffectPressed(_:)))
+        reset.controlSize = .small
+        reset.bezelStyle = .accessoryBarAction
+        reset.font = Theme.Fonts.small
+        reset.tag = effect
+        reset.toolTip = "Reset every section of this effect"
+        reset.setAccessibilityLabel("Reset \(t.stringValue)")
+        views.append(reset)
+        if removable {
+            let remove = NSButton(title: "Remove", target: self, action: #selector(removeEffect(_:)))
+            remove.controlSize = .small
+            remove.bezelStyle = .accessoryBarAction
+            remove.font = Theme.Fonts.small
+            remove.tag = effect
+            remove.setAccessibilityLabel("Remove \(t.stringValue)")
+            views.append(remove)
+        }
+        let row = NSStackView(views: views)
         row.orientation = .horizontal
         row.alignment = .centerY
         row.edgeInsets = NSEdgeInsets(top: Theme.Spacing.sm, left: Theme.Spacing.md, bottom: Theme.Spacing.xs, right: Theme.Spacing.md)
@@ -243,10 +274,11 @@ public final class ColorInspectorView: NSView {
             let group = makeGroup(v, title: g.group ?? "")
             if g.group == "Color" {
                 let eyedropper = NSButton(image: NSImage(systemSymbolName: "eyedropper", accessibilityDescription: "White balance picker") ?? NSImage(),
-                                          target: nil, action: nil)
+                                          target: self, action: #selector(pickWhiteBalance(_:)))
                 eyedropper.isBordered = false
-                eyedropper.isEnabled = false
-                eyedropper.toolTip = "Pick white balance from the Program monitor: not available yet"
+                eyedropper.tag = v.effect
+                v.eyedropper = eyedropper
+                eyedropper.toolTip = "Click a neutral grey or white area in the Program monitor to set the white balance"
                 let l = NSTextField(labelWithString: "White Balance")
                 l.font = Theme.Fonts.small
                 l.textColor = Theme.Colors.label2
@@ -255,7 +287,23 @@ public final class ColorInspectorView: NSView {
                 row.orientation = .horizontal
                 row.alignment = .centerY
                 row.spacing = Theme.Spacing.sm
-                row.alphaValue = 0.4
+                pin(row, in: group.content, inset: Theme.Spacing.lg)
+            }
+            if g.group == "Light" {
+                let reset = NSButton(title: "Reset", target: self, action: #selector(resetTonePressed(_:)))
+                let auto = NSButton(title: "Auto", target: self, action: #selector(autoTonePressed(_:)))
+                for b in [reset, auto] {
+                    b.controlSize = .small
+                    b.bezelStyle = .rounded
+                    b.font = Theme.Fonts.small
+                    b.tag = v.effect
+                }
+                reset.toolTip = "Reset Exposure, Contrast, Highlights, Shadows, Whites and Blacks"
+                v.autoButton = auto
+                auto.toolTip = "Set Exposure and Blacks from the Program monitor picture"
+                let row = NSStackView(views: [NSView(), reset, auto])
+                row.orientation = .horizontal
+                row.spacing = Theme.Spacing.sm
                 pin(row, in: group.content, inset: Theme.Spacing.lg)
             }
             for p in g.params { pin(paramRow(v, p), in: group.content, inset: Theme.Spacing.lg) }
@@ -323,6 +371,32 @@ public final class ColorInspectorView: NSView {
         v.curveEditor = editor
         pin(editor, in: group.content, inset: Theme.Spacing.lg)
         pin(group, in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
+
+        // Hue Saturation Curves: one curve at a time, chosen in the popup (Premiere's tabs).
+        let hueGroup = makeGroup(v, title: "Hue Saturation Curves")
+        let popup = NSPopUpButton(frame: .zero, pullsDown: false)
+        style(popup)
+        for k in HueCurveKind.allCases { popup.addItem(withTitle: k.title) }
+        popup.target = self
+        popup.action = #selector(hueCurveKindChanged(_:))
+        popup.identifier = NSUserInterfaceItemIdentifier("\(v.effect)")
+        popup.setAccessibilityLabel("Hue Saturation Curve")
+        v.huePopup = popup
+        pin(popup, in: hueGroup.content, inset: Theme.Spacing.lg)
+        let hue = CurveEditorView(frame: NSRect(x: 0, y: 0, width: 200, height: 150))
+        hue.translatesAutoresizingMaskIntoConstraints = false
+        hue.heightAnchor.constraint(equalToConstant: 150).isActive = true
+        hue.flatBaseline = true
+        hue.points = HueCurves.flat
+        hue.onBegin = { [weak self] in self?.model.onGestureBegan?() }
+        hue.onEnd = { [weak self] in self?.model.onGestureEnded?() }
+        hue.onChange = { [weak self, weak v] pts in
+            guard let self, let v else { return }
+            self.model.setHueCurve(id, v.hueKind, pts)
+        }
+        v.hueEditor = hue
+        pin(hue, in: hueGroup.content, inset: Theme.Spacing.lg)
+        pin(hueGroup, in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
         pin(trailingReset(v), in: v.body, inset: Theme.Spacing.lg + Theme.Spacing.md)
     }
 
@@ -436,8 +510,23 @@ public final class ColorInspectorView: NSView {
         model.gesture { model.setSourceOverride(i == 0 ? nil : Self.sources[i - 1].1) }
     }
 
+    @objc private func hueCurveKindChanged(_ p: NSPopUpButton) {
+        guard let raw = p.identifier?.rawValue, let id = Int(raw), let kind = HueCurveKind(rawValue: p.indexOfSelectedItem),
+              let v = effectViews[id]?.sections[.curves] else { return }
+        v.hueKind = kind
+        refresh()
+    }
+
+    @objc private func resetTonePressed(_ b: NSButton) { model.resetTone(b.tag) }
+    @objc private func autoTonePressed(_ b: NSButton) { model.onAutoTone?(b.tag) }
+
+    @objc private func copyColor() { model.onCopyColor?() }
+    @objc private func pasteColor() { model.onPasteColor?() }
+
     @objc private func addEffect() { model.addEffect() }
     @objc private func removeEffect(_ b: NSButton) { model.removeEffect(b.tag) }
+    @objc private func resetEffectPressed(_ b: NSButton) { model.resetEffect(b.tag) }
+    @objc private func pickWhiteBalance(_ b: NSButton) { model.onPickWhiteBalance?(b.tag) }
 
     @objc private func switchToggled(_ s: NSSwitch) {
         let parts = (s.identifier?.rawValue ?? "").split(separator: "|")
@@ -472,6 +561,8 @@ public final class ColorInspectorView: NSView {
             _ = model.availableLUTs
             _ = model.recentLUTs
             _ = model.detectedSource
+            _ = model.frameThumbnail
+            _ = model.samplingBlock
             _ = model.embeddedLUTName
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
@@ -511,17 +602,37 @@ public final class ColorInspectorView: NSView {
         }
         for (slot, popup) in v.lutPopups { refreshLUTPopup(popup, slot: slot, effect: e.id, isPrimary: isPrimary) }
         if kind == .basicCorrection {
+            let block = model.samplingBlock
+            v.eyedropper?.isEnabled = block == nil
+            v.eyedropper?.toolTip = block ?? "Click a neutral grey or white area in the Program monitor to set the white balance"
+            v.autoButton?.isEnabled = block == nil
+            v.autoButton?.toolTip = block ?? "Set Exposure and Blacks from the Program monitor picture"
             let hasLUT = e.inputLUT != nil && e.inputLUT != .automatic
             v.rows[.inputLUTIntensity]?.setActive(!isPrimary && hasLUT)
         }
         if kind == .creative, let preview = v.preview {
-            var path: String?
-            if case .file(let p)? = e.creative.look { path = p }
-            if v.previewPath != .some(path) {
-                v.previewPath = .some(path)
-                preview.image = ColorLookPreview.image(forLookPath: path)
+            if let frame = model.frameThumbnail {
+                if v.previewPath != .some(nil) || preview.image == nil || v.previewFrame !== frame {
+                    v.previewFrame = frame
+                    v.previewPath = .some(nil)
+                    preview.image = NSImage(cgImage: frame, size: NSSize(width: frame.width, height: frame.height))
+                }
+            } else {
+                var path: String?
+                if case .file(let p)? = e.creative.look { path = p }
+                if v.previewPath != .some(path) || v.previewFrame != nil {
+                    v.previewFrame = nil
+                    v.previewPath = .some(path)
+                    preview.image = ColorLookPreview.image(forLookPath: path)
+                }
             }
             preview.setStepping(!model.lookChoices.isEmpty || e.creative.look != nil)
+        }
+        if let hue = v.hueEditor, let popup = v.huePopup {
+            popup.selectItem(at: v.hueKind.rawValue)
+            hue.hueStrip = v.hueKind.isHueKeyed
+            hue.points = model.hueCurve(e.id, v.hueKind)
+            hue.lineColor = Theme.Colors.label
         }
         if let editor = v.curveEditor, let dots = v.channelDots {
             dots.selected = v.selectedChannel

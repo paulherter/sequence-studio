@@ -54,6 +54,17 @@ private func readStamp(_ texture: MTLTexture, device: MTLDevice, y0: Int = 0) ->
     return value
 }
 
+private final class CalledFlag: @unchecked Sendable {
+    private let lock = NSLock(); private var v = false
+    func set() { lock.lock(); v = true; lock.unlock() }
+    var value: Bool { lock.lock(); defer { lock.unlock() }; return v }
+}
+
+private final class BoxedTexture: @unchecked Sendable {
+    let texture: MTLTexture
+    init(_ t: MTLTexture) { texture = t }
+}
+
 @MainActor
 private struct Rig {
     let engine: PlaybackEngine
@@ -91,6 +102,59 @@ private struct Rig {
 }
 
 @Suite(.serialized) @MainActor struct PlaybackEngineTests {
+    /// Frame capture (eyedropper, Auto, thumbnails): copies the frame on the loop's own command buffer, so what it reads
+    /// is exactly the frame that was rendered, never a half-written next one, and nothing waits for the GPU on the caller.
+    @Test func frameCaptureReturnsTheRenderedFrameAndCoalescesPerKey() async throws {
+        let rig = try await Rig.make(Rig.single)
+        let e = rig.engine
+        let device = rig.device
+        func capture(key: String = "t") async -> Int? {
+            await withCheckedContinuation { (cont: CheckedContinuation<Int?, Never>) in
+                e.requestFrameCapture(key: key) { frame, cb in
+                    let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: frame.pixelFormat, width: frame.width, height: frame.height, mipmapped: false)
+                    guard let copy = device.makeTexture(descriptor: d), let blit = cb.makeBlitCommandEncoder() else { cont.resume(returning: nil); return nil }
+                    blit.copy(from: frame, to: copy)
+                    blit.endEncoding()
+                    let box = BoxedTexture(copy)
+                    return { cont.resume(returning: readStamp(box.texture, device: device)) }
+                }
+            }
+        }
+        e.seek(to: Time(10, 30))
+        await e.waitForDecodes()
+        // A request made while a render is due (the seek invalidated the loop) is served by that render.
+        async let early = capture()
+        try await Task.sleep(for: .milliseconds(50))
+        _ = rig.tick()
+        #expect(await early == 10)
+        // An idle loop (nothing to render) serves it from its own command buffer: the same frame.
+        #expect(await capture() == 10)
+        // The next frame is captured as that frame.
+        e.seek(to: Time(11, 30))
+        await e.waitForDecodes()
+        async let next = capture()
+        try await Task.sleep(for: .milliseconds(50))
+        _ = rig.tick()
+        #expect(await next == 11)
+        // Same key: only the newest request survives (the older completion is dropped, never called).
+        let oldCalled = CalledFlag()
+        e.seek(to: Time(12, 30)); await e.waitForDecodes()
+        e.requestFrameCapture(key: "k") { _, _ in oldCalled.set(); return nil }
+        async let newer = capture(key: "k")
+        try await Task.sleep(for: .milliseconds(50))
+        _ = rig.tick()
+        #expect(await newer == 12)
+        #expect(!oldCalled.value)
+        // Different keys do not replace each other.
+        e.seek(to: Time(13, 30)); await e.waitForDecodes()
+        async let a = capture(key: "a")
+        async let b = capture(key: "b")
+        try await Task.sleep(for: .milliseconds(50))
+        _ = rig.tick()
+        let (ra, rb) = await (a, b)
+        #expect(ra == 13 && rb == 13)
+    }
+
     @Test func playSeekAndStepBackFromCache() async throws {
         let rig = try await Rig.make(Rig.single)
         let e = rig.engine

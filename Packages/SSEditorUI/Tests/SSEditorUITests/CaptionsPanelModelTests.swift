@@ -37,6 +37,13 @@ private let sample = Transcript(language: "de-DE", words: [
     return (m, s)
 }
 
+/// Waits (main actor stays free) until `condition` holds, at most `timeout`: debounce timers run late on a loaded machine,
+/// so the tests wait for the effect instead of sleeping a fixed time. A debounce that never fires still fails after `timeout`.
+@MainActor private func eventually(timeout: Duration = .seconds(5), _ condition: () -> Bool) async {
+    let deadline = ContinuousClock.now + timeout
+    while !condition() && ContinuousClock.now < deadline { try? await Task.sleep(for: .milliseconds(10)) }
+}
+
 @MainActor @Suite struct CaptionsPanelModelTests {
     @Test func transcribeSuccessUsesLocale() async {
         let (m, s) = makeModel()
@@ -93,7 +100,7 @@ private let sample = Transcript(language: "de-DE", words: [
         m.transcribe(); await m.waitForTranscription()
         m.textChanged("Hallo liebe Leute. Weiter")
         #expect(m.transcript == sample)  // not yet applied
-        try await Task.sleep(for: .milliseconds(150))
+        await eventually { m.transcript?.text == "Hallo liebe Leute. Weiter" }
         let t = try #require(m.transcript)
         #expect(t.text == "Hallo liebe Leute. Weiter")
         #expect(t.words[2].isEdited)
@@ -107,7 +114,7 @@ private let sample = Transcript(language: "de-DE", words: [
         m.transcribe(); await m.waitForTranscription()
         m.textChanged("Hallo liebe Welt. Weite")
         m.textChanged("Hallo liebe Welt. Weiter geht")
-        try await Task.sleep(for: .milliseconds(150))
+        await eventually { m.transcript?.text == "Hallo liebe Welt. Weiter geht" }
         #expect(m.transcript?.text == "Hallo liebe Welt. Weiter geht")
     }
 

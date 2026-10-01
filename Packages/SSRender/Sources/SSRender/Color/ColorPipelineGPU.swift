@@ -84,10 +84,10 @@ public final class ColorPipelineGPU: @unchecked Sendable {
     }
 
     static let maxSections = 8
-    static let maxCurves = 3   // 3 x 64 x 16 B stays below the 4 KB setBytes limit
+    static let maxCurves = 3   // 3 x 64 x 16 B stays below the 4 KB setBytes limit (a Hue Saturation Curves block takes 2)
 
     static let kindConversion: UInt32 = 0, kindBasic: UInt32 = 1, kindCreative: UInt32 = 2, kindLook: UInt32 = 3,
-               kindCurves: UInt32 = 4, kindWheels: UInt32 = 5, kindVignette: UInt32 = 6
+               kindCurves: UInt32 = 4, kindWheels: UInt32 = 5, kindVignette: UInt32 = 6, kindHueCurves: UInt32 = 7
     static let lutPresent: UInt32 = 1, lut1D: UInt32 = 2, lutIn: UInt32 = 4, lutOut: UInt32 = 8
 
     private static func lutFields(_ s: inout Sec, _ l: CubeLUT) {
@@ -153,6 +153,10 @@ public final class ColorPipelineGPU: @unchecked Sendable {
             case .curves(let t):
                 sec.head.x = kindCurves
                 curvesRows = t.table.map { SIMD4($0, 0) }
+            case .hueCurves(let h):
+                sec.head.x = kindHueCurves
+                sec.d = SIMD4(h.luma, 0)
+                curvesRows = h.table
             case .wheels(let w):
                 sec.head.x = kindWheels
                 sec.head.z = w.hasGamma ? 1 : 0
@@ -164,7 +168,7 @@ public final class ColorPipelineGPU: @unchecked Sendable {
             }
             let curveCount = cur.curves.count / CurveTable.count
             if cur.sections.count >= maxSections || (needsLUT != nil && cur.lut != nil)
-                || (!curvesRows.isEmpty && curveCount >= maxCurves) {
+                || (!curvesRows.isEmpty && curveCount + curvesRows.count / CurveTable.count > maxCurves) {
                 close(last: false)
             }
             if !curvesRows.isEmpty { sec.head.w = UInt32(cur.curves.count / CurveTable.count); cur.curves += curvesRows }

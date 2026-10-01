@@ -258,6 +258,116 @@ public struct PreparedVignette: Sendable, Equatable {
     }
 }
 
+// MARK: Hue Saturation Curves
+
+/// Lumetri Hue Saturation Curves. Five curves (Hue vs Sat, Hue vs Hue, Hue vs Luma, Luma vs Sat, Sat vs Sat) all sample
+/// the colour that enters the block (they run in parallel, as in Premiere), then adjust it together: hue shift
+/// (up to +-60 degrees, rotation about the grey axis), saturation (x0…x2 around the luma) and luma (+-1 stop). The
+/// hue-keyed adjustments fade out towards grey, where hue is undefined. y = 0.5 is "no change".
+public struct PreparedHueCurves: Sendable, Equatable {
+    public static let count = 64
+    /// Rows 0…63 hold (hueVsSat, hueVsHue, hueVsLuma, lumaVsSat), rows 64…127 hold (satVsSat, 0, 0, 0).
+    let table: [SIMD4<Float>]
+    let luma: SIMD3<Float>
+    static let maxHueShift: Float = Float.pi / 3
+
+    init(_ h: HueCurves, gamut: Gamut) {
+        let n = Self.count
+        var rows = [SIMD4<Float>](repeating: .zero, count: 2 * n)
+        let hs = Self.periodic(h.hueVsSat, n), hh = Self.periodic(h.hueVsHue, n), hl = Self.periodic(h.hueVsLuma, n)
+        let ls = Self.linear(h.lumaVsSat, n), ss = Self.linear(h.satVsSat, n)
+        for k in 0..<n {
+            rows[k] = SIMD4(hs[k], hh[k], hl[k], ls[k])
+            rows[n + k] = SIMD4(ss[k], 0, 0, 0)
+        }
+        table = rows
+        luma = gamut.lumaRow
+    }
+
+    /// Control points as the maths sees them: clamped to 0…1, sorted, points closer than 1e-4 merged (the later wins).
+    static func clean(_ pts: [CurvePoint]) -> [CurvePoint] {
+        let p = pts.map { CurvePoint(min(max($0.x, 0), 1), min(max($0.y, 0), 1)) }.sorted { $0.x < $1.x }
+        var out: [CurvePoint] = []
+        for q in p { if let l = out.last, q.x - l.x < 1e-4 { out[out.count - 1] = q } else { out.append(q) } }
+        return out
+    }
+
+    /// n samples at x = k/n of a curve that wraps around (hue). The curve is one period [0, 1): a point at x = 1 is the
+    /// same place as x = 0 and is dropped (the model keeps both end points at the same y, so nothing is lost; for a file
+    /// that does not, the first point wins). The period is repeated to both sides and sampled in the middle copy, so the
+    /// seam is as smooth as any other part. One point = a flat curve at its y, none = flat 0.5 (never the diagonal).
+    static func periodic(_ pts: [CurvePoint], _ n: Int) -> [Float] {
+        let p = clean(pts)
+        guard let first = p.first else { return [Float](repeating: 0.5, count: n) }
+        let period = p.filter { $0.x < 1 }
+        guard period.count >= 2 else { return [Float](repeating: (period.first ?? first).y, count: n) }
+        let ext = period.map { CurvePoint($0.x / 3, $0.y) } + period.map { CurvePoint(($0.x + 1) / 3, $0.y) }
+            + period.map { CurvePoint(($0.x + 2) / 3, $0.y) }
+        let spline = CurveMath.Spline(ext)
+        return (0..<n).map { spline.value((Float($0) / Float(n) + 1) / 3) }
+    }
+
+    /// n samples at x = k/(n-1) of a curve over 0…1 (luma, saturation). One point = flat at its y, none = flat 0.5.
+    static func linear(_ pts: [CurvePoint], _ n: Int) -> [Float] {
+        let p = clean(pts)
+        guard p.count >= 2 else { return [Float](repeating: p.first?.y ?? 0.5, count: n) }
+        let spline = CurveMath.Spline(p)
+        return (0..<n).map { spline.value(Float($0) / Float(n - 1)) }
+    }
+
+    @inline(__always) func hueSample(_ column: Int, _ h: Float) -> Float {
+        let n = Self.count
+        let p = h * Float(n)
+        let i = min(Int(p), n - 1)
+        let f = p - Float(i)
+        let a = table[i][column], b = table[(i + 1) % n][column]
+        return a + (b - a) * f
+    }
+
+    @inline(__always) func linearSample(_ row0: Int, _ column: Int, _ x: Float) -> Float {
+        let n = Self.count
+        let p = min(max(x, 0), 1) * Float(n - 1)
+        let i = min(Int(p), n - 2)
+        let f = p - Float(i)
+        let a = table[row0 + i][column], b = table[row0 + i + 1][column]
+        return a + (b - a) * f
+    }
+
+    public func apply(_ c: SIMD3<Float>, pre: Bool) -> SIMD3<Float> {
+        var t = pre ? TransferFunctions.bt709OETF(c) : c
+        let mx = max(t.x, max(t.y, t.z)), mn = min(t.x, min(t.y, t.z))
+        let d = mx - mn
+        var hue: Float = 0
+        if d > 1e-6 {
+            var h: Float
+            if mx == t.x { h = (t.y - t.z) / d } else if mx == t.y { h = (t.z - t.x) / d + 2 } else { h = (t.x - t.y) / d + 4 }
+            h /= 6
+            hue = h - floorf(h)
+        }
+        let w = ToneMath.smooth(0.005, 0.05, d)
+        let sv = mx > 1e-4 ? min(max(d / mx, 0), 1) : 0
+        let y0 = simd_dot(luma, t)
+        let vs = hueSample(0, hue), vh = hueSample(1, hue), vl = hueSample(2, hue)
+        let ls = linearSample(0, 3, y0), ss = linearSample(Self.count, 0, sv)
+        // Hue: rotate the chroma about the grey axis (Rodrigues, axis (1,1,1)/sqrt(3)).
+        let theta = (vh - 0.5) * 2 * Self.maxHueShift * w
+        if theta != 0 {
+            let m = (t.x + t.y + t.z) / 3
+            let dv = t - SIMD3(repeating: m)
+            let cr = SIMD3(dv.z - dv.y, dv.x - dv.z, dv.y - dv.x) * 0.57735027   // n x dv
+            t = SIMD3(repeating: m) + dv * cosf(theta) + cr * sinf(theta)
+        }
+        let s = (1 + (2 * vs - 1) * w) * (2 * ls) * (2 * ss)
+        if s != 1 {
+            let y = simd_dot(luma, t)
+            t = SIMD3(repeating: y) + (t - SIMD3(repeating: y)) * max(s, 0)
+        }
+        let g = exp2f((vl - 0.5) * 2 * w)
+        if g != 1 { t *= g }
+        return pre ? TransferFunctions.bt709InverseOETF(t) : t
+    }
+}
+
 // MARK: Curves
 
 /// Monotone cubic (Fritsch-Carlson) through control points, sampled into a table (master composed with each channel).
@@ -270,9 +380,9 @@ public struct CurveTable: Sendable, Equatable {
         let master = CurveMath.sample(curves.master, Self.count)
         var out: [SIMD3<Float>] = []
         out.reserveCapacity(Self.count)
-        for m in master {
-            out.append(SIMD3(CurveMath.evaluate(curves.red, m), CurveMath.evaluate(curves.green, m), CurveMath.evaluate(curves.blue, m)))
-        }
+        let sr = CurveMath.Spline(CurveMath.normalized(curves.red)), sg = CurveMath.Spline(CurveMath.normalized(curves.green)),
+            sb = CurveMath.Spline(CurveMath.normalized(curves.blue))
+        for m in master { out.append(SIMD3(sr.value(m), sg.value(m), sb.value(m))) }
         table = out
         isIdentity = curves.isNeutral
     }
@@ -304,32 +414,51 @@ public enum CurveMath {
 
     /// Monotone cubic Hermite value at `x` (flat beyond the end points).
     public static func evaluate(_ points: [CurvePoint], _ x: Float) -> Float {
-        let p = normalized(points)
-        let n = p.count
-        if x <= p[0].x { return p[0].y }
-        if x >= p[n - 1].x { return p[n - 1].y }
-        var d = [Float](repeating: 0, count: n - 1)
-        for i in 0..<(n - 1) { d[i] = (p[i + 1].y - p[i].y) / (p[i + 1].x - p[i].x) }
-        var m = [Float](repeating: 0, count: n)
-        m[0] = d[0]; m[n - 1] = d[n - 2]
-        if n > 2 { for i in 1..<(n - 1) { m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2 } }
-        for i in 0..<(n - 1) {
-            if d[i] == 0 { m[i] = 0; m[i + 1] = 0; continue }
-            let a = m[i] / d[i], b = m[i + 1] / d[i]
-            let s = a * a + b * b
-            if s > 9 { let k = 3 / sqrtf(s); m[i] = k * a * d[i]; m[i + 1] = k * b * d[i] }
+        Spline(normalized(points)).value(x)
+    }
+
+    /// Precomputed monotone cubic (Fritsch-Carlson) through `p` (already cleaned, at least 2 points, x ascending):
+    /// the slopes are worked out once, so sampling a curve many times does not repeat that.
+    struct Spline {
+        let p: [CurvePoint]
+        let m: [Float]
+
+        init(_ p: [CurvePoint]) {
+            self.p = p
+            let n = p.count
+            guard n >= 2 else { m = [0]; return }
+            var d = [Float](repeating: 0, count: n - 1)
+            for i in 0..<(n - 1) { d[i] = (p[i + 1].y - p[i].y) / (p[i + 1].x - p[i].x) }
+            var m = [Float](repeating: 0, count: n)
+            m[0] = d[0]; m[n - 1] = d[n - 2]
+            if n > 2 { for i in 1..<(n - 1) { m[i] = d[i - 1] * d[i] <= 0 ? 0 : (d[i - 1] + d[i]) / 2 } }
+            for i in 0..<(n - 1) {
+                if d[i] == 0 { m[i] = 0; m[i + 1] = 0; continue }
+                let a = m[i] / d[i], b = m[i + 1] / d[i]
+                let s = a * a + b * b
+                if s > 9 { let k = 3 / sqrtf(s); m[i] = k * a * d[i]; m[i + 1] = k * b * d[i] }
+            }
+            self.m = m
         }
-        var k = 0
-        while k < n - 2 && x > p[k + 1].x { k += 1 }
-        let h = p[k + 1].x - p[k].x
-        let t = (x - p[k].x) / h
-        let t2 = t * t, t3 = t2 * t
-        let v = (2 * t3 - 3 * t2 + 1) * p[k].y + (t3 - 2 * t2 + t) * h * m[k]
-            + (-2 * t3 + 3 * t2) * p[k + 1].y + (t3 - t2) * h * m[k + 1]
-        return min(max(v, 0), 1)
+
+        func value(_ x: Float) -> Float {
+            let n = p.count
+            if n < 2 { return p.first?.y ?? 0.5 }
+            if x <= p[0].x { return p[0].y }
+            if x >= p[n - 1].x { return p[n - 1].y }
+            var k = 0
+            while k < n - 2 && x > p[k + 1].x { k += 1 }
+            let h = p[k + 1].x - p[k].x
+            let t = (x - p[k].x) / h
+            let t2 = t * t, t3 = t2 * t
+            let v = (2 * t3 - 3 * t2 + 1) * p[k].y + (t3 - 2 * t2 + t) * h * m[k]
+                + (-2 * t3 + 3 * t2) * p[k + 1].y + (t3 - t2) * h * m[k + 1]
+            return min(max(v, 0), 1)
+        }
     }
 
     static func sample(_ points: [CurvePoint], _ count: Int) -> [Float] {
-        (0..<count).map { evaluate(points, Float($0) / Float(count - 1)) }
+        let spline = Spline(normalized(points))
+        return (0..<count).map { spline.value(Float($0) / Float(count - 1)) }
     }
 }

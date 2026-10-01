@@ -55,7 +55,10 @@ public final class ProgramSurfaceView: NSView, NSTextViewDelegate {
         overlay.autoresizingMask = [.width, .height]
         addSubview(viewer)
         addSubview(overlay)
+        NotificationCenter.default.addObserver(self, selector: #selector(pickStateChanged), name: .colorPickStateChanged, object: nil)
     }
+
+    @objc private func pickStateChanged() { window?.invalidateCursorRects(for: self) }
     @available(*, unavailable) public required init?(coder: NSCoder) { fatalError() }
 
     // MARK: Overlay state
@@ -90,6 +93,7 @@ public final class ProgramSurfaceView: NSView, NSTextViewDelegate {
     // MARK: Hit routing and tools
 
     public override func hitTest(_ point: NSPoint) -> NSView? {
+        if ColorPickHub.shared.isPicking, bounds.contains(convert(point, from: superview)) { return self }
         guard tool != .select || textEditor != nil else { return super.hitTest(point) }
         let p = convert(point, from: superview)
         guard bounds.contains(p) else { return nil }
@@ -98,6 +102,7 @@ public final class ProgramSurfaceView: NSView, NSTextViewDelegate {
     }
 
     public override func resetCursorRects() {
+        if ColorPickHub.shared.isPicking { addCursorRect(bounds, cursor: .crosshair); return }
         switch tool {
         case .hand: addCursorRect(bounds, cursor: .openHand)
         case .type: addCursorRect(bounds, cursor: .iBeam)
@@ -107,6 +112,10 @@ public final class ProgramSurfaceView: NSView, NSTextViewDelegate {
 
     public override func mouseDown(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
+        if ColorPickHub.shared.isPicking {
+            ColorPickHub.shared.complete(at: ColorPickHub.position(forClick: p, mapping: mapping))
+            return
+        }
         switch tool {
         case .hand:
             if event.clickCount == 2 { onZoomGesture?(.fit); return }

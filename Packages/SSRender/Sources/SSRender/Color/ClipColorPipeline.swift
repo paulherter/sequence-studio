@@ -96,7 +96,7 @@ extension ColorPipeline {
     /// Builds the per-layer pipeline from a clip's Colour effects and its media's detected properties.
     /// - Source: `clipColor.source` override, else `mediaInfo.colorSpace`, else Rec.709.
     /// - Effects in list order. Inside one effect: Basic Correction sliders -> Input LUT -> Creative (look, then
-    ///   adjustments) -> Curves -> Wheels -> Vignette. Disabled or neutral sections are skipped.
+    ///   adjustments) -> Curves (RGB, then Hue Saturation) -> Wheels -> Vignette. Disabled or neutral sections are skipped.
     /// - The first effect's Input LUT is the conversion step and is always emitted (a disabled Basic Correction or
     ///   "none" = the built-in conversion). `.file`/`.embedded` = that LUT; `.automatic` = the media's embedded camera
     ///   LUT when `useEmbeddedLUT`, the media has one, and the effective source is S-Log3 (the Sony look LUTs expect
@@ -137,6 +137,7 @@ extension ColorPipeline {
                 if k.hasTone { ops.append(.creative(k)) }
             }
             if e.isEnabled(.curves), !e.curves.isNeutral { ops.append(.curves(e.curves)) }
+            if e.isEnabled(.curves), !e.hueCurves.isNeutral { ops.append(.hueCurves(e.hueCurves)) }
             if e.isEnabled(.wheels), !e.wheels.isNeutral { ops.append(.wheels(e.wheels)) }
             if e.isEnabled(.vignette), !e.vignette.isNeutral { ops.append(.vignette(e.vignette)) }
         }

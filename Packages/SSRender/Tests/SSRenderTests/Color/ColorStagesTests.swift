@@ -294,4 +294,121 @@ import SSCore
         let hi = t.apply(SIMD3(repeating: 1.5), pre: false)
         #expect(abs(hi.y - 1.5) < 1e-5)
     }
+
+    // MARK: Hue Saturation Curves
+
+    static func hue(_ f: (inout HueCurves) -> Void) -> PreparedHueCurves {
+        var h = HueCurves(); f(&h)
+        return PreparedHueCurves(h, gamut: .rec709)
+    }
+    /// A bump of height `to` (0…1) centred on x in a flat 0.5 curve.
+    static func bump(_ x: Float, _ to: Float, wrap: Bool = true) -> [CurvePoint] {
+        [CurvePoint(0, 0.5), CurvePoint(max(x - 0.08, 0.01), 0.5), CurvePoint(x, to), CurvePoint(min(x + 0.08, 0.99), 0.5), CurvePoint(1, 0.5)]
+    }
+    static func hueOf(_ v: SIMD3<Float>) -> Float {
+        let mx = max(v.x, v.y, v.z), d = mx - min(v.x, v.y, v.z)
+        var h: Float = mx == v.x ? (v.y - v.z) / d : mx == v.y ? (v.z - v.x) / d + 2 : (v.x - v.y) / d + 4
+        h /= 6
+        return h - floorf(h)
+    }
+
+    @Test func flatHueCurvesAreIdentity() {
+        let p = Self.hue { _ in }
+        for t in [SIMD3<Float>(0.2, 0.5, 0.9), [0.9, 0.1, 0.05], [0.4, 0.4, 0.4], [-0.1, 0.3, 1.4], [0, 0, 0]] {
+            #expect(simd_length(p.apply(t, pre: false) - t) < 1e-5, "\(t)")
+        }
+    }
+
+    @Test func hueVsSatChangesOnlyTheChosenHue() {
+        // Boost saturation around red (hue 0 wraps: put the bump on both sides).
+        let p = Self.hue { $0.hueVsSat = [CurvePoint(0, 1), CurvePoint(0.08, 0.5), CurvePoint(0.92, 0.5), CurvePoint(1, 1)] }
+        let red = SIMD3<Float>(0.8, 0.3, 0.3), blue = SIMD3<Float>(0.3, 0.3, 0.8)
+        let r = p.apply(red, pre: false), b = p.apply(blue, pre: false)
+        #expect(Self.chroma(r) > Self.chroma(red) * 1.6, "red gets (almost) double saturation")
+        #expect(simd_length(b - blue) < 1e-3, "blue is untouched")
+        #expect(abs(Self.y(r) - Self.y(red)) < 5e-3, "luma stays")
+        // Lowering to 0 removes the colour.
+        let down = Self.hue { $0.hueVsSat = [CurvePoint(0, 0), CurvePoint(0.08, 0.5), CurvePoint(0.92, 0.5), CurvePoint(1, 0)] }
+        #expect(Self.chroma(down.apply(red, pre: false)) < 0.05)
+        // Greys are untouched by hue-keyed curves.
+        let grey = SIMD3<Float>(repeating: 0.4)
+        #expect(simd_length(p.apply(grey, pre: false) - grey) < 1e-5)
+    }
+
+    @Test func hueVsHueRotatesTheHueTowardsTheCurve() {
+        let p = Self.hue { $0.hueVsHue = [CurvePoint(0, 0.5), CurvePoint(0.2, 0.5), CurvePoint(1.0 / 3, 1), CurvePoint(0.47, 0.5), CurvePoint(1, 0.5)] }
+        let green = SIMD3<Float>(0.2, 0.7, 0.2)
+        let o = p.apply(green, pre: false)
+        let shift = Self.hueOf(o) - Self.hueOf(green)
+        #expect(shift > 0.08 && shift < 0.18, "pushed towards blue by up to 60 degrees: \(shift)")
+        #expect(abs(Self.chroma(o) - Self.chroma(green)) < 0.02, "rotation keeps the chroma")
+        let red = SIMD3<Float>(0.8, 0.3, 0.3)
+        #expect(simd_length(p.apply(red, pre: false) - red) < 1e-3)
+    }
+
+    @Test func hueVsLumaAndLumaVsSatAndSatVsSat() {
+        let yellow = SIMD3<Float>(0.7, 0.7, 0.2)
+        let hl = Self.hue { $0.hueVsLuma = Self.bump(1.0 / 6, 1) }
+        #expect(Self.y(hl.apply(yellow, pre: false)) > Self.y(yellow) * 1.5, "up to one stop brighter")
+        // Luma vs Sat: desaturate the highlights only.
+        let ls = Self.hue { $0.lumaVsSat = [CurvePoint(0, 0.5), CurvePoint(0.5, 0.5), CurvePoint(0.9, 0)] }
+        let dark = SIMD3<Float>(0.15, 0.1, 0.3), bright = SIMD3<Float>(0.95, 0.8, 0.7)
+        #expect(simd_length(ls.apply(dark, pre: false) - dark) < 1e-3)
+        #expect(Self.chroma(ls.apply(bright, pre: false)) < Self.chroma(bright) * 0.5)
+        // Sat vs Sat: pull down everything above 70 % saturation (broadcast-safe), keep the muted colours.
+        let ss = Self.hue { $0.satVsSat = [CurvePoint(0, 0.5), CurvePoint(0.6, 0.5), CurvePoint(1, 0.15)] }
+        let vivid = SIMD3<Float>(0.9, 0.1, 0.1), muted = SIMD3<Float>(0.6, 0.5, 0.45)
+        #expect(Self.chroma(ss.apply(vivid, pre: false)) < Self.chroma(vivid) * 0.6)
+        #expect(simd_length(ss.apply(muted, pre: false) - muted) < 1e-3)
+    }
+
+    @Test func hueCurvesAgreeBetweenPreAndPostForRec709() {
+        let p = PreparedHueCurves({
+            var h = HueCurves()
+            h.hueVsSat = Self.bump(0.6, 0.9); h.hueVsHue = Self.bump(0.1, 0.3); h.lumaVsSat = [CurvePoint(0, 0.4), CurvePoint(1, 0.7)]
+            return h }(), gamut: .rec709)
+        for enc in [SIMD3<Float>(0.2, 0.5, 0.9), [0.05, 0.04, 0.03], [0.7, 0.6, 0.2]] {
+            let viaPost = p.apply(enc, pre: false)
+            let viaPre = TransferFunctions.bt709OETF(p.apply(TransferFunctions.bt709InverseOETF(enc), pre: true))
+            #expect(simd_length(viaPre - viaPost) < 2e-5)
+        }
+    }
+
+    @Test func hueCurvesWrapAroundRedSmoothly() {
+        // A flat-0.5 curve with only the end points raised: the wrap seam at hue 0 must not show a jump.
+        let p = Self.hue { $0.hueVsSat = [CurvePoint(0, 0.8), CurvePoint(0.5, 0.5), CurvePoint(1, 0.8)] }
+        let a = p.apply(SIMD3(0.8, 0.30, 0.31), pre: false), b = p.apply(SIMD3(0.8, 0.31, 0.30), pre: false)
+        #expect(simd_length(a - b) < 0.035, "the inputs themselves differ by 0.014")
+    }
+
+    // MARK: Hue curve wrap and degenerate point lists
+
+    @Test func hueCurveSeamUsesTheFirstPointAndStaysContinuous() {
+        // End points with different y (a hand-edited or old file): the curve wraps through the first point's y at hue 0.
+        let t = PreparedHueCurves.periodic([CurvePoint(0, 0.8), CurvePoint(0.5, 0.5), CurvePoint(1, 0.2)], 64)
+        #expect(abs(t[0] - 0.8) < 1e-3)
+        #expect(abs(t[63] - t[0]) < 0.1 && abs(t[1] - t[0]) < 0.1, "no jump across the seam: \(t[63]) -> \(t[0]) -> \(t[1])")
+        // Locked end points (what the model writes): the seam is smooth and symmetric.
+        let l = PreparedHueCurves.periodic([CurvePoint(0, 0.8), CurvePoint(0.5, 0.5), CurvePoint(1, 0.8)], 64)
+        #expect(abs(l[0] - 0.8) < 1e-3 && abs(l[63] - l[1]) < 0.02)
+    }
+
+    @Test func singleOrMissingPointsMeanAFlatCurveNeverTheDiagonal() {
+        #expect(PreparedHueCurves.periodic([CurvePoint(0.3, 0.8)], 64).allSatisfy { abs($0 - 0.8) < 1e-6 })
+        #expect(PreparedHueCurves.periodic([], 64).allSatisfy { $0 == 0.5 })
+        #expect(PreparedHueCurves.periodic([CurvePoint(1, 0.7)], 64).allSatisfy { abs($0 - 0.7) < 1e-6 })
+        #expect(PreparedHueCurves.linear([CurvePoint(0.5, 0.7)], 64).allSatisfy { abs($0 - 0.7) < 1e-6 }, "Luma vs Sat with one point")
+        #expect(PreparedHueCurves.linear([], 64).allSatisfy { $0 == 0.5 })
+        // A real curve is unchanged by the refactor: sampled like CurveMath.
+        let pts = [CurvePoint(0, 0.2), CurvePoint(0.4, 0.9), CurvePoint(1, 0.5)]
+        let a = PreparedHueCurves.linear(pts, 64), b = CurveMath.sample(pts, 64)
+        #expect(zip(a, b).allSatisfy { abs($0 - $1) < 1e-6 })
+    }
+
+    @Test func gpuAndCpuSmoothstepAreTheSameFunction() {
+        for x in stride(from: Float(-0.2), through: 1.4, by: 0.07) {
+            let t = min(max((x - 0.1) / (0.7 - 0.1), 0), 1)
+            #expect(ToneMath.smooth(0.1, 0.7, x) == t * t * (3 - 2 * t))
+        }
+    }
 }
