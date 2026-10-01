@@ -149,7 +149,14 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate {
         if timecodeField.currentEditor() == nil { timecodeField.stringValue = model.timecodeText }
         durationLabel.stringValue = "/ " + model.durationText
         inOutLabel.stringValue = model.inOutDurationText.map { "In/Out  " + $0 } ?? ""
-        zoomPopup.selectItem(at: MonitorZoom.presets.firstIndex(of: model.zoom) ?? 0)
+        if let i = MonitorZoom.presets.firstIndex(of: model.zoom) {
+            while zoomPopup.numberOfItems > MonitorZoom.presets.count { zoomPopup.removeItem(at: zoomPopup.numberOfItems - 1) }
+            zoomPopup.selectItem(at: i)
+        } else {   // a gesture zoom: one extra item shows the current percentage
+            while zoomPopup.numberOfItems > MonitorZoom.presets.count { zoomPopup.removeItem(at: zoomPopup.numberOfItems - 1) }
+            zoomPopup.addItem(withTitle: model.zoom.title)
+            zoomPopup.selectItem(at: zoomPopup.numberOfItems - 1)
+        }
         qualityPopup.selectItem(at: MonitorQuality.allCases.firstIndex(of: model.quality) ?? 0)
         let available = Set(model.availableActions)
         for (a, b) in buttons {
@@ -169,7 +176,10 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate {
         model.perform(MonitorAction.allCases[sender.tag])
     }
 
-    @objc private func zoomChanged() { model.setZoom(MonitorZoom.presets[zoomPopup.indexOfSelectedItem]) }
+    @objc private func zoomChanged() {
+        guard MonitorZoom.presets.indices.contains(zoomPopup.indexOfSelectedItem) else { return }
+        model.setZoom(MonitorZoom.presets[zoomPopup.indexOfSelectedItem])
+    }
     @objc private func qualityChanged() { model.setQuality(MonitorQuality.allCases[qualityPopup.indexOfSelectedItem]) }
 
     @objc private func commitTimecode() {

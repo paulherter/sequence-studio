@@ -55,6 +55,27 @@ public struct History<State: Sendable & Equatable>: Sendable {
         for i in redoStack.indices { change(&redoStack[i].state) }
     }
 
+    /// Number of undo steps.
+    public var undoDepth: Int { undoStack.count }
+
+    /// Goes back to `depth` undo steps and forgets everything above (no redo entries are left): for an edit that is
+    /// withdrawn before it was ever finished (an empty text box).
+    public mutating func rewind(toDepth depth: Int) {
+        guard depth >= 0, undoStack.count > depth else { return }
+        current = undoStack[depth].state
+        undoStack.removeSubrange(depth...)
+        redoStack.removeAll()
+        lastKey = nil
+    }
+
+    /// Folds the undo steps above `depth` into one named step (state before the first of them).
+    public mutating func squash(fromDepth depth: Int, name: String) {
+        guard depth >= 0, undoStack.count > depth else { return }
+        undoStack[depth].name = name
+        if undoStack.count > depth + 1 { undoStack.removeSubrange((depth + 1)...) }
+        lastKey = nil
+    }
+
     @discardableResult
     public mutating func undo() -> Bool {
         guard let e = undoStack.popLast() else { return false }

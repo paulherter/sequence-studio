@@ -4,9 +4,11 @@ import Foundation
 import Metal
 import QuartzCore
 import Synchronization
+import os
 import SSCore
 import SSMedia
 import SSRender
+import SSText
 
 /// Opened media shared by the render thread and the decode threads: demuxer (for the `SampleIndex`), track info
 /// (colour hint, known once a decoder exists) and the damaged flag set by decode errors.
@@ -122,6 +124,7 @@ final class RenderLoop: @unchecked Sendable {
         var timeline: Timeline?
         var sequences: [Timeline.ID: Timeline] = [:]
         var mediaIDs: [UUID] = []
+        var clipDurations: [Clip.ID: Time] = [:]
         var mapping: Mapping = { $0.pts }
         var quality: DecodeScale = .full
         var zoom: ViewerZoom = .fit
@@ -244,9 +247,11 @@ final class RenderLoop: @unchecked Sendable {
             // A different sequence must not keep showing the previous one's last frame.
             if s.timeline?.id != timeline.id { s.lastTime = nil; s.holdStart = nil }
             s.timeline = timeline; s.sequences = sequences; s.mediaIDs = ids; s.mapping = mapping
+            s.clipDurations = Self.textDurations(timeline, sequences: sequences)
             s.generation &+= 1
             s.lastJobs = []
         }
+        for r in Self.textRefs(timeline, sequences: sequences) { prewarmText(r) }   // first rasters off the render thread
         // Colour pipelines (LUT reads) are built off the render thread, now, so the first frame rarely waits.
         if let colors = media.resolver.colorResolver { colors.warm(Self.colorLayers(timeline, sequences: sequences)) }
         // Edits may have fixed a damaged/relinked media: forget damage marks and failed jobs.
@@ -358,9 +363,10 @@ final class RenderLoop: @unchecked Sendable {
         }
 
         // Layers
-        let requests = tl.videoLayers(at: t, sequences: { sequences[$0] }).filter { $0.generator == nil }
+        let requests = tl.videoLayers(at: t, sequences: { sequences[$0] })
+        let durations = state.withLock { $0.clipDurations }
         var b = LayerBuild()
-        for r in requests { b.layers.append(layer(for: r, scale: scale, build: &b)) }
+        for r in requests { b.layers.append(layer(for: r, scale: scale, build: &b, tl.format, durations)) }
 
         // Every layer has no picture at all yet (far seek into undecoded media): keep showing the last presented frame
         // instead of a black placeholder; `incomplete` makes the next ticks retry until the decode lands. Bounded: a
@@ -427,9 +433,68 @@ final class RenderLoop: @unchecked Sendable {
         return TickOutcome(presented: presented, time: t, stoppedAtEdge: edge)
     }
 
-    private func layer(for r: LayerRequest, scale: DecodeScale, build b: inout LayerBuild) -> RenderLayer {
+    private static let log = Logger(subsystem: "de.paulherter.SequenceStudio", category: "text")
+    private let textPending = Mutex<Set<GeneratorRef>>([])
+    private let textFailed = Mutex<Set<GeneratorRef>>([])
+
+    /// Renders the first raster of a text on a background task (never on the render or main thread) and redraws.
+    func prewarmText(_ ref: GeneratorRef) {
+        guard !TextGenerator.isCached(ref: ref), !textFailed.withLock({ $0.contains(ref) }),
+              textPending.withLock({ $0.insert(ref).inserted }) else { return }
+        Task.detached(priority: .userInitiated) { [weak self] in
+            do { try TextGenerator.prewarm(ref: ref) } catch {
+                Self.log.error("text raster failed: \(String(describing: error), privacy: .public)")
+                self?.textFailed.withLock { _ = $0.insert(ref) }
+            }
+            self?.textPending.withLock { _ = $0.remove(ref) }
+            self?.invalidate()
+        }
+    }
+
+    /// Text generator layer, animation folded into the transform. A raster that is not ready yet is requested in the
+    /// background and the layer stays invisible until then (the loop keeps re-rendering while `waiting`).
+    private func textLayer(_ r: LayerRequest, _ ref: GeneratorRef, canvas: SequenceFormat, durations: [Clip.ID: Time],
+                           build b: inout LayerBuild) -> RenderLayer {
+        func invisible() -> RenderLayer {
+            var tr = r.transform; tr.opacity = 0
+            return RenderLayer(content: .placeholder(.loading), transform: tr)
+        }
+        if textFailed.withLock({ $0.contains(ref) }) { return invisible() }
+        if !TextGenerator.isCached(ref: ref) { prewarmText(ref); b.waiting = true; return invisible() }
+        let dur = durations[r.clip] ?? r.localTime
+        let frame: TextFrame?
+        do { frame = try TextGenerator.frame(ref: ref, localTime: r.localTime, clipDuration: dur, canvas: canvas, scale: 1) } catch {
+            Self.log.error("text frame failed: \(String(describing: error), privacy: .public)")
+            textFailed.withLock { _ = $0.insert(ref) }   // reported once, not on every tick
+            return invisible()
+        }
+        guard let f = frame else { return invisible() }   // empty text
+        return RenderLayer(content: .linearPremultiplied(f.buffer, width: f.width, height: f.height),
+                           transform: f.layerTransform(base: r.transform, canvas: canvas), cornerRadius: r.cornerRadius)
+    }
+
+    static func textRefs(_ tl: Timeline, sequences: [Timeline.ID: Timeline]) -> Set<GeneratorRef> {
+        var out = Set<GeneratorRef>()
+        for t in [tl] + Array(sequences.values) {
+            for tr in t.tracks { for c in tr.clips { if let g = c.generator, g.kind == GeneratorRef.text { out.insert(g) } } }
+        }
+        return out
+    }
+
+    /// Clip durations of text generators (their animations' out-anchor needs the clip length).
+    static func textDurations(_ tl: Timeline, sequences: [Timeline.ID: Timeline]) -> [Clip.ID: Time] {
+        var d: [Clip.ID: Time] = [:]
+        for t in [tl] + Array(sequences.values) { for tr in t.tracks { for c in tr.clips where c.isGenerator { d[c.id] = c.source.duration } } }
+        return d
+    }
+
+    private func layer(for r: LayerRequest, scale: DecodeScale, build b: inout LayerBuild,
+                       _ format: SequenceFormat, _ durations: [Clip.ID: Time]) -> RenderLayer {
         func placeholder(_ k: PlaceholderKind) -> RenderLayer {
             RenderLayer(content: .placeholder(k), transform: r.transform, cornerRadius: r.cornerRadius)
+        }
+        if let g = r.generator {
+            return g.kind == GeneratorRef.text ? textLayer(r, g, canvas: format, durations: durations, build: &b) : placeholder(.offline)
         }
         if let still = media.still(r.media) {
             return RenderLayer(content: .frame(still.buffer, colorHint: still.info), transform: r.transform,

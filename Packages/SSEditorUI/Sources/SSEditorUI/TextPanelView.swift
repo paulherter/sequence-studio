@@ -220,6 +220,9 @@ public final class TextPanelView: NSView {
     }
     @available(*, unavailable) public required init?(coder: NSCoder) { fatalError() }
 
+    /// Transcript model of a clip (dev aids and tests); exists once the clip was selected.
+    public func captionsModel(for clip: Clip.ID) -> CaptionsPanelModel? { models[clip] }
+
     public func select(_ t: Tab) {
         tab = t
         tabs.selectedSegment = t.rawValue

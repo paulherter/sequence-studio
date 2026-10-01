@@ -15,6 +15,9 @@ import Testing
         #expect(rect((400, 200), (1000, 800), .percent(100)) == CGRect(x: 300, y: 300, width: 400, height: 200))
         #expect(rect((400, 200), (1000, 800), .percent(200)) == CGRect(x: 100, y: 200, width: 800, height: 400))
         #expect(rect((1920, 1080), (800, 600), .percent(100)) == CGRect(x: -560, y: -240, width: 1920, height: 1080))
+        // Free view: scale in drawable px per texture px, centre = texture offset shown at the drawable centre.
+        #expect(rect((400, 200), (1000, 800), .view(scale: 1, centerX: 0, centerY: 0)) == CGRect(x: 300, y: 300, width: 400, height: 200))
+        #expect(rect((400, 200), (1000, 800), .view(scale: 2, centerX: 100, centerY: -50)) == CGRect(x: -100, y: 300, width: 800, height: 400))
     }
 
     @Test func offscreenQuadrantsAndSurround() throws {

@@ -46,7 +46,9 @@ private func close(_ a: CGPoint, _ b: CGPoint, _ e: CGFloat = 0.001) -> Bool { a
 
     @Test func hitPriority() {
         let g = geo()
-        #expect(g.hitTest(CGPoint(x: 490, y: 280)) == .anchor)
+        #expect(g.hitTest(CGPoint(x: 490, y: 280)) == .body)                          // centred anchor does not steal the body
+        #expect(g.hitTest(CGPoint(x: 490, y: 280), anchorAlways: true) == .anchor)
+        #expect(geo(ClipTransform(anchor: Vec2(400, 0))).hitTest(CGPoint(x: 490, y: 280)) == .anchor)   // off-centre anchor is grabbable
         #expect(g.hitTest(CGPoint(x: 12, y: 12)) == .handle(.topLeft))
         #expect(g.hitTest(CGPoint(x: 490, y: 11)) == .handle(.top))
         #expect(g.hitTest(CGPoint(x: 300, y: 200)) == .body)

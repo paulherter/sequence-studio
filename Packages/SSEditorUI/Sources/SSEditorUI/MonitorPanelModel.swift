@@ -17,10 +17,12 @@ public enum MonitorQuality: String, Sendable, Hashable, CaseIterable {
 public enum MonitorZoom: Sendable, Hashable {
     case fit
     case percent(Int)
+    /// Reached by pinch or scroll zoom (not a popup preset).
+    case custom(Int)
     public static let presets: [MonitorZoom] = [.fit, .percent(25), .percent(50), .percent(75), .percent(100),
                                                 .percent(150), .percent(200), .percent(400)]
     public var title: String {
-        switch self { case .fit: "Fit"; case .percent(let p): "\(p)%" }
+        switch self { case .fit: "Fit"; case .percent(let p), .custom(let p): "\(p)%" }
     }
 }
 
@@ -77,5 +79,7 @@ public final class MonitorPanelModel {
     }
 
     public func setZoom(_ z: MonitorZoom) { zoom = z; onZoomChange?(z) }
+    /// Shows a zoom that a gesture produced (Hand tool, pinch) without reporting it back.
+    public func displayZoom(_ z: MonitorZoom) { zoom = z }
     public func setQuality(_ q: MonitorQuality) { quality = q; onQualityChange?(q) }
 }

@@ -8,7 +8,7 @@ extension EditorSession {
     /// free there. Selects the new clip. Returns its ID; a refusal is reported through `lastError`.
     @discardableResult
     public func addTextClip(template: TextTemplate, at time: Time? = nil, track: Track.ID? = nil,
-                            duration: Time = Time(5, 1)) -> Clip.ID? {
+                            duration: Time = Time(5, 1), position: Vec2? = nil) -> Clip.ID? {
         guard let t = activeTimeline else { return nil }
         let start = (time ?? playhead).snapped(to: t.frameDuration)
         let range = TimeRange(start: start, duration: duration)
@@ -22,11 +22,36 @@ extension EditorSession {
             try perform("Add Text") { p in
                 newID = try p.addGeneratorClip(kind: ref.kind, payload: ref.payload, payloadVersion: ref.payloadVersion,
                                                name: template.name, in: tl, at: start, track: chosen, duration: duration)
+                if let position, let id = newID {
+                    try p.edit(tl) { t in
+                        guard var c = t.tracks.lazy.flatMap(\.clips).first(where: { $0.id == id }) else { return }
+                        c.animation.position = AnimatedProperty(position)
+                        try t.replaceClip(c)
+                    }
+                }
             }
         } catch { setError(Self.message(for: error)); return nil }
         if let newID { select(clips: [newID]) }
         return newID
     }
+
+    /// Removes a text clip that was left empty (Type tool: click-away without typing). With `depth` (the undo depth
+    /// before the clip was added) the add and any edits are withdrawn without a trace: no undo entry, no redo entry.
+    /// Without it the clip is lifted (gap) as one undo step.
+    @discardableResult
+    public func discardTextClip(_ id: Clip.ID, rewindingTo depth: Int? = nil) -> Bool {
+        if let depth, history.undoDepth > depth {
+            rewindUndo(toDepth: depth)
+            if selection.contains(id) { select(clips: selection.subtracting([id])) }
+            return true
+        }
+        let ok = attempt("Delete Empty Text") { t in try TimelineEdit.lift([id]).apply(to: &t) }
+        if ok, selection.contains(id) { select(clips: selection.subtracting([id])) }
+        return ok
+    }
+
+    /// Undo depth now, to be passed to `discardTextClip` / `foldUndo` later.
+    public var undoDepth: Int { history.undoDepth }
 
     /// Text or style edit of a generator clip. Edits of one gesture (`continuesGesture`) merge into one step.
     public func updateTextClip(_ id: Clip.ID, template: TextTemplate, animations: AnimationSet?, continuesGesture: Bool) {

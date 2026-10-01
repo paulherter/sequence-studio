@@ -24,6 +24,8 @@ public final class CaptionsPanelModel {
 
     public private(set) var state: State = .idle
     public private(set) var transcript: Transcript?
+    /// Shown next to the progress while the language model is downloaded and installed (first use of a language).
+    public private(set) var statusNote: String?
     /// BCP-47 identifier of the recognition language.
     public var language: String = "de-DE"
     public var languages: [String] = CaptionsPanelModel.defaultLanguages
@@ -89,10 +91,13 @@ public final class CaptionsPanelModel {
         let id = runID
         let locale = Locale(identifier: language)
         state = .transcribing(progress: 0)
+        statusNote = "Preparing the \(Locale.current.localizedString(forIdentifier: language) ?? language) language model"
         let service = self.service
         transcribeTask = Task { [weak self] in
             let sink = ProgressSink(model: self)
             do {
+                try await service.prepare(locale: locale)
+                self?.preparationDone(run: id)
                 let result = try await service.transcribe(url: url, locale: locale) { p in sink.report(p, run: id) }
                 self?.finish(.success(result), run: id)
             } catch {
@@ -119,6 +124,7 @@ public final class CaptionsPanelModel {
         guard case .transcribing = state else { return }
         runID += 1
         transcribeTask?.cancel()
+        statusNote = nil
         state = transcript == nil ? .idle : .ready
     }
 
@@ -127,8 +133,11 @@ public final class CaptionsPanelModel {
         state = .transcribing(progress: min(1, max(0, p)))
     }
 
+    private func preparationDone(run: Int) { if run == runID { statusNote = nil } }
+
     private func finish(_ result: Result<Transcript, Error>, run: Int) {
         guard run == runID else { return }
+        statusNote = nil
         switch result {
         case .success(let t): transcript = t; currentWordID = nil; state = .ready
         case .failure(let e): state = .failed(Self.message(for: e))

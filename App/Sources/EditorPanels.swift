@@ -2,6 +2,7 @@ import AppKit
 import SSCore
 import SSEditorUI
 import SSRender
+import SSText
 
 /// Owns the panel views and models and keeps them in step with the `EditorSession`: session changes flow in through
 /// `sync(_:)`, user gestures flow out as session calls. Only the Source monitor is still a placeholder.
@@ -12,7 +13,15 @@ final class EditorPanels {
     let timelineView = TimelineView()
     /// Peaks for audio clips; filled for every clip on the timeline, whichever way the media came in.
     let waveforms = TimelineWaveforms()
-    let viewer = ViewerView(frame: .zero)
+    /// Metal viewer + transform overlay + Hand/Type tools + in-place text editing.
+    let surface = ProgramSurfaceView(viewer: ViewerView(frame: .zero))
+    var viewer: ViewerView { surface.viewer as! ViewerView }
+    /// Overlay state: the clip under manipulation, the gesture in flight, the text being typed.
+    private var overlayTarget: OverlayTarget?
+    private var overlayGesture: (target: OverlayTarget, start: ClipTransform)?
+    private struct TextEditing { var clip: Clip.ID; var template: TextTemplate; var animations: AnimationSet?; var isNew: Bool; var depth = 0; var first = true }
+    private var textEditing: TextEditing?
+    private var failedRasters = Set<GeneratorRef>()
     let monitorModel: MonitorPanelModel
     let monitorView: MonitorPanelView
     let projectModel: ProjectPanelModel
@@ -65,6 +74,7 @@ final class EditorPanels {
         wireTimeline()
         wireSidePanels()
         wireMonitor()
+        wireOverlay()
         wireEffectControls()
         sync([.project, .selection, .playhead, .transport])
     }
@@ -79,6 +89,7 @@ final class EditorPanels {
             session.commit(c)
             syncTimeline()          // a refused commit must snap the view back to the session's timeline
         }
+        tv.onToolChange = { [weak self] tool in self?.setMonitorTool(tool == .hand ? .hand : tool == .type ? .type : .select) }
         tv.onSelectionChange = { [weak self] clips, captions in self?.session.select(clips: clips, captions: captions) }
         tv.onPointerDown = { [weak self] in self?.session.stopPlayback() }
         tv.onSeek = { [weak self] t in self?.session.seek(to: t) }
@@ -206,19 +217,32 @@ final class EditorPanels {
 
     private func wireMonitor() {
         viewer.drivesLayer = false           // the playback engine presents into the layer
-        viewer.translatesAutoresizingMaskIntoConstraints = true
-        viewer.frame = monitorView.viewerSlot.bounds
-        viewer.autoresizingMask = [.width, .height]
-        monitorView.viewerSlot.addSubview(viewer)
+        surface.translatesAutoresizingMaskIntoConstraints = true
+        surface.frame = monitorView.viewerSlot.bounds
+        surface.autoresizingMask = [.width, .height]
+        monitorView.viewerSlot.addSubview(surface)
         session.engine.attach(viewer.metalLayer)
-        viewer.onResize = { [weak self] in self?.session.engine.redraw() }   // aspect-fit at every panel size
+        viewer.onResize = { [weak self] in self?.session.engine.redraw(); self?.surface.needsLayout = true }   // aspect-fit at every panel size
 
         monitorModel.onSeek = { [weak self] t in self?.session.seek(to: t) }
         monitorModel.onQualityChange = { [weak self] q in self?.session.engine.quality = q.decodeScale }
         monitorModel.onZoomChange = { [weak self] z in
+            let v: ViewerZoom
             switch z {
-            case .fit: self?.session.engine.viewerZoom = .fit
-            case .percent(let p): self?.session.engine.viewerZoom = .percent(p)
+            case .fit: v = .fit
+            case .percent(let p), .custom(let p): v = .percent(p)
+            }
+            self?.session.engine.viewerZoom = v
+            self?.surface.zoom = v
+        }
+        surface.onZoomGesture = { [weak self] v in
+            guard let self else { return }
+            session.engine.viewerZoom = v
+            surface.zoom = v
+            switch v {
+            case .fit: monitorModel.displayZoom(.fit)
+            case .percent(let p): monitorModel.displayZoom(.percent(p))
+            case .view(let s, _, _): monitorModel.displayZoom(.custom(Int((s * 100).rounded())))
             }
         }
         monitorModel.onAction = { [weak self] a in
@@ -238,6 +262,122 @@ final class EditorPanels {
             self?.onCommand?(c)
         }
     }
+
+    // MARK: Program monitor overlay, Type tool
+
+    private func wireOverlay() {
+        let o = surface.overlay
+        o.onTransform = { [weak self] phase, t in self?.overlayTransform(phase, t) }
+        o.onPathEdit = { [weak self] phase, edit in
+            guard let self, effectModel.clip?.id == overlayTarget?.clip else { return }
+            switch phase {
+            case .began: session.stopPlayback(); effectModel.beginGesture()
+            case .changed: effectModel.editPositionKey(edit.key, position: edit.position, tangents: edit.tangents)
+            case .ended: effectModel.editPositionKey(edit.key, position: edit.position, tangents: edit.tangents); effectModel.endGesture()
+            }
+        }
+        o.onBodyDoubleClick = { [weak self] in self?.beginTextEditing(selectAll: false, isNew: false) }
+        surface.onTypeClick = { [weak self] pos in self?.typeToolClick(pos) }
+        surface.onTextEdited = { [weak self] text in self?.textEdited(text) }
+        surface.onTextEditEnded = { [weak self] text in self?.textEditEnded(text) }
+    }
+
+    /// One gesture = one undo step; the values land in Effect Controls live (same clip, same playhead).
+    private func overlayTransform(_ phase: TransformOverlayView.Phase, _ t: ClipTransform) {
+        switch phase {
+        case .began:
+            guard let target = overlayTarget, effectModel.clip?.id == target.clip else { return }
+            session.stopPlayback()
+            overlayGesture = (target, t)
+            effectModel.beginGesture()
+        case .changed, .ended:
+            guard let g = overlayGesture else { return }
+            let wrote = effectModel.setTransform(g.target.baseTransform(fromDisplay: t), from: g.target.baseTransform(fromDisplay: g.start))
+            if !wrote {   // animated property and the playhead is outside the clip: nothing to write, hide instead of snapping back
+                effectModel.endGesture(); overlayGesture = nil
+                overlayTarget = nil; surface.setTarget(nil, snap: nil)
+                return
+            }
+            if phase == .ended { effectModel.endGesture(); overlayGesture = nil }
+        }
+    }
+
+    /// Type tool: click -> new text clip on the top free video track at the playhead (5 s), caret in it at once.
+    private func typeToolClick(_ position: Vec2) {
+        session.stopPlayback()
+        var template = TextTemplateCatalog.all.first?.template ?? TextTemplate(name: "Text", text: "", style: TextStyle())
+        template.name = "Text"; template.text = "Text"; template.animation = nil
+        let depth = session.undoDepth
+        guard session.addTextClip(template: template, position: position) != nil else { return }
+        session.seek(to: session.playhead)   // an empty sequence clamped the engine to 0: show the new text now
+        updateOverlay()
+        beginTextEditing(selectAll: true, isNew: true, depth: depth)
+    }
+
+    private func beginTextEditing(selectAll: Bool, isNew: Bool, depth: Int = 0) {
+        guard let clip = session.singleSelectedClip, let ref = clip.generator, let target = overlayTarget, target.clip == clip.id,
+              let (template, animations) = try? TextGenerator.decode(ref) else { return }
+        session.stopPlayback()
+        textEditing = TextEditing(clip: clip.id, template: template, animations: animations, isNew: isNew, depth: depth)
+        surface.beginTextEditing(text: template.text, style: template.style, target: target, selectAll: selectAll)
+    }
+
+    private func textEdited(_ text: String) {
+        guard var e = textEditing else { return }
+        e.template.text = text
+        session.updateTextClip(e.clip, template: e.template, animations: e.animations, continuesGesture: !e.first)
+        e.first = false
+        textEditing = e
+    }
+
+    private func textEditEnded(_ text: String) {
+        guard let e = textEditing else { return }
+        textEditing = nil
+        // A text box that was created by the tool and left empty is not kept.
+        guard e.isNew else { return }
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            session.discardTextClip(e.clip, rewindingTo: e.depth)   // no undo or redo trace
+        } else {
+            session.foldUndo(fromDepth: e.depth, name: "Add Text")   // add + typing = one step
+        }
+    }
+
+    /// Follows selection, playhead and edits: what the overlay draws, and the lines it snaps to.
+    func updateOverlay() {
+        guard let tl = session.activeTimeline else { surface.setTarget(nil, snap: nil); overlayTarget = nil; return }
+        surface.sequenceSize = CGSize(width: tl.format.width, height: tl.format.height)
+        // A text raster that is not cached yet is rendered on a background task, never on the main thread (typing
+        // is the exception: one short layout per keystroke).
+        if !session.isPlaying, !surface.isEditingText, let clip = session.singleSelectedClip, let ref = clip.generator,
+           ref.kind == GeneratorRef.text, !TextGenerator.isCached(ref: ref), !failedRasters.contains(ref) {
+            overlayTarget = nil
+            surface.setTarget(nil, snap: nil)
+            Task.detached(priority: .userInitiated) { [weak self] in
+                var failed = false
+                do { try TextGenerator.prewarm(ref: ref) } catch { NSLog("Text raster failed: \(error)"); failed = true }
+                await MainActor.run { if failed { self?.failedRasters.insert(ref) }; self?.updateOverlay() }
+            }
+            return
+        }
+        guard !session.isPlaying, let clip = session.singleSelectedClip,
+              let target = OverlayTarget.make(clip: clip, project: session.project, timeline: tl, at: session.playhead) else {
+            overlayTarget = nil
+            if !surface.isEditingText { surface.setTarget(nil, snap: nil) }
+            return
+        }
+        overlayTarget = target
+        var others: [CGRect] = []
+        for c in tl.tracks.filter({ $0.kind == .video && $0.isVisible }).flatMap(\.clips) where c.id != clip.id {
+            if let o = OverlayTarget.make(clip: c, project: session.project, timeline: tl, at: session.playhead) {
+                others.append(LayerBounds.rect(size: o.size, transform: o.displayTransform))
+            }
+        }
+        surface.overlay.selectedKey = effectModel.selectedKeyIDs(.position).first
+        surface.setTarget(target, snap: SnapGuides.targets(canvas: surface.sequenceSize, others: others))
+    }
+
+    /// Tool column / key: Hand and Type also act in the Program monitor.
+    func setMonitorTool(_ t: ProgramSurfaceView.Tool) { surface.tool = t }
 
     private func wireEffectControls() {
         effectModel.onEdit = { [weak self] clip, name, coalescing in
@@ -345,6 +485,7 @@ final class EditorPanels {
         // Every change re-reads the transport state, so the Play/Pause button can never lag behind the session.
         if monitorModel.isPlaying != session.isPlaying { monitorModel.isPlaying = session.isPlaying }
         effectModel.sync(with: session, change: change)
+        updateOverlay()
         clipSections.sync(change)
         textView.sync(change)
         colorView.sync(change)

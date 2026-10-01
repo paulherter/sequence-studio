@@ -101,6 +101,8 @@ extension AppController {
         case .type: mapped = .type
         case .zoom: mapped = nil
         }
+        // The Program monitor follows: Hand pans the view, Type places text, everything else is the selection behaviour.
+        panels.setMonitorTool(t == .hand ? .hand : t == .type ? .type : .select)
         guard let mapped else { shell.statusBar.flash("\(EditorCommand.tool(t).title) is not available yet."); return }
         panels.timelineView.toolState.tool = mapped
         shell.statusBar.flash(EditorCommand.tool(t).title, seconds: 2)

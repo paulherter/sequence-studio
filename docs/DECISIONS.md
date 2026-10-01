@@ -110,6 +110,11 @@ Premiere semantics: Scale 100 % = one upright source pixel per sequence pixel (a
 - Timeline follows playback page-wise; manual scrolling wins until playback restarts.
 - Type tool (T) like Premiere: click in Program monitor → text clip on the top free video track at the playhead (5 s), type immediately; style in Effect Controls › Text.
 
+## 2026-10-01 [C2] Program monitor interaction
+- Overlay anchor: the crosshair is draggable directly only when it sits away from the picture centre; otherwise Option-drag on the picture moves it (picture stays, Position compensated). Smart guides (canvas centre/edges, other layers' edges/centres, 6 view px, Cmd disables) apply to moves; magenta lines while dragging.
+- Monitor pan/zoom is a view property (`ViewerZoom.view(scale, centerX, centerY)`, centre in sequence px), never the clip transform. Scroll pans (only when not Fit), pinch and Cmd/Option+scroll zoom about the cursor, double-click with Hand = Fit, Fit popup resets.
+- Type tool: a new text box left empty is removed when editing ends. The edit field only shows caret and selection; the real text is the rendered one.
+- Text overlay box = text raster at scale 1 (position shifted by the raster centre); animation scale/rotation of in/out animations are not shown on the overlay.
 ## 2026-10-01 Stream A: Effect Controls keyframe area (implementer choices, Paul to confirm by feel)
 - A value edit always applies at the playhead; selected keys only take it when the playhead sits on one of them (then all selected keys shift together). A key selected elsewhere never captures an edit. A key that was just moved is deselected.
 - Reset button on an animated property = value at the playhead (key created/replaced); "Reset All" (right-click) drops the keys.
