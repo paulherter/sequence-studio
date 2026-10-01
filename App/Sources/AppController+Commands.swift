@@ -15,7 +15,7 @@ extension AppController {
              .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .minimizeAllTracks, .expandAllTracks,
-             .importMedia, .newSequence, .save, .export, .audioGain:
+             .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing:
             true
         default:
             false
@@ -88,6 +88,7 @@ extension AppController {
         case .save: Task { await saveDocument() }
         case .export: showExport()
         case .audioGain: requestAudioGain()
+        case .toggleAudioScrubbing: toggleAudioScrubbing()
         default: break
         }
     }

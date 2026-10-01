@@ -36,7 +36,7 @@ public enum EditorCommand: Sendable, Hashable {
     case easyEase, easeIn, easeOut, toggleHoldInterpolation
     case previousKeyframe, nextKeyframe, toggleSpeedGraph, addKeyframe
     // Audio
-    case audioGain
+    case audioGain, toggleAudioScrubbing
 
     /// Auto-repeat (key held) re-fires these; everything else ignores repeats.
     public var isRepeatable: Bool {
@@ -132,6 +132,7 @@ public enum EditorCommand: Sendable, Hashable {
         case .toggleSpeedGraph: "Toggle Value/Speed Graph"
         case .addKeyframe: "Add Keyframe"
         case .audioGain: "Audio Gain…"
+        case .toggleAudioScrubbing: "Audio Scrubbing"
         }
     }
 

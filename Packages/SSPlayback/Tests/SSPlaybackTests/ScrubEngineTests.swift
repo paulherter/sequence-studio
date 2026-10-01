@@ -124,6 +124,19 @@ private struct ScrubRig {
         #expect(rig.scrub.submittedGrains == 2)
     }
 
+    @Test func audioScrubbingOffPlaysNoGrainsButStillMovesThePicture() async throws {
+        let rig = try await ScrubRig.make()
+        let e = rig.engine
+        e.audioScrubbing = false
+        e.setTimeline(rig.timeline())
+        e.beginScrub(); rig.drag(to: Time(1, 2)); rig.drag(to: Time(3, 4)); e.endScrub()
+        e.seek(to: Time(1, 1)); e.step(1)
+        #expect(rig.scrub.submittedGrains == 0)
+        e.audioScrubbing = true
+        e.beginScrub(); rig.drag(to: Time(1, 2)); e.endScrub()
+        #expect(rig.scrub.submittedGrains == 1)
+    }
+
     @Test func noGrainsWhenNothingIsAudible() async throws {
         let rig = try await ScrubRig.make()
         let e = rig.engine

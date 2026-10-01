@@ -18,4 +18,17 @@ extension AppController {
             session.setAudioGain(gains)
         }
     }
+
+    /// Audio scrubbing on or off; remembered between launches.
+    func toggleAudioScrubbing() {
+        let on = !session.engine.audioScrubbing
+        session.engine.audioScrubbing = on
+        UserDefaults.standard.set(on, forKey: "sq.audioScrubbing")
+        shell.statusBar.flash(on ? "Audio scrubbing on" : "Audio scrubbing off", seconds: 2)
+    }
+
+    /// Restores the remembered setting (default on).
+    func restoreAudioScrubbing() {
+        if let v = UserDefaults.standard.object(forKey: "sq.audioScrubbing") as? Bool { session.engine.audioScrubbing = v }
+    }
 }
