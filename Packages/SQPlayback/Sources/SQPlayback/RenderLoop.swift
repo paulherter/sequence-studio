@@ -547,6 +547,7 @@ final class RenderLoop: @unchecked Sendable {
         func placeholder(_ k: PlaceholderKind) -> RenderLayer {
             RenderLayer(content: .placeholder(k), transform: r.transform, cornerRadius: r.cornerRadius)
         }
+        if let g = r.generator, g.kind == GeneratorRef.solid { return RenderLayer.solid(payload: g.payload, transform: r.transform) }
         if let g = r.generator {
             return g.kind == GeneratorRef.text ? textLayer(r, g, canvas: format, durations: durations, build: &b) : placeholder(.offline)
         }

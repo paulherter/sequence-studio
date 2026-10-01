@@ -19,6 +19,8 @@ public struct RenderLayer: @unchecked Sendable {
         /// Linear-light premultiplied `kCVPixelFormatType_64RGBAHalf` raster (text), drawn at exactly `width` x `height`
         /// sequence px (no aspect fit); `transform` positions its centre like any other layer.
         case linearPremultiplied(CVPixelBuffer, width: Double, height: Double)
+        /// Flat colour over the whole canvas (transition dips). Display-encoded (BT.709 OETF) 0...1; the compositor linearises it.
+        case solid(red: Float, green: Float, blue: Float)
     }
     public var content: Content
     public var transform: ClipTransform
@@ -33,6 +35,12 @@ public struct RenderLayer: @unchecked Sendable {
     /// smaller buffer that must still be drawn at the native size: scale 1 = one native pixel per sequence pixel.
     /// nil = the buffer's own size.
     public var nativeSize: (width: Int, height: Int)?
+
+    /// A solid layer from a `GeneratorRef.solid` payload (RGB bytes).
+    public static func solid(payload: Data, transform: ClipTransform = .identity) -> RenderLayer {
+        let b = [UInt8](payload) + [0, 0, 0]
+        return RenderLayer(content: .solid(red: Float(b[0]) / 255, green: Float(b[1]) / 255, blue: Float(b[2]) / 255), transform: transform)
+    }
 
     public init(content: Content, transform: ClipTransform = .identity, colorPipeline: ColorPipeline? = nil,
                 cornerRadius: Double = 0, nativeSize: (width: Int, height: Int)? = nil) {
@@ -204,9 +212,11 @@ public final class Compositor: @unchecked Sendable {
         case .damaged: d = SIMD3(0.45, 0.33, 0.05)
         case .loading: d = SIMD3(0.20, 0.20, 0.20)
         }
-        func lin(_ e: Float) -> Float { e < 0.081242858 ? e / 4.5 : pow((e + 0.09929682680944) / 1.09929682680944, 1 / 0.45) }
         return SIMD4(lin(d.x), lin(d.y), lin(d.z), 1)
     }
+
+    /// Inverse BT.709 OETF: display-encoded -> working-linear.
+    static func lin(_ e: Float) -> Float { e < 0.081242858 ? e / 4.5 : pow((e + 0.09929682680944) / 1.09929682680944, 1 / 0.45) }
 
     /// Corner radii are given in px of the layer fitted into the canvas (what they meant before Scale became relative to
     /// source pixels); the layer is now drawn at its own size, so the radius is converted: native / fitted.
@@ -310,6 +320,11 @@ public final class Compositor: @unchecked Sendable {
                 // "Loading" draws nothing: a frame that is not decoded yet must never cover the layers below.
                 if kind == .loading { return }
                 u.mode = 2; u.solid = Self.placeholderLinear(kind)
+                geometry(&u, transform: layer.transform, canvas: format,
+                         size: SIMD2(Float(format.width), Float(format.height)), cornerRadius: layer.cornerRadius)
+                prepared.append(Prepared(u: u, tex0: dummy, tex1: dummy))
+            case .solid(let r, let g, let b):
+                u.mode = 2; u.solid = SIMD4(Self.lin(r), Self.lin(g), Self.lin(b), 1)
                 geometry(&u, transform: layer.transform, canvas: format,
                          size: SIMD2(Float(format.width), Float(format.height)), cornerRadius: layer.cornerRadius)
                 prepared.append(Prepared(u: u, tex0: dummy, tex1: dummy))
