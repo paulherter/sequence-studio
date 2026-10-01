@@ -251,6 +251,34 @@ public struct WorkspaceLibrary: Sendable, Codable, Hashable {
         return true
     }
 
+    /// Self-healing for persisted state: a user workspace whose name collides with a built-in (it would be shadowed and
+    /// vanish from the list) or with an earlier user workspace is kept under a new name; overrides of unknown
+    /// built-ins are dropped. Built-ins themselves are always listed (`all`), whatever the file held.
+    public func healed() -> WorkspaceLibrary {
+        var out = self
+        var seen = Set(Workspace.builtIns.map { Self.clean($0.name).lowercased() })
+        var users: [Workspace] = []
+        for var w in userWorkspaces {
+            var name = Self.clean(w.name)
+            if name.isEmpty { name = "Workspace" }
+            if seen.contains(name.lowercased()) {
+                let base = name
+                var n = 2
+                name = "\(base) (saved)"
+                while seen.contains(name.lowercased()) { name = "\(base) (saved \(n))"; n += 1 }
+            }
+            seen.insert(name.lowercased())
+            w.name = name
+            users.append(w)
+        }
+        out.userWorkspaces = users
+        out.builtInOverrides = builtInOverrides.filter { k, _ in Workspace.builtIns.contains { $0.name == k } }
+        return out
+    }
+
+    /// Drops every override: all built-ins are back at their shipped layout (user workspaces stay).
+    public mutating func resetAllBuiltIns() { builtInOverrides = [:] }
+
     // MARK: Persistence
 
     public func encoded() throws -> Data {

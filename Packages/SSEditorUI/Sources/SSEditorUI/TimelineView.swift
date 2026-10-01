@@ -77,6 +77,50 @@ public final class TimelineView: NSView {
     public var onPointerDown: (() -> Void)?
     private var toolButtons: [(tool: TimelineTool, button: NSButton)] = []
 
+    // MARK: Track heights
+
+    /// Track heights changed by the user (drag, command): the host persists them per sequence (`TrackHeightStore`).
+    public var onTrackHeightsChange: (([Track.ID: CGFloat]) -> Void)?
+    private var resizing: (zone: TrackSizing.Zone, startY: CGFloat, rows: [TrackRow])?
+
+    /// User track heights (empty = automatic fit).
+    public var trackHeights: [Track.ID: CGFloat] { geometry.heightOverrides }
+
+    /// Restores heights (no callback: this is the store speaking).
+    public func setTrackHeights(_ h: [Track.ID: CGFloat]) {
+        guard h != geometry.heightOverrides else { return }
+        applyHeights(h, notify: false)
+    }
+
+    /// Height commands: one step taller (+1) or shorter (-1) for the tracks of `kind` (nil = all).
+    public func sizeTracks(_ kind: TrackKind?, direction: Int) {
+        applyHeights(TrackSizing.stepped(rows: geometry.rows(for: timeline), kind: kind, direction: direction), notify: true)
+    }
+    public func minimizeAllTracks() { applyHeights(TrackSizing.minimizedAll(rows: geometry.rows(for: timeline)), notify: true) }
+    public func expandAllTracks() { applyHeights(TrackSizing.expandedAll, notify: true) }
+
+    private func applyHeights(_ h: [Track.ID: CGFloat], notify: Bool) {
+        geometry.heightOverrides = h
+        clampScroll()
+        syncChildren()
+        invalidateCursors()
+        needsDisplay = true
+        if notify { onTrackHeightsChange?(h) }
+    }
+
+    private func resizeZone(at p: CGPoint) -> TrackSizing.Zone? {
+        guard resizing != nil || interaction.isIdle else { return nil }
+        return TrackSizing.zone(at: p, rows: geometry.rows(for: timeline), viewWidth: bounds.width)
+    }
+
+    /// The header column and the V/A boundary belong to the view itself in their grab zones, so the header's buttons
+    /// do not swallow the resize drag.
+    public override func hitTest(_ point: NSPoint) -> NSView? {
+        let p = convert(point, from: superview)
+        if bounds.contains(p), resizeZone(at: p) != nil { return self }
+        return super.hitTest(point)
+    }
+
     public static let minPointsPerSecond: Double = 0.02
     public static let maxPointsPerFrame: Double = 400
     public static let zoomStep: Double = 1.5
@@ -310,8 +354,12 @@ public final class TimelineView: NSView {
     public override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         onFocusRequest?()
-        onPointerDown?()
         let p = convert(event.locationInWindow, from: nil)
+        if let zone = resizeZone(at: p) {      // a resize does not stop playback
+            resizing = (zone, p.y, geometry.rows(for: timeline))
+            return
+        }
+        onPointerDown?()
         if event.clickCount == 2, case .caption(let id, _) = geometry.hitTest(p, in: timeline) {
             onEditCaptionText?(id)
             return
@@ -328,6 +376,18 @@ public final class TimelineView: NSView {
 
     public override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
+        if let r = resizing {
+            let dy = p.y - r.startY
+            switch r.zone {
+            case .split:
+                applyHeights(TrackSizing.splitDragged(rows: r.rows, dy: dy), notify: false)
+            case .trackEdge(let id):
+                let start = r.rows.first { $0.track == id }?.height ?? 0
+                applyHeights(TrackSizing.resized(rows: r.rows, track: id, to: start + dy,
+                                                 wholeKind: event.modifierFlags.contains(.shift)), notify: false)
+            }
+            return
+        }
         if scrubbing.active {
             if !scrubbing.began { scrubbing.began = true; onScrubBegan?() }
             onScrub?(scrubTime(at: p, shift: event.modifierFlags.contains(.shift)))
@@ -339,6 +399,11 @@ public final class TimelineView: NSView {
     }
 
     public override func mouseUp(with event: NSEvent) {
+        if resizing != nil {
+            resizing = nil
+            onTrackHeightsChange?(geometry.heightOverrides)
+            return
+        }
         if scrubbing.active {
             if scrubbing.began { onScrubEnded?() }
             scrubbing = (false, false)
@@ -585,6 +650,15 @@ public final class TimelineView: NSView {
         for r in TimelineCursorMap.regions(timeline: timeline, geometry: geometry, tool: toolState.tool, content: content) {
             addCursorRect(r.rect, cursor: TimelineCursors.cursor(for: r.kind))
         }
+        // Resize cursor on the V/A boundary (full width) and on header row edges; added last so it wins.
+        let rows = geometry.rows(for: timeline)
+        let g = TrackSizing.grab
+        for (i, r) in rows.enumerated() where r.maxY > TimelineGeometry.rulerHeight && r.maxY < bounds.height {
+            let split = i + 1 < rows.count && r.kind == .video && rows[i + 1].kind == .audio
+            let x = TimelineGeometry.toolColumnWidth
+            let w = split ? bounds.width - x : TimelineGeometry.headerWidth
+            addCursorRect(CGRect(x: x, y: r.maxY - g, width: w, height: 2 * g), cursor: .resizeUpDown)
+        }
     }
 
     private func rebuildHeaders() {
@@ -692,7 +766,7 @@ public final class TimelineView: NSView {
                 ClipDrawing.draw(name: c.name, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
                                  visible: visibleX, style: .label(labelResolver.label(for: c)), isSelected: selection.contains(c.id),
                                  isOffline: offlineMedia.contains(c.media))
-                if track.kind == .audio, let wf = waveforms, let d = wf.data[c.media] {
+                if track.kind == .audio, !TrackSizing.isThin(row.height), let wf = waveforms, let d = wf.data[c.media] {
                     ClipDrawing.drawWaveform(data: d, media: c.media, source: c.source,
                                              rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
                                              visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height),

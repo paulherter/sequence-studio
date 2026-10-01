@@ -54,6 +54,8 @@ public struct TimelineInteraction: Sendable {
         var scrollOrigin = CGPoint.zero
     }
     private var gesture: Gesture?
+    /// No gesture in flight (the view may start a track resize).
+    public var isIdle: Bool { gesture == nil }
 
     public init(timeline: Timeline, geometry: TimelineGeometry) {
         self.timeline = timeline

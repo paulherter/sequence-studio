@@ -13,6 +13,8 @@ extension AppController {
              .tool, .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext,
              .delete, .rippleDelete, .toggleSnapping, .undo, .redo,
              .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel,
+             .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
+             .minimizeAllTracks, .expandAllTracks,
              .importMedia, .newSequence, .save, .export:
             true
         default:
@@ -66,6 +68,12 @@ extension AppController {
             shell.statusBar.flash(panels.timelineView.toolState.snapping ? "Snapping on" : "Snapping off", seconds: 2)
         case .undo: session.undo()
         case .redo: session.redo()
+        case .videoTracksTaller: panels.timelineView.sizeTracks(.video, direction: 1)
+        case .videoTracksShorter: panels.timelineView.sizeTracks(.video, direction: -1)
+        case .audioTracksTaller: panels.timelineView.sizeTracks(.audio, direction: 1)
+        case .audioTracksShorter: panels.timelineView.sizeTracks(.audio, direction: -1)
+        case .minimizeAllTracks: panels.timelineView.minimizeAllTracks()
+        case .expandAllTracks: panels.timelineView.expandAllTracks()
         case .zoomIn: if effectControlsHasFocus { panels.effectModel.zoomIn() } else { panels.timelineView.zoomIn() }
         case .zoomOut: if effectControlsHasFocus { panels.effectModel.zoomOut() } else { panels.timelineView.zoomOut() }
         case .zoomFit: if effectControlsHasFocus { panels.effectModel.zoomToFit() } else { panels.timelineView.zoomToFit() }

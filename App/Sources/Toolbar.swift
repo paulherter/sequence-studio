@@ -17,7 +17,7 @@ final class EditorToolbar: NSObject, NSToolbarDelegate {
     let toolbar = NSToolbar(identifier: "ss.main.v3")
     /// Menu of the workspace item; the controller fills it with the workspace list.
     let workspaceMenu = NSMenu(title: "Workspace")
-    private var workspaceButton: NSMenuToolbarItem?
+    private var workspacePopup: NSPopUpButton?
 
     init(controller: AppController) {
         self.controller = controller
@@ -54,14 +54,19 @@ final class EditorToolbar: NSObject, NSToolbarDelegate {
             pageGroup = g
             return g
         case Self.workspaceItem:
-            let m = NSMenuToolbarItem(itemIdentifier: id)
-            m.label = "Workspace"
-            m.toolTip = "Workspace"
-            m.menu = workspaceMenu
-            m.showsIndicator = true
-            m.title = controller.store.current.name
-            workspaceButton = m
-            return m
+            // A pull-down popup (first menu item = the button title, never listed) instead of NSMenuToolbarItem, which
+            // dropped the first workspace from the list once the title changed. The menu is rebuilt by the controller.
+            let pop = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 150, height: 24), pullsDown: true)
+            pop.menu = workspaceMenu
+            pop.bezelStyle = .texturedRounded
+            pop.controlSize = .small
+            pop.toolTip = "Workspace"
+            pop.setAccessibilityLabel("Workspace")
+            workspacePopup = pop
+            let i = NSToolbarItem(itemIdentifier: id)
+            i.label = "Workspace"
+            i.view = pop
+            return i
         case Self.exportItem:
             let i = NSToolbarItem(itemIdentifier: id)
             i.label = "Export"
@@ -78,6 +83,5 @@ final class EditorToolbar: NSObject, NSToolbarDelegate {
     /// Pushes the current page into the Edit | Color switch.
     func sync(store: WorkspaceStore) {
         pageGroup?.selectedIndex = store.page == .color ? 1 : 0
-        workspaceButton?.title = store.current.name
     }
 }

@@ -235,7 +235,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         shell.host.apply(w)
         toolbar.sync(store: store)
         fillWorkspaceMenu(mainWorkspaceSubmenu)
-        fillWorkspaceMenu(toolbar.workspaceMenu)
+        fillToolbarWorkspaceMenu()
         // The window never gets smaller than the layout's panels need.
         let m = w.minimumContentSize
         window?.contentMinSize = NSSize(width: max(CGFloat(m.width), 640),
@@ -258,6 +258,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.5, execute: work)
     }
 
+    /// Pull-down menu of the toolbar: item 0 is the button title (the current workspace), then the same list as the Window menu.
+    func fillToolbarWorkspaceMenu() {
+        let menu = toolbar.workspaceMenu
+        fillWorkspaceMenu(menu)
+        let title = NSMenuItem(title: store.current.name, action: nil, keyEquivalent: "")
+        menu.insertItem(title, at: 0)
+    }
+
     func fillWorkspaceMenu(_ menu: NSMenu) {
         menu.removeAllItems()
         for w in store.library.all {
@@ -271,7 +279,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         for (title, sel) in [("Save Workspace As…", #selector(saveLayoutAs(_:))),
                              ("Rename Workspace…", #selector(renameWorkspace(_:))),
                              ("Delete Workspace", #selector(deleteWorkspace(_:))),
-                             ("Reset to Saved Layout", #selector(resetLayout(_:)))] {
+                             ("Reset to Saved Layout", #selector(resetLayout(_:))),
+                             ("Reset All Workspaces", #selector(resetAllWorkspaces(_:)))] {
             let i = NSMenuItem(title: title, action: sel, keyEquivalent: "")
             i.target = self
             menu.addItem(i)
@@ -350,6 +359,15 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
                 self.applyWorkspace()
             }
         }
+    }
+
+    /// Every built-in (and the Color page) back at its shipped layout; user workspaces stay.
+    @objc func resetAllWorkspaces(_ sender: Any?) {
+        store.library.resetAllBuiltIns()
+        store.colorWorkspace = .color
+        maximizedPanel = nil
+        scheduleWorkspaceSave()
+        applyWorkspace()
     }
 
     @objc func resetLayout(_ sender: Any?) {
