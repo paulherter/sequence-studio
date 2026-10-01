@@ -1,3 +1,4 @@
+import CoreGraphics
 import Foundation
 import Observation
 import SSCore
@@ -198,6 +199,8 @@ public final class ColorInspectorModel {
     /// Name of the camera look LUT embedded in the clip's media, if any.
     public private(set) var embeddedLUTName: String?
     public private(set) var mediaID: UUID?
+    /// The clip's frame at the playhead (with its current look) for the Creative preview; nil = use the synthetic picture.
+    public var frameThumbnail: CGImage?
 
     public private(set) var color = ClipColor.default
     /// Sections and sub-groups that are collapsed (UI state, not stored in the clip).

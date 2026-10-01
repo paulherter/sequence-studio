@@ -1,4 +1,5 @@
 import AppKit
+import CoreGraphics
 import Observation
 import SSCore
 import SSRender
@@ -19,6 +20,7 @@ final class ColorSectionView: NSStackView {
     var channelDots: ChannelDots?
     var preview: LookPreviewView?
     var previewPath: String??
+    var previewFrame: CGImage?
     var selectedChannel = 0
 
     init(effect: Int, kind: ColorSectionKind) {
@@ -485,6 +487,7 @@ public final class ColorInspectorView: NSView {
             _ = model.availableLUTs
             _ = model.recentLUTs
             _ = model.detectedSource
+            _ = model.frameThumbnail
             _ = model.embeddedLUTName
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
@@ -528,11 +531,20 @@ public final class ColorInspectorView: NSView {
             v.rows[.inputLUTIntensity]?.setActive(!isPrimary && hasLUT)
         }
         if kind == .creative, let preview = v.preview {
-            var path: String?
-            if case .file(let p)? = e.creative.look { path = p }
-            if v.previewPath != .some(path) {
-                v.previewPath = .some(path)
-                preview.image = ColorLookPreview.image(forLookPath: path)
+            if let frame = model.frameThumbnail {
+                if v.previewPath != .some(nil) || preview.image == nil || v.previewFrame !== frame {
+                    v.previewFrame = frame
+                    v.previewPath = .some(nil)
+                    preview.image = NSImage(cgImage: frame, size: NSSize(width: frame.width, height: frame.height))
+                }
+            } else {
+                var path: String?
+                if case .file(let p)? = e.creative.look { path = p }
+                if v.previewPath != .some(path) || v.previewFrame != nil {
+                    v.previewFrame = nil
+                    v.previewPath = .some(path)
+                    preview.image = ColorLookPreview.image(forLookPath: path)
+                }
             }
             preview.setStepping(!model.lookChoices.isEmpty || e.creative.look != nil)
         }

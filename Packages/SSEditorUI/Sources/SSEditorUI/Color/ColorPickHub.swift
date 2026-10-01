@@ -1,6 +1,9 @@
 import AppKit
+import CoreGraphics
 import Metal
+import MetalPerformanceShaders
 import simd
+import SSRender
 
 extension Notification.Name {
     /// Posted when the colour picker (white-balance eyedropper) starts or ends, so the Program monitor can show a crosshair.
@@ -69,6 +72,43 @@ public enum FrameSampler {
             }
         }
         return sum / Float(w * h)
+    }
+
+    /// The composite scaled to about `width` px wide as an sRGB image (for the Creative look preview). The composite is
+    /// working-linear Rec.709 and already shows the clip's current look, so this is "the clip's frame with its look".
+    @MainActor
+    public static func thumbnail(of texture: MTLTexture, width: Int = 200) -> CGImage? {
+        guard texture.pixelFormat == .rgba16Float, texture.width > 0, texture.height > 0 else { return nil }
+        let w = min(width, texture.width), h = max(Int((Double(w) * Double(texture.height) / Double(texture.width)).rounded()), 1)
+        let device = texture.device
+        let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: w, height: h, mipmapped: false)
+        d.usage = [.shaderRead, .shaderWrite]
+        d.storageMode = .shared
+        guard let small = device.makeTexture(descriptor: d), let queue = device.makeCommandQueue(),
+              let cb = queue.makeCommandBuffer() else { return nil }
+        MPSImageBilinearScale(device: device).encode(commandBuffer: cb, sourceTexture: texture, destinationTexture: small)
+        cb.commit()
+        cb.waitUntilCompleted()
+        guard cb.status == .completed else { return nil }
+        var half = [UInt16](repeating: 0, count: w * h * 4)
+        small.getBytes(&half, bytesPerRow: w * 8, from: MTLRegionMake2D(0, 0, w, h), mipmapLevel: 0)
+        var bytes = [UInt8](repeating: 255, count: w * h * 4)
+        for i in 0..<(w * h) {
+            let lin = SIMD3(halfToFloat(half[i * 4]), halfToFloat(half[i * 4 + 1]), halfToFloat(half[i * 4 + 2]))
+            let px = display8(lin)
+            bytes[i * 4] = px.x; bytes[i * 4 + 1] = px.y; bytes[i * 4 + 2] = px.z
+        }
+        guard let provider = CGDataProvider(data: Data(bytes) as CFData), let cs = CGColorSpace(name: CGColorSpace.sRGB) else { return nil }
+        return CGImage(width: w, height: h, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: w * 4, space: cs,
+                       bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue), provider: provider,
+                       decode: nil, shouldInterpolate: true, intent: .defaultIntent)
+    }
+
+    /// Working-linear Rec.709 -> 8-bit display values (clamped, BT.709 encoded like the monitor path).
+    static func display8(_ linear: SIMD3<Float>) -> SIMD3<UInt8> {
+        let e = Rec709Output.encode(linear)
+        func q(_ v: Float) -> UInt8 { UInt8(min(max(v, 0), 1) * 255 + 0.5) }
+        return SIMD3(q(e.x), q(e.y), q(e.z))
     }
 
     /// IEEE half -> float (no Float16 dependency, so it also builds for x86_64).
