@@ -32,6 +32,20 @@ public struct TextFrame: @unchecked Sendable {
     public let rotation: Double
 }
 
+extension TextFrame {
+    /// The layer transform that places this raster: its centre relative to the canvas centre, with the animation
+    /// factors (opacity, scale, offset, rotation) folded into `base` (the clip's evaluated transform).
+    public func layerTransform(base: ClipTransform, canvas: SequenceFormat) -> ClipTransform {
+        var tr = base
+        tr.position = Vec2(base.position.x + x + width / 2 - Double(canvas.width) / 2 + offsetX,
+                           base.position.y + y + height / 2 - Double(canvas.height) / 2 + offsetY)
+        tr.scale = Vec2(base.scale.x * scale, base.scale.y * scale)
+        tr.rotation += rotation
+        tr.opacity *= opacity
+        return tr
+    }
+}
+
 /// Bridge between a generator clip (`GeneratorRef` kind "text") and the text renderer.
 public enum TextGenerator {
     public static let payloadVersion = 1

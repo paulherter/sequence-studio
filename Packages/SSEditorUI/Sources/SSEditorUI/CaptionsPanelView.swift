@@ -101,7 +101,7 @@ public final class CaptionsPanelView: NSView, NSTextViewDelegate {
     private func observe() {
         guard tracking else { return }
         withObservationTracking {
-            _ = model.state; _ = model.transcript; _ = model.currentWordID; _ = model.language
+            _ = model.state; _ = model.statusNote; _ = model.transcript; _ = model.currentWordID; _ = model.language
             _ = model.languages; _ = model.presets; _ = model.selectedPresetIndex
             _ = model.needsOverwriteConfirmation; _ = model.sourceURL
         } onChange: { [weak self] in
@@ -133,7 +133,7 @@ public final class CaptionsPanelView: NSView, NSTextViewDelegate {
             statusLabel.stringValue = model.sourceURL == nil ? "Select a clip to transcribe." : "Not transcribed yet."
         case .transcribing(let p):
             progress.isHidden = false; progress.doubleValue = p
-            statusLabel.stringValue = "Transcribing \(Int((p * 100).rounded())) %"
+            statusLabel.stringValue = model.statusNote.map { $0 + "..." } ?? "Transcribing \(Int((p * 100).rounded())) %"
         case .ready:
             progress.isHidden = true
             let n = model.editedWordIDs.count

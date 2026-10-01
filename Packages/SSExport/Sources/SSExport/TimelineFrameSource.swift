@@ -155,12 +155,7 @@ public final class TimelineFrameSource: FrameSource {
                 var tr = l.transform; tr.opacity = 0
                 return RenderLayer(content: .placeholder(.loading), transform: tr)   // empty text: invisible
             }
-            var tr = l.transform
-            tr.position = Vec2(tr.position.x + f.x + f.width / 2 - Double(timeline.format.width) / 2 + f.offsetX,
-                               tr.position.y + f.y + f.height / 2 - Double(timeline.format.height) / 2 + f.offsetY)
-            tr.scale = Vec2(tr.scale.x * f.scale, tr.scale.y * f.scale)
-            tr.rotation += f.rotation
-            tr.opacity *= f.opacity
+            let tr = f.layerTransform(base: l.transform, canvas: timeline.format)
             return RenderLayer(content: .linearPremultiplied(f.buffer, width: f.width, height: f.height), transform: tr,
                                cornerRadius: l.cornerRadius)
         }

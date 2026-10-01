@@ -90,6 +90,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         SnapshotDriver.runIfRequested(self)
         PlayTestDriver.runIfRequested(self)
         PlayTestDriver.runKeyTestIfRequested(self)
+        DevAidDrivers.runIfRequested(self)
     }
 
     private func buildWindow() {

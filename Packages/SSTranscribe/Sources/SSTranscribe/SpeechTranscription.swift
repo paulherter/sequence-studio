@@ -12,6 +12,12 @@ public enum TranscriptionError: Error, Sendable, Equatable {
 public protocol TranscriptionService: Sendable {
     /// Transcribes the audio of `url`. `progress` reports 0...1 (analysed time / file duration).
     func transcribe(url: URL, locale: Locale, progress: @escaping @Sendable (Double) -> Void) async throws -> Transcript
+    /// Makes `locale` ready (on-device model download and install). May take a while: the UI shows a note meanwhile.
+    func prepare(locale: Locale) async throws
+}
+
+extension TranscriptionService {
+    public func prepare(locale: Locale) async throws {}
 }
 
 /// On-device transcription with SpeechAnalyzer / SpeechTranscriber (macOS 26).
@@ -43,10 +49,14 @@ public struct SpeechAnalyzerTranscriber: TranscriptionService {
         }
     }
 
+    public func prepare(locale: Locale) async throws { try await Self.installAssetsIfNeeded(for: locale) }
+
     public func transcribe(url: URL, locale: Locale = Locale(identifier: "de-DE"),
                            progress: @escaping @Sendable (Double) -> Void) async throws -> Transcript {
         try await Self.installAssetsIfNeeded(for: locale)
-        let file = try AVAudioFile(forReading: url)
+        let source = try await AudioExtraction.readableAudio(at: url)
+        defer { if source.isTemporary { try? FileManager.default.removeItem(at: source.url) } }
+        let file = try AVAudioFile(forReading: source.url)
         let total = Double(file.length) / file.processingFormat.sampleRate
         guard total > 0 else { throw TranscriptionError.noAudio }
 

@@ -2,7 +2,9 @@ import CoreGraphics
 import Metal
 import QuartzCore
 
-public enum ViewerZoom: Sendable, Hashable { case fit, percent(Int) }
+/// `fit`: aspect-fitted. `percent(p)`: p/100 drawable px per texture px, centred. `view`: free zoom and pan,
+/// `scale` = drawable px per texture px, `centerX/Y` = the texture offset (from its centre) shown at the drawable centre.
+public enum ViewerZoom: Sendable, Hashable { case fit, percent(Int), view(scale: Double, centerX: Double, centerY: Double) }
 
 /// Draws the compositor's rgba16Float working-linear texture into a CAMetalLayer drawable.
 ///
@@ -86,6 +88,7 @@ public final class Presenter: @unchecked Sendable {
             enc.setFragmentTexture(texture, index: 0)
             var useNearest = false
             if case .percent(let p) = zoom, p >= 100 { useNearest = true }
+            if case .view(let s, _, _) = zoom, s >= 1 { useNearest = true }
             enc.setFragmentSamplerState(useNearest ? nearest : linear, index: 0)
             enc.drawPrimitives(type: .triangle, vertexStart: 0, vertexCount: 3)
         }
@@ -108,12 +111,14 @@ public final class Presenter: @unchecked Sendable {
     public static func destinationRect(textureSize: CGSize, drawableSize: CGSize, zoom: ViewerZoom) -> CGRect {
         guard textureSize.width > 0, textureSize.height > 0, drawableSize.width > 0, drawableSize.height > 0 else { return .zero }
         let scale: CGFloat
+        var cx: CGFloat = 0, cy: CGFloat = 0
         switch zoom {
         case .fit: scale = min(drawableSize.width / textureSize.width, drawableSize.height / textureSize.height)
         case .percent(let p): scale = CGFloat(max(p, 1)) / 100
+        case .view(let s, let x, let y): scale = CGFloat(max(s, 0.001)); cx = CGFloat(x); cy = CGFloat(y)
         }
         let w = textureSize.width * scale, h = textureSize.height * scale
-        let x = ((drawableSize.width - w) / 2).rounded(), y = ((drawableSize.height - h) / 2).rounded()
+        let x = ((drawableSize.width - w) / 2 - cx * scale).rounded(), y = ((drawableSize.height - h) / 2 - cy * scale).rounded()
         return CGRect(x: x, y: y, width: w, height: h)
     }
 

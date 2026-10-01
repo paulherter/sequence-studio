@@ -384,6 +384,44 @@ public final class EffectControlsModel {
         return true
     }
 
+    /// Direct manipulation in the Program monitor: writes the parts of `t` that differ from `start` (the transform when
+    /// the gesture began) into Position, Scale, Rotation and Anchor at the playhead, like typing the values. Static
+    /// properties are set, animated ones get or update the key at the playhead. Inside a gesture every call starts
+    /// from the clip as it was when the gesture began, so repeated calls never accumulate; one undo step per gesture.
+    @discardableResult
+    public func setTransform(_ t: ClipTransform, from start: ClipTransform) -> Bool {
+        guard var c = workingClip else { return false }
+        let local = localPlayhead, inRange = playheadInClip
+        var ok = true
+        if t.position != start.position {
+            withVector(&c, .position) { ok = Self.apply(&$0, new: t.position, local: local, inRange: inRange, selected: []) && ok }
+        }
+        if t.scale != start.scale {
+            withVector(&c, .scale) { ok = Self.apply(&$0, new: t.scale, local: local, inRange: inRange, selected: []) && ok }
+        }
+        if t.rotation != start.rotation {
+            withScalar(&c, .rotation) { ok = Self.apply(&$0, new: t.rotation, local: local, inRange: inRange, selected: []) && ok }
+        }
+        if t.anchor != start.anchor {
+            withVector(&c, .anchor) { ok = Self.apply(&$0, new: t.anchor, local: local, inRange: inRange, selected: []) && ok }
+        }
+        guard ok else { return false }
+        commit(c, "Transform")
+        return true
+    }
+
+    /// Motion-path edit in the Program monitor: a Position key's value and/or its tangents. Gesture edits merge.
+    public func editPositionKey(_ id: UUID, position: Vec2?, tangents: (in: Vec2, out: Vec2)?) {
+        guard var c = workingClip else { return }
+        withVector(&c, .position) { p in
+            p.track.update(id) { k in
+                if let position { k.value = position }
+                if let tangents { k.inTangent = tangents.in; k.outTangent = tangents.out }
+            }
+        }
+        commit(c, "Move Keyframe")
+    }
+
     private static func apply<V: KeyframeValue>(_ prop: inout AnimatedProperty<V>, new: V, local: Time,
                                                 inRange: Bool, selected: Set<UUID>) -> Bool {
         guard prop.isAnimated else { prop.value = new; return true }

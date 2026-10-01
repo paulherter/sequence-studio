@@ -7,6 +7,7 @@ import Synchronization
 import SSCore
 import SSMedia
 import SSRender
+import SSText
 
 /// Opened media shared by the render thread and the decode threads: demuxer (for the `SampleIndex`), track info
 /// (colour hint, known once a decoder exists) and the damaged flag set by decode errors.
@@ -122,6 +123,7 @@ final class RenderLoop: @unchecked Sendable {
         var timeline: Timeline?
         var sequences: [Timeline.ID: Timeline] = [:]
         var mediaIDs: [UUID] = []
+        var clipDurations: [Clip.ID: Time] = [:]
         var mapping: Mapping = { $0.pts }
         var quality: DecodeScale = .full
         var zoom: ViewerZoom = .fit
@@ -238,6 +240,7 @@ final class RenderLoop: @unchecked Sendable {
         media.forgetOffline()
         state.withLock { s in
             s.timeline = timeline; s.sequences = sequences; s.mediaIDs = ids; s.mapping = mapping
+            s.clipDurations = Self.textDurations(timeline, sequences: sequences)
             s.generation &+= 1
             s.lastJobs = []
         }
@@ -352,9 +355,10 @@ final class RenderLoop: @unchecked Sendable {
         }
 
         // Layers
-        let requests = tl.videoLayers(at: t, sequences: { sequences[$0] }).filter { $0.generator == nil }
+        let requests = tl.videoLayers(at: t, sequences: { sequences[$0] })
+        let durations = state.withLock { $0.clipDurations }
         var b = LayerBuild()
-        for r in requests { b.layers.append(layer(for: r, scale: scale, build: &b)) }
+        for r in requests { b.layers.append(layer(for: r, scale: scale, build: &b, tl.format, durations)) }
 
         // Composite + present
         var presented = false
@@ -403,9 +407,31 @@ final class RenderLoop: @unchecked Sendable {
         return TickOutcome(presented: presented, time: t, stoppedAtEdge: edge)
     }
 
-    private func layer(for r: LayerRequest, scale: DecodeScale, build b: inout LayerBuild) -> RenderLayer {
+    /// Text generator layer (raster cached in `TextGenerator`), animation folded into the transform.
+    static func textLayer(_ r: LayerRequest, _ ref: GeneratorRef, canvas: SequenceFormat, durations: [Clip.ID: Time]) -> RenderLayer {
+        let dur = durations[r.clip] ?? r.localTime
+        guard let f = try? TextGenerator.frame(ref: ref, localTime: r.localTime, clipDuration: dur, canvas: canvas, scale: 1) else {
+            var tr = r.transform; tr.opacity = 0   // empty or undecodable text: invisible
+            return RenderLayer(content: .placeholder(.loading), transform: tr)
+        }
+        return RenderLayer(content: .linearPremultiplied(f.buffer, width: f.width, height: f.height),
+                           transform: f.layerTransform(base: r.transform, canvas: canvas), cornerRadius: r.cornerRadius)
+    }
+
+    /// Clip durations of text generators (their animations' out-anchor needs the clip length).
+    static func textDurations(_ tl: Timeline, sequences: [Timeline.ID: Timeline]) -> [Clip.ID: Time] {
+        var d: [Clip.ID: Time] = [:]
+        for t in [tl] + Array(sequences.values) { for tr in t.tracks { for c in tr.clips where c.isGenerator { d[c.id] = c.source.duration } } }
+        return d
+    }
+
+    private func layer(for r: LayerRequest, scale: DecodeScale, build b: inout LayerBuild,
+                       _ format: SequenceFormat, _ durations: [Clip.ID: Time]) -> RenderLayer {
         func placeholder(_ k: PlaceholderKind) -> RenderLayer {
             RenderLayer(content: .placeholder(k), transform: r.transform, cornerRadius: r.cornerRadius)
+        }
+        if let g = r.generator {
+            return g.kind == GeneratorRef.text ? Self.textLayer(r, g, canvas: format, durations: durations) : placeholder(.offline)
         }
         if let still = media.still(r.media) {
             return RenderLayer(content: .frame(still.buffer, colorHint: still.info), transform: r.transform,

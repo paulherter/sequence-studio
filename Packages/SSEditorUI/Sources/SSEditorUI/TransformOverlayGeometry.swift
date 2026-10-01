@@ -135,8 +135,16 @@ public struct TransformOverlayGeometry: Sendable, Equatable {
 
     // MARK: Hit testing
 
-    public func hitTest(_ p: CGPoint) -> Hit? {
-        if hypot(p.x - anchorViewPoint.x, p.y - anchorViewPoint.y) <= Self.anchorRadius { return .anchor }
+    /// The anchor can be grabbed directly once it sits away from the layer centre (otherwise it would steal every
+    /// grab of the picture's middle; Option-drag on the picture moves it then).
+    public var anchorIsOffCentre: Bool {
+        let c = viewPoint(fromLocal: .zero), a = anchorViewPoint
+        return hypot(c.x - a.x, c.y - a.y) > Self.anchorRadius * 1.5
+    }
+
+    /// `anchorAlways`: the anchor wins even when it sits on the layer centre (Option held).
+    public func hitTest(_ p: CGPoint, anchorAlways: Bool = false) -> Hit? {
+        if (anchorAlways || anchorIsOffCentre), hypot(p.x - anchorViewPoint.x, p.y - anchorViewPoint.y) <= Self.anchorRadius { return .anchor }
         var best: (Handle, CGFloat)?
         for h in Handle.allCases {
             let hp = viewPoint(of: h)
