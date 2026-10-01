@@ -907,7 +907,7 @@ public final class TimelineView: NSView {
 
     private func buildToggleButtons() {
         let specs: [(ToggleKind, String, String, String)] = [
-            (.snap, "arrow.left.and.right.righttriangle.left.righttriangle.right", "Snap (S)", "Snap"),
+            (.snap, "arrow.left.and.right.righttriangle.left.righttriangle.right", KeyboardListing.tip("Snap", .toggleSnapping), "Snap"),
             (.linked, "link", "Linked Selection", "Linked Selection"),
         ]
         for (kind, symbol, tip, title) in specs {

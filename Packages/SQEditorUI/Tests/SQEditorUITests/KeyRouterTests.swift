@@ -52,7 +52,7 @@ private func rates(_ a: [RouterAction]) -> [ShuttleAction] {
         #expect(g(c("e")) == .extendEdit)
         #expect(g(.delete) == .delete); #expect(g(.delete, .shift) == .rippleDelete)
         #expect(g(c("s")) == .toggleSnapping)
-        #expect(g(c("l"), .command) == .link); #expect(g(c("g"), .command) == .group)
+        #expect(g(c("l"), .command) == .link)
         #expect(g(c("m")) == .addMarker)
         #expect(g(c("c"), .command) == .copy); #expect(g(c("x"), .command) == .cut); #expect(g(c("v"), .command) == .paste)
         #expect(g(c("v"), [.command, .option]) == .pasteAttributes)
@@ -68,9 +68,9 @@ private func rates(_ a: [RouterAction]) -> [ShuttleAction] {
         // keyframe proposal
         #expect(g(.function(9)) == .easyEase); #expect(g(.function(9), .shift) == .easeIn)
         #expect(g(.function(9), [.command, .shift]) == .easeOut)
-        #expect(g(c("h"), [.command, .option]) == .toggleHoldInterpolation)
-        #expect(g(.left, .option) == .previousKeyframe); #expect(g(.right, .option) == .nextKeyframe)
-        #expect(g(.function(3), .shift) == .toggleSpeedGraph); #expect(g(c("k"), .option) == .addKeyframe)
+        // Opt+Left/Right trim by one frame (Premiere); Cmd+Opt+H stays free for Hide Others.
+        #expect(g(.left, .option) == .trimBackward); #expect(g(.right, .option) == .trimForward)
+        #expect(g(c("h"), [.command, .option]) == nil)
     }
 
     @Test func focusPrecedence() {

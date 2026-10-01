@@ -52,13 +52,6 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
         .extract: ("arrow.up.to.line.compact", "Extract"),
         .exportFrame: ("camera", "Export Frame"),
     ]
-    private static let tips: [MonitorAction: String] = [
-        .markIn: "Mark In (I)", .markOut: "Mark Out (O)", .goToIn: "Go to In (Shift+I)", .goToOut: "Go to Out (Shift+O)",
-        .stepBack: "Step Back (Left)", .stepForward: "Step Forward (Right)", .playPause: "Play/Stop (Space)",
-        .addMarker: "Add Marker (M)", .insert: "Insert (,)", .overwrite: "Overwrite (.)",
-        .lift: "Lift (;)", .extract: "Extract (')", .exportFrame: "Export Frame (Cmd+Shift+E)",
-    ]
-
     private func build() {
         viewerSlot.wantsLayer = true
         viewerSlot.layer?.backgroundColor = Theme.Colors.viewer.cgColor
@@ -164,7 +157,7 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
             b.isBordered = false
             b.imagePosition = .imageOnly
             b.contentTintColor = Theme.Colors.label
-            b.toolTip = Self.tips[a] ?? title
+            b.toolTip = a.tip(title)
             b.setAccessibilityLabel(title)
             b.tag = MonitorAction.allCases.firstIndex(of: a)!
             buttons[a] = b
@@ -257,7 +250,7 @@ public final class MonitorPanelView: NSView, NSTextFieldDelegate, NSMenuDelegate
             let name = model.isPlaying ? "pause.fill" : "play.fill"
             let title = model.isPlaying ? "Pause" : "Play"
             play.image = NSImage(systemSymbolName: name, accessibilityDescription: title)
-            play.toolTip = title
+            play.toolTip = MonitorAction.playPause.tip(title)
             play.setAccessibilityLabel(title)
         }
     }

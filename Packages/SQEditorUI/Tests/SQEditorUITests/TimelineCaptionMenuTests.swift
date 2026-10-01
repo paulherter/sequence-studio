@@ -213,9 +213,9 @@ private func drag(_ i: inout TimelineInteraction, _ a: CGPoint, _ b: CGPoint) ->
         let none = TimelineContextMenu.items(timeline: tl, selection: [], clipboardHasClips: false)
         #expect(enabled(none).isEmpty)
         let one = TimelineContextMenu.items(timeline: tl, selection: [a.id], clipboardHasClips: true)
-        #expect(enabled(one) == [.cut, .copy, .paste, .pasteInsert, .delete, .rippleDelete, .enable, .nest, .rename, .label, .setToFrameSize, .scaleToFrameSize, .speed, .timeRemapping])
+        #expect(enabled(one) == [.cut, .copy, .paste, .pasteInsert, .pasteAttributes, .delete, .rippleDelete, .enable, .nest, .rename, .label, .setToFrameSize, .speed, .timeRemapping])
         let two = TimelineContextMenu.items(timeline: tl, selection: [a.id, b.id], clipboardHasClips: false)
-        #expect(enabled(two) == [.cut, .copy, .delete, .rippleDelete, .link, .enable, .nest, .label, .setToFrameSize, .scaleToFrameSize, .speed, .timeRemapping])
+        #expect(enabled(two) == [.cut, .copy, .delete, .rippleDelete, .link, .enable, .nest, .label, .setToFrameSize, .speed, .timeRemapping])
         // No dead entries: features we do not have are not listed.
         #expect(two.count == 16)
     }
@@ -227,6 +227,7 @@ private func drag(_ i: inout TimelineInteraction, _ a: CGPoint, _ b: CGPoint) ->
         let items = TimelineContextMenu.items(timeline: tl, selection: [v.id, au.id], clipboardHasClips: false)
         #expect(items.contains { $0.action == .unlink && $0.isEnabled })
         #expect(!items.contains { $0.action == .link })
+        #expect(items.contains { $0.action == .audioGain && $0.isEnabled })     // an audio clip is selected
     }
 
     @Test func captionOnlySelectionEnablesDelete() {

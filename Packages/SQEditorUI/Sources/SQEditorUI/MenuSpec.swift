@@ -56,7 +56,7 @@ public enum EditorMenus {
         .submenu("Video Options", cmds([.addFrameHold, .insertFrameHold, nil, .videoFadeIn, .videoFadeOut])),
         .separator,
     ] + cmds([
-        .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation, .addKeyframe, .toggleSpeedGraph,
+        .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation,
     ]))
     public static let sequence = MenuSpec(title: "Sequence", items: cmds([
         .sequenceSettings, nil,
@@ -66,6 +66,7 @@ public enum EditorMenus {
         .applyVideoTransition, .applyAudioTransition, .applyDefaultTransitions, nil,
         .toggleSnapping, .toggleLinkedSelection, nil,
         .matchFrame, .reverseMatchFrame, nil,
+        .zoomIn, .zoomOut, .zoomFit, nil,
         .previousEditPoint, .nextEditPoint, .goToStart, .goToEnd,
     ]))
     /// Premiere's Markers menu: In/Out marking and sequence markers.
@@ -81,8 +82,6 @@ public enum EditorMenus {
             .playPause, .playInToOut, .playInToOutRoll, .playAround, .toggleLoop, nil, .shuttleReverse, .shuttleStop, .shuttleForward, nil,
             .stepBackward, .stepForward, .stepBackward5, .stepForward5,
         ])),
-        .separator,
-        .command(.zoomIn), .command(.zoomOut), .command(.zoomFit),
         .separator,
         .command(.toggleAudioScrubbing), .command(.toggleHoverScrub),
         .command(.toggleCaptionsInMonitor),
@@ -111,6 +110,6 @@ public enum EditorMenus {
     public static let alwaysShown: Set<EditorCommand> = [.undo, .redo, .cut, .copy, .paste, .delete]
     public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection, .toggleAudioScrubbing, .toggleCaptionsInMonitor,
                                                        .videoFadeIn, .videoFadeOut, .addFrameHold, .insertFrameHold,
-                                                       .toggleTimeRemapping, .removeTimeRemapping,
+                                                       .toggleTimeRemapping, .removeTimeRemapping, .toggleHoldInterpolation,
                                                        .matchLoudness, .autoDuck, .removeSilences, .tagDialogue, .tagMusic, .tagSFX]
 }

@@ -4,32 +4,7 @@ import SQEditorUI
 
 /// Every `EditorCommand` that SQCore and the session already support. Others report "not available yet".
 extension AppController {
-    static func isSupported(_ c: EditorCommand) -> Bool {
-        switch c {
-        case .shuttleReverse, .shuttleStop, .shuttleForward, .shuttleSlowReverse, .shuttleSlowForward, .playPause,
-             .stepBackward, .stepForward, .stepBackward5, .stepForward5,
-             .previousEditPoint, .nextEditPoint, .goToStart, .goToEnd,
-             .markIn, .markOut, .markClip, .goToIn, .goToOut, .clearInOut, .clearIn, .clearOut, .lift, .extract, .insert, .overwrite, .addMarker,
-             .playInToOut, .toggleLoop, .exportFrame, .newBin, .matchFrame, .reverseMatchFrame,
-             .tool, .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext,
-             .delete, .rippleDelete, .toggleSnapping, .undo, .redo,
-             .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel, .maximizeActivePanel, .resetLayout,
-             .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
-             .minimizeAllTracks, .expandAllTracks, .speedDuration, .toggleTimeRemapping, .removeTimeRemapping,
-             .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing, .toggleCaptionsInMonitor,
-             .playInToOutRoll, .playAround, .setPosterFrame, .clearPosterFrame, .toggleHoverScrub, .find,
-             .applyVideoTransition, .applyAudioTransition, .applyDefaultTransitions,
-             .audioGainDown, .audioGainUp, .audioGainDown6, .audioGainUp6, .matchLoudness, .autoDuck,
-             .tagDialogue, .tagMusic, .tagSFX:
-            true
-        case .removeSilences:
-            FeatureFlags.removeSilences
-        case _ where isShellCommand(c):
-            true
-        default:
-            Self.isTimelineOp(c) || Self.isEffectsLookOp(c)
-        }
-    }
+    static func isSupported(_ c: EditorCommand) -> Bool { CommandSupport.isSupported(c) }
 
     func execute(_ c: EditorCommand) {
         if ProcessInfo.processInfo.environment["SQ_KEYLOG"] == "1" { NSLog("SQKEY execute \(c) playing=\(session.isPlaying)") }
@@ -41,7 +16,7 @@ extension AppController {
         if [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus, executeInEffectControls(c) { return }
         // Timeline operations (clipboard, link, nudge, edge trims...); Effect Controls keeps its own keys while it has focus.
         let ecOwns = [.copy, .cut, .paste].contains(c) ? effectControlsTakes(c) : effectControlsHasFocus
-        if Self.isTimelineOp(c) || c == .previousKeyframe || c == .nextKeyframe, !ecOwns, executeTimelineOp(c) { return }
+        if Self.isTimelineOp(c), !ecOwns, executeTimelineOp(c) { return }
         if Self.isEffectsLookOp(c), executeEffectsLookOp(c) { return }
         guard Self.isSupported(c) else {
             shell.statusBar.flash("\(c.title) is not available yet.")
@@ -137,8 +112,21 @@ extension AppController {
         case .tagMusic: tagSelectedAudio(.music)
         case .tagSFX: tagSelectedAudio(.sfx)
         case .toggleCaptionsInMonitor: toggleCaptionsInMonitor()
+        case .deleteProjectItems: panels.projectView.deleteSelectedItems()
+        case .easyEase: applyKeyframeEasing(.easeInOut)
+        case .easeIn: applyKeyframeEasing(.easeIn, side: .in)
+        case .easeOut: applyKeyframeEasing(.easeOut, side: .out)
+        case .toggleHoldInterpolation:
+            if panels.effectModel.selection.isEmpty { shell.statusBar.flash("Select keyframes in Effect Controls first.") }
+            else { panels.effectModel.toggleHold() }
         default: break
         }
+    }
+
+    /// Easy Ease / Ease In / Ease Out (F9 family) on the keyframes selected in Effect Controls.
+    private func applyKeyframeEasing(_ curve: EasingCurve, side: EaseSide = .both) {
+        if panels.effectModel.selection.isEmpty { shell.statusBar.flash("Select keyframes in Effect Controls first.") }
+        else { panels.effectModel.applyEasing(curve, side: side) }
     }
 
     /// Apply Video / Audio Transition (Cmd+D, Shift+Cmd+D) and Apply Default Transitions to Selection (Shift+D).
@@ -250,6 +238,7 @@ extension AppController {
         case .copy: tv.copy(nil); return true
         case .paste: tv.paste(nil); return true
         case .delete, .deleteProjectItems: tv.deleteBackward(nil); return true
+        case .selectAll: tv.selectAll(nil); return true
         case .find, .setPosterFrame, .clearPosterFrame, .toggleHoverScrub: return true     // Project-panel commands: not while typing
         default: return false
         }
