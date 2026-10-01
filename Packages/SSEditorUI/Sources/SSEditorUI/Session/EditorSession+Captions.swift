@@ -27,6 +27,7 @@ extension EditorSession {
     public func splitCaption(at time: Time? = nil) -> Bool {
         let t = (time ?? playhead).snapped(to: activeTimeline?.frameDuration ?? Time(1, 30))
         guard let item = activeTimeline?.captions(at: t).first?.item else { setError("There is no caption at the playhead."); return false }
+        guard t > item.range.start else { setError("Move the playhead inside the caption."); return false }
         var second: CaptionItem.ID?
         let ok = attempt("Split Caption") { second = try $0.splitCaption(item.id, at: t).1 }
         if ok, let second { select(clips: [], captions: [second]) }

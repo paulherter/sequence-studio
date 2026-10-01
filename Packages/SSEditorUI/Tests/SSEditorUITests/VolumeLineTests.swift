@@ -97,4 +97,26 @@ private func clip(_ start: Int64 = 0, _ frames: Int64 = 90) -> Clip {
         #expect(abs(pts.first!.y - VolumeLine.y(forDB: 0, in: lane)) < 0.5)
         #expect(abs(pts.last!.y - VolumeLine.y(forDB: AudioGain.db(fromLinear: 0.5), in: lane)) < 0.5)
     }
+
+    @Test func aClickWithoutMovementChangesNothing() {
+        var c = clip()
+        let k = c.addVolumeKey(atLocal: fd * 30)
+        let r = rect(c), lane = VolumeLine.lane(in: r)
+        let y = VolumeLine.y(forDB: -3.3, in: lane)
+        var g = VolumeLineGesture(clip: c, hit: .line(atLocal: fd * 10), start: CGPoint(x: 80, y: y), clipRect: r, geometry: geo, addKey: false)
+        #expect(g.update(to: CGPoint(x: 80, y: y)) == c)
+        var kg = VolumeLineGesture(clip: c, hit: .key(k), start: CGPoint(x: 80, y: y), clipRect: r, geometry: geo, addKey: false)
+        #expect(kg.update(to: CGPoint(x: 80.3, y: y)) == c)
+        var plain = clip()
+        let before = plain
+        plain.shiftVolumeLine(atLocal: fd * 3, byDB: 0)
+        #expect(plain == before)
+    }
+
+    @Test func edgeTrimBeatsAKeyNearTheClipEnds() {
+        let c = clip(); let r = rect(c)
+        #expect(VolumeLine.edgeWins(at: CGPoint(x: r.minX + 3, y: r.midY), clipRect: r))
+        #expect(VolumeLine.edgeWins(at: CGPoint(x: r.maxX - 5, y: r.midY), clipRect: r))
+        #expect(!VolumeLine.edgeWins(at: CGPoint(x: r.midX, y: r.midY), clipRect: r))
+    }
 }

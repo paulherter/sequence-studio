@@ -31,6 +31,13 @@ public enum VolumeLine {
         return min(dbBottom + f * (dbTop - dbBottom), dbTop)
     }
 
+    /// Within this many points of a clip's left or right edge the trim handle beats a key (without Cmd).
+    public static let edgeTrimZone: CGFloat = 6
+
+    public static func edgeWins(at p: CGPoint, clipRect: CGRect) -> Bool {
+        p.x - clipRect.minX < edgeTrimZone || clipRect.maxX - p.x < edgeTrimZone
+    }
+
     public enum Hit: Equatable, Sendable {
         case key(UUID)
         /// On the line (not on a key) at this clip-local time.
@@ -114,6 +121,7 @@ public struct VolumeLineGesture {
     }
 
     public mutating func update(to p: CGPoint) -> Clip {
+        if hypot(p.x - start.x, p.y - start.y) < 1 { return startClip }   // no real movement: nothing to commit
         var c = startClip
         let lane = VolumeLine.lane(in: clipRect)
         if let id = keyID {

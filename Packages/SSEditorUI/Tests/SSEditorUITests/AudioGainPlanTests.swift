@@ -33,6 +33,18 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         #expect(r[unknown.id] == nil)
     }
 
+    @Test func normalizeCountsTheVolumeLevel() {
+        // Peak 0.5 at Volume +6 dB (x2) is already at 0 dBFS; normalising to -6 dB needs -6 dB of gain.
+        let it = AudioGainPlan.Item(id: UUID(), name: "c", gainDB: 0, peak: 0.5, volume: 2)
+        let r = AudioGainPlan.plan(.normalizeEach(targetDB: -6.0206), items: [it])
+        #expect(abs(r[it.id]! + 6.0206) < 1e-3)
+        var c = Clip(name: "c", media: UUID(), kind: .audio, source: TimeRange(start: .zero, duration: Time(4, 1)), start: .zero)
+        #expect(AudioGainPlan.volumePeak(of: c) == 1)
+        let k1 = c.addVolumeKey(atLocal: .zero), k2 = c.addVolumeKey(atLocal: Time(2, 1))
+        c.animation.volume.track.set(k1, value: 0.5); c.animation.volume.track.set(k2, value: 1.5)
+        #expect(AudioGainPlan.volumePeak(of: c) == 1.5)
+    }
+
     @Test func peakOfAClipsSourceRange() {
         // One channel, 1000 frames/s, one bucket per second: second 0 peaks at 0.1, second 1 at 0.8 (negative side).
         let data = WaveformData(sampleRate: 1000, channelCount: 1, totalFrames: 2000, baseBucketSize: 1000, levels: [[-0.1, 0.1, -0.8, 0.4]])

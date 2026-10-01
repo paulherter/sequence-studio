@@ -129,7 +129,7 @@ private func timeline(_ items: [CaptionItem]) throws -> (Timeline, CaptionTrack.
         let item = t.captionTracks[0].items[0].id
         #expect(throws: EditError.trackLocked) { try t.splitCaption(item, at: s(2)) }
         #expect(throws: EditError.trackLocked) { try t.setCaptionStyle(styleRef: "x", track: id) }
-        #expect(throws: EditError.trackLocked) { try t.replaceCaptionText(find: "a", with: "b", caseSensitive: false) }
+        #expect(throws: EditError.trackLocked) { try t.replaceCaptionText(find: "a", with: "b", caseSensitive: false) }   // all locked
     }
 
     @Test func addCaptionAtPlayheadFillsFreeSpace() throws {
@@ -140,4 +140,26 @@ private func timeline(_ items: [CaptionItem]) throws -> (Timeline, CaptionTrack.
         #expect(item.styleRef == "style")                                  // takes the track's current style
         #expect(throws: EditError.self) { try t.addCaption(at: s(5), duration: s(1), track: id) }   // inside b
     }
+
+    @Test func splitKeepsLineBreaksWhereItCan() throws {
+        var (t, _) = try timeline([CaptionItem(lines: ["a b", "c d"], range: TimeRange(start: s(0), end: s(8)))])
+        let id = t.captionTracks[0].items[0].id
+        _ = try t.splitCaption(id, at: s(4))
+        #expect(t.captionTracks[0].items.map(\.lines) == [["a b"], ["c d"]])
+        var (u, _) = try timeline([CaptionItem(lines: ["a b", "c d"], range: TimeRange(start: s(0), end: s(8)))])
+        _ = try u.splitCaption(u.captionTracks[0].items[0].id, at: s(2))
+        #expect(u.captionTracks[0].items.map(\.lines) == [["a"], ["b", "c d"]])
+    }
+
+    @Test func replaceSkipsLockedTracksAndSameTextIsANoOp() throws {
+        var t = Timeline(name: "t", frameDuration: Time(1, 30), tracks: [Track(kind: .video)])
+        _ = try t.replaceCaptions([cap("cat", 0, 1)])
+        var locked = CaptionTrack(name: "C2", isLocked: true)
+        try locked.replaceAll([cap("cat", 2, 3)])
+        t.captionTracks.append(locked)
+        #expect(try t.replaceCaptionText(find: "cat", with: "dog", caseSensitive: false) == 1)
+        #expect(t.captionTracks[0].items[0].text == "dog" && t.captionTracks[1].items[0].text == "cat")
+        #expect(try t.replaceCaptionText(find: "dog", with: "dog", caseSensitive: true) == 0)
+    }
 }
+

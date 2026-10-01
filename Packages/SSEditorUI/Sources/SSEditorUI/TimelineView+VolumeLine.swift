@@ -45,6 +45,7 @@ extension TimelineView {
         guard let t = volumeTarget(at: p),
               let hit = VolumeLine.hit(clip: t.clip, clipRect: t.rect, at: p, geometry: geometry) else { return false }
         let cmd = event.modifierFlags.contains(.command)
+        if case .key = hit, !cmd, VolumeLine.edgeWins(at: p, clipRect: t.rect) { return false }   // trimming wins at the edges
         if case .line = hit {
             // The edges belong to trimming; Cmd-click is explicit enough to take them.
             if !cmd, case .clip(_, let zone) = geometry.hitTest(p, in: timeline), zone != .body { return false }

@@ -28,6 +28,14 @@ private func item(_ text: String, _ a: Int64, _ b: Int64) -> CaptionItem {
         #expect(session.captionItems.count == 1)
     }
 
+    @Test func splitAtTheStartOfACaptionExplainsWhat() {
+        let session = makeSession()
+        session.replaceCaptions([item("one two", 2, 6)])
+        session.seek(to: s(2))
+        #expect(!session.splitCaption())
+        #expect(session.lastError == "Move the playhead inside the caption.")
+    }
+
     @Test func splitWithoutCaptionUnderPlayheadSaysSo() {
         let session = makeSession()
         #expect(!session.splitCaption())

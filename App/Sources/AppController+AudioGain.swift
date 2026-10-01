@@ -9,13 +9,17 @@ extension AppController {
         guard !clips.isEmpty else { shell.statusBar.flash("Select an audio clip first."); return }
         let items = clips.map { c in
             AudioGainPlan.Item(id: c.id, name: c.name, gainDB: c.audioGainDB,
-                               peak: panels.waveforms.data[c.media].map { AudioGainPlan.peak(of: $0, source: c.source) })
+                               peak: panels.waveforms.data[c.media].map { AudioGainPlan.peak(of: $0, source: c.source) },
+                               volume: AudioGainPlan.volumePeak(of: c))
         }
         AudioGainDialog.present(on: window, items: items) { [weak self] choice in
             guard let self, let choice else { return }
             let gains = AudioGainPlan.plan(choice, items: items)
             if gains.isEmpty { shell.statusBar.flash("The audio is silent or not analysed yet."); return }
             session.setAudioGain(gains)
+            if gains.count < items.count {
+                shell.statusBar.flash("\(items.count - gains.count) clip(s) were skipped: silent or not analysed yet.")
+            }
         }
     }
 

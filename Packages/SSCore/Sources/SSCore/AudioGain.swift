@@ -55,6 +55,7 @@ extension Clip {
     /// without keys the whole clip's level; with keys the segment under `t` (both of its keys), or the first / last
     /// key when `t` is before / after all of them.
     public mutating func shiftVolumeLine(atLocal t: Time, byDB deltaDB: Double) {
+        guard abs(deltaDB) > 1e-6 else { return }      // a click without movement changes nothing (no dB round trip)
         func shifted(_ v: Double) -> Double {
             AudioGain.linear(fromDB: min(AudioGain.db(fromLinear: v) + deltaDB, AudioGain.maxVolumeDB))
         }

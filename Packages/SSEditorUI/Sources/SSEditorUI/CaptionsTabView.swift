@@ -247,8 +247,10 @@ public final class CaptionsTabView: NSView, NSTableViewDataSource, NSTableViewDe
 
     @objc private func replaceAll() {
         guard let s = session, !findField.stringValue.isEmpty else { return }
+        if findField.stringValue == replaceField.stringValue { onStatus?("Find and Replace are the same: nothing to change."); return }
+        let skipped = s.activeTimeline?.captionTracks.contains(where: \.isLocked) == true ? " Locked caption tracks were skipped." : ""
         if let n = s.replaceCaptionText(find: findField.stringValue, with: replaceField.stringValue, caseSensitive: matchCase.state == .on) {
-            onStatus?(n == 0 ? "No match." : "Replaced \(n) time\(n == 1 ? "" : "s").")
+            onStatus?(n == 0 ? "No match." + skipped : "Replaced \(n) time\(n == 1 ? "" : "s")." + skipped)
         }
     }
 

@@ -121,8 +121,19 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
         }
         var left = items[i], right = items[i]
         left.range = TimeRange(start: r.start, end: t); right.range = TimeRange(start: t, end: r.end)
-        left.lines = [words[..<k].joined(separator: " ")]
-        right.lines = [words[k...].joined(separator: " ")]
+        // Keep the original line breaks where the cut allows: walk the lines, the first k words go left.
+        var leftLines: [String] = [], rightLines: [String] = []
+        var used = 0
+        for line in items[i].lines {
+            let w = line.split(whereSeparator: \.isWhitespace).map(String.init)
+            guard !w.isEmpty else { continue }
+            let take = max(0, min(w.count, k - used))
+            if take > 0 { leftLines.append(w[..<take].joined(separator: " ")) }
+            if take < w.count { rightLines.append(w[take...].joined(separator: " ")) }
+            used += take
+        }
+        left.lines = leftLines.isEmpty ? [""] : leftLines
+        right.lines = rightLines.isEmpty ? [""] : rightLines
         right.id = UUID()
         items[i] = left
         items.insert(right, at: i + 1)
@@ -307,9 +318,13 @@ extension Timeline {
     /// Search and replace over all unlocked caption tracks (a locked track throws). Returns the replacement count.
     @discardableResult
     public mutating func replaceCaptionText(find: String, with new: String, caseSensitive: Bool) throws -> Int {
-        guard !captionTracks.contains(where: \.isLocked) else { throw EditError.trackLocked }
+        // Locked tracks are skipped (and not counted); only when every track is locked is the edit refused.
+        guard captionTracks.contains(where: { !$0.isLocked }) || captionTracks.isEmpty else { throw EditError.trackLocked }
+        guard find != new else { return 0 }
         var n = 0
-        for i in captionTracks.indices { n += captionTracks[i].replaceText(find: find, with: new, caseSensitive: caseSensitive) }
+        for i in captionTracks.indices where !captionTracks[i].isLocked {
+            n += captionTracks[i].replaceText(find: find, with: new, caseSensitive: caseSensitive)
+        }
         return n
     }
 

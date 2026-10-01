@@ -19,9 +19,14 @@ public enum AudioGainPlan {
         public var gainDB: Double
         /// Linear sample peak of the clip's source range; nil when unknown (waveform not read yet).
         public var peak: Double?
-        public init(id: Clip.ID, name: String, gainDB: Double, peak: Double?) {
-            self.id = id; self.name = name; self.gainDB = gainDB; self.peak = peak
+        /// Loudest Volume level of the clip (linear; its keys included): the normalised output peak is
+        /// `peak x volume x gain`, so the target is reached after the Volume line, not before it.
+        public var volume: Double
+        public init(id: Clip.ID, name: String, gainDB: Double, peak: Double?, volume: Double = 1) {
+            self.id = id; self.name = name; self.gainDB = gainDB; self.peak = peak; self.volume = volume
         }
+        /// Peak as heard before the Audio Gain stage.
+        var effectivePeak: Double? { peak.map { $0 * volume } }
     }
 
     /// New gain per clip. Clips that cannot change (silent, peak unknown) are left out.
@@ -31,10 +36,10 @@ public enum AudioGainPlan {
         case .set(let v): for i in items { out[i.id] = AudioGain.apply(.set(v), to: i.gainDB, peak: nil) }
         case .adjust(let d): for i in items { out[i.id] = AudioGain.apply(.adjust(d), to: i.gainDB, peak: nil) }
         case .normalizeEach(let t):
-            for i in items { if let g = AudioGain.apply(.normalize(targetDB: t), to: i.gainDB, peak: i.peak) { out[i.id] = g } }
+            for i in items { if let g = AudioGain.apply(.normalize(targetDB: t), to: i.gainDB, peak: i.effectivePeak) { out[i.id] = g } }
         case .normalizeTogether(let t):
-            let known = items.filter { $0.peak != nil }
-            if let gains = AudioGain.normalizeTogether(peaks: known.map { $0.peak! }, targetDB: t) {
+            let known = items.filter { $0.effectivePeak != nil }
+            if let gains = AudioGain.normalizeTogether(peaks: known.map { $0.effectivePeak! }, targetDB: t) {
                 for (i, g) in zip(known, gains) { out[i.id] = g }
             }
         }
@@ -47,9 +52,15 @@ public enum AudioGainPlan {
         return p.reduce(0.0) { m, ch in max(m, ch.map { Double(max(abs($0.min), abs($0.max))) }.max() ?? 0) }
     }
 
+    /// Loudest Volume level of a clip: its constant level, or the highest key.
+    public static func volumePeak(of clip: Clip) -> Double {
+        let v = clip.animation.volume
+        return v.track.isEmpty ? max(v.value, 0) : max(v.track.keys.map(\.value).max() ?? v.value, 0)
+    }
+
     /// Loudest peak among `items` in dB (nil when none is known).
     public static func loudestDB(of items: [Item]) -> Double? {
-        items.compactMap(\.peak).max().map { AudioGain.db(fromLinear: $0) }
+        items.compactMap(\.effectivePeak).max().map { AudioGain.db(fromLinear: $0) }
     }
 }
 
