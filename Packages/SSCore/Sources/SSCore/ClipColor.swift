@@ -439,3 +439,21 @@ private struct LegacyCorrection: Decodable {
         saturation = try f(.saturation, 100)
     }
 }
+
+// MARK: - Copy / paste between clips
+
+extension ClipColor {
+    /// This clip's colour after pasting the Colour effects of another clip: the effects are replaced; the footage
+    /// interpretation (`source`, `useEmbeddedLUT`) stays, because it describes the target's own media. A LUT embedded in
+    /// the other clip's media does not exist here, so it becomes "automatic" (Input LUT) or none (Creative look).
+    public func pasting(effectsOf other: ClipColor) -> ClipColor {
+        var effects = other.effects
+        for i in effects.indices {
+            if case .embedded? = effects[i].inputLUT { effects[i].inputLUT = i == 0 ? .automatic : nil }
+            if case .embedded? = effects[i].creative.look { effects[i].creative.look = nil }
+        }
+        var c = self
+        c.effects = effects
+        return c
+    }
+}

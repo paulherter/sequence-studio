@@ -364,6 +364,10 @@ public final class ColorInspectorModel {
         gesture { set(effect, .exposure, b.exposure); set(effect, .blacks, b.blacks) }
     }
 
+    /// Copy / Paste buttons of the panel (the host owns the clipboard and the selection).
+    public var onCopyColor: (() -> Void)?
+    public var onPasteColor: (() -> Void)?
+
     /// Basic Correction's Auto was pressed for this effect; the host analyses the Program frame.
     public var onAutoTone: ((Int) -> Void)?
 

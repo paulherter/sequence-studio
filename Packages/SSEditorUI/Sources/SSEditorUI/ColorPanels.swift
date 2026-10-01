@@ -71,6 +71,10 @@ public final class ColorInspectorPanelView: NSView {
             model.onGestureBegan = { [weak self] in self?.beginGesture() }
             model.onGestureEnded = { [weak self] in self?.endGesture() }
             model.onChange = { [weak self] _ in self?.commit(id) }
+            model.onCopyColor = { [weak model] in if let model { ColorClipboard.shared.copy(model.clipColor()) } }
+            model.onPasteColor = { [weak self] in
+                guard let self, let c = ColorClipboard.shared.color, self.session.pasteColor(c) > 0 else { NSSound.beep(); return }
+            }
             model.onAutoTone = { [weak self] effect in self?.autoTone(clip: id, effect: effect) }
             model.onPickWhiteBalance = { [weak self] effect in self?.pickWhiteBalance(clip: id, effect: effect) }
             colorModels[id] = model

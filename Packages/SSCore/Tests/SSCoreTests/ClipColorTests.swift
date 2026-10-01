@@ -279,3 +279,31 @@ import Testing
         #expect(!h.isNeutral)
     }
 }
+
+@Suite struct ClipColorPasteTests {
+    @Test func pasteReplacesEffectsAndKeepsFootageInterpretation() {
+        var src = ClipColor.default
+        src.effects[0].basic.exposure = 1
+        src.addEffect(); src.effects[1].vignette.amount = -2
+        src.source = .hlgBT2020
+        var dst = ClipColor(source: .sLog3SGamut3Cine, useEmbeddedLUT: false)
+        dst.effects[0].basic.contrast = 50
+        let r = dst.pasting(effectsOf: src)
+        #expect(r.effects.count == 2 && r.effects[0].basic.exposure == 1 && r.effects[0].basic.contrast == 0)
+        #expect(r.source == .sLog3SGamut3Cine && r.useEmbeddedLUT == false, "the target keeps its own interpretation")
+        #expect(dst.effects[0].basic.contrast == 50, "value semantics")
+    }
+
+    @Test func embeddedLUTsOfTheOtherClipAreDropped() {
+        var src = ClipColor.default
+        let m = UUID()
+        src.effects[0].inputLUT = .embedded(m)
+        src.effects[0].creative.look = .embedded(m)
+        src.addEffect(); src.effects[1].inputLUT = .embedded(m)
+        let r = ClipColor.default.pasting(effectsOf: src)
+        #expect(r.effects[0].inputLUT == .automatic && r.effects[0].creative.look == nil && r.effects[1].inputLUT == nil)
+        // File LUTs travel.
+        src.effects[0].inputLUT = .file("/a.cube")
+        #expect(ClipColor.default.pasting(effectsOf: src).effects[0].inputLUT == .file("/a.cube"))
+    }
+}

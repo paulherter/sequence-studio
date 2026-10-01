@@ -126,6 +126,18 @@ public final class ColorInspectorView: NSView {
         stack.addArrangedSubview(top)
         top.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
 
+        let copy = NSButton(title: "Copy Colour", target: self, action: #selector(copyColor))
+        let paste = NSButton(title: "Paste Colour", target: self, action: #selector(pasteColor))
+        for b in [copy, paste] { b.controlSize = .small; b.bezelStyle = .rounded; b.font = Theme.Fonts.small }
+        copy.toolTip = "Copy this clip's Colour effects"
+        paste.toolTip = "Paste the copied Colour effects onto the selected clips (their footage interpretation stays)"
+        let copyRow = NSStackView(views: [copy, paste, NSView()])
+        copyRow.orientation = .horizontal
+        copyRow.spacing = Theme.Spacing.sm
+        copyRow.edgeInsets = NSEdgeInsets(top: 0, left: Theme.Spacing.md, bottom: Theme.Spacing.sm, right: Theme.Spacing.md)
+        stack.addArrangedSubview(copyRow)
+        copyRow.widthAnchor.constraint(equalTo: stack.widthAnchor).isActive = true
+
         effectsStack.orientation = .vertical
         effectsStack.alignment = .leading
         effectsStack.spacing = 0
@@ -503,6 +515,9 @@ public final class ColorInspectorView: NSView {
 
     @objc private func resetTonePressed(_ b: NSButton) { model.resetTone(b.tag) }
     @objc private func autoTonePressed(_ b: NSButton) { model.onAutoTone?(b.tag) }
+
+    @objc private func copyColor() { model.onCopyColor?() }
+    @objc private func pasteColor() { model.onPasteColor?() }
 
     @objc private func addEffect() { model.addEffect() }
     @objc private func removeEffect(_ b: NSButton) { model.removeEffect(b.tag) }

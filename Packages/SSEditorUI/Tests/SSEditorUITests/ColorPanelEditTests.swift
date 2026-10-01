@@ -163,4 +163,31 @@ import SSCore
         for sub in v.subviews { out += allSections(sub) }
         return out
     }
+
+    @Test func pasteColorIsOneUndoStepAcrossClipsAndSkipsAudio() throws {
+        let fd = Time(1, 30)
+        let m = UUID()
+        func clip(_ n: String, _ at: Int64, _ kind: TrackKind = .video) -> Clip {
+            Clip(name: n, media: m, kind: kind, source: TimeRange(start: .zero, duration: Time(1, 1)), start: Time(at, 1))
+        }
+        let a = clip("A", 0), b = clip("B", 1), c = clip("C", 2), au = clip("Au", 0, .audio)
+        var v = Track(kind: .video), au1 = Track(kind: .audio)
+        try v.overwrite(a); try v.overwrite(b); try v.overwrite(c); try au1.overwrite(au)
+        let session = EditorSession(project: Project(name: "P", timelines: [Timeline(name: "M", frameDuration: fd, tracks: [v, au1])]),
+                                    engine: StubProgramEngine())
+        var graded = ClipColor.default
+        graded.effects[0].basic.exposure = 1.5
+        graded.effects[0].vignette.amount = -2
+        session.select(clips: [b.id, c.id, au.id])
+        #expect(session.pasteColor(graded) == 2)
+        func color(_ id: Clip.ID) -> ClipColor { current(session, id).color }
+        #expect(color(a.id) == .default && color(b.id).effects[0].basic.exposure == 1.5 && color(c.id).effects[0].vignette.amount == -2)
+        #expect(color(au.id) == .default, "audio clips have no colour")
+        #expect(session.undoName == "Paste Colour")
+        session.undo()
+        #expect(color(b.id) == .default && color(c.id) == .default, "one step for both clips")
+        session.redo()
+        #expect(color(b.id).effects[0].basic.exposure == 1.5)
+        #expect(session.pasteColor(graded) == 0, "pasting the same colour again changes nothing")
+    }
 }
