@@ -62,6 +62,8 @@ public struct WorkspaceStore: Codable, Sendable, Equatable {
         }
         // A Color page saved before the Color inspector and Scopes were panels of it: start from the new layout.
         if !s.colorWorkspace.allPanels.contains(.colorInspector) { s.colorWorkspace = Workspace.color }
+        s.library = s.library.healed()
+        s.colorWorkspace.name = Workspace.color.name
         if s.library.workspace(named: s.editName) == nil { s.editName = Workspace.editingPC.name }
         return s
     }

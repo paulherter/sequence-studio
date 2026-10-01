@@ -67,4 +67,51 @@ import Testing
         #expect(WorkspaceStore.load(from: url) == WorkspaceStore())
         #expect(WorkspaceStore.load(from: tmp()) == WorkspaceStore())
     }
+
+    // Paul's bug: after switching Editing - PC to Editing - MacBook, PC was gone from the list.
+    @Test func switchingBackAndForthKeepsEveryWorkspaceListed() throws {
+        var s = WorkspaceStore()
+        _ = s.library.saveAs("Mine", from: Workspace.editingPC)
+        let expected = [Workspace.editingPC.name, Workspace.editingMacBook.name, "Mine"]
+        #expect(s.library.names == expected)
+        for name in [Workspace.editingMacBook.name, Workspace.editingPC.name, "Mine", Workspace.editingMacBook.name] {
+            let ok = s.selectEdit(name); #expect(ok)
+            var w = s.current
+            w.hide(.effects)                       // an edit while the workspace is showing (stored as override)
+            s.updateCurrent(w)
+            #expect(s.library.names == expected)
+            #expect(s.editName == name)
+        }
+        let url = tmp()
+        try s.save(to: url)
+        #expect(WorkspaceStore.load(from: url).library.names == expected)
+    }
+
+    @Test func persistedStateMissingBuiltInsStillListsThem() throws {
+        let url = tmp()
+        var s = WorkspaceStore()
+        s.editName = "Gone"
+        try s.save(to: url)
+        let loaded = WorkspaceStore.load(from: url)
+        #expect(loaded.library.names.starts(with: [Workspace.editingPC.name, Workspace.editingMacBook.name]))
+        #expect(loaded.current.name == Workspace.editingPC.name)
+    }
+
+    @Test func userWorkspaceShadowedByABuiltInNameIsKeptUnderANewName() {
+        let lib = WorkspaceLibrary(userWorkspaces: [
+            Workspace(name: Workspace.editingPC.name.uppercased(), root: Workspace.editingPC.root),
+            Workspace(name: "Mine", root: Workspace.editingPC.root), Workspace(name: "mine", root: Workspace.editingPC.root),
+        ]).healed()
+        #expect(lib.names.count == 5 && Set(lib.names.map { $0.lowercased() }).count == 5)
+    }
+
+    @Test func resetAllBuiltInsDropsOverridesOnly() {
+        var lib = WorkspaceLibrary()
+        var w = Workspace.editingPC; w.hide(.effects)
+        _ = lib.update(w)
+        _ = lib.saveAs("Mine", from: Workspace.editingMacBook)
+        lib.resetAllBuiltIns()
+        #expect(!lib.isModifiedBuiltIn(Workspace.editingPC.name))
+        #expect(lib.names.contains("Mine"))
+    }
 }
