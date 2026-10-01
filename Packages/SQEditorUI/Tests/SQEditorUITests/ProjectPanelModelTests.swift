@@ -46,6 +46,19 @@ private func ref(_ name: String, path: String? = nil, w: Int = 3840, dur: Time =
         #expect(m.project.rootBin.children.count == 1)
     }
 
+    // Review finding 37: the same file dropped twice while the first probe still ran was added twice.
+    @Test func overlappingImportsOfOneFileAddItOnce() async {
+        let (m, _) = makeModel(probe: { url in
+            try await Task.sleep(for: .milliseconds(60))
+            return ref(url.lastPathComponent, path: url.path)
+        })
+        let url = URL(fileURLWithPath: "/x/a.mov")
+        async let first: Void = m.importFiles([url])
+        async let second: Void = m.importFiles([url])
+        _ = await (first, second)
+        #expect(m.project.media.count == 1)
+    }
+
     @Test func importSkipsDuplicatesAndReportsFailures() async {
         struct Boom: Error {}
         let (m, rec) = makeModel(probe: { url in
