@@ -133,6 +133,7 @@ final class EditorPanels {
         }
         tv.contextMenuProvider = { [weak self] p in self?.timelineMenu(at: p) }
         wireVolumeLine()
+        wireSpeedBand()
         tv.onEditMarker = { [weak self] id in self?.editMarker(id) }
         tv.onToggleChange = { [weak self] snap, linked in
             self?.onStatus?("Snapping \(snap ? "on" : "off"), Linked Selection \(linked ? "on" : "off")")
@@ -220,6 +221,7 @@ final class EditorPanels {
     private func timelineMenu(at p: CGPoint) -> NSMenu? {
         let tv = timelineView
         if let k = tv.volumeKey(at: p) { return volumeKeyMenu(clip: k.clip, key: k.key) }
+        if let k = tv.speedKeyHit(at: p) { return speedKeyMenu(clip: k.clip, hit: k.key) }
         tv.contextSelect(at: p)
         if tv.selection.isEmpty, !tv.captionSelection.isEmpty { return captionMenu() }
         let hasClipboard = session.clipboard != nil
@@ -250,6 +252,7 @@ final class EditorPanels {
             case .link, .unlink: self?.onCommand?(.link)
             case .nest: self?.onNest?()
             case .speed: self?.onCommand?(.speedDuration)
+            case .timeRemapping: self?.onCommand?(.toggleTimeRemapping)
             case .setToFrameSize, .scaleToFrameSize: self?.onFrameSize?()
             case .rename: self?.renameSelectedClip()
             case .label, .editCaption, .splitCaption, .mergeCaptions: break   // captions have their own menu (`captionMenu`)

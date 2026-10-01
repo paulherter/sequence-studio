@@ -24,6 +24,11 @@ public final class TimelineView: NSView {
     /// Volume rubber band edit of an audio clip: the clip as edited so far; one drag = began, changed..., ended.
     public var onVolumeEdit: ((Clip, VolumeEditPhase) -> Void)?
     var volumeDrag: VolumeDrag?
+    /// Time Remapping speed band edit: the clip and its speed track as edited so far; one drag = began, changed..., ended.
+    public var onSpeedEdit: ((SpeedEdit) -> Void)?
+    var speedDrag: SpeedDrag?
+    /// Video clips that show the speed band (view state, not saved).
+    public internal(set) var speedBandClips: Set<Clip.ID> = []
     /// Frames by which linked clips are out of sync (red badge on the clip); refreshed whenever `timeline` changes.
     var syncBadges: [Clip.ID: Int64] = [:]
     /// Builds the right-click menu for a point in view coordinates (see `TimelineContextMenu`). Nil = no menu.
@@ -405,6 +410,7 @@ public final class TimelineView: NSView {
             resizing = (zone, p.y, geometry.rows(for: timeline))
             return
         }
+        if beginSpeedDrag(at: p, event: event) { return }
         if beginVolumeDrag(at: p, event: event) { return }
         onPointerDown?()
         if event.clickCount == 2, case .caption(let id, _) = geometry.hitTest(p, in: timeline) {
@@ -424,6 +430,7 @@ public final class TimelineView: NSView {
 
     public override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
+        if updateSpeedDrag(to: p) { return }
         if updateVolumeDrag(to: p) { return }
         if let r = resizing {
             let dy = p.y - r.startY
@@ -448,6 +455,7 @@ public final class TimelineView: NSView {
     }
 
     public override func mouseUp(with event: NSEvent) {
+        if endSpeedDrag(at: convert(event.locationInWindow, from: nil)) { return }
         if endVolumeDrag(at: convert(event.locationInWindow, from: nil)) { return }
         if resizing != nil {
             resizing = nil
@@ -834,6 +842,7 @@ public final class TimelineView: NSView {
             drawLanes(rows: rows, clip: clip, visible: contentClip)
             drawPlayheadLine(clip: clip)
             drawGestureOverlay(clip: clip)
+            drawSpeedTip()
             drawDropOverlay(clip: clip)
             NSGraphicsContext.restoreGraphicsState()
         }
@@ -903,6 +912,10 @@ public final class TimelineView: NSView {
                                              visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height),
                                              cache: wf.cache,   // pixel-mapped: only the dirty columns are needed
                                              volumeDB: Self.volumeDB(of: c), reversed: c.reversed)
+                }
+                if track.kind == .video, speedBandClips.contains(c.id), SpeedBand.isAvailable(rowHeight: row.height) {
+                    drawSpeedBand(clip: c, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
+                                  visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height), selected: selection.contains(c.id))
                 }
                 if track.kind == .audio, VolumeLine.isAvailable(rowHeight: row.height) {
                     ClipDrawing.drawVolumeLine(clip: c, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),

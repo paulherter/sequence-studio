@@ -43,7 +43,7 @@ public enum EditorMenus {
         .delete, .rippleDelete,
     ]))
     public static let clip = MenuSpec(title: "Clip", items: cmds([
-        .insert, .overwrite, nil, .speedDuration, nil, .link, nil,
+        .insert, .overwrite, nil, .speedDuration, .toggleTimeRemapping, .removeTimeRemapping, nil, .link, nil,
         .setToFrameSize, nil,
         .audioGain, nil,
         .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation, .addKeyframe, .toggleSpeedGraph,

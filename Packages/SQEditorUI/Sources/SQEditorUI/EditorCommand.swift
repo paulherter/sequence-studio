@@ -26,6 +26,8 @@ public enum EditorCommand: Sendable, Hashable {
     case toggleSnapping, matchFrame, reverseMatchFrame, link, group
     /// Clip > Speed/Duration (Cmd+R).
     case speedDuration
+    /// Clip > Show Time Remapping: toggles the speed band on the selected video clips. Remove Time Remapping resets them to 100 %.
+    case toggleTimeRemapping, removeTimeRemapping
     // Clipboard / history
     case copy, cut, paste, pasteAttributes, undo, redo
     // Timeline selection, nudge, edit trims (Premiere: Cmd+Left/Right nudge, Opt+Shift+Left/Right trim 5 frames)
@@ -125,6 +127,8 @@ public enum EditorCommand: Sendable, Hashable {
         case .link: "Link"
         case .group: "Group"
         case .speedDuration: "Speed/Duration…"
+        case .toggleTimeRemapping: "Show Time Remapping"
+        case .removeTimeRemapping: "Remove Time Remapping"
         case .copy: "Copy"
         case .cut: "Cut"
         case .paste: "Paste"
