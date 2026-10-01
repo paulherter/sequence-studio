@@ -36,6 +36,8 @@ extension AppController {
         case .enableClip, .duplicate, .moveSelectionUp, .moveSelectionDown: return !session.selection.isEmpty
         case .setToFrameSize: return session.commandClipsForMenu(kind: .video).contains { session.selection.contains($0.id) }
         case .link: return session.linkMenuState.enabled
+        case .speedDuration: return session.speedDialogModel() != nil
+        case .audioGain: return !session.audioGainTargets.isEmpty
         case .paste, .pasteInsert: return session.clipboard != nil
         case .extendEdit, .toggleTrimType, .trimBackward, .trimForward, .trimBackward5, .trimForward5:
             return panels?.timelineView.interaction.edgeSelection != nil
