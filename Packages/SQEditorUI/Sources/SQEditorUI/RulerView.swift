@@ -10,6 +10,8 @@ public final class RulerView: NSView {
     public private(set) var inOut: TimeRange?
     public private(set) var markers: [Marker] = []
     public private(set) var playhead: Time = .zero
+    /// Timeline spans whose frames are cached (a thin strip along the top edge); only repainted when they change.
+    public private(set) var cachedRanges: [TimeRange] = []
     public var preferDropFrame = true { didSet { refreshFormat() } }
 
     private static let labelAttributes: [NSAttributedString.Key: Any] =
@@ -31,6 +33,14 @@ public final class RulerView: NSView {
     private func refreshFormat() {
         timecode = TimecodeFormat(frameDuration: geometry.frameDuration, preferDropFrame: preferDropFrame)
         needsDisplay = true
+    }
+
+    static let cacheStripHeight: CGFloat = 2
+
+    public func setCachedRanges(_ r: [TimeRange]) {
+        guard r != cachedRanges else { return }
+        cachedRanges = r
+        setNeedsDisplay(NSRect(x: 0, y: 0, width: bounds.width, height: Self.cacheStripHeight))
     }
 
     public func update(geometry: TimelineGeometry, inOut: TimeRange?, markers: [Marker], playhead: Time) {
@@ -78,6 +88,7 @@ public final class RulerView: NSView {
             NSGraphicsContext.saveGraphicsState()
             clip.clip()
             drawInOut(in: clip)
+            drawCacheStrip(in: clip)
             drawTicks(in: clip)
             drawMarkers(in: clip)
             NSGraphicsContext.restoreGraphicsState()
@@ -86,6 +97,15 @@ public final class RulerView: NSView {
         Theme.Colors.separator.setFill()
         CGRect(x: dirtyRect.minX, y: h - 1, width: dirtyRect.width, height: 1).fill()
         drawPlayheadHead(dirty: dirtyRect)
+    }
+
+    private func drawCacheStrip(in clip: CGRect) {
+        guard !cachedRanges.isEmpty else { return }
+        Theme.Colors.accent.withAlphaComponent(0.6).setFill()
+        for r in cachedRanges {
+            let x0 = max(geometry.x(for: r.start), clip.minX), x1 = min(geometry.x(for: r.end), clip.maxX)
+            if x1 > x0 { CGRect(x: x0, y: 0, width: x1 - x0, height: Self.cacheStripHeight).fill() }
+        }
     }
 
     private func drawInOut(in clip: CGRect) {

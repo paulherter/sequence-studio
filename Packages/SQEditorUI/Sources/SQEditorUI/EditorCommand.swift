@@ -53,6 +53,13 @@ public enum EditorCommand: Sendable, Hashable {
     case previousKeyframe, nextKeyframe, toggleSpeedGraph, addKeyframe
     // Audio
     case audioGain, toggleAudioScrubbing
+    // Clip > Video Options (effects-look): fade presets on the picture, frame holds
+    case videoFadeIn, videoFadeOut, addFrameHold, insertFrameHold
+    // Source and Project flow: Play In to Out with preroll/postroll (Shift+Space), Play Around (Shift+K), poster frame
+    // (Cmd+P / Option+P), Hover Scrub (Shift+H), Find (Cmd+F).
+    case playInToOutRoll, playAround, setPosterFrame, clearPosterFrame, toggleHoverScrub, find
+    // Transitions (Sequence menu): Cmd+D, Shift+Cmd+D, Shift+D
+    case applyVideoTransition, applyAudioTransition, applyDefaultTransitions
     // Captions
     case toggleCaptionsInMonitor
 
@@ -197,6 +204,19 @@ public enum EditorCommand: Sendable, Hashable {
         case .addKeyframe: "Add Keyframe"
         case .audioGain: "Audio Gain…"
         case .toggleAudioScrubbing: "Audio Scrubbing"
+        case .videoFadeIn: "Fade In"
+        case .videoFadeOut: "Fade Out"
+        case .addFrameHold: "Add Frame Hold"
+        case .insertFrameHold: "Insert Frame Hold Segment"
+        case .playInToOutRoll: "Play In to Out with Preroll/Postroll"
+        case .playAround: "Play Around"
+        case .setPosterFrame: "Set Poster Frame"
+        case .clearPosterFrame: "Clear Poster Frame"
+        case .toggleHoverScrub: "Hover Scrub"
+        case .find: "Find…"
+        case .applyVideoTransition: "Apply Video Transition"
+        case .applyAudioTransition: "Apply Audio Transition"
+        case .applyDefaultTransitions: "Apply Default Transitions to Selection"
         case .toggleCaptionsInMonitor: "Show Captions in Program Monitor"
         }
     }

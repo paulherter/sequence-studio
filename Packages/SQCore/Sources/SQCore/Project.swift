@@ -26,9 +26,15 @@ public struct MediaRef: Codable, Hashable, Sendable, Identifiable {
     public var info: MediaInfo?
     /// Label colour; nil = default for the media type.
     public var label: LabelColor?
+    /// Poster frame (Cmd+P in the Project panel): the time shown as the thumbnail; nil = automatic.
+    public var posterTime: Time?
+    /// Markers on the media itself (M in the Source monitor), sorted by time; nil = none.
+    public var sourceMarkers: [Marker]?
 
     public init(id: UUID = UUID(), name: String, path: String, bookmark: Data? = nil,
-                fingerprint: MediaFingerprint, duration: Time? = nil, info: MediaInfo? = nil, label: LabelColor? = nil) {
+                fingerprint: MediaFingerprint, duration: Time? = nil, info: MediaInfo? = nil, label: LabelColor? = nil,
+                posterTime: Time? = nil, sourceMarkers: [Marker]? = nil) {
+        self.posterTime = posterTime; self.sourceMarkers = sourceMarkers
         self.label = label
         self.id = id; self.name = name; self.path = path; self.bookmark = bookmark
         self.fingerprint = fingerprint; self.duration = duration; self.info = info

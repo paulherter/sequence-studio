@@ -449,8 +449,8 @@ private func track(_ clips: [Clip], kind: TrackKind = .video) -> Track {
         #expect(cmd(.char("e"), [.command, .shift]) == .enableClip)
         #expect(cmd(.char("/"), [.command, .shift]) == .duplicate)
         #expect(cmd(.char("e"), .shift) == .exportFrame)
-        // Cmd+D belongs to transitions: not bound here.
-        #expect(cmd(.char("d"), .command) == nil)
+        // Cmd+D belongs to transitions.
+        #expect(cmd(.char("d"), .command) == .applyVideoTransition)
     }
 
     @Test func everyNewCommandHasATitle() {

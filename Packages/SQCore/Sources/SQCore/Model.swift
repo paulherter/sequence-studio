@@ -14,6 +14,10 @@ public enum EditError: Error, Equatable {
     case invalidFormat
     /// Speed/Duration on a clip that has no constant speed (nested sequence, generator, still).
     case speedUnsupported
+    /// Apply Transition at a place that is not a cut (the clips do not touch).
+    case notACut
+    /// Not one frame of media beyond the cut(s) is available for the transition.
+    case insufficientMedia
 }
 
 /// What a clip plays: imported media, or another sequence of the project (nested sequence).
@@ -34,6 +38,9 @@ public struct GeneratorRef: Sendable, Hashable, Codable {
     public var payloadVersion: Int
 
     public static let text = "text"
+    /// A flat colour layer (transition dips). `payload` = display-encoded RGB bytes.
+    public static let solid = "solid"
+    public static func solid(rgb: [UInt8]) -> GeneratorRef { GeneratorRef(kind: solid, payload: Data(rgb)) }
 
     public init(kind: String, payload: Data, payloadVersion: Int = 1) {
         self.kind = kind; self.payload = payload; self.payloadVersion = payloadVersion
@@ -81,6 +88,15 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var reversed: Bool = false
     /// Audio: keep the pitch when speed is not 100 % (time-stretch); false = resample (pitch follows speed).
     public var keepsPitch: Bool = true
+    /// Opacity > Blend Mode (v22). Normal = plain alpha-over.
+    public var blendMode: BlendMode = .normal
+    /// Frame hold (v22): the clip shows this one source frame (media time) for its whole length, like a still. Video
+    /// only. Trims grow it freely in both directions (no media limit); `source` is nominal for a held clip.
+    public var holdFrame: Time?
+    /// fx toggle of the fixed Motion / Opacity sections (v22): off = the clip renders as if they were at their defaults
+    /// (values and keys stay stored). Opacity off also means blend mode Normal.
+    public var motionEnabled: Bool = true
+    public var opacityEnabled: Bool = true
     /// Clip > Enable (Shift+Cmd+E). A disabled clip stays on the timeline and in every edit but is skipped by the
     /// picture and the audio mix (v18). Files without the key decode as enabled.
     public var isEnabled: Bool = true
@@ -98,12 +114,13 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     /// How far the head can still grow, in timeline time (the source handle that plays first, divided by `speed`:
     /// before `source.start`, or after `source.end` for a reversed clip); nil = unbounded.
     var headHandle: Time? {
-        if isGenerator || isStill { return nil }
+        if isGenerator || isStill || holdFrame != nil { return nil }
         if reversed { return mediaDuration.map { speed.unscale($0 - source.end) } }
         return speed.unscale(source.start)
     }
     /// How far the tail can still grow, in timeline time; nil = unbounded.
     var tailRoom: Time? {
+        if holdFrame != nil { return nil }
         if isGenerator || isStill { return mediaDuration.map { speed.unscale($0 - source.end) } }
         if reversed { return speed.unscale(source.start) }
         return mediaDuration.map { speed.unscale($0 - source.end) }
@@ -118,8 +135,11 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public func sourceTime(at t: Time, frameDuration: Time) -> Time {
         let local = t - start
         if isGenerator { return local }
+        if let h = holdFrame { return h }
         if reversed {
-            return max(source.end - speed.scale(local + frameDuration), source.start)
+            let s = source.end - speed.scale(local + frameDuration)
+            // Outside the clip (a transition reading its handle) the reversed source runs on below `source.start`.
+            return timeline.contains(t) ? max(s, source.start) : max(s, .zero)
         }
         return source.start + speed.scale(local)
     }
@@ -149,7 +169,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB, isEnabled
+        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB, isEnabled, blendMode, holdFrame, motionEnabled, opacityEnabled
     }
 
     public init(from d: Decoder) throws {
@@ -171,6 +191,10 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   keepsPitch: try c.decodeIfPresent(Bool.self, forKey: .keepsPitch) ?? true)
         audioGainDB = try c.decodeIfPresent(Double.self, forKey: .audioGainDB) ?? 0
         isEnabled = try c.decodeIfPresent(Bool.self, forKey: .isEnabled) ?? true
+        blendMode = try c.decodeIfPresent(BlendMode.self, forKey: .blendMode) ?? .normal
+        holdFrame = try c.decodeIfPresent(Time.self, forKey: .holdFrame)
+        motionEnabled = try c.decodeIfPresent(Bool.self, forKey: .motionEnabled) ?? true
+        opacityEnabled = try c.decodeIfPresent(Bool.self, forKey: .opacityEnabled) ?? true
         // v8 -> v9: a radius that was not the default becomes an applied Rounded Corners effect.
         if let legacy = animation.legacyCornerRadius {
             animation.legacyCornerRadius = nil
@@ -254,6 +278,8 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
     public var isSolo: Bool
     /// Receives inserts/overwrites from the source monitor.
     public var isTargeted: Bool
+    /// Transitions at cuts and clip edges of this track (v17). Anchored to clip IDs; see `Transition.swift`.
+    public var transitions: [Transition] = []
     /// Row height in points (UI hint).
     public var height: Double
 
@@ -262,7 +288,8 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
     public init(id: UUID = UUID(), kind: TrackKind, clips: [Clip] = [],
                 isLocked: Bool = false, syncLock: Bool = true,
                 name: String = "", isVisible: Bool = true, isMuted: Bool = false, isSolo: Bool = false,
-                isTargeted: Bool = false, height: Double = Track.defaultHeight) {
+                isTargeted: Bool = false, height: Double = Track.defaultHeight, transitions: [Transition] = []) {
+        self.transitions = transitions
         self.id = id; self.kind = kind; self.clips = clips
         self.isLocked = isLocked; self.syncLock = syncLock
         self.name = name; self.isVisible = isVisible; self.isMuted = isMuted; self.isSolo = isSolo
@@ -270,7 +297,7 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, kind, clips, isLocked, syncLock, name, isVisible, isMuted, isSolo, isTargeted, height
+        case id, kind, clips, isLocked, syncLock, name, isVisible, isMuted, isSolo, isTargeted, height, transitions
     }
 
     public init(from d: Decoder) throws {
@@ -285,7 +312,8 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
                   isMuted: try c.decodeIfPresent(Bool.self, forKey: .isMuted) ?? false,
                   isSolo: try c.decodeIfPresent(Bool.self, forKey: .isSolo) ?? false,
                   isTargeted: try c.decodeIfPresent(Bool.self, forKey: .isTargeted) ?? false,
-                  height: try c.decodeIfPresent(Double.self, forKey: .height) ?? Track.defaultHeight)
+                  height: try c.decodeIfPresent(Double.self, forKey: .height) ?? Track.defaultHeight,
+                  transitions: try c.decodeIfPresent([Transition].self, forKey: .transitions) ?? [])
     }
 
     /// Takes part in ripple edits made on other tracks.
@@ -328,7 +356,11 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
             }
             if hole.end < c.timeline.end,
                var right = c.cropped(to: TimeRange(start: hole.end, end: c.timeline.end)) {
-                if keepsLeft { right.id = UUID(); right.relink(&relinks) }
+                if keepsLeft {
+                    let old = right.id
+                    right.id = UUID(); right.relink(&relinks)
+                    retargetTail(of: old, to: right.id)
+                }
                 out.append(right)
             }
         }
@@ -359,7 +391,14 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
         var right = c.cropped(to: TimeRange(start: t, end: c.timeline.end))!
         right.id = UUID()
         right.relink(&relinks)
+        retargetTail(of: c.id, to: right.id)
         clips.insert(right, at: i + 1)
+    }
+
+    /// A clip was cut in two: transitions that start from its tail (cut to the next clip, fade out) now belong to the right
+    /// half, which holds the old tail; transitions on its head stay on the left half, which keeps the ID.
+    mutating func retargetTail(of old: Clip.ID, to new: Clip.ID) {
+        for i in transitions.indices where transitions[i].outgoing == old { transitions[i].outgoing = new }
     }
 
     /// Removes a clip and leaves a gap.

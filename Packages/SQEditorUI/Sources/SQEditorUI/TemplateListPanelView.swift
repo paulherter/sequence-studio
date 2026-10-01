@@ -159,7 +159,11 @@ public class TemplateListPanelView: NSView, NSTableViewDataSource, NSTableViewDe
 /// double-click for the selection); it then shows in Effect Controls. Categories with no effect are not listed.
 @MainActor
 public final class EffectsPanelView: TemplateListPanelView {
-    public static let roundedCorners = "rounded-corners"
+    /// Entry ids are effect kinds (`ClipEffect.kind`).
+    public static let roundedCorners = ClipEffect.roundedCornersKind
+    public static let crop = ClipEffect.cropKind
+    public static let gaussianBlur = ClipEffect.gaussianBlurKind
+    public static let ultraKey = ClipEffect.ultraKeyKind
 
     public struct Entry: Sendable, Hashable {
         public var id: String, title: String, category: String, symbol: String
@@ -170,8 +174,22 @@ public final class EffectsPanelView: TemplateListPanelView {
     /// Everything that can be applied today. Audio effects, video transitions and audio transitions have no entry
     /// until the engine can render them.
     public static let catalog: [Entry] = [
-        Entry(id: roundedCorners, title: "Rounded Corners", category: "Video Effects", symbol: "app"),
-    ]
+        Entry(id: gaussianBlur, title: "Gaussian Blur", category: "Blur & Sharpen", symbol: "circle.dotted"),
+        Entry(id: ultraKey, title: "Ultra Key", category: "Keying", symbol: "person.crop.rectangle"),
+        Entry(id: crop, title: "Crop", category: "Transform", symbol: "crop"),
+        Entry(id: roundedCorners, title: "Rounded Corners", category: "Transform", symbol: "app"),
+    ] + transitionEntries
+
+    /// Pasteboard / row id of a transition: `transition.<TransitionKind raw value>`.
+    public static let transitionPrefix = "transition."
+    public static func transitionID(_ k: TransitionKind) -> String { transitionPrefix + k.rawValue }
+    public static func transitionKind(forID id: String) -> TransitionKind? {
+        id.hasPrefix(transitionPrefix) ? TransitionKind(rawValue: String(id.dropFirst(transitionPrefix.count))) : nil
+    }
+    static let transitionEntries: [Entry] = TransitionKind.allCases.map { k in
+        Entry(id: transitionID(k), title: k.name, category: k.trackKind == .video ? "Video Transitions" : "Audio Transitions",
+              symbol: k.trackKind == .video ? "square.on.square" : "waveform.path")
+    }
 
     /// Rows for a search text: entries whose title or category contain it (case-insensitive), under their category.
     public static func rows(matching query: String, in entries: [Entry] = catalog) -> [Row] {
@@ -189,7 +207,7 @@ public final class EffectsPanelView: TemplateListPanelView {
 
     public init() {
         super.init(rows: Self.rows(matching: ""), buttonTitle: "",
-                   hint: "Drag onto a clip, or double-click for the selected clips.", label: "Effects", searchable: true)
+                   hint: "Drag effects onto a clip and transitions onto a cut or clip end. Double-click applies to the selection.", label: "Effects", searchable: true)
         dragType = .sequenceEffectID
         onSearch = { [weak self] q in self?.rows = Self.rows(matching: q) }
     }

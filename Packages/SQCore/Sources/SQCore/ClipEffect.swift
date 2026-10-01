@@ -5,6 +5,12 @@ import Foundation
 public struct ClipEffect: Sendable, Hashable, Codable, Identifiable {
     public static let roundedCornersKind = "roundedCorners"
     public static let radiusKey = "radius"
+    public static let cropKind = "crop"
+    public static let cropLeftKey = "left", cropTopKey = "top", cropRightKey = "right", cropBottomKey = "bottom"
+    public static let gaussianBlurKind = "gaussianBlur"
+    public static let blurrinessKey = "blurriness"
+    public static let ultraKeyKind = "ultraKey"
+    public static let keyHueKey = "keyHue", toleranceKey = "tolerance", softenKey = "soften", spillKey = "spill"
 
     public var id: UUID
     public var kind: String
@@ -24,7 +30,14 @@ public struct ClipEffect: Sendable, Hashable, Codable, Identifiable {
 
     /// Parameter values an effect starts with (what "Reset" restores).
     public static func defaultParameters(for kind: String) -> [String: AnimatedProperty<Double>] {
-        kind == roundedCornersKind ? [radiusKey: AnimatedProperty(24.0)] : [:]
+        var out: [String: AnimatedProperty<Double>] = [:]
+        for p in EffectCatalog.spec(for: kind)?.params ?? [] { out[p.key] = AnimatedProperty(p.defaultValue) }
+        return out
+    }
+
+    /// A new instance of `kind` with its default values; nil for an unknown kind.
+    public static func make(kind: String) -> ClipEffect? {
+        EffectCatalog.spec(for: kind) == nil ? nil : ClipEffect(kind: kind, parameters: defaultParameters(for: kind))
     }
 
     func remapped(_ f: (Time) -> Time) -> ClipEffect {

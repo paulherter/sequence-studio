@@ -126,11 +126,13 @@ private func rates(_ a: [RouterAction]) -> [ShuttleAction] {
         #expect(last == PlaybackRate(4))
     }
 
-    @Test func jAfterLIsMinusOne() {
+    @Test func jAfterLSlowsDownOneStepThenReverses() {
         var r = router()
         _ = r.handle(down("l")); _ = r.handle(up("l"))
         _ = r.handle(down("l")); _ = r.handle(up("l"))
-        #expect(rates(r.handle(down("j"))) == [.setRate(PlaybackRate(-1))])
+        #expect(rates(r.handle(down("j"))) == [.setRate(PlaybackRate(1))])      // 2x -> 1x
+        _ = r.handle(up("j"))
+        #expect(rates(r.handle(down("j"))) == [.setRate(PlaybackRate(-1))])     // at 1x the opposite key reverses
     }
 
     @Test func kStops() {
