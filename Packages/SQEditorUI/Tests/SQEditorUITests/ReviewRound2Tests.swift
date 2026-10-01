@@ -45,4 +45,16 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         #expect(session.bounds.range == nil)
         #expect(session.clipboard == nil)
     }
+
+    // Finding 31: a refused replace (every caption track locked) returned 0 instead of nil.
+    @Test func replaceCaptionTextRefusedIsNil() {
+        let t = Timeline(name: "Main", frameDuration: Time(1, 30), tracks: [Track(kind: .video), Track(kind: .audio)])
+        let session = EditorSession(project: Project(name: "P", timelines: [t]))
+        session.replaceCaptions([CaptionItem(lines: ["cat"], range: TimeRange(start: s(0), end: s(1)), styleRef: "default")])
+        session.perform("lock") { p in
+            let id = p.timelines[0].id
+            _ = try? p.edit(id) { for i in $0.captionTracks.indices { $0.captionTracks[i].isLocked = true } }
+        }
+        #expect(session.replaceCaptionText(find: "cat", with: "fox", caseSensitive: false) == nil)
+    }
 }

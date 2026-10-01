@@ -86,7 +86,7 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
                 s.demuxers[id] = nil; s.audio[id] = nil; s.noAudio.remove(id); s.stills[id] = nil
                 s.videoOpen[id] = nil; s.audioOpen[id] = nil
             }
-            if new.contains(where: { $0.value.path != s.refs[$0.key]?.path }) {
+            if new.contains(where: { id, ref in s.refs[id].map { $0.path != ref.path } ?? false }) {   // a path change, not a new item
                 lutProvider.removeAll(); colorResolver?.invalidate()
             }
             s.refs = new

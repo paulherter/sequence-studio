@@ -57,7 +57,7 @@ public final class EditorSession {
     @ObservationIgnored private var forceDirty = false
     @ObservationIgnored private var pushed: (timeline: Timeline, sequences: [Timeline.ID: Timeline])?
     @ObservationIgnored private var mediaSnapshot: [MediaRef] = []
-    @ObservationIgnored private var requestedMedia: Set<UUID> = []
+    @ObservationIgnored var requestedMedia: Set<UUID> = []
     @ObservationIgnored var gestureCounter = 0
     @ObservationIgnored private var autosaveTask: Task<Void, Never>?
 
