@@ -65,7 +65,10 @@ public enum TextLayout {
     /// - Parameter boxHeight: area text: the box is `maxWidth` x `boxHeight`; the block is placed in it by
     ///   `style.verticalAlignment` and `bounds` is the box. Without it (point text, or a wrap width only) the block is
     ///   the text itself.
-    public static func layout(text: String, style: TextStyle, maxWidth: Double?, boxHeight: Double? = nil) -> TextLayoutResult {
+    public static func layout(text original: String, style: TextStyle, maxWidth: Double?, boxHeight: Double? = nil) -> TextLayoutResult {
+        // All caps changes the glyphs only: the caller keeps the text as typed, the layout (and so the renderer, which
+        // draws the line texts) sees the capitals.
+        let text = style.allCaps ? original.uppercased() : original
         let font = makeFont(style)
         let fontAscent = CTFontGetAscent(font), fontDescent = CTFontGetDescent(font), fontLeading = CTFontGetLeading(font)
         let wrap = maxWidth.map { max(1, $0) } ?? Double.greatestFiniteMagnitude
@@ -126,10 +129,10 @@ public enum TextLayout {
         return TextLayoutResult(lines: lines, bounds: bounds, inkBounds: ink, backgroundRect: bg)
     }
 
-    /// `rect` grown by the full stroke width (conservative: covers outside strokes) and united with its shadow.
+    /// `rect` grown by how far the stroke reaches (its width outside, half of it centred) and united with its shadow.
     /// Shadow offset is in layout space (positive y = down); blur is taken as full radius.
     static func inkRect(_ rect: TextRect, style: TextStyle) -> TextRect {
-        let grown = rect.expanded(by: style.stroke?.width ?? 0)
+        let grown = rect.expanded(by: style.stroke?.reach ?? 0)
         guard let sh = style.shadow else { return grown }
         return grown.union(grown.offsetBy(dx: sh.offsetX, dy: sh.offsetY).expanded(by: sh.blur))
     }

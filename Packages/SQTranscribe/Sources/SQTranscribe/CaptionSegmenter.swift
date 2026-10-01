@@ -10,11 +10,14 @@ public struct Caption: Sendable, Hashable {
     public var wordIndices: Range<Int>
     public var styleRef: String
     public var animationRef: String
+    /// The spoken words with their times (same time base as `range`): the karaoke highlight follows them.
+    public var words: [CaptionWord]
 
     public init(lines: [String], range: TimeRange, firstWordID: UUID = UUID(), lastWordID: UUID = UUID(),
-                wordIndices: Range<Int> = 0..<0, styleRef: String, animationRef: String) {
+                wordIndices: Range<Int> = 0..<0, styleRef: String, animationRef: String, words: [CaptionWord] = []) {
         self.lines = lines; self.range = range; self.firstWordID = firstWordID; self.lastWordID = lastWordID
         self.wordIndices = wordIndices; self.styleRef = styleRef; self.animationRef = animationRef
+        self.words = words
     }
 }
 
@@ -40,7 +43,8 @@ public enum CaptionSegmenter {
                 lines: wrap(slice.map(\.text), maxChars: preset.maxCharsPerLine),
                 range: TimeRange(start: s, end: e),
                 firstWordID: first.id, lastWordID: last.id, wordIndices: startIndex..<end,
-                styleRef: preset.styleRef, animationRef: preset.animationRef))
+                styleRef: preset.styleRef, animationRef: preset.animationRef,
+                words: slice.map { CaptionWord(text: $0.text, range: $0.range) }))
             lastEnd = e
             startIndex = end
         }
