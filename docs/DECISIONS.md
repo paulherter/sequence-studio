@@ -156,3 +156,6 @@ Premiere semantics: Scale 100 % = one upright source pixel per sequence pixel (a
 - Sequence Out without In is remembered (`Timeline.outOnlyEnd`, not saved) so a Source edit is back-timed to end at the Out.
 - Source marks and Source markers are clip metadata outside the undo history; the poster frame is a normal undo step. `MediaRef.posterTime`, `MediaRef.sourceMarkers`: project v19, identity migration.
 - Deleting: a media item used in a sequence stays and the status line names the sequences; a sequence cannot be deleted when it is the last one or nested in another.
+
+## 2026-10-01: Remove Silences is an explicit timeline edit (audio-shortform)
+"Remove Silences..." (Clip > Audio Options) detects pauses from the waveform and ripples them out of the timeline after a dialog (threshold dB, minimum length, padding, preview count). It never runs automatically and does not change media; one undo step. Flagged for Paul before merge.
