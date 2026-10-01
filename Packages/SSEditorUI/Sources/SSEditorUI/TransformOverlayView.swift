@@ -142,7 +142,7 @@ public final class TransformOverlayView: NSView {
         let shift = flags.contains(.shift), option = flags.contains(.option)
         switch d {
         case .body(let s, let g):
-            emit(snapped(g.moved(from: s, to: p, lockAxis: shift), geo: g, disabled: flags.contains(.command)))
+            emit(snapped(g.moved(from: s, to: p, lockAxis: shift), geo: g, disabled: flags.contains(.command), lockAxis: shift))
         case .scale(let h, let s, let g):
             emit(g.scaled(handle: h, from: s, to: p, modifiers: .init(shift: shift, option: option)))
         case .rotate(let s, let g, let last):
@@ -181,10 +181,12 @@ public final class TransformOverlayView: NSView {
     }
 
     /// Smart guides: the moved layer's edges and centre snap to the canvas and the other layers.
-    private func snapped(_ t: ClipTransform, geo g: TransformOverlayGeometry, disabled: Bool) -> ClipTransform {
+    private func snapped(_ t: ClipTransform, geo g: TransformOverlayGeometry, disabled: Bool, lockAxis: Bool) -> ClipTransform {
         guard !disabled, let targets = snapTargets, g.viewScale > 0 else { activeGuides = .none; return t }
         let box = LayerBounds.rect(size: g.fittedSize, transform: t)
+        // Shift axis lock: the locked axis did not move, so it must not snap either.
         let r = SnapGuides.snap(box: box, targets: targets, threshold: Self.snapDistance / g.viewScale)
+            .locking(x: lockAxis && t.position.x == g.transform.position.x, y: lockAxis && t.position.y == g.transform.position.y)
         activeGuides = r
         var out = t
         out.position = Vec2(t.position.x + r.dx, t.position.y + r.dy)

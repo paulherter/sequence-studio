@@ -20,6 +20,11 @@ public enum SnapGuides {
         public var verticalLines: [Double]
         public var horizontalLines: [Double]
         public static let none = Result(dx: 0, dy: 0, verticalLines: [], horizontalLines: [])
+
+        /// Shift axis lock: no correction (and no guide) on a locked axis.
+        public func locking(x: Bool, y: Bool) -> Result {
+            Result(dx: x ? 0 : dx, dy: y ? 0 : dy, verticalLines: x ? [] : verticalLines, horizontalLines: y ? [] : horizontalLines)
+        }
     }
 
     /// Canvas lines plus min / mid / max of every other layer's bounds.
@@ -89,10 +94,15 @@ public struct OverlayTarget: Sendable, Equatable {
     /// Text: its raster centre relative to the canvas centre (the clip's Position is added on top); zero for pictures.
     public var shift: Vec2
     public var positionTrack: KeyframeTrack<Vec2>
+    /// Text in/out animation factors at the playhead, folded into the drawn transform like the renderer does.
+    public var animScale = 1.0
+    public var animRotation = 0.0
 
     public var displayTransform: ClipTransform {
         var t = baseTransform
         t.position = t.position + shift
+        t.scale = Vec2(t.scale.x * animScale, t.scale.y * animScale)
+        t.rotation += animRotation
         return t
     }
 
@@ -100,6 +110,9 @@ public struct OverlayTarget: Sendable, Equatable {
     public func baseTransform(fromDisplay t: ClipTransform) -> ClipTransform {
         var b = t
         b.position = t.position - shift
+        let k = abs(animScale) > 1e-9 ? animScale : 1
+        b.scale = Vec2(t.scale.x / k, t.scale.y / k)
+        b.rotation = t.rotation - animRotation
         return b
     }
 
@@ -119,8 +132,10 @@ public struct OverlayTarget: Sendable, Equatable {
             }
             let shift = Vec2(f.x + f.width / 2 - Double(timeline.format.width) / 2 + f.offsetX,
                              f.y + f.height / 2 - Double(timeline.format.height) / 2 + f.offsetY)
-            return OverlayTarget(clip: clip.id, size: CGSize(width: f.width, height: f.height), isText: true, baseTransform: base,
-                                 shift: shift, positionTrack: KeyframeTrack<Vec2>())   // no motion path for text (keys are not shifted)
+            var target = OverlayTarget(clip: clip.id, size: CGSize(width: f.width, height: f.height), isText: true,
+                                       baseTransform: base, shift: shift, positionTrack: KeyframeTrack<Vec2>())
+            target.animScale = f.scale; target.animRotation = f.rotation
+            return target   // no motion path for text (keys are not shifted)
         }
         let size = project.pictureSize(of: clip).map { CGSize(width: $0.width, height: $0.height) } ?? canvas
         return OverlayTarget(clip: clip.id, size: size, isText: false, baseTransform: base, shift: .zero,

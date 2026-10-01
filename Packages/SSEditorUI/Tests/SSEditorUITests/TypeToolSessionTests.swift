@@ -42,4 +42,28 @@ private let template = TextTemplate(name: "Text", text: "Text", style: TextStyle
         #expect(session.activeTimeline?.tracks.allSatisfy { $0.clips.isEmpty } == true)
         #expect(session.selection.isEmpty)
     }
+
+    @Test func discardWithDepthLeavesNoUndoOrRedoTrace() throws {
+        let session = makeSession()
+        let depth = session.undoDepth
+        let id = try #require(session.addTextClip(template: template, position: .zero))
+        session.updateTextClip(id, template: TextTemplate(name: "t", text: "", style: template.style), animations: nil, continuesGesture: false)
+        #expect(session.discardTextClip(id, rewindingTo: depth))
+        #expect(session.undoDepth == depth)
+        #expect(!session.history.canRedo)
+        #expect(session.activeTimeline?.tracks.allSatisfy { $0.clips.isEmpty } == true)
+        #expect(session.selection.isEmpty)
+    }
+
+    @Test func addAndFirstTypedTextFoldIntoOneStep() throws {
+        let session = makeSession()
+        let depth = session.undoDepth
+        let id = try #require(session.addTextClip(template: template, position: .zero))
+        session.updateTextClip(id, template: TextTemplate(name: "t", text: "Hi", style: template.style), animations: nil, continuesGesture: false)
+        session.updateTextClip(id, template: TextTemplate(name: "t", text: "Hi!", style: template.style), animations: nil, continuesGesture: true)
+        session.foldUndo(fromDepth: depth, name: "Add Text")
+        #expect(session.undoDepth == depth + 1 && session.history.undoName == "Add Text")
+        session.undo()
+        #expect(session.activeTimeline?.tracks.allSatisfy { $0.clips.isEmpty } == true)
+    }
 }

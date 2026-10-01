@@ -19,13 +19,17 @@ import SSText
                           tracks: [Track(kind: .video, clips: [clip])])
         engine.setTimeline(tl)
         engine.seek(to: Time(1, 1))
-        #expect(engine.tick())
-        let tex = try #require(engine.lastRenderedTexture)
-        let w = tex.width, h = tex.height
-        let px = try #require(readback(tex, device: device))
-        // Some pixel in the middle band is lit.
-        var lit = 0
-        for y in (h / 2 - 30)..<(h / 2 + 30) { for x in 40..<(w - 40) where Float(px[(y * w + x) * 4 + 3]) > 0.5 { lit += 1 } }
+        // The first raster is rendered on a background task: the layer is invisible until it is ready, then the loop redraws.
+        var lit = 0, w = 0, h = 0
+        for _ in 0..<100 {
+            _ = engine.tick()
+            if let tex = engine.lastRenderedTexture, let px = readback(tex, device: device) {
+                w = tex.width; h = tex.height; lit = 0
+                for y in (h / 2 - 30)..<(h / 2 + 30) { for x in 40..<(w - 40) where Float(px[(y * w + x) * 4]) > 0.5 { lit += 1 } }
+                if lit > 50 { break }
+            }
+            try await Task.sleep(for: .milliseconds(20))
+        }
         #expect(lit > 50, "lit \(lit)")
     }
 }

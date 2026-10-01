@@ -479,7 +479,14 @@ public final class EffectControlsModel {
         let local = localPlayhead, inRange = playheadInClip
         var ok = true
         if t.position != start.position {
-            withVector(&c, .position) { ok = Self.apply(&$0, new: t.position, local: local, inRange: inRange, selected: []) && ok }
+            if t.anchor != start.anchor, c.animation.position.isAnimated {
+                // Anchor drag: Position only compensates so the picture stays put. With animated Position every key
+                // gets the same compensation (a key at the playhead alone would bend the motion path).
+                let d = t.position - start.position
+                withVector(&c, .position) { p in for id in p.track.keys.map(\.id) { p.track.update(id) { $0.value = $0.value + d } } }
+            } else {
+                withVector(&c, .position) { ok = Self.apply(&$0, new: t.position, local: local, inRange: inRange, selected: []) && ok }
+            }
         }
         if t.scale != start.scale {
             withVector(&c, .scale) { ok = Self.apply(&$0, new: t.scale, local: local, inRange: inRange, selected: []) && ok }

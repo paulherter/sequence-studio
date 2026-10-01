@@ -16,7 +16,10 @@ enum AudioExtraction {
             throw TranscriptionError.noAudio
         }
         let out = FileManager.default.temporaryDirectory.appendingPathComponent("ss-transcribe-\(UUID().uuidString).m4a")
-        try await export.export(to: out, as: .m4a)
+        do { try await export.export(to: out, as: .m4a) } catch {
+            try? FileManager.default.removeItem(at: out)   // a failed or cancelled export may leave a partial file
+            throw error
+        }
         return Source(url: out, isTemporary: true)
     }
 }

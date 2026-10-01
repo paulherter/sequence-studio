@@ -98,6 +98,19 @@ public enum TextGenerator {
                          offsetX: v("positionX", 0), offsetY: v("positionY", 0), rotation: v("rotation", 0))
     }
 
+    /// True when the raster for this clip's text and style (scale 1) is already cached: `frame` then returns at once.
+    public static func isCached(ref: GeneratorRef) -> Bool {
+        guard let (template, _) = try? decode(ref) else { return true }   // undecodable: nothing to wait for
+        return cache.contains(text: template.text, style: template.style, scale: 1)
+    }
+
+    /// Renders and caches the raster (scale 1) on the calling thread; call it from a background task so the render
+    /// thread and the main thread never pay for the first CoreText layout. Throws what the renderer throws.
+    public static func prewarm(ref: GeneratorRef) throws {
+        let (template, _) = try decode(ref)
+        _ = try cache.raster(text: template.text, style: template.style, scale: 1)
+    }
+
     /// Byte cap of the raster cache (linear half-float, 8 bytes per pixel).
     public static let cacheByteLimit = 128 * 1024 * 1024
     private static let cache = RasterCache(limit: cacheByteLimit)
@@ -112,6 +125,11 @@ public enum TextGenerator {
         private var total = 0, tick: UInt64 = 0
         private let limit: Int
         init(limit: Int) { self.limit = limit }
+
+        func contains(text: String, style: TextStyle, scale: Double) -> Bool {
+            lock.lock(); defer { lock.unlock() }
+            return entries[Key(text: text, style: style, scale: max(0.01, scale))] != nil
+        }
 
         func clear() { lock.lock(); entries = [:]; total = 0; lock.unlock() }
 

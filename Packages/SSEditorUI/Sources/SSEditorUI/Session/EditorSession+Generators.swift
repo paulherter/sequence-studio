@@ -35,13 +35,23 @@ extension EditorSession {
         return newID
     }
 
-    /// Removes a text clip that was left empty (Type tool: click-away without typing). Leaves a gap.
+    /// Removes a text clip that was left empty (Type tool: click-away without typing). With `depth` (the undo depth
+    /// before the clip was added) the add and any edits are withdrawn without a trace: no undo entry, no redo entry.
+    /// Without it the clip is lifted (gap) as one undo step.
     @discardableResult
-    public func discardTextClip(_ id: Clip.ID) -> Bool {
+    public func discardTextClip(_ id: Clip.ID, rewindingTo depth: Int? = nil) -> Bool {
+        if let depth, history.undoDepth > depth {
+            rewindUndo(toDepth: depth)
+            if selection.contains(id) { select(clips: selection.subtracting([id])) }
+            return true
+        }
         let ok = attempt("Delete Empty Text") { t in try TimelineEdit.lift([id]).apply(to: &t) }
         if ok, selection.contains(id) { select(clips: selection.subtracting([id])) }
         return ok
     }
+
+    /// Undo depth now, to be passed to `discardTextClip` / `foldUndo` later.
+    public var undoDepth: Int { history.undoDepth }
 
     /// Text or style edit of a generator clip. Edits of one gesture (`continuesGesture`) merge into one step.
     public func updateTextClip(_ id: Clip.ID, template: TextTemplate, animations: AnimationSet?, continuesGesture: Bool) {

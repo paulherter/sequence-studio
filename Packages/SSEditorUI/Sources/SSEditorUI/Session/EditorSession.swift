@@ -188,6 +188,15 @@ public final class EditorSession {
         notify([.project, .selection])
     }
 
+    /// Withdraws every undo step above `depth` (Type tool: an empty text box leaves no trace). No redo entries remain.
+    public func rewindUndo(toDepth depth: Int) {
+        history.rewind(toDepth: depth)
+        projectDidChange()
+    }
+
+    /// Folds the undo steps above `depth` into one named step (Type tool: add + typed text = "Add Text").
+    public func foldUndo(fromDepth depth: Int, name: String) { history.squash(fromDepth: depth, name: name) }
+
     private func projectDidChange() {
         if let id = activeTimelineID, project.timeline(id) == nil { activeTimelineID = nil }
         if activeTimelineID == nil { activeTimelineID = project.activeTimeline.flatMap { project.timeline($0) }?.id ?? project.timelines.first?.id }

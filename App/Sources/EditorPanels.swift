@@ -19,8 +19,9 @@ final class EditorPanels {
     /// Overlay state: the clip under manipulation, the gesture in flight, the text being typed.
     private var overlayTarget: OverlayTarget?
     private var overlayGesture: (target: OverlayTarget, start: ClipTransform)?
-    private struct TextEditing { var clip: Clip.ID; var template: TextTemplate; var animations: AnimationSet?; var isNew: Bool; var first = true }
+    private struct TextEditing { var clip: Clip.ID; var template: TextTemplate; var animations: AnimationSet?; var isNew: Bool; var depth = 0; var first = true }
     private var textEditing: TextEditing?
+    private var failedRasters = Set<GeneratorRef>()
     let monitorModel: MonitorPanelModel
     let monitorView: MonitorPanelView
     let projectModel: ProjectPanelModel
@@ -291,7 +292,12 @@ final class EditorPanels {
             effectModel.beginGesture()
         case .changed, .ended:
             guard let g = overlayGesture else { return }
-            effectModel.setTransform(g.target.baseTransform(fromDisplay: t), from: g.target.baseTransform(fromDisplay: g.start))
+            let wrote = effectModel.setTransform(g.target.baseTransform(fromDisplay: t), from: g.target.baseTransform(fromDisplay: g.start))
+            if !wrote {   // animated property and the playhead is outside the clip: nothing to write, hide instead of snapping back
+                effectModel.endGesture(); overlayGesture = nil
+                overlayTarget = nil; surface.setTarget(nil, snap: nil)
+                return
+            }
             if phase == .ended { effectModel.endGesture(); overlayGesture = nil }
         }
     }
@@ -301,17 +307,18 @@ final class EditorPanels {
         session.stopPlayback()
         var template = TextTemplateCatalog.all.first?.template ?? TextTemplate(name: "Text", text: "", style: TextStyle())
         template.name = "Text"; template.text = "Text"; template.animation = nil
+        let depth = session.undoDepth
         guard session.addTextClip(template: template, position: position) != nil else { return }
         session.seek(to: session.playhead)   // an empty sequence clamped the engine to 0: show the new text now
         updateOverlay()
-        beginTextEditing(selectAll: true, isNew: true)
+        beginTextEditing(selectAll: true, isNew: true, depth: depth)
     }
 
-    private func beginTextEditing(selectAll: Bool, isNew: Bool) {
+    private func beginTextEditing(selectAll: Bool, isNew: Bool, depth: Int = 0) {
         guard let clip = session.singleSelectedClip, let ref = clip.generator, let target = overlayTarget, target.clip == clip.id,
               let (template, animations) = try? TextGenerator.decode(ref) else { return }
         session.stopPlayback()
-        textEditing = TextEditing(clip: clip.id, template: template, animations: animations, isNew: isNew)
+        textEditing = TextEditing(clip: clip.id, template: template, animations: animations, isNew: isNew, depth: depth)
         surface.beginTextEditing(text: template.text, style: template.style, target: target, selectAll: selectAll)
     }
 
@@ -327,13 +334,31 @@ final class EditorPanels {
         guard let e = textEditing else { return }
         textEditing = nil
         // A text box that was created by the tool and left empty is not kept.
-        if e.isNew, text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { session.discardTextClip(e.clip) }
+        guard e.isNew else { return }
+        if text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            session.discardTextClip(e.clip, rewindingTo: e.depth)   // no undo or redo trace
+        } else {
+            session.foldUndo(fromDepth: e.depth, name: "Add Text")   // add + typing = one step
+        }
     }
 
     /// Follows selection, playhead and edits: what the overlay draws, and the lines it snaps to.
     func updateOverlay() {
         guard let tl = session.activeTimeline else { surface.setTarget(nil, snap: nil); overlayTarget = nil; return }
         surface.sequenceSize = CGSize(width: tl.format.width, height: tl.format.height)
+        // A text raster that is not cached yet is rendered on a background task, never on the main thread (typing
+        // is the exception: one short layout per keystroke).
+        if !session.isPlaying, !surface.isEditingText, let clip = session.singleSelectedClip, let ref = clip.generator,
+           ref.kind == GeneratorRef.text, !TextGenerator.isCached(ref: ref), !failedRasters.contains(ref) {
+            overlayTarget = nil
+            surface.setTarget(nil, snap: nil)
+            Task.detached(priority: .userInitiated) { [weak self] in
+                var failed = false
+                do { try TextGenerator.prewarm(ref: ref) } catch { NSLog("Text raster failed: \(error)"); failed = true }
+                await MainActor.run { if failed { self?.failedRasters.insert(ref) }; self?.updateOverlay() }
+            }
+            return
+        }
         guard !session.isPlaying, let clip = session.singleSelectedClip,
               let target = OverlayTarget.make(clip: clip, project: session.project, timeline: tl, at: session.playhead) else {
             overlayTarget = nil

@@ -65,6 +65,7 @@ public struct MonitorViewMapping: Sendable, Equatable {
     /// The picture follows the pointer: dragging right by `d.width` points moves the picture right.
     public func panned(byViewDelta d: CGSize) -> ViewerZoom {
         let s = Double(scale)
+        guard s > 0, s.isFinite, viewSize.width > 0, viewSize.height > 0 else { return zoom }
         let c = center
         return clamped(scale: s, centerX: Double(c.x) - Double(d.width * backingScale) / s,
                        centerY: Double(c.y) - Double(d.height * backingScale) / s)
@@ -75,6 +76,7 @@ public struct MonitorViewMapping: Sendable, Equatable {
     public func zoomed(by factor: CGFloat, about p: CGPoint) -> ViewerZoom {
         guard factor > 0, factor.isFinite else { return zoom }
         let s0 = Double(scale)
+        guard s0 > 0, s0.isFinite, viewSize.width > 0, viewSize.height > 0 else { return zoom }
         let s1 = min(max(s0 * Double(factor), Self.minScale), Self.maxScale)
         let c = center
         // Drawable-pixel offset of the anchor from the view centre.
