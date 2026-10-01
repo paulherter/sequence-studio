@@ -96,7 +96,9 @@ extension Clip {
     public mutating func applyVideoFade(_ edge: ClipEdge, duration requested: Time, frameDuration: Time? = nil) {
         let len = duration
         var d = OpacityFade.clamped(requested, clipDuration: len)
-        if let fd = frameDuration { d = min(d.snapped(to: fd), len) }       // keys sit on frames
+        if let fd = frameDuration {                                          // keys sit on frames; never past
+            d = min(d.snapped(to: fd), FadeKeys.snapDown(OpacityFade.clamped(len, clipDuration: len), fd))   // the whole frames in half the clip
+        }
         guard d > .zero else { return }
         switch edge {
         case .head:

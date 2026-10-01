@@ -7,7 +7,7 @@ import Testing
         let obj: ProjectFile.JSONObject = ["formatVersion": 20, "project": ["name": "P"] as ProjectFile.JSONObject]
         let step = try #require(ProjectFile.migrations[20])
         let out = try step(obj)
-        #expect(NSDictionary(dictionary: out).isEqual(to: NSDictionary(dictionary: obj)))
+        #expect(NSDictionary(dictionary: out).isEqual(NSDictionary(dictionary: obj)))
     }
 
     @Test func captionStyleAndKaraokeSurviveASaveAndLoad() throws {

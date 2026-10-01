@@ -7,7 +7,13 @@ public struct FadeMarks: Sendable, Hashable, Codable {
     public var head: [UUID] = []
     /// Tail fade: the key where the fade starts and the silent key at the clip end.
     public var tail: [UUID] = []
-    public init(head: [UUID] = [], tail: [UUID] = []) { self.head = head; self.tail = tail }
+    /// A user key that sat exactly where a fade put its silent key (clip start / clip end). The fade replaces it (one key
+    /// per time) and removing the fade puts it back.
+    public var displacedHead: Keyframe<Double>?
+    public var displacedTail: Keyframe<Double>?
+    public init(head: [UUID] = [], tail: [UUID] = [], displacedHead: Keyframe<Double>? = nil, displacedTail: Keyframe<Double>? = nil) {
+        self.head = head; self.tail = tail; self.displacedHead = displacedHead; self.displacedTail = displacedTail
+    }
     public var isEmpty: Bool { head.isEmpty && tail.isEmpty }
 }
 
@@ -45,6 +51,7 @@ public enum FadeKeys {
         let l = min(snapDown(length, frameDuration), max(snapDown(duration - tailLen, frameDuration), .zero))
         guard l > .zero else { return p }
         let level = p.value(atLocal: l)
+        marks.displacedHead = p.track.keys.first { $0.time == .zero && !marks.tail.contains($0.id) }
         let a = place(Keyframe(time: .zero, value: floor), in: &p, shared: marks.tail)
         let b = place(Keyframe(time: l, value: level), in: &p, shared: marks.tail)
         marks.head = [a, b]
@@ -61,6 +68,7 @@ public enum FadeKeys {
         let from = duration - l
         let level = p.value(atLocal: from)
         let a = place(Keyframe(time: from, value: level), in: &p, shared: marks.head)
+        marks.displacedTail = p.track.keys.first { $0.time == duration && !marks.head.contains($0.id) }
         let b = place(Keyframe(time: duration, value: floor), in: &p, shared: marks.head)
         marks.tail = [a, b]
         return p
@@ -69,19 +77,29 @@ public enum FadeKeys {
     /// Removes the head fade's two keys and nothing else. A line left without keys becomes a constant at the level the
     /// fade rose to.
     public static func removingHead(_ prop: AnimatedProperty<Double>, marks: inout FadeMarks) -> AnimatedProperty<Double> {
-        defer { marks.head = [] }
-        return removing(prop, ids: marks.head, keeping: marks.tail, levelKey: 1)
+        defer { marks.head = []; marks.displacedHead = nil }
+        return restoring(removing(prop, ids: marks.head, keeping: marks.tail, levelKey: 1), marks.displacedHead, ids: marks.head)
     }
 
     public static func removingTail(_ prop: AnimatedProperty<Double>, marks: inout FadeMarks) -> AnimatedProperty<Double> {
-        defer { marks.tail = [] }
-        return removing(prop, ids: marks.tail, keeping: marks.head, levelKey: 0)
+        defer { marks.tail = []; marks.displacedTail = nil }
+        return restoring(removing(prop, ids: marks.tail, keeping: marks.head, levelKey: 0), marks.displacedTail, ids: marks.tail)
     }
 
     /// Marks that still point at both of their keys; a fade whose key was deleted or replaced is no longer a fade (its
     /// remaining key is an ordinary key).
+    /// Puts a displaced user key back when the fade's keys were really removed and its time is free.
+    private static func restoring(_ p: AnimatedProperty<Double>, _ key: Keyframe<Double>?, ids: [UUID]) -> AnimatedProperty<Double> {
+        guard let key, !ids.isEmpty, !p.track.keys.contains(where: { $0.time == key.time }) else { return p }
+        var q = p
+        q.track.insert(key)
+        return q
+    }
+
     public static func pruned(_ marks: FadeMarks, in p: AnimatedProperty<Double>) -> FadeMarks {
-        FadeMarks(head: keys(p, marks.head) == nil ? [] : marks.head, tail: keys(p, marks.tail) == nil ? [] : marks.tail)
+        FadeMarks(head: keys(p, marks.head) == nil ? [] : marks.head, tail: keys(p, marks.tail) == nil ? [] : marks.tail,
+                  displacedHead: keys(p, marks.head) == nil ? nil : marks.displacedHead,
+                  displacedTail: keys(p, marks.tail) == nil ? nil : marks.displacedTail)
     }
 
     // MARK: internals

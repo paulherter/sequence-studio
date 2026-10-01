@@ -27,8 +27,8 @@ public enum Ducking {
             out.append(Keyframe(time: t, value: ducked ? v * factor : v))
         }
         for (a, b) in spans {
-            if a - fade > .zero { add(a - fade, ducked: false); add(a, ducked: true) } else { add(.zero, ducked: true) }
-            if b + fade < duration { add(b, ducked: true); add(b + fade, ducked: false) } else { add(duration, ducked: true) }
+            if a - fade > .zero { if fade > .zero { add(a - fade, ducked: false) }; add(a, ducked: true) } else { add(.zero, ducked: true) }
+            if b + fade < duration { add(b, ducked: true); if fade > .zero { add(b + fade, ducked: false) } } else { add(duration, ducked: true) }
         }
         return out
     }
