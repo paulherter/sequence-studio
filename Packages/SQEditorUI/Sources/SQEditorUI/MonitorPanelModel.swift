@@ -66,6 +66,9 @@ public final class MonitorPanelModel {
     /// Source Monitor drag: the pasteboard item for dragging the picture (`.both`) or only its video / audio.
     @ObservationIgnored public var dragItem: ((SourceStreams) -> NSPasteboardItem?)?
     @ObservationIgnored public var onDragEnded: (() -> Void)?
+    /// A mark grip on the scrub strip was dropped: `.markIn` carries the new In, `.markOut` the new stored Out (one frame
+    /// past the Out frame). Called once per drag; while dragging only `markIn` / `markOut` of the model preview it.
+    @ObservationIgnored public var onMarkEdit: ((MonitorScrubMath.Hit, Time) -> Void)?
     /// Fills the right-click menu of the picture area.
     @ObservationIgnored public var contextMenuBuilder: ((NSMenu) -> Void)?
 
@@ -102,12 +105,42 @@ public final class MonitorPanelModel {
         onAction?(action)
     }
 
-    /// Returns false (and does not seek) when the text is not a valid timecode.
+    /// Returns false (and does not seek) when the text is not a valid timecode. `+10` / `-5` move relative to the
+    /// current time (frames; `+1:00` is a timecode amount), never before 0 (Premiere).
     @discardableResult
     public func commitTimecodeText(_ text: String) -> Bool {
+        if let off = timecode.parseRelative(text) {
+            onSeek?(max(.zero, currentTime + off))
+            return true
+        }
         guard let t = timecode.parse(text) else { return false }
         onSeek?(t)
         return true
+    }
+
+    // MARK: Mark grips (drag In / Out on the strip)
+
+    /// Drag preview: moves the In or Out to the frame `frame` (`.playhead` is ignored). Out is stored one frame past it.
+    public func previewMark(_ end: MonitorScrubMath.Hit, frame: Time) {
+        switch end {
+        case .markIn:
+            markIn = frame
+            if let o = markOut, o <= frame { markOut = nil }
+        case .markOut:
+            let out = frame + frameDuration
+            markOut = out
+            if let i = markIn, i >= out { markIn = nil }
+        case .playhead: break
+        }
+    }
+
+    /// Drop: hands the final mark to the host.
+    public func commitMark(_ end: MonitorScrubMath.Hit) {
+        switch end {
+        case .markIn: if let i = markIn { onMarkEdit?(.markIn, i) }
+        case .markOut: if let o = markOut { onMarkEdit?(.markOut, o) }
+        case .playhead: break
+        }
     }
 
     public func setZoom(_ z: MonitorZoom) { zoom = z; onZoomChange?(z) }

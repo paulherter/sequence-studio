@@ -62,6 +62,8 @@ public final class ProjectPanelModel {
     /// Bumped on every change the view must reload for.
     public private(set) var revision = 0
 
+    /// Source In/Out set from the panel (`I` / `O` while hover scrubbing): not an undo step, the host stores the marks.
+    @ObservationIgnored public var onSourceMarks: ((MediaRef.ID, SourceMarks?) -> Void)?
     @ObservationIgnored private let probe: Probe
     @ObservationIgnored private let onEdit: EditHandler
     @ObservationIgnored private let status: @Sendable (MediaRef) -> MediaStatus
@@ -195,6 +197,22 @@ public final class ProjectPanelModel {
             return changed
         }
         return result
+    }
+
+    // MARK: Hover marks (I / O over a thumbnail)
+
+    /// `I` (`isIn`) or `O` while hover scrubbing at `time`: writes the media's Source marks like the Source monitor does
+    /// (Out includes its own frame, so it is stored one frame later). Returns false for unknown media.
+    @discardableResult
+    public func markFromHover(isIn: Bool, media id: MediaRef.ID, time: Time) -> Bool {
+        guard let ref = project.media(id) else { return false }
+        let fd = ref.info?.video?.nominalFrameDuration ?? Time(1, 30)
+        var p = project
+        if isIn { p.setSourceIn(time, for: id) } else { p.setSourceOut(time + fd, for: id) }
+        project = p
+        revision += 1
+        onSourceMarks?(id, p.sourceMarks[id])
+        return true
     }
 
     // MARK: Find (Cmd+F)

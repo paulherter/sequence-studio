@@ -26,7 +26,6 @@ extension EditorSession {
                                            frameDuration: still ? tl.format.frameDuration : v.nominalFrameDuration,
                                            audioSampleRate: tl.format.audioSampleRate)
             }
-            let at = tl.sourceEditPosition(playhead: self.playhead).snapped(to: tl.frameDuration)
             guard let targets = tl.sourceEditTargets(hasVideo: hasVideo, hasAudio: hasAudio, streams: streams) else {
                 noTarget = true; throw EditError.clipNotFound
             }
@@ -38,6 +37,8 @@ extension EditorSession {
             if !still, source.start + d > total { d = d - fd }
             guard d > .zero else { throw EditError.emptyClip }
             let placed = TimeRange(start: source.start, duration: d)
+            // Three-point rule: sequence In, else a sequence Out back-timed from the end, else the playhead.
+            let at = tl.sourceEditPlacement(sourceDuration: d, playhead: self.playhead).snapped(to: tl.frameDuration)
             try tl.threePointEdit(source: placed, media: id, name: ref.name, mediaDuration: still ? nil : total,
                                   isStill: still, initialScale: fit, targets: targets, at: at, mode: mode)
             endTime = at + d
@@ -49,15 +50,33 @@ extension EditorSession {
 }
 
 extension EditorSession {
-    /// Play In to Out: plays the sequence In..Out range (the whole sequence without marks), stops at Out, or loops.
-    public func playInToOut() {
+    /// Play In to Out (Option+K): plays the sequence In..Out range (the whole sequence without marks), stops at Out, or
+    /// loops. With `preroll` / `postroll` (Shift+Space, Premiere "Play In to Out with Preroll/Postroll") it starts that
+    /// long before In and ends that long after Out, clamped to the sequence.
+    public func playInToOut(preroll: Time = .zero, postroll: Time = .zero) {
         guard let t = activeTimeline else { return }
-        let range = t.inOut.flatMap { $0.isEmpty ? nil : $0 }
-        let start = range?.start ?? .zero
+        var range = t.inOut.flatMap { $0.isEmpty ? nil : $0 }
+        if let r = range, preroll > .zero || postroll > .zero {
+            range = PlaybackBounds.extended(r, preroll: preroll, postroll: postroll, duration: t.duration) ?? r
+        }
+        start(range: range, from: range?.start ?? .zero, returnTo: nil)
+    }
+
+    /// Shift+K, Play Around: from `preroll` before the playhead to `postroll` after it; at the end the playhead goes back
+    /// to where it was.
+    public func playAround(preroll: Time, postroll: Time) {
+        guard let t = activeTimeline else { return }
+        let here = playhead
+        guard let range = PlaybackBounds.playAround(at: here, preroll: preroll, postroll: postroll, duration: t.duration) else { return }
+        start(range: range, from: range.start, returnTo: here)
+    }
+
+    private func start(range: TimeRange?, from t: Time, returnTo: Time?) {
         if isPlaying { stopPlayback() }
-        seek(to: start)
+        seek(to: t)
         apply(shuttle: .setRate(.forward))
         bounds.range = range           // after apply: starting playback clears the range
+        bounds.returnTo = range == nil ? nil : returnTo
     }
 
     public func toggleLoop() { bounds.loop.toggle() }

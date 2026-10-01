@@ -165,4 +165,25 @@ private func key(_ sec: Int64, _ m: UUID = media, _ s: DecodeScale = .full) -> F
         }
         #expect(c.usedBytes <= 500)
     }
+
+    @Test func cachedRangesMergeAdjacentFramesAndSkipUnplaceable() {
+        let fd = Time(1, 10)
+        let c = FrameCache<Fake>(budgetBytes: 1000)
+        // Source frames 0, 0.1, 0.2 and 0.5, 0.6 on the timeline shifted by 1 s; one frame the mapping cannot place.
+        for pts in [0, 1, 2, 5, 6] { c.insert(Fake(id: pts, byteCost: 1), for: FrameKey(media: media, pts: Time(Int64(pts), 10))) }
+        c.insert(Fake(id: 99, byteCost: 1), for: FrameKey(media: media, pts: Time(99, 10)))
+        c.setFocus(playhead: .zero, direction: 0, mapping: { $0.pts == Time(99, 10) ? nil : $0.pts + Time(1, 1) })
+        let r = c.cachedRanges(frameDuration: fd)
+        #expect(r == [TimeRange(start: Time(10, 10), end: Time(13, 10)), TimeRange(start: Time(15, 10), end: Time(17, 10))])
+        #expect(c.count == 6)                                      // the query changed nothing
+    }
+
+    @Test func cachedRangesEmptyAndFrameLongerThanSpacing() {
+        let c = FrameCache<Fake>(budgetBytes: 1000)
+        #expect(c.cachedRanges(frameDuration: Time(1, 30)).isEmpty)
+        // 24 fps source in a 30 fps sequence: frames 1/24 apart are less than two sequence frames apart, so one span.
+        for i in 0..<5 { c.insert(Fake(id: i, byteCost: 1), for: FrameKey(media: media, pts: Time(Int64(i), 24))) }
+        let r = c.cachedRanges(frameDuration: Time(1, 30))
+        #expect(r.count == 1 && r[0].start == .zero && r[0].end == Time(4, 24) + Time(1, 30))
+    }
 }

@@ -151,6 +151,24 @@ public final class FrameCache<Payload: CacheCost>: Sendable {
         }
     }
 
+    /// Timeline spans that cached frames cover (the "yellow bar" of the ruler): every frame covers one `frameDuration`
+    /// from its timeline time; frames at most one frame apart merge into one span. Keys the focus mapping cannot place
+    /// on the timeline are skipped. Sorted, non-overlapping. A pure query (no side effects).
+    public func cachedRanges(frameDuration fd: Time) -> [TimeRange] {
+        guard fd > .zero else { return [] }
+        let (keys, mapping) = state.withLock { s in (Array(s.entries.keys), s.mapping) }
+        let times = keys.compactMap(mapping).sorted()
+        var out: [TimeRange] = []
+        for t in times {
+            if let last = out.last, t <= last.end + fd {
+                if t + fd > last.end { out[out.count - 1] = TimeRange(start: last.start, end: t + fd) }
+            } else {
+                out.append(TimeRange(start: t, duration: fd))
+            }
+        }
+        return out
+    }
+
     public func removeAll() {
         state.withLock { $0.entries.removeAll(); $0.index.removeAll(); $0.used = 0 }
     }

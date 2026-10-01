@@ -334,7 +334,8 @@ private final class SessionTestClock: @unchecked Sendable {
         r.session.seek(to: s(1)); r.session.markIn()
         #expect(r.timeline.inOut?.start == s(1))
         r.session.seek(to: s(3)); r.session.markOut()
-        #expect(r.timeline.inOut == TimeRange(start: s(1), end: s(3)))
+        let fd = r.timeline.frameDuration
+        #expect(r.timeline.inOut == TimeRange(start: s(1), end: s(3) + fd))      // Out includes its own frame
         r.session.seek(to: .zero); r.session.goToOut()
         #expect(r.session.playhead == s(3))
         r.session.goToIn()
@@ -349,7 +350,7 @@ private final class SessionTestClock: @unchecked Sendable {
         r.session.seek(to: s(1)); r.session.markOut()
         let io = try #require(r.timeline.inOut)
         #expect(io.start < io.end)
-        #expect(io.end == s(1))
+        #expect(io.end == s(1) + r.timeline.frameDuration)
     }
 
     @Test func addMarkerAtPlayhead() throws {
@@ -363,11 +364,12 @@ private final class SessionTestClock: @unchecked Sendable {
         let r = try Rig()
         r.session.seek(to: s(1)); r.session.markIn()
         r.session.seek(to: s(3)); r.session.markOut()
+        let fd = r.timeline.frameDuration
         r.session.liftRange()
-        #expect(r.timeline.tracks[0].clips.map(\.timeline) == [TimeRange(start: .zero, end: s(1)), TimeRange(start: s(3), end: s(4))])
+        #expect(r.timeline.tracks[0].clips.map(\.timeline) == [TimeRange(start: .zero, end: s(1)), TimeRange(start: s(3) + fd, end: s(4))])
         r.session.undo()
         r.session.extractRange()
-        #expect(r.timeline.tracks[0].clips.map(\.timeline) == [TimeRange(start: .zero, end: s(1)), TimeRange(start: s(1), end: s(2))])
+        #expect(r.timeline.tracks[0].clips.map(\.timeline) == [TimeRange(start: .zero, end: s(1)), TimeRange(start: s(1), end: s(2) - fd)])
     }
 
     @Test func rippleTrimToPlayheadShortensTheSequence() throws {

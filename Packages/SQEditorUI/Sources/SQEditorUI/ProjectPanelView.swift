@@ -112,6 +112,12 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
     public var onNewSequence: (() -> Void)?
     public var onReplaceFootage: ((MediaRef.ID) -> Void)?
     public var onImportRequest: (() -> Void)?
+    /// Double-click on a hover-scrubbed icon opens the clip at the hovered time (Premiere); nil time = from the start.
+    public var onOpenMediaAt: ((MediaRef.ID, Time?) -> Void)?
+    /// One-line messages (a delete that was blocked, Find results): the host shows them in its status bar.
+    public var onNotice: ((String) -> Void)?
+    /// Cmd+P without a hovered picture: the clip and time of the Source monitor, when it shows one of the selected clips.
+    public var sourcePosition: (() -> (MediaRef.ID, Time)?)?
     public enum ViewMode: String, Sendable { case list, icons }
     public private(set) var viewMode: ViewMode
     private let grid: ProjectIconView
@@ -518,7 +524,80 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
     private func deleteSelection() {
         let refs = selectedRefs
         guard !refs.isEmpty else { return }
-        if !model.delete(refs) { NSSound.beep() }
+        let r = model.delete(refs)
+        if let message = r.message { onNotice?(message) }
+        if !r.changed { NSSound.beep() }
+    }
+
+    // MARK: Hover scrub, poster frame, Find (Cmd+F)
+
+    /// Hover Scrub on/off (Shift+H, Project panel). While off, holding Shift scrubs temporarily.
+    public var hoverScrubEnabled: Bool {
+        get { grid.hoverScrubEnabled }
+        set { grid.hoverScrubEnabled = newValue }
+    }
+
+    /// `I` / `O` over a hovered thumbnail. False when nothing is hovered (the key then goes on to the default command).
+    public func handleHoverMark(isIn: Bool) -> Bool { viewMode == .icons && grid.handleHoverMark(isIn: isIn) }
+
+    /// Cmd+P: poster frame of the selected clips = the hovered frame, else the Source monitor's frame of that clip.
+    /// Option+P (`clear`) goes back to the automatic poster.
+    public func setPosterFrame(clear: Bool) {
+        let ids = selectedMediaIDs
+        guard !ids.isEmpty else { onNotice?("Select a clip first."); return }
+        if clear { _ = model.setPoster(nil, for: ids.map { .media($0) }); return }
+        if viewMode == .icons, let t = grid.hoveredTime, let h = grid.hoveredMedia, ids.contains(h) {
+            _ = model.setPoster(t, for: [.media(h)]); return
+        }
+        if let (id, t) = sourcePosition?(), ids.contains(id) { _ = model.setPoster(t, for: [.media(id)]); return }
+        onNotice?("Hover a clip in icon view (or open it in the Source monitor) and press Cmd+P.")
+    }
+
+    /// Cmd+F: asks for name / label / offline criteria and selects every match.
+    public func showFind() {
+        let alert = NSAlert()
+        alert.messageText = "Find"
+        alert.informativeText = "Select the clips and sequences that match."
+        let field = NSTextField(frame: NSRect(x: 0, y: 0, width: 240, height: 22))
+        field.placeholderString = "Text"
+        let which = NSPopUpButton(frame: NSRect(x: 0, y: 0, width: 110, height: 24), pullsDown: false)
+        which.addItems(withTitles: ["Name", "Label"])
+        let offline = NSButton(checkboxWithTitle: "Offline media only", target: nil, action: nil)
+        let stack = NSStackView(views: [field, which, offline])
+        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 8
+        stack.frame = NSRect(x: 0, y: 0, width: 240, height: 90)
+        alert.accessoryView = stack
+        alert.addButton(withTitle: "Find")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        guard alert.runModal() == .alertFirstButtonReturn else { return }
+        let c = ProjectPanelModel.FindCriteria(text: field.stringValue, field: which.indexOfSelectedItem == 1 ? .label : .name,
+                                               offlineOnly: offline.state == .on)
+        selectFound(c)
+    }
+
+    /// Selects the matches of `criteria` (and shows them); reports the count.
+    public func selectFound(_ c: ProjectPanelModel.FindCriteria) {
+        let found = model.find(c)
+        guard !found.isEmpty else { onNotice?(c.isEmpty ? "Nothing to find." : "No match."); NSSound.beep(); return }
+        model.searchText = ""
+        if viewMode == .icons {
+            let here = Set(grid.items)
+            let inView = found.filter(here.contains)
+            grid.setSelection(inView.isEmpty ? found : inView)
+        } else {
+            for ref in found { if case .media(let id) = ref, let parent = model.project.rootBin.parent(of: .media(id)) { expandChain(to: parent) } }
+            let rows = IndexSet(found.compactMap { nodes[$0] }.map { outline.row(forItem: $0) }.filter { $0 >= 0 })
+            outline.selectRowIndexes(rows, byExtendingSelection: false)
+            if let first = rows.first { outline.scrollRowToVisible(first) }
+        }
+        onNotice?("\(found.count) match\(found.count == 1 ? "" : "es").")
+    }
+
+    private func expandChain(to bin: Bin.ID) {
+        var chain: [Bin.ID] = [bin]
+        while let up = model.project.rootBin.parent(of: .bin(chain.last!)), up != model.project.rootBin.id { chain.append(up) }
+        for b in chain.reversed() { if let n = nodes[.bin(b)] { outline.expandItem(n) } }
     }
 
     /// Media items selected in the outline, in row order (for Insert / Overwrite).
@@ -652,12 +731,13 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         grid.onOpen = { [weak self] ref in
             guard let self else { return }
             switch ref {
-            case .media(let id): onOpenMedia?(id)
+            case .media(let id): if let open = onOpenMediaAt { open(id, grid.hoveredTime) } else { onOpenMedia?(id) }
             case .sequence(let id): onOpenSequence?(id)
             case .bin(let id): model.browseBin = id; model.currentBin = id; grid.setSelection([])
             }
         }
         grid.onDelete = { [weak self] in self?.deleteSelection() }
+        grid.onHoverMark = { [weak self] isIn, id, t in _ = self?.model.markFromHover(isIn: isIn, media: id, time: t) }
         grid.onRename = { [weak self] ref, name in
             guard let self else { return }
             if !model.rename(ref, to: name) { reload() }
@@ -746,6 +826,12 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
             add("New Sequence…", #selector(menuNewSequence))
             menu.addItem(.separator())
             add("Import…", #selector(menuImport))
+            menu.addItem(.separator())
+            add("Find…", #selector(menuFind))
+            if viewMode == .icons {
+                add("Hover Scrub", #selector(menuToggleHoverScrub))
+                menu.items.last?.state = hoverScrubEnabled ? .on : .off
+            }
             return
         }
         let online = !media.isEmpty && media.allSatisfy { !model.isOffline($0) }
@@ -762,7 +848,10 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
         }
         if hasBin && targets.count == 1 { add("New Bin", #selector(menuNewBin)); menu.addItem(.separator()) }
         add("Rename", #selector(menuRename), enabled: targets.count == 1)
-        add("Delete", #selector(menuDelete), enabled: hasBin || !media.isEmpty)
+        add("Delete", #selector(menuDelete), enabled: true)
+        if media.count == 1, !hasBin, !hasSeq, model.project.media(media[0])?.posterTime != nil {
+            add("Clear Poster Frame", #selector(menuClearPoster))
+        }
         if targets.contains(where: { if case .bin = $0 { false } else { true } }) {
             menu.addItem(.separator())
             addLabelItems(to: menu)
@@ -837,6 +926,9 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
     }
     @objc private func menuRename() { renameSelection() }
     @objc private func menuDelete() { deleteSelection() }
+    @objc private func menuClearPoster() { _ = model.setPoster(nil, for: menuTargets) }
+    @objc private func menuFind() { showFind() }
+    @objc private func menuToggleHoverScrub() { hoverScrubEnabled.toggle() }
     @objc private func menuReveal() {
         let urls = menuTargets.compactMap { r -> URL? in
             if case .media(let id) = r, let m = model.project.media(id) { return URL(fileURLWithPath: m.path) }

@@ -4,7 +4,7 @@ import Foundation
 /// `range` limits playback to an In..Out span (Premiere "Play In to Out"); nil = the whole sequence / clip.
 public struct PlaybackBounds: Sendable, Hashable {
     public var loop = false
-    public var range: TimeRange?
+    public var range: TimeRange? { didSet { if range == nil { returnTo = nil } } }
     /// Where the playhead goes when a non-looping range ends (Play Around: back to where it started). nil = stay at the end.
     public var returnTo: Time?
 
