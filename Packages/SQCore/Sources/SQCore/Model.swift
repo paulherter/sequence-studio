@@ -337,7 +337,11 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
             }
             if hole.end < c.timeline.end,
                var right = c.cropped(to: TimeRange(start: hole.end, end: c.timeline.end)) {
-                if keepsLeft { right.id = UUID(); right.relink(&relinks) }
+                if keepsLeft {
+                    let old = right.id
+                    right.id = UUID(); right.relink(&relinks)
+                    retargetTail(of: old, to: right.id)
+                }
                 out.append(right)
             }
         }
@@ -368,7 +372,14 @@ public struct Track: Sendable, Hashable, Codable, Identifiable {
         var right = c.cropped(to: TimeRange(start: t, end: c.timeline.end))!
         right.id = UUID()
         right.relink(&relinks)
+        retargetTail(of: c.id, to: right.id)
         clips.insert(right, at: i + 1)
+    }
+
+    /// A clip was cut in two: transitions that start from its tail (cut to the next clip, fade out) now belong to the right
+    /// half, which holds the old tail; transitions on its head stay on the left half, which keeps the ID.
+    mutating func retargetTail(of old: Clip.ID, to new: Clip.ID) {
+        for i in transitions.indices where transitions[i].outgoing == old { transitions[i].outgoing = new }
     }
 
     /// Removes a clip and leaves a gap.

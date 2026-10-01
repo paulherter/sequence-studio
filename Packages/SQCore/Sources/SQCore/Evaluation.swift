@@ -49,6 +49,19 @@ public struct LayerRequest: Sendable, Hashable {
     public var localTime: Time
     /// The clip's static colour settings (resolved against the media by `ColorPipeline.from` in SQRender).
     public var color: ClipColor
+    /// Set on the two layers of a cross dissolve (opacities already 1-w and w): the compositor sums them as premultiplied
+    /// colour instead of compositing B over A. `format` is the canvas the pair is summed in.
+    public var pair: PairInfo?
+
+    public enum PairRole: Sendable, Hashable { case first, second }
+    public struct PairInfo: Sendable, Hashable {
+        public var id: Transition.ID, role: PairRole, format: SequenceFormat
+        /// Nesting depth (`groups.count`) of the sequence the pair lives in.
+        public var depth: Int
+        public init(id: Transition.ID, role: PairRole, format: SequenceFormat, depth: Int) {
+            self.id = id; self.role = role; self.format = format; self.depth = depth
+        }
+    }
 
     public init(clip: Clip.ID, media: UUID, track: Track.ID, sourceTime: Time, transform: ClipTransform = .identity,
                 cornerRadius: Double = 0, groups: [LayerGroup] = [], generator: GeneratorRef? = nil,
@@ -146,21 +159,25 @@ extension Timeline {
                 out.append(LayerRequest(clip: dip.id, media: dip.id, track: track.id, sourceTime: .zero,
                                         groups: groups, generator: GeneratorRef.solid(rgb: dip.color), localTime: .zero))
             }
-            for (c, factor) in state.items {
+            for (n, (c, factor)) in state.items.enumerated() {
                 var tr = c.transform(at: t)
                 tr.opacity *= factor
+                let pair = state.pair.map { LayerRequest.PairInfo(id: $0, role: n == 0 ? .first : .second, format: format, depth: groups.count) }
                 if let seqID = c.sequence {
                     guard !visiting.contains(seqID), let inner = sequences(seqID) else { continue }
                     let g = LayerGroup(clip: c.id, track: track.id, sequence: seqID, format: inner.format,
                                        transform: tr, cornerRadius: c.effects(at: t).cornerRadius)
-                    out += inner.videoLayers(at: c.source.start + (t - c.start), sequences: sequences,
-                                             groups: groups + [g], visiting: visiting.union([seqID]))
+                    var inners = inner.videoLayers(at: c.source.start + (t - c.start), sequences: sequences,
+                                                   groups: groups + [g], visiting: visiting.union([seqID]))
+                    if let pair { for k in inners.indices where inners[k].pair == nil { inners[k].pair = pair } }
+                    out += inners
                 } else {
                     let local = t - c.start
                     out.append(LayerRequest(clip: c.id, media: c.media, track: track.id,
                                             sourceTime: c.sourceTime(at: t, frameDuration: fd),
                                             transform: tr, cornerRadius: c.effects(at: t).cornerRadius,
                                             groups: groups, generator: c.generator, localTime: local, color: c.color))
+                    out[out.count - 1].pair = pair
                 }
             }
         }
@@ -179,8 +196,13 @@ extension Timeline {
         let anySolo = audio.contains { $0.isSolo }
         var out: [AudioSegment] = []
         for track in audio where !track.isMuted && (!anySolo || track.isSolo) {
-            let info = track.audioTransitionInfo(frameDuration: format.frameDuration)
-            for c in track.clips {
+            // Clips that can sound in `range`: those overlapping it plus one neighbour each side (handles reach into them).
+            let first = max(0, track.clipIndex(endingAfter: range.start) - 1)
+            var last = first
+            while last < track.clips.count, track.clips[last].start < range.end { last += 1 }
+            let candidates = track.clips[first..<min(track.clips.count, last + 1)]
+            let info = track.audioTransitionInfo(frameDuration: format.frameDuration, for: Set(candidates.map(\.id)))
+            for c in candidates {
                 let x = info[c.id]
                 // A clip in a transition plays on into its handle: outgoing past its end, incoming before its start.
                 let extended = TimeRange(start: c.start - (x?.head ?? .zero), end: c.timeline.end + (x?.tail ?? .zero))

@@ -56,6 +56,10 @@ public struct RenderLayer: @unchecked Sendable {
 public indirect enum RenderNode: @unchecked Sendable {
     case layer(RenderLayer)
     case group(format: SequenceFormat, transform: ClipTransform, opacity: Double, cornerRadius: Double, children: [RenderNode])
+    /// Cross dissolve of two pictures: `first` and `second` (opacities already folded in: 1-w and w) are summed as premultiplied
+    /// colour, `first + second`, into one transparent canvas-sized image that is then composited over what is below. Correct for
+    /// letterboxed, transparent and nested pictures, on any track (a plain "over" of B on A would not fade A out where B is empty).
+    case pair(format: SequenceFormat, first: [RenderNode], second: [RenderNode])
 
     /// Builds the tree from flat `LayerRequest`s (bottom -> top) and their prepared layers (`layers[i]` belongs to
     /// `requests[i]`). Consecutive layers sharing the same `groups` prefix (same nested clip) form one group,
@@ -70,6 +74,19 @@ public indirect enum RenderNode: @unchecked Sendable {
         var i = 0
         while i < items.count {
             let (req, layer) = items[i]
+            if let p = req.pair, p.depth == depth {
+                var j = i + 1
+                while j < items.count, items[j].0.pair?.id == p.id { j += 1 }
+                func side(_ role: LayerRequest.PairRole) -> [RenderNode] {
+                    build(items[i..<j].filter { $0.0.pair?.role == role }.map { item in
+                        var r = item.0; r.pair = nil
+                        return (r, item.1)
+                    }, depth: depth)
+                }
+                out.append(.pair(format: p.format, first: side(.first), second: side(.second)))
+                i = j
+                continue
+            }
             guard req.groups.count > depth else { out.append(.layer(layer)); i += 1; continue }
             let g = req.groups[depth]
             var j = i + 1
@@ -98,6 +115,8 @@ public final class Compositor: @unchecked Sendable {
     public let device: MTLDevice
     private let convertPipeline: MTLComputePipelineState
     private let renderPipeline: MTLRenderPipelineState
+    /// Same shader with additive blending (premultiplied sum): the second side of a transition pair.
+    private let additivePipeline: MTLRenderPipelineState
     private let textureCache: CVMetalTextureCache
     private let colorGPU: ColorPipelineGPU
     private let dummy: MTLTexture
@@ -146,6 +165,8 @@ public final class Compositor: @unchecked Sendable {
         ca.sourceRGBBlendFactor = .one; ca.sourceAlphaBlendFactor = .one
         ca.destinationRGBBlendFactor = .oneMinusSourceAlpha; ca.destinationAlphaBlendFactor = .oneMinusSourceAlpha
         renderPipeline = try device.makeRenderPipelineState(descriptor: rp)
+        ca.destinationRGBBlendFactor = .one; ca.destinationAlphaBlendFactor = .one
+        additivePipeline = try device.makeRenderPipelineState(descriptor: rp)
         var cache: CVMetalTextureCache?
         guard CVMetalTextureCacheCreate(nil, nil, device, nil, &cache) == kCVReturnSuccess, let cache else {
             throw CompositorError.resourceAllocation
@@ -273,7 +294,7 @@ public final class Compositor: @unchecked Sendable {
     }
 
     private func encode(_ nodes: [RenderNode], format: SequenceFormat, into target: MTLTexture, commandBuffer: MTLCommandBuffer,
-                        retainer: Retainer, clear: MTLClearColor) throws {
+                        retainer: Retainer, clear: MTLClearColor, additiveOnto: Bool = false) throws {
         var prepared: [Prepared] = []
         for node in nodes {
             switch node {
@@ -292,15 +313,27 @@ public final class Compositor: @unchecked Sendable {
                          cornerRadius: radius * Self.radiusFactor(gf.width, gf.height, canvas: format))
                 u.opacity = Float(min(1, max(0, transform.opacity * opacity)))
                 prepared.append(Prepared(u: u, tex0: tex, tex1: dummy))
+            case .pair(let pf, let first, let second):
+                guard let tex = acquireIntermediate(width: pf.width, height: pf.height) else { throw CompositorError.resourceAllocation }
+                retainer.pooled.append(tex)
+                let clearAll = MTLClearColor(red: 0, green: 0, blue: 0, alpha: 0)
+                try encode(first, format: pf, into: tex, commandBuffer: commandBuffer, retainer: retainer, clear: clearAll)
+                try encode(second, format: pf, into: tex, commandBuffer: commandBuffer, retainer: retainer, clear: clearAll,
+                           additiveOnto: true)
+                var u = Uniforms()
+                u.mode = 3
+                geometry(&u, transform: .identity, canvas: format, size: SIMD2(Float(pf.width), Float(pf.height)))
+                prepared.append(Prepared(u: u, tex0: tex, tex1: dummy))
             }
         }
         let pass = MTLRenderPassDescriptor()
         pass.colorAttachments[0].texture = target
-        pass.colorAttachments[0].loadAction = .clear
+        // `additiveOnto`: keep what is in the target (the first side of a pair) and add this layer list on top.
+        pass.colorAttachments[0].loadAction = additiveOnto ? .load : .clear
         pass.colorAttachments[0].storeAction = .store
         pass.colorAttachments[0].clearColor = clear
         guard let enc = commandBuffer.makeRenderCommandEncoder(descriptor: pass) else { throw CompositorError.resourceAllocation }
-        enc.setRenderPipelineState(renderPipeline)
+        enc.setRenderPipelineState(additiveOnto ? additivePipeline : renderPipeline)
         enc.setCullMode(.none)
         for var p in prepared {
             enc.setVertexBytes(&p.u, length: MemoryLayout<Uniforms>.stride, index: 0)

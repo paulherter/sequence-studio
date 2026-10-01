@@ -542,3 +542,51 @@ private func rotatedHint(_ r: Int) -> VideoTrackInfo {
     near(pixel(t, 2, 2), [1, 0, 0], 1.0 / 255, "fills at native size")
     near(pixel(t, 61, 33), [1, 0, 0], 1.0 / 255, "fills corner")
 }
+
+// MARK: Cross dissolve pair (premultiplied sum)
+
+private func pairNode(_ a: RenderLayer, _ b: RenderLayer) -> RenderNode {
+    .pair(format: format(64, 64), first: [.layer(a)], second: [.layer(b)])
+}
+
+@Test func dissolvePairSumsTheTwoPicturesAndFadesTheOutgoingOneWhereTheIncomingIsEmpty() throws {
+    guard let (dev, q, comp) = setup() else { return }
+    let f = format(64, 64), t = makeTarget(dev, 64, 64)
+    // A = red full frame at 1-w, B = green scaled to the middle (letterboxed: transparent around it) at w, w = 0.3, over blue.
+    let w = 0.3
+    let a = solid(red, transform: ClipTransform(opacity: 1 - w))
+    let b = solid(green, transform: ClipTransform(scale: Vec2(0.5, 0.5), opacity: w))
+    try renderAndWait(comp, [.layer(solid(blue)), pairNode(a, b)], f, t, queue: q)
+    // Centre: both pictures present: 0.7 red + 0.3 green; the blue below is fully covered (pair alpha = 1).
+    near(pixel(t, 32, 32), [0.7, 0.3, 0], 0.01, "centre")
+    // Outside B: only A at 0.7 over blue. An "over" of B on a full A would leave pure red here.
+    near(pixel(t, 4, 4), [0.7, 0, 0.3], 0.01, "letterbox bar")
+}
+
+@Test func dissolvePairOnAnUpperTrackLeavesTheLowerTrackVisibleWhereBothAreTransparent() throws {
+    guard let (dev, q, comp) = setup() else { return }
+    let f = format(64, 64), t = makeTarget(dev, 64, 64)
+    let w = 0.5
+    let sc = Vec2(0.25, 0.25)
+    let a = solid(red, transform: ClipTransform(position: Vec2(-16, 0), scale: sc, opacity: 1 - w))
+    let b = solid(blue, transform: ClipTransform(position: Vec2(16, 0), scale: sc, opacity: w))
+    try renderAndWait(comp, [.layer(solid(green)), pairNode(a, b)], f, t, queue: q)
+    near(pixel(t, 2, 2), [0, 1, 0], 0.01, "outside both: lower track untouched")
+    near(pixel(t, 16, 32), [0.5, 0.5, 0], 0.01, "A alone at 50 %: red over green")
+    near(pixel(t, 48, 32), [0, 0.5, 0.5], 0.01, "B alone at 50 %: blue over green")
+}
+
+@Test func treeBuildsAPairFromTaggedRequests() {
+    let f = format(64, 64)
+    func req(_ role: LayerRequest.PairRole?, _ pid: UUID) -> LayerRequest {
+        var r = LayerRequest(clip: UUID(), media: UUID(), track: UUID(), sourceTime: .zero)
+        r.pair = role.map { LayerRequest.PairInfo(id: pid, role: $0, format: f, depth: 0) }
+        return r
+    }
+    let pid = UUID()
+    let reqs = [req(nil, pid), req(.first, pid), req(.second, pid), req(nil, pid)]
+    let tree = RenderNode.tree(requests: reqs, layers: reqs.map { _ in solid(red) })
+    #expect(tree.count == 3)
+    guard case .pair(_, let first, let second) = tree[1] else { Issue.record("expected a pair"); return }
+    #expect(first.count == 1 && second.count == 1)
+}

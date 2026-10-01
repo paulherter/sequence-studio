@@ -50,6 +50,20 @@ private func dissolveTimeline(kind: TransitionKind = .crossDissolve, alignment: 
         #expect(before.r > 250 && before.g < 3 && after.g > 250 && after.r < 3)
     }
 
+    @Test func letterboxedIncomingPictureStillFadesTheOutgoingOneOut() async throws {
+        var tl = try dissolveTimeline()
+        var bClip = tl.tracks[0].clips[1]
+        bClip.animation.scale = AnimatedProperty(Vec2(0.5, 0.5))
+        try tl.replaceClip(bClip)
+        let src = try TimelineFrameSource(timeline: tl, provider: provider(), width: 64, height: 32, frameDuration: fd, frameCount: 120)
+        // Frame 50 + 9: w = 10/21. Centre = A(1-w) + B(w); the corner has only A at (1-w) over black: red darker than in the centre.
+        let w = 10.0 / 21
+        let pb = try await src.frame(at: 59)
+        let centre = bgra(pb, 32, 16), corner = bgra(pb, 2, 2)
+        #expect(abs(Double(corner.r) - oetf255(1 - w)) <= 3 && corner.g <= 3, "corner \(corner)")
+        #expect(abs(Double(centre.r) - oetf255(1 - w)) <= 3 && abs(Double(centre.g) - oetf255(w)) <= 3, "centre \(centre)")
+    }
+
     @Test func dipToBlackPassesThroughBlack() async throws {
         let src = try TimelineFrameSource(timeline: try dissolveTimeline(kind: .dipToBlack, frames: 21), provider: provider(),
                                           width: 64, height: 32, frameDuration: fd, frameCount: 120)

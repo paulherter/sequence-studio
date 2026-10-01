@@ -201,7 +201,27 @@ extension Track {
         return out.sorted { $0.span.start < $1.span.start }
     }
 
-    func resolve(_ tr: Transition, frameDuration fd: Time) -> ResolvedTransition? {
+    /// Index of clip `id`, looking next to `hint` first (the evaluation loops already know where they are).
+    func clipIndex(_ id: Clip.ID, near hint: Int?) -> Int? {
+        if let h = hint, !clips.isEmpty {
+            for i in max(0, h - 2)...min(clips.count - 1, h + 2) where i >= 0 && clips[i].id == id { return i }
+        }
+        return clips.firstIndex { $0.id == id }
+    }
+
+    /// Index of the first clip that ends after `t` (binary search; clips are sorted and never overlap).
+    func clipIndex(endingAfter t: Time) -> Int {
+        var lo = 0, hi = clips.count
+        while lo < hi {
+            let mid = (lo + hi) / 2
+            if clips[mid].timeline.end > t { hi = mid } else { lo = mid + 1 }
+        }
+        return lo
+    }
+
+    /// `budgeted`: also respect the clip's other (earlier) transition. A clip holds at most its own length of transition
+    /// frames: the head transition keeps what it asks for (it comes first on the timeline), the tail one gets what is left.
+    func resolve(_ tr: Transition, frameDuration fd: Time, hint: Int? = nil, budgeted: Bool = true) -> ResolvedTransition? {
         guard tr.kind.trackKind == kind else { return nil }
         func frames(_ t: Time) -> Int64 { max(0, t.frameIndex(frameDuration: fd)) }
         func cap(_ t: Time?) -> Int64 { t.map { min(frames($0), Self.unbounded) } ?? Self.unbounded }
@@ -216,28 +236,37 @@ extension Track {
 
         switch (tr.outgoing, tr.incoming) {
         case let (o?, i?):
-            guard let oi = clips.firstIndex(where: { $0.id == o }), oi + 1 < clips.count, clips[oi + 1].id == i,
+            guard let oi = clipIndex(o, near: hint), oi + 1 < clips.count, clips[oi + 1].id == i,
                   clips[oi].timeline.end == clips[oi + 1].start else { return nil }
             let out = clips[oi], inc = clips[oi + 1]
-            let bMax = min(cap(inc.headHandle), frames(out.duration))
+            let bMax = min(cap(inc.headHandle), max(0, frames(out.duration) - (budgeted ? headPortion(of: o, except: tr.id, fd) : 0)))
             let aMax = min(cap(out.tailRoom), frames(inc.duration))
             let d = min(want, Self.maxFrames(tr.alignment, customBefore: cb, beforeMax: bMax, afterMax: aMax))
             guard d >= 1 else { return nil }
             let (b, a) = Self.split(tr.alignment, customBefore: cb, d)
             return make(cut: inc.start, d: d, b: b, a: a)
         case let (nil, i?):
-            guard let c = clip(i) else { return nil }
+            guard let ci = clipIndex(i, near: hint) else { return nil }
+            let c = clips[ci]
             let d = min(want, frames(c.duration))
             guard d >= 1 else { return nil }
             return make(cut: c.start, d: d, b: 0, a: d)
         case let (o?, nil):
-            guard let c = clip(o) else { return nil }
-            let d = min(want, frames(c.duration))
+            guard let ci = clipIndex(o, near: hint) else { return nil }
+            let c = clips[ci]
+            let d = min(want, max(0, frames(c.duration) - (budgeted ? headPortion(of: o, except: tr.id, fd) : 0)))
             guard d >= 1 else { return nil }
             return make(cut: c.timeline.end, d: d, b: d, a: 0)
         case (nil, nil):
             return nil
         }
+    }
+
+    /// Frames of clip `o` taken by the transition that sits on its head (the earlier one), before any budgeting.
+    private func headPortion(of o: Clip.ID, except id: Transition.ID, _ fd: Time) -> Int64 {
+        guard let h = transitions.first(where: { $0.incoming == o && $0.id != id }),
+              let r = resolve(h, frameDuration: fd, budgeted: false) else { return 0 }
+        return r.after.frameIndex(frameDuration: fd)
     }
 
     /// Largest whole-frame duration the handles allow for `tr` right now (0 = nothing fits).
@@ -259,11 +288,14 @@ extension Track {
     /// What the track shows at `t`: an optional solid dip layer (bottom) and the clips with an opacity factor.
     /// Without a transition at `t` this is just the clip under `t` at opacity 1.
     func videoEntries(at t: Time, frameDuration fd: Time)
-        -> (dip: (id: Transition.ID, color: [UInt8])?, items: [(clip: Clip, opacity: Double)]) {
-        let base = clips.first { $0.timeline.contains(t) }
-        guard !transitions.isEmpty else { return (nil, base.map { [($0, 1.0)] } ?? []) }
-        for tr in transitions {
-            guard let r = resolve(tr, frameDuration: fd), let i = r.frameIndex(at: t) else { continue }
+        -> (dip: (id: Transition.ID, color: [UInt8])?, pair: Transition.ID?, items: [(clip: Clip, opacity: Double)]) {
+        let k = clipIndex(endingAfter: t)
+        let base = k < clips.count && clips[k].timeline.contains(t) ? clips[k] : nil
+        guard !transitions.isEmpty else { return (nil, nil, base.map { [($0, 1.0)] } ?? []) }
+        // Only transitions on the clip at `t` and its neighbours can reach `t` (a span never leaves the clips it joins).
+        let near = Set(clips[max(0, k - 1)..<min(clips.count, k + 2)].map(\.id))
+        for tr in transitions where tr.outgoing.map(near.contains) == true || tr.incoming.map(near.contains) == true {
+            guard let r = resolve(tr, frameDuration: fd, hint: k), let i = r.frameIndex(at: t) else { continue }
             let w = TransitionMix.videoWeight(frameIndex: i, frames: r.frames)
             let dipKind = r.kind == .dipToBlack || r.kind == .dipToWhite
             let dip = dipKind ? (r.id, TransitionMix.dipColor(r.kind)) : nil
@@ -272,28 +304,31 @@ extension Track {
                 guard let oc = clip(o), let ic = clip(i) else { continue }
                 if dipKind {
                     let m = TransitionMix.video(r.kind, weight: w)
-                    return (dip, [(oc, m.outgoing), (ic, m.incoming)])
+                    return (dip, nil, [(oc, m.outgoing), (ic, m.incoming)])
                 }
-                // Linear dissolve over the outgoing picture: A at full opacity, B at w. Exact in linear light for opaque pictures.
-                return (nil, [(oc, 1), (ic, w)])
+                // Cross dissolve: premultiplied sum A*(1-w) + B*w in linear light (the compositor's `pair` node).
+                return (nil, r.id, [(oc, 1 - w), (ic, w)])
             case let (nil, i?):
                 guard let ic = clip(i) else { continue }
-                return (dip, [(ic, w)])
+                return (dip, nil, [(ic, w)])
             case let (o?, nil):
                 guard let oc = clip(o) else { continue }
-                return (dip, [(oc, 1 - w)])
+                return (dip, nil, [(oc, 1 - w)])
             case (nil, nil):
                 continue
             }
         }
-        return (nil, base.map { [($0, 1.0)] } ?? [])
+        return (nil, nil, base.map { [($0, 1.0)] } ?? [])
     }
 
     /// Per clip: how far its audio extends into its handles and the gain envelopes of its audio transitions.
-    func audioTransitionInfo(frameDuration fd: Time) -> [Clip.ID: (head: Time, tail: Time, envelopes: [TransitionEnvelope])] {
+    /// Only for the transitions that touch `ids` (the clips the caller is about to read).
+    func audioTransitionInfo(frameDuration fd: Time, for ids: Set<Clip.ID>)
+        -> [Clip.ID: (head: Time, tail: Time, envelopes: [TransitionEnvelope])] {
         guard kind == .audio, !transitions.isEmpty else { return [:] }
         var info: [Clip.ID: (head: Time, tail: Time, envelopes: [TransitionEnvelope])] = [:]
-        for r in resolvedTransitions(frameDuration: fd) {
+        for tr in transitions where tr.outgoing.map(ids.contains) == true || tr.incoming.map(ids.contains) == true {
+            guard let r = resolve(tr, frameDuration: fd) else { continue }
             if let o = r.outgoing {
                 var e = info[o] ?? (.zero, .zero, [])
                 e.tail = max(e.tail, r.after)

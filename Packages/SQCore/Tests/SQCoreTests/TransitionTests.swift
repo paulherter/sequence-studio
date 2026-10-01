@@ -117,7 +117,7 @@ private func pair(kind: TrackKind = .video, a: Clip? = nil, b: Clip? = nil) thro
         let rs = t.resolvedTransitions(on: tr)
         let head = try #require(rs.first { $0.outgoing == nil }), tail = try #require(rs.first { $0.incoming == nil })
         #expect(head.span == TimeRange(start: f(0), duration: f(12)))
-        #expect(tail.span == TimeRange(start: f(0), duration: f(60)))
+        #expect(tail.span == TimeRange(start: f(12), duration: f(48)))   // the clip also holds the 12-frame head fade
     }
 
     @Test func secondApplyReplacesInsteadOfStacking() throws {
@@ -270,11 +270,11 @@ private func pair(kind: TrackKind = .video, a: Clip? = nil, b: Clip? = nil) thro
         #expect(a.timeline.end == t.tracks[0].clips[1].start)
     }
 
-    @Test func splittingTheOutgoingClipDropsTheCutTransitionButSplittingIncomingKeepsIt() throws {
+    @Test func splittingEitherClipKeepsTheCutTransition() throws {
         var (t, tr, _, _, _) = try setup()
         var t2 = t
-        try t2.tracks[0].split(at: f(30))               // inside A: the right half of A touches B now
-        #expect(t2.resolvedTransitions(on: tr).isEmpty)
+        try t2.tracks[0].split(at: f(30))               // inside A: the transition follows the right half, which touches B
+        #expect(t2.resolvedTransitions(on: tr).count == 1)
         try t.tracks[0].split(at: f(90))                // inside B: B keeps the head with the old id
         #expect(t.resolvedTransitions(on: tr).count == 1)
     }
@@ -292,11 +292,11 @@ private func pair(kind: TrackKind = .video, a: Clip? = nil, b: Clip? = nil) thro
         #expect(p.timelines[0].tracks[0].transitions.isEmpty)
     }
 
-    @Test func pastedCopiesStartWithoutTransitions() throws {
+    @Test func pastedCopiesCarryTheirTransitionToo() throws {
         var (t, tr, a, b, _) = try setup()
         let cb = try #require(t.clipboard(copying: [a.id, b.id]))
         try t.paste(cb, at: f(200))
-        #expect(t.resolvedTransitions(on: tr).count == 1)
+        #expect(t.resolvedTransitions(on: tr).count == 2)
     }
 }
 
@@ -355,7 +355,9 @@ private func pair(kind: TrackKind = .video, a: Clip? = nil, b: Clip? = nil) thro
         // first frame of the span (frame 50): A under B, B at weight 1/21
         let l = t.videoLayers(at: f(50))
         #expect(l.count == 2 && l[0].clip == a.id && l[1].clip == b.id)
-        #expect(l[0].transform.opacity == 1 && abs(l[1].transform.opacity - 1.0 / 21) < 1e-12)
+        #expect(abs(l[0].transform.opacity - 20.0 / 21) < 1e-12 && abs(l[1].transform.opacity - 1.0 / 21) < 1e-12)
+        #expect(l[0].pair?.role == .first && l[1].pair?.role == .second && l[0].pair?.id == l[1].pair?.id)
+        #expect(before[0].pair == nil)
         // before the cut B plays 5 frames of its head handle
         let h = t.videoLayers(at: f(55))
         #expect(h[0].sourceTime == f(30 + 55) && h[1].sourceTime == f(30 - 5) && abs(h[1].transform.opacity - 6.0 / 21) < 1e-12)
@@ -405,5 +407,124 @@ private func pair(kind: TrackKind = .video, a: Clip? = nil, b: Clip? = nil) thro
         #expect(ea.role == .outgoing && eb.role == .incoming && ea.span == TimeRange(start: f(50), duration: f(20)))
         #expect(sa.envelopeGain(at: f(10)) == 1 && sa.envelopeGain(at: f(69)) < 0.1)
         #expect(sb.envelopeGain(at: f(50)) < 0.01)
+    }
+}
+
+@Suite struct TransitionBudgetTests {
+    /// A 10-frame clip B between two long ones, with two 8-frame transitions on it (one on each edge).
+    private func shortMiddle(kind: TrackKind = .video, alignment: TransitionAlignment = .startAtCut) throws -> (Timeline, Clip, Clip, Clip) {
+        let a = clip("A", start: 0, kind: kind), b = clip("B", start: 60, frames: 10, kind: kind), c = clip("C", start: 70, kind: kind)
+        var t = Track(kind: kind)
+        for x in [a, b, c] { try t.overwrite(x) }
+        var tl = Timeline(name: "t", frameDuration: fd, tracks: [t])
+        let video = kind == .video
+        try tl.addTransition(kind: video ? .crossDissolve : .constantPower, track: t.id, outgoing: a.id, incoming: b.id, duration: f(8), alignment: alignment)
+        try tl.addTransition(kind: video ? .crossDissolve : .constantPower, track: t.id, outgoing: b.id, incoming: c.id, duration: f(8), alignment: .endAtCut)
+        return (tl, a, b, c)
+    }
+
+    @Test func aClipNeverHoldsMoreTransitionFramesThanItsLength() throws {
+        let (t, _, b, _) = try shortMiddle()
+        let rs = t.resolvedTransitions(on: t.tracks[0].id)
+        #expect(rs.count == 2)
+        let head = rs[0], tail = rs[1]                       // timeline order
+        #expect(head.span.duration == f(8))                  // the earlier one keeps its request
+        #expect(tail.span.duration == f(2))                  // the later one gets the 2 frames left in B
+        #expect(head.after + tail.before <= b.timeline.duration)
+    }
+
+    @Test func videoAndAudioAgreeOnTheClampedSpans() throws {
+        let (v, _, _, _) = try shortMiddle(kind: .video)
+        let (au, _, _, _) = try shortMiddle(kind: .audio)
+        let vs = v.resolvedTransitions(on: v.tracks[0].id).map(\.span), asp = au.resolvedTransitions(on: au.tracks[0].id).map(\.span)
+        #expect(vs == asp)
+        // Video: inside the overlap-free part of B exactly one transition is active per frame (no storage-order lottery).
+        for n in 60..<70 {
+            let layers = v.videoLayers(at: f(Int64(n)))
+            #expect(layers.count == 2 || layers.count == 1)
+        }
+        // Audio: B's envelopes cover disjoint spans, so their product never dips below either alone.
+        let seg = au.audioSegments(in: TimeRange(start: f(55), duration: f(30))).first { $0.envelopes.count == 2 }
+        let e = try #require(seg).envelopes
+        #expect(e[0].span.end <= e[1].span.start)
+    }
+
+    @Test func settingADurationOnTheLaterTransitionClampsToTheRemainder() throws {
+        var (t, _, _, _) = try shortMiddle()
+        let tid = t.tracks[0].transitions[1].id
+        try t.setTransition(tid, duration: f(30))
+        #expect(t.resolvedTransitions(on: t.tracks[0].id)[1].span.duration == f(2))
+        #expect(t.tracks[0].transitions[1].duration == f(2))
+    }
+}
+
+@Suite struct TransitionSplitTests {
+    @Test func splittingTheOutgoingClipKeepsTheCutTransitionOnTheRightHalf() throws {
+        var (t, a, b) = try pair()
+        let tr = t.tracks[0].id
+        try t.addTransition(kind: .crossDissolve, track: tr, outgoing: a.id, incoming: b.id, duration: f(20))
+        try t.tracks[0].split(at: f(30))
+        let rs = t.resolvedTransitions(on: tr)
+        #expect(rs.count == 1 && rs[0].outgoing != a.id && rs[0].incoming == b.id && rs[0].cut == f(60))
+        t.pruneTransitions()
+        #expect(t.tracks[0].transitions.count == 1)
+    }
+
+    @Test func splittingAClipMovesItsTailFadeToTheRightHalfAndKeepsTheHeadFade() throws {
+        var (t, a, _) = try pair()
+        let tr = t.tracks[0].id
+        try t.addTransition(kind: .dipToBlack, track: tr, outgoing: nil, incoming: a.id, duration: f(10))
+        try t.addTransition(kind: .dipToBlack, track: tr, outgoing: a.id, incoming: nil, duration: f(10))
+        try t.tracks[0].split(at: f(30))
+        let rs = t.resolvedTransitions(on: tr)
+        let left = t.tracks[0].clips[0], right = t.tracks[0].clips[1]
+        #expect(left.id == a.id)
+        #expect(rs.first { $0.incoming == a.id && $0.outgoing == nil }?.span == TimeRange(start: .zero, duration: f(10)))
+        #expect(rs.first { $0.outgoing == right.id && $0.incoming == nil }?.span == TimeRange(start: f(50), duration: f(10)))
+        #expect(rs.count == 2)
+    }
+
+    @Test func addEditAndRazorGoThroughTheSamePath() throws {
+        var (t, a, b) = try pair()
+        let tr = t.tracks[0].id
+        try t.addTransition(kind: .crossDissolve, track: tr, outgoing: a.id, incoming: b.id, duration: f(20))
+        _ = try t.addEdit(at: f(20), tracks: nil)
+        #expect(t.resolvedTransitions(on: tr).count == 1)
+    }
+}
+
+@Suite struct TransitionClipboardTests {
+    @Test func copyingTwoAdjacentClipsCopiesTheirCutTransition() throws {
+        var (t, a, b) = try pair()
+        let tr = t.tracks[0].id
+        try t.addTransition(kind: .crossDissolve, track: tr, outgoing: a.id, incoming: b.id, duration: f(20))
+        try t.addTransition(kind: .dipToBlack, track: tr, outgoing: b.id, incoming: nil, duration: f(10))
+        let cb = try #require(t.clipboard(copying: [a.id, b.id]))
+        #expect(cb.transitions.count == 2)
+        try t.paste(cb, at: f(200))
+        let rs = t.resolvedTransitions(on: tr)
+        #expect(rs.count == 4)
+        let copies = rs.filter { $0.span.start >= f(190) }
+        #expect(copies.count == 2 && copies.contains { $0.kind == .crossDissolve && $0.cut == f(260) })
+        #expect(Set(copies.map(\.id)).isDisjoint(with: Set(rs.filter { $0.span.start < f(190) }.map(\.id))))
+    }
+
+    @Test func copyingOneClipOfACutLeavesTheTransitionBehind() throws {
+        var (t, a, b) = try pair()
+        let tr = t.tracks[0].id
+        try t.addTransition(kind: .crossDissolve, track: tr, outgoing: a.id, incoming: b.id, duration: f(20))
+        let cb = try #require(t.clipboard(copying: [b.id]))
+        #expect(cb.transitions.isEmpty)
+        try t.paste(cb, at: f(200))
+        #expect(t.resolvedTransitions(on: tr).count == 1)
+    }
+
+    @Test func insertPasteKeepsTheCopiedTransition() throws {
+        var (t, a, b) = try pair()
+        let tr = t.tracks[0].id
+        try t.addTransition(kind: .crossDissolve, track: tr, outgoing: a.id, incoming: b.id, duration: f(20))
+        let cb = try #require(t.clipboard(copying: [a.id, b.id]))
+        try t.paste(cb, at: f(120), insert: true)
+        #expect(t.resolvedTransitions(on: tr).count == 2)
     }
 }
