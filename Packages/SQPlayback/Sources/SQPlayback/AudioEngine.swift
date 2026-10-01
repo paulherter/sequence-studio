@@ -326,6 +326,8 @@ public final class AudioEngine: AudioPlaying, @unchecked Sendable {
         scrubAudio?.setTimeline(timeline, sequences: sequences)
     }
 
+    public func mediaChanged(_ ids: Set<UUID>) { feeder.mediaChanged(ids) }
+
     public func start() { core.playing.store(true, ordering: .releasing) }
     public func stop() { core.playing.store(false, ordering: .releasing) }
 

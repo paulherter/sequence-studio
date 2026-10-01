@@ -1,3 +1,4 @@
+import Foundation
 import Synchronization
 import SQCore
 
@@ -36,6 +37,8 @@ public protocol AudioPlaying: AnyObject, Sendable {
     /// Mixer rate (48 kHz): the rate of `consumedFrames` and of the feeder's timeline frames.
     var sampleRate: Int { get }
     func setTimeline(_ timeline: Timeline, sequences: [Timeline.ID: Timeline])
+    /// The files behind these media changed (relink): cached audio sources are reopened. Default: nothing cached.
+    func mediaChanged(_ ids: Set<UUID>)
     /// Brings the output up (hardware, feeder thread). Idempotent. May block (hardware start): call it off the render
     /// path. Throws when there is no usable output device.
     func prepare() throws
@@ -188,4 +191,8 @@ public final class ManualAudio: AudioPlaying {
     public var underrunCount: Int { 0 }
     public func meterSnapshot() -> AudioMeterSnapshot { state.withLock { $0.meter } }
     public func setRestartHandler(_ handler: (@Sendable () -> Void)?) { state.withLock { $0.restart = handler } }
+}
+
+extension AudioPlaying {
+    public func mediaChanged(_ ids: Set<UUID>) {}
 }

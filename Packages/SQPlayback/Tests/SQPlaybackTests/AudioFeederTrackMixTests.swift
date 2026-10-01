@@ -238,3 +238,76 @@ private func played(_ f: AudioFeeder, _ n: Int) -> (l: [Float], r: [Float]) {
         #expect(st.l <= 0.5 && st.r <= 0.5 && mono.l <= 0.5 && mono.r <= 0.5)      // no pan boost above unity
     }
 }
+
+/// Review findings 13-15: source invalidation, open failures and the feeder thread lifecycle.
+@Suite struct AudioFeederLifecycleTests {
+    private final class Counter: @unchecked Sendable {
+        private let lock = NSLock(); private var n = 0, urls: [UUID: Int] = [:]
+        func hit(_ m: UUID) { lock.lock(); n += 1; urls[m, default: 0] += 1; lock.unlock() }
+        var count: Int { lock.lock(); defer { lock.unlock() }; return n }
+    }
+
+    private func setup(_ resolver: @escaping @Sendable (UUID) throws -> any AudioSource) -> (AudioFeeder, Timeline, UUID) {
+        let m = UUID()
+        let c = Clip(name: "c", media: m, kind: .audio, source: TimeRange(start: .zero, duration: frames(20_000)), start: .zero)
+        let t = Timeline(name: "t", format: fmt, tracks: [Track(kind: .audio, clips: [c])])
+        return (AudioFeeder(timeline: t, ring: RingBuffer(capacity: 1 << 14), blockFrames: 1024, resolver: resolver), t, m)
+    }
+    private func block(_ f: AudioFeeder, _ t: Timeline, _ from: Int64) -> Float {
+        var l = [Float](repeating: 9, count: 256), r = l
+        l.withUnsafeMutableBufferPointer { lp in r.withUnsafeMutableBufferPointer { rp in
+            f.mix(timeline: t, startFrame: from, count: 256, left: lp.baseAddress!, right: rp.baseAddress!) } }
+        return l[10]
+    }
+
+    @Test func aFailedOpenIsNotRetriedEveryBlockButAfterMediaChanged() {
+        struct Missing: Error {}
+        let counter = Counter()
+        let (f, t, m) = setup { id in counter.hit(id); throw Missing() }
+        for i in 0..<20 { #expect(block(f, t, Int64(i) * 256) == 0) }
+        #expect(counter.count == 1, "resolver hit \(counter.count) times for 20 blocks")
+        f.mediaChanged([m])
+        _ = block(f, t, 0)
+        #expect(counter.count == 2)                                      // relinked: tried again at once
+        f.openRetryInterval = .zero                                      // and after the retry interval
+        _ = block(f, t, 256); _ = block(f, t, 512)
+        #expect(counter.count == 4)
+    }
+
+    @Test func relinkedMediaPlaysTheNewFileWithoutRestart() {
+        final class Box: @unchecked Sendable { let lock = NSLock(); var level: Float = 0.25
+            func get() -> Float { lock.lock(); defer { lock.unlock() }; return level }
+            func set(_ v: Float) { lock.lock(); level = v; lock.unlock() } }
+        let box = Box()
+        let (f, t, m) = setup { _ in constant(30_000, box.get()) }
+        #expect(abs(block(f, t, 0) - 0.25) < 1e-6)
+        box.set(0.75)
+        #expect(abs(block(f, t, 256) - 0.25) < 1e-6)                    // still the cached old source
+        f.mediaChanged([m])
+        #expect(abs(block(f, t, 512) - 0.75) < 1e-6)
+        box.set(0.5); f.invalidateSources()
+        #expect(abs(block(f, t, 768) - 0.5) < 1e-6)
+    }
+
+    @Test func invalidatingFromOtherThreadsWhileMixingIsSafe() async {
+        let (f, t, m) = setup { _ in constant(30_000, 0.5) }
+        await withTaskGroup(of: Void.self) { g in
+            g.addTask { for i in 0..<400 { _ = self.block(f, t, Int64(i % 20) * 256) } }
+            g.addTask { for _ in 0..<2000 { f.mediaChanged([m]); f.invalidateSources() } }
+        }
+        #expect(abs(block(f, t, 0) - 0.5) < 1e-6)
+    }
+
+    @Test func rapidStopStartLeavesExactlyOneFeederThread() async throws {
+        let (f, _, _) = setup { _ in constant(30_000) }
+        for _ in 0..<100 { f.start(); f.stop() }
+        f.start(); f.start()                                              // idempotent
+        for _ in 0..<200 where f.liveFeederThreads != 1 { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(f.liveFeederThreads == 1)
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(f.liveFeederThreads == 1)
+        f.stop(); f.stop()
+        for _ in 0..<200 where f.liveFeederThreads != 0 { try await Task.sleep(for: .milliseconds(10)) }
+        #expect(f.liveFeederThreads == 0)
+    }
+}

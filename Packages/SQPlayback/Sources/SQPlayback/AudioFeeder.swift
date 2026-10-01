@@ -130,7 +130,21 @@ public final class AudioFeeder: @unchecked Sendable {
         var running = false
         var buses = BusSet()
         var sequences: [Timeline.ID: Timeline] = [:]   // nested sequences, by id
+        var feederEpoch = 0             // bumped by every start and stop: a feeder thread of an older epoch ends
+        var staleMedia: Set<UUID> = []  // media whose cached source (and failure) the feeder thread drops at its next block
+        var staleAll = false
     }
+    /// Live feeder threads (for tests: after start/stop settles it is 1 while running, 0 when stopped).
+    final class ThreadCount: Sendable { let n = Atomic<Int>(0) }
+    let liveThreads = ThreadCount()
+    var liveFeederThreads: Int { liveThreads.n.load(ordering: .acquiring) }
+    /// Held while the feeder thread produces a block, so a thread of an older epoch that is still inside `fill` finishes
+    /// before the next one starts: the ring never has two producers.
+    private let feederGate = Mutex<Void>(())
+    /// A source that failed to open is not retried before this long has passed (or `mediaChanged`).
+    var openRetryInterval: Duration = .seconds(5)
+    private var failedOpens: [UUID: ContinuousClock.Instant] = [:]
+    private var loggedFailures: Set<UUID> = []
     private let flushState = Mutex<(generation: Int, epoch: Int, latency: Int)>((0, 0, 0))
     /// Lock-free copy of `flushed.generation` for the audio render thread; stored after the ring flush and before any
     /// push of that generation, so once it is >= g the ring holds nothing mixed before generation g.
@@ -226,12 +240,22 @@ public final class AudioFeeder: @unchecked Sendable {
     /// Timeline frame the next produced block is anchored at (for tests and clock anchoring).
     public var position: Int64 { control.withLock { $0.position } }
 
+    /// Starts the feeder thread. Idempotent: a second `start` while running does nothing. Every start/stop pair moves the
+    /// epoch on, so a thread that was stopped but has not noticed yet ends instead of running beside the new one.
     public func start() {
-        let already = control.withLock { c -> Bool in let r = c.running; c.running = true; return r }
-        if already { return }
+        let epoch = control.withLock { c -> Int? in
+            if c.running { return nil }
+            c.running = true; c.feederEpoch += 1
+            return c.feederEpoch
+        }
+        guard let epoch else { return }
+        let live = liveThreads
         let t = Thread { [weak self] in
-            while let self, self.control.withLock({ $0.running }) {
-                if self.fill() == 0 { Thread.sleep(forTimeInterval: 0.005) }
+            live.n.add(1, ordering: .acquiringAndReleasing)
+            defer { live.n.subtract(1, ordering: .acquiringAndReleasing) }
+            while let self, self.control.withLock({ $0.running && $0.feederEpoch == epoch }) {
+                let pushed = self.feederGate.withLock { _ in self.fill() }
+                if pushed == 0 { Thread.sleep(forTimeInterval: 0.005) }
             }
         }
         t.name = "AudioFeeder"; t.qualityOfService = .userInteractive
@@ -239,8 +263,9 @@ public final class AudioFeeder: @unchecked Sendable {
         t.start()
     }
 
+    /// Idempotent. The thread ends at its next loop check; a later `start` never runs beside it.
     public func stop() {
-        control.withLock { $0.running = false }
+        control.withLock { $0.running = false; $0.feederEpoch += 1 }
         thread = nil
     }
 
@@ -325,6 +350,7 @@ public final class AudioFeeder: @unchecked Sendable {
         precondition(count <= blockFrames)
         let rate = Int64(sampleRate)
         let range = TimeRange(start: Time(startFrame, rate), duration: Time(Int64(count), rate))
+        applyStaleMedia()
         var endState: [FaderKey: (left: Double, right: Double)] = [:]
         defer { for (k, v) in endState { faderState[k] = v } }
         for seg in timeline.audioSegments(in: range, sequences: { sequences[$0] }) {
@@ -342,10 +368,7 @@ public final class AudioFeeder: @unchecked Sendable {
             let animated = (clip?.animation.volume.isAnimated ?? false) || seg.nests.contains { $0.clip.animation.volume.isAnimated }
                 || !seg.envelopes.isEmpty || seg.nests.contains { !$0.envelopes.isEmpty }
             let gain = { (frame: Int64) -> Double in Self.gain(seg, clip: clip, atFrame: frame, rate: rate) }
-            let source: any AudioSource
-            do {
-                if let s = sources[seg.media] { source = s } else { source = try resolver(seg.media); sources[seg.media] = source }
-            } catch { failedReads.add(1, ordering: .relaxed); continue }
+            guard let source = source(for: seg.media) else { failedReads.add(1, ordering: .relaxed); continue }
             let (dl, dr) = destination(seg.nests.first?.track ?? seg.track)
             let fader = Self.faderChain(seg, top: timeline, sequences: sequences, monoSource: source.isMono)
             let busKey = FaderKey(track: seg.nests.first?.track ?? seg.track, mono: source.isMono)
@@ -400,8 +423,46 @@ public final class AudioFeeder: @unchecked Sendable {
         return m
     }
 
-    /// Drops cached sources (media relinked or proxies switched).
-    public func invalidateSources() { sources.removeAll(); timeMaps.removeAll() }
+    /// Drops every cached source and remembered open failure (media relinked or proxies switched). Safe from any thread:
+    /// it only records the request, the feeder thread applies it at the start of its next block.
+    public func invalidateSources() { control.withLock { $0.staleAll = true } }
+
+    /// The files behind these media changed (relink to another path): their sources are reopened at the next block and a
+    /// remembered open failure is forgotten, so the new file plays without a restart. Any thread.
+    public func mediaChanged(_ ids: Set<UUID>) {
+        guard !ids.isEmpty else { return }
+        control.withLock { $0.staleMedia.formUnion(ids) }
+    }
+
+    /// Feeder-side: applies `invalidateSources` / `mediaChanged`.
+    private func applyStaleMedia() {
+        let (all, ids) = control.withLock { c -> (Bool, Set<UUID>) in
+            defer { c.staleAll = false; c.staleMedia = [] }
+            return (c.staleAll, c.staleMedia)
+        }
+        if all {
+            sources.removeAll(); timeMaps.removeAll(); failedOpens.removeAll(); loggedFailures.removeAll()
+        } else if !ids.isEmpty {
+            for id in ids { sources[id] = nil; failedOpens[id] = nil; loggedFailures.remove(id) }
+            timeMaps.removeAll()
+        }
+    }
+
+    /// The cached source of `media`, opening it when needed. A failed open is remembered (retried after `openRetryInterval`
+    /// or `mediaChanged`) and logged once, so a missing file does not hit the disk on every block.
+    private func source(for media: UUID) -> (any AudioSource)? {
+        if let s = sources[media] { return s }
+        if let t = failedOpens[media], ContinuousClock.now - t < openRetryInterval { return nil }
+        do {
+            let s = try resolver(media)
+            sources[media] = s; failedOpens[media] = nil
+            return s
+        } catch {
+            failedOpens[media] = .now
+            if loggedFailures.insert(media).inserted { NSLog("AudioFeeder: cannot open audio of media %@: %@", media.uuidString, "\(error)") }
+            return nil
+        }
+    }
 
     private static let gainChunk = 256
 

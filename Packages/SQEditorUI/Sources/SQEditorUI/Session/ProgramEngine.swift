@@ -50,6 +50,8 @@ public protocol ProgramEngine: AnyObject {
     var scrubLatencyText: String? { get }
     /// Captions drawn over the picture in the monitor (the export burn-in is separate).
     var showsCaptions: Bool { get set }
+    /// The files behind these media changed (relink to another path): cached decoders and audio sources are reopened.
+    func mediaChanged(_ ids: Set<UUID>)
 }
 
 extension ProgramEngine {
@@ -64,9 +66,12 @@ extension ProgramEngine {
     public var cacheGeneration: Int { 0 }
     public var scrubLatencyText: String? { nil }
     public var showsCaptions: Bool { get { true } set {} }
+    public func mediaChanged(_ ids: Set<UUID>) {}
 }
 
 extension PlaybackEngine: ProgramEngine {
+    /// Audio side; the video side (decoder and frame cache) joins here with the engine's own `mediaChanged`.
+    public func mediaChanged(_ ids: Set<UUID>) { audio?.mediaChanged(ids) }
     public var cachedSpans: [TimeRange] { cachedRanges() }
     public var scrubLatencyText: String? { stats.latencySummary()?.text }
     public var meterReading: (sequence: Int, peaks: [Float])? {
