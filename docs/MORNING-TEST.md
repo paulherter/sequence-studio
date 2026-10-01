@@ -74,3 +74,18 @@ Fehlt noch: Marker im Source-Monitor, Vier-Punkt-Schnitt (Fit to Fill), eigene S
 6. „Copy Colour", zwei andere Clips wählen, „Paste Colour", einmal Undo.
 
 Fehlt noch: Sharpen und HSL Secondary (ausgegraut). Pipette und Auto messen das Gesamtbild und sind deshalb bei mehreren Ebenen gesperrt.
+
+## Text, Untertitel, Audio
+1. Type-Tool (T): in den Programm-Monitor klicken, tippen, Cmd+Return. Dann eine Box aufziehen, eine lange Zeile tippen und in den Effect Controls „Vertical" auf Middle stellen.
+2. Mit dem Type-Tool auf vorhandenen Text klicken: bearbeiten. Cmd+B und Cmd+I schalten Fett und Kursiv.
+3. Textstil: Laufweite erhöhen, Kursiv, Schattenwinkel 135 mit Abstand.
+4. Clip transkribieren, im Captions-Reiter „Create Captions…", Vorlage „Short Video". Die Untertitel erscheinen im Monitor.
+5. Captions-Reiter: Untertitel bearbeiten, Wort suchen und ersetzen, Stil ändern. Rechtsklick auf einen Untertitel in der Timeline: teilen, zusammenführen.
+6. Audiospur höher ziehen (Opt+=). Die grüne Linie ziehen, Cmd-Klick setzt einen Keyframe, Rechtsklick auf den Keyframe löscht ihn.
+7. Audioclip wählen, G drücken, „Normalize Max Peak" auf -3 dB.
+8. Nur den Ton eines verbundenen Clips verschieben (Option-Klick wählt eine Seite): rotes Abzeichen mit dem Versatz.
+
+Fehlt noch: Audio-Übergänge, Untertitel direkt im Monitor bearbeiten, Schalter zum Ausblenden der Untertitel.
+
+## Umbenennung
+Projektdateien heißen jetzt `.sqproj`. Eine alte `.ssproj`-Datei öffnen und speichern: Es entsteht eine neue `.sqproj` daneben, die alte bleibt liegen.
