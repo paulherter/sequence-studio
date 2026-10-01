@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import SQCore
 import SQMedia
+import AppKit
 @testable import SQEditorUI
 
 private func s(_ n: Int64) -> Time { Time(n, 1) }
@@ -110,5 +111,15 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         #expect(m.hasChanges)
         m.setPercent(100)
         #expect(!m.hasChanges)
+    }
+
+    // Finding 25: zoom to fit on a one-frame sequence went past the zoom cap.
+    @Test func zoomToFitRespectsTheLimits() {
+        let fd = Time(1, 24)
+        let c = Clip(name: "c", media: UUID(), kind: .video, source: TimeRange(start: .zero, duration: fd), start: .zero)
+        let tl = Timeline(name: "t", frameDuration: fd, tracks: [Track(kind: .video, clips: [c], name: "V1")])
+        let v = TimelineView(timeline: tl, frame: NSRect(x: 0, y: 0, width: 1600, height: 180))
+        v.zoomToFit()
+        #expect(v.geometry.pointsPerSecond <= v.zoomLimits.upperBound + 1e-9)
     }
 }

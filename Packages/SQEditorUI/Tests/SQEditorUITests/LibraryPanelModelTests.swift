@@ -157,6 +157,35 @@ private func eventually(_ cond: @MainActor () -> Bool) async -> Bool {
         #expect(env.model.items.isEmpty)
     }
 
+    // Review finding 38: the ascending comparator was not a strict ordering (equal names compared "before" each other).
+    @Test func equalPresetNamesKeepTheirOrderWhenAscending() async throws {
+        let env = try await Env()
+        defer { env.cleanup() }
+        for i in 0..<6 { try await env.store.add(PresetItem(kind: .easing, name: "Same", payload: Data("{\(i)}".utf8), payloadVersion: 1)) }
+        env.model.selection = .presets(nil)
+        let a = env.model.visiblePresets.map(\.id)
+        env.model.ascending = false
+        env.model.ascending = true
+        #expect(env.model.visiblePresets.map(\.id) == a)
+        let ids = env.model.visiblePresets.map(\.id)
+        #expect(ids == env.model.presets.filter { $0.name == "Same" }.map(\.id))
+    }
+
+    // Review finding 39: a favorites file from a newer version was ignored on load and then overwritten by the next toggle.
+    @Test func favoritesFileOfANewerVersionIsNotOverwritten() async throws {
+        let env = try await Env()
+        defer { env.cleanup() }
+        let url = env.root.appendingPathComponent("favorites.json")
+        let newer = Data(#"{"formatVersion": 99, "items": []}"#.utf8)
+        try newer.write(to: url)
+        await env.model.start()
+        let folder = await env.model.addFolder(url: env.media)
+        _ = folder
+        let song = try #require(env.model.items.first { $0.entry.name == "a_song.wav" })
+        env.model.toggleFavorite(song.id)
+        #expect(try Data(contentsOf: url) == newer)
+    }
+
     @Test func presetsSectionByKind() async throws {
         let env = try await Env()
         defer { env.cleanup() }

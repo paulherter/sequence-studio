@@ -361,8 +361,9 @@ public final class TimelineView: NSView {
             let span = fitSpan
             guard !span.isEmpty else { return }
             let startSeconds = Double(span.start.value) / Double(span.start.timescale)
-            geometry.pointsPerSecond = fitScale
-            geometry.scrollX = CGFloat(startSeconds * fitScale) - Theme.Spacing.lg
+            let scale = TimelineZoom.clamp(fitScale, to: zoomLimits)     // a one-frame sequence must not pass the zoom cap
+            geometry.pointsPerSecond = scale
+            geometry.scrollX = CGFloat(startSeconds * scale) - Theme.Spacing.lg
             clampScroll()
             viewportChanged()
         }
