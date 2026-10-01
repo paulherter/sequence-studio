@@ -34,6 +34,22 @@ public enum FontResolver {
     }
 
     public static func font(for style: TextStyle) -> CTFont {
+        let upright = uprightFont(for: style)
+        guard style.italic else { return upright }
+        return italicVersion(of: upright)
+    }
+
+    /// The italic face of the same family when there is one, else the upright face sheared by 12 degrees (synthetic oblique).
+    static func italicVersion(of font: CTFont) -> CTFont {
+        if CTFontGetSymbolicTraits(font).contains(.italicTrait) { return font }
+        let size = CTFontGetSize(font)
+        if let it = CTFontCreateCopyWithSymbolicTraits(font, size, nil, .italicTrait, .italicTrait),
+           CTFontGetSymbolicTraits(it).contains(.italicTrait) { return it }
+        var shear = CGAffineTransform(a: 1, b: 0, c: CGFloat(tan(12.0 * Double.pi / 180)), d: 1, tx: 0, ty: 0)
+        return CTFontCreateCopyWithAttributes(font, size, &shear, nil)
+    }
+
+    static func uprightFont(for style: TextStyle) -> CTFont {
         let size = CGFloat(style.size)
         let base = CTFontCreateWithName(style.fontName as CFString, size, nil)
         if isExplicitFace(style.fontName, resolved: base) { return base }
