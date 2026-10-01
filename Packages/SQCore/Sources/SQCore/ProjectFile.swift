@@ -30,11 +30,11 @@ public enum ProjectFile {
         return candidate
     }
 
-    public static let currentVersion = 16
+    public static let currentVersion = 23
     public typealias JSONObject = [String: Any]
     /// Upgrades the top-level object from version N to N+1, keyed by N.
     public typealias Migrations = [Int: (JSONObject) throws -> JSONObject]
-    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7, 7: migrateV7toV8, 8: migrateV8toV9, 9: migrateV9toV10, 10: migrateV10toV11, 11: migrateV11toV12, 12: migrateV12toV13, 13: migrateV13toV14, 14: migrateV14toV15, 15: migrateV15toV16] }
+    public static var migrations: Migrations { [1: migrateV1toV2, 2: migrateV2toV3, 3: migrateV3toV4, 4: migrateV4toV5, 5: migrateV5toV6, 6: migrateV6toV7, 7: migrateV7toV8, 8: migrateV8toV9, 9: migrateV9toV10, 10: migrateV10toV11, 11: migrateV11toV12, 12: migrateV12toV13, 13: migrateV13toV14, 14: migrateV14toV15, 15: migrateV15toV16, 22: migrateV22toV23] }
 
     /// v2: `Timeline.frameDuration` moved into `Timeline.format` (defaults 1920x1080, 48 kHz).
     /// Track flags, `inOut` and `markers` are optional on decode, so nothing else changes.
@@ -120,6 +120,19 @@ public enum ProjectFile {
     /// no tracking, upright, point text, no gap: identity migration. Older builds drop these fields on save.
     static func migrateV15toV16(_ obj: JSONObject) throws -> JSONObject { obj }
 
+    /// v23 (stream speed-time): `Clip.speedKeys` (time remapping: segments with ramps and an origin) and
+    /// `Clip.timeInterpolation`. Both optional on decode; absent = constant speed (`speed` / `reversed`) and frame sampling,
+    /// so every v22 clip, constant-speed clips included, decodes and plays unchanged: identity migration. Older builds drop the
+    /// speed track on save and then play the clip at its `speed` over its `source` hull.
+    static func migrateV22toV23(_ obj: JSONObject) throws -> JSONObject { obj }
+
+    /// INTERIM, delete on merge: v16 -> v22 belong to the other round-2 streams (v17 transitions ... v22), whose blocks are
+    /// not on this branch. Until they are merged an older file steps through them as identity migrations so this branch can open it.
+    /// Once a real `migrations[N]` exists it wins (see `decode`).
+    static func interimIdentity(_ version: Int) -> ((JSONObject) throws -> JSONObject)? {
+        (16..<22).contains(version) ? { $0 } : nil
+    }
+
     static let fileName = "project.json"
     static let autosaveDir = "Autosave"
 
@@ -148,7 +161,7 @@ public enum ProjectFile {
               var version = obj["formatVersion"] as? Int, obj["project"] != nil else { throw ProjectFileError.corrupt }
         if version > currentVersion { throw ProjectFileError.newerVersion(found: version, supported: currentVersion) }
         while version < currentVersion {
-            guard let step = migrations[version] else { throw ProjectFileError.corrupt }
+            guard let step = migrations[version] ?? interimIdentity(version) else { throw ProjectFileError.corrupt }
             obj = try step(obj)
             version += 1
         }

@@ -81,6 +81,12 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var reversed: Bool = false
     /// Audio: keep the pitch when speed is not 100 % (time-stretch); false = resample (pitch follows speed).
     public var keepsPitch: Bool = true
+    /// Time remapping (v23): a speed track with ramps. nil = constant speed (`speed` / `reversed` apply). When set, it is
+    /// the only time mapping: `duration`, `sourceTime`, `timelineTime`, handles, trims and audio all go through it, and
+    /// `source` is always its hull (use `setSpeedKeys`). `reversed` then only remembers the Reverse checkbox state.
+    public var speedKeys: SpeedKeys?
+    /// How frames between two source frames are produced when the clip is slowed down (v23). Stored per clip.
+    public var timeInterpolation: TimeInterpolation = .frameSampling
 
     /// Media, nested sequence or generator.
     public var clipSource: ClipSource {
@@ -90,18 +96,39 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var isNested: Bool { sequence != nil }
     public var isGenerator: Bool { generator != nil }
     /// Length on the timeline: the source range played at `speed`.
-    public var duration: Time { speed.isNormal ? source.duration : speed.unscale(source.duration) }
+    public var duration: Time {
+        if let k = speedKeys { return k.duration }
+        return speed.isNormal ? source.duration : speed.unscale(source.duration)
+    }
+
+    /// Source the clip plays through, in source time: the range for a constant clip, the path length for a remapped one
+    /// (average speed = this / `duration`).
+    public var retimeSpan: Time { speedKeys?.pathLength ?? source.duration }
+
+    /// Installs a speed track and keeps `source` equal to its hull. nil goes back to the constant fields.
+    public mutating func setSpeedKeys(_ k: SpeedKeys?) {
+        speedKeys = k
+        if let k { source = k.hull }
+    }
 
     /// How far the head can still grow, in timeline time (the source handle that plays first, divided by `speed`:
     /// before `source.start`, or after `source.end` for a reversed clip); nil = unbounded.
     var headHandle: Time? {
         if isGenerator || isStill { return nil }
+        if let k = speedKeys {
+            let f = k.segments[0]
+            return f.reversed ? mediaDuration.map { f.from.unscale($0 - k.origin) } : f.from.unscale(k.origin)
+        }
         if reversed { return mediaDuration.map { speed.unscale($0 - source.end) } }
         return speed.unscale(source.start)
     }
     /// How far the tail can still grow, in timeline time; nil = unbounded.
     var tailRoom: Time? {
         if isGenerator || isStill { return mediaDuration.map { speed.unscale($0 - source.end) } }
+        if let k = speedKeys {
+            let l = k.segments[k.segments.count - 1]
+            return l.reversed ? l.to.unscale(k.endPosition) : mediaDuration.map { l.to.unscale($0 - k.endPosition) }
+        }
         if reversed { return speed.unscale(source.start) }
         return mediaDuration.map { speed.unscale($0 - source.end) }
     }
@@ -115,6 +142,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public func sourceTime(at t: Time, frameDuration: Time) -> Time {
         let local = t - start
         if isGenerator { return local }
+        if let k = speedKeys { return min(max(k.sourceTime(at: local, frameDuration: frameDuration), source.start), source.end) }
         if reversed {
             return max(source.end - speed.scale(local + frameDuration), source.start)
         }
@@ -124,7 +152,11 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     /// Timeline time (absolute) at which source time `s` is shown; the inverse of `sourceTime`. Pass the sequence frame
     /// duration for reversed clips (the frame shown starts one frame before the mapped end). Used to map decoded frames back onto the timeline.
     public func timelineTime(forSource s: Time, frameDuration: Time = .zero) -> Time {
-        reversed ? start + speed.unscale(source.end - s) - frameDuration : start + speed.unscale(s - source.start)
+        if let k = speedKeys {
+            let local = k.localTime(forSource: s)
+            return start + local - (k.isReversed(at: local) ? frameDuration : .zero)
+        }
+        return reversed ? start + speed.unscale(source.end - s) - frameDuration : start + speed.unscale(s - source.start)
     }
 
     public init(id: UUID = UUID(), name: String, media: UUID, kind: TrackKind,
@@ -132,7 +164,9 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                 animation: ClipAnimation = ClipAnimation(), sequence: Timeline.ID? = nil,
                 generator: GeneratorRef? = nil, color: ClipColor = .default, label: LabelColor? = nil,
                 isStill: Bool = false, effects: [ClipEffect] = [],
-                speed: ClipSpeed = .normal, reversed: Bool = false, keepsPitch: Bool = true) {
+                speed: ClipSpeed = .normal, reversed: Bool = false, keepsPitch: Bool = true,
+                speedKeys: SpeedKeys? = nil, timeInterpolation: TimeInterpolation = .frameSampling) {
+        self.speedKeys = speedKeys; self.timeInterpolation = timeInterpolation
         self.speed = speed; self.reversed = reversed; self.keepsPitch = keepsPitch
         self.isStill = isStill
         self.effects = effects
@@ -146,7 +180,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB
+        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB, speedKeys, timeInterpolation
     }
 
     public init(from d: Decoder) throws {
@@ -167,6 +201,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   reversed: try c.decodeIfPresent(Bool.self, forKey: .reversed) ?? false,
                   keepsPitch: try c.decodeIfPresent(Bool.self, forKey: .keepsPitch) ?? true)
         audioGainDB = try c.decodeIfPresent(Double.self, forKey: .audioGainDB) ?? 0
+        speedKeys = try c.decodeIfPresent(SpeedKeys.self, forKey: .speedKeys)
+        timeInterpolation = try c.decodeIfPresent(TimeInterpolation.self, forKey: .timeInterpolation) ?? .frameSampling
         // v8 -> v9: a radius that was not the default becomes an applied Rounded Corners effect.
         if let legacy = animation.legacyCornerRadius {
             animation.legacyCornerRadius = nil
@@ -189,6 +225,12 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     /// The source side that plays first changes by `g * speed`; keys stay on the same frames, so they shift by `g`
     /// (clip-local keys are timeline time). Keys pushed outside 0...duration are kept, like in `cropped`.
     mutating func extendHead(by g: Time) {
+        if let k = speedKeys {
+            setSpeedKeys(k.extendedHead(by: g))
+            animation = animation.shifted(by: g)
+            effects = effects.map { $0.shifted(by: g) }
+            return
+        }
         let d = speed.scale(g)
         if reversed { source.duration += d } else { source.start -= d; source.duration += d }
         animation = animation.shifted(by: g)
@@ -210,6 +252,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
 
     /// Makes the clip `g` longer at its tail (negative = shorter). The source side that plays last changes by `g * speed`.
     mutating func extendTail(by g: Time) {
+        if let k = speedKeys { setSpeedKeys(k.extendedTail(by: g)); return }
         let d = speed.scale(g)
         if reversed { source.start -= d }
         source.duration += d
@@ -220,6 +263,14 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     func cropped(to range: TimeRange) -> Clip? {
         guard let r = timeline.intersection(range) else { return nil }
         var c = self
+        if let k = speedKeys {
+            let a = r.start - start
+            c.setSpeedKeys(k.sliced(from: a, to: a + r.duration))
+            c.start = r.start
+            c.animation = animation.shifted(by: start - r.start)
+            c.effects = effects.map { $0.shifted(by: start - r.start) }
+            return c
+        }
         let a = r.start - start, len = speed.scale(r.duration)
         if reversed {
             c.source = TimeRange(start: source.end - speed.scale(a) - len, duration: len)
