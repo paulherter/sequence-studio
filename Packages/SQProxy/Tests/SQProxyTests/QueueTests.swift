@@ -122,10 +122,13 @@ private func waitUntil(_ cond: @escaping @Sendable () async -> Bool) async -> Bo
 
     /// P5: a job that already runs before start() keeps its partial; unrelated partials are purged.
     @Test func startDoesNotPurgePartialOfRunningJob() async throws {
-        let (q, _, cache, urls, dir) = try setup()
+        let (q, t, cache, urls, dir) = try setup()
         defer { try? FileManager.default.removeItem(at: dir) }
         let j1 = try await q.enqueue(urls[0], kind: .proxyHalf)
         #expect(await waitUntil { await q.info(j1)?.state == .running })
+        // `.running` is set before the job task runs; the task first deletes its own stale partial. Write the
+        // partial only once the transcoder has started (i.e. after that deletion), or the test races it.
+        #expect(await waitUntil { t.started.count == 1 })
         let fp = try SourceFingerprint.compute(for: urls[0])
         let mine = cache.partialURL(fingerprint: fp, kind: .proxyHalf)
         let stray = cache.directory.appendingPathComponent("stray.mov.partial")
