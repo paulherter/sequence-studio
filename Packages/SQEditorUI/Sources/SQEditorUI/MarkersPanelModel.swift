@@ -100,6 +100,7 @@ public final class MarkersPanelModel {
         let parts = text.split(separator: ":", omittingEmptySubsequences: false).map { Int64($0.trimmingCharacters(in: .whitespaces)) }
         guard !parts.isEmpty, parts.count <= 4, !parts.contains(where: { $0 == nil || $0! < 0 }) else { return nil }
         let v = parts.map { $0! }
+        guard v.allSatisfy({ $0 <= 999_999_999 }) else { return nil }       // keeps the frame maths below Int64 overflow
         let fps = framesPerSecond(fd)
         let frames: Int64
         if v.count == 1 { frames = v[0] } else {

@@ -381,7 +381,7 @@ public final class ProjectPanelModel {
     public static func durationString(_ m: MediaRef) -> String {
         guard let d = m.duration ?? m.info?.duration, !d.isNegative else { return "" }
         func two(_ n: Int64) -> String { n < 10 ? "0\(n)" : "\(n)" }
-        if let fd = m.info?.video?.nominalFrameDuration {
+        if let fd = m.info?.video?.nominalFrameDuration, fd.value > 0 {
             let fps = max(1, Int64((Double(fd.timescale) / Double(fd.value)).rounded()))
             let frames = d.frameIndex(frameDuration: fd)
             let s = frames / fps

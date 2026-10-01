@@ -158,11 +158,13 @@ public enum FrameSampler {
                        decode: nil, shouldInterpolate: true, intent: .defaultIntent)
     }
 
+    /// 0...1 to 0...255, rounded; NaN (a broken pixel or LUT output) becomes 0 instead of trapping.
+    static func byte(_ v: Float) -> UInt8 { v.isNaN ? 0 : UInt8(min(max(v, 0), 1) * 255 + 0.5) }
+
     /// Working-linear Rec.709 -> 8-bit display values (clamped, BT.709 encoded like the monitor path).
     static func display8(_ linear: SIMD3<Float>) -> SIMD3<UInt8> {
         let e = Rec709Output.encode(linear)
-        func q(_ v: Float) -> UInt8 { UInt8(min(max(v, 0), 1) * 255 + 0.5) }
-        return SIMD3(q(e.x), q(e.y), q(e.z))
+        return SIMD3(byte(e.x), byte(e.y), byte(e.z))
     }
 
     /// IEEE half -> float (no Float16 dependency, so it also builds for x86_64).

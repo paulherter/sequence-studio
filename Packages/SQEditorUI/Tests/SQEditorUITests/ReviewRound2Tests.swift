@@ -57,4 +57,42 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         }
         #expect(session.replaceCaptionText(find: "cat", with: "fox", caseSensitive: false) == nil)
     }
+
+    // Findings 14, 15: huge hour or frame fields overflowed the timecode maths and trapped.
+    @Test func hugeTimecodeIsRejected() {
+        let tc = Timecode(frameDuration: Time(1, 30), dropFrame: false)
+        #expect(tc.parse("9999999999999:00:00:00") == nil)
+        #expect(tc.parse("1:00:00:00") != nil)
+        let fd = Time(1, 30)
+        #expect(MarkersPanelModel.parseTimecode("9999999999999:00:00:00", frameDuration: fd) == nil)
+        #expect(MarkersPanelModel.parseTimecode("9999999999999999", frameDuration: fd) == nil)
+        #expect(MarkersPanelModel.parseTimecode("01:00:00:00", frameDuration: fd) != nil)
+    }
+
+    // Finding 16: Create Captions "Minimum duration" of 1e30 / inf trapped on the Int64 conversion.
+    @Test func captionMinimumDurationIsClamped() {
+        #expect(CaptionsPanelModel.minDuration(seconds: 1e30) == Time(3600, 1))
+        #expect(CaptionsPanelModel.minDuration(seconds: .infinity) == Time(3600, 1))
+        #expect(CaptionsPanelModel.minDuration(seconds: .nan) == .zero)
+        #expect(CaptionsPanelModel.minDuration(seconds: -4) == .zero)
+        #expect(CaptionsPanelModel.minDuration(seconds: 1.5) == Time(3, 2))
+    }
+
+    // Finding 17: NaN pixels trapped in the 8-bit conversion.
+    @Test func nanPixelsConvertToZero() {
+        #expect(FrameSampler.display8(SIMD3<Float>(.nan, 0, 1)).x == 0)
+        #expect(FrameSampler.byte(.nan) == 0)
+        #expect(FrameSampler.byte(2) == 255)
+    }
+
+    // Finding 18: a probe with a zero frame duration trapped in the duration columns and hover scrub.
+    @Test func zeroFrameDurationDoesNotTrap() {
+        let v = VideoTrackInfo(width: 1920, height: 1080, codec: "avc1", bitDepth: 8, chroma: "4:2:0",
+                               nominalFrameDuration: Time(0, 1), isVariableFrameRate: false)
+        let m = MediaRef(name: "A", path: "/x.mov", fingerprint: MediaFingerprint(size: 1),
+                         duration: s(10), info: MediaInfo(duration: s(10), video: v, audio: nil))
+        #expect(ProjectPanelModel.durationString(m) == "00:00:10")
+        #expect(ProjectPanelModel.timecode(s(10), frameDuration: Time(0, 1)) == "00:00:10")
+        #expect(HoverScrub.poster(duration: s(10), frameDuration: Time(0, 1)) <= Time(2, 1))
+    }
 }

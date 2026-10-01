@@ -65,7 +65,7 @@ public struct Timecode: Sendable, Hashable {
         while fields.count < 4 { fields.insert(0, at: 0) }
         let (h, m, sec, f) = (fields[0], fields[1], fields[2], fields[3])
         let fps = nominalFPS
-        guard m < 60, sec < 60, f < fps else { return nil }
+        guard h <= 9_999, m < 60, sec < 60, f < fps else { return nil }   // h capped: the frame maths must not overflow
         var frames = fps * (3600 * h + 60 * m + sec) + f
         if dropFrame {
             let d = dropCount

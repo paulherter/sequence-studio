@@ -8,7 +8,7 @@ import SQMedia
 public enum HoverScrub {
     /// Time at `fraction` (0...1, clamped) of `duration`, snapped to `frameDuration`, never past the last frame.
     public static func time(fraction: Double, duration: Time, frameDuration: Time) -> Time {
-        guard duration > .zero else { return .zero }
+        guard duration > .zero, frameDuration.value > 0 else { return .zero }
         let f = min(max(fraction, 0), 1)
         let scale: Int64 = 1_000
         let raw = Time(Int64((f * Double(scale)).rounded()) * duration.value, scale * duration.timescale)
