@@ -29,7 +29,7 @@ public enum EditorCommand: Sendable, Hashable {
     case videoTracksTaller, videoTracksShorter, audioTracksTaller, audioTracksShorter
     case minimizeAllTracks, expandAllTracks
     case focusPanel(PanelID)
-    case maximizePanel
+    case maximizePanel, maximizeActivePanel, resetLayout
     // File
     case importMedia, newSequence, save, export
     case newProject, openProject, saveAs, revert, sequenceSettings, setToFrameSize
@@ -119,7 +119,9 @@ public enum EditorCommand: Sendable, Hashable {
         case .minimizeAllTracks: "Minimize All Tracks"
         case .expandAllTracks: "Expand All Tracks"
         case .focusPanel(let p): "Show " + Self.panelTitle(p)
-        case .maximizePanel: "Maximize Panel"
+        case .maximizePanel: "Maximize or Restore Panel Under Pointer"
+        case .maximizeActivePanel: "Maximize or Restore Active Panel"
+        case .resetLayout: "Reset to Saved Layout"
         case .importMedia: "Import Media…"
         case .newSequence: "New Sequence…"
         case .save: "Save"

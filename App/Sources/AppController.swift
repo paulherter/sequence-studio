@@ -289,6 +289,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
                              ("Reset to Saved Layout", #selector(resetLayout(_:))),
                              ("Reset All Workspaces", #selector(resetAllWorkspaces(_:)))] {
             let i = NSMenuItem(title: title, action: sel, keyEquivalent: "")
+            if sel == #selector(resetLayout(_:)) { i.keyEquivalent = "0"; i.keyEquivalentModifierMask = [.option, .shift] }
             i.target = self
             menu.addItem(i)
         }

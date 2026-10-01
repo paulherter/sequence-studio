@@ -82,7 +82,8 @@ public struct CommandMap: Sendable {
         for (i, p) in panels.enumerated() {
             add(g, ch(Character(String(i + 1))), .shift, .focusPanel(p))
         }
-        add(g, ch("`"), .maximizePanel)
+        add(g, ch("`"), .maximizePanel); add(g, ch("`"), .shift, .maximizeActivePanel)
+        add(g, ch("0"), [.option, .shift], .resetLayout)
 
         // Timeline
         add(t, .up, .previousEditPoint); add(t, .down, .nextEditPoint)

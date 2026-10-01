@@ -86,7 +86,7 @@ public enum EditorMenus {
     ]
 
     /// The panel items and the workspace list are added by the app (they carry state); the spec keeps the plain commands.
-    public static let window = MenuSpec(title: "Window", items: cmds([.maximizePanel]))
+    public static let window = MenuSpec(title: "Window", items: cmds([.maximizePanel, .maximizeActivePanel]))
 
     /// Commands that stay visible in their menu even when not wired (the standard text editing commands: a text field
     /// handles them) and commands that are menu-only (no default key in Premiere).

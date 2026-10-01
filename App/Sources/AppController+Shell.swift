@@ -6,7 +6,8 @@ import SSEditorUI
 extension AppController {
     static func isShellCommand(_ c: EditorCommand) -> Bool {
         switch c {
-        case .newProject, .openProject, .saveAs, .revert, .sequenceSettings, .setToFrameSize, .keyboardShortcuts, .preferences: true
+        case .newProject, .openProject, .saveAs, .revert, .sequenceSettings, .setToFrameSize, .keyboardShortcuts, .preferences,
+             .maximizeActivePanel, .resetLayout: true
         default: false
         }
     }
@@ -21,6 +22,8 @@ extension AppController {
         case .sequenceSettings: showSequenceSettings(nil)
         case .setToFrameSize:
             if !session.setToFrameSize() { shell.statusBar.flash("Select clips to scale to the frame size.", seconds: 3) }
+        case .maximizeActivePanel: if let p = focusedPanel { toggleMaximize(p) }
+        case .resetLayout: resetLayout(nil)
         case .keyboardShortcuts: shortcutsWindow.show()
         case .preferences: showSettings(nil)
         default: return false
