@@ -677,10 +677,9 @@ public final class TimelineView: NSView {
         }
         let p = convert(event.locationInWindow, from: nil)
         interaction.geometry = geometry
-        let wasRejected = interaction.isRejected
         let commit = interaction.mouseUp(p, modifiers: gestureModifiers(event))
         refreshFromInteraction()
-        if wasRejected, let m = interaction.rejectionMessage { onRejection?(m) }
+        if let m = interaction.releasedRejection { onRejection?(m) }
         if let commit { onCommit?(commit) }
     }
 
