@@ -88,6 +88,7 @@ public struct CommandMap: Sendable {
         add(t, .delete, .delete); add(t, .delete, .shift, .rippleDelete)
         add(t, ch("s"), .toggleSnapping)
         add(t, ch("l"), .command, .link); add(t, ch("g"), .command, .group)
+        add(t, ch("g"), .audioGain)
         add(t, ch("f"), .matchFrame); add(t, ch("r"), .shift, .reverseMatchFrame)
         add(t, ch("="), .zoomIn); add(t, ch("+"), .zoomIn); add(t, ch("-"), .zoomOut); add(t, ch("\\"), .zoomFit)
         // Track heights: modifier combinations only, so plain +/-/\ stay timeline zoom.

@@ -25,7 +25,7 @@ public enum EditorMenus {
         .delete, .rippleDelete, nil, .toggleSnapping,
     ]))
     public static let clip = MenuSpec(title: "Clip", items: cmds([
-        .insert, .overwrite, nil, .link, .group, nil,
+        .insert, .overwrite, nil, .link, .group, nil, .audioGain, nil,
         .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation, .addKeyframe, .toggleSpeedGraph,
     ]))
     public static let sequence = MenuSpec(title: "Sequence", items: cmds([

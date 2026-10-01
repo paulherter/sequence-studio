@@ -15,7 +15,7 @@ extension AppController {
              .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .minimizeAllTracks, .expandAllTracks,
-             .importMedia, .newSequence, .save, .export:
+             .importMedia, .newSequence, .save, .export, .audioGain:
             true
         default:
             false
@@ -87,6 +87,7 @@ extension AppController {
         case .newSequence: requestNewSequence()
         case .save: Task { await saveDocument() }
         case .export: showExport()
+        case .audioGain: requestAudioGain()
         default: break
         }
     }

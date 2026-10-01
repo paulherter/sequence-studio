@@ -35,6 +35,8 @@ public enum EditorCommand: Sendable, Hashable {
     // Keyframes (proposal in UX section 3)
     case easyEase, easeIn, easeOut, toggleHoldInterpolation
     case previousKeyframe, nextKeyframe, toggleSpeedGraph, addKeyframe
+    // Audio
+    case audioGain
 
     /// Auto-repeat (key held) re-fires these; everything else ignores repeats.
     public var isRepeatable: Bool {
@@ -129,6 +131,7 @@ public enum EditorCommand: Sendable, Hashable {
         case .nextKeyframe: "Next Keyframe"
         case .toggleSpeedGraph: "Toggle Value/Speed Graph"
         case .addKeyframe: "Add Keyframe"
+        case .audioGain: "Audio Gain…"
         }
     }
 
