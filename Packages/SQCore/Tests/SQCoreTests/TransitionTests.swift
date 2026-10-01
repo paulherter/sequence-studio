@@ -129,6 +129,22 @@ private func pair(kind: TrackKind = .video, a: Clip? = nil, b: Clip? = nil) thro
         #expect(t.tracks[0].transitions[0].kind == .dipToBlack)
     }
 
+    @Test func oneTransitionPerClipEdge() throws {
+        var (t, a, b) = try pair()
+        let tr = t.tracks[0].id
+        try t.addTransition(kind: .dipToBlack, track: tr, outgoing: a.id, incoming: nil, duration: f(10))   // tail of A
+        try t.addTransition(kind: .dipToBlack, track: tr, outgoing: nil, incoming: b.id, duration: f(10))   // head of B
+        try t.addTransition(kind: .dipToBlack, track: tr, outgoing: nil, incoming: a.id, duration: f(10))   // head of A: elsewhere
+        #expect(t.tracks[0].transitions.count == 3)
+        try t.addTransition(kind: .crossDissolve, track: tr, outgoing: a.id, incoming: b.id, duration: f(10))
+        // the cut replaced the tail of A and the head of B; the head of A stays
+        #expect(t.tracks[0].transitions.count == 2)
+        #expect(t.tracks[0].transitions.contains { $0.outgoing == nil && $0.incoming == a.id })
+        #expect(t.tracks[0].transitions.contains { $0.outgoing == a.id && $0.incoming == b.id })
+        try t.addTransition(kind: .dipToWhite, track: tr, outgoing: a.id, incoming: nil, duration: f(10))   // tail of A replaces the cut
+        #expect(!t.tracks[0].transitions.contains { $0.incoming == b.id })
+    }
+
     @Test func refusals() throws {
         var (t, a, b) = try pair()
         let tr = t.tracks[0].id

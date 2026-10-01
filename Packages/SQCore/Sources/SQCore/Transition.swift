@@ -385,7 +385,10 @@ extension Timeline {
         let fit = tracks[ti].maxTransitionFrames(tr, frameDuration: fd)
         guard fit >= 1 else { throw EditError.insufficientMedia }
         tr.duration = min(tr.duration, fd * fit)
-        tracks[ti].transitions.removeAll { $0.outgoing == outgoing && $0.incoming == incoming }
+        // One transition per clip edge (Premiere): a new one replaces what already sits on the same edge(s).
+        tracks[ti].transitions.removeAll { other in
+            (outgoing != nil && other.outgoing == outgoing) || (incoming != nil && other.incoming == incoming)
+        }
         tracks[ti].transitions.append(tr)
         return tr.id
     }

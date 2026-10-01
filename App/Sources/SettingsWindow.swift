@@ -14,6 +14,8 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
     private let qualityPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let cachePath = NSTextField(labelWithString: "")
     private let usedLabel = NSTextField(labelWithString: "")
+    private let videoTransitionField = NSTextField(string: "")
+    private let audioTransitionField = NSTextField(string: "")
 
     init(controller: AppController) {
         self.controller = controller
@@ -95,8 +97,17 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         }
         autosavePopUp.target = self; autosavePopUp.action = #selector(changed)
         recoveryCheck.target = self; recoveryCheck.action = #selector(changed)
+        for f in [videoTransitionField, audioTransitionField] {
+            f.alignment = .right; f.target = self; f.action = #selector(transitionDefaultsChanged)
+            f.widthAnchor.constraint(equalToConstant: 60).isActive = true
+        }
+        let video = NSStackView(views: [videoTransitionField, NSTextField(labelWithString: "frames (0 = 1 second)")])
+        let audio = NSStackView(views: [audioTransitionField, NSTextField(labelWithString: "seconds")])
+        for s in [video, audio] { s.spacing = 6 }
         return column([row("Autosave", autosavePopUp), row("Recovery", recoveryCheck),
-                       note("Changed projects are saved to a recovery copy; your project file is only written when you save. The interval applies the next time Sequence Studio starts.")])
+                       note("Changed projects are saved to a recovery copy; your project file is only written when you save. The interval applies the next time Sequence Studio starts."),
+                       row("Video transition", video), row("Audio transition", audio),
+                       note("Default length of transitions placed with Command-D, Shift-Command-D and Shift-D. It does not change transitions already on the timeline.")])
     }
 
     private func playbackPage() -> NSView {
@@ -123,7 +134,21 @@ final class SettingsWindowController: NSObject, NSWindowDelegate {
         recoveryCheck.state = s.offerRecovery ? .on : .off
         qualityPopUp.selectItem(at: MonitorQuality.allCases.firstIndex(of: s.defaultQuality) ?? 0)
         cachePath.stringValue = s.effectiveCacheFolder.path
+        let t = TransitionDefaults.load()
+        videoTransitionField.integerValue = t.videoFrames
+        audioTransitionField.stringValue = String(format: "%g", t.audioSeconds)
         refreshUsed()
+    }
+
+    @objc private func transitionDefaultsChanged() {
+        var t = TransitionDefaults.load()
+        let frames = videoTransitionField.integerValue
+        if frames >= 0, frames <= 10_000 { t.videoFrames = frames }
+        let seconds = audioTransitionField.doubleValue
+        if seconds.isFinite, seconds > 0, seconds <= 600 { t.audioSeconds = seconds }
+        t.save()
+        videoTransitionField.integerValue = t.videoFrames
+        audioTransitionField.stringValue = String(format: "%g", t.audioSeconds)
     }
 
     @objc private func changed() {

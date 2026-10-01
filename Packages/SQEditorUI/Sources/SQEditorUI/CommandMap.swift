@@ -65,6 +65,8 @@ public struct CommandMap: Sendable {
         add(g, ch(";"), .lift); add(g, ch("'"), .extract)
         add(g, ch(","), .insert); add(g, ch("."), .overwrite)
         add(g, ch("m"), .addMarker)
+        add(g, ch("d"), .command, .applyVideoTransition); add(g, ch("d"), [.command, .shift], .applyAudioTransition)
+        add(g, ch("d"), .shift, .applyDefaultTransitions)
         add(g, ch("m"), .shift, .nextMarker); add(g, ch("m"), [.command, .shift], .previousMarker)
         add(g, ch("/"), .markSelection)
         // Tools

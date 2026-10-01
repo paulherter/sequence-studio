@@ -52,6 +52,7 @@ public enum EditorMenus {
         .sequenceSettings, nil,
         .lift, .extract, nil,
         .addEdit, .addEditAllTracks, .rippleTrimPrevious, .rippleTrimNext, .extendEdit, nil,
+        .applyVideoTransition, .applyAudioTransition, .applyDefaultTransitions, nil,
         .toggleSnapping, .toggleLinkedSelection, nil,
         .matchFrame, .reverseMatchFrame, nil,
         .previousEditPoint, .nextEditPoint, .goToStart, .goToEnd,

@@ -49,6 +49,8 @@ public enum EditorCommand: Sendable, Hashable {
     case previousKeyframe, nextKeyframe, toggleSpeedGraph, addKeyframe
     // Audio
     case audioGain, toggleAudioScrubbing
+    // Transitions (Sequence menu): Cmd+D, Shift+Cmd+D, Shift+D
+    case applyVideoTransition, applyAudioTransition, applyDefaultTransitions
 
     /// Auto-repeat (key held) re-fires these; everything else ignores repeats.
     public var isRepeatable: Bool {
@@ -182,6 +184,9 @@ public enum EditorCommand: Sendable, Hashable {
         case .addKeyframe: "Add Keyframe"
         case .audioGain: "Audio Gain…"
         case .toggleAudioScrubbing: "Audio Scrubbing"
+        case .applyVideoTransition: "Apply Video Transition"
+        case .applyAudioTransition: "Apply Audio Transition"
+        case .applyDefaultTransitions: "Apply Default Transitions to Selection"
         }
     }
 

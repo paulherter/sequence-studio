@@ -28,7 +28,7 @@ extension EditorSession {
     /// the edges of the selected clips, else at the edit nearest the playhead on the targeted tracks of `scope`.
     /// Returns how many were applied; a refusal (no edit found, not enough media) only sets the status message.
     @discardableResult
-    public func applyDefaultTransitions(scope: TransitionScope, edges: EdgeSelection?,
+    public func applyDefaultTransitions(scope: TransitionScope, edges: EdgeSelection?, kind only: TransitionKind? = nil,
                                         defaults: TransitionDefaults = .load()) -> Int {
         guard let t = activeTimeline else { return 0 }
         let targets = TransitionTargets.resolve(in: t, kinds: scope.kinds, edges: edges, selection: selection, playhead: playhead)
@@ -38,14 +38,14 @@ extension EditorSession {
             return 0
         }
         var applied = 0
-        var kindsUsed = Set<TransitionKind>()
-        let ok = attempt(targets.count == 1 ? "Apply Transition" : "Apply Transitions") { tl in
+        let ok = attempt(only.map { "Apply \($0.name)" } ?? (targets.count == 1 ? "Apply Transition" : "Apply Transitions")) { tl in
             for target in targets {
                 guard let track = tl.track(target.track) else { continue }
-                let kind = TransitionKind.defaultKind(for: track.kind)
+                let kind = only ?? TransitionKind.defaultKind(for: track.kind)
+                guard kind.trackKind == track.kind else { continue }
                 let d = defaults.duration(for: track.kind, frameDuration: tl.format.frameDuration)
                 if (try? tl.addTransition(point: target.point, kind: kind, track: target.track, duration: d)) != nil {
-                    applied += 1; kindsUsed.insert(kind)
+                    applied += 1
                 }
             }
             if applied == 0 { throw EditError.insufficientMedia }

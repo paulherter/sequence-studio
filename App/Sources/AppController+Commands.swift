@@ -16,7 +16,8 @@ extension AppController {
              .zoomIn, .zoomOut, .zoomFit, .focusPanel, .maximizePanel, .maximizeActivePanel, .resetLayout,
              .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter,
              .minimizeAllTracks, .expandAllTracks, .speedDuration,
-             .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing:
+             .importMedia, .newSequence, .save, .export, .audioGain, .toggleAudioScrubbing,
+             .applyVideoTransition, .applyAudioTransition, .applyDefaultTransitions:
             true
         case _ where isShellCommand(c):
             true
@@ -83,7 +84,8 @@ extension AppController {
         case .rippleTrimNext: session.rippleTrimToPlayhead(.tail)
         case .delete, .rippleDelete:
             // Effect Controls owns Delete while it has focus: keys, then the selected effect. Never the timeline clips.
-            if effectControlsHasFocus { panels.effectModel.deleteSelectionOrEffect() }
+            if effectControlsHasFocus && session.selectedTransition == nil { panels.effectModel.deleteSelectionOrEffect() }
+            else if session.removeSelectedTransition() { }
             else if deleteSelectedGap() { }
             else { session.deleteSelection(ripple: c == .rippleDelete) }
         case .toggleSnapping:
@@ -110,10 +112,21 @@ extension AppController {
         case .newSequence: requestNewSequence()
         case .save: Task { await saveDocument() }
         case .export: showExport()
+        case .applyVideoTransition: applyTransitions(.video)
+        case .applyAudioTransition: applyTransitions(.audio)
+        case .applyDefaultTransitions: applyTransitions(.both)
         case .audioGain: requestAudioGain()
         case .toggleAudioScrubbing: toggleAudioScrubbing()
         default: break
         }
+    }
+
+    /// Apply Video / Audio Transition (Cmd+D, Shift+Cmd+D) and Apply Default Transitions to Selection (Shift+D).
+    private func applyTransitions(_ scope: EditorSession.TransitionScope) {
+        session.stopPlayback()
+        let n = session.applyDefaultTransitions(scope: scope, edges: panels.timelineView.interaction.edgeSelection)
+        if n > 0 { shell.statusBar.flash(n == 1 ? "Transition applied." : "\(n) transitions applied.", seconds: 2) }
+        else if let m = session.lastError { shell.statusBar.flash(m) }
     }
 
     private func nudgeShuttle(forward: Bool) {
