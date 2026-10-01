@@ -79,7 +79,7 @@ public enum TextGenerator {
     public static func frame(ref: GeneratorRef, localTime: Time, clipDuration: Time, canvas: SequenceFormat,
                              scale: Double) throws -> TextFrame? {
         let (template, set) = try decode(ref)
-        guard let raster = try cache.raster(text: template.text, style: template.style, scale: scale) else { return nil }
+        guard let raster = try cache.raster(text: template.text, style: template.style, box: template.box, scale: scale) else { return nil }
 
         let anims: AnimationSet? = set ?? template.animation.map {
             $0.anchor == .start ? AnimationSet(in: $0, out: nil) : AnimationSet(in: nil, out: $0)
@@ -101,14 +101,14 @@ public enum TextGenerator {
     /// True when the raster for this clip's text and style (scale 1) is already cached: `frame` then returns at once.
     public static func isCached(ref: GeneratorRef) -> Bool {
         guard let (template, _) = try? decode(ref) else { return true }   // undecodable: nothing to wait for
-        return cache.contains(text: template.text, style: template.style, scale: 1)
+        return cache.contains(text: template.text, style: template.style, box: template.box, scale: 1)
     }
 
     /// Renders and caches the raster (scale 1) on the calling thread; call it from a background task so the render
     /// thread and the main thread never pay for the first CoreText layout. Throws what the renderer throws.
     public static func prewarm(ref: GeneratorRef) throws {
         let (template, _) = try decode(ref)
-        _ = try cache.raster(text: template.text, style: template.style, scale: 1)
+        _ = try cache.raster(text: template.text, style: template.style, box: template.box, scale: 1)
     }
 
     /// Byte cap of the raster cache (linear half-float, 8 bytes per pixel).
@@ -119,29 +119,29 @@ public enum TextGenerator {
     public static func clearCache() { cache.clear() }
 
     private final class RasterCache: @unchecked Sendable {
-        struct Key: Hashable { let text: String; let style: TextStyle; let scale: Double }
+        struct Key: Hashable { let text: String; let style: TextStyle; let box: TextBox?; let scale: Double }
         private let lock = NSLock()
         private var entries: [Key: (raster: TextRaster?, bytes: Int, tick: UInt64)] = [:]
         private var total = 0, tick: UInt64 = 0
         private let limit: Int
         init(limit: Int) { self.limit = limit }
 
-        func contains(text: String, style: TextStyle, scale: Double) -> Bool {
+        func contains(text: String, style: TextStyle, box: TextBox?, scale: Double) -> Bool {
             lock.lock(); defer { lock.unlock() }
-            return entries[Key(text: text, style: style, scale: max(0.01, scale))] != nil
+            return entries[Key(text: text, style: style, box: box, scale: max(0.01, scale))] != nil
         }
 
         func clear() { lock.lock(); entries = [:]; total = 0; lock.unlock() }
 
-        func raster(text: String, style: TextStyle, scale: Double) throws -> TextRaster? {
-            let key = Key(text: text, style: style, scale: max(0.01, scale))
+        func raster(text: String, style: TextStyle, box: TextBox?, scale: Double) throws -> TextRaster? {
+            let key = Key(text: text, style: style, box: box, scale: max(0.01, scale))
             lock.lock()
             if let e = entries[key] {
                 tick += 1; entries[key]?.tick = tick
                 lock.unlock(); return e.raster
             }
             lock.unlock()
-            let r = try TextRenderer.render(text: text, style: style, maxWidth: nil, scale: scale)
+            let r = try TextRenderer.render(text: text, style: style, maxWidth: box?.width, boxHeight: box?.height, scale: scale)
             let bytes = r.map { $0.pixelWidth * $0.pixelHeight * 8 } ?? 0
             lock.lock(); defer { lock.unlock() }
             if let e = entries[key] { return e.raster }   // raced: keep the first

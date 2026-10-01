@@ -182,7 +182,7 @@ private let sample = Transcript(language: "de-DE", words: [
         var tight = CaptionPreset.standard
         tight.maxCharsPerLine = 5; tight.maxLines = 1
         m.presets.append(.init(name: "Tight", preset: tight))
-        m.selectedPresetIndex = 1
+        m.selectedPresetIndex = m.presets.count - 1
         m.transcribe(); await m.waitForTranscription()
         #expect(m.createCaptions().count == 4)
     }

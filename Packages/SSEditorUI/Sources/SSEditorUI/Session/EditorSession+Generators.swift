@@ -11,6 +11,8 @@ extension EditorSession {
                             duration: Time = Time(5, 1), position: Vec2? = nil) -> Clip.ID? {
         guard let t = activeTimeline else { return nil }
         let start = (time ?? playhead).snapped(to: t.frameDuration)
+        // 5 s is not a whole number of frames at 29.97: the clip ends on a frame like everything else on the timeline.
+        let duration = max(duration.snapped(to: t.frameDuration), t.frameDuration)
         let range = TimeRange(start: start, duration: duration)
         let chosen = track.flatMap { id in t.track(id).flatMap { $0.kind == .video ? id : nil } }
             ?? t.tracks.last { $0.kind == .video && !$0.isLocked && !$0.clips.contains { $0.timeline.overlaps(range) } }?.id

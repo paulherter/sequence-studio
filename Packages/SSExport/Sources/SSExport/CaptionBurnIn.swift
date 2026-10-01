@@ -35,7 +35,8 @@ public final class CaptionBurnIn: @unchecked Sendable {
     private let style: @Sendable (String) -> TextStyle
     private let animation: @Sendable (String) -> KeyframeTemplate?
     private let lock = NSLock()
-    private var textures: [Int: MTLTexture] = [:]
+    private struct Cached { var texture: MTLTexture; var originX: Double, originY: Double }
+    private var textures: [Int: Cached] = [:]
     private var pipeline: MTLRenderPipelineState?
     private var device: MTLDevice?
 
@@ -83,12 +84,15 @@ public final class CaptionBurnIn: @unchecked Sendable {
         return p
     }
 
-    private func texture(for index: Int, canvasWidth: Int, device: MTLDevice) throws -> MTLTexture? {
+    private func texture(for index: Int, canvasWidth: Int, canvasHeight: Int, device: MTLDevice) throws -> Cached? {
         if let t = textures[index] { return t }
         let c = captions[index]
-        let text = c.lines.joined(separator: "\n")
-        guard let raster = try TextRenderer.render(text: text, style: style(c.styleRef),
-                                                   maxWidth: Double(canvasWidth) * placement.maxWidthFraction) else { return nil }
+        // Same template and box as the Program monitor (`CaptionLayout`).
+        let template = CaptionLayout.template(text: c.lines.joined(separator: "\n"), style: style(c.styleRef),
+                                              canvasWidth: Double(canvasWidth), canvasHeight: Double(canvasHeight),
+                                              widthFraction: placement.maxWidthFraction)
+        guard let raster = try TextRenderer.render(text: template.text, style: template.style, maxWidth: template.box?.width,
+                                                   boxHeight: template.box?.height) else { return nil }
         let pb = raster.linearBuffer
         let d = MTLTextureDescriptor.texture2DDescriptor(pixelFormat: .rgba16Float, width: raster.pixelWidth,
                                                          height: raster.pixelHeight, mipmapped: false)
@@ -99,8 +103,9 @@ public final class CaptionBurnIn: @unchecked Sendable {
         tex.replace(region: MTLRegionMake2D(0, 0, raster.pixelWidth, raster.pixelHeight), mipmapLevel: 0,
                     withBytes: CVPixelBufferGetBaseAddress(pb)!, bytesPerRow: CVPixelBufferGetBytesPerRow(pb))
         if textures.count >= 8 { textures.removeAll() }
-        textures[index] = tex
-        return tex
+        let cached = Cached(texture: tex, originX: raster.originX, originY: raster.originY)
+        textures[index] = cached
+        return cached
     }
 
     /// Draws the caption active at `t` (if any) over `target` (rgba16Float, `.renderTarget`, working-linear).
@@ -110,13 +115,17 @@ public final class CaptionBurnIn: @unchecked Sendable {
         guard let s = state(at: t), s.opacity > 0, s.scale > 0 else { return false }
         lock.lock(); defer { lock.unlock() }
         let device = target.device
-        guard let tex = try texture(for: s.index, canvasWidth: target.width, device: device) else { return false }
+        guard let cached = try texture(for: s.index, canvasWidth: target.width, canvasHeight: target.height, device: device)
+        else { return false }
+        let tex = cached.texture
         let pipe = try makePipeline(device)
         let w = Float(target.width), h = Float(target.height)
         let size = SIMD2(Float(tex.width), Float(tex.height))
-        // Block centred horizontally; its bottom edge sits `bottomMargin` above the canvas bottom.
-        let bottom = h * (1 - Float(placement.bottomMargin))
-        let center = SIMD2(w / 2, bottom - size.y / 2)
+        // Where the monitor puts the raster: inside the shared caption box (`CaptionLayout`); its centre is the pivot.
+        let c = CaptionLayout.rasterCentre(canvasWidth: Double(w), canvasHeight: Double(h), originX: cached.originX,
+                                           originY: cached.originY, width: Double(size.x), height: Double(size.y),
+                                           widthFraction: placement.maxWidthFraction, bottomMargin: placement.bottomMargin)
+        let center = SIMD2(Float(c.x), Float(c.y))
         var u = OverlayUniforms(canvas: SIMD2(w, h), center: center, size: size, scale: Float(s.scale),
                                 opacity: Float(s.opacity))
         let pass = MTLRenderPassDescriptor()

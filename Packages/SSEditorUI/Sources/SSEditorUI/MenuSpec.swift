@@ -45,6 +45,7 @@ public enum EditorMenus {
     public static let clip = MenuSpec(title: "Clip", items: cmds([
         .insert, .overwrite, nil, .speedDuration, nil, .link, nil,
         .setToFrameSize, nil,
+        .audioGain, nil,
         .easyEase, .easeIn, .easeOut, .toggleHoldInterpolation, .addKeyframe, .toggleSpeedGraph,
     ]))
     public static let sequence = MenuSpec(title: "Sequence", items: cmds([
@@ -71,6 +72,8 @@ public enum EditorMenus {
         .separator,
         .command(.zoomIn), .command(.zoomOut), .command(.zoomFit),
         .separator,
+        .command(.toggleAudioScrubbing),
+        .separator,
         .submenu("Track Height", cmds([
             .videoTracksTaller, .videoTracksShorter, .audioTracksTaller, .audioTracksShorter, nil,
             .minimizeAllTracks, .expandAllTracks,
@@ -93,5 +96,5 @@ public enum EditorMenus {
     /// Commands that stay visible in their menu even when not wired (the standard text editing commands: a text field
     /// handles them) and commands that are menu-only (no default key in Premiere).
     public static let alwaysShown: Set<EditorCommand> = [.undo, .redo, .cut, .copy, .paste, .delete]
-    public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection]
+    public static let menuOnly: Set<EditorCommand> = [.revert, .sequenceSettings, .setToFrameSize, .toggleLinkedSelection, .toggleAudioScrubbing]
 }

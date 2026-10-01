@@ -62,7 +62,10 @@ public struct TextLayoutResult: Sendable, Hashable {
 public enum TextLayout {
     /// - Parameter maxWidth: wrap width in points; nil disables wrapping. Also the alignment container
     ///   (nil: the widest line).
-    public static func layout(text: String, style: TextStyle, maxWidth: Double?) -> TextLayoutResult {
+    /// - Parameter boxHeight: area text: the box is `maxWidth` x `boxHeight`; the block is placed in it by
+    ///   `style.verticalAlignment` and `bounds` is the box. Without it (point text, or a wrap width only) the block is
+    ///   the text itself.
+    public static func layout(text: String, style: TextStyle, maxWidth: Double?, boxHeight: Double? = nil) -> TextLayoutResult {
         let font = makeFont(style)
         let fontAscent = CTFontGetAscent(font), fontDescent = CTFontGetDescent(font), fontLeading = CTFontGetLeading(font)
         let wrap = maxWidth.map { max(1, $0) } ?? Double.greatestFiniteMagnitude
@@ -71,7 +74,7 @@ public enum TextLayout {
         if !text.isEmpty {
             for para in text.components(separatedBy: "\n") {
                 if para.isEmpty { raw.append(Measured(text: "", width: 0, ascent: 0, descent: 0, leading: 0)); continue }
-                raw.append(contentsOf: wrapParagraph(para, font: font, maxWidth: wrap))
+                raw.append(contentsOf: wrapParagraph(para, font: font, maxWidth: wrap, tracking: style.tracking))
             }
         }
         guard !raw.isEmpty else { return TextLayoutResult(lines: [], bounds: .zero, inkBounds: .zero, backgroundRect: nil) }
@@ -95,13 +98,31 @@ public enum TextLayout {
             y += ascent + descent + leading + style.lineSpacing
         }
         let minX = lines.map(\.x).min()!, maxX = lines.map { $0.x + $0.width }.max()!
-        let bounds = TextRect(x: minX, y: 0, width: maxX - minX, height: lines.last!.rect.maxY - lines[0].y)
+        var textBounds = TextRect(x: minX, y: 0, width: maxX - minX, height: lines.last!.rect.maxY - lines[0].y)
+        var bounds = textBounds
+        if let boxH = boxHeight, let w = maxWidth {
+            let h = max(1, boxH), cw = max(1, w)
+            let dy: Double
+            switch style.verticalAlignment {
+            case .top: dy = 0
+            case .middle: dy = (h - textBounds.height) / 2
+            case .bottom: dy = h - textBounds.height
+            }
+            if dy != 0 {
+                lines = lines.map {
+                    TextLine(text: $0.text, x: $0.x, y: $0.y + dy, width: $0.width, height: $0.height, baseline: $0.baseline,
+                             inkBounds: $0.inkBounds.offsetBy(dx: 0, dy: dy))
+                }
+                textBounds = textBounds.offsetBy(dx: 0, dy: dy)
+            }
+            bounds = TextRect(x: 0, y: 0, width: cw, height: h)
+        }
         var bg: TextRect?
         if let b = style.background {
-            bg = TextRect(x: bounds.x - b.padding.horizontal, y: bounds.y - b.padding.vertical,
-                          width: bounds.width + 2 * b.padding.horizontal, height: bounds.height + 2 * b.padding.vertical)
+            bg = TextRect(x: textBounds.x - b.padding.horizontal, y: textBounds.y - b.padding.vertical,
+                          width: textBounds.width + 2 * b.padding.horizontal, height: textBounds.height + 2 * b.padding.vertical)
         }
-        let ink = inkRect(bounds.union(bg ?? bounds), style: style)
+        let ink = inkRect(bounds.union(textBounds).union(bg ?? textBounds), style: style)
         return TextLayoutResult(lines: lines, bounds: bounds, inkBounds: ink, backgroundRect: bg)
     }
 
@@ -127,8 +148,14 @@ public enum TextLayout {
         var ascent: Double, descent: Double, leading: Double
     }
 
-    private static func wrapParagraph(_ para: String, font: CTFont, maxWidth: Double) -> [Measured] {
-        let attr = NSAttributedString(string: para, attributes: [NSAttributedString.Key(kCTFontAttributeName as String): font])
+    static func attributes(font: CTFont, tracking: Double) -> [NSAttributedString.Key: Any] {
+        var a: [NSAttributedString.Key: Any] = [NSAttributedString.Key(kCTFontAttributeName as String): font]
+        if tracking != 0 { a[NSAttributedString.Key(kCTKernAttributeName as String)] = tracking }
+        return a
+    }
+
+    private static func wrapParagraph(_ para: String, font: CTFont, maxWidth: Double, tracking: Double) -> [Measured] {
+        let attr = NSAttributedString(string: para, attributes: attributes(font: font, tracking: tracking))
         let ts = CTTypesetterCreateWithAttributedString(attr)
         let ns = para as NSString
         var out: [Measured] = []

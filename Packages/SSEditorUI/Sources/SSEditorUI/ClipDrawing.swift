@@ -37,9 +37,9 @@ public enum ClipStyle: Sendable, Hashable {
 /// Draws one clip into the current graphics context. View coordinates, y down (flipped view).
 @MainActor
 public enum ClipDrawing {
-    public static let nameStripHeight: CGFloat = 14
+    nonisolated public static let nameStripHeight: CGFloat = 14
     /// Tracks at least this tall show the darker body under the name strip.
-    public static let bodyMinHeight: CGFloat = 26
+    nonisolated public static let bodyMinHeight: CGFloat = 26
     static let offlineFill = Theme.hex(0x6B2A26)
 
     private static let textAttributes: [NSAttributedString.Key: Any] =
@@ -133,26 +133,77 @@ public enum ClipDrawing {
         }
     }
 
-    /// Waveform of an audio clip over its body (below the name strip when the clip is tall).
-    /// `rect` is the clip's full rectangle, `visible` the horizontal range being drawn, `source` the clip's source range.
-    public static func drawWaveform(data: WaveformData, media: UUID, source: TimeRange, rect: CGRect, visible: CGRect,
-                                    cache: WaveformCache?, reversed: Bool = false) {
-        guard let cg = NSGraphicsContext.current?.cgContext, rect.width >= 1 else { return }
+    /// The waveform area inside a clip's full rectangle (also where the volume line moves).
+    nonisolated public static func waveformRect(in rect: CGRect) -> CGRect {
         let body = rect.insetBy(dx: 0, dy: 1)
         let top = body.height >= bodyMinHeight ? body.minY + nameStripHeight : body.minY
-        let wave = CGRect(x: body.minX, y: top + 1, width: body.width, height: body.maxY - top - 2)
+        return CGRect(x: body.minX, y: top + 1, width: body.width, height: body.maxY - top - 2)
+    }
+
+    /// Waveform of an audio clip over its body (below the name strip when the clip is tall).
+    /// `rect` is the clip's full rectangle, `visible` the horizontal range being drawn, `source` the clip's source range.
+    /// `volumeDB`: level in dB at source seconds since the clip's source start (Volume line plus Audio Gain), so the waveform shows
+    /// what will be heard; nil draws the source as it is.
+    public static func drawWaveform(data: WaveformData, media: UUID, source: TimeRange, rect: CGRect, visible: CGRect,
+                                    cache: WaveformCache?, volumeDB: (@Sendable (Double) -> Double)? = nil, reversed: Bool = false) {
+        guard let cg = NSGraphicsContext.current?.cgContext, rect.width >= 1 else { return }
+        let wave = waveformRect(in: rect)
         guard wave.height >= 4 else { return }
         let from = max(Int((visible.minX - wave.minX).rounded(.down)), 0)
         let to = min(Int((visible.maxX - wave.minX).rounded(.up)), Int(wave.width.rounded()))
         guard to > from else { return }
         let style = WaveformStyle()
         var input = WaveformPath.Input(data: data, source: source, clipWidth: wave.width, visibleColumns: from..<to,
-                                       style: style, cache: cache.map { ($0, media) })
+                                       style: style, volumeDB: volumeDB ?? { _ in 0 }, cache: cache.map { ($0, media) })
         input.reversed = reversed
         let columns = WaveformPath.columns(input)
         cg.setFillColor(Theme.white(0.55).cgColor)
         cg.addPath(WaveformPath.path(columns: columns, rect: wave, style: style, firstColumn: from))
         cg.fillPath()
+    }
+
+    /// "Out of sync" badge: frames the linked partner has drifted ("+3" / "-3"), red on the clip's left edge.
+    public static func drawSyncBadge(frames: Int64, rect: CGRect, visible: CGRect) {
+        guard let cg = NSGraphicsContext.current?.cgContext, frames != 0, rect.width >= 24 else { return }
+        let text = (frames > 0 ? "+" : "\u{2212}") + String(abs(frames))
+        let line = CTLineCreateWithAttributedString(NSAttributedString(string: text, attributes: [
+            .font: NSFont.monospacedDigitSystemFont(ofSize: 9, weight: .semibold), .foregroundColor: NSColor.white]))
+        let w = CTLineGetTypographicBounds(line, nil, nil, nil) + 8
+        let x = max(rect.minX, visible.minX) + 3
+        let y = rect.minY + (rect.height >= bodyMinHeight ? nameStripHeight + 3 : 2)
+        let pill = CGRect(x: x, y: y, width: w, height: 12)
+        guard pill.maxX < rect.maxX else { return }
+        cg.saveGState()
+        cg.setFillColor(NSColor(srgbRed: 0.86, green: 0.2, blue: 0.2, alpha: 1).cgColor)
+        cg.addPath(CGPath(roundedRect: pill, cornerWidth: 3, cornerHeight: 3, transform: nil)); cg.fillPath()
+        cg.textMatrix = CGAffineTransform(scaleX: 1, y: -1)
+        cg.textPosition = CGPoint(x: pill.minX + 4, y: pill.minY + 9)
+        CTLineDraw(line, cg)
+        cg.restoreGState()
+    }
+
+    /// The volume rubber band over the waveform: a thin line with a diamond on every key.
+    public static func drawVolumeLine(clip: Clip, rect: CGRect, visible: CGRect, selected: Bool) {
+        guard let cg = NSGraphicsContext.current?.cgContext else { return }
+        let pts = VolumeLine.points(clip: clip, clipRect: rect, visible: visible)
+        guard pts.count >= 2 else { return }
+        cg.saveGState()
+        cg.clip(to: visible.intersection(rect))
+        cg.setLineWidth(1)
+        cg.setStrokeColor(Theme.black(0.45).cgColor)
+        cg.addLines(between: pts.map { CGPoint(x: $0.x, y: $0.y + 1) }); cg.strokePath()
+        cg.setStrokeColor(Theme.white(selected ? 0.95 : 0.75).cgColor)
+        cg.addLines(between: pts); cg.strokePath()
+        cg.setFillColor(Theme.white(0.95).cgColor)
+        cg.setStrokeColor(Theme.black(0.6).cgColor)
+        for k in VolumeLine.keyPoints(clip: clip, clipRect: rect) where k.x >= visible.minX - 4 && k.x <= visible.maxX + 4 {
+            let d = CGMutablePath()
+            d.move(to: CGPoint(x: k.x, y: k.y - 4)); d.addLine(to: CGPoint(x: k.x + 4, y: k.y))
+            d.addLine(to: CGPoint(x: k.x, y: k.y + 4)); d.addLine(to: CGPoint(x: k.x - 4, y: k.y)); d.closeSubpath()
+            cg.addPath(d); cg.fillPath()
+            cg.addPath(d); cg.strokePath()
+        }
+        cg.restoreGState()
     }
 
     /// Dark bars with a grip line at both ends: where trimming will grab (T-04).

@@ -70,6 +70,21 @@ private let seq = CGSize(width: 1920, height: 1080)
         let small = MonitorViewMapping(viewSize: CGSize(width: 960, height: 600), backingScale: 2, sequenceSize: seq, zoom: .percent(50))
         #expect(TypeToolPlacement.position(forClick: CGPoint(x: 2, y: 2), mapping: small) == nil)
     }
+
+    @Test func typeDragMakesABoxAndAShortDragIsAClick() {
+        let m = mapping()
+        let a = CGPoint(x: 480, y: 300), b = CGPoint(x: 480 + 96, y: 300 + 54)
+        let (centre, box) = TypeToolPlacement.box(from: a, to: b, mapping: m, minDrag: 6)!
+        #expect(abs(box.width - 192) < 1.5 && abs(box.height - 108) < 1.5)
+        #expect(abs(centre.x - 96) < 1.5 && abs(centre.y - 54) < 1.5)
+        // Dragging the other way gives the same box.
+        let back = TypeToolPlacement.box(from: b, to: a, mapping: m, minDrag: 6)!
+        #expect(back.1 == box)
+        #expect(TypeToolPlacement.box(from: a, to: CGPoint(x: 483, y: 303), mapping: m, minDrag: 6) == nil)
+        // A drag running past the canvas edge is clipped to the canvas.
+        let big = TypeToolPlacement.box(from: a, to: CGPoint(x: 9000, y: 9000), mapping: m, minDrag: 6)!
+        #expect(abs(big.1.width - 960) < 1.5 && abs(big.1.height - 540) < 1.5)
+    }
 }
 
 @Suite struct SnapGuidesTests {

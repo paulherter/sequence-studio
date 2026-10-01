@@ -106,6 +106,96 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
 
     public mutating func remove(_ id: CaptionItem.ID) { items.removeAll { $0.id == id } }
 
+    /// Splits at `t` (strictly inside the item). The words are shared out by the time proportion, at least one word
+    /// each side while the item has two or more. Both halves keep style and animation. Returns the new IDs.
+    mutating func split(_ id: CaptionItem.ID, at t: Time) -> (CaptionItem.ID, CaptionItem.ID)? {
+        guard let i = items.firstIndex(where: { $0.id == id }) else { return nil }
+        let r = items[i].range
+        guard t > r.start, t < r.end else { return nil }
+        let words = items[i].lines.flatMap { $0.split(whereSeparator: \.isWhitespace).map(String.init) }
+        let k: Int
+        if words.count < 2 { k = words.count } else {
+            let frac = Double((t - r.start).value) / Double((t - r.start).timescale)
+                / (Double((r.end - r.start).value) / Double((r.end - r.start).timescale))
+            k = min(max(Int((Double(words.count) * frac).rounded()), 1), words.count - 1)
+        }
+        var left = items[i], right = items[i]
+        left.range = TimeRange(start: r.start, end: t); right.range = TimeRange(start: t, end: r.end)
+        // Keep the original line breaks where the cut allows: walk the lines, the first k words go left.
+        var leftLines: [String] = [], rightLines: [String] = []
+        var used = 0
+        for line in items[i].lines {
+            let w = line.split(whereSeparator: \.isWhitespace).map(String.init)
+            guard !w.isEmpty else { continue }
+            let take = max(0, min(w.count, k - used))
+            if take > 0 { leftLines.append(w[..<take].joined(separator: " ")) }
+            if take < w.count { rightLines.append(w[take...].joined(separator: " ")) }
+            used += take
+        }
+        left.lines = leftLines.isEmpty ? [""] : leftLines
+        right.lines = rightLines.isEmpty ? [""] : rightLines
+        right.id = UUID()
+        items[i] = left
+        items.insert(right, at: i + 1)
+        return (left.id, right.id)
+    }
+
+    /// Merges the items from the earliest to the latest of `ids` (everything in between is included) into the
+    /// earliest one: text joined by a space on one line, range from the first start to the last end.
+    mutating func merge(_ ids: Set<CaptionItem.ID>) -> CaptionItem.ID? {
+        let idx = items.indices.filter { ids.contains(items[$0].id) }
+        guard let lo = idx.first, let hi = idx.last, lo < hi else { return nil }
+        var m = items[lo]
+        let text = items[lo...hi].map { $0.lines.joined(separator: " ") }.filter { !$0.isEmpty }.joined(separator: " ")
+        m.lines = [text]
+        m.range = TimeRange(start: items[lo].range.start, end: items[hi].range.end)
+        items.replaceSubrange(lo...hi, with: [m])
+        return m.id
+    }
+
+    /// New empty caption starting at `at` (not inside another item) up to `duration`, cut short by the next item.
+    mutating func add(at: Time, duration: Time, style: String, animation: String) throws -> CaptionItem.ID {
+        guard at >= .zero, duration > .zero else { throw EditError.emptyClip }
+        guard !items.contains(where: { $0.range.contains(at) }) else { throw EditError.collision }
+        var end = at + duration
+        if let next = items.first(where: { $0.range.start >= at }) { end = min(end, next.range.start) }
+        guard end > at else { throw EditError.collision }
+        let ref = items.last { $0.range.end <= at } ?? items.first
+        let item = CaptionItem(lines: [""], range: TimeRange(start: at, end: end),
+                               styleRef: ref?.styleRef ?? style, animationRef: ref?.animationRef ?? animation)
+        items.append(item)
+        items.sort { $0.range.start < $1.range.start }
+        return item.id
+    }
+
+    mutating func setStyle(styleRef: String, animationRef: String?) {
+        for i in items.indices {
+            items[i].styleRef = styleRef
+            if let animationRef { items[i].animationRef = animationRef }
+        }
+    }
+
+    /// Replaces `find` in every line; returns the number of replacements. Timing is untouched.
+    mutating func replaceText(find: String, with new: String, caseSensitive: Bool) -> Int {
+        guard !find.isEmpty else { return 0 }
+        var count = 0
+        let opts: String.CompareOptions = caseSensitive ? [] : [.caseInsensitive]
+        for i in items.indices {
+            var lines = items[i].lines
+            for j in lines.indices {
+                var out = "", rest = lines[j][...]
+                while let r = rest.range(of: find, options: opts) {
+                    out += rest[..<r.lowerBound] + new
+                    rest = rest[r.upperBound...]
+                    count += 1
+                }
+                lines[j] = out + rest
+            }
+            items[i].lines = lines
+        }
+        return count
+    }
+
     /// Ripple-closes `span`: material after it moves left by its duration, items inside it are cut out
     /// (fully covered ones vanish, straddling ones shrink). Items never overlap afterwards.
     mutating func closeSpan(_ span: TimeRange) {
@@ -198,6 +288,58 @@ extension Timeline {
     public mutating func deleteCaption(_ id: CaptionItem.ID) throws {
         let i = try captionLocation(id)
         captionTracks[i].remove(id)
+    }
+
+    /// Splits a caption at `t`. Returns the IDs of the two halves.
+    @discardableResult
+    public mutating func splitCaption(_ id: CaptionItem.ID, at t: Time) throws -> (CaptionItem.ID, CaptionItem.ID) {
+        let i = try captionLocation(id)
+        guard let r = captionTracks[i].split(id, at: t) else { throw EditError.emptyClip }
+        return r
+    }
+
+    /// Merges the selected captions (and any between them) of one track into one. Needs two or more.
+    @discardableResult
+    public mutating func mergeCaptions(_ ids: Set<CaptionItem.ID>) throws -> CaptionItem.ID {
+        guard let first = ids.first else { throw EditError.clipNotFound }
+        let i = try captionLocation(first)
+        guard ids.allSatisfy({ captionTracks[i].item($0) != nil }) else { throw EditError.wrongTrackKind }
+        guard let m = captionTracks[i].merge(ids) else { throw EditError.emptyClip }
+        return m
+    }
+
+    @discardableResult
+    public mutating func addCaption(at t: Time, duration: Time, track: CaptionTrack.ID? = nil) throws -> CaptionItem.ID {
+        let id = try track ?? captionTracks.first?.id ?? replaceCaptions([])
+        let i = try captionTrackIndex(id)
+        return try captionTracks[i].add(at: t, duration: duration, style: "", animation: "")
+    }
+
+    /// Search and replace over all unlocked caption tracks (a locked track throws). Returns the replacement count.
+    @discardableResult
+    public mutating func replaceCaptionText(find: String, with new: String, caseSensitive: Bool) throws -> Int {
+        // Locked tracks are skipped (and not counted); only when every track is locked is the edit refused.
+        guard captionTracks.contains(where: { !$0.isLocked }) || captionTracks.isEmpty else { throw EditError.trackLocked }
+        guard find != new else { return 0 }
+        var n = 0
+        for i in captionTracks.indices where !captionTracks[i].isLocked {
+            n += captionTracks[i].replaceText(find: find, with: new, caseSensitive: caseSensitive)
+        }
+        return n
+    }
+
+    /// IDs of the captions whose text contains `find`, in time order.
+    public func captionMatches(find: String, caseSensitive: Bool) -> [CaptionItem.ID] {
+        guard !find.isEmpty else { return [] }
+        let opts: String.CompareOptions = caseSensitive ? [] : [.caseInsensitive]
+        return captionTracks.flatMap(\.items).sorted { $0.range.start < $1.range.start }
+            .filter { $0.lines.contains { $0.range(of: find, options: opts) != nil } }.map(\.id)
+    }
+
+    /// Applies a caption style (and optionally an animation) to every caption of the track.
+    public mutating func setCaptionStyle(styleRef: String, animationRef: String? = nil, track id: CaptionTrack.ID) throws {
+        let i = try captionTrackIndex(id)
+        captionTracks[i].setStyle(styleRef: styleRef, animationRef: animationRef)
     }
 
     /// Captions visible at `t`, bottom track first. Captions of nested sequences are not evaluated (Premiere).

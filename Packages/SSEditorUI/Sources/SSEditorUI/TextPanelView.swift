@@ -4,174 +4,6 @@ import SSCore
 import SSText
 import SSTranscribe
 
-/// Captions tab of the Text panel: the captions of the sequence, the style preset and Create Captions.
-/// The transcript comes from the model of the selected clip (Transcript tab).
-@MainActor
-public final class CaptionsTabView: NSView, NSTableViewDataSource, NSTableViewDelegate {
-    public struct Row: Equatable, Sendable {
-        public var id: UUID
-        public var start: Time
-        public var text: String
-    }
-
-    /// Model of the selected clip; nil when no clip is selected.
-    public var model: CaptionsPanelModel? { didSet { observe(); refresh() } }
-    public var onSeek: ((Time) -> Void)?
-    public var timecode = Timecode(frameDuration: Time(1001, 30000), dropFrame: true)
-
-    public private(set) var rows: [Row] = []
-
-    private let table = NSTableView()
-    private let scroll = NSScrollView()
-    private let presetPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let createButton = NSButton(title: "Create Captions", target: nil, action: nil)
-    private let hint = NSTextField(wrappingLabelWithString: "")
-    private var observed: CaptionsPanelModel?
-    private var generation = 0
-
-    public override var isFlipped: Bool { true }
-
-    public init() {
-        super.init(frame: NSRect(x: 0, y: 0, width: 320, height: 400))
-        wantsLayer = true
-        layer?.backgroundColor = Theme.Colors.panel.cgColor
-        appearance = NSAppearance(named: .darkAqua)
-        let col = NSTableColumn(identifier: .init("caption"))
-        table.addTableColumn(col)
-        table.headerView = nil
-        table.rowHeight = 34
-        table.style = .sourceList
-        table.backgroundColor = .clear
-        table.dataSource = self
-        table.delegate = self
-        table.target = self
-        table.action = #selector(rowClicked)
-        table.setAccessibilityLabel("Captions")
-        scroll.documentView = table
-        scroll.hasVerticalScroller = true
-        scroll.drawsBackground = false
-        scroll.borderType = .noBorder
-        presetPopUp.controlSize = .small
-        presetPopUp.font = Theme.Fonts.small
-        presetPopUp.target = self; presetPopUp.action = #selector(presetChanged)
-        createButton.bezelStyle = .rounded
-        createButton.controlSize = .small
-        createButton.font = Theme.Fonts.small
-        createButton.keyEquivalent = "\r"
-        createButton.target = self; createButton.action = #selector(createClicked)
-        hint.font = Theme.Fonts.small
-        hint.textColor = Theme.Colors.label3
-        addSubview(scroll); addSubview(presetPopUp); addSubview(createButton); addSubview(hint)
-        refresh()
-    }
-    @available(*, unavailable) public required init?(coder: NSCoder) { fatalError() }
-
-    // MARK: Data
-
-    /// All captions of the timeline's caption tracks in time order.
-    public static func rows(of timeline: Timeline?) -> [Row] {
-        (timeline?.captionTracks.flatMap(\.items) ?? [])
-            .sorted { $0.range.start < $1.range.start }
-            .map { Row(id: $0.id, start: $0.range.start, text: $0.lines.joined(separator: " ")) }
-    }
-
-    public func setTimeline(_ t: Timeline?) {
-        let new = Self.rows(of: t)
-        if new != rows { rows = new; table.reloadData() }
-        refresh()
-    }
-
-    // MARK: Observation
-
-    private func observe() {
-        generation += 1
-        observed = model
-        track(generation)
-    }
-
-    private func track(_ gen: Int) {
-        guard gen == generation, let m = observed else { return }
-        withObservationTracking {
-            _ = m.state; _ = m.presets; _ = m.selectedPresetIndex; _ = m.transcript
-        } onChange: { [weak self] in
-            Task { @MainActor [weak self] in
-                guard let self, gen == generation else { return }
-                refresh()
-                track(gen)
-            }
-        }
-    }
-
-    private func refresh() {
-        presetPopUp.removeAllItems()
-        if let m = model {
-            presetPopUp.addItems(withTitles: m.presets.map(\.name))
-            if m.presets.indices.contains(m.selectedPresetIndex) { presetPopUp.selectItem(at: m.selectedPresetIndex) }
-        }
-        presetPopUp.isEnabled = model != nil
-        createButton.isEnabled = model?.canCreateCaptions ?? false
-        if model?.canCreateCaptions == true {
-            hint.stringValue = rows.isEmpty ? "No captions yet." : "\(rows.count) captions. Creating replaces them."
-        } else {
-            hint.stringValue = model == nil ? "Select a clip, then transcribe it in the Transcript tab."
-                                            : "Transcribe the clip in the Transcript tab first."
-        }
-        needsLayout = true
-    }
-
-    // MARK: Layout
-
-    public override func layout() {
-        super.layout()
-        let pad = Theme.Spacing.sm
-        let w = bounds.width
-        let footer: CGFloat = 78
-        scroll.frame = CGRect(x: 0, y: 0, width: w, height: max(bounds.height - footer, 0))
-        let y = scroll.frame.maxY + pad
-        let inner = max(w - 2 * pad, 0)
-        presetPopUp.frame = CGRect(x: pad, y: y, width: inner, height: 20)
-        createButton.sizeToFit()
-        createButton.frame = CGRect(x: max(w - pad - createButton.frame.width, pad), y: y + 26,
-                                    width: createButton.frame.width, height: createButton.frame.height)
-        let hw = max(createButton.frame.minX - 2 * pad, 0)
-        hint.frame = CGRect(x: pad, y: y + 26, width: hw, height: max(footer - 26 - pad, 0))
-    }
-
-    // MARK: Actions
-
-    @objc private func presetChanged() { model?.selectedPresetIndex = presetPopUp.indexOfSelectedItem }
-    @objc private func createClicked() { model?.createCaptions() }
-    @objc private func rowClicked() {
-        guard rows.indices.contains(table.clickedRow) else { return }
-        onSeek?(rows[table.clickedRow].start)
-    }
-
-    // MARK: Table
-
-    public func numberOfRows(in tableView: NSTableView) -> Int { rows.count }
-
-    public func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let r = rows[row]
-        let cell = NSTableCellView()
-        let time = NSTextField(labelWithString: timecode.format(r.start))
-        time.font = Theme.Fonts.mini; time.textColor = Theme.Colors.label3
-        let text = NSTextField(labelWithString: r.text)
-        text.font = Theme.Fonts.smallName; text.textColor = Theme.Colors.label
-        text.lineBreakMode = .byTruncatingTail
-        let stack = NSStackView(views: [time, text])
-        stack.orientation = .vertical; stack.alignment = .leading; stack.spacing = 0
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        cell.addSubview(stack)
-        NSLayoutConstraint.activate([
-            stack.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: Theme.Spacing.xs),
-            stack.trailingAnchor.constraint(lessThanOrEqualTo: cell.trailingAnchor, constant: -Theme.Spacing.xs),
-            stack.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-        ])
-        cell.setAccessibilityLabel(r.text)
-        return cell
-    }
-}
-
 /// Text panel = Premiere's Text panel: a Transcript tab (transcribe and edit the transcript of the selected clip)
 /// and a Captions tab (caption list, style preset, Create Captions into the caption track).
 /// Text templates live in the Library (Text Templates), not here.
@@ -183,6 +15,8 @@ public final class TextPanelView: NSView {
 
     public let session: EditorSession
     public var onStatus: ((String) -> Void)?
+    /// "Export SRT…" in the Captions tab.
+    public var onExportSRT: (() -> Void)?
     public private(set) var tab: Tab = .transcript
 
     private let tabs = NSSegmentedControl(labels: Tab.allCases.map(\.title), trackingMode: .selectOne, target: nil, action: nil)
@@ -209,7 +43,10 @@ public final class TextPanelView: NSView {
         emptyLabel.font = Theme.Fonts.small
         emptyLabel.textColor = Theme.Colors.label3
         emptyLabel.alignment = .center
+        captionsTab.session = session
         captionsTab.onSeek = { [weak self] t in self?.session.seek(to: t) }
+        captionsTab.onStatus = { [weak self] m in self?.onStatus?(m) }
+        captionsTab.onExportSRT = { [weak self] in self?.onExportSRT?() }
         addSubview(tabs)
         addSubview(emptyLabel)
         addSubview(captionsTab)
@@ -229,6 +66,14 @@ public final class TextPanelView: NSView {
         showCurrent()
     }
 
+    /// Shows the Captions tab and starts typing into that caption (double-click on a caption in the timeline).
+    public func editCaption(_ id: CaptionItem.ID) {
+        select(.captions)
+        layoutSubtreeIfNeeded()
+        captionsTab.setTimeline(session.activeTimeline)
+        captionsTab.beginEditing(id)
+    }
+
     @objc private func tabChanged() { select(Tab(rawValue: tabs.selectedSegment) ?? .transcript) }
 
     // MARK: Session to UI
@@ -244,7 +89,9 @@ public final class TextPanelView: NSView {
                 captionsTab.timecode = Timecode(frameDuration: tl.frameDuration,
                                                 dropFrame: tl.frameDuration == Time(1001, 30000) || tl.frameDuration == Time(1001, 60000))
             }
+            captionsTab.model?.frameDuration = session.activeTimeline?.frameDuration ?? Time(1, 30)
             captionsTab.setTimeline(session.activeTimeline)
+            captionsTab.setCaptionSelection(session.captionSelection)
             showCurrent()
         }
         if change.contains(.playhead) || change.contains(.project) { updatePlayhead() }
@@ -267,9 +114,12 @@ public final class TextPanelView: NSView {
         }
         model.onCreateCaptions = { [weak self] captions in
             guard let self, let c = self.clip(id) else { return }
-            let items = CaptionMapping.items(captions, for: c)
+            // Every clip of the sequence that plays this media gets its captions (cut interviews, linked A/V once).
+            let same = self.session.activeTimeline?.tracks.flatMap(\.clips).filter { $0.media == c.media && $0.generator == nil } ?? [c]
+            let items = CaptionMapping.items(captions, forClips: same.isEmpty ? [c] : same,
+                                             frameDuration: self.session.activeTimeline?.frameDuration)
             guard !items.isEmpty else { self.onStatus?("No captions fall inside this clip."); return }
-            if self.session.replaceCaptions(items) { self.onStatus?("Created \(items.count) captions.") }
+            if self.session.addCaptions(items) { self.onStatus?("Created \(items.count) captions.") }
         }
         if let ref = session.project.media(clip.media) { model.sourceURL = URL(fileURLWithPath: ref.path) }
         models[id] = model

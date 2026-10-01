@@ -72,6 +72,8 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     public var isStill: Bool = false
     /// Explicitly applied effects (v9), in render order. Empty = none applied (nothing shows in Effect Controls).
     public var effects: [ClipEffect] = []
+    /// Audio Gain in dB (Clip > Audio Options > Audio Gain), on top of the Volume level. 0 = none.
+    public var audioGainDB: Double = 0
     /// Constant speed (v13). 100 % = `.normal`. Only media clips are retimed (nested sequences, generators and stills
     /// stay at 100 %; `Timeline.setSpeed` refuses them).
     public var speed: ClipSpeed = .normal
@@ -144,7 +146,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch
+        case id, name, media, kind, source, start, link, mediaDuration, animation, sequence, generator, color, label, effects, isStill, speed, reversed, keepsPitch, audioGainDB
     }
 
     public init(from d: Decoder) throws {
@@ -164,6 +166,7 @@ public struct Clip: Sendable, Hashable, Codable, Identifiable {
                   speed: try c.decodeIfPresent(ClipSpeed.self, forKey: .speed) ?? .normal,
                   reversed: try c.decodeIfPresent(Bool.self, forKey: .reversed) ?? false,
                   keepsPitch: try c.decodeIfPresent(Bool.self, forKey: .keepsPitch) ?? true)
+        audioGainDB = try c.decodeIfPresent(Double.self, forKey: .audioGainDB) ?? 0
         // v8 -> v9: a radius that was not the default becomes an applied Rounded Corners effect.
         if let legacy = animation.legacyCornerRadius {
             animation.legacyCornerRadius = nil

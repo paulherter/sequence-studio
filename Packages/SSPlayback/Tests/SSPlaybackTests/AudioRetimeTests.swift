@@ -97,3 +97,27 @@ private func risingCrossings(_ x: ArraySlice<Float>) -> Int {
         #expect(abs(o[3000] - 1) < 1e-5)
     }
 }
+
+/// Audio Gain is part of `Clip.volume(at:)`, which every path uses: retimed and reversed output is gain x volume, once.
+@Suite struct AudioGainRetimeTests {
+    @Test func gainTimesVolumeAppliesOnceWhenRetimedAndReversed() {
+        let m = UUID()
+        for (speed, rev) in [(200, false), (200, true), (50, false), (100, true)] {
+            func clip(gain: Double, volume: Double) -> Clip {
+                var c = retimedClip(m, srcLen: 4000, speed: ClipSpeed(percent: Double(speed)), reversed: rev, keepsPitch: false)
+                c.audioGainDB = gain
+                c.animation.volume = AnimatedProperty(volume)
+                return c
+            }
+            let base = render(tl(clip(gain: 0, volume: 1)), ramp(8000), m, from: 0, count: 1000)
+            let gained = render(tl(clip(gain: 6.0206, volume: 1)), ramp(8000), m, from: 0, count: 1000)
+            let both = render(tl(clip(gain: 6.0206, volume: 0.5)), ramp(8000), m, from: 0, count: 1000)
+            for i in stride(from: 0, to: 1000, by: 37) {
+                #expect(abs(gained[i] - base[i] * 2) <= abs(base[i]) * 1e-3 + 1e-4, "gain x2 at \(i), \(speed)% rev \(rev)")
+                #expect(abs(both[i] - base[i]) <= abs(base[i]) * 1e-3 + 1e-4, "gain x volume once at \(i)")
+            }
+            #expect(base.contains { $0 != 0 })
+        }
+    }
+}
+

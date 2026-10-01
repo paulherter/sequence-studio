@@ -249,4 +249,18 @@ private func drag(_ i: inout TimelineInteraction, _ a: CGPoint, _ b: CGPoint) ->
         #expect(menu.items.filter { !$0.isSeparatorItem }.count == items.count)
         #expect(menu.items.first { $0.title == "Nest…" }?.isEnabled == false)
     }
+
+    @Test func captionMenuEntriesFollowTheSelectionAndPlayhead() {
+        let f = Fx()
+        func on(_ items: [TimelineMenuItem]) -> [TimelineMenuAction] { items.filter(\.isEnabled).map(\.action) }
+        // One caption selected, playhead inside it.
+        let one = TimelineContextMenu.captionItems(timeline: f.tl, captionSelection: [f.c1.id], playhead: fd * 5)
+        #expect(on(one) == [.editCaption, .splitCaption, .delete])
+        // Playhead in a gap: no split.
+        let gap = TimelineContextMenu.captionItems(timeline: f.tl, captionSelection: [f.c1.id], playhead: fd * 25)
+        #expect(on(gap) == [.editCaption, .delete])
+        // Two captions of one track: merge, no edit.
+        let two = TimelineContextMenu.captionItems(timeline: f.tl, captionSelection: [f.c1.id, f.c2.id], playhead: fd * 25)
+        #expect(on(two) == [.mergeCaptions, .delete])
+    }
 }

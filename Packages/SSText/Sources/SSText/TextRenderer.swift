@@ -24,8 +24,8 @@ public enum TextRendererError: Error, Sendable { case bufferCreationFailed(Int32
 /// Rasterizes `TextLayout` output with Core Graphics / Core Text (see docs/PHASE7.md "Text renderer").
 public enum TextRenderer {
     /// Returns nil for empty text / empty ink.
-    public static func render(text: String, style: TextStyle, maxWidth: Double?, scale: Double = 1) throws -> TextRaster? {
-        let layout = TextLayout.layout(text: text, style: style, maxWidth: maxWidth)
+    public static func render(text: String, style: TextStyle, maxWidth: Double?, boxHeight: Double? = nil, scale: Double = 1) throws -> TextRaster? {
+        let layout = TextLayout.layout(text: text, style: style, maxWidth: maxWidth, boxHeight: boxHeight)
         let ink = layout.inkBounds
         let s = max(0.01, scale)
         let w = Int((ink.width * s).rounded(.up)), h = Int((ink.height * s).rounded(.up))
@@ -94,9 +94,9 @@ public enum TextRenderer {
         let font = TextLayout.makeFont(style)
         let lines: [(CTLine, TextLine)] = layout.lines.compactMap { l in
             guard !l.text.isEmpty else { return nil }
-            let attr = NSAttributedString(string: l.text, attributes: [
-                NSAttributedString.Key(kCTFontAttributeName as String): font,
-                NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String): true])
+            var attrs = TextLayout.attributes(font: font, tracking: style.tracking)
+            attrs[NSAttributedString.Key(kCTForegroundColorFromContextAttributeName as String)] = true
+            let attr = NSAttributedString(string: l.text, attributes: attrs)
             return (CTLineCreateWithAttributedString(attr), l)
         }
         func drawLines(_ mode: CGTextDrawingMode) {

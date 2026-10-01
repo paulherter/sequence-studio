@@ -3,6 +3,7 @@ import SSAudioFX
 import SSCore
 import SSMedia
 import SSPlayback
+import SSTranscribe
 
 /// Builds the real export sources of one sequence: decoded video through the compositor (text, nested sequences,
 /// corner radius), the mixed audio (clip/track volume, per-track FX presets, nested sequences) and the sidecar cues.
@@ -25,6 +26,19 @@ public enum ExportSourceBuilder {
         }
     }
 
+    /// The caption burn-in of a "Burn in captions" export: every visible caption track of the sequence, drawn with its
+    /// caption style at the bottom safe area. Nil when burn-in is off or there are no captions.
+    public static func burnIn(for timeline: Timeline, settings: ExportSettings) -> CaptionBurnIn? {
+        guard settings.captions == .burnIn else { return nil }
+        let items = timeline.captionTracks.filter(\.isVisible).flatMap(\.items)
+            .filter { !$0.range.isEmpty && !$0.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty }
+        guard !items.isEmpty else { return nil }
+        let captions = items.map {
+            Caption(lines: $0.lines, range: $0.range, styleRef: $0.styleRef, animationRef: $0.animationRef)
+        }
+        return CaptionBurnIn(captions: captions, library: .builtIn)
+    }
+
     /// - Parameters:
     ///   - sequences: all timelines of the project by id (nested clips resolve through them).
     ///   - presets: per-audio-track FX presets (tracks without one are dry).
@@ -39,6 +53,7 @@ public enum ExportSourceBuilder {
                                             width: settings.video.width, height: settings.video.height,
                                             frameDuration: settings.video.frameDuration, frameCount: frames,
                                             startTime: range.start, pixelFormat: pixelFormat,
+                                            captions: burnIn(for: timeline, settings: settings),
                                             colorResolver: resolver.colorResolver)
         let hasAudio = settings.audio.enabled && timeline.tracks.contains { $0.kind == .audio && !$0.clips.isEmpty }
         let audio: (any AudioSource)? = hasAudio

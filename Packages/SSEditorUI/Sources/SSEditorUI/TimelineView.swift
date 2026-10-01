@@ -21,6 +21,11 @@ public final class TimelineView: NSView {
     public var onTrackToggle: ((Track.ID, TrackToggle) -> Void)?
     /// Double-click on a caption item: the host opens its text editor.
     public var onEditCaptionText: ((CaptionItem.ID) -> Void)?
+    /// Volume rubber band edit of an audio clip: the clip as edited so far; one drag = began, changed..., ended.
+    public var onVolumeEdit: ((Clip, VolumeEditPhase) -> Void)?
+    var volumeDrag: VolumeDrag?
+    /// Frames by which linked clips are out of sync (red badge on the clip); refreshed whenever `timeline` changes.
+    var syncBadges: [Clip.ID: Int64] = [:]
     /// Builds the right-click menu for a point in view coordinates (see `TimelineContextMenu`). Nil = no menu.
     public var contextMenuProvider: ((CGPoint) -> NSMenu?)?
     /// Fired after scroll or zoom changed, so a host can sync scrollers and a zoom slider.
@@ -140,6 +145,7 @@ public final class TimelineView: NSView {
 
     public init(timeline: Timeline = Timeline(name: "", frameDuration: Time(1, 24)), frame: NSRect = NSRect(x: 0, y: 0, width: 1000, height: 200)) {
         self.timeline = timeline
+        self.syncBadges = timeline.syncOffsets()
         let fd = timeline.frameDuration
         self.geometry = TimelineGeometry(frameDuration: fd, pointsPerSecond: 40)
         self.geometry.viewportHeight = frame.height
@@ -164,6 +170,7 @@ public final class TimelineView: NSView {
 
     public func setTimeline(_ t: Timeline) {
         timeline = t
+        syncBadges = t.syncOffsets()
         geometry.frameDuration = t.frameDuration
         selection.formIntersection(Set(t.tracks.flatMap { $0.clips.map(\.id) }))
         captionSelection.formIntersection(Set(t.captionTracks.flatMap { $0.items.map(\.id) }))
@@ -377,6 +384,7 @@ public final class TimelineView: NSView {
         let preview = interaction.preview
         if preview != timeline {
             timeline = preview
+            syncBadges = preview.syncOffsets()
             rebuildHeaders()
             syncChildren()
             invalidateCursors()
@@ -397,6 +405,7 @@ public final class TimelineView: NSView {
             resizing = (zone, p.y, geometry.rows(for: timeline))
             return
         }
+        if beginVolumeDrag(at: p, event: event) { return }
         onPointerDown?()
         if event.clickCount == 2, case .caption(let id, _) = geometry.hitTest(p, in: timeline) {
             onEditCaptionText?(id)
@@ -415,6 +424,7 @@ public final class TimelineView: NSView {
 
     public override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
+        if updateVolumeDrag(to: p) { return }
         if let r = resizing {
             let dy = p.y - r.startY
             switch r.zone {
@@ -438,6 +448,7 @@ public final class TimelineView: NSView {
     }
 
     public override func mouseUp(with event: NSEvent) {
+        if endVolumeDrag(at: convert(event.locationInWindow, from: nil)) { return }
         if resizing != nil {
             resizing = nil
             onTrackHeightsChange?(geometry.heightOverrides)
@@ -883,11 +894,20 @@ public final class TimelineView: NSView {
                 ClipDrawing.draw(name: c.name + SpeedLabel.nameSuffix(for: c), rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
                                  visible: visibleX, style: .label(labelResolver.label(for: c)), isSelected: selection.contains(c.id),
                                  isOffline: offlineMedia.contains(c.media))
+                if let n = syncBadges[c.id] {
+                    ClipDrawing.drawSyncBadge(frames: n, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height), visible: visibleX)
+                }
                 if track.kind == .audio, !TrackSizing.isThin(row.height), let wf = waveforms, let d = wf.data[c.media] {
                     ClipDrawing.drawWaveform(data: d, media: c.media, source: c.source,
                                              rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
                                              visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height),
-                                             cache: wf.cache, reversed: c.reversed)   // pixel-mapped: only the dirty columns are needed
+                                             cache: wf.cache,   // pixel-mapped: only the dirty columns are needed
+                                             volumeDB: Self.volumeDB(of: c), reversed: c.reversed)
+                }
+                if track.kind == .audio, VolumeLine.isAvailable(rowHeight: row.height) {
+                    ClipDrawing.drawVolumeLine(clip: c, rect: CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height),
+                                               visible: CGRect(x: clip.minX, y: 0, width: clip.width, height: bounds.height),
+                                               selected: selection.contains(c.id))
                 }
             }
         }

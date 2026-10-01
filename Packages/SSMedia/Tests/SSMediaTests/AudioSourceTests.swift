@@ -1,3 +1,4 @@
+import AVFoundation
 import CoreMedia
 import Foundation
 import SSMediaTestSupport
@@ -138,3 +139,28 @@ private func clickPositions(_ a: [Float], base: Int64 = 0, threshold: Float = 0.
         #expect(try readAll(mem, from: 1_000, count: 8, channel: 1).isEmpty)
     }
 }
+
+@Suite struct MonoAudioTests {
+    /// A mono file plays on both sides (not only left) and keeps its level.
+    @Test func monoFileFillsLeftAndRightEqually() async throws {
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent("mono-\(UUID().uuidString).wav")
+        defer { try? FileManager.default.removeItem(at: url) }
+        let rate = 48_000.0
+        let fmt = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: rate, channels: 1, interleaved: false)!
+        let buf = AVAudioPCMBuffer(pcmFormat: fmt, frameCapacity: 48_000)!
+        buf.frameLength = 48_000
+        for i in 0..<48_000 { buf.floatChannelData![0][i] = Float(sin(2 * Double.pi * 440 * Double(i) / rate)) * 0.5 }
+        do {
+            let file = try AVAudioFile(forWriting: url, settings: fmt.settings)
+            try file.write(from: buf)
+        }
+        let src = try await AssetAudioSource.open(url: url, sampleRate: 48_000)
+        let l = try readAll(src, from: 12_000, count: 4_800, channel: 0)
+        let r = try readAll(src, from: 12_000, count: 4_800, channel: 1)
+        #expect(l.count == 4_800 && r.count == 4_800)
+        let peakL = l.map(abs).max() ?? 0, peakR = r.map(abs).max() ?? 0
+        #expect(peakL > 0.45 && peakR > 0.45, "left \(peakL) right \(peakR)")
+        #expect(abs(peakL - peakR) < 0.02)
+    }
+}
+

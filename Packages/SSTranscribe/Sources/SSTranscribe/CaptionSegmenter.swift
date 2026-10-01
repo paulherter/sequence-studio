@@ -10,6 +10,12 @@ public struct Caption: Sendable, Hashable {
     public var wordIndices: Range<Int>
     public var styleRef: String
     public var animationRef: String
+
+    public init(lines: [String], range: TimeRange, firstWordID: UUID = UUID(), lastWordID: UUID = UUID(),
+                wordIndices: Range<Int> = 0..<0, styleRef: String, animationRef: String) {
+        self.lines = lines; self.range = range; self.firstWordID = firstWordID; self.lastWordID = lastWordID
+        self.wordIndices = wordIndices; self.styleRef = styleRef; self.animationRef = animationRef
+    }
 }
 
 public enum CaptionSegmenter {
@@ -56,6 +62,29 @@ public enum CaptionSegmenter {
         }
         close(upTo: words.count)
         return captions
+    }
+
+    /// Applies the preset's minimum duration and gap: a caption shorter than `minDuration` is extended into the silence
+    /// after it (never over the next caption and its gap), then a caption that ends closer than `gap` to the next one
+    /// is shortened (never to nothing). The start of a caption never moves. Input must be sorted and non-overlapping.
+    public static func applyTiming(_ captions: [Caption], preset: CaptionPreset) -> [Caption] {
+        var out = captions
+        for i in out.indices {
+            let s = out[i].range.start
+            var e = out[i].range.end
+            let limit = i + 1 < out.count ? out[i + 1].range.start - preset.gap : nil
+            if e - s < preset.minDuration {
+                var wanted = s + preset.minDuration
+                if let limit { wanted = min(wanted, limit) }
+                e = max(e, wanted)
+            }
+            if i + 1 < out.count {
+                let next = out[i + 1].range.start
+                if next - e < preset.gap, next - preset.gap > s { e = next - preset.gap }
+            }
+            out[i].range = TimeRange(start: s, end: e)
+        }
+        return out
     }
 
     private static func endsSentence(_ text: String) -> Bool {

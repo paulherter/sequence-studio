@@ -17,6 +17,12 @@ public final class TextInspectorView: NSView {
     private let alignControl = NSSegmentedControl(labels: ["Left", "Center", "Right"], trackingMode: .selectOne,
                                                   target: nil, action: nil)
     private let lineSpacingField = NSTextField()
+    private let trackingField = NSTextField()
+    private let italicCheck = NSButton(checkboxWithTitle: "Italic", target: nil, action: nil)
+    private let vAlignControl = NSSegmentedControl(labels: ["Top", "Middle", "Bottom"], trackingMode: .selectOne,
+                                                   target: nil, action: nil)
+    private let boxOpacityField = NSTextField()
+    private let shadowAngleField = NSTextField(), shadowDistField = NSTextField(), shadowOpacityField = NSTextField()
 
     private let strokeCheck = NSButton(checkboxWithTitle: "Stroke", target: nil, action: nil)
     private let strokeWell = NSColorWell()
@@ -28,7 +34,7 @@ public final class TextInspectorView: NSView {
 
     private let shadowCheck = NSButton(checkboxWithTitle: "Shadow", target: nil, action: nil)
     private let shadowWell = NSColorWell()
-    private let shadowXField = NSTextField(), shadowYField = NSTextField(), blurField = NSTextField()
+    private let blurField = NSTextField()
 
     private let inPopup = NSPopUpButton(frame: .zero, pullsDown: false)
     private let outPopup = NSPopUpButton(frame: .zero, pullsDown: false)
@@ -70,6 +76,11 @@ public final class TextInspectorView: NSView {
         savePresetButton.controlSize = .small; savePresetButton.bezelStyle = .rounded
         alignControl.target = self; alignControl.action = #selector(alignChanged)
         alignControl.controlSize = .small
+        vAlignControl.target = self; vAlignControl.action = #selector(vAlignChanged)
+        vAlignControl.controlSize = .small
+        vAlignControl.toolTip = "Vertical alignment inside an area text box"
+        italicCheck.target = self; italicCheck.action = #selector(italicToggled)
+        italicCheck.font = Theme.Fonts.small; italicCheck.controlSize = .small
         for (well, sel) in [(colorWell, #selector(colorChanged)), (strokeWell, #selector(strokeColorChanged)),
                             (boxWell, #selector(boxColorChanged)), (shadowWell, #selector(shadowColorChanged))] {
             well.target = self; well.action = sel
@@ -80,8 +91,8 @@ public final class TextInspectorView: NSView {
                              (shadowCheck, #selector(shadowToggled))] {
             check.target = self; check.action = sel; check.font = Theme.Fonts.small; check.controlSize = .small
         }
-        for f in [sizeField, lineSpacingField, strokeWidthField, padXField, padYField, radiusField,
-                  shadowXField, shadowYField, blurField] {
+        for f in [sizeField, lineSpacingField, trackingField, strokeWidthField, padXField, padYField, radiusField,
+                  boxOpacityField, shadowAngleField, shadowDistField, shadowOpacityField, blurField] {
             f.font = Theme.Fonts.small; f.controlSize = .small
             f.alignment = .right
             f.target = self; f.action = #selector(numberChanged(_:))
@@ -93,16 +104,19 @@ public final class TextInspectorView: NSView {
             row("Preset", [presetPopup, savePresetButton]),
             section("Text"),
             row("Font", [fontPopup]),
-            row("Weight", [weightPopup]),
+            row("Weight", [weightPopup, italicCheck]),
             row("Size", [sizeField, colorWell]),
             row("Alignment", [alignControl]),
-            row("Line Spacing", [lineSpacingField]),
+            row("Vertical", [vAlignControl]),
+            row("Tracking", [trackingField, caption("Leading"), lineSpacingField]),
             section("Appearance"),
             row(nil, [strokeCheck, strokeWell, caption("Width"), strokeWidthField]),
             row(nil, [boxCheck, boxWell]),
-            row("Padding", [padXField, padYField, caption("Radius"), radiusField]),
+            row("Padding", [padXField, padYField]),
+            row("Radius", [radiusField, caption("Opacity"), boxOpacityField]),
             row(nil, [shadowCheck, shadowWell]),
-            row("Offset", [shadowXField, shadowYField, caption("Blur"), blurField]),
+            row("Angle", [shadowAngleField, caption("Distance"), shadowDistField]),
+            row("Opacity", [shadowOpacityField, caption("Blur"), blurField]),
             section("Animation"),
             row("In", [inPopup]),
             row("Out", [outPopup]),
@@ -182,7 +196,9 @@ public final class TextInspectorView: NSView {
         fontPopup.removeAllItems(); fontPopup.addItems(withTitles: model.fontFamilies)
         fontPopup.selectItem(withTitle: s.fontName)
         if let i = Self.weights.firstIndex(where: { $0.1 == s.weight }) { weightPopup.selectItem(at: i) }
-        setNumber(sizeField, s.size); setNumber(lineSpacingField, s.lineSpacing)
+        setNumber(sizeField, s.size); setNumber(lineSpacingField, s.lineSpacing); setNumber(trackingField, s.tracking)
+        italicCheck.state = s.italic ? .on : .off
+        vAlignControl.selectedSegment = [TextVerticalAlignment.top, .middle, .bottom].firstIndex(of: s.verticalAlignment) ?? 0
         colorWell.color = nsColor(s.color)
         alignControl.selectedSegment = [TextAlignment.left, .center, .right].firstIndex(of: s.alignment) ?? 1
 
@@ -191,18 +207,20 @@ public final class TextInspectorView: NSView {
         if let v = s.stroke { strokeWell.color = nsColor(v.color); setNumber(strokeWidthField, v.width) }
 
         boxCheck.state = s.background == nil ? .off : .on
-        for c in [boxWell, padXField, padYField, radiusField] as [NSControl] { c.isEnabled = s.background != nil }
+        for c in [boxWell, padXField, padYField, radiusField, boxOpacityField] as [NSControl] { c.isEnabled = s.background != nil }
         if let v = s.background {
             boxWell.color = nsColor(v.color)
             setNumber(padXField, v.padding.horizontal); setNumber(padYField, v.padding.vertical)
             setNumber(radiusField, v.cornerRadius)
+            setNumber(boxOpacityField, (v.color.alpha * 100).rounded())
         }
 
         shadowCheck.state = s.shadow == nil ? .off : .on
-        for c in [shadowWell, shadowXField, shadowYField, blurField] as [NSControl] { c.isEnabled = s.shadow != nil }
+        for c in [shadowWell, shadowAngleField, shadowDistField, shadowOpacityField, blurField] as [NSControl] { c.isEnabled = s.shadow != nil }
         if let v = s.shadow {
-            shadowWell.color = nsColor(v.color)
-            setNumber(shadowXField, v.offsetX); setNumber(shadowYField, v.offsetY); setNumber(blurField, v.blur)
+            shadowWell.color = nsColor(v.color).withAlphaComponent(1)
+            setNumber(shadowAngleField, v.angle.rounded()); setNumber(shadowDistField, v.distance)
+            setNumber(shadowOpacityField, (v.color.alpha * 100).rounded()); setNumber(blurField, v.blur)
         }
 
         fill(inPopup, ids: model.inAnimationIDs, selected: model.selectedInID)
@@ -233,6 +251,12 @@ public final class TextInspectorView: NSView {
         let i = alignControl.selectedSegment
         if a.indices.contains(i) { model.setAlignment(a[i]) }
     }
+    @objc private func vAlignChanged() {
+        let a: [TextVerticalAlignment] = [.top, .middle, .bottom]
+        let i = vAlignControl.selectedSegment
+        if a.indices.contains(i) { model.setVerticalAlignment(a[i]) }
+    }
+    @objc private func italicToggled() { model.setItalic(italicCheck.state == .on) }
     @objc private func inChanged() { if let id = inPopup.selectedItem?.representedObject as? String { model.setInAnimation(id) } }
     @objc private func outChanged() { if let id = outPopup.selectedItem?.representedObject as? String { model.setOutAnimation(id) } }
 
@@ -254,8 +278,15 @@ public final class TextInspectorView: NSView {
     }
     @objc private func colorChanged() { colorEdit { model.setColor(rgba(colorWell.color)) } }
     @objc private func strokeColorChanged() { colorEdit { model.setStrokeColor(rgba(strokeWell.color)) } }
-    @objc private func boxColorChanged() { colorEdit { model.setBackgroundColor(rgba(boxWell.color)) } }
-    @objc private func shadowColorChanged() { colorEdit { model.setShadowColor(rgba(shadowWell.color)) } }
+    // The wells carry colour only; opacity has its own field, so a colour pick keeps the current alpha.
+    @objc private func boxColorChanged() {
+        let a = model.style.background?.color.alpha ?? 1
+        colorEdit { model.setBackgroundColor(rgba(boxWell.color.withAlphaComponent(a))) }
+    }
+    @objc private func shadowColorChanged() {
+        let a = model.style.shadow?.color.alpha ?? 1
+        colorEdit { model.setShadowColor(rgba(shadowWell.color.withAlphaComponent(a))) }
+    }
 
     @objc private func numberChanged(_ f: NSTextField) {
         let v = f.doubleValue
@@ -266,8 +297,11 @@ public final class TextInspectorView: NSView {
         case padXField, padYField:
             model.setBackgroundPadding(horizontal: padXField.doubleValue, vertical: padYField.doubleValue)
         case radiusField: model.setBackgroundRadius(v)
-        case shadowXField, shadowYField:
-            model.setShadowOffset(x: shadowXField.doubleValue, y: shadowYField.doubleValue)
+        case trackingField: model.setTracking(v)
+        case boxOpacityField: model.setBackgroundOpacity(v / 100)
+        case shadowAngleField, shadowDistField:
+            model.setShadowAngle(shadowAngleField.doubleValue, distance: shadowDistField.doubleValue)
+        case shadowOpacityField: model.setShadowOpacity(v / 100)
         case blurField: model.setShadowBlur(v)
         default: break
         }

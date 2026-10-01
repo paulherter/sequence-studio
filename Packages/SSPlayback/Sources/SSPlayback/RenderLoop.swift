@@ -417,8 +417,8 @@ final class RenderLoop: @unchecked Sendable {
         var presented = false
         if let target = target(&g, format: tl.format), let cb = g.queue.makeCommandBuffer() {
             do {
-                try g.compositor.render(nodes: RenderNode.tree(requests: requests, layers: b.layers), format: tl.format,
-                                        into: target, commandBuffer: cb)
+                let nodes = RenderNode.tree(requests: requests, layers: b.layers) + captionNodes(tl, at: t, build: &b)
+                try g.compositor.render(nodes: nodes, format: tl.format, into: target, commandBuffer: cb)
                 if let presenter {
                     if let drawable { presenter.present(target, zoom: zoom, drawable: drawable, commandBuffer: cb) }
                     else { presenter.present(target, zoom: zoom, commandBuffer: cb) }
@@ -502,6 +502,29 @@ final class RenderLoop: @unchecked Sendable {
         guard let f = frame else { return invisible() }   // empty text
         return RenderLayer(content: .linearPremultiplied(f.buffer, width: f.width, height: f.height),
                            transform: f.layerTransform(base: r.transform, canvas: canvas), cornerRadius: r.cornerRadius)
+    }
+
+    /// Captions of the visible caption tracks at `t`, on top of the picture (Program monitor). Same rasters and the
+    /// same placement as the export burn-in; a raster that is not ready yet is prepared in the background.
+    private func captionNodes(_ tl: Timeline, at t: Time, build b: inout LayerBuild) -> [RenderNode] {
+        let active = tl.captions(at: t)
+        guard !active.isEmpty else { return [] }
+        var out: [RenderNode] = []
+        for a in active where !a.item.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            guard let ref = try? CaptionPreview.ref(for: a.item, canvas: tl.format) else { continue }
+            if textFailed.withLock({ $0.contains(ref) }) { continue }
+            if !TextGenerator.isCached(ref: ref) { prewarmText(ref); b.waiting = true; continue }
+            let local = t - a.item.range.start
+            guard let f = try? TextGenerator.frame(ref: ref, localTime: local, clipDuration: a.item.range.duration,
+                                                   canvas: tl.format, scale: 1) else {
+                textFailed.withLock { _ = $0.insert(ref) }
+                continue
+            }
+            let base = ClipTransform(position: CaptionPreview.position(canvas: tl.format))
+            out.append(.layer(RenderLayer(content: .linearPremultiplied(f.buffer, width: f.width, height: f.height),
+                                          transform: f.layerTransform(base: base, canvas: tl.format))))
+        }
+        return out
     }
 
     static func textRefs(_ tl: Timeline, sequences: [Timeline.ID: Timeline]) -> Set<GeneratorRef> {

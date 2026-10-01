@@ -39,6 +39,38 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         #expect(items.first?.range.start == max(inside[0].range.start + s(90), s(100)))
     }
 
+    @Test func captionsOfAllClipsOfOneMediaAreMappedAndNeverOverlap() {
+        let media = UUID()
+        // Two cuts of the same recording (source 0..4 at 0, source 10..14 at 4) plus the linked audio half of the first.
+        let a = Clip(name: "a", media: media, kind: .video, source: TimeRange(start: .zero, duration: s(4)), start: .zero)
+        let b = Clip(name: "b", media: media, kind: .video, source: TimeRange(start: s(10), duration: s(4)), start: s(4))
+        let au = Clip(name: "a", media: media, kind: .audio, source: TimeRange(start: .zero, duration: s(4)), start: .zero)
+        func word(_ x: Int64) -> TranscriptWord { TranscriptWord(text: "w\(x)", range: TimeRange(start: s(x), duration: Time(1, 2))) }
+        let captions = CaptionSegmenter.segment(Transcript(language: "en-US", words: [word(1), word(11), word(30)]),
+                                                preset: CaptionPreset(maxCharsPerLine: 20, maxLines: 1, maxDuration: s(6), minDuration: .zero,
+                                                                      pauseBreak: Time(1, 2), styleRef: "d", animationRef: "n"))
+        let items = CaptionMapping.items(captions, forClips: [b, au, a])
+        #expect(items.count == 2)                                   // word at 30 is outside both cuts; audio half adds nothing
+        #expect(items[0].range.start == s(1) && items[1].range.start == s(5))
+        #expect(zip(items, items.dropFirst()).allSatisfy { $0.range.end <= $1.range.start })
+    }
+
+    @Test func captionsLandOnTheFrameGrid() {
+        let fd = Time(1001, 30000)
+        func item(_ a: Time, _ b: Time) -> CaptionItem { CaptionItem(lines: ["x"], range: TimeRange(start: a, end: b)) }
+        // 0.52 s .. 1.7 s at 29.97: frame 15.55 -> 16, 50.9 -> 51
+        let r = CaptionMapping.snapped([item(Time(52, 100), Time(17, 10))], to: fd)
+        #expect(r[0].range.start == fd * 16 && r[0].range.end == fd * 51)
+        // Two captions that touch still touch; one that collapses gets a frame or goes.
+        let t = CaptionMapping.snapped([item(Time(52, 100), Time(100, 100)), item(Time(100, 100), Time(150, 100))], to: fd)
+        #expect(t[0].range.end == t[1].range.start)
+        let tiny = CaptionMapping.snapped([item(Time(1, 1), Time(1, 1) + Time(1, 1000)), item(Time(2, 1), Time(3, 1))], to: fd)
+        #expect(tiny.count == 2 && tiny[0].range.end - tiny[0].range.start == fd)
+        let squeezed = CaptionMapping.snapped([item(Time(1, 1), Time(1, 1) + Time(1, 1000)), item(Time(1, 1) + Time(1, 1000), Time(2, 1))], to: fd)
+        #expect(squeezed.count == 1)                                   // no room for a frame: dropped, never overlapping
+        #expect(zip(t, t.dropFirst()).allSatisfy { $0.range.end <= $1.range.start })
+    }
+
     @Test func textTemplatesExist() {
         #expect(!TextTemplateCatalog.all.isEmpty)
         #expect(TextTemplateCatalog.all.allSatisfy { $0.template.text == TextTemplateCatalog.placeholderText })

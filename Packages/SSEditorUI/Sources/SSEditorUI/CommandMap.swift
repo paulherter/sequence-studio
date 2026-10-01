@@ -106,6 +106,7 @@ public struct CommandMap: Sendable {
         add(t, .left, [.command, .shift], .nudgeLeft5); add(t, .right, [.command, .shift], .nudgeRight5)
         add(t, .left, [.option, .shift], .trimBackward5); add(t, .right, [.option, .shift], .trimForward5)
         add(t, ch("l"), .command, .link); add(t, ch("g"), .command, .group)
+        add(t, ch("g"), .audioGain)
         add(t, ch("r"), .command, .speedDuration)
         add(t, ch("f"), .matchFrame); add(t, ch("r"), .shift, .reverseMatchFrame)
         add(t, ch("="), .zoomIn); add(t, ch("-"), .zoomOut); add(t, ch("\\"), .zoomFit)

@@ -40,6 +40,8 @@ public protocol ProgramEngine: AnyObject {
     func redraw()
     /// Linear peaks (left, right) of the last metered audio buffer and that buffer's counter; nil without audio output.
     var meterReading: (sequence: Int, peaks: [Float])? { get }
+    /// Dragging the playhead and stepping play short audio grains (Premiere "audio scrubbing").
+    var audioScrubbing: Bool { get set }
 }
 
 extension ProgramEngine {
@@ -49,6 +51,7 @@ extension ProgramEngine {
     public func requestFrameCapture(key: String, _ encode: @escaping FrameCaptureEncoder) {}
     public var audioUnavailable: Bool { false }
     public var meterReading: (sequence: Int, peaks: [Float])? { nil }
+    public var audioScrubbing: Bool { get { true } set {} }
 }
 
 extension PlaybackEngine: ProgramEngine {

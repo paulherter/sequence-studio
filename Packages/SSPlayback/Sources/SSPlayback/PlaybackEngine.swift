@@ -42,6 +42,8 @@ import SSRender
     private var audioPrepared = false
     /// Between `beginScrub` and `endScrub` (drags play grains).
     private var scrubbing = false
+    /// Audio scrubbing (Premiere preference): off = dragging the playhead and stepping stay silent.
+    public var audioScrubbing = true
     /// `audio.prepare()` failed or the output stalled: running on the injected clock until the next `play()` retries.
     public var audioUnavailable: Bool { prepareFailed || switching.audioFailed }
 
@@ -199,7 +201,7 @@ import SSRender
     /// Scrub grains are played only when the output has a scrub voice, the timeline is audible and the output is up
     /// (prepared here on first use, like `play()`; a failure marks the audio unavailable until the next `play()`).
     private func scrubOutput(_ tl: Timeline) -> ScrubAudio? {
-        guard let audio, let s = audio.scrubAudio, !audioUnavailable, Self.isAudible(tl, sequences: sequences) else { return nil }
+        guard audioScrubbing, let audio, let s = audio.scrubAudio, !audioUnavailable, Self.isAudible(tl, sequences: sequences) else { return nil }
         if !audioPrepared {
             do { try audio.prepare(); audioPrepared = true } catch { prepareFailed = true; return nil }
         }
