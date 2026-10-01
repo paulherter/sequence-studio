@@ -18,7 +18,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
     var settings: AppSettings
     private(set) lazy var settingsWindow = SettingsWindowController(controller: self)
     var maximizedPanel: PanelID?
-    var focusedPanel: PanelID? = .timeline { didSet { router.focus = focusedPanel } }
+    var focusedPanel: PanelID? = .timeline { didSet { router.focus = focusedPanel; shell.host.focusedPanel = focusedPanel } }
     var router: KeyRouter
     var menuShuttle = Shuttle()
 
@@ -108,6 +108,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         w.delegate = self
         w.contentView = shell
         shell.host.panelView = { [weak self] p in self?.panels.view(for: p) ?? NSView() }
+        shell.host.tabMenu = { [weak self] p in self?.tabContextMenu(for: p) }
+        shell.host.focusedPanel = focusedPanel
         shell.host.onSelectTab = { [weak self] p in
             self?.mutateWorkspace { $0.selectTab(p) }
             self?.focusedPanel = p

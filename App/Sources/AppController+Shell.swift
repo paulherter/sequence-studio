@@ -87,6 +87,52 @@ extension AppController {
     @objc func clearRecents(_ sender: Any?) { NSDocumentController.shared.clearRecentDocuments(nil) }
 }
 
+// MARK: Panels
+
+extension AppController {
+    /// Panel group under the pointer (Premiere: ` maximises "the panel under the mouse"); nil outside the window.
+    func panelUnderMouse() -> PanelID? {
+        guard let window, let content = window.contentView, panels != nil else { return nil }
+        let p = window.mouseLocationOutsideOfEventStream
+        guard content.frame.contains(p) else { return nil }
+        return panels.panel(containing: content.hitTest(p))
+    }
+
+    func toggleMaximize(_ p: PanelID) {
+        maximizedPanel = maximizedPanel == p ? nil : p
+        focusedPanel = p
+        applyWorkspace()
+    }
+
+    /// Right-click menu of a panel tab.
+    func tabContextMenu(for p: PanelID) -> NSMenu {
+        let menu = NSMenu(title: EditorCommand.panelTitle(p))
+        let close = NSMenuItem(title: "Close Panel", action: #selector(closePanelFromTab(_:)), keyEquivalent: "")
+        close.target = self
+        close.representedObject = p
+        menu.addItem(close)
+        let max = NSMenuItem(title: maximizedPanel == p ? "Restore Panel Size" : "Maximize Panel",
+                             action: #selector(maximizePanelFromTab(_:)), keyEquivalent: "`")
+        max.keyEquivalentModifierMask = []
+        max.target = self
+        max.representedObject = p
+        menu.addItem(max)
+        return menu
+    }
+
+    @objc func closePanelFromTab(_ sender: NSMenuItem) {
+        guard let p = sender.representedObject as? PanelID else { return }
+        if maximizedPanel != nil { maximizedPanel = nil }
+        mutateWorkspace { $0.hide(p) }
+        if focusedPanel == p { focusedPanel = store.current.isVisible(.timeline) ? .timeline : nil }
+    }
+
+    @objc func maximizePanelFromTab(_ sender: NSMenuItem) {
+        guard let p = sender.representedObject as? PanelID else { return }
+        toggleMaximize(p)
+    }
+}
+
 extension AppController: NSMenuDelegate {
     /// Open Recent is rebuilt every time it opens.
     func menuNeedsUpdate(_ menu: NSMenu) {

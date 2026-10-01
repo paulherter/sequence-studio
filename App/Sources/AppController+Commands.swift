@@ -82,7 +82,7 @@ extension AppController {
         case .zoomFit: if effectControlsHasFocus { panels.effectModel.zoomToFit() } else { panels.timelineView.zoomToFit() }
         case .focusPanel(let p): showPanel(p)
         case .maximizePanel:
-            if let p = focusedPanel { maximizedPanel = maximizedPanel == p ? nil : p; applyWorkspace() }
+            if let p = panelUnderMouse() ?? focusedPanel { toggleMaximize(p) }
         case .importMedia:
             showPanel(.project)
             panels.projectView.runImportPanel()
