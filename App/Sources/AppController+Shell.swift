@@ -87,6 +87,24 @@ extension AppController {
     @objc func clearRecents(_ sender: Any?) { NSDocumentController.shared.clearRecentDocuments(nil) }
 }
 
+// MARK: Sequence match prompt
+
+extension AppController {
+    /// "This clip does not match the sequence settings": Change Sequence Settings (adopt) or Keep Existing Settings.
+    func askChangeSequenceFormat(_ current: SequenceFormat, _ proposed: SequenceFormat) -> Bool {
+        func text(_ f: SequenceFormat) -> String {
+            let fps = Double(f.frameDuration.timescale) / Double(f.frameDuration.value)
+            return "\(f.width)×\(f.height), \(String(format: "%.5g", fps)) fps"
+        }
+        let alert = NSAlert()
+        alert.messageText = "This clip does not match the sequence settings."
+        alert.informativeText = "Sequence: \(text(current)). Clip: \(text(proposed)). Change the sequence settings to match the clip?"
+        alert.addButton(withTitle: "Change Sequence Settings")
+        alert.addButton(withTitle: "Keep Existing Settings")
+        return alert.runModal() == .alertFirstButtonReturn
+    }
+}
+
 // MARK: Panels
 
 extension AppController {

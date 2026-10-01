@@ -57,6 +57,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate, NS
         router = KeyRouter(map: .premiereDefault, focus: .timeline, clock: { ProcessInfo.processInfo.systemUptime })
         super.init()
         session.onChange = { [weak self] c in self?.sessionChanged(c) }
+        if !ProcessInfo.processInfo.environment.keys.contains(where: { $0.hasPrefix("SS_") && $0 != "SS_KEYLOG" }) {
+            session.confirmFormatChange = { [weak self] current, proposed in self?.askChangeSequenceFormat(current, proposed) ?? true }
+        }
     }
 
     // MARK: Launch

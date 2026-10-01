@@ -18,7 +18,7 @@ extension AppController {
 
     func openProject(at url: URL) async {
         guard await confirmDiscardChanges() else { return }
-        do { try await session.open(url: url); noteRecent(url) } catch {
+        do { try await session.open(url: url); noteRecent(url); offerRelinkIfNeeded() } catch {
             presentError("Could not open “\(url.lastPathComponent)”", error)
         }
     }
