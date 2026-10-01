@@ -209,4 +209,17 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
         for _ in 0..<200 where (thumbs.cachedPoster(ref.id)?.size.height ?? 0) <= small { try await Task.sleep(for: .milliseconds(10)) }
         #expect((thumbs.cachedPoster(ref.id)?.size.height ?? 0) > small)
     }
+
+    // Finding 42: the transcript model kept the old file path after a relink (same clip id).
+    @Test func transcriptFollowsARelinkedFile() throws {
+        let (session, _, m) = makeSession()
+        session.placeMedia([m.id], at: .zero)
+        let clip = try #require(session.activeTimeline?.tracks.flatMap(\.clips).first)
+        session.select(clips: [clip.id])
+        let view = TextPanelView(session: session)
+        #expect(view.captionsModel(for: clip.id)?.sourceURL?.path == "/nonexistent/A.mov")
+        session.relinkMedia([m.id: "/elsewhere/B.mov"])
+        view.sync([.project])
+        #expect(view.captionsModel(for: clip.id)?.sourceURL?.path == "/elsewhere/B.mov")
+    }
 }
