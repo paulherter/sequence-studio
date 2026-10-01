@@ -67,10 +67,9 @@ extension EditorSession {
     /// Search and replace over all captions; returns the number of replacements (nil: refused).
     @discardableResult
     public func replaceCaptionText(find: String, with new: String, caseSensitive: Bool) -> Int? {
-        var n = 0
-        let ok = attempt("Replace Caption Text") { n = try $0.replaceCaptionText(find: find, with: new, caseSensitive: caseSensitive) }
-        guard ok || n == 0 else { return nil }
-        return n
+        var n: Int?
+        _ = attempt("Replace Caption Text") { n = try $0.replaceCaptionText(find: find, with: new, caseSensitive: caseSensitive) }
+        return n          // nil when the edit threw (every caption track locked)
     }
 
     /// Caption style (and optionally animation) of every caption on every caption track.

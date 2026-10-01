@@ -14,6 +14,8 @@ public final class TimelineWaveforms {
     public var onReady: (() -> Void)?
     private var pending: Set<UUID> = []
     private var failed: Set<UUID> = []
+    /// Bumped by `invalidate`: a build that started before it must not store its (old file's) peaks.
+    private var generation: [UUID: Int] = [:]
     private let builder: Builder
 
     public init(builder: @escaping Builder = { try await WaveformBuilder.build(url: $0) }) { self.builder = builder }
@@ -34,9 +36,10 @@ public final class TimelineWaveforms {
         let url = URL(fileURLWithPath: ref.path)
         let builder = self.builder
         let name = ref.name
+        let gen = generation[id, default: 0]
         Task { [weak self] in
             let result = try? await builder(url)
-            guard let self else { return }
+            guard let self, generation[id, default: 0] == gen else { return }     // invalidated meanwhile
             pending.remove(id)
             if let result {
                 data[id] = result
@@ -51,6 +54,7 @@ public final class TimelineWaveforms {
 
     /// Forget a media item (relinked or replaced file).
     public func invalidate(_ id: UUID) {
-        data[id] = nil; failed.remove(id); cache.remove(media: id)
+        generation[id, default: 0] += 1
+        data[id] = nil; failed.remove(id); pending.remove(id); cache.remove(media: id)
     }
 }

@@ -439,9 +439,9 @@ enum ColorLookPreview {
                 }
                 if let pipe { rgb = TransferFunctions.bt709OETF(simd_clamp(pipe.process(rgb), .zero, SIMD3(repeating: 1))) }
                 let i = (y * width + x) * 4
-                bytes[i] = UInt8(min(max(rgb.x, 0), 1) * 255 + 0.5)
-                bytes[i + 1] = UInt8(min(max(rgb.y, 0), 1) * 255 + 0.5)
-                bytes[i + 2] = UInt8(min(max(rgb.z, 0), 1) * 255 + 0.5)
+                bytes[i] = FrameSampler.byte(rgb.x)
+                bytes[i + 1] = FrameSampler.byte(rgb.y)
+                bytes[i + 2] = FrameSampler.byte(rgb.z)
             }
         }
         let cs = CGColorSpace(name: CGColorSpace.sRGB)!

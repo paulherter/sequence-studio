@@ -66,6 +66,9 @@ import Testing
         try Data("not json".utf8).write(to: url)
         #expect(WorkspaceStore.load(from: url) == WorkspaceStore())
         #expect(WorkspaceStore.load(from: tmp()) == WorkspaceStore())
+        // Review finding 32: the unreadable file is kept next to it, so the next save does not destroy it.
+        let backup = url.appendingPathExtension("corrupt")
+        #expect(try Data(contentsOf: backup) == Data("not json".utf8))
     }
 
     // Paul's bug: after switching Editing - PC to Editing - MacBook, PC was gone from the list.

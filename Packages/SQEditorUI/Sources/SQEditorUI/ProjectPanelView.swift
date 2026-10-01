@@ -767,7 +767,7 @@ public final class ProjectPanelView: NSView, NSOutlineViewDataSource, NSOutlineV
     @objc private func viewModeChanged() {
         viewMode = viewToggle.selectedSegment == 0 ? .list : .icons
         defaults.set(viewMode.rawValue, forKey: "ProjectPanel.viewMode")
-        if viewMode == .icons { model.browseBin = model.project.rootBin.id }
+        if viewMode == .icons { model.browseBin = model.project.rootBin.id; model.currentBin = model.browseBin }   // the grid shows currentBin
         applyMode()
         reload()
     }

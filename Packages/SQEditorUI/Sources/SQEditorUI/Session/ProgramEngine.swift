@@ -50,14 +50,14 @@ public protocol ProgramEngine: AnyObject {
     var scrubLatencyText: String? { get }
     /// Captions drawn over the picture in the monitor (the export burn-in is separate).
     var showsCaptions: Bool { get set }
-    /// These media (still online) now point at other files: forget their opened files, decoders and cached frames.
+    /// The files behind these media changed (relink to another path): opened files, decoders, cached frames and audio
+    /// sources (playback and scrub) are reopened, so picture and sound switch to the new file.
     func mediaChanged(_ ids: Set<UUID>)
 }
 
 extension ProgramEngine {
     /// Default: nothing to redraw (stand-ins).
     public func redraw() {}
-    public func mediaChanged(_ ids: Set<UUID>) {}
     public var lastRenderedTexture: MTLTexture? { nil }
     public func requestFrameCapture(key: String, _ encode: @escaping FrameCaptureEncoder) {}
     public var audioUnavailable: Bool { false }
@@ -67,6 +67,7 @@ extension ProgramEngine {
     public var cacheGeneration: Int { 0 }
     public var scrubLatencyText: String? { nil }
     public var showsCaptions: Bool { get { true } set {} }
+    public func mediaChanged(_ ids: Set<UUID>) {}
 }
 
 extension PlaybackEngine: ProgramEngine {

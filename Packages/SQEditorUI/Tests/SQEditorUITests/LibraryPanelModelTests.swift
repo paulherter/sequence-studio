@@ -157,6 +157,35 @@ private func eventually(_ cond: @MainActor () -> Bool) async -> Bool {
         #expect(env.model.items.isEmpty)
     }
 
+    // Review finding 38: the ascending comparator was not a strict ordering (equal names compared "before" each other).
+    @Test func equalPresetNamesKeepTheirOrderWhenAscending() async throws {
+        let env = try await Env()
+        defer { env.cleanup() }
+        for i in 0..<6 { try await env.store.add(PresetItem(kind: .easing, name: "Same", payload: Data("{\(i)}".utf8), payloadVersion: 1)) }
+        env.model.selection = .presets(nil)
+        let a = env.model.visiblePresets.map(\.id)
+        env.model.ascending = false
+        env.model.ascending = true
+        #expect(env.model.visiblePresets.map(\.id) == a)
+        let ids = env.model.visiblePresets.map(\.id)
+        #expect(ids == env.model.presets.filter { $0.name == "Same" }.map(\.id))
+    }
+
+    // Review finding 39: a favorites file from a newer version was ignored on load and then overwritten by the next toggle.
+    @Test func favoritesFileOfANewerVersionIsNotOverwritten() async throws {
+        let env = try await Env()
+        defer { env.cleanup() }
+        let url = env.root.appendingPathComponent("favorites.json")
+        let newer = Data(#"{"formatVersion": 99, "items": []}"#.utf8)
+        try newer.write(to: url)
+        await env.model.start()
+        let folder = await env.model.addFolder(url: env.media)
+        _ = folder
+        let song = try #require(env.model.items.first { $0.entry.name == "a_song.wav" })
+        env.model.toggleFavorite(song.id)
+        #expect(try Data(contentsOf: url) == newer)
+    }
+
     @Test func presetsSectionByKind() async throws {
         let env = try await Env()
         defer { env.cleanup() }
@@ -198,6 +227,18 @@ private func eventually(_ cond: @MainActor () -> Bool) async -> Bool {
         #expect(env.model.pendingPreviewCount == 0)
     }
 
+    // Review finding 40: thumbnails of a removed folder stayed in the model.
+    @Test func removingAFolderDropsItsThumbnails() async throws {
+        let env = try await Env()
+        defer { env.cleanup() }
+        let folder = await env.model.addFolder(url: env.media)
+        let clip = try #require(env.model.items.first { $0.entry.name == "b_clip.mp4" })
+        env.model.itemDidAppear(clip)
+        #expect(await eventually { env.model.thumbnails[clip.id] != nil })
+        await env.model.removeFolder(folder.id)
+        #expect(env.model.thumbnails.isEmpty)
+    }
+
     @Test func noPreviewForLutAndFont() async throws {
         let env = try await Env()
         defer { env.cleanup() }
@@ -233,5 +274,27 @@ private func eventually(_ cond: @MainActor () -> Bool) async -> Bool {
         try await Task.sleep(for: .milliseconds(50))
         view.layoutSubtreeIfNeeded()
         #expect(view.subviews.count == 1)
+    }
+
+    // Review finding 11: every model change (a finished thumbnail, a favorite) reloaded the grid and dropped the selection.
+    @Test func selectionSurvivesARefresh() async throws {
+        let env = try await Env()
+        defer { env.cleanup() }
+        let view = LibraryPanelView(model: env.model)
+        view.frame = NSRect(x: 0, y: 0, width: 700, height: 440)
+        _ = await env.model.addFolder(url: env.media)
+        view.layoutSubtreeIfNeeded()
+        try await Task.sleep(for: .milliseconds(50))
+        func find(_ v: NSView) -> NSCollectionView? {
+            if let c = v as? NSCollectionView { return c }
+            for s in v.subviews { if let c = find(s) { return c } }
+            return nil
+        }
+        let grid = try #require(find(view))
+        grid.selectionIndexPaths = [IndexPath(item: 1, section: 0)]
+        let other = try #require(env.model.items.first)
+        env.model.toggleFavorite(other.id)                 // observed: the view refreshes
+        try await Task.sleep(for: .milliseconds(100))
+        #expect(grid.selectionIndexPaths == [IndexPath(item: 1, section: 0)])
     }
 }

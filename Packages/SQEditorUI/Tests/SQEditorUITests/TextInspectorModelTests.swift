@@ -16,6 +16,20 @@ import SQText
         return (m, log)
     }
 
+    // Review finding 6: a session left open (colour well timer never ran) merged later edits, even those of another clip.
+    @Test func loadingAnotherClipClosesAnOpenSession() {
+        let (m, log) = make()
+        m.beginEditing()
+        m.setSize(60)
+        m.load(style: TextStyle(), animations: AnimationSet(in: nil, out: nil))      // another clip selected
+        #expect(log.events == ["begin", "change", "end"])
+        log.events.removeAll()
+        m.setSize(80)                                                                // an edit of the new clip is its own step
+        #expect(log.events == ["begin", "change", "end"])
+        m.endEditing()                                                               // the stale timer firing later is harmless
+        #expect(log.events == ["begin", "change", "end"])
+    }
+
     @Test func singleEditWrapsInBeginEnd() {
         let (m, log) = make()
         m.setSize(72)

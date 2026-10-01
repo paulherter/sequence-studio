@@ -149,3 +149,24 @@ Geprüft durch Tests und Review. In der App ausprobiert hat es noch niemand.
 6. Speed/Duration auf einer verschachtelten Sequenz.
 
 Fehlt noch: weiche Tempo-Kurven, Optical Flow, Wischblenden, Trim-Modus per Doppelklick, Gruppieren, Source Patching, Sharpen, HSL Secondary. Das Audio-Paket (Fade-Griffe, Ducking, Pan, Lautheit) ist noch in Arbeit.
+
+## Audio (zweite Runde)
+1. Audioclip wählen, `]` und `[` drücken (1 dB), mit Shift 6 dB.
+2. Den Griff an der Clip-Kante ziehen: Fade In oder Fade Out. Eigene Lautstärke-Punkte bleiben erhalten.
+3. Cmd-Klick auf die Lautstärke-Linie, dann den Punkt an seinem Nachbarn vorbeiziehen: geht nicht.
+4. Einen Clip als Music und einen als Dialogue markieren (Clip > Audio Options), dann „Auto Duck Music".
+5. „Match Loudness" auf einem leisen Clip.
+6. Rechtsklick auf eine Audiospur > „Volume and Pan…": ganz nach links drehen, exportieren und vergleichen.
+
+„Remove Silences…" ist gebaut, aber ausgeblendet, bis du entscheidest, ob du es willst.
+
+## Befehle und Kürzel
+1. Clip wählen, Cmd+Pfeil verschiebt um ein Bild. Schnittkante wählen, Opt+Pfeil trimmt um ein Bild.
+2. Keyframes in den Effect Controls wählen, F9: Easy Ease.
+3. Cmd+Opt+K, nach „trim" suchen.
+4. Mit der Maus über einen Monitor-Knopf: Der Tooltip zeigt das Kürzel.
+
+## Kleinere Korrekturen aus dem Review der Oberfläche
+1. Clips mit anderer Bildrate aus dem Projekt-Panel auf die Timeline ziehen: Sie liegen ohne Lücke aneinander.
+2. Etwas auf eine gesperrte Spur ziehen: Die Statuszeile nennt den Grund.
+3. Neues Projekt öffnen: Wiedergabe stoppt, In/Out und Zwischenablage sind leer.

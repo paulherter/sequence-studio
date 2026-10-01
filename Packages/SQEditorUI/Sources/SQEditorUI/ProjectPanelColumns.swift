@@ -19,7 +19,7 @@ extension ProjectPanelModel {
     static func timecode(_ d: Time, frameDuration fd: Time?) -> String {
         guard !d.isNegative else { return "" }
         func two(_ n: Int64) -> String { n < 10 ? "0\(n)" : "\(n)" }
-        if let fd {
+        if let fd, fd.value > 0 {
             let fps = max(1, Int64((Double(fd.timescale) / Double(fd.value)).rounded()))
             let frames = d.frameIndex(frameDuration: fd)
             let s = frames / fps

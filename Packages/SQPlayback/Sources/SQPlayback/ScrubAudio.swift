@@ -326,6 +326,9 @@ public final class ScrubAudio: @unchecked Sendable {
         control.withLock { $0.timeline = timeline; $0.sequences = sequences }
     }
 
+    /// The files behind these media changed (relink): the scrub mixer reopens their sources at its next grain. Any thread.
+    public func mediaChanged(_ ids: Set<UUID>) { mixer.mediaChanged(ids) }
+
     /// Start of a drag at `position` (no sound yet).
     public func begin(at position: Time, hostNanos: Int64) {
         control.withLock { $0.planner.begin(at: position, hostNanos: hostNanos) }

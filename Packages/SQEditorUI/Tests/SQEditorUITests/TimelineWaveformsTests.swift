@@ -32,4 +32,30 @@ import Testing
     }
 }
 
+extension TimelineWaveformsTests {
+    // Review finding 26: a build still running when the media was relinked stored the old file's peaks afterwards.
+    @Test func buildStartedBeforeInvalidateIsDiscarded() async throws {
+        let a = AudioTrackInfo(sampleRate: 48_000, channels: 2, codec: "lpcm")
+        let m = MediaRef(name: "m", path: "/nonexistent/m.wav", fingerprint: MediaFingerprint(size: 1), duration: Time(4, 1),
+                         info: MediaInfo(duration: Time(4, 1), video: nil, audio: a))
+        var p = Project(name: "p")
+        p.add(m)
+        let calls = Counter()
+        let w = TimelineWaveforms { _ in
+            calls.value += 1
+            let first = calls.value == 1
+            if first { try await Task.sleep(for: .milliseconds(200)) }
+            return WaveformData(sampleRate: 48_000, channelCount: 1, totalFrames: first ? 111 : 222, baseBucketSize: 256, levels: [[-0.5, 0.5]])
+        }
+        w.request(m.id, project: p)
+        try await Task.sleep(for: .milliseconds(30))
+        w.invalidate(m.id)                                   // relinked
+        w.request(m.id, project: p)                          // builds the new file
+        for _ in 0..<100 where w.pendingCount > 0 { try await Task.sleep(for: .milliseconds(20)) }
+        try await Task.sleep(for: .milliseconds(300))        // the old build finishes late
+        #expect(w.data[m.id]?.totalFrames == 222)
+        #expect(w.pendingCount == 0)
+    }
+}
+
 private final class Counter: @unchecked Sendable { var value = 0 }

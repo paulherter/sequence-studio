@@ -81,9 +81,11 @@ import SQRender
     }
 
     /// These media were relinked to other files while online: forget their opened files, decoders and cached frames so the
-    /// viewer shows the new file. (Audio sources are refreshed by the audio side.)
+    /// viewer shows the new file, and the audio output (playback feeder and scrub mixer) reopens their sources.
     public func mediaChanged(_ ids: Set<UUID>) {
         guard !ids.isEmpty else { return }
+        audio?.mediaChanged(ids)
+        audio?.scrubAudio?.mediaChanged(ids)
         loop.mediaChanged(ids)
         if let tl = timeline { loop.prefetch(at: RenderLoop.gridTime(loop.clock.now(), tl), rate: rate) }
     }

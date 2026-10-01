@@ -261,7 +261,9 @@ private func click(_ i: inout TimelineInteraction, _ p: CGPoint, _ m: GestureMod
         i.mouseDragged(CGPoint(x: X(35), y: yV1), modifiers: [])
         #expect(i.isRejected)
         #expect(i.preview == i.timeline)
+        #expect(i.rejectionMessage == "A selected clip is on a locked track.")      // review finding 4
         #expect(i.mouseUp(CGPoint(x: X(35), y: yV1), modifiers: []) == nil)
+        #expect(i.releasedRejection == "A selected clip is on a locked track.")
     }
 
     @Test func cancelRestoresBase() {

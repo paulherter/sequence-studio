@@ -31,6 +31,16 @@ private func makeModel(_ n: Int = 3) -> ExportDialogModel {
         #expect(m.codec == .hevc)
     }
 
+    // Review finding 13: the NTSC rates read back as 29.97002997..., so the Picker never matched its tags.
+    @Test func ntscFrameRatesReadBackAsTheirPickerTags() {
+        let m = makeModel()
+        for rate in [23.976, 29.97, 59.94] {
+            m.fps = rate
+            #expect(m.fps == rate)
+            #expect(ExportDialogModel.frameRates.contains(m.fps))
+        }
+    }
+
     @Test func detailEditsSwitchToCustom() {
         let m = makeModel()
         m.codec = .hevc

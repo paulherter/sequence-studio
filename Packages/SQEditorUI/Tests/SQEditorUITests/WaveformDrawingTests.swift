@@ -123,4 +123,23 @@ private func input(_ data: WaveformData, width: CGFloat = 100, style: WaveformSt
         #expect(cached[0].count == direct[0].count)
         for k in stride(from: 0, to: 100, by: 9) { #expect(abs(cached[0][k].hi - direct[0][k].hi) < 0.03) }
     }
+
+    // Review finding 1: the cache had no byte budget and resampled whole files at any zoom.
+    @Test func cacheHasAByteBudget() {
+        let cache = WaveformCache(limit: 24, maxBytes: 1)
+        let id = UUID()
+        _ = cache.resampled(media: id, data: makeData(), pointsPerSecond: 100)
+        _ = cache.resampled(media: id, data: makeData(), pointsPerSecond: 400)
+        #expect(cache.count == 1)                          // only the newest entry stays above the budget
+    }
+
+    @Test func deepZoomSkipsTheWholeFileResample() {
+        let cache = WaveformCache()
+        var i = input(makeData(), width: 5000)             // 5000 points for one second: far beyond the cache's range
+        let direct = WaveformPath.columns(i)
+        i.cache = (cache, UUID())
+        let cached = WaveformPath.columns(i)
+        #expect(cache.count == 0)
+        #expect(cached[0].count == direct[0].count)
+    }
 }

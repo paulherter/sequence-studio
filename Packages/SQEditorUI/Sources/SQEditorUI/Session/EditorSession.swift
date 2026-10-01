@@ -57,7 +57,7 @@ public final class EditorSession {
     @ObservationIgnored private var forceDirty = false
     @ObservationIgnored private var pushed: (timeline: Timeline, sequences: [Timeline.ID: Timeline])?
     @ObservationIgnored private var mediaSnapshot: [MediaRef] = []
-    @ObservationIgnored private var requestedMedia: Set<UUID> = []
+    @ObservationIgnored var requestedMedia: Set<UUID> = []
     @ObservationIgnored var gestureCounter = 0
     @ObservationIgnored private var autosaveTask: Task<Void, Never>?
 
@@ -266,12 +266,13 @@ public final class EditorSession {
     private func syncMedia() {
         // Always: the active sequence's sample rate can change without the media changing.
         media.update(project.media, sampleRate: activeTimeline?.format.audioSampleRate)
-        // A media that was online and now points at another file (relink, undo of a relink): the engine still holds the
-        // old file's demuxer, decoder and frames.
-        let oldPaths = Dictionary(mediaSnapshot.map { ($0.id, $0.path) }, uniquingKeysWith: { a, _ in a })
-        let moved = Set(project.media.filter { m in oldPaths[m.id].map { $0 != m.path } ?? false }.map(\.id))
-        if !moved.isEmpty { engine.mediaChanged(moved) }
         guard project.media != mediaSnapshot else { return }
+        // Media whose file moved (relink to another path, or its undo): the engine reopens them (picture, playback audio, scrub audio).
+        var oldPaths: [UUID: String] = [:]
+        for m in mediaSnapshot { oldPaths[m.id] = m.path }
+        var moved: Set<UUID> = []
+        for m in project.media { if let old = oldPaths[m.id], old != m.path { moved.insert(m.id) } }
+        if !moved.isEmpty { engine.mediaChanged(moved) }
         mediaSnapshot = project.media
         let fresh = project.media.map(\.id).filter { requestedMedia.insert($0).inserted }
         guard !fresh.isEmpty else { return }
@@ -531,8 +532,12 @@ public final class EditorSession {
                 let fit = ref.info?.video.map { tl.format.fitScale(width: $0.displayWidth, height: $0.displayHeight) } ?? 1
                 let total = ref.info?.duration ?? ref.duration ?? .zero
                 let still = ref.info?.isStill == true
-                let source = still ? TimeRange(start: .zero, duration: total)      // stills: default length, no source marks
-                                   : marks[ref.id]?.range ?? TimeRange(start: .zero, duration: total)
+                // Whole frames of the sequence (like `sourceEdit`): a 23.976 source in a 29.97 sequence must not leave
+                // off-grid ends or start the next item off the grid. Stills: default length, no source marks.
+                guard let plan = Timeline.sourceEditPlan(sourceMarks: still ? SourceMarks() : (marks[ref.id].flatMap { $0.range == nil ? nil : $0 } ?? SourceMarks()), total: total,
+                                                         sequenceIn: nil, sequenceOut: nil, playhead: at,
+                                                         frameDuration: tl.frameDuration, isStill: still) else { throw EditError.emptyClip }
+                let source = still ? TimeRange(start: .zero, duration: total) : plan.source   // stills keep their default length
                 let hasVideo = (ref.info?.video != nil || ref.info == nil) && streams.includesVideo
                 let d = tl.dropTargets(pointer: videoTrack, hasVideo: hasVideo, hasAudio: ref.info?.audio != nil && streams.includesAudio)
                 var targets: [Track.ID] = []
@@ -540,7 +545,7 @@ public final class EditorSession {
                 if let a = d.audio { targets.append(a) } else if let n = d.newAudioOrdinal { targets.append(tl.ensureAudioTrack(atOrdinal: n)) }
                 try tl.threePointEdit(source: source, media: ref.id, name: ref.name, mediaDuration: still ? nil : total,
                                       isStill: still, initialScale: fit, targets: targets, at: at, mode: mode)
-                at += source.duration
+                at = (at + source.duration).snapped(to: tl.frameDuration)
             }
         }
         return done
@@ -694,6 +699,9 @@ public final class EditorSession {
         forceDirty = dirty
         activeTimelineID = p.activeTimeline.flatMap { p.timeline($0) }?.id ?? p.timelines.first?.id
         selection = []; captionSelection = []
+        if isPlaying || !engine.rate.isPaused { engine.pause(); isPlaying = false }
+        bounds = PlaybackBounds()
+        clipboard = nil                          // its clips refer to media of the old project
         playhead = .zero
         lastAutosave = nil
         mediaSnapshot = []; requestedMedia = []

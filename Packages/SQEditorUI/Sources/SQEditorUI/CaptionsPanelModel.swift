@@ -233,8 +233,15 @@ public final class CaptionsPanelModel {
     public func setOptions(maxCharsPerLine: Int, lines: Int, minDuration: Time, gapFrames: Int) {
         guard presets.indices.contains(selectedPresetIndex) else { return }
         presets[selectedPresetIndex].preset = presets[selectedPresetIndex].preset
-            .with(maxCharsPerLine: maxCharsPerLine, lines: lines, minDuration: minDuration, gapFrames: gapFrames,
+            .with(maxCharsPerLine: maxCharsPerLine, lines: lines, minDuration: minDuration, gapFrames: min(gapFrames, 3600),
                   frameDuration: frameDuration)
+    }
+
+    /// Create Captions dialog: the typed "Minimum duration" in seconds as time, clamped to 0...1 hour (a typed 1e30 or
+    /// "inf" must not overflow the conversion).
+    public static func minDuration(seconds: Double) -> Time {
+        guard !seconds.isNaN else { return .zero }
+        return Time(Int64((min(max(seconds, 0), 3600) * 1000).rounded()), 1000)
     }
 
     /// The gap of the selected preset in frames (rounded).

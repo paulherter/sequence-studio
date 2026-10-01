@@ -37,6 +37,8 @@ public struct TimelineInteraction: Sendable {
     public private(set) var isRejected = false
     /// Why the last command (nest, ...) was refused; nil otherwise. Cleared by the next mouse down / cancel.
     public private(set) var rejectionMessage: String?
+    /// Why the gesture that just ended with `mouseUp` was refused (nil: it was not). The host shows it in the status bar.
+    public private(set) var releasedRejection: String?
 
     /// Pixels the pointer must travel before a press becomes a drag.
     public static let dragThreshold: CGFloat = 3
@@ -294,8 +296,10 @@ public struct TimelineInteraction: Sendable {
     /// Finishes the gesture. Returns the commit when the gesture changed the timeline.
     @discardableResult
     public mutating func mouseUp(_ p: CGPoint, modifiers m: GestureModifiers) -> TimelineCommit? {
+        releasedRejection = nil
         guard let g = gesture else { return nil }
         if g.active && g.kind != .razor { mouseDragged(p, modifiers: m) }
+        releasedRejection = isRejected ? rejectionMessage : nil
         defer {
             snapInverted = false
             moveHint = nil
@@ -463,11 +467,13 @@ public struct TimelineInteraction: Sendable {
         pendingEdits = edits
         pendingUndoName = name
         isRejected = false
+        rejectionMessage = nil
         guard !edits.isEmpty else { preview = timeline; return }
         do { preview = try TimelineEdit.apply(edits, to: timeline) } catch {
             preview = timeline
             pendingEdits = []
             isRejected = true
+            rejectionMessage = Self.message(for: error)
         }
     }
 

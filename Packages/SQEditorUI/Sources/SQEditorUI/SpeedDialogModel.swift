@@ -43,6 +43,7 @@ public struct SpeedDialogModel: Equatable, Sendable {
     private enum Edited { case none, speed, duration }
     private var edited = Edited.none
     private let originalSpeed: ClipSpeed
+    private let originalDuration: Time
     private let originalReversed: Bool
     private let originalKeepsPitch: Bool
     private let originalInterpolation: TimeInterpolation
@@ -62,6 +63,7 @@ public struct SpeedDialogModel: Equatable, Sendable {
         keepsPitch = first.keepsPitch
         timeInterpolation = first.timeInterpolation
         originalInterpolation = first.timeInterpolation
+        originalDuration = first.duration
         originalSpeed = avg; originalReversed = first.reversed; originalKeepsPitch = first.keepsPitch
     }
 
@@ -75,7 +77,7 @@ public struct SpeedDialogModel: Equatable, Sendable {
         guard typed.isFinite, typed != 0 else { return }
         if typed < 0 { reversed = true }
         percent = min(max(abs(typed), Self.percentRange.lowerBound), Self.percentRange.upperBound)
-        edited = .speed
+        edited = speed == originalSpeed ? .none : .speed       // typing the current value is no change
         if isLinked || !canEditDuration { duration = Self.frames(speed.unscale(sourceDuration), frameDuration) }
     }
 
@@ -86,7 +88,7 @@ public struct SpeedDialogModel: Equatable, Sendable {
         let s = ClipSpeed(num: sourceDuration.value * d.timescale, den: sourceDuration.timescale * d.value)
         percent = s.percent
         duration = Self.frames(s.unscale(sourceDuration), frameDuration)
-        edited = .duration
+        edited = duration == originalDuration ? .none : .duration
     }
 
     private static func frames(_ t: Time, _ fd: Time) -> Time { max(t.snapped(to: fd), fd) }

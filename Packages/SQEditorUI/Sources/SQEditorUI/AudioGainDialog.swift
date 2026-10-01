@@ -70,12 +70,16 @@ public enum AudioGainPlan {
 public enum AudioGainDialog {
     private enum Row: Int, CaseIterable { case set, adjust, normalizeEach, normalizeTogether }
 
+    /// Clip name (or clip count) plus the peak amplitude, for one clip as well as for several.
+    nonisolated public static func infoText(items: [AudioGainPlan.Item]) -> String {
+        let head = items.count == 1 ? items[0].name : "\(items.count) clips"
+        return head + (AudioGainPlan.loudestDB(of: items).map { String(format: "\nPeak amplitude: %.1f dB", $0) } ?? "")
+    }
+
     public static func present(on window: NSWindow, items: [AudioGainPlan.Item], completion: @escaping @MainActor (AudioGainChoice?) -> Void) {
         let alert = NSAlert()
         alert.messageText = "Audio Gain"
-        let loudest = AudioGainPlan.loudestDB(of: items)
-        alert.informativeText = items.count == 1 ? items[0].name : "\(items.count) clips"
-            + (loudest.map { String(format: "\nPeak amplitude: %.1f dB", $0) } ?? "")
+        alert.informativeText = infoText(items: items)
 
         let titles = ["Set Gain to", "Adjust Gain by", "Normalize Max Peak to", "Normalize All Peaks to"]
         let radios = titles.enumerated().map { i, t -> NSButton in

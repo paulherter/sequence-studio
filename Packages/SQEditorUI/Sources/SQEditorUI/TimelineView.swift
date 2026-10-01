@@ -362,8 +362,9 @@ public final class TimelineView: NSView {
             let span = fitSpan
             guard !span.isEmpty else { return }
             let startSeconds = Double(span.start.value) / Double(span.start.timescale)
-            geometry.pointsPerSecond = fitScale
-            geometry.scrollX = CGFloat(startSeconds * fitScale) - Theme.Spacing.lg
+            let scale = TimelineZoom.clamp(fitScale, to: zoomLimits)     // a one-frame sequence must not pass the zoom cap
+            geometry.pointsPerSecond = scale
+            geometry.scrollX = CGFloat(startSeconds * scale) - Theme.Spacing.lg
             clampScroll()
             viewportChanged()
         }
@@ -677,10 +678,9 @@ public final class TimelineView: NSView {
         }
         let p = convert(event.locationInWindow, from: nil)
         interaction.geometry = geometry
-        let wasRejected = interaction.isRejected
         let commit = interaction.mouseUp(p, modifiers: gestureModifiers(event))
         refreshFromInteraction()
-        if wasRejected, let m = interaction.rejectionMessage { onRejection?(m) }
+        if let m = interaction.releasedRejection { onRejection?(m) }
         if let commit { onCommit?(commit) }
     }
 

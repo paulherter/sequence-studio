@@ -467,7 +467,7 @@ enum CreateCaptionsDialog {
                 model.selectedPresetIndex = preset.indexOfSelectedItem
                 let secs = max(0, minDur.doubleValue)
                 model.setOptions(maxCharsPerLine: chars.integerValue, lines: lines.indexOfSelectedItem + 1,
-                                 minDuration: Time(Int64((secs * 1000).rounded()), 1000), gapFrames: gap.integerValue)
+                                 minDuration: CaptionsPanelModel.minDuration(seconds: secs), gapFrames: gap.integerValue)
                 completion(true)
             }
         }

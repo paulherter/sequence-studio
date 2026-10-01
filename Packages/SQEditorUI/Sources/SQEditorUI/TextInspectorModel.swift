@@ -42,6 +42,7 @@ public final class TextInspectorModel {
 
     /// Replaces the edited values from outside (selection changed). Fires no callbacks.
     public func load(style: TextStyle, animations: AnimationSet) {
+        if sessionDepth > 0 { sessionDepth = 0; onEndEditing?() }     // an open edit session belongs to the previous values
         self.style = style; self.animations = animations
         remember(style)
         refreshFamilies()
