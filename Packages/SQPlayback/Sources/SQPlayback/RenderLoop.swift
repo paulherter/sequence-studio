@@ -14,7 +14,9 @@ import SQText
 /// (colour hint, known once a decoder exists) and the damaged flag set by decode errors.
 final class MediaTable: Sendable {
     private enum Entry: Sendable { case ready(any Demuxing), still(StillFrame), offline }
-    private struct State { var entries: [UUID: Entry] = [:]; var info: [UUID: VideoTrackInfo] = [:]; var damaged: [UUID: [ClosedRange<Int>]] = [:] }
+    private struct State { var entries: [UUID: Entry] = [:]; var info: [UUID: VideoTrackInfo] = [:]; var damaged: [UUID: [ClosedRange<Int>]] = [:]
+        /// Bumped by `forget`: work that began under an older epoch (a resolve, a decode) must not store its result.
+        var epochs: [UUID: Int] = [:] }
     private let state = Mutex(State())
     private let gates = Mutex<[UUID: NSLock]>([:])
     let resolver: any MediaResolver
@@ -37,9 +39,11 @@ final class MediaTable: Sendable {
     /// Forgets everything about these media (relinked to other files): the next use resolves them again.
     func forget(_ ids: Set<UUID>) {
         state.withLock { s in
-            for id in ids { s.entries[id] = nil; s.info[id] = nil; s.damaged[id] = nil }
+            for id in ids { s.entries[id] = nil; s.info[id] = nil; s.damaged[id] = nil; s.epochs[id, default: 0] += 1 }
         }
     }
+
+    func epoch(_ media: UUID) -> Int { state.withLock { $0.epochs[media] ?? 0 } }
 
     init(resolver: any MediaResolver) { self.resolver = resolver }
 
@@ -52,14 +56,20 @@ final class MediaTable: Sendable {
             let l = NSLock(); g[media] = l; return l
         }
         gate.lock(); defer { gate.unlock() }
-        if let e = state.withLock({ $0.entries[media] }) { return e }
-        let e: Entry
-        if let still = try? resolver.stillFrame(for: media) { e = .still(still) }
-        else if let d = try? resolver.demuxer(for: media) { e = .ready(d) }
-        else { e = .offline }
-        return state.withLock { s in
-            if let old = s.entries[media] { return old }
-            s.entries[media] = e; return e
+        while true {
+            if let e = state.withLock({ $0.entries[media] }) { return e }
+            let epoch = self.epoch(media)
+            let e: Entry
+            if let still = try? resolver.stillFrame(for: media) { e = .still(still) }
+            else if let d = try? resolver.demuxer(for: media) { e = .ready(d) }
+            else { e = .offline }
+            // A relink that landed while this open ran: the result is for the old file, open again.
+            let stored: Entry? = state.withLock { s in
+                guard (s.epochs[media] ?? 0) == epoch else { return nil }
+                if let old = s.entries[media] { return old }
+                s.entries[media] = e; return e
+            }
+            if let stored { return stored }
         }
     }
 
@@ -95,7 +105,12 @@ final class MediaTable: Sendable {
         state.withLock { s in s.entries = s.entries.filter { if case .ready = $0.value { true } else { false } } }
     }
 
-    func setInfo(_ info: VideoTrackInfo, for media: UUID) { state.withLock { $0.info[media] = info } }
+    func setInfo(_ info: VideoTrackInfo, for media: UUID, epoch: Int? = nil) {
+        state.withLock { s in
+            if let epoch, (s.epochs[media] ?? 0) != epoch { return }
+            s.info[media] = info
+        }
+    }
     func info(_ media: UUID) -> VideoTrackInfo? { state.withLock { $0.info[media] } }
     /// A failed decode job damages its frames (one GOP), not the whole media: earlier/later good GOPs keep playing.
     func markDamaged(_ media: UUID, frames: ClosedRange<Int>) { state.withLock { $0.damaged[media, default: []].append(frames) } }
@@ -120,6 +135,21 @@ struct CountingDecoder: VideoDecoding {
     func decode(_ range: ClosedRange<Int>) async throws -> [DecodedFrame] {
         counter.increment()
         return try await inner.decode(range)
+    }
+}
+
+/// Drops the frames of a decode that ran for a file the media has since been relinked away from.
+struct EpochDecoder: VideoDecoding {
+    let inner: any VideoDecoding
+    let media: MediaTable
+    let id: UUID
+    let epoch: Int
+    var info: VideoTrackInfo { inner.info }
+    var isHardware: Bool { inner.isHardware }
+    func invalidate() { inner.invalidate() }
+    func decode(_ range: ClosedRange<Int>) async throws -> [DecodedFrame] {
+        let frames = try await inner.decode(range)
+        return media.epoch(id) == epoch ? frames : []
     }
 }
 
@@ -173,6 +203,7 @@ final class RenderLoop: @unchecked Sendable {
         var incomplete = false
         /// Consecutive composites that were not presented (see `maxRenderRetries`).
         var renderFailures = 0
+        var failureGeneration: UInt64 = 0
         var lastTime: Time?
         /// Since when the picture is held for a layer that has no frame yet (capped, see `holdLimit`).
         var holdStart: (time: Time, since: ContinuousClock.Instant)?
@@ -228,10 +259,11 @@ final class RenderLoop: @unchecked Sendable {
         return DecodeScheduler(
             maxConcurrent: 4,
             decoder: { id in
+                let epoch = media.epoch(id)
                 guard let d = media.demuxer(id) else { throw MediaResolverError.unknownMedia(id) }
                 let dec = try VTVideoDecoder(demuxer: d, media: id, scale: scale)
-                media.setInfo(dec.info, for: id)
-                return CountingDecoder(inner: dec, counter: counter)
+                media.setInfo(dec.info, for: id, epoch: epoch)
+                return EpochDecoder(inner: CountingDecoder(inner: dec, counter: counter), media: media, id: id, epoch: epoch)
             },
             sink: { [weak self] _, frames in self?.store(frames, scale: scale) },
             onError: { [weak self] job, _ in self?.decodeFailed(job) })
@@ -296,6 +328,7 @@ final class RenderLoop: @unchecked Sendable {
         // Edits may have fixed a damaged/relinked media: forget damage marks and failed jobs.
         media.clearDamaged()
         if let s = state.withLock({ $0.scheduler }) { post(reset: s) }
+        resolveSoon(nil)        // open the timeline's media in the background: a cut or a clip added during playback is never cold
     }
 
     /// These media now point at other files (online relink): drop the opened demuxers, decoders, track infos, damage marks
@@ -305,7 +338,16 @@ final class RenderLoop: @unchecked Sendable {
         media.forget(ids)
         for id in ids { cache.remove(media: id) }
         let s: DecodeScheduler? = state.withLock { s in s.generation &+= 1; s.lastJobs = []; return s.scheduler }
-        if let s { Task { await s.forget(ids) } }
+        // Ordered with the submissions. The scheduler cancels a running job of these media and drops its result; a job that
+        // finished before that already stored frames, so the cache is cleaned again after the scheduler has settled.
+        submitChain.withLock { last in
+            let prev = last
+            last = Task { [weak self] in
+                await prev?.value
+                await s?.forget(ids)
+                for id in ids { self?.cache.remove(media: id) }
+            }
+        }
     }
 
     func setQuality(_ q: DecodeScale) {
@@ -425,6 +467,8 @@ final class RenderLoop: @unchecked Sendable {
     }
 
     static let maxRenderRetries = 30
+    /// After this many failed attempts the next one draws the placeholder instead of the real composite.
+    static let fallbackAfter = 3
 
     private func tickLocked(_ g: inout GPU, drawable: CAMetalDrawable?) -> TickOutcome? {
         let now = clock.now()
@@ -482,9 +526,14 @@ final class RenderLoop: @unchecked Sendable {
 
         // Composite + present
         var presented = false
+        let failures = state.withLock { $0.renderFailures }
         if let target = target(&g, format: tl.format), let cb = g.queue.makeCommandBuffer() {
             do {
-                let nodes = RenderNode.tree(requests: requests, layers: b.layers) + captionNodes(tl, at: t, build: &b)
+                var nodes = RenderNode.tree(requests: requests, layers: b.layers) + captionNodes(tl, at: t, build: &b)
+                // The real composite failed repeatedly: show the "damaged" placeholder instead of staying black.
+                if failures >= Self.fallbackAfter {
+                    nodes = [.layer(RenderLayer(content: .placeholder(.damaged), transform: ClipTransform()))]
+                }
                 try g.compositor.render(nodes: nodes, format: tl.format, into: target, commandBuffer: cb)
                 if let presenter {
                     if let drawable { presenter.present(target, zoom: zoom, drawable: drawable, commandBuffer: cb) }
@@ -515,7 +564,12 @@ final class RenderLoop: @unchecked Sendable {
             if drift > s.stats.maxAVDrift { s.stats.maxAVDrift = drift }
             // A composite that failed (texture allocation, encoder) is retried by the next ticks, not only after an edit;
             // a persistent failure gives up after `maxRenderRetries` so a paused loop does not spin.
+            // The counter belongs to one generation: an edit or any other invalidation starts a fresh series of attempts.
+            if s.failureGeneration != generation { s.failureGeneration = generation; s.renderFailures = 0 }
             if presented { s.renderFailures = 0 } else { s.renderFailures += 1 }
+            if !presented && s.renderFailures == Self.maxRenderRetries + 1 {
+                Self.log.error("composite failed \(Self.maxRenderRetries, privacy: .public) times in a row: giving up until the next change")
+            }
             if presented || s.renderFailures > Self.maxRenderRetries { s.renderedGeneration = generation }
             s.incomplete = b.waiting
             guard presented else { return }
@@ -695,20 +749,30 @@ final class RenderLoop: @unchecked Sendable {
 
     private let resolvePending = Mutex<Set<UUID>>([])
 
-    /// Opens `id` on the resolve queue (once at a time, ordered in the submit chain so `waitForDecodes` covers it), then
-    /// replans the decode window around the playhead and redraws.
-    private func resolveSoon(_ id: UUID) {
-        guard resolvePending.withLock({ $0.insert(id).inserted }) else { return }
+    /// Opens `first` (if given) and every other media of the timeline that is not resolved yet, on the resolve queue (ordered
+    /// in the submit chain, so `waitForDecodes` covers it), then replans the decode window around the playhead and redraws.
+    /// Opening everything ahead of time means a clip added during playback, or the next cut, never starts cold.
+    private func resolveSoon(_ first: UUID?) {
+        let all = state.withLock { $0.mediaIDs }
+        let candidates = (first.map { [$0] } ?? []) + all.filter { $0 != first }
+        let ids = candidates.filter { id in
+            guard case .unresolved = media.known(id) else { return false }
+            return resolvePending.withLock { $0.insert(id).inserted }
+        }
+        guard !ids.isEmpty else { return }
         let queue = resolveQueue
         submitChain.withLock { last in
             let prev = last
             last = Task { [weak self] in
                 await prev?.value
                 await withCheckedContinuation { (c: CheckedContinuation<Void, Never>) in
-                    queue.async { self?.media.resolve(id); c.resume() }
+                    queue.async {
+                        for id in ids { self?.media.resolve(id) }
+                        c.resume()
+                    }
                 }
                 guard let self else { return }
-                resolvePending.withLock { _ = $0.remove(id) }
+                resolvePending.withLock { $0.subtract(ids) }
                 if let (tl, scale) = state.withLock({ s in s.timeline.map { ($0, s.quality) } }) {
                     state.withLock { $0.lastJobs = [] }
                     prefetch(timeline: tl, at: Self.gridTime(clock.now(), tl), rate: clock.rate, scale: scale, misses: [])

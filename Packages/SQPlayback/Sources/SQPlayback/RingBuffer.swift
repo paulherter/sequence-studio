@@ -15,8 +15,11 @@ public final class RingBuffer: @unchecked Sendable {
     private let underruns = Atomic<Int>(0)
     private let consumed = Atomic<Int64>(0)
     private let consumerEpoch = Atomic<Int>(0)   // written by the consumer only
+    #if DEBUG
     /// Test hook: runs on the consumer between the flush-epoch load and the write-index load of `pop` (the race window).
+    /// Compiled out of release builds (no closure access on the audio thread); tests set it before any `pop` runs.
     nonisolated(unsafe) var afterEpochLoad: (() -> Void)?
+    #endif
 
     // Flush acknowledgement (seqlock: odd sequence = consumer is writing). Written by the consumer only.
     private let ackSeq = Atomic<Int>(0)
@@ -94,7 +97,9 @@ public final class RingBuffer: @unchecked Sendable {
                 publishAck(epoch: epoch, frames: consumed.load(ordering: .relaxed))
                 beginFade()
             }
+            #if DEBUG
             afterEpochLoad?()
+            #endif
             w = writeIndex.load(ordering: .acquiring)
             // A flush (and new pushes) that landed between the two loads: `w` may then include data pushed after the cut
             // while `rd` still points before it. Apply the flush first, then read `w` again.

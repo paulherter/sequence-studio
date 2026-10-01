@@ -182,7 +182,28 @@ private struct CountingFake: VideoDecoding {
         audio.render(frames: 10_000)
         #expect(clock.now() < sec(1))
         audio.render(frames: Int(sr) - 10_000)                     // everything from 1 s down to 0 consumed
-        #expect(clock.now() < fd, "clock \(clock.now()) must be inside frame 0")
+        #expect(clock.now() > .zero, "the last audio is still in the output pipeline")
+        audio.advanceTime(nanoseconds: 200_000_000)                // ... and out after the output latency
+        #expect(clock.now() == .zero)
+        #expect(clock.sample().stalled == false)
+    }
+
+    // Review of the fix: the clock must not jump to 0 early by the output latency; it decays with the audio still in flight.
+    @Test func reverseDecaysToZeroOverTheOutputLatency() {
+        let audio = ManualAudio(outputLatency: Time(250, 1000))
+        let clock = AudioClock(audio: audio)
+        clock.start(at: sec(1), rate: .reverse)
+        audio.render(frames: Int(sr))
+        #expect(clock.now() == Time(250, 1000))                    // exactly the latency left
+        var last = clock.now()
+        for _ in 0..<4 {
+            audio.advanceTime(nanoseconds: 50_000_000)
+            let p = clock.now()
+            #expect(p < last && p > .zero, "decays monotonically, \(p)")
+            #expect(clock.sample().stalled == false)
+            last = p
+        }
+        audio.advanceTime(nanoseconds: 60_000_000)                 // 260 ms after the last render: the last audio is out
         #expect(clock.now() == .zero)
     }
 }

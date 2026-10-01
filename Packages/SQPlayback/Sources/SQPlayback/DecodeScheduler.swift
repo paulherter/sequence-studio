@@ -36,6 +36,9 @@ public actor DecodeScheduler {
     /// Decoders hold a VideoToolbox session each (hardware sessions are limited): the ones the current queue does not
     /// need are kept most-recently-used first, at most `idleDecoders` of them, the rest are invalidated.
     private let idleDecoders: Int
+    /// Media of the last submitted queue (running or already done): their decoders are never trimmed, however few jobs
+    /// are still pending, so a window with 3+ alternating media does not recreate a decoder per job.
+    private var lastWanted: Set<UUID> = []
     private var lastUse: [UUID: UInt64] = [:]
     private var useClock: UInt64 = 0
     private var idleWaiters: [CheckedContinuation<Void, Never>] = []
@@ -58,7 +61,8 @@ public actor DecodeScheduler {
             f.cancelled = true; f.task.cancel(); flights[media] = f
         }
         pending = wanted.filter { job in flights[job.media].map { $0.job.key != job.key || $0.cancelled } ?? true }
-        trimDecoders(keeping: Set(wanted.map(\.media)))
+        lastWanted = Set(wanted.map(\.media))
+        trimDecoders(keeping: lastWanted)
         pump()
     }
 
@@ -69,6 +73,8 @@ public actor DecodeScheduler {
         for media in idle.dropFirst(idleDecoders) { release(media) }
     }
 
+    /// Only called for a media without a running job (callers check `flights`, or the job has just finished), and always on
+    /// this actor, so `invalidate()` never races a `decode` of the same decoder: decoders are used by one job at a time.
     private func release(_ media: UUID) {
         decoders.removeValue(forKey: media)?.invalidate()
         executors[media] = nil; lastUse[media] = nil
@@ -145,7 +151,7 @@ public actor DecodeScheduler {
             }
         }
         if decoders[job.media] == nil { executors[job.media] = nil }
-        trimDecoders(keeping: Set(pending.map(\.media)))
+        trimDecoders(keeping: lastWanted.union(pending.map(\.media)))
         pump()
     }
 }
