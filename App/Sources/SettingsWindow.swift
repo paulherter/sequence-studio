@@ -2,22 +2,18 @@ import AppKit
 import CoreAudio
 import SSEditorUI
 
-/// Settings window (⌘,): General, Playback, Media, Keyboard. Real AppKit controls in an NSTabView; every change is
+/// Settings window (⌘,): General, Playback, Media. Real AppKit controls in an NSTabView; every change is
 /// written to UserDefaults at once (`AppSettings`). Autosave interval and audio output are read at launch.
 @MainActor
-final class SettingsWindowController: NSObject, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
+final class SettingsWindowController: NSObject, NSWindowDelegate {
     unowned let controller: AppController
     private var window: NSWindow?
 
     private let autosavePopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let recoveryCheck = NSButton(checkboxWithTitle: "Offer to restore the last autosave after an unclean quit", target: nil, action: nil)
     private let qualityPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
-    private let audioPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let cachePath = NSTextField(labelWithString: "")
-    private let capPopUp = NSPopUpButton(frame: .zero, pullsDown: false)
     private let usedLabel = NSTextField(labelWithString: "")
-    private let keyTable = NSTableView()
-    private var keyRows: [KeyboardListing.Row] = []
 
     init(controller: AppController) {
         self.controller = controller
@@ -38,7 +34,6 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSTableViewDat
         tabs.addTabViewItem(item("General", "gearshape", generalPage()))
         tabs.addTabViewItem(item("Playback", "play.rectangle", playbackPage()))
         tabs.addTabViewItem(item("Media", "externaldrive", mediaPage()))
-        tabs.addTabViewItem(item("Keyboard", "keyboard", keyboardPage()))
         let w = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 560, height: 380),
                          styleMask: [.titled, .closable], backing: .buffered, defer: false)
         w.title = "Sequence Studio Settings"
@@ -107,47 +102,17 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSTableViewDat
     private func playbackPage() -> NSView {
         for q in MonitorQuality.allCases { qualityPopUp.addItem(withTitle: q.title); qualityPopUp.lastItem?.representedObject = q.rawValue }
         qualityPopUp.target = self; qualityPopUp.action = #selector(changed)
-        audioPopUp.addItem(withTitle: "System Default")
-        for d in Self.outputDevices() {
-            audioPopUp.addItem(withTitle: d.name)
-            audioPopUp.lastItem?.representedObject = d.uid
-        }
-        audioPopUp.target = self; audioPopUp.action = #selector(changed)
-        return column([row("Default quality", qualityPopUp), row("Audio output", audioPopUp),
-                       note("Quality is the Program monitor's playback resolution at launch; change it any time in the monitor. The audio output is stored and used by the playback engine once device selection is wired.")])
+        return column([row("Default quality", qualityPopUp),
+                       note("Quality is the Program monitor's playback resolution at launch; change it any time in the monitor. Audio plays on the system output device.")])
     }
 
     private func mediaPage() -> NSView {
         cachePath.lineBreakMode = .byTruncatingMiddle
-        cachePath.widthAnchor.constraint(lessThanOrEqualToConstant: 280).isActive = true
-        let choose = NSButton(title: "Choose…", target: self, action: #selector(chooseCache))
-        let reset = NSButton(title: "Default", target: self, action: #selector(resetCache))
-        let folder = NSStackView(views: [cachePath, choose, reset])
-        folder.spacing = 8
-        for g in AppSettings.cacheCapChoices { capPopUp.addItem(withTitle: "\(g) GB"); capPopUp.lastItem?.tag = g }
-        capPopUp.target = self; capPopUp.action = #selector(changed)
+        cachePath.widthAnchor.constraint(lessThanOrEqualToConstant: 300).isActive = true
+        let clear = NSButton(title: "Clear Cache", target: self, action: #selector(clearCache))
         usedLabel.textColor = .secondaryLabelColor
-        return column([row("Cache folder", folder), row("Size cap", capPopUp), row("In use", usedLabel),
-                       note("Proxies and render cache are stored here. When the cap is reached the oldest files are removed first.")])
-    }
-
-    private func keyboardPage() -> NSView {
-        keyRows = KeyboardListing.rows(controller.commandMap)
-        for (id, title, w) in [("command", "Command", 220.0), ("shortcut", "Shortcut", 110), ("scope", "Active in", 110)] {
-            let c = NSTableColumn(identifier: .init(id))
-            c.title = title; c.width = w
-            keyTable.addTableColumn(c)
-        }
-        keyTable.dataSource = self
-        keyTable.delegate = self
-        keyTable.rowHeight = 20
-        keyTable.usesAlternatingRowBackgroundColors = true
-        let scroll = NSScrollView()
-        scroll.documentView = keyTable
-        scroll.hasVerticalScroller = true
-        scroll.heightAnchor.constraint(equalToConstant: 250).isActive = true
-        scroll.widthAnchor.constraint(equalToConstant: 500).isActive = true
-        return column([scroll, note("Premiere's default shortcuts. Editing shortcuts comes later.")])
+        return column([row("Cache folder", cachePath), row("In use", usedLabel), row("", clear),
+                       note("Previews and proxies are stored here. Clearing the cache is safe: files are rebuilt when needed.")])
     }
 
     // MARK: State
@@ -157,11 +122,7 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSTableViewDat
         autosavePopUp.selectItem(at: AppSettings.autosaveChoices.firstIndex(of: s.autosaveInterval) ?? 2)
         recoveryCheck.state = s.offerRecovery ? .on : .off
         qualityPopUp.selectItem(at: MonitorQuality.allCases.firstIndex(of: s.defaultQuality) ?? 0)
-        if let uid = s.audioOutputUID, let i = audioPopUp.itemArray.firstIndex(where: { $0.representedObject as? String == uid }) {
-            audioPopUp.selectItem(at: i)
-        } else { audioPopUp.selectItem(at: 0) }
         cachePath.stringValue = s.effectiveCacheFolder.path
-        capPopUp.selectItem(withTag: s.cacheCapGB)
         refreshUsed()
     }
 
@@ -170,32 +131,16 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSTableViewDat
         s.autosaveInterval = AppSettings.autosaveChoices[max(autosavePopUp.indexOfSelectedItem, 0)]
         s.offerRecovery = recoveryCheck.state == .on
         if let raw = qualityPopUp.selectedItem?.representedObject as? String, let q = MonitorQuality(rawValue: raw) { s.defaultQuality = q }
-        s.audioOutputUID = audioPopUp.selectedItem?.representedObject as? String
-        s.cacheCapGB = capPopUp.selectedItem?.tag ?? s.cacheCapGB
         controller.settings = s
         s.save()
     }
 
-    @objc private func chooseCache() {
-        let p = NSOpenPanel()
-        p.canChooseDirectories = true; p.canChooseFiles = false; p.canCreateDirectories = true
-        p.prompt = "Choose"
-        p.directoryURL = controller.settings.effectiveCacheFolder
-        guard let w = window else { return }
-        p.beginSheetModal(for: w) { [weak self] r in
-            MainActor.assumeIsolated {
-                guard let self, r == .OK, let url = p.url else { return }
-                self.controller.settings.cacheFolder = url
-                self.controller.settings.save()
-                self.load()
-            }
+    @objc private func clearCache() {
+        let url = controller.settings.effectiveCacheFolder
+        if let items = try? FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil) {
+            for f in items { try? FileManager.default.removeItem(at: f) }
         }
-    }
-
-    @objc private func resetCache() {
-        controller.settings.cacheFolder = nil
-        controller.settings.save()
-        load()
+        refreshUsed()
     }
 
     private func refreshUsed() {
@@ -215,52 +160,5 @@ final class SettingsWindowController: NSObject, NSWindowDelegate, NSTableViewDat
             total += Int64((try? f.resourceValues(forKeys: [.totalFileAllocatedSizeKey]))?.totalFileAllocatedSize ?? 0)
         }
         return total
-    }
-
-    // MARK: Keyboard table
-
-    func numberOfRows(in tableView: NSTableView) -> Int { keyRows.count }
-
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        let r = keyRows[row]
-        let text: String
-        switch tableColumn?.identifier.rawValue {
-        case "command": text = r.command
-        case "shortcut": text = r.shortcut
-        default: text = r.scope
-        }
-        let l = NSTextField(labelWithString: text)
-        l.font = tableColumn?.identifier.rawValue == "shortcut" ? .monospacedSystemFont(ofSize: 12, weight: .regular) : .systemFont(ofSize: 12)
-        return l
-    }
-
-    // MARK: Audio devices
-
-    private static func outputDevices() -> [(name: String, uid: String)] {
-        var addr = AudioObjectPropertyAddress(mSelector: kAudioHardwarePropertyDevices,
-                                              mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-        var size: UInt32 = 0
-        guard AudioObjectGetPropertyDataSize(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size) == noErr else { return [] }
-        var ids = [AudioDeviceID](repeating: 0, count: Int(size) / MemoryLayout<AudioDeviceID>.size)
-        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &addr, 0, nil, &size, &ids) == noErr else { return [] }
-        return ids.compactMap { id in
-            guard hasOutput(id), let name = string(id, kAudioObjectPropertyName), let uid = string(id, kAudioDevicePropertyDeviceUID) else { return nil }
-            return (name, uid)
-        }
-    }
-
-    private static func hasOutput(_ id: AudioDeviceID) -> Bool {
-        var addr = AudioObjectPropertyAddress(mSelector: kAudioDevicePropertyStreams,
-                                              mScope: kAudioObjectPropertyScopeOutput, mElement: kAudioObjectPropertyElementMain)
-        var size: UInt32 = 0
-        return AudioObjectGetPropertyDataSize(id, &addr, 0, nil, &size) == noErr && size > 0
-    }
-
-    private static func string(_ id: AudioDeviceID, _ selector: AudioObjectPropertySelector) -> String? {
-        var addr = AudioObjectPropertyAddress(mSelector: selector, mScope: kAudioObjectPropertyScopeGlobal, mElement: kAudioObjectPropertyElementMain)
-        var value: Unmanaged<CFString>?
-        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
-        guard AudioObjectGetPropertyData(id, &addr, 0, nil, &size, &value) == noErr, let v = value else { return nil }
-        return v.takeRetainedValue() as String
     }
 }

@@ -20,7 +20,7 @@ import SSCore
     }
 
     @Test func socialPresetsStayDeliveryCodecs() {
-        #expect(ExportPreset.all.allSatisfy { $0.codec == .h264 || $0.codec == .hevc })
+        #expect(ExportPreset.social.allSatisfy { $0.codec == .h264 || $0.codec == .hevc })
     }
 
     @Test func codableRoundTripAndOldDataDecodes() throws {

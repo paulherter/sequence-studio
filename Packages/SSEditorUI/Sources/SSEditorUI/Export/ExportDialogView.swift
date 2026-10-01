@@ -63,6 +63,7 @@ public struct ExportDialogView: View {
         VStack(alignment: .leading, spacing: 8) {
             LabeledContent("Preset") { presetPicker }
             LabeledContent("Range") { rangePicker }
+            LabeledContent("Summary") { Text(model.summaryText).foregroundStyle(.secondary).font(.callout) }
         }
     }
 
@@ -97,6 +98,7 @@ public struct ExportDialogView: View {
                 Picker("Codec", selection: $model.codec) {
                     Text("H.264").tag(VideoCodec.h264)
                     Text("HEVC").tag(VideoCodec.hevc)
+                    if model.codec == .prores422HQ { Text("ProRes 422 HQ").tag(VideoCodec.prores422HQ) }
                 }
                 LabeledContent("Size") {
                     HStack(spacing: 4) {
@@ -110,13 +112,14 @@ public struct ExportDialogView: View {
                 Picker("Frame rate", selection: $model.fps) {
                     ForEach(ExportDialogModel.frameRates, id: \.self) { Text(Self.fpsText($0)).tag($0) }
                 }
-                LabeledContent("Bitrate") {
+                if !model.codec.isMastering { LabeledContent("Bitrate") {
                     HStack(spacing: 4) {
                         TextField("Bitrate", value: $model.bitrateMbps, format: .number.precision(.fractionLength(0...1)))
                             .frame(width: 64).multilineTextAlignment(.trailing)
                         Text("Mbit/s").foregroundStyle(.secondary)
                     }
-                }
+                } }
+                LabeledContent("Summary") { Text(model.summaryText).foregroundStyle(.secondary).font(.callout) }
             }
             Section("Audio") {
                 Toggle("Normalize loudness to \(ExportDialogModel.loudnessTargetLUFS) LUFS", isOn: $model.normalizeLoudness)

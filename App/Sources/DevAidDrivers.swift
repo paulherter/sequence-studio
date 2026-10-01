@@ -17,6 +17,7 @@ enum DevAidDrivers {
         let env = ProcessInfo.processInfo.environment
         if let path = env["SS_TRANSCRIBE_TEST"] { runTranscribe(c, path: path) }
         if env["SS_TEXTTEST"] == "1" { runTextTest(c) }
+        ShellDevAids.runIfRequested(c)
     }
 
     private static func runTranscribe(_ c: AppController, path: String) {
