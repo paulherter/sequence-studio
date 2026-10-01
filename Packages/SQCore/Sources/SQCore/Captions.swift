@@ -130,7 +130,7 @@ public struct CaptionTrack: Sendable, Hashable, Codable, Identifiable {
             items[i].range = TimeRange(start: max(lo, min(t, hi)), end: r.end)
         case .tail:
             var e = max(t, min(r.end, r.start + minDuration))
-            if i + 1 < items.count { e = min(e, items[i + 1].range.start) }
+            if i + 1 < items.count { e = min(e, items[i + 1].range.start) }   // the neighbour wins over minDuration
             items[i].range = TimeRange(start: r.start, end: e)
         }
         return items[i].range
@@ -422,13 +422,28 @@ extension Timeline {
 
     // MARK: Ripple support (used by the timeline-wide edits; only unlocked, sync-locked tracks follow)
 
+    /// Captions, sequence markers and the In/Out range follow a ripple that closes `span`.
     mutating func closeCaptionSpan(_ span: TimeRange) {
         for i in captionTracks.indices where captionTracks[i].followsRipple { captionTracks[i].closeSpan(span) }
+        shiftMarkers(from: span.end, by: .zero - span.duration)
+        shiftInOut(from: span.end, by: .zero - span.duration)
     }
 
     mutating func openCaptionGap(at pivot: Time, by length: Time) {
         for i in captionTracks.indices where captionTracks[i].followsRipple {
             captionTracks[i].openGap(at: pivot, by: length)
         }
+        shiftMarkers(from: pivot, by: length)
+        shiftInOut(from: pivot, by: length)
+    }
+
+    /// Same point rule as `shiftMarkers`: points at or after `editPoint` move by `delta`; points inside a removed
+    /// span collapse to its start. A range that collapses to nothing is cleared.
+    mutating func shiftInOut(from editPoint: Time, by delta: Time) {
+        guard let r = inOut else { return }
+        let floor = editPoint + min(delta, .zero)
+        func shifted(_ p: Time) -> Time { p >= editPoint ? p + delta : (p >= floor ? floor : p) }
+        let n = TimeRange(start: shifted(r.start), end: shifted(r.end))
+        inOut = n.isEmpty ? nil : n
     }
 }
