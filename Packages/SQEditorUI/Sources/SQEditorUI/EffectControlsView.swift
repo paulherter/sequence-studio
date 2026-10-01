@@ -113,7 +113,7 @@ public final class EffectControlsView: NSView {
         withObservationTracking {
             _ = model.clip; _ = model.playhead; _ = model.selection; _ = model.expanded
             _ = model.collapsedSections; _ = model.selectedSection; _ = model.graphMode; _ = model.easingLibrary
-            _ = model.viewport
+            _ = model.viewport; _ = model.uniformScale     // the Scale row has one field or two
         } onChange: { [weak self] in
             Task { @MainActor [weak self] in
                 self?.modelChanged()

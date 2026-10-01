@@ -70,7 +70,9 @@ public enum WaveformPath {
         let srcSeconds = max(Double(src.duration.value) / Double(src.duration.timescale), 1e-9)
 
         let peaks: [[WaveformPeak]]
-        if let (cache, media) = input.cache {
+        // Beyond ~500 columns per second the whole-file resample would be huge (hours at deep zoom): read the mip pyramid
+        // for the visible range only.
+        if let (cache, media) = input.cache, Double(total) / srcSeconds <= WaveformCache.maxColumnsPerSecond {
             let r = cache.resampled(media: media, data: input.data, pointsPerSecond: Double(total) / srcSeconds)
             peaks = r.peaks(in: range, buckets: vis.count)
         } else {
@@ -200,6 +202,8 @@ public final class ResampledPeaks: @unchecked Sendable {
         self.columnsPerSecond = columnsPerSecond; self.channels = channels
     }
 
+    var byteCount: Int { channels.reduce(0) { $0 + $1.count * MemoryLayout<WaveformPeak>.stride } }
+
     /// Same contract as `WaveformData.peaks(in:buckets:)`, merged from the resampled columns.
     func peaks(in range: TimeRange, buckets: Int) -> [[WaveformPeak]] {
         let start = Double(range.start.value) / Double(range.start.timescale)
@@ -226,13 +230,20 @@ public final class WaveformCache: @unchecked Sendable {
     private var store: [Key: ResampledPeaks] = [:]
     private var order: [Key] = []
     private let limit: Int
+    private let maxBytes: Int
+    private var bytes = 0
+    /// Zoom beyond this many columns per second is not cached (the draw reads the visible range directly).
+    public static let maxColumnsPerSecond: Double = 500
 
-    public init(limit: Int = 24) { self.limit = max(limit, 1) }
+    public init(limit: Int = 24, maxBytes: Int = 64 * 1024 * 1024) { self.limit = max(limit, 1); self.maxBytes = maxBytes }
 
     public var count: Int { lock.withLock { store.count } }
-    public func removeAll() { lock.withLock { store.removeAll(); order.removeAll() } }
+    public func removeAll() { lock.withLock { store.removeAll(); order.removeAll(); bytes = 0 } }
     public func remove(media: UUID) {
-        lock.withLock { store = store.filter { $0.key.media != media }; order.removeAll { $0.media == media } }
+        lock.withLock {
+            store = store.filter { $0.key.media != media }; order.removeAll { $0.media == media }
+            bytes = store.values.reduce(0) { $0 + $1.byteCount }
+        }
     }
 
     /// Half-octave zoom buckets: pps within a factor of ~1.41 share a bucket.
@@ -249,9 +260,13 @@ public final class WaveformCache: @unchecked Sendable {
         let whole = data.peaks(in: TimeRange(start: .zero, duration: Time(Int64(data.totalFrames), Int64(max(data.sampleRate, 1)))), buckets: n)
         let r = ResampledPeaks(columnsPerSecond: Double(n) / max(seconds, 1e-9), channels: whole)
         lock.withLock {
-            if store[key] == nil { order.append(key) }
+            if let old = store[key] { bytes -= old.byteCount } else { order.append(key) }
             store[key] = r
-            while order.count > limit { store[order.removeFirst()] = nil }
+            bytes += r.byteCount
+            // Oldest first, by count and by bytes; the entry just made always stays.
+            while order.count > 1, order.count > limit || bytes > maxBytes {
+                if let gone = store.removeValue(forKey: order.removeFirst()) { bytes -= gone.byteCount }
+            }
         }
         return r
     }

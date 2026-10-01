@@ -112,6 +112,7 @@ extension EditorSession {
 
     /// Replace Footage / Link Media: `ref` (probed from the new file) takes over the item `id`. One undo step.
     public func replaceFootage(_ id: MediaRef.ID, with ref: MediaRef) {
+        requestedMedia.remove(id)       // so `syncMedia` opens the new file now, not on the first decode
         perform("Replace Footage") { _ = $0.replaceMedia(id, with: ref) }
     }
 }

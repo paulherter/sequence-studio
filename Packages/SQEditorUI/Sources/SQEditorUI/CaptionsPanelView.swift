@@ -253,15 +253,21 @@ public final class CaptionsPanelView: NSView, NSTextViewDelegate, NSSearchFieldD
         if let id = languagePopUp.selectedItem?.representedObject as? String { model.language = id }
     }
 
+    /// The overwrite question is open: refreshes while it is showing must not queue more sheets.
+    private var overwriteSheetOpen = false
+
     private func confirmOverwrite() {
+        guard !overwriteSheetOpen else { return }
         let alert = NSAlert()
         alert.messageText = "Replace the transcript?"
         alert.informativeText = "Transcribing again replaces the current transcript, including your edits. Media is not changed."
         alert.addButton(withTitle: "Transcribe Again")
         alert.addButton(withTitle: "Cancel")
         guard let window else { model.cancelOverwrite(); return }
-        alert.beginSheetModal(for: window) { [model] response in
+        overwriteSheetOpen = true
+        alert.beginSheetModal(for: window) { [model, weak self] response in
             MainActor.assumeIsolated {
+                self?.overwriteSheetOpen = false
                 if response == .alertFirstButtonReturn { model.confirmOverwrite() } else { model.cancelOverwrite() }
             }
         }

@@ -35,6 +35,8 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
         var sampleRate = 48_000
         /// Decoded still images (path they were read from), decoded once.
         var stills: [UUID: (path: String, frame: StillFrame)] = [:]
+        /// Order the stills were decoded in (oldest first), for the byte budget.
+        var stillOrder: [UUID] = []
         /// One open in flight per media, shared by `prepare` and the blocking lookups (never two live demuxers).
         var videoOpen: [UUID: (path: String, task: Task<(any Demuxing)?, Never>)] = [:]
         var audioOpen: [UUID: (path: String, rate: Int, task: Task<(any AudioSource)?, Never>)] = [:]
@@ -43,6 +45,8 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
     private let makeDemuxer: DemuxerFactory
     private let makeAudio: AudioFactory
     private let fileExists: @Sendable (String) -> Bool
+    /// Decoded stills (up to 8192 px, ~270 MB each) are kept up to this many bytes; the oldest go first.
+    private let stillBudget: Int
     private let lutProvider: CachingLUTProvider
     /// Per-layer colour pipelines for playback and export: S-Log3 / HLG conversion, the clip's correction and LUTs.
     /// Media infos and the embedded LUT (read from the clip file, cached) come from this resolver's refs.
@@ -57,7 +61,9 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
     /// function value: an async throwing function as a default-argument expression miscompiles, and the process then
     /// aborts with "freed pointer was not the last allocation" as soon as that factory throws (e.g. an unreadable file).
     public init(demuxer: DemuxerFactory? = nil, audio: AudioFactory? = nil,
-                fileExists: @escaping @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) }) {
+                fileExists: @escaping @Sendable (String) -> Bool = { FileManager.default.fileExists(atPath: $0) },
+                stillCacheBytes: Int = 512 * 1024 * 1024) {
+        stillBudget = stillCacheBytes
         makeDemuxer = demuxer ?? { try await Self.openDemuxer($0) }
         makeAudio = audio ?? { try await Self.openAudio($0, $1) }
         self.fileExists = fileExists
@@ -73,6 +79,9 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
 
     private final class WeakOwner: @unchecked Sendable { weak var value: ProjectMediaResolver? }
 
+    /// Number of decoded stills held (tests).
+    var cachedStillCount: Int { state.withLock { $0.stills.count } }
+
     func path(of id: UUID) -> String? { state.withLock { $0.refs[id]?.path } }
     func info(of id: UUID) -> MediaInfo? { state.withLock { $0.refs[id]?.info } }
 
@@ -83,10 +92,10 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
             let new = Dictionary(uniqueKeysWithValues: media.map { ($0.id, $0) })
             for id in Set(s.refs.keys).union(s.demuxers.keys).union(s.videoOpen.keys).union(s.audioOpen.keys)
             where new[id] == nil || new[id]?.path != s.refs[id]?.path {
-                s.demuxers[id] = nil; s.audio[id] = nil; s.noAudio.remove(id); s.stills[id] = nil
+                s.demuxers[id] = nil; s.audio[id] = nil; s.noAudio.remove(id); s.stills[id] = nil; s.stillOrder.removeAll { $0 == id }
                 s.videoOpen[id] = nil; s.audioOpen[id] = nil
             }
-            if new.contains(where: { $0.value.path != s.refs[$0.key]?.path }) {
+            if new.contains(where: { id, ref in s.refs[id].map { $0.path != ref.path } ?? false }) {   // a path change, not a new item
                 lutProvider.removeAll(); colorResolver?.invalidate()
             }
             s.refs = new
@@ -212,6 +221,12 @@ public final class ProjectMediaResolver: MediaResolver, @unchecked Sendable {
             guard s.refs[media]?.path == ref.path else { return frame }
             if let c = s.stills[media], c.path == ref.path { return c.frame }
             s.stills[media] = (ref.path, frame)
+            s.stillOrder.removeAll { $0 == media }; s.stillOrder.append(media)
+            var total = s.stills.values.reduce(0) { $0 + CVPixelBufferGetDataSize($1.frame.buffer) }
+            while total > stillBudget, s.stillOrder.count > 1 {         // the one just decoded always stays
+                let old = s.stillOrder.removeFirst()
+                if let f = s.stills.removeValue(forKey: old) { total -= CVPixelBufferGetDataSize(f.frame.buffer) }
+            }
             return frame
         }
     }

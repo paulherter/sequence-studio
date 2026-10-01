@@ -50,6 +50,7 @@ public final class LibraryPanelModel {
     public private(set) var kindFilter: Set<LibraryItemKind> = []
     public var sortKey: LibrarySortKey = .name
     public var ascending = true
+    private var favoritesWritable = true
     public var viewMode: LibraryViewMode = .grid
     /// Pixel size used for preview requests.
     public var previewPixelSize = (width: 256, height: 144)
@@ -76,7 +77,9 @@ public final class LibraryPanelModel {
 
     /// Loads favorites, presets and the index state, then follows watcher updates.
     public func start() async {
-        favorites = (try? FavoritesStore.load(from: favoritesURL)) ?? Favorites()
+        do { favorites = try FavoritesStore.load(from: favoritesURL); favoritesWritable = true } catch {
+            favorites = Favorites(); favoritesWritable = false      // e.g. a newer app version's file: never overwrite it
+        }
         await reloadPresets()
         await reloadFolders()
         if updatesTask == nil {
@@ -133,6 +136,9 @@ public final class LibraryPanelModel {
     public func removeFolder(_ id: UUID) async {
         await index.remove(id)
         if selection == .folder(id) { selection = .favorites }
+        for key in Array(thumbnails.keys) where key.folderID == id { thumbnails[key] = nil }
+        for key in Array(failedPreviews) where key.folderID == id { failedPreviews.remove(key) }
+        for key in Array(previewTasks.keys) where key.folderID == id { cancelPreview(key) }
         await reloadFolders()
         onFoldersChanged?(folders.map(\.folder))
     }
@@ -201,7 +207,7 @@ public final class LibraryPanelModel {
             }
             .sorted {
                 let c = Self.fold($0.name).compare(Self.fold($1.name), options: .numeric)
-                return ascending ? c != .orderedDescending : c == .orderedDescending
+                return ascending ? c == .orderedAscending : c == .orderedDescending
             }
     }
 
@@ -221,7 +227,7 @@ public final class LibraryPanelModel {
 
     public func toggleFavorite(_ id: LibraryEntryID) {
         favorites.toggle(id)
-        try? FavoritesStore.save(favorites, to: favoritesURL)
+        if favoritesWritable { try? FavoritesStore.save(favorites, to: favoritesURL) }
     }
 
     // MARK: Drag
