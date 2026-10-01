@@ -176,3 +176,5 @@ Native decoded formats: Sony `x422` (10-bit 4:2:2, VT hands out the Apple-compre
 **Stream A (Effect Controls keyframes, 2026-10-01):** ruler + clip bar + scrub (stops playback, Shift snaps to keys) at the top, zoom (pinch/keys/bar) shared by lanes/ruler/graph, speed graph only under the row (value via context menu), hourglass glyphs, axis-locked handle drags, deselect after key move, reset at playhead + Reset All, draggable persisted divider (hidden without clip), Text section below Motion/Opacity. Tests green; Paul to test by feel.
 
 **Stream effects (overnight 2026-10-01):** Effect Controls Premiere handling (key copy/paste/cut, Option duplicate, Shift snap, interpolation menu, Tab, Uniform Scale, twirl memory per kind), Effects panel bins + search. Audit and gaps (no transitions, no clip speed, no blend/crop in the engine): docs/audit/effects.md.
+
+**Stream speed (overnight 2026-10-01):** constant clip speed end to end (SSCore model + edits, project v14, audio retime, Speed/Duration dialog Cmd+R, Rate Stretch tool R, timeline badge). Audit and numbers: docs/audit/speed.md. Open: speed ramps, nested/still retiming, frame blending.

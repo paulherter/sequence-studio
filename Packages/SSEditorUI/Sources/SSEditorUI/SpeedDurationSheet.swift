@@ -14,7 +14,7 @@ public final class SpeedDurationSheet: NSObject, NSTextFieldDelegate {
     private let pitchBox = NSButton(checkboxWithTitle: "Maintain Audio Pitch", target: nil, action: nil)
     private let rippleBox = NSButton(checkboxWithTitle: "Ripple Edit, Shifting Trailing Clips", target: nil, action: nil)
 
-    private init(model: SpeedDialogModel, timecode: Timecode) {
+    init(model: SpeedDialogModel, timecode: Timecode) {
         self.model = model; self.timecode = timecode
         super.init()
     }
@@ -38,7 +38,7 @@ public final class SpeedDurationSheet: NSObject, NSTextFieldDelegate {
         }
     }
 
-    private func buildView() -> NSView {
+    func buildView() -> NSView {
         func label(_ s: String) -> NSTextField {
             let l = NSTextField(labelWithString: s)
             l.alignment = .right
