@@ -30,4 +30,19 @@ private func s(_ n: Int64) -> Time { Time(n, 1) }
             #expect(c.source.duration == c.source.duration.snapped(to: fd))
         }
     }
+
+    // Finding 9: opening or creating a project left playback, In/Out range and clipboard of the old one alive.
+    @Test func newProjectStopsPlaybackAndDropsOldState() {
+        let (session, engine, m) = makeSession()
+        session.placeMedia([m.id], at: .zero)
+        session.selectAllClips()
+        #expect(session.copySelection())
+        session.playPause()
+        session.bounds.range = TimeRange(start: .zero, duration: s(1))
+        #expect(session.isPlaying)
+        session.newProject()
+        #expect(!session.isPlaying && engine.rate.isPaused)
+        #expect(session.bounds.range == nil)
+        #expect(session.clipboard == nil)
+    }
 }

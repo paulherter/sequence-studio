@@ -693,6 +693,9 @@ public final class EditorSession {
         forceDirty = dirty
         activeTimelineID = p.activeTimeline.flatMap { p.timeline($0) }?.id ?? p.timelines.first?.id
         selection = []; captionSelection = []
+        if isPlaying || !engine.rate.isPaused { engine.pause(); isPlaying = false }
+        bounds = PlaybackBounds()
+        clipboard = nil                          // its clips refer to media of the old project
         playhead = .zero
         lastAutosave = nil
         mediaSnapshot = []; requestedMedia = []
