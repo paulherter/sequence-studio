@@ -193,3 +193,12 @@ Native decoded formats: Sony `x422` (10-bit 4:2:2, VT hands out the Apple-compre
 
 - speed-time (round 2, v23): time remapping (speed band, ramps, frame blend, nested retime) built; see docs/audit/speed-time-2.md. Open: ease curves, Cmd-drag palindrome, Delete key on keys, Optical Flow.
 - shortcut parity (round 2): keys checked against Adobe macOS defaults, dead bindings removed, nudge and Cmd+B reach the router, context menus and tooltips follow the key map; table in docs/audit/shortcuts.md, tests in `CommandParityTests`. `docs/cloud/parity.md` is superseded by it.
+
+## Handoff 2026-10-02 morning (control session)
+- main = everything from the night: 7 night streams, SS→SQ rename (.sqproj), round 2 (transitions v17, timeline-edit v18, source-project-flow v19, audio-shortform v20, captions-text v21, effects-look v22, speed-time v23), round 3 (command parity, 36 editor-UI review fixes, engine review fixes). Project file currentVersion 23; `ProjectFile.realMigrations` has one line per version, missing steps are identity.
+- All 11 packages green on main (SQCore 902, SQEditorUI 1104, SQPlayback 266, SQRender 183, SQText 137, SQMedia 98, SQExport 97, SQLibrary 70, SQAudioFX 65, SQTranscribe 61, SQProxy 47). Stale `.build` after big merges shows as "cannot find X in scope": delete that package's `.build`.
+- Paul's test list: docs/MORNING-TEST.md. Nothing was click-tested in the app.
+- Open decisions for Paul: "Remove Silences…" (built, hidden behind `FeatureFlags.removeSilences`); colour-managed Program monitor (review finding 18).
+- Real-media playback bench reads low (19 frames/5 s) when the Mac is idle/unattended: macOS throttles the test window's display link. Use `PresentationRateTests` (manual clock) for the engine; re-run the bench with a user at the Mac.
+- Not built yet: Group/Ungroup, Trim mode (double-click a cut), source patching, four-point Fit Clip, ease curves for time remapping, Optical Flow, wipes, Sharpen, HSL Secondary, Make Subclip.
+- Cloud: routine "Sequence Studio Cloud" (trigger trig_01JRjmL6Cqm8wpaZSMygNkMP), jobs in docs/CLOUD.md; it cannot reach Adobe or archive.org; results arrive as PRs on cloud/* branches.
