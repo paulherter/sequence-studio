@@ -10,6 +10,12 @@ public struct Caption: Sendable, Hashable {
     public var wordIndices: Range<Int>
     public var styleRef: String
     public var animationRef: String
+
+    public init(lines: [String], range: TimeRange, firstWordID: UUID = UUID(), lastWordID: UUID = UUID(),
+                wordIndices: Range<Int> = 0..<0, styleRef: String, animationRef: String) {
+        self.lines = lines; self.range = range; self.firstWordID = firstWordID; self.lastWordID = lastWordID
+        self.wordIndices = wordIndices; self.styleRef = styleRef; self.animationRef = animationRef
+    }
 }
 
 public enum CaptionSegmenter {

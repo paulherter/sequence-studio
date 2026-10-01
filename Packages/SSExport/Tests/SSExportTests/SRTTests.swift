@@ -97,3 +97,32 @@ import SSTranscribe
         #expect(try String(contentsOf: srt, encoding: .utf8).contains("00:00:00,000 --> 00:00:00,100\r\nHi"))
     }
 }
+
+@Suite struct BurnInWiringTests {
+    private func timeline() throws -> Timeline {
+        var t = Timeline(name: "t", frameDuration: Time(1, 30), tracks: [Track(kind: .video)])
+        _ = try t.replaceCaptions([
+            CaptionItem(lines: ["Hello", "there"], range: TimeRange(start: Time(1, 1), end: Time(2, 1)), styleRef: "tiktok"),
+            CaptionItem(lines: [" "], range: TimeRange(start: Time(3, 1), end: Time(4, 1))),      // blank: skipped
+        ])
+        return t
+    }
+
+    @Test func burnInOnlyWhenRequestedAndCaptionsExist() throws {
+        var s = ExportSettings()
+        #expect(ExportSourceBuilder.burnIn(for: try timeline(), settings: s) == nil)        // captions: none
+        s.captions = .burnIn
+        let b = try #require(ExportSourceBuilder.burnIn(for: try timeline(), settings: s))
+        #expect(b.captions.count == 1 && b.captions[0].lines == ["Hello", "there"] && b.captions[0].styleRef == "tiktok")
+        #expect(b.state(at: Time(3, 2)) != nil && b.state(at: Time(7, 2)) == nil)
+        let empty = Timeline(name: "e", frameDuration: Time(1, 30), tracks: [Track(kind: .video)])
+        #expect(ExportSourceBuilder.burnIn(for: empty, settings: s) == nil)
+    }
+
+    @Test func hiddenCaptionTrackIsNotBurnedIn() throws {
+        var t = try timeline()
+        t.captionTracks[0].isVisible = false
+        var s = ExportSettings(); s.captions = .burnIn
+        #expect(ExportSourceBuilder.burnIn(for: t, settings: s) == nil)
+    }
+}
