@@ -77,10 +77,15 @@ public struct VideoTrackInfo: Sendable, Hashable, Codable {
 
     public init(from d: Decoder) throws {
         let c = try d.container(keyedBy: CodingKeys.self)
+        let fd = try c.decode(Time.self, forKey: .nominalFrameDuration)
+        guard fd > .zero else {
+            throw DecodingError.dataCorruptedError(forKey: .nominalFrameDuration, in: c,
+                debugDescription: "frame duration must be positive, got \(fd.value)/\(fd.timescale)")
+        }
         self.init(width: try c.decode(Int.self, forKey: .width), height: try c.decode(Int.self, forKey: .height),
                   codec: try c.decode(String.self, forKey: .codec), bitDepth: try c.decode(Int.self, forKey: .bitDepth),
                   chroma: try c.decode(String.self, forKey: .chroma),
-                  nominalFrameDuration: try c.decode(Time.self, forKey: .nominalFrameDuration),
+                  nominalFrameDuration: fd,
                   isVariableFrameRate: try c.decode(Bool.self, forKey: .isVariableFrameRate),
                   colorPrimaries: try c.decodeIfPresent(String.self, forKey: .colorPrimaries),
                   transfer: try c.decodeIfPresent(String.self, forKey: .transfer),

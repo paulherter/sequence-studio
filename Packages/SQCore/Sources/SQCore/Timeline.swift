@@ -15,6 +15,19 @@ public struct SequenceFormat: Sendable, Hashable, Codable {
         self.width = width; self.height = height
         self.frameDuration = frameDuration; self.audioSampleRate = audioSampleRate
     }
+
+    private enum CodingKeys: String, CodingKey { case width, height, frameDuration, audioSampleRate }
+
+    public init(from d: Decoder) throws {
+        let c = try d.container(keyedBy: CodingKeys.self)
+        let fd = try c.decode(Time.self, forKey: .frameDuration)
+        guard fd > .zero else {
+            throw DecodingError.dataCorruptedError(forKey: .frameDuration, in: c,
+                debugDescription: "frame duration must be positive, got \(fd.value)/\(fd.timescale)")
+        }
+        self.init(width: try c.decode(Int.self, forKey: .width), height: try c.decode(Int.self, forKey: .height),
+                  frameDuration: fd, audioSampleRate: try c.decode(Int.self, forKey: .audioSampleRate))
+    }
 }
 
 public struct Timeline: Sendable, Hashable, Codable, Identifiable {
