@@ -11,10 +11,10 @@
 Cut, grade, caption and export short-form video in one fast, native app.<br>
 **Free. Open source. No account, no subscription, no watermark.**
 
-[![Download for Mac](https://img.shields.io/badge/Download-for%20Mac-0a6cf0?style=for-the-badge)](https://github.com/paulherter/sequence-studio/releases)
-[![Support the project](https://img.shields.io/badge/Support-the%20project-ea4aaa?style=for-the-badge)](https://github.com/sponsors/paulherter)
-[![Join Discord](https://img.shields.io/badge/Join-Discord-5865F2?style=for-the-badge)](DISCORD_INVITE_URL)
-[![Report a bug](https://img.shields.io/badge/Report-a%20bug-555555?style=for-the-badge)](https://github.com/paulherter/sequence-studio/issues/new/choose)
+[![Download for Mac](https://img.shields.io/badge/Download-for%20Mac-0a6cf0?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI%2BPHBhdGggZD0iTTEyIDN2MTIiLz48cGF0aCBkPSJNNi41IDEwLjUgMTIgMTZsNS41LTUuNSIvPjxwYXRoIGQ9Ik00IDIwaDE2Ii8%2BPC9zdmc%2B)](https://github.com/paulherter/sequence-studio/releases)
+[![Support the project](https://img.shields.io/badge/Support-the%20project-ea4aaa?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyMXMtNy41LTQuNy0xMC05LjRDLjMgOC4zMDAgMS45MDAgNCA2IDRjMi4yMDAgMCAzLjgwMCAxLjIwMCA2IDMuNTAwQzE0LjIwMCA1LjIwMCAxNS44MDAgNCAxOCA0YzQuMTAwIDAgNS43MDAgNC4zMDAgNCA3LjYwMEMxOS41MDAgMTYuMzAwIDEyIDIxIDEyIDIxeiIvPjwvc3ZnPg%3D%3D)](https://github.com/sponsors/paulherter)
+[![Join Discord](https://img.shields.io/badge/Join-Discord-5865F2?style=for-the-badge&logo=discord&logoColor=white)](DISCORD_INVITE_URL)
+[![Report a bug](https://img.shields.io/badge/Report-a%20bug-555555?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI%2BPHJlY3QgeD0iOCIgeT0iNyIgd2lkdGg9IjgiIGhlaWdodD0iMTMiIHJ4PSI0Ii8%2BPHBhdGggZD0iTTkuNSA3YTIuNSAyLjUgMCAwIDEgNSAwIi8%2BPHBhdGggZD0iTTggMTFINE04IDE1SDRNMjAgMTFoLTRNMjAgMTVoLTRNNiA1bDIuNSAyLjVNMTggNWwtMi41IDIuNU0xMiAxMXY5Ii8%2BPC9zdmc%2B)](https://github.com/paulherter/sequence-studio/issues/new/choose)
 
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 ![macOS 26 or later](https://img.shields.io/badge/macOS-26%2B-lightgray.svg)
@@ -164,7 +164,7 @@ Supporting gives no special rights and is not a tax-deductible payment.
 
 <div align="center">
 
-[![Support Sequence Studio](https://img.shields.io/badge/Support-Sequence%20Studio-ea4aaa?style=for-the-badge)](https://github.com/sponsors/paulherter)
+[![Support Sequence Studio](https://img.shields.io/badge/Support-Sequence%20Studio-ea4aaa?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0id2hpdGUiPjxwYXRoIGQ9Ik0xMiAyMXMtNy41LTQuNy0xMC05LjRDLjMgOC4zMDAgMS45MDAgNCA2IDRjMi4yMDAgMCAzLjgwMCAxLjIwMCA2IDMuNTAwQzE0LjIwMCA1LjIwMCAxNS44MDAgNCAxOCA0YzQuMTAwIDAgNS43MDAgNC4zMDAgNCA3LjYwMEMxOS41MDAgMTYuMzAwIDEyIDIxIDEyIDIxeiIvPjwvc3ZnPg%3D%3D)](https://github.com/sponsors/paulherter)
 
 </div>
 
