@@ -2,10 +2,10 @@
 
 <img alt="Sequence Studio" src="docs/readme/banner.png" width="860">
 
-### The free video editor that stays out of your way.
+### The open-source video editor that stays out of your way.
 
-Cut, grade, caption and export short-form video in one fast app. Mac today, Windows in alpha.<br>
-**Free. Open source. No account, no subscription, no watermark.**
+Cut, grade, caption and export short-form video in one fast app. For Mac and Windows.<br>
+**Open source (GPL-3.0). Build it yourself for free. No account, no subscription, no watermark.**
 
 [![Download for Mac](https://img.shields.io/badge/Download-for%20Mac-0a6cf0?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI%2BPHBhdGggZD0iTTEyIDN2MTIiLz48cGF0aCBkPSJNNi41IDEwLjUgMTIgMTZsNS41LTUuNSIvPjxwYXRoIGQ9Ik00IDIwaDE2Ii8%2BPC9zdmc%2B)](https://github.com/paulherter/sequence-studio/releases)
 [![Report a bug](https://img.shields.io/badge/Report-a%20bug-555555?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI%2BPHJlY3QgeD0iOCIgeT0iNyIgd2lkdGg9IjgiIGhlaWdodD0iMTMiIHJ4PSI0Ii8%2BPHBhdGggZD0iTTkuNSA3YTIuNSAyLjUgMCAwIDEgNSAwIi8%2BPHBhdGggZD0iTTggMTFINE04IDE1SDRNMjAgMTFoLTRNMjAgMTVoLTRNNiA1bDIuNSAyLjVNMTggNWwtMi41IDIuNU0xMiAxMXY5Ii8%2BPC9zdmc%2B)](https://github.com/paulherter/sequence-studio/issues/new/choose)
@@ -13,7 +13,7 @@ Cut, grade, caption and export short-form video in one fast app. Mac today, Wind
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 ![macOS 26 or later](https://img.shields.io/badge/macOS-26%2B-lightgray.svg)
 ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-native-lightgray.svg)
-![Windows: alpha, from source](https://img.shields.io/badge/Windows-alpha%2C%20from%20source-lightgray.svg)
+![Windows 10/11 x64](https://img.shields.io/badge/Windows-10%2F11%20x64-lightgray.svg)
 ![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)
 
 [Why](#-why-sequence-studio) &middot; [Features](#-features) &middot; [Install](#-install) &middot; [Status](#-status-alpha) &middot; [Formats](#formats) &middot; [Contributing](#contributing)
@@ -31,7 +31,7 @@ Cut, grade, caption and export short-form video in one fast app. Mac today, Wind
 - **Uncluttered.** One tool per job, no panels you never open, no upsell. Panels dock, tab and float.
 - **Made for short-form.** Rough cut, b-roll, titles, captions, a quick grade, export for vertical and widescreen.
 - **One codebase.** The editor UI and engine logic are shared between macOS and Windows, so a feature is written once.
-- **Free for everyone.** No paid tier and no locked features. The source is open under the GPL-3.0.
+- **Open source.** The full source is under the GPL-3.0 and you can always build it yourself for free. Ready-made, signed installers and future extras may be paid; the editor itself stays open.
 
 ## 🎬 Features
 
@@ -112,8 +112,12 @@ drag Sequence Studio to Applications. You need a Mac with Apple Silicon and macO
 Developer ID signed and notarized. If a build is only ad-hoc signed (the release notes say so), right-click the app,
 choose **Open** and confirm once.
 
-**Windows:** there is no installer or release build yet. The Windows app is alpha and builds from source, see
-[Build from source](#build-from-source).
+**Windows:** a Windows 10/11 x64 build comes with the release; until an installer is published you can build it from
+source, see [Build from source](#build-from-source).
+
+**Free or paid?** The source code is free and open (GPL-3.0): anyone can build and use it at no cost. Convenience
+builds (the signed and notarized `.dmg`, Windows installer, automatic updates) and later extras may be offered for a
+price or on a pay-what-you-want basis to fund development. What that looks like is not decided yet.
 
 ## 🚧 Status: Alpha
 
