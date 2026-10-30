@@ -5,7 +5,7 @@
 ### The open-source video editor that stays out of your way.
 
 Cut, grade, caption and export short-form video in one fast app. For Mac and Windows.<br>
-**Open source (GPL-3.0). Build it yourself for free. No account, no subscription, no watermark.**
+**Open source (GPL-3.0). The alpha is a free download. No account, no watermark.**
 
 [![Download for Mac](https://img.shields.io/badge/Download-for%20Mac-0a6cf0?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI%2BPHBhdGggZD0iTTEyIDN2MTIiLz48cGF0aCBkPSJNNi41IDEwLjUgMTIgMTZsNS41LTUuNSIvPjxwYXRoIGQ9Ik00IDIwaDE2Ii8%2BPC9zdmc%2B)](https://github.com/paulherter/sequence-studio/releases)
 [![Report a bug](https://img.shields.io/badge/Report-a%20bug-555555?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI%2BPHJlY3QgeD0iOCIgeT0iNyIgd2lkdGg9IjgiIGhlaWdodD0iMTMiIHJ4PSI0Ii8%2BPHBhdGggZD0iTTkuNSA3YTIuNSAyLjUgMCAwIDEgNSAwIi8%2BPHBhdGggZD0iTTggMTFINE04IDE1SDRNMjAgMTFoLTRNMjAgMTVoLTRNNiA1bDIuNSAyLjVNMTggNWwtMi41IDIuNU0xMiAxMXY5Ii8%2BPC9zdmc%2B)](https://github.com/paulherter/sequence-studio/issues/new/choose)
@@ -31,7 +31,7 @@ Cut, grade, caption and export short-form video in one fast app. For Mac and Win
 - **Uncluttered.** One tool per job, no panels you never open, no upsell. Panels dock, tab and float.
 - **Made for short-form.** Rough cut, b-roll, titles, captions, a quick grade, export for vertical and widescreen.
 - **One codebase.** The editor UI and engine logic are shared between macOS and Windows, so a feature is written once.
-- **Open source.** The full source is under the GPL-3.0 and you can always build it yourself for free. Ready-made, signed installers and future extras may be paid; the editor itself stays open.
+- **Open source, free during the alpha.** Download the alpha builds for free. From the first stable release the ready-made builds are paid. The source stays open under the GPL-3.0.
 
 ## 🎬 Features
 
@@ -115,9 +115,10 @@ choose **Open** and confirm once.
 **Windows:** a Windows 10/11 x64 build comes with the release; until an installer is published you can build it from
 source, see [Build from source](#build-from-source).
 
-**Free or paid?** The source code is free and open (GPL-3.0): anyone can build and use it at no cost. Convenience
-builds (the signed and notarized `.dmg`, Windows installer, automatic updates) and later extras may be offered for a
-price or on a pay-what-you-want basis to fund development. What that looks like is not decided yet.
+**Free or paid?** While Sequence Studio is in alpha, the `.dmg` and the Windows build are a free download. From the first
+stable release, the ready-made builds (signed and notarized `.dmg`, Windows installer, updates) are paid to fund
+development; the price is not set yet. The source code stays open under the GPL-3.0, so you can always build it
+yourself, see [Build from source](#build-from-source).
 
 ## 🚧 Status: Alpha
 
