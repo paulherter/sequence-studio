@@ -1,0 +1,18 @@
+Subject mask tracking models (the .mlmodelc folders next to this file)
+
+These models are a converted form of EdgeTAM.
+Source: https://github.com/facebookresearch/EdgeTAM, commit 7711e012a30a2402c4eaab637bdb00a521302c91,
+checkpoint checkpoints/edgetam.pt.
+Copyright (c) Meta Platforms, Inc. and affiliates.
+Licensed under the Apache License, Version 2.0. The license text is in LICENSE-Apache-2.0.txt next to this file.
+
+EdgeTAM builds on SAM 2 (Apache-2.0, Meta Platforms, Inc.) and uses a RepViT-M1 image trunk
+(https://github.com/THU-MIG/RepViT, Copyright THU-MIG, Apache-2.0) whose weights are part of the checkpoint.
+
+Changes made by Sequence Studio:
+- The network was split into five fixed-shape parts: image encoder, mask decoder for a click, mask decoder for a
+  box with a click, memory encoder, memory attention.
+- The rotary position encoding and the prompt embedding were rewritten without complex numbers and boolean indexing.
+- The weights were converted to 16-bit Core ML models.
+
+Sequence Studio contains no source code of EdgeTAM.

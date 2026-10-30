@@ -1,0 +1,26 @@
+[package]
+name = "sqgyro"
+version = "0.1.0"
+edition = "2024"
+license = "GPL-3.0-or-later"
+description = "Sequence Studio's C shim around gyroflow_core (Gyroflow stabilisation engine)"
+publish = false
+
+[lib]
+crate-type = ["cdylib"]
+path = "src/lib.rs"
+
+[dependencies]
+# Pinned: 5fa0309a (2026-10-15; no API break from d918ab3, docs/research/stabilization/G4). The official plugins pin f681124.
+# Bump only together with docs/THIRD_PARTY.md. OpenCL is left out (deprecated on macOS; wgpu/Metal is used).
+gyroflow-core = { git = "https://github.com/gyroflow/gyroflow.git", rev = "5fa0309a", default-features = false, features = ["bundle-lens-profiles"] }
+parking_lot = "0.12"
+log = "0.4"
+nalgebra = "0.34"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
+codegen-units = 4
+panic = "unwind"
+strip = "debuginfo"

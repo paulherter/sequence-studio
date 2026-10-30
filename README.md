@@ -10,13 +10,18 @@ Cut, grade, caption and export short-form video in one fast app. For Mac and Win
 [![Download for Mac](https://img.shields.io/badge/Download-for%20Mac-0a6cf0?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjYiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI%2BPHBhdGggZD0iTTEyIDN2MTIiLz48cGF0aCBkPSJNNi41IDEwLjUgMTIgMTZsNS41LTUuNSIvPjxwYXRoIGQ9Ik00IDIwaDE2Ii8%2BPC9zdmc%2B)](https://github.com/paulherter/sequence-studio/releases)
 [![Report a bug](https://img.shields.io/badge/Report-a%20bug-555555?style=for-the-badge&logo=data%3Aimage%2Fsvg%2Bxml%3Bbase64%2CPHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAyNCAyNCIgZmlsbD0ibm9uZSIgc3Ryb2tlPSJ3aGl0ZSIgc3Ryb2tlLXdpZHRoPSIyLjIiIHN0cm9rZS1saW5lY2FwPSJyb3VuZCIgc3Ryb2tlLWxpbmVqb2luPSJyb3VuZCI%2BPHJlY3QgeD0iOCIgeT0iNyIgd2lkdGg9IjgiIGhlaWdodD0iMTMiIHJ4PSI0Ii8%2BPHBhdGggZD0iTTkuNSA3YTIuNSAyLjUgMCAwIDEgNSAwIi8%2BPHBhdGggZD0iTTggMTFINE04IDE1SDRNMjAgMTFoLTRNMjAgMTVoLTRNNiA1bDIuNSAyLjVNMTggNWwtMi41IDIuNU0xMiAxMXY5Ii8%2BPC9zdmc%2B)](https://github.com/paulherter/sequence-studio/issues/new/choose)
 
+[![Website](https://img.shields.io/badge/Website-getsequencestudio.com-1f2937?style=for-the-badge)](https://getsequencestudio.com)
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20chat-5865F2?style=for-the-badge&logo=discord&logoColor=white)](https://discord.gg/q6KPQc8WCA)
+[![Support](https://img.shields.io/badge/Support-buy%20Pip%20a%20coffee-f59e0b?style=for-the-badge)](https://getsequencestudio.com/supporter/)
+[![Roadmap](https://img.shields.io/badge/Roadmap-what's%20next-16a34a?style=for-the-badge)](ROADMAP.md)
+
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
 ![macOS 26 or later](https://img.shields.io/badge/macOS-26%2B-lightgray.svg)
 ![Apple Silicon](https://img.shields.io/badge/Apple%20Silicon-native-lightgray.svg)
 ![Windows 10/11 x64](https://img.shields.io/badge/Windows-10%2F11%20x64-lightgray.svg)
 ![Status: Alpha](https://img.shields.io/badge/status-alpha-orange.svg)
 
-[Why](#-why-sequence-studio) &middot; [Features](#-features) &middot; [Install](#-install) &middot; [Status](#-status-alpha) &middot; [Formats](#formats) &middot; [Contributing](#contributing)
+[Why](#-why-sequence-studio) &middot; [Features](#-features) &middot; [Install](#-install) &middot; [Status](#-status-alpha) &middot; [Roadmap](ROADMAP.md) &middot; [Community](#-community-and-support) &middot; [Formats](#formats) &middot; [Contributing](#contributing)
 
 <img alt="Sequence Studio editor window" src="docs/readme/shot-hero.png" width="900">
 
@@ -127,7 +132,7 @@ rough edges. Project files may change between versions: keep backups and do not 
 
 **Mac and Windows share one app.** The editor UI (timeline, monitors, inspector, color, text, library, dialogs) is
 drawn by shared code (`SQDraw*`, `SQAppShell`, `SQEditorSession`); only the media, GPU, audio and window backends differ
-per platform. On the Mac the AppKit UI is still the default and the shared app is opt-in (`SQ_SHARED_UI=1`, see
+per platform. On the Mac the shared app is now the default; the older AppKit UI is kept as a fallback (`SQ_APPKIT_UI=1`, see
 `scripts/run-shared.sh`); Windows only runs the shared app. A command audit of the two is in
 [docs/FEATURE-PARITY.md](docs/FEATURE-PARITY.md).
 
@@ -143,14 +148,23 @@ per platform. On the Mac the AppKit UI is still the default and the shared app i
 **Not there yet**
 
 - Windows (x86-64, Direct3D 12) is a first alpha for developers: it runs the shared app on FFmpeg media, with Magic
-  Mask and whisper.cpp captions, but there is no installer or updater, no ProRes, no HDR, no Gyroflow, stabilization or
+  Mask and whisper.cpp captions. A per-user installer (Setup.exe) exists and Help > Check for Updates reads the GitHub
+  releases, but nothing is published there yet and updating means downloading the new Setup.exe. No ProRes, no HDR, no Gyroflow, stabilization or
   auto reframe, and some commands answer "not available in this window yet". Much of it was verified by tests and
   headless runs, not yet by long hands-on use.
 - No Intel Mac, Windows on ARM or Linux.
 - Premiere import covers a subset of effects and project features.
 - Plugin support and a node-based color mode are not started.
 
-Found a bug or missing something? [Open an issue](https://github.com/paulherter/sequence-studio/issues/new/choose). Feedback shapes what gets built next.
+See the [Roadmap](ROADMAP.md) for what is coming next and where you can help. Found a bug or missing something? [Open an issue](https://github.com/paulherter/sequence-studio/issues/new/choose). Feedback shapes what gets built next.
+
+## 💬 Community and support
+
+- **Chat:** [join the Discord](https://discord.gg/q6KPQc8WCA) to ask questions, show your edits and meet Pip, the helper bot.
+- **Website:** [getsequencestudio.com](https://getsequencestudio.com), with downloads for Mac and Windows.
+- **Support the project:** Sequence Studio is made by one person, with no ads and no investors. If you like it, [buy Pip a coffee](https://getsequencestudio.com/supporter/) once or monthly. Supporters get a key and can be named in the credits.
+- **What's next:** the [Roadmap](ROADMAP.md) lists what is planned and where you can help.
+- **Bugs and ideas:** [open an issue](https://github.com/paulherter/sequence-studio/issues/new/choose).
 
 ## Formats
 
@@ -219,7 +233,7 @@ Windows app and `Tools/` holds development executables.
 
 ## Contributing
 
-Issues and pull requests are welcome, in English. Please open an issue before starting larger work. Read
+**What is planned next is in the [Roadmap](ROADMAP.md).** Pick something, or tell us what matters to you. Issues and pull requests are welcome, in English. Please open an issue before starting larger work. Read
 [CONTRIBUTING.md](CONTRIBUTING.md) and the [Code of Conduct](CODE_OF_CONDUCT.md) first. Security problems: see
 [SECURITY.md](SECURITY.md). Questions and ideas are welcome as issues.
 

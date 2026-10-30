@@ -1,0 +1,472 @@
+# Sequence Studio — Architecture (Phase 2 engine)
+
+Scope: the playback engine (Route B) and the seams the timeline and monitors use.
+Slices that build this: the status notes "Phase 2 slices". Signatures below are the contract; implementers may add
+private helpers and internal types but change a public signature only with a note in this file.
+
+## 1. Data flow
+
+```
+           main actor                         render thread (CAMetalDisplayLink)          decode tasks
+EditorSession ──setTimeline/seek/play──▶ PlaybackEngine ──snapshot (Mutex)──▶ RenderLoop ──▶ Compositor ──▶ CAMetalLayer
+                                              │                                  ▲    │
+                                              │ PlaybackClock.now() ◀── AudioClock    │ FrameCache.frame(key) (non-blocking)
+                                              ▼                                        ▼
+                                        PrefetchPlanner ──jobs──▶ DecodeScheduler ──▶ VTVideoDecoder ──▶ FrameCache.insert
+                                                                     (per media: Demuxer + SampleIndex)
+audio: AudioFeeder (thread) ── mixes timeline PCM ahead ──▶ ring buffer ──▶ AVAudioSourceNode ──▶ AVAudioUnitTimePitch ──▶ output
+                                                                              └─ consumed-frame counter = master clock
+```
+
+Principles:
+- **Audio is the master clock**, video follows. With no audible audio (muted, no audio clips, scrubbing) a `HostClock` takes over.
+- **Decoded frames are keyed by media + source PTS**, never by timeline position. Timeline edits (trim, move, ripple) never invalidate
+  the cache; only the composite changes, and we composite every display frame anyway.
+- **The render thread never waits.** On a cache miss it shows the nearest cached earlier frame of that clip (or the last presented
+  composite) and counts a dropped frame. Decoding happens only in decode tasks.
+- **Time is `SQCore.Time` everywhere in our APIs.** `CMTime` / host ticks / sample counts are converted at the boundary
+  (`Time(cm.value, Int64(cm.timescale))`, `Time(sampleCount, 48_000)`, `Time(nanos, 1_000_000_000)`). No `Double` for positions.
+- **Failures are per clip.** A damaged file marks its media `.damaged`, the compositor draws a placeholder for that layer, playback continues.
+
+## 2. Module placement
+
+| Module (Package.swift deps) | Contents |
+|---|---|
+| SQCore (none) | `SequenceFormat`, track flags, In/Out, markers, `Timeline.videoLayers(at:)` / `audioSegments(in:)`, three-point edit, add edit, `PlaybackRate`, `Shuttle`, `Bin`/`rootBin`, `SourceMarks`, `Recovery` (autosave), project file v4 |
+| SQMedia (SQCore) | `MediaInfo` probe/import, `SampleIndex`, `Demuxer`, `VideoDecoding` + `VTVideoDecoder`, `AudioSource`/`AssetAudioSource`/`MemoryAudioSource`, `Relink` (`MediaLocator`). Test target `SQMediaTestSupport` (synthetic clips) |
+| SQRender (SQCore) | `Compositor` (Metal, YCbCr → linear half float, stacking, placeholder), `Presenter` (texture → drawable, fit) |
+| SQPlayback (SQCore, SQMedia, SQRender) | `PlaybackClock` + `HostClock`/`ManualClock`, `RingBuffer`, `AudioFeeder` landed; `FrameCache`, `PrefetchPlanner`, `DecodeScheduler`, `AudioClock`, `AudioEngine`, `ScrubAudio`, `PlaybackEngine`, `PlaybackStats` not yet on main |
+| SQAudioFX (SQCore, CRNNoise) | `RealtimeAudioFX` (48 kHz track preset/volume/denoise chain), `OfflineAudioFX`, loudness, presets |
+| SQText (SQCore) | Text/caption layout |
+| SQTranscribe (SQCore) | Transcription |
+| SQLibrary (none) | Media/asset library |
+| SQProxy (SQCore) | Proxy generation |
+| SQExport (SQCore, SQRender, SQPlayback, SQTranscribe, SQAudioFX) | Export writer, settings, frame source |
+| SQUIKit (SQCore, SQText, SQMedia) | Lowest UI module: Theme and tokens, SQ controls, menus, dialogs, popovers, tooltips, scrub fields, command and key vocabulary (EditorCommand, CommandMap, KeymapStore, PanelID), keyframe graph math, waveform drawing. No session, timeline, monitor or inspector code. |
+| SQEditorUI (SQUIKit, SQCore, ...) | Workspace layout tree, timeline view + geometry, viewer view, monitor panels, inspector, session. Re-exports SQUIKit (`Exports.swift`). Testable with `swift test`. |
+| App | SwiftUI shell, window/toolbar, menus, `EditorSession` wiring |
+| Tools/EngineBench | Release-build executable that measures the Phase 2 acceptance criteria |
+
+SQCore stays free of AVFoundation/AppKit/Metal. SQMedia is the only module that touches `AVAsset`/`VideoToolbox`.
+
+## 3. SQCore additions (value types, tests first)
+
+```swift
+public struct SequenceFormat: Sendable, Hashable, Codable {
+    public var width: Int, height: Int          // pixels, e.g. 1080×1920
+    public var frameDuration: Time              // 1001/30000 for 29.97
+    public var audioSampleRate: Int             // 48_000
+}
+// Timeline gains: format (frameDuration moves into it; keep a computed `frameDuration`), inOut: TimeRange?, markers: [Marker]
+// Track gains:    name, isVisible (eye, video), isMuted / isSolo (audio), isTargeted, height (pt, UI hint)
+public struct Marker: Sendable, Hashable, Codable, Identifiable { public var id: UUID; public var time: Time; public var name: String }
+
+/// What is visible at one instant. Ordered bottom → top (V1 first). Hidden tracks and gaps are omitted.
+public struct LayerRequest: Sendable, Hashable {
+    public var clip: Clip.ID, media: UUID, track: Track.ID
+    public var sourceTime: Time                 // clip.source.start + (t - clip.start)
+}
+public struct AudioSegment: Sendable, Hashable {  // one clip's contribution to a timeline range
+    public var clip: Clip.ID, media: UUID, track: Track.ID
+    public var timeline: TimeRange, sourceStart: Time
+}
+extension Timeline {
+    public func videoLayers(at t: Time) -> [LayerRequest]
+    public func audioSegments(in range: TimeRange) -> [AudioSegment]   // honours mute/solo
+    public func editPoints() -> [Time]                                  // sorted, for ↑/↓
+    public var duration: Time { get }
+}
+
+/// Rational playback speed. Negative = reverse. `.zero` = paused.
+public struct PlaybackRate: Sendable, Hashable { public var num: Int32; public var den: Int32 }
+/// J/K/L state machine (Premiere): L = 1, 2, 4, 8; J mirrors; K stops; K held + L/J = ±1/4; K held + tap = ±1 frame.
+public struct Shuttle: Sendable, Equatable {
+    public private(set) var rate: PlaybackRate
+    public mutating func press(_ key: ShuttleKey) -> ShuttleAction   // .setRate(r) / .step(frames) / .none
+    public mutating func release(_ key: ShuttleKey) -> ShuttleAction
+}
+```
+
+Project file: `ProjectFile.currentVersion` = 67 (ProjectFile.swift:~145; read it there, it moves with every new stored kind). Migrations are keyed by source version: v1→v2 (`frameDuration` → `format`, 1920×1080 / 48 kHz defaults), v2→v3 (clip `animation`, pass-through), v3→v4 (`rootBin`, `sourceMarks`, optional on decode, pass-through). Later versions add fields or effect kinds; new kinds sit behind version gates (`ProjectFile+V60.swift` pattern) so older builds warn instead of silently dropping them.
+
+Landed since (SQCore):
+```swift
+public struct Bin: Sendable, Hashable, Codable, Identifiable { id, name, children: [BinItem]; bin(_:), allRefs, contains(_:), parent(of:), mediaIDs }
+public enum BinItem { /* bin / media / timeline */ }   public enum BinItemRef { /* id-only handle */ }
+// Project: rootBin: Bin (default "Root", id = project id), sourceMarks: [MediaRef.ID: SourceMarks]
+// Project bin ops (mutating): normalizeBins(), newBin(name:in:), renameBin(_:to:), move(_:to:at:), deleteBin(_:), sortBin(_:by:ascending:), displayName(of:)
+public struct SourceMarks: Sendable, Hashable, Codable { public var markIn: Time?, markOut: Time?; var range: TimeRange? }
+// Project: sourceMarks(for:), setSourceIn/Out(_:for:), clearSourceIn/Out(for:), clearSourceMarks(for:)
+// Recovery.swift: AutosavePolicy(interval 300 s, keep 10, maxAge 7 d), AutosaveStore(base:policy:writer) write/versions(for:)/prune/read,
+//   SessionMarker (begin/end/info, crash detection by pid), RecoveryScanner.scan() -> [RecoveryCandidate], recover(_:), dismiss(_:)
+```
+
+### Fast Cut model (v67, `ClipAttachment.swift`; design: docs/research/FCP-MAGNETIC-TIMELINE.md 5.3)
+- `Timeline.editMode: TimelineEditMode` (`.normal` / `.magnetic`, UI "Fast Cut"), per sequence, written only when magnetic.
+  `Clip.attachment: ClipAttachment? { host: Clip.ID; point: Time }`, written only when set. Either makes the file v67
+  (`containsV67Content`); Normal-only projects stay byte-identical to v66 output.
+- Main track = first video track (`mainTrackID` / `mainTrackIndex`), empty or not. Attachable = not on it and not linked
+  to a clip on it (`isAttachable`). Positions are the only truth; host and point are stored, never trusted blindly:
+  `isAttachmentValid(id)` = host on the main track, attach time (`start + point`) on the host or the hole after it (first
+  clip: also the leading hole), inside the clip (linked group: the group span), and every group member agrees on host and
+  attach time. `attachHost(at:)` = clip under t, in a hole the one before, before the first the first.
+- `deriveAttachments()` keeps valid ones, re-derives the rest from positions (stored attach time if still inside the
+  clip/group, else its start), clears them on main-track and camera-audio clips; moves no clip. Fast Cut edits (1B) call
+  it first. Normal mode ignores attachments and keeps them (stale ones are re-derived on the next Fast Cut edit).
+- `setEditMode(_:)` (Timeline, and `Project.setEditMode(_:of:)`): one undo step, moves no clip; entering magnetic derives.
+- Clip-id remaps carry hosts: paste/duplicate, title blocks and templates, duplicate sequence (conform), group copies, nest
+  (outside clips re-host to the nested clip; inside, hosts left outside are dropped). Unmapped hosts are dropped.
+  Every edit that places clips ends with `clearMainTrackAttachments()` (a clip moved/pasted onto V1 has none); split,
+  crop and head trims keep the attach time (`point` follows `start`). Templates gate attachments by format version
+  (ProjectTemplate 3, TitleTemplate 4); a graphics-only template drops them and stores no edit mode.
+
+### Fast Cut operations (1B, `Timeline+Magnetic.swift` engine, `Timeline+MagneticOps.swift` verbs; table 5.6)
+- Engine `magneticEdit(involving:stay:orphans:_:)`. Normal mode or no main track: the edit alone (byte-identical). Fast
+  Cut: derive, lift out every attached group (by link, whole or not at all; not `involving`, not on a locked track),
+  run the edit with sync lock on for all unlocked tracks (flags restored), lift out clips the edit made off V1 that are
+  attachable (they yield), put each group back: `stay` → same frame; host survives → same content frame (head-trim
+  shift, zero if media/sequence changed), in the hole after it → same distance after its end, leading hole → same distance
+  before it, point cut away → the new/grown piece holding the frame, else clamped to the host's first..last frame; host
+  gone → piece, else `orphans` (`.delete`, `.stay`, `.follow` = next surviving clip's shift). Placement never overwrites:
+  own track if free, else nearest free unlocked track of its kind, never V1, else a new track. Then transitions back,
+  `deriveAttachments()`, consistency check. A throw changes nothing.
+- Verbs (each = Normal counterpart in Normal mode): `appendToMainTrack`, `insertOnMainTrack`, `overwriteOnMainTrack`
+  (stay all), `attach(_:at:backtimed:)` (lowest free track; audio never on A1; point 0 or last frame),
+  `replaceOnMainTrack(_:with:keepLength:)` (keeps the id), `magneticDelete(_:keepAttached:)` (V1: ripple, orphans
+  deleted; attached: removed; Normal: lift), `replaceWithSpacer`, `deleteSpacer(at:keepAttached:)` (clips attached in the
+  hole deleted), `insertSpacer(at:duration:)`, `magneticRippleTrim`, `magneticRippleTrimToPlayhead`, `magneticRoll` /
+  `magneticSlip` (stay all), `magneticSlide`, `magneticNudge` (V1 = slide), `magneticAddEdit(at:selection:)` (empty = V1
+  + its linked audio), `magneticAddEditAll`, `magneticJoin`, `magneticRearrange(_:to:keepAttached:)` (nearest V1 edit,
+  `mainTrackDropPoint`), `moveAttached(_:to:track:)` (the moved clip yields), `liftOffMainTrack`,
+  `dragOffMainTrack(_:to:at:keepAttached:)`, `dragOntoMainTrack(_:at:overwrite:)`, `putOnMainTrack`,
+  `setAttachPoint(_:at:)`, `magneticClipboard(copying:)` (+ linked partners + attached clips of V1 clips),
+  `magneticPaste(_:at:attached:)`, `magneticDuplicate`, `magneticExtract` / `magneticClearRange` (V1 targeted; else lift),
+  `Project.magneticNest` (+ attached groups inside the span). Queries: `isOnMainTrack`, `isMainMaterial`, `mainClip(of:)`,
+  `attachedClips(of:)`, `mainTrackDropPoint`, `mainTrackEnd`.
+- Invariants (tests: `FastCutRoutingTests`, `MagneticInvariantFuzzTests`): V1 has holes only from Replace with Spacer,
+  Insert Spacer, Lift off Main Track, Clear Range; source edits past V1's end land at its end; linked groups keep their
+  offsets. The Glue engine is gone: one system. Sync lock is not an escape hatch in Fast Cut (the engine turns it on
+  for every unlocked track while it runs a verb); in Normal mode it works as before.
+- Final Cut differences (`Timeline+FastCutStorylines.swift`, no stored item, no format change): gap item = a V1 hole as host of
+  the clips attached inside it (`mainGaps()`, `isGapAttached`); deleting the clip before it keeps them (they follow the hole),
+  Delete on the gap deletes them. Storyline = run of touching attached clips on one non-main lane (`storylines()`,
+  `createStoryline`, `storylineRippleDelete`, `storylineRearrange`). `positionMove(_:to:track:)` = overwrite without ripple.
+  UI: `TimelineInteraction.reorderGhost` (floating dragged V1 clip).
+- UI routing (phase 2): the only switch is `Timeline.isFastCut` (`editMode == .magnetic` with a main track). Source
+  edits (`threePointEdit`, `placeMedia`, `sourceEdit`, sequence placement) go through `fastCutSourceEdit` inside SQCore.
+  Gestures: `TimelineInteraction.publish` maps the gesture's edits with `TimelineEdit.fastCut` (SQEditorUI
+  `TimelineEdit+FastCut.swift`, `ToolState.Edit.fastCut(FastCutEdit)`), so preview and commit run the same verb.
+  Session commands (Delete, Q/W, Cmd+K, Join, paste, duplicate, nudge, slip, slide, ranges, close gap, nest, lift/put,
+  append, spacers, attach point) call their verb directly; each is one undo step. Hold `` ` ``: `ToolState.keepAttached`
+  / `EditorSession.keepAttachedHeld`. View: spacer hatching on V1 and host highlight (`ClipDrawing+MagneticHint`), drop
+  ghost lands at the nearest V1 edit (`DropPreview`), move hints in `TimelineInteraction.moveHint`.
+
+### Edit target rule (W6.1, `Timeline+EditTargets.swift`)
+One rule decides which tracks the playhead commands Cmd+K (add edit), Up/Down (edit navigation) and X (mark clip) act on,
+`Timeline.editTargets(selection:)`:
+1. the tracks holding a selected clip (the session's selection, linked partners included when the selection has them);
+2. else the targeted tracks;
+3. else all tracks.
+
+Locked tracks stay in the scope: Up/Down and X read them, Cmd+K skips them (`.trackLocked` only when every track in the
+scope is locked). Cmd+Shift+K ignores the rule (all unlocked tracks). Q/W are NOT covered: they still trim every unlocked
+track (A1 F2 proposal "selection > targeted > all" is still open).
+Per-key entry points: `addEdit(at:selection:)`, `editPoints(selection:)`, `markClipRange(at:selection:)`.
+
+Ripple clamps report themselves. `rippleTrimToPlayheadOutcome`, `rippleDeleteOutcome`, `extractOutcome` return
+`EditOutcome` = `.applied` | `.clamped(ClampReason.clipOnTrack(trackID, shortfall:))` when clips on another track kept
+the edit short. `Timeline.describe(_:)` gives "limited by clip on V3"; EditorSession prefixes the verb and shows it in
+the status line ("Trim / Ripple Delete / Extract limited by clip on V3"). Media limits are not clamps in this sense.
+
+## 4. SQMedia
+
+```swift
+public struct MediaInfo: Sendable, Hashable, Codable {           // stored on MediaRef (SQCore mirror type, filled by SQMedia)
+    public var duration: Time
+    public var video: VideoTrackInfo?, audio: AudioTrackInfo?
+}
+public struct VideoTrackInfo: Sendable, Hashable, Codable {
+    public var width: Int, height: Int, codec: String, bitDepth: Int, chroma: String   // "4:2:2"
+    public var nominalFrameDuration: Time, isVariableFrameRate: Bool
+    public var colorPrimaries: String?, transfer: String?, matrix: String?             // nil = untagged (Sony)
+}
+public struct AudioTrackInfo: Sendable, Hashable, Codable { public var sampleRate: Int, channels: Int, codec: String }
+
+public enum MediaImporter { public static func probe(_ url: URL) async throws -> (MediaRef, MediaInfo) }
+
+/// Relink (Relink.swift). Pure logic + file system, no AV.
+public struct MediaLocator: Sendable {                    // init(projectFolder:searchFolders:maxDepth: 6, durationProbe:)
+    public func locate(_ ref: MediaRef) -> LocateResult   // bookmark → original path → project neighbour → fingerprint; resolved only when certain
+    public static func fingerprint(of url: URL) -> MediaFingerprint?
+    public static func applying(_ url: URL, to ref: MediaRef) -> MediaRef    // name/path/bookmark/fingerprint refreshed, id kept
+    public static func relinkOthers(chosen: MediaRef, to: URL, others: [MediaRef]) -> (refs: [MediaRef], report: RelinkReport)
+}
+// LocateMethod { bookmark, originalPath, projectNeighbour, fingerprint }; LocateResult { resolved: (url, method)?, candidates: [RelinkCandidate] (ranked) }
+// RelinkReport { relinked: [UUID: URL], fingerprintMismatch: [UUID], missing: [UUID] }
+// No Thumbnailer on main yet.
+
+/// Presentation-ordered frame table of one video track. Pure value, built once per media, testable with synthetic tables.
+public struct SampleIndex: Sendable {
+    public struct Entry: Sendable, Hashable { public var pts: Time, dts: Time, duration: Time, isSync: Bool, decodeOrdinal: Int }
+    public let entries: [Entry]                           // sorted by pts; pts 0 = first presented frame (edit-list offset removed)
+    public func frame(at sourceTime: Time) -> Int?        // index of frame with pts ≤ t < next pts (VFR-safe); nil outside
+    public func gop(containing index: Int) -> ClosedRange<Int>   // presentation indices decodable from one sync sample
+    public func previousSync(before index: Int) -> Int
+}
+
+public protocol Demuxing: Sendable {                      // AVSampleCursor / AVSampleBufferGenerator behind it
+    var index: SampleIndex { get }
+    var formatDescription: CMFormatDescription { get }
+    /// Compressed samples needed to decode presentation frames `range`, in decode order (from the GOP's sync sample).
+    func samples(for range: ClosedRange<Int>) async throws -> [CMSampleBuffer]
+}
+
+/// One decoded frame. `CVPixelBuffer` is IOSurface-backed and Metal compatible (native format: x422/x420/420v or the
+/// Apple lossless-compressed variants). Immutable after creation, hence @unchecked Sendable.
+public struct DecodedFrame: @unchecked Sendable {
+    public let media: UUID, pts: Time, duration: Time
+    public let pixelBuffer: CVPixelBuffer
+    public var byteCost: Int { get }                      // CVPixelBufferGetDataSize (or plane sum)
+}
+
+public protocol VideoDecoding: Sendable {
+    var info: VideoTrackInfo { get }
+    var isHardware: Bool { get }
+    /// Decodes presentation frames `range` and returns them in PTS order. Continues from the previous call without
+    /// reseeking when `range` starts right after the last decoded frame (forward playback). Cancellable (Task).
+    func decode(_ range: ClosedRange<Int>) async throws -> [DecodedFrame]
+    func invalidate()
+}
+public final class VTVideoDecoder: VideoDecoding { public init(demuxer: any Demuxing, media: UUID, scale: DecodeScale = .full) throws }
+public enum DecodeScale: Sendable, Hashable { case full, half, quarter }   // VT destination size (Program monitor quality popup)
+
+public enum MediaError: Error, Sendable { case unreadable, unsupportedCodec(String), decodeFailed(OSStatus), truncated }
+
+/// Timeline-rate PCM access: Float32, non-interleaved, stereo (channel 0/1), at the rate the source was opened with (48 kHz).
+/// Returns frames written (fewer only at end of media, 0 past it); caller zero-fills. Blocking: feeder thread only.
+public protocol AudioSource: Sendable {
+    func read(from sourceFrame: Int64, count: Int, into buffer: UnsafeMutablePointer<Float>, channel: Int) throws -> Int
+}
+public final class MemoryAudioSource: AudioSource { public init(left: [Float], right: [Float]); public convenience init(mono: [Float]) }  // tests, generated audio
+public final class AssetAudioSource: AudioSource { public let sampleRate: Int; public static func open(url: URL, sampleRate: Int) async throws -> AssetAudioSource }  // AVAssetReader + converter
+```
+
+Decoding strategy:
+- Forward play/prefetch: decode GOP by GOP; the decoder keeps its session and cursor between contiguous calls.
+- Random access / scrub: decode from `previousSync` to the target; **keep every decoded frame of that run** in the cache
+  (that is what makes the backward step cheap).
+- Reverse play: decode GOPs back to front; each GOP lands in the cache whole, then plays backwards from cache.
+- Hardware first (`EnableHardwareAcceleratedVideoDecoder`); Sony H.264 4:2:2 has no software fallback (spike), so a failure there is a clip error, not a retry loop.
+
+## 5. SQRender
+
+```swift
+public struct RenderLayer: @unchecked Sendable {          // built per display frame from LayerRequest + FrameCache
+    public enum Content { case frame(CVPixelBuffer, colorHint: VideoTrackInfo), placeholder(PlaceholderKind) }
+    public var content: Content
+    // Phase 4 adds transform/opacity; Phase 3 adds color. Phase 2: aspect-fit into the sequence frame, opaque.
+}
+public enum PlaceholderKind: Sendable { case offline, damaged, loading }
+
+public final class Compositor: @unchecked Sendable {       // used from the render thread only
+    public init(device: MTLDevice) throws
+    /// Renders layers bottom → top into `target` (rgba16Float, sequence size, linear Rec.709). Black background.
+    public func render(_ layers: [RenderLayer], format: SequenceFormat, into target: MTLTexture, commandBuffer: MTLCommandBuffer)
+}
+public final class Presenter: @unchecked Sendable {
+    public init(device: MTLDevice, layer: CAMetalLayer)
+    /// Fits (or scales by `zoom`) `texture` into the drawable, surround = viewer token #0C0C0C, encodes and presents.
+    public func present(_ texture: MTLTexture, zoom: ViewerZoom, commandBuffer: MTLCommandBuffer)
+}
+public enum ViewerZoom: Sendable, Hashable { case fit, percent(Int) }
+```
+
+Landed on main: `Compositor.render(_:format:into:commandBuffer:) throws` (throws instead of trapping; also `render(nodes:...)`), and `RenderLayer` carries `transform` and `colorPipeline`.
+
+YCbCr → RGB uses the matrix from the clip's tags (709 default for untagged). Color management (S-Log3, HLG, ColorSync
+viewer) is Phase 3; Phase 2 output is "tagged Rec.709, gamma as decoded" so later work replaces a stage, not the plumbing.
+Risk: Metal sampling of Apple lossless-compressed pixel formats (`&xf2`, `&8v0`). If `CVMetalTextureCache` rejects them,
+request the uncompressed format in the VT destination attributes (costs bandwidth, measure in EngineBench).
+
+### Picture masks (C6, contract for the compositor)
+- `Timeline.videoLayers` appends, per nesting level, the layers of every track that a Picture mask (`MaskShape.source == .picture`) of that level reads, tagged `LayerRequest.matteFor = track id`, with the same `groups` as the consumer level (`groups.count` = level). Each track once per frame per level; they are evaluated at the same `t` (nested: inner time), even with the track's eye off; transition layers on it are ignored, adjustment layers dropped.
+- Matte layers are never drawn into the picture. The compositor composites the layers with one `matteFor` at one level (bottom first, pairs/blend modes as usual) into a transparent canvas of that level (`groups.last?.format` or the sequence canvas) and reads it as the matte of the masks with `pictureTrack` == that id at that level: per pixel `MatteChannel.value` of the straight color (`.shape` = alpha, `.brightness` = Rec.709 luma of display-encoded color times alpha), sampled at the consumer fragment's canvas position (the matte stays put on screen, it does not move with the clip's Motion). Missing matte = 0 (covers nothing). Then invert/opacity/mode as every matte (`MaskCoverage.coverage(picture:)` is the CPU reference). Effect inputs (`EffectSegment.scope`) read it the same way.
+- Matte layers carry Picture masks with `pictureTrack == nil` (no chains). `LayerOcclusion` never uses them as a cover nor drops them.
+- Implementation (T4): `RenderNode.tree` emits `.pictureMatte(track:children:)` first in each level's list (only if read); `Compositor.encodePictureMattes` renders them into pooled intermediates and pushes `Retainer.pictureScopes`; `applyMasks(screen:)` binds up to 2 picture textures per draw (fragment 3/4, flags 6-9, `ScreenMap` affine in the mask buffer). Counter `pictureMattePasses`.
+
+## 6. SQPlayback
+
+```swift
+public protocol PlaybackClock: Sendable {
+    /// Current timeline position (not snapped). Safe to call from any thread, lock-free or `Mutex`-guarded.
+    func now() -> Time
+    var rate: PlaybackRate { get }
+    func start(at position: Time, rate: PlaybackRate)
+    @discardableResult func stop() -> Time                 // holds (rate 0), returns position where it stopped
+    func setRate(_ rate: PlaybackRate)                     // keeps position, atomic re-anchor
+    func seek(to position: Time)                           // keeps rate, atomic re-anchor
+}
+// Model: anchor (position, elapsed) + rate; now() = anchor + (elapsed - anchorElapsed) × rate, exact rational, continuous across re-anchors.
+public final class HostClock: PlaybackClock { public init() }   // mach_continuous_time, rational (ns timescale)
+public final class ManualClock: PlaybackClock { public init(position: Time = .zero, rate: PlaybackRate = .zero); public func advance(by: Time) }  // tests
+public final class AudioClock: PlaybackClock { public init(audio: any AudioPlaying) }   // E-11, derived from consumed frames, see §7
+
+/// (FrameCache: pending merge, adds a default budget and low-water eviction; signature below is the pre-branch contract.)
+/// Byte-budgeted cache of decoded frames. Thread-safe (Synchronization.Mutex); lookups never block on decoding.
+public struct FrameKey: Sendable, Hashable { public var media: UUID; public var pts: Time; public var scale: DecodeScale }
+public protocol CacheCost: Sendable { var byteCost: Int { get } }
+public final class FrameCache<Payload: CacheCost>: Sendable {
+    public init(budgetBytes: Int)                          // default: 25 % of physical memory, max 8 GB
+    public func frame(_ key: FrameKey) -> Payload?
+    public func nearest(media: UUID, atOrBefore pts: Time, scale: DecodeScale) -> Payload?
+    public func insert(_ payload: Payload, for key: FrameKey)
+    /// Evicts until under budget: farthest from `playhead` first; frames behind the play direction weigh ×2.
+    public func setFocus(playhead: Time, direction: Int, mapping: @Sendable (FrameKey) -> Time?)
+    public var usedBytes: Int { get }
+}
+
+/// Pure: decides which GOPs to decode next. Tested with synthetic SampleIndex + Timeline.
+public struct PrefetchPlanner: Sendable {
+    public struct Job: Sendable, Hashable { public var media: UUID; public var frames: ClosedRange<Int>; public var priority: Int }
+    public var lookahead: Time                             // default 2 s ahead in play direction (× |rate|), 0.5 s behind
+    public func jobs(timeline: Timeline, playhead: Time, rate: PlaybackRate,
+                     indexes: [UUID: SampleIndex], cached: (UUID, Int) -> Bool) -> [Job]
+}
+public actor DecodeScheduler {                             // runs jobs, one in flight per media, max 4 total; cancels on seek
+    public func submit(_ jobs: [PrefetchPlanner.Job])      // replaces the pending queue
+    public func cancelAll()
+}
+// Init (deviation, no FrameCache dependency): DecodeScheduler(maxConcurrent: 4, decoder: @Sendable (UUID) throws -> any VideoDecoding,
+//   sink: @Sendable (PrefetchPlanner.Job, [DecodedFrame]) -> Void, onError: (@Sendable (Job, Error) -> Void)? = nil). Failed jobs are not retried until resetFailures().
+
+@MainActor public final class PlaybackEngine {
+    public init(device: MTLDevice, media: MediaResolver) throws
+    public func setTimeline(_ timeline: Timeline)          // value snapshot; cheap, called after every edit
+    public func attach(_ layer: CAMetalLayer?)             // nil = headless (tests/bench render offscreen)
+    public private(set) var position: Time                 // last presented frame, snapped to the frame grid
+    public private(set) var rate: PlaybackRate
+    public func play(_ rate: PlaybackRate = .init(num: 1, den: 1))
+    public func pause()
+    public func seek(to t: Time)                           // exact frame, shows it as soon as decoded
+    public func step(_ frames: Int)                        // ± frames, plays a 1-frame audio grain
+    public func beginScrub(); public func scrub(to t: Time); public func endScrub()   // audio grains while dragging (E-12, §7)
+    public var quality: DecodeScale
+    public var onPositionChange: (@MainActor (Time) -> Void)?   // ≤ display rate, for playhead/timecode
+    public var stats: PlaybackStats { get }
+}
+// E-09 additions: init(device:media:clock: = HostClock(), cache: = FrameCache()); setTimeline(_:sequences:) for nested clips;
+//   headless hooks tick() -> Bool (one synchronous loop iteration), waitForDecodes() async, lastRenderedTexture. DecodeScheduler runs
+//   each job on a per-media serial DispatchQueue (TaskExecutor preference), never on the cooperative pool.
+// E-11 additions: init(..., audio: (any AudioPlaying)? = nil) (nil = video only; the app passes AudioEngine(media:), tests ManualAudio);
+//   `usesAudioClock`, `audioUnavailable` (prepare() threw or the output stalled -> injected clock; next play() retries), `audio` (meterSnapshot()).
+//   The loop's clock is an internal SwitchingClock (control calls + switches serialised): audible timeline (audioSegments over the whole
+//   duration non-empty) -> AudioClock, else the injected clock; a switch hands position + rate over. prepare() only in play(), never setTimeline.
+//   Watchdog: AudioClock.sample().stalled (running, no audio consumed for 250 ms) -> SwitchingClock falls back to the injected clock at the
+//   current position. On the audio clock, reverse stops inside frame 0 (audio never goes < 0).
+public protocol MediaResolver: Sendable { func demuxer(for media: UUID) throws -> any Demuxing; func audio(for media: UUID) throws -> any AudioSource }
+// StaticMediaResolver(demuxers:audio:) = fixed table (tests, bench); unknown IDs throw (layer draws .offline).
+public struct PlaybackStats: Sendable {
+    public var presentedFrames: Int, droppedFrames: Int
+    public var stepLatencies: [Duration]                   // seek/step call → frame on screen
+    public var maxAVDrift: Time                            // |presented video time − audio clock| over the run
+    public var cacheBytes: Int
+}
+```
+
+Render loop (render thread, per `CAMetalDisplayLink` tick): `t = clock.now()` snapped to the sequence frame grid →
+if unchanged and nothing invalidated, present nothing → `timeline.videoLayers(at: t)` → map each to `FrameKey` through the
+media's `SampleIndex` → cache lookup (miss: `nearest`, count drop, ask scheduler) → `Compositor.render` → `Presenter.present`
+→ report `t` to the main actor (coalesced). The engine's mutable state for this thread is one `Mutex<RenderState>`
+(timeline snapshot, clock, quality, invalidation flag).
+
+## 7. Audio
+
+- Graph: `AVAudioSourceNode` (our mixer) → `AVAudioUnitTimePitch` (rate = |speed|, pitch preserved) → `mainMixerNode` → output.
+  Tap on the source node output for the timeline audio meter (peak/RMS per channel).
+- Landed (main): `AudioFeeder`, `RingBuffer` in SQPlayback; `AudioSource`/`AssetAudioSource`/`MemoryAudioSource` in SQMedia; `RealtimeAudioFX` in SQAudioFX.
+  E-11: `AudioPlaying` protocol (AudioPlaying.swift, + `ManualAudio` for tests), `AudioEngine` (real graph), `AudioClock`. E-12: `ScrubAudio` (ScrubAudio.swift).
+- `AudioPlaying`: `prepare() throws` (hardware + feeder thread, idempotent, may block; `AudioEngineError.noOutputDevice`), `start()`/`stop()` (atomics;
+  stop = 5 ms fade-out then silence, hardware keeps running), `setRate` (direction for the next seek, TimePitch |rate|, bypass at 1, re-reads latency),
+  `seek(to: Time) -> generation`, `flushed`, `consumedAtEpoch`, `consumedFrames`, `lastRender: AudioRenderStamp` (frames after / consumed by /
+  host ns of the last consuming render call), `hostNanoseconds()`, `outputLatency` (output time, unscaled: outputNode.presentationLatency
+  at prepare/config change + TimePitch latency at the current rate, 0 while bypassed), `underrunCount`, `meterSnapshot()` (peak/RMS L/R, tap on
+  the source node), `setRestartHandler` (AVAudioEngineConfigurationChange: engine restarted, latency re-measured, clock re-seeks at its position).
+  Only `AudioClock` drives it while it is the clock (every flush must be one it requested). Ring capacity 65536, fadeFrames 240.
+- Render core (`AudioRenderCore`, headless-testable): after a seek it primes on THAT generation (`AudioFeeder.flushGeneration`, lock-free, stored
+  after the ring flush and before any push): old material keeps playing until then, then silence until one full render call is queued; shortage
+  while priming is not an underrun. Priming requests are a sequence counter (a newer one is never cleared by the render thread).
+- `AudioClock`: holds at the anchor until the flush of its seek is acknowledged and until elapsed > 0, i.e.
+  `anchor ± max(0, (heard − base − M)/48k − outputLatency×|rate|)`, `heard` = last call's first frame + |rate|×48k×(now − call time), clamped
+  to that call's frames (smooth between callbacks, monotonic within an anchor). outputLatency is snapshotted at each restart.
+  Every start/setRate/seek while running = feeder restart (flush, crossfade); a seek while paused only moves the anchor. Control calls hold
+  their own lock and call the audio object outside the state lock, so `now()` never waits on audio work.
+- `AudioFeeder` (own thread) mixes `timeline.audioSegments` from `AudioSource`s into a lock-free SPSC ring buffer at
+  timeline rate, **in play direction** (reverse = blocks read backwards and reversed). Render block only copies from the ring,
+  never locks, never allocates. Underrun = silence + counter.
+- `AudioFeeder(timeline:ring:sampleRate: 48_000, blockFrames: 1024, resolver:)` (resolver: `(UUID) throws -> any AudioSource`): `setTimeline`, `start()`/`stop()`,
+  `fill(maxBlocks:)` (one pass on the feeder thread, also used by tests), `mix(...)`, `invalidateSources()`, `position`, `failedReads` (failed segments render silence).
+  `seek(to: frame, reverse:)` is callable from any thread: it only sets position/direction and bumps a generation. The feeder thread sees the new
+  generation, flushes the ring itself (ring keeps a single producer) and drops blocks mixed under an older generation. In reverse, `frame` is the exclusive upper end.
+- `RingBuffer(capacity:)` SPSC stereo Float: `push(left:right:count:)`, `pop(...)` (underrun = silence + `underrunCount`), `flush()`, `availableToRead/Write`,
+  `consumedFrames: Int64` (atomic, the clock source).
+- `RealtimeAudioFX`: fixed 48 kHz (`sampleRate`), `init(preset:volume:channelCount:maxFrames:denoiser:)`, `process(_:frameCount:timelineSample:)` in place,
+  `setPreset/setDenoiseMix/setVolume/setBypass/reset` (thread-safe). `latencySamples` = 480 with denoiser (RNNoise), else 0; constant for its lifetime.
+- Clock: `position = anchor + direction × (consumedFrames − M) / sampleRate − outputLatency` (M = `feeder.outputLatencySamples`, scaled by direction: reverse is `anchor − (consumed − M)/rate`, never `+ M`), where `latency` = TimePitch latency
+  + output presentation latency, scaled by |rate|. All rational. Rate change / seek = new anchor (flush ring, 5 ms fade out/in).
+- Feeder FX (E-10 review fixes): one bus + one `RealtimeAudioFX` per audio track (`setTracks` / `setPreset(track:preset:)`, built off the
+  audio path; FX volume is unity, clip/track volume stays in the feeder and runs before the compressor; `OfflineAudioFX`/`RealtimeAudioFX` use the same gain -> denoise -> compressor order, pinned by `AudioChainParityTests`). All tracks are delay-compensated to the
+  max FX latency (480 with a denoiser) -> `feeder.outputLatencySamples`; the clock subtracts it. Reverse: each bus is reversed, FX bypassed
+  (dry, same latency); every seek resets FX and delay lines. Nested audio mixes into the bus of the top-level track holding the nested clip
+  (gain = inner clip volume x `nestGain`). Mixer rate is fixed at 48 kHz (precondition).
+- Flush epoch: `seek` returns a generation; `feeder.flushed` = (generation, ring epoch issued by `flush()`); the consumer publishes
+  `ring.consumedAtEpoch` = (epoch, consumedFrames when it applied the flush). Re-base: `position = anchor + direction × (consumed − frames − M)/rate`; M changes only at a seek and is published with the flush (`flushed.latency`), never mid-play.
+  `RingBuffer(fadeFrames: 240)` adds the 5 ms fade on the consumer side: new audio fades in, the old tail (snapshot taken after each pop,
+  skipped if the consumer paused > 100 ms) fades out cross-faded; the tail is not counted as consumed. Default `fadeFrames` is 0.
+- Scrub audio (`ScrubAudio`): while scrubbing or stepping, play short grains (≈ 1 frame, min 40 ms) of source audio at the
+  playhead in drag direction, 5 ms raised-cosine crossfades between grains. Target: sounds like Premiere (judged by ear).
+  E-12 as built (deviations from the line above): speed follows the drag velocity by grain placement (grains read at 1x,
+  pitch preserved, each starts at the current scrub position), not through TimePitch (its ~85 ms latency would lag the
+  mouse); `ScrubSettings.maxVarispeed` > 1 optionally speeds grains up (pitch rises) to that factor, default 1.
+  Output: own `ScrubVoice` rendered by a second `AVAudioSourceNode` -> `mainMixerNode` (bus 1), not the play ring (owned by
+  `AudioClock`); no meter tap, no track FX (dry mix: clip volume, mute/solo, gaps = silence). Pieces: `ScrubGrainPlanner`
+  (pure: hop = max(frame, 40 ms), 40 ms when |v| >= 2x; no movement = no grain; reverse grain when moving left; step =
+  new frame forward from its start / backward from its end), worker queue mixing latest-wins requests into one of 4
+  fixed voice slots, lock-free handoff (free bitmask + one pending slot; a newer grain replaces an unplayed one), voice takes
+  the pending grain at the playing grain's hop (crossfade) or at once when idle; `stop()` = 5 ms fade, drops pending and
+  older-generation grains. `AudioPlaying.scrubAudio: ScrubAudio?` (default nil; `ManualAudio(scrub:)`). PlaybackEngine:
+  grains only inside beginScrub/endScrub and on `step`, only when the timeline is audible; beginScrub/step may `prepare()`
+  the output (like play); `endScrub()` and `play()` stop the voice.
+
+## 8. Threads and Swift 6
+
+| Context | Runs | Owns / touches |
+|---|---|---|
+| Main actor | UI, EditorSession, PlaybackEngine API | posts snapshots into `Mutex<RenderState>` |
+| Render thread | CAMetalDisplayLink runloop | reads RenderState, FrameCache, clock; owns Compositor/Presenter |
+| Decode tasks | `DecodeScheduler` actor + VT callbacks | Demuxer, VTVideoDecoder, writes FrameCache |
+| AudioFeeder thread | own `Thread`, high QoS | AudioSources, ring buffer write side |
+| Audio render thread | Core Audio | ring buffer read side, atomic counters only |
+
+`CVPixelBuffer`/`MTLTexture` crossing threads are wrapped in `@unchecked Sendable` structs that are immutable after creation.
+Shared mutable state uses `Synchronization.Mutex` / `Atomic`, not `NSLock` or `DispatchQueue.sync`.
+
+## 9. Measuring (Tools/EngineBench, release build)
+
+`EngineBench three-stack <sony.mp4>` · `step-back <file>` · `drift <file> --minutes 10` · `scrub <file>`.
+Headless: offscreen target paced by a 60 Hz `CAMetalDisplayLink`-equivalent timer, real audio output. Prints `PlaybackStats`
+as one table; results go into the status notes with commit hash. Media paths come from arguments or `SQ_MEDIA_DIR`
+(default `~/Documents/Videos`), never from the repo.
+
+## Coordinate convention
+Decided 2026-09-30. Spatial values (Position, anchor, text layout, caption boxes) are in **sequence pixels**, origin **top-left**, **y down**,
+like Premiere's Position values: the center of a 1080×1920 sequence is (540, 960). Text layout uses points = sequence pixels (scale 1).
+Renderers convert to Metal/Core Graphics conventions at their own boundary, never in the model.
+
+## Hidden catalog
+`Packages/SQCore/Sources/SQCore/HiddenCatalog.swift` (consolidation round 1, DECISIONS 2026-10-07). Features that duplicate
+another one are hidden, not deleted:
+- Hidden effect kinds, built-in motion presets and Keystones are left out of every list (Effects panel, Quick Apply,
+  Add Effect lists, Keystones panel).
+- They still decode, apply and render when a project, preset or Library item holds one, so old projects stay intact.
+- `SQ_SHOW_HIDDEN=1` in the environment shows them again for a run; `HiddenCatalog.isActive = false` does it in code.
+- Stored ids are strings: never rename them. New hides go into the sets in that file, nothing else changes.

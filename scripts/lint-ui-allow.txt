@@ -1,0 +1,26 @@
+# Allowlist for scripts/lint-ui.sh. Format: path[:line]:rule  reason (reason required)
+# Example: Packages/SQEditorUI/Sources/SQEditorUI/Foo.swift:native-control  NSMenu needed for key-equivalent routing
+App/Sources/RenderPanels.swift:native-control  render harness only: takes the app's NSMenu model to draw it as an SQ menu, never shows a system menu
+Packages/SQInspectorUI/Sources/SQInspectorUI/TextBlockView.swift:native-control  NSMenu is only the item model for the look context menu, shown through SQContextMenu in SQ look
+Packages/SQInspectorUI/Sources/SQInspectorUI/TextPanelControls.swift:native-control  NSMenu is only the item model handed to SQContextMenu, never shown as a system menu
+App/Sources/CardImportWindow.swift:layout-literal  board-measured card import metrics (4/10 toolbar, 56+8 footer, 12 checkbox, 6 inset), no token exists
+App/Sources/RenderDemoMedia.swift:color-literal  render harness only: generated demo clip colours, never shown in the app
+Packages/SQUIKit/Sources/SQUIKit/SQMenuTableView.swift:native-control  override signature of NSView.menu(for:) (returns nil after showing SQ rows)
+Packages/SQEditorUI/Sources/SQEditorUI/Library/PresetHoverCard.swift:font-literal  sample line is set in the previewed template's own font, never a UI font
+Packages/SQEditorUI/Sources/SQEditorUI/Library/PresetHoverCard.swift:color-literal  sample line uses the previewed template's own colour, not a UI colour
+Packages/SQEditorSession/Sources/SQEditorSession/GraphicPresets.swift:color-literal  artwork colours of the built-in stickers and lower thirds (content that lands in the clip, not app chrome)
+Packages/SQEditorUI/Sources/SQEditorUI/StartScreenTokens.swift:color-literal  canvas token (#141416) of the start screen, awaiting a move into Theme.swift
+Packages/SQUIKit/Sources/SQUIKit/AppearancePalette.swift:color-literal  token source: the Dark/Light palettes every dynamic Theme color resolves from (same role as ThemeTokens.swift)
+Packages/SQUIKit/Sources/SQUIKit/ThemeAppearance.swift:color-literal  token source: converts palette components to NSColor (srgbRed), no UI color of its own
+Packages/SQUIKit/Sources/SQUIKit/Mascot/SQMascotArt.swift:color-literal  Theme.Mascot token definitions (Pip art palette from the design source)
+Packages/SQInspectorUI/Sources/SQInspectorUI/Draw/ClipSectionsDraw.swift:color-literal  model conversion (ColorMatteColor to EffectColor for the picker), no UI color
+Packages/SQInspectorUI/Sources/SQInspectorUI/Draw/EffectControlsDrawRows.swift:color-literal  model conversion (key color to EffectColor for the picker), no UI color
+Packages/SQInspectorUI/Sources/SQInspectorUI/Draw/TextBlockDraw.swift:color-literal  model conversion (RGBAColor and EffectColor for the picker), no UI color
+Packages/SQInspectorUI/Sources/SQInspectorUI/TextInspectorModel.swift:color-literal  model conversion (RGBAColor withAlpha), no UI color
+Packages/SQInspectorUI/Sources/SQInspectorUI/Draw/KeyframeGraphDraw.swift:75:color-literal  Theme.Colors.curveX / curveY values; move to DrawTheme tokens when DrawTheme gets curve colors
+Packages/SQInspectorUI/Sources/SQInspectorUI/Draw/TemplateSlotsDraw.swift:color-literal  model conversion (slot color to EffectColor for the picker), no UI color
+Packages/SQInspectorUI/Sources/SQInspectorUI/Draw/MultibandEditorDraw.swift:color-literal  model label palette (LabelColor.textDefault) to DrawColor, no literal
+Packages/SQInspectorUI/Sources/SQInspectorUI/Draw/TransitionControlsDraw.swift:color-literal  model conversion (picked RGB to EffectColor for the transition), no UI color (Inspector slice)
+Packages/SQInspectorUI/Sources/SQInspectorUI/Draw/CaptionStyleTabDraw.swift:color-literal  caption content colors (karaoke default, kit color fallback) and picker-to-model conversions, never app chrome (Inspector slice)
+App/Sources/SharedUI/SharedUIView.swift:color-literal  converts the theme's divider token to a CGColor, no color of its own (Mac shared UI slice)
+App/Sources/SharedUI/SharedUIMainMenu.swift:native-control  the macOS main menu bar of the shared-UI app (system bar like MenuBuilder), no popup or sheet (Mac shared UI slice)

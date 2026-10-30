@@ -1,0 +1,384 @@
+import Foundation
+
+public enum SplitAxis: String, Sendable, Codable, Hashable {
+    /// Children sit side by side.
+    case horizontal
+    /// Children are stacked.
+    case vertical
+}
+
+/// Layout tree: splits -> tab groups -> panels. `fractions` of a split sum to 1.
+public indirect enum LayoutNode: Sendable, Codable, Hashable {
+    case split(axis: SplitAxis, children: [LayoutNode], fractions: [Double])
+    case tabs(panels: [PanelID], selected: PanelID)
+
+    /// Every panel in this subtree, in layout order.
+    public var panels: [PanelID] {
+        switch self {
+        case .split(_, let c, _): c.flatMap(\.panels)
+        case .tabs(let p, _): p
+        }
+    }
+
+    /// Saved layouts from before the Source monitor was a placeholder may have it selected: a group holding both monitors opens on Program.
+    public var programPreferred: LayoutNode {
+        switch self {
+        case .tabs(let panels, let selected):
+            return selected == .sourceMonitor && panels.contains(.programMonitor)
+                ? .tabs(panels: panels, selected: .programMonitor) : self
+        case .split(let axis, let children, let fractions):
+            return .split(axis: axis, children: children.map(\.programPreferred), fractions: fractions)
+        }
+    }
+
+    /// Layouts saved before the audio meter existed get it docked right of the timeline group; layouts that have it
+    /// (visible or hidden) are returned unchanged.
+    public var withMeterBesideTimeline: LayoutNode {
+        guard !panels.contains(.audioMeter), panels.contains(.timeline) else { return self }
+        func wrap(_ n: LayoutNode) -> LayoutNode {
+            switch n {
+            case .tabs(let p, _):
+                return p.contains(.timeline)
+                    ? .split(axis: .horizontal, children: [n, .tabs(panels: [.audioMeter], selected: .audioMeter)], fractions: [0.95, 0.05])
+                    : n
+            case .split(let a, let c, let f): return .split(axis: a, children: c.map(wrap), fractions: f)
+            }
+        }
+        return wrap(self)
+    }
+
+    /// Repaired copy: empty tab groups and empty splits removed (with their fractions), `selected` inside `panels`,
+    /// single-child splits collapsed, fractions one per child and summing to 1 (equal split otherwise). Nil when nothing is left.
+    public var sanitized: LayoutNode? {
+        switch self {
+        case .tabs(let panels, let selected):
+            guard let first = panels.first else { return nil }
+            return .tabs(panels: panels, selected: panels.contains(selected) ? selected : first)
+        case .split(let axis, let children, let fractions):
+            let usable = fractions.count == children.count
+            var kept: [LayoutNode] = [], fr: [Double] = []
+            for (i, c) in children.enumerated() {
+                if let s = c.sanitized { kept.append(s); if usable { fr.append(fractions[i]) } }
+            }
+            if kept.count <= 1 { return kept.first }
+            let sum = fr.reduce(0, +)
+            let ok = usable && fr.allSatisfy { $0.isFinite && $0 > 0 } && abs(sum - 1) < 1e-6
+            if !ok { fr = Array(repeating: 1 / Double(kept.count), count: kept.count) }
+            return .split(axis: axis, children: kept, fractions: fr)
+        }
+    }
+}
+
+/// A named layout plus view state (hidden panels, maximized panel). Value type.
+/// Hidden panels stay in `root` and are only pruned from `visibleRoot`, so show restores the exact previous position and sizes.
+public struct Workspace: Sendable, Codable, Hashable {
+    public var name: String
+    public var root: LayoutNode
+    public var hidden: Set<PanelID>
+    public var maximized: PanelID?
+
+    public static let minFraction = 0.05
+
+    public init(name: String, root: LayoutNode, hidden: Set<PanelID> = [], maximized: PanelID? = nil) {
+        self.name = name; self.root = root; self.hidden = hidden; self.maximized = maximized
+    }
+
+    private enum CodingKeys: String, CodingKey { case name, root, hidden, maximized }
+
+    /// Decodes and validates the layout: a bad saved tree is repaired (see `LayoutNode.sanitized`) instead of trapping later.
+    public init(from decoder: Decoder) throws {
+        let c = try decoder.container(keyedBy: CodingKeys.self)
+        name = try c.decode(String.self, forKey: .name)
+        let saved = try c.decode(LayoutNode.self, forKey: .root).sanitized?.programPreferred
+        root = saved?.withMeterBesideTimeline ?? Workspace.editingPC.root
+        hidden = try c.decodeIfPresent(Set<PanelID>.self, forKey: .hidden) ?? []
+        // The Color page does not show the meter by default; a layout saved before the meter existed gets it hidden there.
+        if name == Workspace.color.name, let saved, !saved.panels.contains(.audioMeter) { hidden.insert(.audioMeter) }
+        maximized = try c.decodeIfPresent(PanelID.self, forKey: .maximized)
+    }
+
+    // MARK: Built-ins (docs/UX.md section 1)
+
+    /// Color inspector and Scopes belong to the Color page; Edit layouts hold them hidden so the Window menu can show them.
+    static let colorPanels: Set<PanelID> = [.colorInspector, .scopes]
+
+    /// The timeline with the audio meter docked to its right (tools stay inside the timeline, on its left).
+    static let timelineWithMeter: LayoutNode = .split(axis: .horizontal, children: [
+        .tabs(panels: [.timeline], selected: .timeline),
+        .tabs(panels: [.audioMeter], selected: .audioMeter),
+    ], fractions: [0.95, 0.05])
+
+    /// The v9 default (1440 x 900): Controls | Captions | Graphics and Program | Source on top (43 % / 33 % of the width),
+    /// the timeline with the audio meter below; Library | Effects over Project | Keystones in the right column (24 %).
+    public static let editingPC = Workspace(name: "Editing – PC", root: .split(axis: .horizontal, children: [
+        .split(axis: .vertical, children: [
+            .split(axis: .horizontal, children: [
+                .tabs(panels: [.effectControls, .text, .graphics, .colorInspector], selected: .effectControls),
+                .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor),
+            ], fractions: [0.565, 0.435]),
+            Self.timelineWithMeter,
+        ], fractions: [0.521, 0.479]),
+        .split(axis: .vertical, children: [
+            .tabs(panels: [.library, .effects], selected: .library),
+            .tabs(panels: [.project, .keystones, .markerList, .scopes], selected: .project),
+        ], fractions: [0.535, 0.465]),
+    ], fractions: [0.762, 0.238]), hidden: Self.colorPanels)
+
+    /// Program monitor full height on the right; Library | Effects and Effect Controls group in the middle; Project and timeline bottom left.
+    public static let editingMacBook = Workspace(name: "Editing – MacBook", root: .split(axis: .horizontal, children: [
+        .split(axis: .vertical, children: [
+            .split(axis: .horizontal, children: [
+                .tabs(panels: [.library, .effects, .keystones, .markerList, .scopes], selected: .library),
+                .tabs(panels: [.effectControls, .text, .graphics, .colorInspector], selected: .effectControls),
+            ], fractions: [0.4, 0.6]),
+            .split(axis: .horizontal, children: [
+                .tabs(panels: [.project], selected: .project),
+                Self.timelineWithMeter,
+            ], fractions: [0.25, 0.75]),
+        ], fractions: [0.5, 0.5]),
+        .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor),
+    ], fractions: [0.68, 0.32]), hidden: Self.colorPanels)
+
+    /// Portrait work (vertical video): Program monitor far right at full height, a smaller timeline underneath.
+    public static let editingPortrait = Workspace(name: "Editing – Portrait", root: .split(axis: .horizontal, children: [
+        .split(axis: .vertical, children: [
+            .split(axis: .horizontal, children: [
+                .tabs(panels: [.library, .effects, .keystones, .markerList, .scopes], selected: .library),
+                .tabs(panels: [.effectControls, .text, .graphics, .colorInspector], selected: .effectControls),
+            ], fractions: [0.35, 0.65]),
+            .split(axis: .horizontal, children: [
+                .tabs(panels: [.project], selected: .project),
+                Self.timelineWithMeter,
+            ], fractions: [0.2, 0.8]),
+        ], fractions: [0.64, 0.36]),
+        .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor),
+    ], fractions: [0.66, 0.34]), hidden: Self.colorPanels)
+
+    /// 27-inch and larger: Effect Controls, Program and Source side by side above a wide timeline; Library column on the left.
+    public static let editing27 = Workspace(name: "Editing – 27\"", root: .split(axis: .horizontal, children: [
+        .split(axis: .vertical, children: [
+            .tabs(panels: [.library], selected: .library),
+            .tabs(panels: [.effects, .keystones, .markerList, .project, .scopes], selected: .effects),
+        ], fractions: [0.5, 0.5]),
+        .split(axis: .vertical, children: [
+            .split(axis: .horizontal, children: [
+                .tabs(panels: [.effectControls, .text, .graphics, .colorInspector], selected: .effectControls),
+                .tabs(panels: [.programMonitor], selected: .programMonitor),
+                .tabs(panels: [.sourceMonitor], selected: .sourceMonitor),
+            ], fractions: [0.28, 0.44, 0.28]),
+            Self.timelineWithMeter,
+        ], fractions: [0.5, 0.5]),
+    ], fractions: [0.17, 0.83]), hidden: Self.colorPanels)
+
+    public static let builtIns: [Workspace] = [editingPC, editingMacBook, editingPortrait, editing27]
+
+    /// The Color page of the Edit | Color switch (1440 wide: flexible | 340): the viewer with Scopes beside it over one
+    /// tabbed lower group (Steps | Timeline | Sources) with the meter and the library group, the Color settings full
+    /// height on the right. Every panel is a normal dock tab (drag, drop zones, active marker as on the Edit page).
+    /// Steps is hidden by the shell while the grade is Simple. Not in `builtIns` (it is a page, not an Edit layout);
+    /// the other panels are in the tree but hidden so the Window menu can show them.
+    public static let color = Workspace(name: "Color", root: .split(axis: .horizontal, children: [
+        .split(axis: .vertical, children: [
+            .split(axis: .horizontal, children: [
+                .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor),
+                .tabs(panels: [.scopes], selected: .scopes),
+            ], fractions: [0.68, 0.32]),
+            colorLower,
+        ], fractions: [0.62, 0.38]),
+        .tabs(panels: [.colorInspector, .effectControls, .text, .graphics], selected: .colorInspector),
+    ], fractions: [0.764, 0.236]), hidden: colorHidden)
+
+    /// Lower group of the Color page: Steps | Timeline | Sources as tabs, the meter, and the (hidden) library group.
+    private static let colorLower: LayoutNode = .split(axis: .horizontal, children: [
+        .tabs(panels: [.steps, .timeline, .colorClips], selected: .timeline),
+        .tabs(panels: [.audioMeter], selected: .audioMeter),
+        .tabs(panels: [.project, .library, .effects, .keystones, .markerList], selected: .project),
+    ], fractions: [0.70, 0.05, 0.25])
+
+    /// The Color layout paired with Editing - MacBook and Editing - Portrait: the viewer sits full height on the far
+    /// right (as in those Editing layouts); Scopes | Color settings on top left, the lower group below them.
+    private static func colorViewerRight(_ viewerFraction: Double) -> Workspace {
+        Workspace(name: "Color", root: .split(axis: .horizontal, children: [
+            .split(axis: .vertical, children: [
+                .split(axis: .horizontal, children: [
+                    .tabs(panels: [.scopes], selected: .scopes),
+                    .tabs(panels: [.colorInspector, .effectControls, .text, .graphics], selected: .colorInspector),
+                ], fractions: [0.4, 0.6]),
+                colorLower,
+            ], fractions: [0.6, 0.4]),
+            .tabs(panels: [.programMonitor, .sourceMonitor], selected: .programMonitor),
+        ], fractions: [1 - viewerFraction, viewerFraction]), hidden: colorHidden)
+    }
+    public static let colorMacBook = colorViewerRight(0.32)
+    public static let colorPortrait = colorViewerRight(0.34)
+
+    /// Panels the Color page keeps in its tree but hidden (the Window menu can show them).
+    static let colorHidden: Set<PanelID> = [.project, .library, .effects, .keystones, .markerList, .effectControls, .text, .graphics, .audioMeter]
+
+    // MARK: Queries
+
+    public var allPanels: [PanelID] { root.panels }
+    public func isVisible(_ p: PanelID) -> Bool { allPanels.contains(p) && !hidden.contains(p) }
+
+    /// Tree to render: hidden panels pruned, single-child splits collapsed, fractions renormalised.
+    /// A maximized panel fills everything. Nil when nothing is visible.
+    public var visibleRoot: LayoutNode? {
+        if let m = maximized, isVisible(m) { return .tabs(panels: [m], selected: m) }
+        return prune(root)
+    }
+
+    private func prune(_ node: LayoutNode) -> LayoutNode? {
+        switch node {
+        case .tabs(let panels, let selected):
+            let vis = panels.filter { !hidden.contains($0) }
+            guard let first = vis.first else { return nil }
+            return .tabs(panels: vis, selected: vis.contains(selected) ? selected : first)
+        case .split(let axis, let children, let fractions):
+            var kept: [LayoutNode] = [], fr: [Double] = []
+            for (i, c) in children.enumerated() {
+                if let p = prune(c) { kept.append(p); fr.append(fractions[i]) }
+            }
+            if kept.count <= 1 { return kept.first }
+            return .split(axis: axis, children: kept, fractions: Self.normalized(fr))
+        }
+    }
+
+    // MARK: Operations
+
+    public mutating func hide(_ p: PanelID) {
+        guard allPanels.contains(p) else { return }
+        hidden.insert(p)
+        if maximized == p { maximized = nil }
+    }
+
+    /// Restores the panel at its previous position and selects it in its tab group.
+    public mutating func show(_ p: PanelID) {
+        // The Color page's clip list docks only where a layout already holds it (the Color layouts).
+        guard PanelID.dockable.contains(p) || allPanels.contains(p) else { return }
+        if !allPanels.contains(p) { addToTree(p) }
+        guard allPanels.contains(p) else { return }
+        hidden.remove(p)
+        root = Self.selecting(p, in: root)
+    }
+
+    /// Makes the panel visible in its tab group without selecting it (the group keeps its selected tab).
+    public mutating func reveal(_ p: PanelID) {
+        guard PanelID.dockable.contains(p) || allPanels.contains(p) else { return }
+        if !allPanels.contains(p) { addToTree(p) }
+        hidden.remove(p)
+    }
+
+    /// The selected tab of the group that holds `p` (nil when no group does).
+    public func selectedTab(inGroupOf p: PanelID) -> PanelID? {
+        Self.tabGroups(in: root).first { $0.panels.contains(p) }?.selected
+    }
+
+    public mutating func toggle(_ p: PanelID) { isVisible(p) ? hide(p) : show(p) }
+
+    /// Adds a panel that this workspace does not contain as a tab next to a related panel (first group as a fallback).
+    mutating func addToTree(_ p: PanelID) {
+        guard !allPanels.contains(p) else { return }
+        let anchors: [PanelID] = [.effectControls, .library, .programMonitor, .project, .timeline]
+        guard let anchor = anchors.first(where: { allPanels.contains($0) }) ?? allPanels.first else { return }
+        root = Self.appending(p, toGroupWith: anchor, in: root)
+    }
+
+    private static func appending(_ p: PanelID, toGroupWith anchor: PanelID, in node: LayoutNode) -> LayoutNode {
+        switch node {
+        case .tabs(let panels, let sel): panels.contains(anchor) ? .tabs(panels: panels + [p], selected: sel) : node
+        case .split(let a, let c, let f): .split(axis: a, children: c.map { appending(p, toGroupWith: anchor, in: $0) }, fractions: f)
+        }
+    }
+
+    /// Selects a tab (and shows the panel if it was hidden).
+    public mutating func selectTab(_ p: PanelID) { show(p) }
+
+    /// Sets fractions of the split at `visiblePath` (child indices in `visibleRoot`). `fractions` has one entry per
+    /// visible child; it is clamped to `minFraction` and normalized. Hidden children keep their stored fractions.
+    /// Returns false when the path is not a split or the count is wrong.
+    @discardableResult
+    public mutating func setFractions(at visiblePath: [Int], _ fractions: [Double]) -> Bool {
+        guard maximized == nil, let new = applying(root, visiblePath[...], fractions) else { return false }
+        root = new
+        return true
+    }
+
+    /// Maximizes a visible panel; calling again with the same panel restores the layout.
+    public mutating func toggleMaximize(_ p: PanelID) {
+        if maximized == p { maximized = nil } else if isVisible(p) { maximized = p }
+    }
+    public mutating func restore() { maximized = nil }
+
+    // MARK: Helpers
+
+    private func hasVisible(_ n: LayoutNode) -> Bool { n.panels.contains { !hidden.contains($0) } }
+
+    private func applying(_ node: LayoutNode, _ path: ArraySlice<Int>, _ new: [Double]) -> LayoutNode? {
+        guard case .split(let axis, let children, let old) = node else { return nil }
+        let vis = children.indices.filter { hasVisible(children[$0]) }
+        if vis.count == 1 {   // collapsed in visibleRoot: path passes through
+            guard let inner = applying(children[vis[0]], path, new) else { return nil }
+            var c = children; c[vis[0]] = inner
+            return .split(axis: axis, children: c, fractions: old)
+        }
+        guard vis.count >= 2 else { return nil }
+        if let i = path.first {
+            guard vis.indices.contains(i), let inner = applying(children[vis[i]], path.dropFirst(), new) else { return nil }
+            var c = children; c[vis[i]] = inner
+            return .split(axis: axis, children: c, fractions: old)
+        }
+        guard new.count == vis.count else { return nil }
+        let share = Self.normalized(new)
+        let hiddenSum = children.indices.filter { !vis.contains($0) }.reduce(0.0) { $0 + old[$1] }
+        let visibleSum = 1 - hiddenSum
+        var f = old
+        for (k, idx) in vis.enumerated() { f[idx] = share[k] * visibleSum }
+        return .split(axis: axis, children: children, fractions: f)
+    }
+
+    /// The panel is the tab its group shows right now (visible, and the group's selected tab).
+    public func showsTab(_ p: PanelID) -> Bool {
+        guard let r = visibleRoot else { return false }
+        return Self.tabGroups(in: r).contains { $0.selected == p }
+    }
+
+    /// Every tab group of a tree with its selected panel.
+    static func tabGroups(in node: LayoutNode) -> [(panels: [PanelID], selected: PanelID)] {
+        switch node {
+        case .tabs(let p, let s): [(p, s)]
+        case .split(_, let c, _): c.flatMap { tabGroups(in: $0) }
+        }
+    }
+
+    private static func selecting(_ p: PanelID, in node: LayoutNode) -> LayoutNode {
+        switch node {
+        case .tabs(let panels, let sel): .tabs(panels: panels, selected: panels.contains(p) ? p : sel)
+        case .split(let a, let c, let f): .split(axis: a, children: c.map { selecting(p, in: $0) }, fractions: f)
+        }
+    }
+
+    /// Non-finite or negative values count as 0; result sums to 1 with every entry >= `minFraction`
+    /// (equal split when that is impossible or the input is all zero).
+    public static func normalized(_ values: [Double]) -> [Double] {
+        let n = values.count
+        guard n > 0 else { return [] }
+        let equal = Array(repeating: 1 / Double(n), count: n)
+        var v = values.map { $0.isFinite ? max($0, 0) : 0 }
+        let sum = v.reduce(0, +)
+        guard sum > 0, Double(n) * minFraction < 1 else { return equal }
+        v = v.map { $0 / sum }
+        // Raise entries below the minimum, take the excess from the free entries proportionally.
+        var pinned = Set<Int>()
+        for _ in 0..<n {
+            let low = v.indices.filter { !pinned.contains($0) && v[$0] < minFraction }
+            if low.isEmpty { break }
+            for i in low { v[i] = minFraction; pinned.insert(i) }
+            let free = v.indices.filter { !pinned.contains($0) }
+            let target = 1 - Double(pinned.count) * minFraction
+            let freeSum = free.reduce(0.0) { $0 + v[$1] }
+            guard freeSum > 0 else { return equal }
+            for i in free { v[i] *= target / freeSum }
+        }
+        return v
+    }
+}

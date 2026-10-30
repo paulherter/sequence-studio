@@ -1,0 +1,296 @@
+import Foundation
+import Testing
+import SQCore
+@testable import SQEditorSession
+
+private let fd = Time(1, 30)
+private func s(_ n: Int64) -> Time { Time(n, 1) }
+private func clip(_ start: Int64, _ dur: Int64, kind: TrackKind = .video, link: UUID? = nil) -> Clip {
+    Clip(name: "c\(start)", media: UUID(), kind: kind, source: TimeRange(start: .zero, duration: s(dur)), start: s(start), link: link)
+}
+
+@MainActor private func makeSession(_ tracks: [Track]) -> EditorSession {
+    let t = Timeline(name: "Main", frameDuration: fd, tracks: tracks)
+    return EditorSession(project: Project(name: "P", timelines: [t]), engine: StubProgramEngine())
+}
+
+private func track(_ clips: [Clip], kind: TrackKind = .video) -> Track {
+    var t = Track(kind: kind)
+    for c in clips { try! t.overwrite(c) }
+    return t
+}
+
+@MainActor @Suite struct TimelineOpsSessionTests {
+    @Test func copyPasteAtPlayheadSelectsThePaste() {
+        let a = clip(0, 2)
+        let ses = makeSession([track([a])])
+        ses.select(clips: [a.id])
+        #expect(ses.copySelection())
+        ses.seek(to: s(5))
+        ses.pasteClipboard()
+        #expect(ses.activeTimeline!.tracks[0].clips.map(\.start) == [s(0), s(5)])
+        #expect(ses.selection == [ses.activeTimeline!.tracks[0].clips[1].id])
+        #expect(ses.undo())
+        #expect(ses.activeTimeline!.tracks[0].clips.count == 1)
+    }
+
+    @Test func cutLeavesAGapAndPasteInsertRipples() {
+        let a = clip(0, 2), b = clip(2, 2)
+        let ses = makeSession([track([a, b])])
+        ses.select(clips: [a.id])
+        ses.cutSelection()
+        #expect(ses.activeTimeline!.tracks[0].clips.map(\.start) == [s(2)])
+        ses.seek(to: s(2))
+        ses.pasteClipboard(insert: true)
+        #expect(ses.activeTimeline!.tracks[0].clips.map(\.start) == [s(2), s(4)])
+    }
+
+    @Test func linkMenuStateFollowsTheSelection() {
+        let v = clip(1, 2), a = clip(1, 2, kind: .audio)
+        let ses = makeSession([track([v]), track([a], kind: .audio)])
+        #expect(ses.linkMenuState.enabled == false)
+        ses.select(clips: [v.id])
+        #expect(ses.linkMenuState.enabled == false)
+        ses.select(clips: [v.id, a.id])
+        #expect(ses.linkMenuState.enabled && !ses.linkMenuState.unlink)
+        ses.toggleLinkSelection()
+        #expect(ses.linkMenuState.enabled && ses.linkMenuState.unlink)
+        ses.select(clips: [v.id])
+        #expect(ses.linkMenuState.enabled && ses.linkMenuState.unlink)
+    }
+
+    @Test func linkToggleAndNudge() {
+        let v = clip(1, 2), a = clip(1, 2, kind: .audio)
+        let ses = makeSession([track([v]), track([a], kind: .audio)])
+        ses.select(clips: [v.id, a.id])
+        ses.toggleLinkSelection()
+        #expect(ses.activeTimeline!.tracks[0].clips[0].link != nil)
+        ses.nudgeSelection(frames: 3)
+        #expect(ses.activeTimeline!.tracks[0].clips[0].start == s(1) + fd * 3)
+        #expect(ses.activeTimeline!.tracks[1].clips[0].start == s(1) + fd * 3)
+        ses.toggleLinkSelection()
+        #expect(ses.activeTimeline!.tracks[0].clips[0].link == nil)
+    }
+
+    /// Shift = 10 frames (Final Cut): the same call with a negative count moves left.
+    @Test func nudgeTenFramesLeftAndRight() {
+        let v = clip(20, 2)
+        let ses = makeSession([track([v])])
+        ses.select(clips: [v.id])
+        ses.nudgeSelection(frames: 10)
+        #expect(ses.activeTimeline!.tracks[0].clips[0].start == s(20) + fd * 10)
+        ses.nudgeSelection(frames: -10)
+        #expect(ses.activeTimeline!.tracks[0].clips[0].start == s(20))
+    }
+
+    /// Opt+Left/Right with no edit selected: slips the selected clips by whole frames, position and duration stay.
+    @Test func slipSelectionMovesTheSourceNotTheClip() {
+        var a = clip(0, 4)
+        a.source = TimeRange(start: s(1), duration: s(4))
+        let ses = makeSession([track([a])])
+        ses.select(clips: [a.id])
+        ses.slipSelection(frames: 10)
+        var c = ses.activeTimeline!.tracks[0].clips[0]
+        #expect(c.source.start == s(1) + fd * 10)
+        #expect(c.timeline == a.timeline)
+        ses.slipSelection(frames: -1)
+        c = ses.activeTimeline!.tracks[0].clips[0]
+        #expect(c.source.start == s(1) + fd * 9)
+        #expect(ses.undo())
+        #expect(ses.activeTimeline!.tracks[0].clips[0].source.start == s(1) + fd * 10)
+    }
+
+    @Test func slipSelectionWithoutSelectionIsANoOp() {
+        let a = clip(0, 4)
+        let ses = makeSession([track([a])])
+        ses.slipSelection(frames: 3)
+        #expect(ses.activeTimeline!.tracks[0].clips[0] == a)
+    }
+
+    @Test func keyboardTrimAndExtendUseTheSelectedEdge() {
+        let a = clip(0, 4)
+        let ses = makeSession([track([a])])
+        let tail = EdgeSelection(edges: [EdgeRef(clip: a.id, edge: .tail)])
+        ses.trimEdges(tail, frames: -5)
+        #expect(ses.activeTimeline!.tracks[0].clips[0].timeline.end == s(4) - fd * 5)
+        ses.seek(to: s(3))
+        ses.extendEdit(tail)
+        #expect(ses.activeTimeline!.tracks[0].clips[0].timeline.end == s(3))
+    }
+
+    /// E on a selected edit (both sides): rolls the linked partners too and stops one frame short of emptying a clip,
+    /// as one undo step (H6 audit items 5 and 6).
+    @Test func extendRollMovesPartnersAndClamps() {
+        let l = UUID()
+        let a = clip(0, 2), b = clip(2, 2, link: l), a2 = clip(0, 2, kind: .audio), b2 = clip(2, 2, kind: .audio, link: l)
+        let ses = makeSession([track([a, b]), track([a2, b2], kind: .audio)])
+        let roll = EdgeSelection(edges: [EdgeRef(clip: a.id, edge: .tail), EdgeRef(clip: b.id, edge: .head)])
+        ses.seek(to: s(9))
+        ses.extendEdit(roll)
+        let t = ses.activeTimeline!
+        #expect(t.tracks[0].clips[1].duration == fd && t.tracks[0].clips[1].start == s(4) - fd)
+        #expect(t.tracks[1].clips[1].start == s(4) - fd)
+        #expect(ses.undo())
+        #expect(ses.activeTimeline!.tracks[1].clips[1].start == s(2) && ses.activeTimeline!.tracks[0].clips[1].start == s(2))
+    }
+
+    @Test func closeGapAndMarkSelectionAndMarkers() {
+        let a = clip(0, 2), b = clip(5, 2)
+        let ses = makeSession([track([a, b])])
+        let tid = ses.activeTimeline!.tracks[0].id
+        ses.closeGap(GapSelection(track: tid, range: TimeRange(start: s(2), end: s(5))))
+        #expect(ses.activeTimeline!.tracks[0].clips.map(\.start) == [s(0), s(2)])
+        ses.select(clips: [b.id])
+        ses.markSelection()
+        #expect(ses.activeTimeline!.inOut == TimeRange(start: s(2), end: s(4)))
+        ses.seek(to: s(1)); ses.addMarkerAtPlayhead()
+        ses.seek(to: s(3)); ses.addMarkerAtPlayhead()
+        ses.seek(to: s(2))
+        ses.goToNextMarker()
+        #expect(ses.playhead == s(3))
+        ses.goToPreviousMarker(); ses.goToPreviousMarker()
+        #expect(ses.playhead == s(1))
+    }
+
+    @Test func markOverhangAndSplitPointNavigation() {
+        let l = UUID()
+        let v = clip(0, 4, link: l), au = clip(2, 4, kind: .audio, link: l)
+        let ses = makeSession([track([v]), track([au], kind: .audio)])
+        ses.seek(to: s(1))
+        #expect(ses.canMarkOverhang)
+        ses.markOverhang()
+        #expect(ses.activeTimeline!.inOut == TimeRange(start: s(0), end: s(2)))
+        ses.seek(to: s(0))
+        ses.goToNextSplitPoint()
+        #expect(ses.playhead == s(2))
+        ses.goToNextSplitPoint()
+        #expect(ses.playhead == s(4))
+        ses.goToPreviousSplitPoint()
+        #expect(ses.playhead == s(2))
+    }
+
+    @Test func trackAddDeleteRename() {
+        let a = clip(0, 2)
+        let ses = makeSession([track([a]), track([], kind: .audio)])
+        ses.addTrack(.video)
+        ses.addTrack(.audio)
+        #expect(ses.activeTimeline!.tracks.map(\.kind) == [.video, .video, .audio, .audio])
+        let first = ses.activeTimeline!.tracks[0].id
+        ses.renameTrack(first, to: " Camera ")
+        #expect(ses.activeTimeline!.tracks[0].name == "Camera")
+        ses.deleteTrack(first)
+        #expect(ses.activeTimeline!.tracks.count == 3)
+        #expect(ses.undo())
+        #expect(ses.activeTimeline!.tracks.count == 4)
+    }
+
+    @Test func markerAtPlayheadOpensEditOnSecondPress() {
+        let ses = makeSession([track([clip(0, 5)])])
+        ses.seek(to: s(2))
+        let first = ses.markAtPlayhead()
+        #expect(first?.openEdit == false)
+        let second = ses.markAtPlayhead()
+        #expect(second?.openEdit == true && second?.id == first?.id)
+        #expect(ses.activeTimeline!.markers.count == 1)
+        ses.editMarker(first!.id, name: "Cut", color: .red, comment: "tighten")
+        #expect(ses.activeTimeline!.markers[0].color == .red && ses.activeTimeline!.markers[0].name == "Cut")
+        ses.deleteMarker(first!.id)
+        #expect(ses.activeTimeline!.markers.isEmpty)
+    }
+
+    @Test func markerDurationIsOneUndoStep() {
+        let ses = makeSession([track([clip(0, 4)])])
+        let id = ses.markAtPlayhead()!.id
+        ses.setMarkerDuration(id, to: s(2))
+        #expect(ses.activeTimeline!.markers[0].duration == s(2))
+        ses.editMarker(id, name: "R", color: .blue, comment: "c", duration: s(3))
+        #expect(ses.activeTimeline!.markers[0].duration == s(3) && ses.activeTimeline!.markers[0].name == "R")
+        ses.undo()
+        #expect(ses.activeTimeline!.markers[0].duration == s(2) && ses.activeTimeline!.markers[0].name != "R")
+        ses.undo()
+        #expect(ses.activeTimeline!.markers[0].duration == .zero)
+    }
+
+    @Test func beatSnapLevelPersists() {
+        let d = UserDefaults(suiteName: "sq.test.beatSnap")!
+        d.removePersistentDomain(forName: "sq.test.beatSnap")
+        #expect(BeatSnapLevel.stored(d) == .everyBeat)
+        BeatSnapLevel.barsOnly.store(d)
+        #expect(BeatSnapLevel.stored(d) == .barsOnly)
+    }
+
+    @Test func renameAndLabelSelectedClip() {
+        let a = clip(0, 2)
+        let ses = makeSession([track([a])])
+        ses.select(clips: [a.id])
+        ses.renameSelectedClip(to: "Interview")
+        ses.setLabel(.rose)
+        let c = ses.activeTimeline!.tracks[0].clips[0]
+        #expect(c.name == "Interview" && c.label == .rose)
+        ses.setLabel(nil)
+        #expect(ses.activeTimeline!.tracks[0].clips[0].label == nil)
+    }
+
+    @Test func editPointJumpFollowsTargetedTracks() {
+        var v1 = track([clip(0, 2), clip(2, 2)])
+        v1.isTargeted = true
+        let v2 = track([clip(1, 5)])
+        let ses = makeSession([v1, v2])
+        ses.seek(to: s(0))
+        ses.goToNextEditPoint()
+        #expect(ses.playhead == s(2))
+    }
+
+    @Test func selectClipAtPlayheadAndAnyTrackJump() {
+        var v1 = track([clip(0, 2), clip(2, 2)])
+        v1.isTargeted = true
+        let v2 = track([clip(1, 5)])
+        let ses = makeSession([v1, v2])
+        ses.seek(to: s(1))
+        ses.selectClipAtPlayhead()
+        #expect(ses.selection == [ses.activeTimeline!.tracks[0].clips[0].id])
+        ses.seek(to: s(0))
+        ses.goToEditPointOnAnyTrack(forward: true)
+        #expect(ses.playhead == s(1))
+        ses.goToEditPointOnAnyTrack(forward: false)
+        #expect(ses.playhead == s(0))
+    }
+
+    @Test func ungroupWithoutAGroupSaysSoAndChangesNothing() {
+        let a = clip(0, 2)
+        let ses = makeSession([track([a])])
+        ses.select(clips: [a.id])
+        let before = ses.activeTimeline!
+        #expect(!ses.ungroupSelection())
+        #expect(ses.lastError == "Select a group to ungroup.")
+        #expect(ses.activeTimeline! == before)
+    }
+
+    @Test func groupThenUngroupRestoresTheClipsAndSelectsThem() {
+        let a = clip(0, 2), b = clip(2, 2)
+        let ses = makeSession([track([a, b])])
+        ses.select(clips: [a.id, b.id])
+        #expect(ses.groupSelection() != nil)
+        #expect(ses.activeTimeline!.tracks[0].clips.count == 1)
+        ses.select(clips: [ses.activeTimeline!.tracks[0].clips[0].id])
+        #expect(ses.ungroupSelection())
+        #expect(ses.undoName == "Ungroup")
+        let cs = ses.activeTimeline!.tracks[0].clips
+        #expect(cs.map(\.start) == [s(0), s(2)])
+        #expect(ses.selection == Set(cs.map(\.id)))
+        #expect(ses.undo())
+        #expect(ses.activeTimeline!.tracks[0].clips.count == 1)
+    }
+
+    @Test func editPointJumpAcrossAllTracksStopsAtTheEnds() {
+        let ses = makeSession([track([clip(0, 2), clip(2, 2)]), track([clip(1, 5)])])
+        ses.seek(to: s(6))
+        ses.goToEditPointOnAnyTrack(forward: true)
+        #expect(ses.playhead == s(6))                                // nothing after the last edit point
+        ses.goToEditPointOnAnyTrack(forward: false)
+        #expect(ses.playhead == s(4))                                // end of the first track's last clip
+        ses.seek(to: s(0))
+        ses.goToEditPointOnAnyTrack(forward: false)
+        #expect(ses.playhead == s(0))
+    }
+}

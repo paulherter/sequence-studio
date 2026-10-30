@@ -1,0 +1,152 @@
+{
+  "appFormat" : 71,
+  "formatVersion" : 71,
+  "project" : {
+    "activeTimeline" : "45E95A23-CA5F-42B1-BA84-61DBCAC9664C",
+    "builtInStyles" : 1,
+    "id" : "0D85461B-F30E-413C-82A4-15F492C10849",
+    "media" : [
+
+    ],
+    "name" : "P",
+    "rootBin" : {
+      "children" : [
+        {
+          "sequence" : {
+            "_0" : "45E95A23-CA5F-42B1-BA84-61DBCAC9664C"
+          }
+        }
+      ],
+      "id" : "0D85461B-F30E-413C-82A4-15F492C10849",
+      "name" : "Root"
+    },
+    "sourceMarks" : {
+
+    },
+    "styleKit" : {
+      "colors" : {
+
+      },
+      "fonts" : {
+
+      },
+      "looks" : {
+        "brand" : {
+          "name" : "Old",
+          "payload" : "eyJzdHlsZSI6e30sImFuaW1hdGlvbiI6e319",
+          "payloadVersion" : 1
+        },
+        "own-1" : {
+          "name" : "Old",
+          "payload" : "eyJzdHlsZSI6e30sImFuaW1hdGlvbiI6e319",
+          "payloadVersion" : 1
+        }
+      }
+    },
+    "timelines" : [
+      {
+        "angles" : {
+          "audioAngle" : 0,
+          "audioFollowsVideo" : false
+        },
+        "captionTracks" : [
+          {
+            "animationRef" : "look-kit-brand",
+            "id" : "CC4BD707-3B25-4AB0-B1A8-9A54A120AB7B",
+            "isLocked" : false,
+            "isVisible" : true,
+            "items" : [
+              {
+                "animationRef" : "",
+                "id" : "54A173E1-07DD-4279-BE7E-81292BBB0C08",
+                "lines" : [
+                  "Hello"
+                ],
+                "range" : {
+                  "duration" : {
+                    "timescale" : 1,
+                    "value" : 1
+                  },
+                  "start" : {
+                    "timescale" : 1,
+                    "value" : 0
+                  }
+                },
+                "styleOverridden" : false,
+                "styleRef" : "look-kit-brand",
+                "words" : [
+
+                ]
+              },
+              {
+                "animationRef" : "",
+                "id" : "1AC251BE-46B3-47EE-822B-2450ACC6D42F",
+                "lines" : [
+                  "World"
+                ],
+                "range" : {
+                  "duration" : {
+                    "timescale" : 1,
+                    "value" : 1
+                  },
+                  "start" : {
+                    "timescale" : 1,
+                    "value" : 2
+                  }
+                },
+                "styleOverridden" : false,
+                "styleRef" : "look-kit-brand",
+                "words" : [
+
+                ]
+              }
+            ],
+            "name" : "",
+            "styleRef" : "look-kit-brand",
+            "syncLock" : true
+          }
+        ],
+        "format" : {
+          "audioSampleRate" : 48000,
+          "frameDuration" : {
+            "timescale" : 30,
+            "value" : 1
+          },
+          "height" : 1080,
+          "width" : 1920
+        },
+        "formatLocked" : true,
+        "id" : "45E95A23-CA5F-42B1-BA84-61DBCAC9664C",
+        "markers" : [
+
+        ],
+        "name" : "S",
+        "tracks" : [
+          {
+            "clips" : [
+
+            ],
+            "height" : 48,
+            "id" : "0331B6F3-32A4-412B-8528-608754B22091",
+            "isLocked" : false,
+            "isMuted" : false,
+            "isSolo" : false,
+            "isTargeted" : false,
+            "isVisible" : true,
+            "kind" : "video",
+            "name" : "",
+            "pan" : 0,
+            "syncLock" : true,
+            "transitions" : [
+
+            ],
+            "volumeDB" : 0
+          }
+        ],
+        "variants" : [
+
+        ]
+      }
+    ]
+  }
+}

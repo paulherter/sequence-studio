@@ -1,0 +1,26 @@
+.DS_Store
+xcuserdata/
+*.xcodeproj/
+DerivedData/
+.build/
+build/
+**/TestMedia/
+*.xcresult
+docs/reference/
+icon-work/
+dist/
+*.dmg
+*.zip
+.swiftpm/
+*.sqproj
+*.ssproj
+*.prproj
+.claude/settings.local.json
+Packages/*/.build
+
+# Subject mask spike: clone, checkpoint, Python env, converted models, frames (never commit)
+Tools/SubjectMaskSpike/work/
+Tools/SubjectMaskSpike/.build/
+
+# Internal UI reference screenshots (third-party images, never commit)
+docs/research/ui-ref-images/

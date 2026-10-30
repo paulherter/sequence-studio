@@ -33,7 +33,7 @@ a copy (`EditorSession.previewPerform`) and returns the diff. Refused while a ti
 
 Operations (`op` + fields): `razor{at, tracks?}`, `rippleDelete{clips}`, `lift{clips}`, `extract{range, tracks?}`,
 `liftRange{range, tracks?}`, `trim{clip, edge: head|tail, by}`, `rippleTrim{clip, edge, by}`, `move{clip, to, track?}`,
-`slip{clip, by}`, `slide{clip, by}`, `roll{clip, by}`, `toggleEnabled{clips}`, `addMarker{at, name?}`.
+`slip{clip, by}`, `slide{clip, by}`, `roll{clip, by}`, `toggleEnabled{clips}`, `addMarker{at, name?}`, `setPixelAspect{media, aspect?}` (aspect `{num, den}` within 1:4 ... 4:1; omitted = what the file says; a media setting, counted in the diff as `pixelAspectChanges`).
 `range` = `{start, duration}`; `tracks` omitted = every unlocked track.
 
 ## Ids
@@ -50,3 +50,7 @@ f=~/Library/Application\ Support/Sequence\ Studio/edit-api.json
 port=$(jq .port "$f"); token=$(jq -r .token "$f")
 curl -s -H "Authorization: Bearer $token" http://127.0.0.1:$port/v1/state
 ```
+
+## Unknown keys
+
+Requests with unknown JSON keys are refused with `400`; nothing is applied.

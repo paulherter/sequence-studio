@@ -1,0 +1,49 @@
+{
+  "formatVersion" : 1,
+  "styles" : [
+    {
+      "id" : "user-1a2b3c4d",
+      "isBuiltIn" : false,
+      "name" : "Red",
+      "style" : {
+        "alignment" : "center",
+        "allCaps" : false,
+        "color" : {
+          "alpha" : 1,
+          "blue" : 0,
+          "green" : 0,
+          "red" : 1
+        },
+        "fontName" : "Menlo",
+        "italic" : false,
+        "lineSpacing" : 0,
+        "size" : 50,
+        "tracking" : 0,
+        "verticalAlignment" : "top",
+        "weight" : 700
+      }
+    },
+    {
+      "id" : "user-5e6f7a8b",
+      "isBuiltIn" : false,
+      "name" : "Big",
+      "style" : {
+        "alignment" : "center",
+        "allCaps" : false,
+        "color" : {
+          "alpha" : 1,
+          "blue" : 0,
+          "green" : 0,
+          "red" : 1
+        },
+        "fontName" : "Menlo",
+        "italic" : false,
+        "lineSpacing" : 0,
+        "size" : 90,
+        "tracking" : 0,
+        "verticalAlignment" : "top",
+        "weight" : 700
+      }
+    }
+  ]
+}

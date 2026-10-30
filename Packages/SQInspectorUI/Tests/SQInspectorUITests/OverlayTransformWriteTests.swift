@@ -1,0 +1,69 @@
+import Foundation
+import Testing
+import SQCore
+@testable import SQInspectorUI
+
+@MainActor @Suite struct OverlayTransformWriteTests {
+    private func model(playhead: Time = Time(6, 1)) -> EffectControlsModel {
+        let clip = Clip(name: "c", media: UUID(), kind: .video, source: TimeRange(start: .zero, duration: Time(10, 1)), start: Time(5, 1))
+        let m = EffectControlsModel()
+        m.setClip(clip)
+        m.playhead = playhead
+        return m
+    }
+
+    @Test func gestureEditsAreRelativeToTheGestureStartAndOnlyWriteChangedProperties() {
+        let m = model()
+        var edits: [(Clip, String, Bool)] = []
+        m.onEdit = { edits.append(($0, $1, $2)) }
+        let start = m.clip!.transform(at: Time(6, 1))
+        m.beginGesture()
+        var t = start; t.position = Vec2(10, 0)
+        #expect(m.setTransform(t, from: start))
+        t.position = Vec2(30, 5); t.scale = Vec2(2, 2)
+        #expect(m.setTransform(t, from: start))
+        m.endGesture()
+        #expect(m.clip!.animation.position.value == Vec2(30, 5))
+        #expect(m.clip!.animation.scale.value == Vec2(2, 2))
+        #expect(m.clip!.animation.rotation.value == 0 && m.clip!.animation.anchor.value == .zero)
+        // First emit opens the undo step, the second continues it.
+        #expect(edits.map(\.2) == [false, true])
+    }
+
+    @Test func animatedPropertyGetsAKeyAtThePlayhead() {
+        let m = model(playhead: Time(7, 1))
+        m.toggleStopwatch(.position)
+        let start = m.clip!.transform(at: Time(7, 1))
+        var t = start; t.position = Vec2(50, 50)
+        m.beginGesture()
+        #expect(m.setTransform(t, from: start))
+        m.endGesture()
+        let keys = m.clip!.animation.position.track.keys
+        #expect(keys.count == 1 && keys[0].time == Time(2, 1) && keys[0].value == Vec2(50, 50))
+    }
+
+    @Test func setVectorInAGestureWritesBothComponents() {
+        let m = model()
+        m.beginGesture()
+        #expect(m.setVector(.position, to: Vec2(30, 40)))
+        #expect(m.setVector(.position, to: Vec2(50, 60)))
+        m.endGesture()
+        #expect(m.clip!.animation.position.value == Vec2(50, 60))
+    }
+
+    @Test func keyedTextPositionMovesEveryKey() {
+        var clip = Clip(name: "t", media: UUID(), kind: .video, source: TimeRange(start: .zero, duration: Time(10, 1)), start: Time(5, 1))
+        clip.generator = GeneratorRef(kind: GeneratorRef.text, payload: Data(), payloadVersion: 1)
+        clip.animation.position.track.insert(Keyframe(time: .zero, value: Vec2(-300, 0)))
+        clip.animation.position.track.insert(Keyframe(time: Time(1, 1), value: Vec2(0, 0)))
+        let m = EffectControlsModel()
+        m.setClip(clip)
+        m.playhead = Time(6, 1)
+        let start = m.clip!.transform(at: Time(6, 1))
+        var t = start; t.position = Vec2(40, 20)
+        m.beginGesture()
+        #expect(m.setTransform(t, from: start))
+        m.endGesture()
+        #expect(m.clip!.animation.position.track.keys.map(\.value) == [Vec2(-260, 20), Vec2(40, 20)])
+    }
+}

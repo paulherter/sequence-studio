@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Ad-hoc packages only (scripts/package.sh): an ad-hoc signed app under the hardened runtime may not load an ad-hoc
+     signed library (no Team ID to match), so the Gyroflow engine (Contents/Frameworks/libsqgyro.dylib) would not load.
+     Developer ID builds sign app and library with one Team ID and do not need this. -->
+<plist version="1.0">
+<dict>
+	<key>com.apple.security.cs.disable-library-validation</key>
+	<true/>
+	<key>com.apple.security.device.audio-input</key>
+	<true/>
+</dict>
+</plist>

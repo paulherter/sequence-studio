@@ -1,0 +1,95 @@
+import Foundation
+import Testing
+import SQCore
+import SQText
+@testable import SQPlayback
+
+@Suite struct CaptionKaraokePlanTests {
+    let canvas = SequenceFormat(width: 1080, height: 1920, frameDuration: Time(1, 30))
+
+    func item() -> CaptionItem {
+        let words = [("so", 0, 3), ("this", 4, 8), ("works", 9, 14)].map {
+            CaptionWord(text: $0.0, range: TimeRange(start: Time(Int64($0.1), 10), end: Time(Int64($0.2), 10)))
+        }
+        return CaptionItem(lines: ["so this works"], range: TimeRange(start: .zero, end: Time(2, 1)), styleRef: "tiktok", words: words)
+    }
+
+    /// The caption must be on screen on every frame, also on the frames where the lit word changes: the plain caption
+    /// is the same raster for the whole caption, so it never has to be made again at a word change.
+    @Test func thePlainCaptionIsTheSameRasterOnEveryFrame() throws {
+        let it = item()
+        var plain = Set<GeneratorRef>(), lit = Set<GeneratorRef>()
+        let frames = 60
+        for f in 0..<frames {
+            let t = canvas.frameDuration * Int64(f)
+            guard it.range.contains(t) else { continue }
+            let p = try CaptionPreview.plan(for: it, karaoke: KaraokeStyle(), canvas: canvas, at: t)
+            plain.insert(p.plain)
+            if let l = p.lit { lit.insert(l) }
+        }
+        #expect(plain.count == 1)        // one raster for the whole caption
+        #expect(lit.count == 3)          // one small lit layer per word
+    }
+
+    @Test func theNextWordIsPreparedBeforeItStarts() throws {
+        let it = item()
+        let k = KaraokeStyle()
+        let at0 = try CaptionPreview.plan(for: it, karaoke: k, canvas: canvas, at: .zero)
+        let at5 = try CaptionPreview.plan(for: it, karaoke: k, canvas: canvas, at: Time(5, 10))
+        #expect(at0.next == at5.lit)     // what is "next" while word 0 is lit is what word 1 will need
+        let last = try CaptionPreview.plan(for: it, karaoke: k, canvas: canvas, at: Time(10, 10))
+        #expect(last.next == nil)
+    }
+
+    /// Played backwards the word reached next is the one before: that is the one prepared, also from the time after the
+    /// last word (nothing lit) where the last word comes next.
+    @Test func playedBackwardsTheWordBeforeIsPrepared() throws {
+        let it = item()
+        let k = KaraokeStyle()
+        func plan(_ tenths: Int64) throws -> CaptionPreview.Plan {
+            try CaptionPreview.plan(for: it, karaoke: k, canvas: canvas, at: Time(tenths, 10), forward: false)
+        }
+        let first = try plan(0), second = try plan(5), third = try plan(10)
+        #expect(third.next == second.lit && third.next != nil)
+        #expect(second.next == first.lit && second.next != nil)
+        #expect(first.next == nil)
+        #expect(try plan(18).next == third.lit)   // after the last word
+        // The lit word itself does not depend on the direction.
+        #expect(second.lit == (try CaptionPreview.plan(for: it, karaoke: k, canvas: canvas, at: Time(5, 10))).lit)
+    }
+
+    /// A caption held past its end (a small gap, the tail under the next caption): played backwards the playhead comes
+    /// into its range from the end, so the last word is prepared; played forwards nothing is.
+    @Test func playedBackwardsIntoAHeldCaptionTheLastWordIsPrepared() throws {
+        let it = item()
+        let k = KaraokeStyle()
+        func held(forward: Bool) throws -> CaptionPreview.Plan {
+            try CaptionPreview.plan(for: it, karaoke: k, canvas: canvas, at: it.range.end, held: true, forward: forward)
+        }
+        let lastWord = try #require(it.karaokeKeys.last(where: { $0.activeWord != nil }))
+        let lastLit = try CaptionPreview.plan(for: it, karaoke: k, canvas: canvas, at: lastWord.time).lit
+        #expect(lastLit != nil)
+        #expect(try held(forward: false).next == lastLit)
+        #expect(try held(forward: true).next == nil)
+        #expect(try held(forward: false).lit == (try held(forward: true).lit))
+    }
+
+    @Test func theCaptionStaysVisibleWhileTheLitLayerIsNotReady() throws {
+        // The plain raster is cached by itself; a cold lit layer does not make the caption wait.
+        let it = item()
+        TextGenerator.clearCache()
+        let p = try CaptionPreview.plan(for: it, karaoke: KaraokeStyle(), canvas: canvas, at: Time(5, 10))
+        try TextGenerator.prewarm(ref: p.plain)
+        #expect(TextGenerator.isCached(ref: p.plain))
+        let lit = try #require(p.lit)
+        #expect(!TextGenerator.isCached(ref: lit))                 // cold: skipped, the plain caption is still drawn
+        try TextGenerator.prewarm(ref: lit)
+        let later = try CaptionPreview.plan(for: it, karaoke: KaraokeStyle(), canvas: canvas, at: Time(10, 10))
+        #expect(TextGenerator.isCached(ref: later.plain))          // a word change never un-caches the caption
+    }
+
+    @Test func withoutKaraokeThereIsOnlyThePlainCaption() throws {
+        let p = try CaptionPreview.plan(for: item(), karaoke: nil, canvas: canvas, at: Time(5, 10))
+        #expect(p.lit == nil && p.next == nil)
+    }
+}
