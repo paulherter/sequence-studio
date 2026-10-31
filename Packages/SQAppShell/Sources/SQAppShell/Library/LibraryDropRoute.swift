@@ -13,8 +13,7 @@ import SQTimelineUI
 /// their `EditorPanels` wiring (`onDropFiles`, `onDropTextTemplate`, `onDropTitleBlock`, `onDropPreset`, `onDropEffect`,
 /// `commitTransitionDrop`). Files show the Project drop ghost and land where it showed after the import; templates and
 /// titles show a 5 s ghost; effects, effect presets and transitions land on the clip or edit under the pointer.
-/// shortcut: no hover highlight for effects, presets and transitions (the Mac box over the target edit or clip); upgrade
-/// when TimelinePanel draws a transition drop target.
+/// While dragging, effects, presets and transitions show the Mac highlight (`TimelinePanel.effectDropHover`).
 public enum LibraryDropRoute {
     /// What is dragged: a Library cell or Effects panel rows (effect kinds, `preset.<uuid>`, transition ids).
     public enum Payload: Equatable, Sendable {
@@ -41,6 +40,19 @@ public enum LibraryDropRoute {
         let over = panel.contains(x: x, y: y)
         let insert = mods.contains(.command)
         guard phase != .canceled else { panel.dropExit(); return false }
+        if phase == .moved {
+            switch payload {
+            case .effects(let ids):
+                if over { panel.effectDropHover(ids: ids, x: x, y: y, layerDuration: layerDuration(ids, session)) } else { panel.effectDropExit() }
+                return false
+            case .library(.effectPreset(let id)):
+                if over { panel.effectDropHover(ids: [presetPrefix + id.uuidString], x: x, y: y, layerDuration: .zero) } else { panel.effectDropExit() }
+                return false
+            default: break
+            }
+        }
+        if phase == .ended, case .effects = payload { panel.effectDropExit() }
+        if phase == .ended, case .library(.effectPreset) = payload { panel.effectDropExit() }
         switch payload {
         case .library(.files(let urls)):
             guard phase == .ended else {
@@ -76,22 +88,38 @@ public enum LibraryDropRoute {
                 return dropTransition(kind, at: panel.point(x: x, y: y), panel: panel, session: session)
             }
             guard let clip = panel.clipID(x: x, y: y) else { return false }
-            if id.hasPrefix(presetPrefix), let uuid = UUID(uuidString: String(id.dropFirst(presetPrefix.count))),
-               let item = context.presets.first(where: { $0.id == uuid }) {
-                if !session.applyPreset(item, to: [clip], mode: PresetApplyModeSetting.load()) {
-                    context.status(session.lastError ?? SQL10n.string("The preset could not be applied."))
-                }
-                return true
-            }
-            let targets = session.effectDropTargets(hit: clip)
-            for kind in ids where !session.addEffect(kind: kind, to: targets) {
-                context.status(SQL10n.format("%@ needs %@.", SQL10n.string(EffectsApply.title(kind)), SQL10n.string(EffectsApply.targetNoun(kind))))
-            }
-            return true
+            let targets = id.hasPrefix(presetPrefix) ? [clip] : session.effectDropTargets(hit: clip)
+            return dropOnClips(ids, targets: targets, session: session, context: context)
         }
     }
 
+    /// Effects or one effect preset released on clips: a preset applies with the saved mode, effects are added one by one
+    /// (a refusal says why in the status line). True when the drag was understood. Also the Effect Controls drop
+    /// (`EffectControlsView+Drop`: the clip shown there).
+    @MainActor @discardableResult
+    public static func dropOnClips(_ ids: [String], targets: Set<Clip.ID>, session: EditorSession, context: Context) -> Bool {
+        guard let id = ids.first, !targets.isEmpty, EffectDragPayload.transitionKind(forID: id) == nil else { return false }
+        // A folder drag may carry transitions among the effects: Effect Controls skips them (`EffectControlsView.dropPayload`).
+        let ids = ids.filter { EffectDragPayload.transitionKind(forID: $0) == nil }
+        if id.hasPrefix(presetPrefix), let uuid = UUID(uuidString: String(id.dropFirst(presetPrefix.count))),
+           let item = context.presets.first(where: { $0.id == uuid }) {
+            if !session.applyPreset(item, to: targets, mode: PresetApplyModeSetting.load()) {
+                context.status(session.lastError ?? SQL10n.string("The preset could not be applied."))
+            }
+            return true
+        }
+        for kind in ids where !session.addEffect(kind: kind, to: targets) {
+            context.status(SQL10n.format("%@ needs %@.", SQL10n.string(EffectsApply.title(kind)), SQL10n.string(EffectsApply.targetNoun(kind))))
+        }
+        return true
+    }
+
     static let presetPrefix = "preset."
+
+    @MainActor
+    static func layerDuration(_ ids: [String], _ session: EditorSession) -> Time {
+        ids.first.flatMap(EffectDragPayload.transitionKind(forID:)).map { session.transitionLayerDuration($0) } ?? .zero
+    }
 
     /// Templates and titles: a one-item ghost on the existing tracks, then `place` with its time and track.
     @MainActor

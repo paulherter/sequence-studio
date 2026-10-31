@@ -311,11 +311,20 @@ import SQUIKit
 
     // MARK: Drawing
 
+    /// No sequence open: the empty state instead of the tab (TextPanelView.emptyLabel).
+    var showsEmptyState: Bool { model == nil }
+    static let noSequenceTitle = "No sequence open", noSequenceHint = "Open a sequence to transcribe it and create captions"
+
     public func draw(_ c: inout Canvas) {
         sync()
         let t = theme, fs = CGFloat(DrawTheme.TypeSize.body)
         c.fill(CGRect(origin: .zero, size: size), t.panel)
-        guard let m = model else { return }
+        guard let m = model else {
+            // TextPanelView.emptyLabel: no sequence, no transcript page.
+            c.drawEmptyState(title: SQL10n.string(Self.noSequenceTitle), hint: SQL10n.string(Self.noSequenceHint),
+                             in: CGRect(origin: .zero, size: size), theme: t)
+            return
+        }
         measure(c, m)
         let f = frames(), enabledTop = m.canTranscribe && !isRunning
         InspectorDraw.button(&c, title: SQL10n.string(transcribeTitle), in: f.transcribe, hovering: hover == .transcribe,

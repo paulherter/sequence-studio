@@ -30,6 +30,19 @@ extension MonitorPanel {
         return false
     }
 
+    /// Hand tool press: starts a pan; the second press of a double-click fits the picture.
+    func beginHandPress(at p: CGPoint) {
+        let now = clock()
+        if let last = lastPress, now - last.time <= Self.doubleClickInterval,
+           hypot(p.x - last.p.x, p.y - last.p.y) <= Self.typeDragThreshold {
+            lastPress = nil
+            zoomGesture(.fit)
+            return
+        }
+        lastPress = (now, p)
+        handLast = p
+    }
+
     /// The Type tool press ended: a drag drew a box (center and size in sequence px), a click places point text.
     func endTypePress(at p: CGPoint) {
         guard let press = typePress else { return }

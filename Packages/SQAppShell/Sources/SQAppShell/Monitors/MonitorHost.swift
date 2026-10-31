@@ -1,4 +1,5 @@
 import Foundation
+import SQAudioFX
 import SQCore
 import SQDrawKit
 import SQDrawMonitor
@@ -36,6 +37,8 @@ public final class MonitorHost {
     public var maskToolNow: () -> MaskToolMode? = { nil }
     /// The Mask tool's Magic mode (a platform segmenter; nil: Magic clicks only tell the status line).
     public var magic: (any AppMagicMasks)?
+    /// Magic tool, nothing usable selected: the topmost video clip under the pointer, previewed (never selected by hover).
+    var magicPreviewClip: Clip.ID?
     private var magicWasOn = false
     /// The Slip drag's two-up (the host makes it with the Program engine); drawn instead of the picture while it shows.
     public var slip: SlipTwoUpHost?
@@ -45,6 +48,8 @@ public final class MonitorHost {
     public var maskTintDefaults = UserDefaults.standard
     /// Type tool, double-click text editing and the graphic text pick (MonitorTextHost.swift).
     public private(set) lazy var text = MonitorTextHost(session: session, panel: panel)
+    /// The selected graphic's layers on the picture (GraphicsLayerOverlay): text and shapes are picked and moved one by one.
+    private lazy var layerSource = GraphicsLayerAdapter { [weak self] in self?.text.graphics() }
     /// Picture tools (MonitorHost+PictureTools.swift): the running caption drag and the Dynamic Zoom editor's clip.
     var captionDrag: (id: CaptionItem.ID, start: CaptionPosition, textRect: CGRect, started: Bool)?
     var zoomEditRun: (clip: Clip.ID, ease: ZoomEase, dragging: Bool, wrote: Bool)?
@@ -61,6 +66,19 @@ public final class MonitorHost {
         let fd = session.activeTimeline?.frameDuration ?? Time(1, 25)
         model = MonitorPanelModel(frameDuration: fd, mode: .program)
         panel = MonitorPanel(model: model, title: "Program")
+        // Pip asleep above the empty-state hint (the Mac ProgramEmptyView, `SQMascotPlace.programEmpty`).
+        // `SQMascotPlace` is Mac-only (AppKit); off the Mac the same pose (`.sleep`) is used directly.
+        #if os(macOS)
+        let emptyPose = SQMascotPlace.programEmpty.animation
+        let emptyOn = SQMascotPlace.programEmpty.isEnabled
+        #else
+        let emptyPose = SQMascotAnim.sleep
+        let emptyOn = true
+        #endif
+        if emptyOn {
+            let stage = ShellMascotStage()
+            panel.emptyMascot = { c, r in stage.draw(emptyPose, slot: 0, in: r, into: &c) }
+        }
         model.onAction = { [weak self] a in
             guard let self else { return }
             if a == .toggleSafeMargins { model.safeMargins.toggle(); return }
@@ -85,6 +103,12 @@ public final class MonitorHost {
         // Quality popup and the Auto governor's steps reach the engine (EditorPanels: engine.quality = q.decodeScale).
         model.onQualityChange = { [weak session] q in session?.engine.quality = q.decodeScale }
         model.onSafeZoneChange = { [weak self] _ in self?.syncZone() }
+        // "..." > Playback Speed reaches the session (AppController: onPreviewRateChange); the empty monitor's New Sequence button.
+        model.onPreviewRateChange = { [weak session] r in session?.setPreviewRate(r) }
+        model.onNewSequence = { [weak self] in self?.onCommand?(.newSequence) }
+        // The loudness readout over the picture (EditorPanels: monitorView.loudnessProvider / loudnessTargetProvider).
+        panel.loudnessProvider = { [weak session] in session?.engine.loudnessLevels.map(LoudnessReading.init) }
+        panel.loudnessTargetProvider = { [weak session] in LoudnessTarget(delivery: session?.activeTimeline?.deliveryTarget) }
         model.contextMenuBuilder = { [weak self] in self?.programMenuItems() ?? [] }
         panel.onMenu = { [weak menus] items, anchor, pointer in
             guard let menus else { return }
@@ -109,6 +133,10 @@ public final class MonitorHost {
         model.duration = t?.duration ?? .zero
         model.hasSequence = t != nil
         model.timelineIsEmpty = t.map { $0.tracks.allSatisfy { $0.clips.isEmpty } && $0.captionTracks.allSatisfy { $0.items.isEmpty } } ?? false
+        // Sequence Settings > timecode start and display (EditorPanels.syncSequenceSettingsDisplay).
+        let start = t?.timecodeStart ?? .zero, frames = t?.timecodeDisplay == .frames
+        if model.timecodeOrigin != start { model.timecodeOrigin = start }
+        if model.timecodeFramesOnly != frames { model.timecodeFramesOnly = frames }
         model.markIn = t?.inOut?.start
         model.markOut = t?.inOut?.end
         model.markerTimes = t?.markers.map(\.time) ?? []
@@ -176,6 +204,7 @@ public final class MonitorHost {
     public func layout(_ card: DrawRect, scale: Float, playhead: Time, isPlaying: Bool, hasPicture: Bool, dropped: Int = 0) {
         model.currentTime = playhead
         model.isPlaying = isPlaying
+        if model.isLooping != session.bounds.loop { model.isLooping = session.bounds.loop }   // the "..." menu's Loop check
         syncOverlay(isPlaying: isPlaying)
         syncMaskTint(isPlaying: isPlaying)
         refreshDynamicZoomEdit()
@@ -344,16 +373,19 @@ extension MonitorHost {
     /// not on a Color solo view). A running drag keeps its own live transform.
     func syncOverlay(isPlaying: Bool) {
         let o = panel.overlay
+        syncGraphicLayers(isPlaying: isPlaying)
         guard !o.isDragging else { return }
         guard !isPlaying, let fx = effects, let tl = session.displayTimeline, session.colorSoloClip == nil,
               let clip = session.displayedSelectedClip, fx.clip?.id == clip.id,
               let target = OverlayTarget.make(clip: clip, project: session.project, timeline: tl, at: session.playhead,
                                               variant: session.activeVariantID) else {
             overlayTarget = nil; o.isShown = false; o.pointHandles = []; o.masks = []; o.maskTool = nil
+            syncMagicPreview(isPlaying: isPlaying)
             refreshMagic(isPlaying: isPlaying)
             return
         }
         overlayTarget = target
+        magicPreviewClip = nil
         if hidesTransformBox {
             o.isShown = false; o.pointHandles = []; o.masks = []; o.maskTool = nil
             refreshMagic(isPlaying: isPlaying)
@@ -389,6 +421,16 @@ extension MonitorHost {
         } else {
             o.cropInsets = nil
         }
+    }
+
+    /// EditorPanels.updateGraphicsOverlay: the layer boxes show while a graphic under the playhead is selected and nothing plays;
+    /// a drag in progress keeps them.
+    private func syncGraphicLayers(isPlaying: Bool) {
+        let l = panel.layerOverlay
+        guard !l.isDragging else { return }
+        l.source = layerSource
+        let active = text.graphics().flatMap { g in g.clip.map { $0.timeline.contains(session.playhead) } } == true
+        l.isShown = !isPlaying && active && session.colorSoloClip == nil
     }
 
     /// EditorPanels.overlayTransform: one gesture = one undo step through Effect Controls. A text clip's scale handles
@@ -451,7 +493,7 @@ extension MonitorHost {
         }
         o.onMaskToolHover = { [weak self] p in
             guard let self, let magic else { return }
-            magic.hover(p, target: overlayTarget?.clip)
+            magic.hover(p, target: overlayTarget?.clip ?? magicPreviewClip)
         }
         o.onMaskToolClick = { [weak self] p, mods in
             guard let self, let fx = effects, let mode = maskToolNow() else { return }
@@ -461,7 +503,14 @@ extension MonitorHost {
                     onStatus?("Magic masks are not available on this platform yet: use Pen, Ellipse or Rectangle.")
                     return
                 }
-                magic.click(p, target: overlayTarget?.clip, subtract: mods.contains(.option), newMask: mods.contains(.shift))
+                if overlayTarget == nil, let preview = magicPreviewClip {
+                    // The clip under the pointer is not selected: the click selects it, then picks (the Mac pickClip + press).
+                    let subtract = mods.contains(.option) != panel.overlay.magicSubtract, newMask = mods.contains(.shift)
+                    session.select(clips: [preview])
+                    Task { @MainActor [weak self] in self?.magic?.click(p, target: preview, subtract: subtract, newMask: newMask) }
+                    return
+                }
+                magic.click(p, target: overlayTarget?.clip, subtract: mods.contains(.option) != panel.overlay.magicSubtract, newMask: mods.contains(.shift))
                 return
             }
             guard fx.playheadInClip else { onStatus?("Put the playhead on the clip to draw a mask there."); return }

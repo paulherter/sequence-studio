@@ -43,6 +43,7 @@ final class PictureEngineStub: ProgramEngine, AppPictureSource {
     var channelStates: [ChannelMonitor] = []
     func setChannelMonitor(_ state: ChannelMonitor) { channelStates.append(state) }
     var meterReading: (sequence: Int, peaks: [Float])? = (3, [0.5, 0.25])
+    var showsCaptions = true
 }
 
 @MainActor
@@ -115,6 +116,34 @@ struct SharedHostsTests {
         #expect(lines.contains("Transcribing the sequence…"))
         #expect(await task.value == 0)
         #expect(lines.count >= 2)
+    }
+
+    @Test func editingACaptionFromTheTimelineTypesIntoItsRowInTheTextPanel() throws {
+        let engine = PictureEngineStub()
+        let s = session(engine)
+        let shell = ShellHost(session: s, map: .premiereDefault, recents: RecentProjects(entries: []))
+        let host = CaptionsHost(session: s, menus: shell.menuBar.controller, shell: shell)
+        host.layout(CGRect(x: 0, y: 0, width: 300, height: 400))
+        #expect(!host.editCaption(UUID()))                       // no such caption
+        let item = CaptionItem(lines: ["Hello"], range: TimeRange(start: .zero, duration: Time(1, 1)))
+        #expect(s.addCaptions([item]))
+        let id = try #require(s.captionItems.first?.id)
+        host.panel.select(.templates)
+        #expect(shell.editCaptionInPanel?(id) == true)
+        #expect(host.panel.tab == .captions)
+        #expect(host.panel.captions.isEditingCaption)
+    }
+
+    @Test func theSavedCaptionsInMonitorChoiceComesBackAtLaunch() throws {
+        let engine = PictureEngineStub()
+        let shell = ShellHost(session: session(engine), map: .premiereDefault, recents: RecentProjects(entries: []))
+        let defaults = try #require(UserDefaults(suiteName: "sq.test.captionsInMonitor"))
+        defer { defaults.removePersistentDomain(forName: "sq.test.captionsInMonitor") }
+        shell.restoreCaptionsInMonitor(defaults: defaults)
+        #expect(engine.showsCaptions)                              // nothing saved: unchanged
+        defaults.set(false, forKey: "sq.showCaptionsInMonitor")
+        shell.restoreCaptionsInMonitor(defaults: defaults)
+        #expect(!engine.showsCaptions)
     }
 
     @Test func theAutoCaptionsCommandRunsThroughTheCaptionsHost() {

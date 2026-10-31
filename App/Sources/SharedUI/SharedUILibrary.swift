@@ -13,11 +13,17 @@ extension SharedUIController {
         let h = LibraryHost(session: session, menus: shell.menuBar.controller, shell: shell)
         h.withTimeline = { [weak self] change in if let self { change(&timelinePanel) } }
         h.modifiers = { MacKeys.modifiers(flags: NSEvent.modifierFlags.rawValue) }
+        h.inspectorDropClip = { [weak self] in self?.inspectorDropClip($0) }
         h.poster = { [mediaStore] url in
             mediaStore.picture(media: mediaStore.id(forPath: url.path), at: nil).map {
                 ProjectPoster(slot: $0.slot, u0: $0.source.u0, v0: $0.source.v0, u1: $0.source.u1, v1: $0.source.v1,
                               pixelSize: $0.pixelSize)
             }
+        }
+        h.isSequencePlaying = { [weak self] in self.map { !$0.engine.rate.isPaused } ?? false }
+        h.previewFrame = { [weak self] in
+            guard let self, let size = libraryFrames.size else { return nil }
+            return (LibraryPreviewFrames.slot, size)
         }
         wirePreferencesLibrary(h.model)
         return h
@@ -49,7 +55,16 @@ extension SharedUIController {
         let h = EffectsHost(session: session, menus: shell.menuBar.controller, shell: shell, library: library.model)
         h.withTimeline = { [weak self] change in if let self { change(&timelinePanel) } }
         h.modifiers = { MacKeys.modifiers(flags: NSEvent.modifierFlags.rawValue) }
+        h.inspectorDropClip = { [weak self] in self?.inspectorDropClip($0) }
+        h.graphicsDrop = { [weak self] kinds, p in self?.graphics.dropEffects(kinds, at: p) ?? false }
+        h.graphicsDragOver = { [weak self] p in self?.graphics.effectDragOver(at: p) }
         return h
+    }
+
+    /// The clip shown in Effect Controls when a Library/Effects drag is released over that card (no transition shown).
+    func inspectorDropClip(_ p: CGPoint) -> Clip.ID? {
+        guard inspector.frame.contains(p), !inspector.showsTransitionControls else { return nil }
+        return inspector.model.clip?.id
     }
 
     func drawLibraryPanels(_ c: inout Canvas, scale: Float, theme: DrawTheme) {
@@ -60,6 +75,17 @@ extension SharedUIController {
     func drawLibraryDragLabels(_ c: inout Canvas, scale: Float, theme: DrawTheme) {
         library.drawDragLabel(&c, scale: scale, theme: theme)
         effects.drawDragLabel(&c, scale: scale, theme: theme)
+        drawInspectorDropHighlight(&c, scale: scale, theme: theme)
+    }
+
+    /// While an effect, preset or keystone is dragged over Effect Controls (a drop there lands on its clip) the card gets an
+    /// accent outline.
+    func drawInspectorDropHighlight(_ c: inout Canvas, scale: Float, theme: DrawTheme) {
+        let k = CGFloat(max(scale, 0.01))
+        let dragged = [effects.dragLabel, library.dragLabel].compactMap { $0 }.map { CGPoint(x: CGFloat($0.x) / k, y: CGFloat($0.y) / k) }
+            + [keystones.palette.dragPoint].compactMap { $0 }
+        guard let p = dragged.first, inspectorDropClip(p) != nil else { return }
+        c.stroke(roundedRect: inspector.frame.insetBy(dx: 1, dy: 1), radius: CGFloat(DrawTheme.Radius.small), width: 2, theme.accent)
     }
 
     func handleLibraryPanels(_ e: InputEvent, scale: Float) -> Bool {

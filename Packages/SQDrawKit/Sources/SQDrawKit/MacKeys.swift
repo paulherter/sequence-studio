@@ -35,6 +35,27 @@ public enum MacKeys {
         }
     }
 
+    /// The key for one press on any layout: the key position, except that a printable ASCII cap wins over it (Cmd-Z on a
+    /// German QWERTZ keyboard, "-" on the German cap that sits at the US "/" position, "+" where the US "]" is). `base` is the
+    /// character the key types with no modifier at all (`NSEvent.characters(byApplyingModifiers: [])`). Keypad, named and
+    /// function keys keep their position; a non-ASCII cap (ö, AZERTY digits typed through Shift) falls back to the position.
+    public static func key(code: UInt16, base: String?) -> InputKey? {
+        let positional = key(code: code)
+        if keypad.contains(code) { return positional }
+        switch positional {
+        case .character?, .plus?, .minus?: break
+        default: return positional
+        }
+        guard let base = base?.lowercased(), base.count == 1, let c = base.first, c.isASCII else { return positional }
+        switch c {
+        case "+", "=": return .plus
+        case "-": return .minus
+        case _ where c.isLetter || c.isNumber || ",./;'[]\\`".contains(c): return .character(c)
+        default: return positional
+        }
+    }
+    private static let keypad: Set<UInt16> = [69, 78, 82, 83, 84, 85, 86, 87, 88, 89, 91, 92]
+
     private static let functionKeys: [UInt16: Int] = [122: 1, 120: 2, 99: 3, 118: 4, 96: 5, 97: 6, 98: 7, 100: 8, 101: 9,
                                                       109: 10, 103: 11, 111: 12]
     private static let letters: [UInt16: Character] = [
@@ -56,11 +77,19 @@ public enum MacKeys {
         return m
     }
 
+    /// Modifiers of a key press: `modifiers(flags:)` plus Control, which the key map binds on the Mac (Ctrl+K Jump Cut,
+    /// Ctrl+Delete Close Gap, Ctrl+Space ...). A mouse event does not use this: its Control-click is `secondaryClick`.
+    public static func keyModifiers(flags: UInt) -> InputModifiers {
+        var m = modifiers(flags: flags)
+        if flags & (1 << 18) != 0 { m.insert(.control) }
+        return m
+    }
+
     /// Control-click is the Mac's right click.
     public static func secondaryClick(flags: UInt) -> Bool { flags & (1 << 18) != 0 }
 
     /// What one key press sends, the Mac counterpart of `ShellTextInput` (Windows WM_KEYDOWN + WM_CHAR):
-    /// - Command combinations: the key map's key only (the input method is not asked).
+    /// - Command and Control combinations: the key map's key only (the input method is not asked).
     /// - While an input method composes (marked text before or after the key: IME, a dead key such as Option-E): only
     ///   the text it commits, as plain characters.
     /// - Committed text with a non-ASCII character (ä, ö, ß on a German layout, é after a dead key): that text, replacing
@@ -70,7 +99,7 @@ public enum MacKeys {
     /// shortcut: text that only Option produces and that is ASCII (@ is Option-L on a German layout) arrives as the key
     /// map's key with Option, as AltGr text does on Windows; upgrade when the focused field tells the host it edits text.
     public static func events(key: InputKey?, modifiers: InputModifiers, committed: String, composing: Bool) -> [InputEvent] {
-        if modifiers.contains(.command) { return key.map { [.keyDown($0, modifiers: modifiers)] } ?? [] }
+        if modifiers.contains(.command) || modifiers.contains(.control) { return key.map { [.keyDown($0, modifiers: modifiers)] } ?? [] }
         // Control characters and AppKit's function-key code points (U+F700...U+F8FF) are keys, not text.
         let typed = committed.filter { c in
             !c.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F || (0xF700...0xF8FF).contains($0.value) }

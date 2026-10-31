@@ -1,6 +1,7 @@
 import Foundation
 import SQCore
 import SQDrawKit
+import SQEditorSession
 import SQTimelineUI
 import SQUIKit
 
@@ -21,12 +22,70 @@ extension TimelinePanel {
                            snapping: toolState.snapping, playhead: playhead)
     }
 
+    /// The effect / transition highlight goes (released, left the panel, Esc).
+    public mutating func effectDropExit() {
+        effectDropTarget = nil; transitionDropTarget = nil; transitionLayerDropTarget = nil
+    }
+
     /// Left the panel or Esc: the ghost goes, nothing changed.
     public mutating func dropExit() {
+        effectDropExit()
         guard dropPreview.isActive else { return }
         dropPreview.cancel()
         geometry.reservesGhostSpace = false
         clampScroll()
+    }
+
+    /// An Effects panel drag at window pixels `x, y` (the Mac `trackedUpdate` for `.effect`): a transition shows its box on
+    /// the cut or clip end (else a transition layer on an empty video spot, `layerDuration` long), an effect or preset lights
+    /// up the clip under the pointer when it can land there (`EffectDropRules`). True when a release would land.
+    @discardableResult
+    public mutating func effectDropHover(ids: [String], x: Float, y: Float, layerDuration: Time) -> Bool {
+        let p = point(x: x, y: y)
+        var clipTarget: Clip.ID?, target: TransitionDropTarget?, layer: TransitionLayerDropTarget?
+        if frame.contains(x, y) {
+            if let id = ids.first, let kind = EffectDragPayload.transitionKind(forID: id) {
+                target = TransitionLayout.dropTarget(at: p, kind: kind, in: timeline, geometry: geometry)
+                if target == nil {
+                    layer = TransitionLayerLayout.dropTarget(at: p, kind: kind, in: timeline, geometry: geometry, playhead: playhead,
+                                                             duration: layerDuration)
+                }
+            } else {
+                clipTarget = effectDropClip(at: p, effectIDs: ids)
+            }
+        }
+        effectDropTarget = clipTarget; transitionDropTarget = target; transitionLayerDropTarget = layer
+        return clipTarget != nil || target != nil || layer != nil
+    }
+
+    /// The clip an effect drag would land on at `p`: the one under the pointer, unless its track is locked or none of the
+    /// dragged effects fits it.
+    func effectDropClip(at p: CGPoint, effectIDs: [String]) -> Clip.ID? {
+        guard case .clip(let id, _) = geometry.hitTest(p, in: timeline) else { return nil }
+        for track in timeline.tracks {
+            guard let clip = track.clips.first(where: { $0.id == id }) else { continue }
+            return EffectDropRules.accepts(effectIDs: effectIDs, clip: clip, trackLocked: track.isLocked) ? id : nil
+        }
+        return nil
+    }
+
+    /// The highlight boxes of the running effect or transition drag (the accent box of `TimelineView.drawDropBox`).
+    func drawEffectDropTargets(_ cv: inout Canvas, rows: [TrackRow]) {
+        func box(_ r: CGRect) {
+            cv.fill(r, skin.accentTint)
+            cv.stroke(roundedRect: r.insetBy(dx: 1, dy: 1), radius: 0, width: 2, theme.accent)
+        }
+        if let id = effectDropTarget,
+           let (row, c) = rows.compactMap({ r in timeline.track(r.track)?.clips.first { $0.id == id }.map { (r, $0) } }).first {
+            box(CGRect(x: geometry.x(for: c.timeline.start), y: row.y, width: geometry.width(of: c.timeline.duration), height: row.height - 1))
+        }
+        if let l = transitionLayerDropTarget {
+            box(l.rect)
+            drawCutMarker(&cv, x: geometry.x(for: l.cut), y: l.rect.minY, height: l.rect.height, selected: true)
+        }
+        if let t = transitionDropTarget {
+            for r in [t.rect] + (t.tailRect.map { [$0] } ?? []) { box(r) }
+        }
     }
 
     /// Released over the panel: the media lands where the ghost showed (one undo step, the Mac `onDropMedia` /
@@ -46,6 +105,7 @@ extension TimelinePanel {
     }
 
     func drawDropPreview(_ cv: inout Canvas, rows: [TrackRow], clip: CGRect) {
+        drawEffectDropTargets(&cv, rows: rows)
         guard dropPreview.isActive else { return }
         let ghostRows = dropPreview.canCreateTracks ? geometry.ghostRows(for: timeline) : []
         for gr in ghostRows {

@@ -91,12 +91,8 @@ final class ExportCoordinator {
         var replace = false
         let existing = ExportPreflight.existingTargets(of: model.buildJobs(outputDirectory: dir))
         if !existing.isEmpty {
-            let names = existing.prefix(3).map { "“\($0.lastPathComponent)”" }.joined(separator: ", ")
-            let more = existing.count > 3 ? " and \(existing.count - 3) more" : ""
-            let what = existing.count == 1 ? "\(names) already exists" : "\(names)\(more) already exist"
-            let choice = await ask("\(what) in this folder",
-                                   "Keep Both saves the new export with a number added to its name. Replace overwrites the existing file.",
-                                   options: ["Keep Both", "Replace"], window: window)
+            let q = ExportPreflightReport.existingFilesQuestion(existing)!
+            let choice = await ask(q.title, q.message, options: ["Keep Both", "Replace"], window: window)
             guard let choice else { return false }
             replace = choice == 1
         }
@@ -232,66 +228,13 @@ final class ExportCoordinator {
         }
     }
 
-    /// Things the user should know before the export starts: offline media (those frames export as the offline
-    /// picture), picture masks without a track, Magic mask frames without a matte.
+    /// Things the user should know before the export starts (`ExportPreflightReport`, shared with the shared shell).
     private func preflightWarnings(_ model: ExportDialogModel, directory dir: URL) async -> (lines: [String], title: String) {
-        guard let project = session?.project, let tl = project.timelines.first(where: { $0.id == model.selectedID }) else { return ([], "") }
-        let sequences = Dictionary(project.timelines.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
-        let unlinked = tl.unlinkedPictureMaskCount(sequences: sequences)
-        let n = MagicMatteStore.shared.untrackedFrames(in: tl, sequences: sequences)
-        let offline = ExportPreflight.offlineMedia(in: tl.id, project: project)
-        var lines: [String] = []
-        if !offline.isEmpty {
-            let shown = offline.prefix(5).map { "• \($0.name)" }.joined(separator: "\n")
-            let more = offline.count > 5 ? "\n• and \(offline.count - 5) more" : ""
-            lines.append("\(offline.count) media file\(offline.count == 1 ? " is" : "s are") offline and export as the offline picture:\n\(shown)\(more)\nReconnect them first (File > Reconnect Media…).")
+        guard let project = session?.project else { return ([], "") }
+        let r = await ExportPreflightReport.build(model: model, project: project, directory: dir) { tl, sequences in
+            MagicMatteStore.shared.untrackedFrames(in: tl, sequences: sequences)
         }
-        if unlinked > 0 {
-            lines.append("\(unlinked) Picture mask\(unlinked == 1 ? " is" : "s are") set to No track and cut\(unlinked == 1 ? "s" : "") nothing. Pick a track in the mask row.")
-        }
-        if n > 0 {
-            lines.append("Magic mask not tracked on \(n) frame\(n == 1 ? "" : "s"): those frames export without the mask. Select the clip, then Track Forward / Backward in its mask row.")
-        }
-        // The audio check ran in the dialog and found a failure (clipping, silent mix, level off target): say so again.
-        let audioFails = model.audioCheckFailures
-        if !audioFails.isEmpty {
-            lines.append("Audio check failed:\n" + audioFails.map { "• \($0.message)" }.joined(separator: "\n"))
-        }
-        // Files that are there but cannot be read: their frames export as the damaged placeholder (or stop the export).
-        let damaged = await ExportPreflight.unreadableMedia(in: tl.id, project: project)
-        if !damaged.isEmpty {
-            let shown = damaged.prefix(5).map { "• \($0.name)" }.joined(separator: "\n")
-            let more = damaged.count > 5 ? "\n• and \(damaged.count - 5) more" : ""
-            let outcome = model.continueOnDamagedFrames
-                ? "their frames export as the damaged-frame placeholder"
-                : "the export stops at the first damaged frame (turn on Continue on damaged frames to export the rest)"
-            lines.append("\(damaged.count) media file\(damaged.count == 1 ? " is" : "s are") damaged or unreadable; \(outcome):\n\(shown)\(more)")
-        }
-        // HDR sources: the export is Rec. 709 only, so HLG / PQ media is tone-mapped to SDR.
-        let hdr = ExportPreflight.hdrMedia(in: tl.id, project: project)
-        if !hdr.isEmpty {
-            let shown = hdr.prefix(5).map { "• \($0.name)" }.joined(separator: "\n")
-            let more = hdr.count > 5 ? "\n• and \(hdr.count - 5) more" : ""
-            lines.append("\(hdr.count) media file\(hdr.count == 1 ? " is" : "s are") HDR. The export is Rec. 709 (SDR) only, so the picture is converted and will look flatter than on an HDR display:\n\(shown)\(more)")
-        }
-        // The estimate against the free space of the output volume (the queue also watches it while exporting).
-        let estimate = model.estimatedBytes
-        let verdict = ExportPreflight.spaceVerdict(freeBytes: ExportPreflight.freeBytes(at: dir), estimatedBytes: estimate)
-        if verdict != .ok, let free = ExportPreflight.freeBytes(at: dir) {
-            let gb = { (b: Int64) in String(format: "%.1f GB", Double(b) / 1_000_000_000) }
-            lines.append(verdict == .insufficient
-                ? "The output disk has \(gb(free)) free and the export needs about \(gb(estimate)). It will probably stop before it is done. Pick another folder or free some space."
-                : "The output disk has \(gb(free)) free and the export needs about \(gb(estimate)): little room is left over.")
-        }
-        let kinds = (offline.isEmpty ? 0 : 1) + (unlinked > 0 ? 1 : 0) + (n > 0 ? 1 : 0) + (audioFails.isEmpty ? 0 : 1)
-            + (damaged.isEmpty ? 0 : 1) + (verdict == .ok ? 0 : 1)
-        let title = kinds > 1 ? "Check before exporting"
-            : !damaged.isEmpty ? "Media is damaged"
-            : verdict != .ok ? "Not much disk space"
-            : !audioFails.isEmpty ? "Audio check failed"
-            : !offline.isEmpty ? "Media is offline"
-            : unlinked > 0 ? "Picture mask without a track" : "Magic mask not tracked"
-        return (lines, title)
+        return (r.lines, r.title)
     }
 
     func showQueue(relativeTo rect: CGRect, of view: NSView) {

@@ -127,4 +127,27 @@ struct MonitorMaskTintTests {
         _ = frame()
         #expect(stub.asked.isEmpty)
     }
+
+    /// Nothing selected, the Magic tool on, the pointer over a video clip: that clip is previewed (hover reaches the
+    /// segmenter with its id, the tint is asked for it) and the selection stays empty until a click.
+    @Test func theMagicHoverPreviewsAnUnselectedClip() throws {
+        let (host, stub, _, frame) = try setup()
+        let m = host.monitor
+        let clip = try #require(m.session.activeTimeline?.tracks[0].clips.first)
+        m.session.select(clips: [])
+        m.effects?.setClip(nil)
+        m.maskToolNow = { .magic }
+        stub.hasHover = true
+        _ = frame()
+        _ = m.panel.handle(.mouseMoved(x: 400, y: 250))
+        _ = frame()
+        #expect(m.magicPreviewClip == clip.id)
+        #expect(m.panel.overlay.isShown && m.panel.overlay.maskTool == .magic)
+        #expect(stub.hovers.contains { $0.0 != nil && $0.1 == clip.id })
+        #expect(stub.asked.last?.masks.isEmpty == true)
+        #expect(m.session.selection.isEmpty)
+        // A click selects the clip it previews.
+        m.panel.overlay.onMaskToolClick?(Vec2(0.5, 0.5), [])
+        #expect(m.session.selection == [clip.id])
+    }
 }

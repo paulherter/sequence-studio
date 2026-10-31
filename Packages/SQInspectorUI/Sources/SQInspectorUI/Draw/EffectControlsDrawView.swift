@@ -222,8 +222,8 @@ import SQDrawKit
                size: iconSide, t.label2)
         let name = model.isMulti ? "\(model.peers.count + 1) clips selected" : clip.name
         let nameX = lead + iconSide + CGFloat(DrawTheme.Spacing.sm), room = max(size.width - nameX - trail, 0)
-        let nameW = min(c.size(of: name, fontSize: fs).width + 4, room)
-        c.draw(name, in: CGRect(x: nameX, y: 0, width: nameW, height: ch), fontSize: fs, t.label)
+        let nameW = min(c.size(of: name, fontSize: fs, face: c.semibold).width + 4, room)
+        c.draw(name, in: CGRect(x: nameX, y: 0, width: nameW, height: ch), fontSize: fs, t.label, face: c.semibold)
         let infoX = nameX + nameW + CGFloat(DrawTheme.Spacing.sm)
         c.draw(clipMeta(clip), in: CGRect(x: infoX, y: 0, width: max(size.width - trail - infoX, 0), height: ch), fontSize: fs, t.label3)
         c.fill(CGRect(x: 0, y: ch - 1, width: size.width, height: 1), t.trackRowLine)
@@ -239,8 +239,8 @@ import SQDrawKit
         let fs = CGFloat(DrawTheme.TypeSize.body)
         c.draw(icon: .captions, at: CGPoint(x: lead, y: ((ch - iconSide) / 2).rounded()), size: iconSide, t.label2)
         let nameX = lead + iconSide + CGFloat(DrawTheme.Spacing.sm), room = max(size.width - nameX - ControlsGrid.trailing, 0)
-        let nameW = min(c.size(of: s.name, fontSize: fs).width + 4, room)
-        c.draw(s.name, in: CGRect(x: nameX, y: 0, width: nameW, height: ch), fontSize: fs, t.label)
+        let nameW = min(c.size(of: s.name, fontSize: fs, face: c.semibold).width + 4, room)
+        c.draw(s.name, in: CGRect(x: nameX, y: 0, width: nameW, height: ch), fontSize: fs, t.label, face: c.semibold)
         let infoX = nameX + nameW + CGFloat(DrawTheme.Spacing.sm)
         c.draw(SQL10n.string("Captions") + " \u{00B7} \(s.count)", in: CGRect(x: infoX, y: 0, width: max(size.width - ControlsGrid.trailing - infoX, 0), height: ch),
                fontSize: fs, t.label3)

@@ -29,6 +29,22 @@ struct InspectorHostTests {
         return (InspectorHost(session: s, menus: shell.menuBar.controller, shell: shell, sampler: sampler), shell, s)
     }
 
+    @Test func sessionHooksOfEffectControlsAreWired() {
+        let (host, shell, s) = make(SamplerStub())
+        var notices: [String] = []
+        shell.onStatus = { notices.append($0) }
+        host.model.onNotice?("hello")
+        #expect(notices == ["hello"])
+        #expect(host.model.onColorMatch != nil && host.model.onConvertToKeyframes != nil && host.model.onReopenAsEffect != nil)
+        #expect(host.model.onStabilizeAnalyze != nil && host.model.onStabilizeCancel != nil && host.model.onOpenColorPro != nil)
+        #expect(host.model.canConvert != nil && host.model.colorSourceOf != nil)
+        #expect(s.onStabilizerNeedsAnalysis != nil)
+        shell.analysis.onStabilizeProgress?([], 0.5)
+        #expect(host.model.stabilizeRun != nil)
+        shell.analysis.onStabilizeProgress?([], nil)
+        #expect(host.model.stabilizeRun == nil)
+    }
+
     @Test func pickerForAnotherPanelTakesEventsAndAnOutsidePressClosesIt() {
         let (host, _, _) = make(SamplerStub())
         var answers: [EffectColor?] = []

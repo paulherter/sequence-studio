@@ -46,8 +46,32 @@ extension SharedUIController {
                 }
             }
         }
-        // shortcut: Conform to Constant Frame Rate stays hidden in the shared UI (hook nil); wire it when the shared
-        // shell gets the AppKit conform progress sheet.
+        // Project menu > Conform to Constant Frame Rate: one background job per item, as `EditorPanels.conformToConstantFrameRate`.
+        projectList.onConformToConstantFrameRate = { [weak self] ids in
+            guard let self else { return }
+            for id in ids {
+                guard let ref = session.project.media(id) else { continue }
+                let folder = projectModel.projectFolder?() ?? URL(fileURLWithPath: ref.path).deletingLastPathComponent()
+                let name = ref.name
+                shell.onStatus?(SQL10n.format("Conforming %@ to a constant frame rate…", name))
+                Task { @MainActor [weak self] in
+                    guard let self else { return }
+                    do {
+                        try await conformRunner.conform(id, in: session, folder: folder)
+                        projectModel.scheduleOfflineRefresh()
+                        shell.onStatus?(SQL10n.format("Conformed %@ to a constant frame rate.", name))
+                    } catch is CancellationError {
+                        shell.onStatus?(SQL10n.format("Conform of %@ canceled.", name))
+                    } catch ConstantFrameRateConform.Failure.offline {
+                        shell.presentMessage("Conform", SQL10n.string("The item is offline. Reconnect it first."))
+                    } catch ConstantFrameRateConform.Failure.alreadyRunning {
+                        shell.presentMessage("Conform", SQL10n.format("%@ is already being conformed.", name))
+                    } catch {
+                        shell.presentMessage("Conform", SQL10n.format("Conform failed: %@", SQL10n.errorText(error)))
+                    }
+                }
+            }
+        }
         // Sequence > New Shape takes the Create tool's path, as on the AppKit monitor.
         shell.onNewShape = { [weak self] kind in
             guard let self else { return }
@@ -72,6 +96,12 @@ extension SharedUIController {
             Set(ViewGammaChoice.allCases.filter { $0.rawValue == ViewGamma.current.rawValue }.map { EditorCommand.viewGamma($0) })
         }
         wireCardImport()
+        // Delete / Select All of the panels that own them (the AppKit `executeFocusedEdit` targets).
+        let editor = graphics.editor
+        shell.editActions[.deleteGraphicsLayers] = { [weak self] in editor.deleteSelected(); self?.inspector.graphicsSelectionChanged() }
+        shell.editActions[.selectAllGraphicsLayers] = { [weak self] in editor.selectAllLayers(); self?.inspector.graphicsSelectionChanged() }
+        shell.editActions[.deleteKeystones] = { [weak self] in self?.keystones.deleteSelection() }
+        shell.editActions[.deleteCaptions] = { [weak self] in _ = self?.session.deleteSelectedCaptions() }
         // Find Scene Changes, Auto Reframe, Stabilize: the shared `AnalysisFlows` over the Mac's AVFoundation / Vision backend.
         shell.analysisBackend = MacAnalysisBackend()
         // Match Color to Clip captures the solo clip from the engine; Weak Tracking and Quick Apply use the same caches and

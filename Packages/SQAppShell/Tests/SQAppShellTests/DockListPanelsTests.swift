@@ -1,5 +1,5 @@
 import Foundation
-import SQAppShell
+@testable import SQAppShell
 import SQCore
 import SQDrawKit
 import SQDrawShell
@@ -102,6 +102,24 @@ import Testing
         _ = h.handle(.mouseDown(x: 40, y: 14, modifiers: []), scale: 1)
         _ = h.handle(.mouseDragged(x: 40, y: 400), scale: 1)
         #expect(asked == 1)
+    }
+}
+
+extension DockListPanelsTests {
+    @Test func keystoneReleasedOnEffectControlsLandsOnTheClipShownThere() {
+        let clip = Clip(name: "c", media: UUID(), kind: .video, source: TimeRange(start: .zero, duration: Self.fd * 100), start: .zero)
+        let t = Timeline(name: "Main", frameDuration: Self.fd, tracks: [Track(kind: .video, clips: [clip])])
+        let s = EditorSession(project: Project(name: "P", timelines: [t]))
+        let shell = ShellHost(session: s, map: .premiereDefault, recents: RecentProjects(entries: []))
+        let h = KeystonesHost(session: s, menus: shell.menuBar.controller, shell: shell, loadLibrary: false)
+        h.withTimeline = { _ in }
+        var asked: [CGPoint] = []
+        h.inspectorDropClip = { asked.append($0); return clip.id }
+        h.layout(docked: CGRect(x: 0, y: 0, width: 260, height: 300), scale: 2, theme: DrawTheme())
+        h.apply(.drop(h.model.keystones[0], x: 800, y: 600))
+        #expect(asked == [CGPoint(x: 400, y: 300)])                        // pixels become window points
+        let after = s.activeTimeline!.tracks[0].clips[0]
+        #expect(after != clip)
     }
 }
 

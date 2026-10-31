@@ -90,6 +90,8 @@ public final class ProjectListView {
     public var thumbSize: CGFloat = 96 { didSet { defaults.set(Double(thumbSize), forKey: Self.thumbSizeKey) } }
     /// The thumbnail slider is being dragged.
     var sizeSliderDragging = false
+    /// A press on the list's column header (ProjectListView+Columns): resize, move or sort.
+    var columnPress: ColumnPress?
     /// View > Hover Scrub (`AppSettings.hoverScrub`): moving over a video tile shows the frame under the pointer.
     public internal(set) var hoverScrubOn: Bool
     /// The frame of a media item at a media time for hover scrubbing (the Mac `ProjectThumbnails.scrub`); nil while it loads.
@@ -187,6 +189,7 @@ public final class ProjectListView {
             return true
         case .mouseDragged(let x, let y):
             if sizeSliderDragging { setThumbSize(atX: CGFloat(x) / k); return true }
+            if columnPress != nil { dragColumn(toX: CGFloat(x) / k); return true }
             guard let start = press else { return false }
             let p = CGPoint(x: CGFloat(x) / k, y: CGFloat(y) / k)
             if !isDragging {
@@ -199,6 +202,7 @@ public final class ProjectListView {
             return true
         case .mouseUp(let x, let y):
             if sizeSliderDragging { sizeSliderDragging = false; return true }
+            if columnPress != nil { endColumnPress(atX: CGFloat(x) / k); return true }
             guard press != nil else { return false }
             press = nil
             if isDragging {
@@ -354,8 +358,7 @@ public final class ProjectListView {
         case .rename: if targets.count == 1 { rename(targets[0]) }
         case .deletePoster: _ = model.setPoster(nil, for: targets)
         case .reveal:
-            // shortcut: reveals the first file (the Mac selects them all in one Finder window); upgrade with a list reveal hook.
-            if let id = media.first, let path = model.project.media(id)?.path { host.revealFile?(URL(fileURLWithPath: path)) }
+            host.reveal(media.compactMap { model.project.media($0).map { URL(fileURLWithPath: $0.path) } })
         case .replaceMedia: if let id = media.first { host.spawn { await host.replaceMedia(id) } }
         case .locateMedia: if let id = media.first { host.spawn { await host.locateOffline(id) } }
         case .delete: deleteSelection()
@@ -411,7 +414,7 @@ public final class ProjectListView {
     // MARK: Drawing
 
     public func draw(_ c: inout Canvas, theme: DrawTheme) {
-        guard let model else { return }
+        guard let model, frame.width > 0, frame.height > 0 else { return }   // another dock tab is on top: nothing of the list shows
         c.fill(frame, theme.panel)
         drawChrome(&c, theme: theme, model: model)
         c.saveGState()

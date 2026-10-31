@@ -36,6 +36,7 @@ public final class MarkerListHost {
         self.session = session
         self.shell = shell
         search.alignment = .left
+        search.quiet = true                     // `SQSearchField.setQuietPlaceholder`: the quiet fill, no outline (as the Library search)
         search.fontSize = CGFloat(DrawTheme.TypeSize.body)
         shell.factProviders.append { [weak self] f in if self?.search.isEditing == true { f.textEditing = true } }
         // File > Export Markers as CSV… runs here too (the Mac `AppController+MarkerList`).

@@ -62,6 +62,22 @@ import SQUIKit
         #expect(seen.count == 2, "still off the layer")
     }
 
+    /// The Add | Remove switch top left of the picture: only with Magic, it takes the press (no pick) and keeps its mode.
+    @Test func magicAddRemoveSwitchTakesItsPressAndKeepsTheMode() {
+        let (o, r) = overlay()
+        let add = CGPoint(x: 120, y: 60), remove = CGPoint(x: 200, y: 60)
+        o.maskTool = .pen
+        #expect(o.magicSwitchHit(remove, in: rect) != nil)           // geometry only; the pen tool does not use it
+        #expect(!o.hits(remove, canvasRect: rect) || r.toolClicks.isEmpty)
+        o.maskTool = .magic
+        #expect(o.mouseDown(remove, modifiers: [], canvasRect: rect))
+        #expect(o.magicSubtract && r.toolClicks.isEmpty)
+        #expect(o.mouseDown(add, modifiers: [], canvasRect: rect))
+        #expect(!o.magicSubtract && r.toolClicks.isEmpty)
+        #expect(o.mouseDown(view(0.5, 0.5), modifiers: [], canvasRect: rect))
+        #expect(r.toolClicks.count == 1)
+    }
+
     @Test func vertexDragSelectsTheMaskAndMovesThePoint() throws {
         let (o, r) = overlay()
         let i = try #require(o.masks[0].path.vertices.firstIndex { near($0.point, Vec2(0.25, 0.25)) })

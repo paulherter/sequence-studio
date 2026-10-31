@@ -48,6 +48,8 @@ public final class CaptionsHost {
         self.shell = shell
         panel = TextPanelDraw(session: session)
         shell.runAutoCaptions = { [weak self] in self?.autoCaptions() != nil }
+        registerAudioCommands()
+        shell.editCaptionInPanel = { [weak self] in self?.editCaption($0) ?? false }
         let list = panel.captions
         list.createHint = AppPlatform.transcriptionHint
         panel.onMenu = { [weak self, weak menus] items, anchor in

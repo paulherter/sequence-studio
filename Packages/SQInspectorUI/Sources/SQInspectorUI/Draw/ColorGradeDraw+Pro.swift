@@ -272,6 +272,7 @@ extension ColorGradeDraw {
             guard let pick = self?.chooseLUTFiles else { done(nil); return }
             pick(false) { paths in done(paths.first) }
         }
+        if let choose = chooseDecisionFile, let tell = tellUser { menus.importDecision = menus.makeDecisionImport(choose: choose, tell: tell) }
         return menus
     }
 

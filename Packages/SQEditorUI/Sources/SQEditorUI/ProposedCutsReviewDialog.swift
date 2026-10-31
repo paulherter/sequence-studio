@@ -15,19 +15,10 @@ public enum ProposedCutsReviewDialog {
     public static let listHeight: CGFloat = Theme.Row.list * 9
 
     /// "0:12.4   1.4 s": start in minutes:seconds and the length of the pause.
-    public static func rowTitle(_ cut: Timeline.ProposedCut) -> String {
-        func sec(_ t: Time) -> Double { Double(t.value) / Double(t.timescale) }
-        let start = max(sec(cut.range.start), 0)
-        let m = Int(start) / 60
-        let s = start - Double(m * 60)
-        if cut.kind == .scene { return String(format: "%d:%04.1f   scene change", m, s) }
-        return String(format: "%d:%04.1f   %.1f s", m, s, sec(cut.range.duration))
-    }
+    public static func rowTitle(_ cut: Timeline.ProposedCut) -> String { cut.rowTitle }
 
     public static func summary(count: Int, checked: Int, removed: Time) -> String {
-        guard count > 0 else { return "No proposed cuts." }
-        let sec = Double(removed.value) / Double(removed.timescale)
-        return "\(checked) of \(count) checked, \(String(format: "%.1f", sec)) s will be removed."
+        Timeline.ProposedCut.reviewSummary(count: count, checked: checked, removed: removed)
     }
 
     public static func present(on window: NSWindow, cuts: [Timeline.ProposedCut], completion: @escaping @MainActor (Result?) -> Void) {

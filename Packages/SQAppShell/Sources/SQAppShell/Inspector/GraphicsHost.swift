@@ -92,6 +92,20 @@ public final class GraphicsHost {
         }
     }
 
+    /// Effects released over the card (window points): they go to the one selected layer (the Mac
+    /// `GraphicsPanelView.performDragOperation`). False when the card is not under `p` or no Graphic is open.
+    @discardableResult
+    public func dropEffects(_ kinds: [String], at p: CGPoint) -> Bool {
+        guard frame.width > 0, frame.contains(p) else { return false }
+        return panel.dropEffects(kinds, at: CGPoint(x: p.x - frame.minX, y: p.y - frame.minY))
+    }
+
+    /// An Effects drag is at window point `p` (nil: it ended or left): the layer row under it takes the accent tint.
+    public func effectDragOver(at p: CGPoint?) {
+        guard frame.width > 0, let p, frame.contains(p) else { panel.effectDragOver(at: nil); return }
+        panel.effectDragOver(at: CGPoint(x: p.x - frame.minX, y: p.y - frame.minY))
+    }
+
     /// Places the panel on the dock's Graphics card (`card` in points, nil while the card is hidden).
     public func layout(_ card: CGRect?) {
         frame = card ?? .zero

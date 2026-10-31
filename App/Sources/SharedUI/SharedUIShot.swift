@@ -1,9 +1,12 @@
 import AppKit
 import SQCore
 import SQDrawKit
+import SQDrawLibrary
 import SQDrawShell
 import SQDrawTimeline
+import SQAppShell
 import SQEditorSession
+import SQInspectorUI
 import SQTimelineUI
 import SQUIKit
 
@@ -40,14 +43,27 @@ enum SharedUIShot {
         func write(_ name: String, _ items: [SQMenuItem]) {
             try? MenuOutline.text(items).write(to: dir.appendingPathComponent("shared-\(name).txt"), atomically: true, encoding: .utf8)
         }
-        /// Right press at window point `p` (pt); the menu it opened, closed again.
-        func probe(_ p: CGPoint) -> [SQMenuItem] {
+        /// Right press at window point `p` (pt); the menu it opened, closed again. `png`: called with the menu open.
+        func probe(_ p: CGPoint, png: ([SQMenuItem]) -> Void = { _ in }) -> [SQMenuItem] {
             menus.dismiss()
             c.handle(.mouseDown(x: Float(p.x * 2), y: Float(p.y * 2), modifiers: .secondary))
             let items = menus.isOpen ? menus.rootItems : []
+            if !items.isEmpty { png(items) }
             menus.dismiss()
             c.handle(.mouseUp(x: Float(p.x * 2), y: Float(p.y * 2)))
             return items
+        }
+        // Earlier sweeps may leave a dialog or alert open: it would swallow the right press ("no menu").
+        for _ in 0..<4 {
+            guard let d = c.shell.dialog else { break }
+            if let r = d.model.response(forReturn: false) { d.press(r) }
+            try? await Task.sleep(for: .milliseconds(150))   // the dialog goes away after its completion ran
+            if c.shell.dialog === d { c.handle(.keyDown(.escape, modifiers: [])); try? await Task.sleep(for: .milliseconds(150)) }
+        }
+        menus.dismiss()
+        c.session.select(clips: [])
+        if ProcessInfo.processInfo.environment["SQ_SHOT_DEBUG"] != nil {
+            print("menu sweep state: dialog \(c.shell.dialog != nil) start \(c.shell.isStartShown) fullscreen \(c.shell.isProgramFullScreen) trim \(c.shell.trim.isActive) quick \(c.shell.quickApply != nil) queue \(c.shell.queuePopover != nil)")
         }
         c.shell.dock.setPage(.edit)
         _ = c.frame(width: 2880, height: 1800)
@@ -65,16 +81,9 @@ enum SharedUIShot {
         if let y = rowMid("V1") { probes.append(("menu-timeline-track-header-v1", at(hx, y))) }
         if let y = rowMid("A3") { probes.append(("menu-timeline-track-header-a3", at(hx, y))) }
         for (name, p) in probes {
-            let items = probe(p)
+            let items = probe(p) { _ in shot("shared-\(name).png") }
             if items.isEmpty { print("shared ui shot: \(name) no menu"); continue }
             write(name, items)
-            if name == "menu-timeline-clip" {
-                menus.dismiss()
-                c.handle(.mouseDown(x: Float(p.x * 2), y: Float(p.y * 2), modifiers: .secondary))
-                shot("shared-\(name).png")
-                menus.dismiss()
-                c.handle(.mouseUp(x: Float(p.x * 2), y: Float(p.y * 2)))
-            }
         }
         for panel in PanelID.allCases where panel != .timeline && panel != .audioMeter {
             c.shell.dock.show(panel)
@@ -88,7 +97,14 @@ enum SharedUIShot {
             } }
             var seen = Set<String>(), n = 0
             for p in points where n < 6 {
-                let items = probe(p)
+                let items = probe(p) { items in
+                    let key = items.map(\.title).joined(separator: "|")
+                    guard !seen.contains(key) else { return }
+                    let first = items.first { $0.kind == .action }?.title ?? "menu"
+                    let slug = first.lowercased().map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
+                        .split(separator: "-").joined(separator: "-").prefix(32)
+                    shot("shared-menu-\(panel.rawValue)-\(n + 1)-\(slug).png")
+                }
                 let key = items.map(\.title).joined(separator: "|")
                 guard !items.isEmpty, seen.insert(key).inserted else { continue }
                 n += 1
@@ -98,6 +114,86 @@ enum SharedUIShot {
                 write("menu-\(panel.rawValue)-\(n)-\(slug)", items)
             }
         }
+    }
+
+    /// `render-panels.sh` panel-graphics-layers: a new graphics clip with four layers (line, ellipse, rectangle, text "FOLGEN"),
+    /// the text layer selected; the clip is removed again.
+    static func graphicsLayersShot(_ c: SharedUIController, shot: (String) -> Void) async {
+        let e = c.graphics.editor
+        guard e.newGraphicsClip() != nil else { print("shared ui shot: no graphics clip"); return }
+        e.addShape(.line); e.addShape(.ellipse); e.addShape(.rectangle); e.addText("FOLGEN")
+        _ = c.shell.execute(.focusPanel(.graphics))
+        _ = c.frame(width: 2880, height: 1800)
+        try? await Task.sleep(for: .milliseconds(400)); c.shell.dock.focused = nil
+        shot("shared-panel-graphics-layers.png")
+        c.session.select(clips: [])
+        _ = c.session.undo()
+    }
+
+    /// Effect Controls with the selected clip carrying several effect types (`render-panels.sh` panel-effectcontrols-mask /
+    /// -stabilize): the panel maximized, then a rectangle mask, the Stabilizer mid-analysis, and a stack of effects.
+    static func effectControlsSweep(_ c: SharedUIController, selected: UUID, shot: (String) -> Void) async {
+        c.session.select(clips: [selected])
+        _ = c.shell.execute(.focusPanel(.effectControls))
+        c.shell.dock.toggleMaximize(.effectControls)
+        func settle() async {
+            _ = c.frame(width: 2880, height: 1800)
+            try? await Task.sleep(for: .milliseconds(400)); c.shell.dock.focused = nil
+        }
+        let m = c.inspector.model
+        if m.addMask(.rectangle) != nil { await settle(); shot("shared-ec-mask.png"); _ = c.session.undo() }
+        let ask = c.session.onStabilizerNeedsAnalysis
+        c.session.onStabilizerNeedsAnalysis = nil
+        if c.session.addStabilizer(to: [selected]) {
+            m.stabilizeRun = StabilizeRunState(clips: [selected], progress: 0.42)
+            await settle(); shot("shared-ec-stabilize.png")
+            m.stabilizeRun = nil
+            _ = c.session.undo()
+        }
+        c.session.onStabilizerNeedsAnalysis = ask
+        var added = 0
+        for kind in [ClipEffect.gaussianBlurKind, ClipEffect.dropShadowKind, ClipEffect.cropKind, ClipEffect.lumaKeyKind,
+                     ClipEffect.agedFilmKind, ClipEffect.roundedCornersKind] where c.session.addEffect(kind: kind, to: [selected]) { added += 1 }
+        if added > 0 { await settle(); shot("shared-ec-effects.png") }
+        for _ in 0..<added { _ = c.session.undo() }
+        c.shell.dock.toggleMaximize(.effectControls)
+        c.session.select(clips: [])
+    }
+
+    /// The Library states of `render-panels.sh` (`renderLibraryPopulated`): Overlays grid, SFX list, Music with sections
+    /// (grid, list, audio item selected with its transport bar), Presets grid; same fixture folders.
+    static func librarySweep(_ c: SharedUIController, shot: (String) -> Void) async {
+        let root = FileManager.default.temporaryDirectory.appendingPathComponent("sq-shot-library-\(ProcessInfo.processInfo.processIdentifier)")
+        RenderLibraryFixture.make(at: root)
+        let model = c.library.model
+        var ids: [String: UUID] = [:]
+        for n in ["Music", "SFX", "Overlays", "B-Roll"] { ids[n] = await model.addFolder(url: root.appendingPathComponent(n)).id }
+        _ = c.shell.execute(.focusPanel(.library))
+        func settle(_ s: Double = 1.5) async {
+            _ = c.frame(width: 2880, height: 1800)      // the first draw requests the thumbnails
+            try? await Task.sleep(for: .seconds(s)); c.shell.dock.focused = nil
+        }
+        for (name, folder, mode) in [("grid", "Overlays", LibraryViewMode.grid), ("list", "SFX", .list)] {
+            model.selection = .folder(ids[folder]!); model.viewMode = mode
+            model.clearKindFilter(); if mode == .grid { model.toggleKind(.image) }
+            await settle(); shot("shared-library-\(name).png")
+        }
+        for (name, mode, selectItem) in [("sections-grid", LibraryViewMode.grid, false), ("sections-list", .list, false),
+                                         ("preview-audio", .list, true)] {
+            model.selection = .folder(ids["Music"]!); model.viewMode = mode; model.clearKindFilter()
+            if mode == .grid { model.toggleKind(.audio); model.toggleGroup("*") }
+            if selectItem, let item = model.items.first(where: { $0.entry.name == "Morning Haze.wav" }) {
+                model.selectItemForPreview(item)
+                await settle(1.0)
+                model.preview.pause(); model.preview.seek(to: 42)
+            }
+            await settle(); shot("shared-library-\(name).png")
+            model.selectItemForPreview(nil)
+            if mode == .grid { model.toggleGroup("*") }
+        }
+        model.selection = .presets(nil); model.viewMode = .grid; model.clearKindFilter()
+        await settle(); shot("shared-library-presets-grid.png")
+        try? FileManager.default.removeItem(at: root)
     }
 
     static func run(_ c: SharedUIController, into dir: URL) {
@@ -116,6 +212,14 @@ enum SharedUIShot {
             _ = c.frame(width: w, height: h)        // the first layout settles the dock and the zoom
             let list = c.frame(width: w, height: h)
             let t1 = Date()
+            // Every dock group's content rect (pt) at this shot, for cropping against the AppKit panel renders.
+            let rects = c.shell.dock.groups.map { g in
+                "\(name) | \(g.selected.rawValue) | \(Int(g.content.minX)) \(Int(g.content.minY)) \(Int(g.content.width)) \(Int(g.content.height))"
+            }.joined(separator: "\n") + "\n" + c.shell.menuBar.controller.views.map { v in
+                "\(name) | menu | \(Int(v.frame.minX)) \(Int(v.frame.minY)) \(Int(v.frame.width)) \(Int(v.frame.height))\n"
+            }.joined()
+            if let h = try? FileHandle(forWritingTo: dir.appendingPathComponent("rects.txt")) { h.seekToEndOfFile(); h.write(Data(rects.utf8)); try? h.close() }
+            else { try? rects.write(to: dir.appendingPathComponent("rects.txt"), atomically: true, encoding: .utf8) }
             guard let img = CoreGraphicsRenderer.render(list, width: w, height: h, clear: c.screen.theme.divider, atlas: c.atlas) else {
                 print("shared ui shot: \(name) render failed"); return
             }
@@ -226,6 +330,19 @@ enum SharedUIShot {
                     await keySweep(c)
                     exit(0)
                 }
+                if ProcessInfo.processInfo.environment["SQ_SHOT_ONLY"] == "menu" {
+                    await menuSweep(c, into: dir, shot: shot)
+                    exit(0)
+                }
+                if ProcessInfo.processInfo.environment["SQ_SHOT_ONLY"] == "graphics" {
+                    await graphicsLayersShot(c, shot: shot)
+                    exit(0)
+                }
+                if ProcessInfo.processInfo.environment["SQ_SHOT_ONLY"] == "alerts-menu" {
+                    await alertSweep(c, selected: built.selected, shot: { _ in })
+                    await menuSweep(c, into: dir, shot: shot)
+                    exit(0)
+                }
                 if ProcessInfo.processInfo.environment["SQ_SHOT_ONLY"] == "color" {
                     await colorSweep(c, resize: { w = $0; h = $1 }, shot: shot)
                     exit(0)
@@ -256,6 +373,16 @@ enum SharedUIShot {
                 _ = c.shell.execute(.focusPanel(.markerList))
                 try? await Task.sleep(for: .milliseconds(300))
                 shot("shared-markerlist.png")
+                // Every other dock panel once, for the AppKit comparison (`render-panels.sh` panel-*).
+                for panel in [PanelID.graphics, .keystones, .effects, .sourceMonitor, .project, .library, .effectControls] {
+                    _ = c.shell.execute(.focusPanel(panel))
+                    try? await Task.sleep(for: .milliseconds(300))
+                    c.shell.dock.focused = nil
+                    shot("shared-panel-\(panel.rawValue).png")
+                }
+                await graphicsLayersShot(c, shot: shot)
+                await librarySweep(c, shot: shot)
+                await effectControlsSweep(c, selected: built.selected, shot: shot)
                 Task { @MainActor in await c.shell.showAbout() }   // closed by the next dialog's Return press below
                 try? await Task.sleep(for: .milliseconds(400))
                 shot("shared-dialog-about.png")

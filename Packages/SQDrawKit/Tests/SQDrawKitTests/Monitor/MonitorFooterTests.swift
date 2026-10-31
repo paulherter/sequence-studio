@@ -121,4 +121,14 @@ struct MonitorFooterTests {
         _ = f.mouseDown(CGPoint(x: f.scrubRect.midX, y: y(f)), s)
         #expect(!f.isEditingTimecode)
     }
+
+    @Test func sourceFooterRightGroupNeverOverlapsTransport() {
+        var s = state(); s.mode = .source
+        for width in stride(from: 330 as CGFloat, through: 700, by: 10) {
+            let f = footer(s, width: width)
+            let end = f.buttons.filter { [.playPause, .stepBack, .stepForward, .markIn, .markOut, .goToIn, .goToOut].contains($0.0) }
+                .map(\.1.maxX).max() ?? 0
+            if f.durationRect != .zero { #expect(f.durationRect.minX >= end, "duration overlaps transport at \(width)") }
+        }
+    }
 }

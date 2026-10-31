@@ -19,6 +19,9 @@ public final class GlyphAtlas {
     public private(set) var pixels: [UInt8]
     /// Bumped whenever `pixels` changed (the renderer re-uploads on a new value).
     public private(set) var generation = 0
+    /// Counts the times a full page was wiped: quads built before it point at glyph cells that no longer hold those glyphs
+    /// (new glyphs only add cells, so `generation` alone does not invalidate a cache of finished quads).
+    public private(set) var wipes = 0
     public let font: GlyphRasterFont
     /// Every face baked into the page; `faces[0]` is `font`.
     public private(set) var faces: [GlyphRasterFont]
@@ -142,7 +145,7 @@ public final class GlyphAtlas {
         }
         if shelfX + bmp.width + 1 > size { shelfX = 1; shelfY += shelfH + 1; shelfH = 0 }
         if shelfY + bmp.height + 1 > size {
-            pixels = [UInt8](repeating: 0, count: size * size); entries.removeAll(); shelfX = 1; shelfY = 1; shelfH = 0
+            pixels = [UInt8](repeating: 0, count: size * size); entries.removeAll(); wipes += 1; shelfX = 1; shelfY = 1; shelfH = 0
         }
         let darken = faces[k.face].hasSystemTypography
         for row in 0..<bmp.height {

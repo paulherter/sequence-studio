@@ -20,6 +20,8 @@ import SQDrawKit
         var title: String
         var enabled: () -> Bool = { true }
         var selected: () -> Bool = { false }
+        /// Shown instead of `icon` while `selected()` is false (Link Scale: link / unlink, as on the Mac).
+        var offIcon: SQIcon?
         var action: () -> Void
     }
 
@@ -269,7 +271,7 @@ import SQDrawKit
                      size: 9, t.label3)
                 let on = enabled?() ?? true
                 c.draw(SQL10n.string(title), in: CGRect(x: ControlsGrid.headerLabelX, y: y, width: max(width - ControlsGrid.headerLabelX - 60, 0), height: h),
-                       fontSize: fs, on ? t.label : t.label3)
+                       fontSize: fs, on ? t.label : t.label3, face: c.semibold)
                 if enabled != nil, let f = frame(.enable, of: r, y: y) { icon(&c, on ? .eye : .eyeOff, in: f, tint(hov(.enable))) }
                 if remove != nil, let f = frame(.remove, of: r, y: y) { icon(&c, .minusCircle, in: f, tint(hov(.remove))) }
             case .numbers(let title, let keyed, let link):
@@ -283,7 +285,7 @@ import SQDrawKit
                     fd.draw(&c, in: f, theme: t, focused: focused == Hit(row: i, part: .field(k)))
                 }
                 if let link, let f = frame(.link, of: r, y: y) {
-                    icon(&c, link.icon, in: f, size: 11, link.selected() ? t.accent : tint(hov(.link)))
+                    icon(&c, link.selected() ? link.icon : (link.offIcon ?? link.icon), in: f, size: 11, link.selected() ? t.accent : tint(hov(.link)))
                 }
             case .popup(let title, let titles, let selected, let enabled, _):
                 label(&c, title, y)

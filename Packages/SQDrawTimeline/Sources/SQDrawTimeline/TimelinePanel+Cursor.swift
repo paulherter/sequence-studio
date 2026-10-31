@@ -33,9 +33,29 @@ extension TimelinePanel {
                              height: max(trackAreaHeight - TimelineGeometry.rulerHeight, 0))
         guard content.contains(p) else { return nil }
         if tool == .selection, let t = transitionCursor(at: p) { return t }
+        if captionWordEdge(at: p) { return .resizeLeftRight }
         let regions = TimelineCursorMap.regions(timeline: timeline, geometry: geometry, tool: tool, content: content,
                                                 command: mods.contains(.command), option: mods.contains(.option))
         return regions.last { $0.rect.contains(p) }.map { Self.drawCursor($0.kind) }
+    }
+
+    /// The pointer is on the inner edge grab of a caption word (the Mac `addCaptionWordCursorRects`; Selection tool, word level).
+    func captionWordEdge(at p: CGPoint) -> Bool {
+        guard toolState.timelineTool == .selection, geometry.pointsPerSecond >= CaptionWordLayout.wordLevelPointsPerSecond,
+              let row = geometry.captionRows(for: timeline).first(where: { p.y >= $0.y && p.y < $0.maxY }),
+              let track = timeline.captionTrack(row.track), !track.isLocked else { return false }
+        let grab = CaptionWordLayout.edgeGrab
+        for item in track.items where CaptionWordLayout.showsWords(item, geometry: geometry) {
+            let x0 = geometry.x(for: item.range.start), x1 = geometry.x(for: item.range.end)
+            guard p.x >= x0, p.x < x1 else { continue }
+            let handle = TimelineGeometry.trimHandleWidth(forClipWidth: x1 - x0)
+            for w in item.effectiveWords {
+                let a = geometry.x(for: w.range.start), b = geometry.x(for: w.range.end)
+                guard b - a >= CaptionWordLayout.minWidthForEdges else { continue }
+                for x in [a, b - grab] where x >= x0 + handle && x + grab <= x1 - handle && p.x >= x && p.x < x + grab { return true }
+            }
+        }
+        return false
     }
 
     /// Transition boxes: resize on the ends, a hand over the body; transition layers: resize on the ends and the cut.
@@ -59,7 +79,9 @@ extension TimelinePanel {
         case .resize: return .resizeUpDown
         case .keystone, .attach, .transitionLayer, .speed: return .resizeLeftRight
         case .transition: return pressCursor == .openHand ? .closedHand : .resizeLeftRight
-        case .band: return .resizeUpDown
+        case .band(let d):                       // a fade handle drag sets the left-right shape (beginFadeDrag), the lines up-down
+            if case .fade = d.kind { return .resizeLeftRight }
+            return .resizeUpDown
         case .patch(_, _, let dragging): return dragging ? .closedHand : nil
         case .clips:
             if interaction.moveHint?.contains("opy") == true { return .dragCopy }

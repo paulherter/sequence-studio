@@ -22,7 +22,7 @@ public final class MonitorPanel {
     public private(set) var frame: CGRect = .zero
     public private(set) var scale: Float = 1
     /// Picture size in pixels (the sequence format, or the Source clip): aspect and zoom percentages.
-    public var sequenceSize = CGSize(width: 1920, height: 1080)
+    public var sequenceSize = CGSize(width: 1920, height: 1080) { didSet { layerOverlay.sequenceSize = sequenceSize } }
     /// The host has a decoded frame bound to the video quad.
     public var hasPicture = false
     /// The bound picture keeps its alpha (a transparent composite, blended over what lies under the video quad): the
@@ -41,9 +41,19 @@ public final class MonitorPanel {
     public var onZoomGesture: ((ViewerZoom) -> Void)?
     /// Transform box, Crop handles and motion path of the selected clip (Program monitor; the host fills it).
     public let overlay = TransformOverlay()
+    /// The layers of the selected graphic (text, shapes): picked, boxed and moved one by one, above the clip's box.
+    public let layerOverlay = GraphicsLayerOverlay()
     /// A click on the picture that no overlay or guide took (ProgramSurfaceView's Select tool `onPickClip`): the position
     /// in sequence px from the canvas center; the host selects the topmost clip there (`TextHitTest.topmostVisualClip`).
     public var onPickClip: ((Vec2) -> Void)?
+    /// Where the pointer rests on the picture (sequence px from the canvas center), nil beside it: the host previews the
+    /// Magic tool's object on the clip under it.
+    public private(set) var pointerSequencePosition: Vec2?
+    private var lastPointer: CGPoint?
+    /// The overlay learned of a pointer that has not moved since (a layer that appeared under it): it hears the position again.
+    public func repeatPointerOverlay() {
+        if let p = lastPointer, !overlay.isDragging { overlay.pointerMoved(p, canvasRect: canvasRect) }
+    }
     /// Program | Source tabs in the header instead of the title (empty = the title); `selectedTab` is this panel's.
     public var tabs: [String] = []
     public var selectedTab = 0
@@ -68,6 +78,10 @@ public final class MonitorPanel {
     /// A double-click on the picture (Select tool): the host edits the text under it.
     public var onTextDoubleClick: ((Vec2) -> Void)?
     var typePress: (start: CGPoint, now: CGPoint)?
+    /// Hand tool (ProgramSurfaceView `.hand`): a drag pans the shown picture, a double-click fits it. `handLast` is the
+    /// pointer of the running pan.
+    public var handToolOn: () -> Bool = { false }
+    var handLast: CGPoint?
     var lastPress: (time: Double, p: CGPoint)?
     public var clock: () -> Double = { ProcessInfo.processInfo.systemUptime }
     /// Create tool on the picture (MonitorPanel+PictureTools.swift): the mode now (nil = not the Create tool) and what a
@@ -107,6 +121,32 @@ public final class MonitorPanel {
     private var pressInFooter = false
     /// The rejected-timecode hint (the Mac `SQToast` over the monitor); the host shows it in its status line.
     public var onHint: ((String) -> Void)?
+    /// Program loudness readout (bottom left of the picture, the Mac `loudnessLabel`): short-term and integrated LUFS while
+    /// the engine measures; the host sets the provider on the Program monitor only.
+    public var loudnessProvider: (() -> LoudnessReading?)?
+    public var loudnessTargetProvider: (() -> LoudnessTarget)?
+    /// Project items dragged over the monitor (the Mac panel's drop highlight): a focus ring and a tint; the Program monitor
+    /// also names the half under the pointer (Insert left, Overwrite right). The host sets both from its drag callbacks.
+    public var dropHighlight = false
+    public var dropZone: MonitorDropZone?
+    /// The "New Sequence..." button of the empty Program monitor (laid out while drawing, like the header popups).
+    public private(set) var newSequenceRect: CGRect = .zero
+    /// Draws Pip into the Program empty state (the Mac `SQMascotPlace.programEmpty`); the host owns the animation (SQDrawShell).
+    public var emptyMascot: ((inout Canvas, CGRect) -> Void)?
+    /// The monitor has keyboard focus: its header line turns accent (the Mac `PanelContainerView.isFocused`).
+    public var isFocused = false
+    public static let activeLineThickness: CGFloat = 2
+    /// `PanelActiveMarker.lineFrame(in:headerHeight:)`: inset `sm` each side, the header's bottom 2 pt.
+    public static func activeLineRect(header: CGRect) -> CGRect {
+        let inset = CGFloat(DrawTheme.Spacing.sm)
+        return CGRect(x: header.minX + inset, y: header.maxY - activeLineThickness, width: max(header.width - 2 * inset, 0), height: activeLineThickness)
+    }
+    /// Where the last draw put Pip (zero when none).
+    public private(set) var emptyMascotRect: CGRect = .zero
+    /// `SQMascotPlace.programEmpty.side`.
+    public static let emptyMascotSide: CGFloat = 72
+    private var newSequenceHover = false
+    private var newSequencePressed = false
     /// Caret offsets of the open timecode field as last drawn (the canvas measures glyphs only while drawing).
     var timecodeCarets: [CGFloat] = []
     var activeGuide: (axis: MonitorGuides.Axis, index: Int)?
@@ -116,7 +156,7 @@ public final class MonitorPanel {
         self.title = title ?? (model.mode == .program ? "Program" : "Source")
     }
 
-    public var isDragging: Bool { pressInFooter || pressInWave || activeGuide != nil || overlay.isDragging || sourceDrag != nil || typePress != nil || pictureToolDragging }
+    public var isDragging: Bool { pressInFooter || pressInWave || activeGuide != nil || overlay.isDragging || layerOverlay.isDragging || handLast != nil || sourceDrag != nil || typePress != nil || pictureToolDragging }
 
     // MARK: Layout
 
@@ -185,13 +225,33 @@ public final class MonitorPanel {
         let t = theme
         c.fill(roundedRect: frame, radius: CGFloat(DrawTheme.Radius.panel), t.panel)
         drawHeader(&c)
+        // The Mac `pic` view (header to footer, edge to edge) carries the backdrop too: the picture margin is not panel colored.
+        c.fill(CGRect(x: frame.minX, y: headerRect.maxY, width: frame.width, height: max(0, footer.frame.minY - headerRect.maxY)), t.monitorBackdrop)
         c.saveGState()
         c.clip(to: slot)
         c.fill(slot, t.monitorBackdrop)
+        newSequenceRect = .zero
+        emptyMascotRect = .zero
         if showsAnglesGrid {
             drawAnglesGrid(&c)
+        } else if let empty = emptyText, let title = empty.title {
+            // Source with no clip: the Mac `EmptyStateView` (15 pt semibold title, body hint).
+            c.drawEmptyState(title: SQL10n.string(title), hint: SQL10n.string(empty.hint), in: slot, theme: t)
         } else if let empty = emptyText {
+            // ProgramEmptyView: Pip (72 pt, the host draws him), 14 pt gap, the hint, 14 pt gap, the button, centered as one stack.
+            let showsPip = model.mode == .program && emptyMascot != nil
             var y = slot.midY - (empty.title == nil ? 8 : 18)
+            emptyMascotRect = .zero
+            if showsPip {
+                let lineCount = c.wrap(empty.hint, width: min(220, slot.width - 48), fontSize: 11).count
+                let button = model.programEmptyState == .noSequence && model.onNewSequence != nil
+                let total = Self.emptyMascotSide + 14 + CGFloat(lineCount) * 16 + (button ? 14 + 24 : 0)
+                let top = (slot.midY - total / 2).rounded()
+                emptyMascotRect = CGRect(x: (slot.midX - Self.emptyMascotSide / 2).rounded(), y: max(top, slot.minY + 4),
+                                         width: Self.emptyMascotSide, height: Self.emptyMascotSide)
+                emptyMascot?(&c, emptyMascotRect)
+                y = emptyMascotRect.maxY + 14
+            }
             if let title = empty.title {
                 c.draw(title, in: CGRect(x: slot.minX, y: y, width: slot.width, height: 18), fontSize: 13, t.label2, align: .center)
                 y += 20
@@ -200,6 +260,13 @@ public final class MonitorPanel {
             for line in lines {
                 c.draw(line, in: CGRect(x: slot.minX, y: y, width: slot.width, height: 16), fontSize: 11, t.label3, align: .center)
                 y += 16
+            }
+            // ProgramEmptyView: the large "New Sequence..." button under the hint while no sequence is open.
+            if model.mode == .program, model.programEmptyState == .noSequence, model.onNewSequence != nil {
+                let title = "New Sequence…", w = InspectorDraw.buttonWidth(c, title: title)
+                newSequenceRect = CGRect(x: (slot.midX - w / 2).rounded(), y: y + 14, width: w, height: 24)
+                InspectorDraw.button(&c, title: title, in: newSequenceRect, hovering: newSequenceHover, pressed: newSequencePressed,
+                                        enabled: true, height: 24, t)
             }
         } else if showsWaveform {
             drawWaveform(&c)
@@ -212,18 +279,21 @@ public final class MonitorPanel {
             if hasPicture { c.list.video(c.px(canvasRect)) }
             if !model.overlaysHidden { drawOverlays(&c, in: canvasRect) }
             overlay.draw(&c, canvasRect: canvasRect, theme: t)
+            layerOverlay.draw(&c, canvasRect: canvasRect, theme: t)
             drawTextTools(&c)
             drawPictureTools(&c)
             drawOfflineCard(&c)
             drawBadges(&c)
         }
         c.restoreGState()
+        drawDropTarget(&c)
         let st = footerState
         var f = footer
         f.layout(footer.frame, st, durationWidth: c.size(of: st.footerDurationText, fontSize: 12).width)
         f.draw(&c, st, theme: t)
         if let e = footer.timecodeEdit {
-            timecodeCarets = MonitorFooter.timecodeCarets(e.string) { c.size(of: $0, fontSize: 12).width }
+            let semibold = c.semibold
+            timecodeCarets = MonitorFooter.timecodeCarets(e.string) { c.size(of: $0, fontSize: 12, face: semibold).width }
         }
     }
 
@@ -233,6 +303,15 @@ public final class MonitorPanel {
         let t = theme
         let body: CGFloat = 11, box: CGFloat = 24, pad = CGFloat(DrawTheme.Spacing.md)
         let midY = headerRect.midY
+        // The active mark of a panel with a header of its own (`PanelFocusRule`, `PanelActiveMarker.lineFrame`): the 2 pt line at the
+        // header's bottom, accent while the monitor has focus, quiet gray otherwise.
+        // With Program | Source tabs the header is the dock's tab strip (`ShellDock.draw`): a 1 pt separator and the line only
+        // under the selected tab, drawn by `drawTitleOrTabs`.
+        if tabs.isEmpty {
+            c.fill(roundedRect: Self.activeLineRect(header: headerRect), radius: Self.activeLineThickness / 2, isFocused ? t.accent : t.label3)
+        } else {
+            c.fill(CGRect(x: headerRect.minX, y: headerRect.maxY - 1, width: headerRect.width, height: 1), t.separator)
+        }
         let titleW = drawTitleOrTabs(&c, x: headerRect.minX + pad, fontSize: body)
         headerControls = []
         func popupWidth(_ s: String) -> CGFloat { (c.size(of: s, fontSize: body).width + 8 + 10 + 8 + 4).rounded(.up) }
@@ -309,10 +388,40 @@ public final class MonitorPanel {
         c.restoreGState()
     }
 
-    /// Drop dot (bottom left) and resolution badge (bottom right) on the picture slot.
+    /// MonitorPanelView.setDropHighlight / showDropZone: drop tint and focus ring over the card, and the Program half under
+    /// the pointer with its action name.
+    private func drawDropTarget(_ c: inout Canvas) {
+        guard dropHighlight else { return }
+        let t = theme
+        c.fill(frame, t.accent.alpha(0.10))
+        if model.mode == .program, let zone = dropZone {
+            let r = zone.rect(in: frame.size).offsetBy(dx: frame.minX, dy: frame.minY)
+            c.fill(r, t.accent.alpha(0.10))
+            c.draw(zone.title, in: r, fontSize: 11, t.label, align: .center)
+        }
+        c.stroke(roundedRect: frame.insetBy(dx: 0.5, dy: 0.5), radius: CGFloat(DrawTheme.Radius.panel), width: 1, t.accent.alpha(0.55))
+    }
+
+    /// Drop dot (bottom left), loudness readout, scrub latency (top left) and resolution badge (bottom right) on the slot.
     private func drawBadges(_ c: inout Canvas) {
         let t = theme
         let inset = CGFloat(DrawTheme.Spacing.sm)
+        let h14: CGFloat = 14
+        if let latency = model.latencyText {
+            let s = " \(latency) ", w = c.size(of: s, fontSize: 10).width
+            let r = CGRect(x: slot.minX + 10, y: slot.minY + 10, width: w, height: h14)
+            c.fill(r, t.viewerHUD)
+            c.draw(s, in: r, fontSize: 10, t.label2)
+        }
+        if let reading = loudnessProvider?(), let text = LoudnessReadout.text(reading) {
+            let over = LoudnessReadout.isOver(reading, target: loudnessTargetProvider?() ?? .default)
+            let s = " \(text) ", w = c.size(of: s, fontSize: 10).width
+            // The Mac label shares the corner with the drop dot; here it sits right of the dot so both stay readable.
+            let dot: CGFloat = model.mode == .program && model.dropIndicatorEnabled ? 14 + 4 : 0
+            let r = CGRect(x: slot.minX + inset + dot, y: slot.maxY - inset - h14, width: w, height: h14)
+            c.fill(r, t.viewerHUD)
+            c.draw(s, in: r, fontSize: 10, over ? t.yellow : t.label2)
+        }
         if model.mode == .program, model.dropIndicatorEnabled {
             let size: CGFloat = 14, d: CGFloat = 6
             let o = CGPoint(x: slot.minX + inset, y: slot.maxY - inset - size)
@@ -365,6 +474,7 @@ public final class MonitorPanel {
             let p = pt(x, y)
             guard frame.contains(p) else { return false }
             let right = mods.contains(.secondary)
+            if !right, newSequenceRect.contains(p) { newSequencePressed = true; return true }
             if !right, let h = footer.streamHandle(at: p), beginSourceDragPress(h, at: p) { return true }
             if footer.frame.contains(p) {
                 pressInFooter = !right
@@ -393,6 +503,9 @@ public final class MonitorPanel {
                     }
                     pressInWave = true
                     scrubWaveform(began: true, at: p)
+                } else if model.mode == .program, handToolOn() {
+                    beginHandPress(at: p)
+                    if handLast != nil { HostHover.current.request(.closedHand) }
                 } else if textField.isEditing, textField.mouseDown(p, modifiers: mods, canvasRect: canvasRect) {
                     // the caret moved inside the open text field (a press outside ended it and goes on below)
                 } else if beginPictureToolPress(at: p, modifiers: mods) {
@@ -403,16 +516,21 @@ public final class MonitorPanel {
                     // the Source picture is the Video and Audio drag source (StreamDragView over the viewer)
                 } else if beginTextPress(at: p) {
                     // Type tool press, or the second press of a double-click on the picture
+                } else if overlay.maskTool == nil, !textField.isEditing, layerOverlay.mouseDown(p, modifiers: mods, canvasRect: canvasRect) {
+                    // a layer of the selected graphic, its handle, or the empty canvas while layers are selected
                 } else if !overlay.mouseDown(p, modifiers: mods, canvasRect: canvasRect),
                           let pos = mapping.clickPosition(CGPoint(x: p.x - slot.minX, y: p.y - slot.minY)) {
                     onPickClip?(pos)
                 }
+                requestDragCursor()
             }
             return true
         case .mouseDragged(let x, let y):
             let p = pt(x, y)
-            if pictureToolDragging { pictureToolDragged(p); return true }
-            if overlay.isDragging { overlay.mouseDragged(p); return true }
+            if pictureToolDragging { pictureToolDragged(p); requestDragCursor(); return true }
+            if overlay.isDragging { overlay.mouseDragged(p); requestDragCursor(); return true }
+            if let last = handLast { handLast = p; HostHover.current.request(.closedHand); zoomGesture(mapping.panned(byViewDelta: CGSize(width: p.x - last.x, height: p.y - last.y))); return true }
+            if layerOverlay.isDragging { layerOverlay.mouseDragged(p, modifiers: overlay.modifiersNow?()); requestDragCursor(); return true }
             if sourceDrag != nil { sourceDragMoved(p, x: x, y: y); return true }
             if typePress != nil { typePress?.now = p; return true }
             if pressInWave { scrubWaveform(began: false, at: p); return true }
@@ -422,8 +540,16 @@ public final class MonitorPanel {
             return true
         case .mouseUp(let x, let y):
             let p = pt(x, y)
+            defer { requestHoverCursor(at: p) }
+            if newSequencePressed {
+                newSequencePressed = false
+                if newSequenceRect.contains(p) { model.onNewSequence?() }
+                return true
+            }
             if pictureToolDragging { pictureToolEnded(p); return true }
             if overlay.isDragging { overlay.mouseUp(p); return true }
+            if handLast != nil { handLast = nil; return true }
+            if layerOverlay.isDragging { layerOverlay.mouseUp(p); return true }
             if sourceDrag != nil { sourceDragEnded(x: x, y: y); return true }
             if typePress != nil { endTypePress(at: p); return true }
             if pressInWave { pressInWave = false; model.onScrubEnded?(); return true }
@@ -435,12 +561,15 @@ public final class MonitorPanel {
         case .mouseMoved(let x, let y):
             let p = pt(x, y)
             footer.mouseMoved(p)
+            newSequenceHover = newSequenceRect.contains(p)
             if let a = footer.hovered, let title = a.buttonTitle(playing: model.isPlaying) { HostHover.current.offerTip(a.tip(title)) }
             hoveredControl = headerControls.first { $0.1.contains(p) }?.0
             if let ctl = hoveredControl { HostHover.current.offerTip(headerTip(ctl)) }
             angleHover = showsAnglesGrid ? AnglesGridLayout.index(at: p, cells: angleCells) : nil
+            lastPointer = p
+            pointerSequencePosition = slot.contains(p) ? mapping.clickPosition(CGPoint(x: p.x - slot.minX, y: p.y - slot.minY)) : nil
             if !overlay.isDragging { overlay.pointerMoved(p, canvasRect: canvasRect) }
-            if !overlay.isDragging, let c = overlay.hoverCursor(at: p, canvasRect: canvasRect) { HostHover.current.request(c) }
+            requestHoverCursor(at: p)
             return false
         case .scroll(let x, let y, let dx, let dy, let mods):
             let p = pt(x, y)
@@ -470,6 +599,26 @@ public final class MonitorPanel {
             if key == .escape, activeSourceDrag != nil { sourceDragEnded(x: 0, y: 0, canceled: true); return true }
             return key == .escape && overlay.cancelDrag()
         }
+    }
+
+    /// The shape the picture asks for at `p` while no drag runs (Hand, Create, layer handles, transform box).
+    func requestHoverCursor(at p: CGPoint) {
+        if model.mode == .program, handToolOn(), slot.contains(p) {
+            HostHover.current.request(handLast != nil ? .closedHand : .openHand)
+        } else if !overlay.isDragging, !layerOverlay.isDragging, overlay.maskTool == nil, !textField.isEditing,
+                  let c = layerOverlay.hoverCursor(at: p, canvasRect: canvasRect) {
+            HostHover.current.request(c)
+        } else if !overlay.isDragging, let c = overlay.hoverCursor(at: p, canvasRect: canvasRect) {
+            HostHover.current.request(c)
+        } else if model.mode == .program, slot.contains(p), let m = createModeNow(), m != .text, !overlay.isDragging {
+            HostHover.current.request(.crosshair)       // Create tool: shapes, lines and strokes (resetCursorRects)
+        }
+    }
+
+    /// A press or drag keeps the shape of what it holds (HostHover forgets it on every drag event).
+    func requestDragCursor() {
+        if overlay.isDragging { HostHover.current.request(overlay.dragCursor) }
+        else if createDrag != nil { HostHover.current.request(.crosshair) }
     }
 
     /// A wheel zoom or pan: show it, put its value in the zoom popup without reporting it back (EditorPanels

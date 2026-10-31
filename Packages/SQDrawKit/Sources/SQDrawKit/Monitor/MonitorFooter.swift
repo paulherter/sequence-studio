@@ -286,16 +286,19 @@ public struct MonitorFooter: Sendable {
         func w(_ a: MonitorAction) -> CGFloat { a == .playPause ? Self.rowHeight : Self.smallBox }
         let transportW = bar.map(w).reduce(0, +) + Self.buttonGap * CGFloat(bar.count - 1)
         let edits: [MonitorAction] = s.mode == .source ? [.insert, .overwrite] : []
-        let fixed = 12 + Self.timecodeWidth + transportW + 4 + 12
         let iconW: CGFloat = 14
         let editsW = edits.isEmpty ? 0 : CGFloat(edits.count) * (Self.smallBox + Self.iconToLabel)
         let handles: [SourceStreams] = s.mode == .source ? [.videoOnly, .audioOnly] : []
         let handlesW = handles.isEmpty ? 0 : 2 * Self.handleSize.width + Self.handleGap + Self.iconToLabel
+        // Transport centered on the footer, never left of the timecode; the right group (marks, duration, edits, handles)
+        // must start after where the transport really ends, so it drops pieces from the outside in instead of overlapping.
+        let transportStart = max((r.midX - transportW / 2).rounded(), timecodeRect.maxX)
+        let room = r.maxX - 12 - (transportStart + transportW + 4)
+        let base = iconW + Self.iconToLabel + durationWidth
         var showEdits = !edits.isEmpty, showDuration = true
-        let showHandles = !handles.isEmpty && r.width >= fixed + iconW + Self.iconToLabel + durationWidth + editsW + handlesW
-        if r.width < fixed + iconW + Self.iconToLabel + durationWidth + editsW { showEdits = false }
-        if r.width < fixed + iconW + Self.iconToLabel + durationWidth { showDuration = false }
-        // Transport centered on the footer, never left of the timecode.
+        let showHandles = !handles.isEmpty && room >= base + editsW + handlesW
+        if room < base + editsW { showEdits = false }
+        if room < base { showDuration = false }
         var x = max((r.midX - transportW / 2).rounded(), timecodeRect.maxX)
         buttons = []
         for a in bar {
@@ -346,7 +349,7 @@ public struct MonitorFooter: Sendable {
         drawScrubBar(&c, s, theme: t)
         let size: CGFloat = 12    // Theme.Typography.shell / shellStrong
         if timecodeEdit != nil { drawTimecodeEdit(&c, theme: t) } else {
-            c.draw(s.timecode.format(s.currentTime), in: timecodeRect, fontSize: size, t.accent, align: .left)
+            c.draw(s.timecode.format(s.currentTime), in: timecodeRect, fontSize: size, t.accent, align: .left, face: c.semibold)   // shellStrong
         }
         for (a, r) in buttons {
             let isPlay = a == .playPause
@@ -482,13 +485,14 @@ public struct MonitorFooter: Sendable {
     private func drawTimecodeEdit(_ c: inout Canvas, theme t: DrawTheme) {
         guard let e = timecodeEdit else { return }
         let r = timecodeRect, size: CGFloat = 12
-        let xs = Self.timecodeCarets(e.string) { c.size(of: $0, fontSize: size).width }
+        let semibold = c.semibold
+        let xs = Self.timecodeCarets(e.string) { c.size(of: $0, fontSize: size, face: semibold).width }
         let lineH: CGFloat = 16, top = (r.midY - lineH / 2).rounded()
         if e.hasSelection {
             let x0 = xs[e.selection.lowerBound], x1 = xs[e.selection.upperBound]
             c.fill(CGRect(x: r.minX + x0, y: top, width: x1 - x0, height: lineH), t.accent.alpha(0.3))
         }
-        c.draw(e.string, in: r, fontSize: size, t.accent, align: .left)
+        c.draw(e.string, in: r, fontSize: size, t.accent, align: .left, face: semibold)
         let cx = r.minX + xs[min(e.caret, xs.count - 1)]
         c.strokeLine(from: CGPoint(x: cx, y: top), to: CGPoint(x: cx, y: top + lineH), width: 1, t.accent)
         HostRequests.current.caret = c.px(CGRect(x: cx, y: top, width: 0, height: lineH))

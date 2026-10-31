@@ -114,6 +114,7 @@ private func pad(_ dx: Double, _ dy: Double, _ phase: ScrollPhase, momentum: Scr
         #expect(normal.geometry.pointsPerSecond == zoomed)       // Normal: no double tap
         var p = panel(magnetic: true, clock: clock)
         p.scrollWheel(at: CGPoint(x: 500, y: 100), gesture: ScrollGesture(kind: .smartMagnify), modifiers: [])
+        p.settleZoomAnimation()                                   // the Mac eases the fit (`ZoomAnimation`)
         #expect(p.geometry.pointsPerSecond == p.fitScale)
         p.setZoom(pointsPerSecond: zoomed, anchorX: TimelineGeometry.contentOriginX)
         p.geometry.scrollX = 0

@@ -49,6 +49,26 @@ final class MagicStub: AppMagicMasks {
 
 @MainActor
 struct MonitorCardTests {
+    @Test func finderFilesOverTheSourceTabHighlightItAndReleaseHandsThemOver() {
+        let (host, _, _, _) = card()
+        let panel = host.source.panel
+        panel.layout(DrawRect(x: 0, y: 0, w: 800, h: 500), scale: 1)
+        var got: [URL] = []
+        panel.model.onDropFiles = { got = $0 }
+        let url = URL(fileURLWithPath: "/tmp/a.mov")
+        let x = Float(panel.frame.midX), y = Float(panel.frame.midY)
+        // The Program tab leaves Finder files to the timeline.
+        host.source.isShown = false
+        #expect(!host.filesDragged([url], phase: .ended, x: x, y: y) && got.isEmpty && !panel.dropHighlight)
+        host.source.isShown = true
+        #expect(!host.filesDragged([url], phase: .moved, x: x, y: y))
+        #expect(panel.dropHighlight && panel.dropZone == nil)
+        #expect(!host.filesDragged([url], phase: .moved, x: -50, y: -50) && !panel.dropHighlight)
+        #expect(host.filesDragged([url], phase: .ended, x: x, y: y))
+        #expect(got == [url] && !panel.dropHighlight)
+        #expect(!host.filesDragged([], phase: .canceled, x: x, y: y))
+    }
+
     private func card() -> (MonitorCardHost, MonitorEngineStub, MonitorBackendStub, EditorSession) {
         let program = MonitorEngineStub()
         let s = EditorSession(project: EditorSession.makeUntitled(), fileURL: nil, engine: program.stub)
@@ -92,6 +112,22 @@ struct MonitorCardTests {
         // The eyedropper wins over everything, a divider over text.
         #expect(AppPointer.shape(.init(divider: .vertical, sampling: true, textEditing: true)) == .crosshair)
         #expect(AppPointer.shape(.init(divider: .horizontal, textEditing: true)) == .resizeLeftRight)
+    }
+
+    @Test func projectDragOverTheProgramMonitorShowsTheHalfAndOtherPhasesClearIt() {
+        let (host, _, _, _) = card()
+        let panel = host.monitor.panel
+        panel.layout(DrawRect(x: 0, y: 0, w: 800, h: 500), scale: 1)
+        let ref = BinItemRef.media(MediaRef.ID())
+        let x = Float(panel.frame.minX + 10), y = Float(panel.frame.midY)
+        #expect(!host.projectDragged([ref], phase: .moved, x: x, y: y))
+        #expect(panel.dropHighlight)
+        #expect(panel.dropZone == .insert)                  // left half = Insert
+        #expect(!host.projectDragged([ref], phase: .canceled, x: x, y: y))
+        #expect(!panel.dropHighlight)
+        #expect(panel.dropZone == nil)
+        // Outside the card nothing is taken.
+        #expect(!host.projectDragged([ref], phase: .ended, x: -50, y: -50))
     }
 
     @Test func projectItemsBecomeTimelineDropSources() {

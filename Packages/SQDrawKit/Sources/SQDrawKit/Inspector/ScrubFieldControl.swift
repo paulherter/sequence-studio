@@ -265,14 +265,15 @@ public struct ScrubFieldControl: Sendable {
             }
         }
         let vw = c.size(of: valueText, fontSize: size).width
-        let uw = unitText.isEmpty ? 0 : c.size(of: unitText, fontSize: size).width + 3
+        let gap: CGFloat = unitText == "\u{00B0}" ? 0 : 3   // the degree sign hugs the number (`ScrubMath.format`)
+        let uw = unitText.isEmpty ? 0 : c.size(of: unitText, fontSize: size).width + gap
         let x0: CGFloat
         if isPlain { x0 = leadingText ? box.minX : box.maxX - uw - vw }
         else { x0 = leadingText ? box.minX + 8 : max(box.minX + 8, box.maxX - 8 - vw - uw) }
         let line = CGRect(x: x0, y: box.minY, width: vw + 1, height: box.height)
         c.draw(valueText, in: line, fontSize: size, valueColor.alpha(valueColor.a * dim))
         if !unitText.isEmpty {
-            c.draw(unitText, in: CGRect(x: x0 + vw + 3, y: box.minY, width: uw + 1, height: box.height), fontSize: size,
+            c.draw(unitText, in: CGRect(x: x0 + vw + gap, y: box.minY, width: uw + 1, height: box.height), fontSize: size,
                    t.label3.alpha(t.label3.a * dim))
         }
     }

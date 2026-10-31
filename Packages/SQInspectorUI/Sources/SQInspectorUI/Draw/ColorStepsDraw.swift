@@ -19,6 +19,9 @@ import SQDrawKit
     public var onMenu: (@MainActor (_ items: [SQMenuItem], _ anchor: CGRect) -> Void)?
     /// The host's .cube / .3dl chooser (nil = Choose File… is disabled).
     public var chooseLUTFile: (@MainActor (@escaping @MainActor (String?) -> Void) -> Void)?
+    /// The host's one-file chooser for Import Color Decision… (nil = the item is disabled) and its message sink.
+    public var chooseDecisionFile: (@MainActor (@escaping @MainActor (URL?) -> Void) -> Void)?
+    public var tellUser: (@MainActor (String, String) -> Void)?
     public var clock: @MainActor () -> Double = { ProcessInfo.processInfo.systemUptime }
 
     public init(controller: ColorGradeController) { self.controller = controller }
@@ -47,6 +50,7 @@ import SQDrawKit
         var m = ColorGraphMenus(model: model, tidyUp: { [weak self] in self?.tidyUp() })
         m.chooseLUTFile = chooseLUTFile
         m.rename = { [weak self] id in self?.beginRename(id) }
+        if let choose = chooseDecisionFile, let tell = tellUser { m.importDecision = m.makeDecisionImport(choose: choose, tell: tell) }
         return m
     }
 

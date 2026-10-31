@@ -56,6 +56,28 @@ extension ShellHost {
             guard list.viewMode == .icons else { return true }
             let r = ProjectListView.thumbRange
             list.thumbSize = min(max(list.thumbSize + (c == .projectThumbnailLarger ? 16 : -16), r.lowerBound), r.upperBound)
+        case .playInToOutRoll:
+            let st = AppSettings.load(from: defaults)
+            session.playInToOut(preroll: st.preroll, postroll: st.postroll)
+        case .playAround:
+            let st = AppSettings.load(from: defaults)
+            session.playAround(preroll: st.preroll, postroll: st.postroll)
+        case .newBin:
+            dock.show(.project)
+            focus = dock.focused ?? focus
+            guard let list = projectList else { return false }
+            list.newFolder()
+        case .replaceClipFromProject:
+            // Clip > Replace Clip from Project (the Mac `replaceClipFromProject`): same edit as Option-drop.
+            guard session.selection.count == 1, let clip = session.selection.first else { flash("Select one clip in the timeline to replace."); return true }
+            let picked = projectList?.selection ?? []
+            let media = picked.compactMap { if case .media(let id) = $0 { id } else { nil } }
+            let seqs = picked.compactMap { if case .sequence(let id) = $0 { id } else { nil } }
+            let ok: Bool
+            if !media.isEmpty { ok = session.replaceMedia(of: clip, withFirstOf: media) }
+            else if seqs.count == 1, let s = seqs.first { ok = session.replaceWithSequence(of: clip, with: s) }
+            else { flash("Select one item in the Project panel to replace with."); return true }
+            if let e = session.lastError, !ok || media.count > 1 { flash(e) }
         default: return false
         }
         return true
@@ -63,6 +85,11 @@ extension ShellHost {
 
     /// `sq.showCaptionsInMonitor`, the Mac key (AppController+Captions).
     static let captionsInMonitorKey = "sq.showCaptionsInMonitor"
+
+    /// The saved View > Show Captions in Program Monitor choice goes back into the engine at launch (AppKit `restoreCaptionsInMonitor`).
+    public func restoreCaptionsInMonitor(defaults: UserDefaults = .standard) {
+        if let v = defaults.object(forKey: Self.captionsInMonitorKey) as? Bool { session.engine.showsCaptions = v }
+    }
 
     /// The check marks of the toggles above.
     func viewChecks() -> Set<EditorCommand> {
@@ -80,7 +107,7 @@ extension ShellHost {
     // MARK: Quick Export
 
     /// Quick Export: the active sequence with its own platform preset (or the last one used), into `Exports/` next to the
-    /// project; no form. An existing file is kept and the new one gets a number.
+    /// project; no form. The preflight notes and the question about files already there come first (`preflightAndSubmit`).
     func quickExport(defaults: UserDefaults = .standard) async {
         guard let sources = exportSources, let queue = exportQueue else { flash("Export is not available."); return }
         let items = ExportDialogModel.sequenceItems(for: session)
@@ -100,17 +127,8 @@ extension ShellHost {
                                         moviesDirectory: StorageLocations.load().exportFallbackDirectory)
         model.outputDirectory = dir
         guard model.canExport else { flash(model.validationMessages.first ?? "Cannot export this sequence."); return }
-        let offline = ExportPreflight.offlineMedia(in: model.selectedID, project: session.project)
-        if !offline.isEmpty {
-            let q = ShellDialog("Media is offline", informative: SQL10n.plural(offline.count, one: "%@ media file is offline and exports as the offline picture.",
-                                                                               other: "%@ media files are offline and export as the offline picture."))
-            q.addButton("Export Anyway")
-            q.addButton("Cancel", role: .cancel)
-            guard await ask(q) == .first else { return }
-        }
         defaults.set(model.presetID, forKey: Self.lastPresetKey)
-        let ids = await model.submit(to: queue, outputDirectory: dir, run: true, replaceExisting: false)
-        guard !ids.isEmpty else { return }
+        guard let ids = await preflightAndSubmit(model, directory: dir, queue: queue), !ids.isEmpty else { return }
         await followExports(ids, in: queue)
     }
 

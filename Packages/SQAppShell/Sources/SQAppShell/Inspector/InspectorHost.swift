@@ -29,6 +29,8 @@ public final class InspectorHost {
     /// effects the same way).
     private lazy var transitions = TransitionControlsDraw(actions: TransitionControlsActions(session: session))
     private var showsTransition: Bool { transitions.shown != nil }
+    /// A transition is selected: its controls cover the effects (nothing to drop an effect on).
+    public var showsTransitionControls: Bool { showsTransition }
     private let session: EditorSession
     /// The card in points (window coordinates).
     public private(set) var frame: CGRect = .zero
@@ -79,6 +81,7 @@ public final class InspectorHost {
         panel = EffectControlsDrawView(model: model)
         // Edits, gestures, scrubs and the model's sync on every session change (shared with hosts without this panel).
         EffectControlsBinding.connect(model, to: session)
+        InspectorHooks.connect(model: model, session: session, shell: shell) { [weak self] in self?.dirty = true }
         // Popups and right-click menus: the shell's one menu system, anchored in window points.
         panel.onMenu = { [weak self, weak menus] items, anchor in
             guard let self, let menus else { return }
@@ -154,8 +157,30 @@ public final class InspectorHost {
         }
         let next = shell.onCommand
         shell.onCommand = { [weak self, weak shell] c in
-            guard c == .addKeyframe, let self else { return next?(c) == true }
-            shell?.onStatus?(addKeyframeAtPlayhead() ?? "")
+            // Delete with Effect Controls focused removes the selected keys, effect or mask, never the timeline clip.
+            if c == .delete || c == .rippleDelete, let self, shell?.focus == .effectControls,
+               !model.selection.isEmpty || model.selectedSection.map(model.canDeleteSection) == true {
+                model.deleteSelectionOrEffect()
+                return true
+            }
+            guard let self else { return next?(c) == true }
+            switch c {
+            case .addKeyframe: shell?.onStatus?(addKeyframeAtPlayhead() ?? "")
+            case .toggleGraphEditor:
+                // Clip > Graph Editor: Effect Controls shows and flips its graph (the Mac `execute`).
+                shell?.dock.show(.effectControls)
+                model.toggleGraphEditor()
+            case .easyEase, .easeIn, .easeOut:
+                let curve: EasingCurve = c == .easyEase ? .easeInOut : c == .easeIn ? .easeIn : .easeOut
+                let side: EaseSide = c == .easyEase ? .both : c == .easeIn ? .in : .out
+                if !model.selection.isEmpty { model.applyEasing(curve, side: side) }
+                else if !session.easeSpeedPointAtPlayhead(curve, side: side) {      // no keys selected: the speed point at the playhead
+                    shell?.onStatus?(SQL10n.string("Select keyframes in Effect Controls, or put the playhead on a speed point."))
+                }
+            case .toggleHoldInterpolation:
+                if model.selection.isEmpty { shell?.onStatus?(SQL10n.string("Select keyframes in Effect Controls first.")) } else { model.toggleHold() }
+            default: return next?(c) == true
+            }
             return true
         }
     }

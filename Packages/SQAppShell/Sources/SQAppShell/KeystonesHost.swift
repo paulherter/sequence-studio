@@ -26,6 +26,8 @@ public final class KeystonesHost {
     public var withTimeline: (_ change: (inout TimelinePanel) -> Void) -> Void = { _ in }
     /// The timeline's host, for the bridge that applies a drop.
     public var timelineHost: () -> TimelineHost? = { nil }
+    /// The clip shown in Effect Controls when the point (window points) is over that card (the Mac `effectView.onDropKeystone`).
+    public var inspectorDropClip: (@MainActor (CGPoint) -> Clip.ID?)?
     /// Edit Curve: the shared ease popover (`InspectorHost.openEase`), anchor in window points.
     public var openEase: ((any EaseCurveSource, CGRect) -> Void)?
 
@@ -62,7 +64,10 @@ public final class KeystonesHost {
     /// Floating over the timeline area (Windows), window points.
     public func layout(floatingIn area: CGRect, scale: Float, theme: DrawTheme) {
         palette.theme = theme
-        if palette.isVisible { palette.keystones = model.keystones }
+        if palette.isVisible {
+            palette.keystones = model.keystones
+            palette.changed = Set(model.keystones.filter { $0.isBuiltIn && model.canDelete($0.id) }.map(\.id))
+        }
         palette.layout(in: area, scale: scale)
     }
 
@@ -70,6 +75,7 @@ public final class KeystonesHost {
     public func layout(docked card: CGRect?, scale: Float, theme: DrawTheme) {
         palette.theme = theme
         palette.keystones = model.keystones
+        palette.changed = Set(model.keystones.filter { $0.isBuiltIn && model.canDelete($0.id) }.map(\.id))
         palette.layout(docked: card, scale: scale)
     }
 
@@ -83,7 +89,14 @@ public final class KeystonesHost {
     /// True when the panel took the event (pointer moves go on).
     public func handle(_ e: InputEvent, scale: Float) -> Bool {
         if options?.handle(e, scale: scale) == true { return true }
+        if case .mouseMoved(let x, let y) = e, palette.isVisible {
+            let k = CGFloat(max(palette.scale, 0.01))
+            let p = CGPoint(x: CGFloat(x) / k, y: CGFloat(y) / k)
+            if palette.frame.contains(p) { HostHover.current.offerTip(palette.help(at: p)) }
+        }
         guard let events = palette.handle(e) else { return false }
+        // A click selects the row in the model too (Delete, the "..." menu and Edit Curve read `model.selected`).
+        if model.selectedID != palette.selectedID, palette.selectedID != nil { model.selectedID = palette.selectedID }
         for ev in events { apply(ev) }
         if case .mouseMoved = e { return false }
         return true
@@ -95,7 +108,16 @@ public final class KeystonesHost {
             withTimeline { p in if p.contains(x: x, y: y) { _ = p.keystoneHover(ks, x: x, y: y) } else { p.keystoneExit() } }
         case .drop(let ks, let x, let y):
             var actions: [TimelineAction] = []
-            withTimeline { p in if p.contains(x: x, y: y) { actions = p.keystoneDrop(ks, x: x, y: y) } else { p.keystoneExit() } }
+            var overTimeline = false
+            withTimeline { p in
+                overTimeline = p.contains(x: x, y: y)
+                if overTimeline { actions = p.keystoneDrop(ks, x: x, y: y) } else { p.keystoneExit() }
+            }
+            // Released on Effect Controls: the keystone lands on the clip shown there, whole clip.
+            if !overTimeline, let clip = inspectorDropClip?(CGPoint(x: CGFloat(x / palette.scale), y: CGFloat(y / palette.scale))) {
+                apply(ks, to: clip)
+                return
+            }
             let h = timelineHost()
             for a in actions { if let m = TimelineSessionBridge.apply(a, to: session, host: h) { shell.onStatus?(m) } }
         case .cancel:
@@ -134,11 +156,16 @@ public final class KeystonesHost {
         guard let clip = session.singleSelectedClip, clip.kind == .video else {
             shell.onStatus?(SQL10n.format("Select a video clip to apply “%@”.", ks.name)); return
         }
-        guard let landed = session.applyKeystone(ks, to: clip.id, span: nil) else {
+        apply(ks, to: clip.id)
+    }
+
+    /// The keystone's own placement on the whole clip, then its bar on the timeline.
+    func apply(_ ks: Keystone, to clipID: Clip.ID) {
+        guard let landed = session.applyKeystone(ks, to: clipID, span: nil) else {
             shell.onStatus?(session.lastError ?? SQL10n.format("“%@” could not be applied.", ks.name)); return
         }
-        let now = session.activeTimeline?.tracks.lazy.flatMap(\.clips).first { $0.id == clip.id }
-        withTimeline { $0.setKeystoneBar(KeystoneBar(clip: clip.id, span: landed, name: ks.name), clip: now) }
+        let now = session.activeTimeline?.tracks.lazy.flatMap(\.clips).first { $0.id == clipID }
+        withTimeline { $0.setKeystoneBar(KeystoneBar(clip: clipID, span: landed, name: ks.name), clip: now) }
     }
 
     /// Delete Keystone / Reset to Built-in: only for a keystone the user saved or changed.

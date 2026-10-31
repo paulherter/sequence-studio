@@ -78,7 +78,9 @@ public final class ShellDock {
     /// itself (header detail and buttons, the Mac `PanelHeaderItems`): no tab goes there, the dock ignores presses on it.
     public var stripTools: (PanelID) -> CGFloat = { _ in 0 }
     /// The panel with keyboard focus: its tab underline turns accent.
-    public var focused: PanelID?
+    public var focused: PanelID? { didSet { if let f = focused { onFocus?(f) } } }
+    /// The host follows it: the key map's scope (`ShellHost.focus`) is the panel last clicked or focused.
+    public var onFocus: ((PanelID) -> Void)?
     /// The last pointer position (points): Maximize Panel Under Pointer.
     public var pointer: CGPoint?
     /// Writes the store (the host debounces nothing: layouts are small). nil = not saved (tests).

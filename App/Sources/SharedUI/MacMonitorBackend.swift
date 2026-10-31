@@ -23,12 +23,17 @@ final class MacMonitorBackend: AppMonitorBackend {
     /// The Source picture: its engine's CAMetalLayer, placed like the Program viewer when the Source tab shows.
     let sourceViewer = ViewerView(frame: .zero)
     var window: () -> NSWindow? = { nil }
+    /// The audio engines made here (the Source monitor's): Settings > Audio Output points them at the chosen device.
+    private(set) var audioEngines: [AudioEngine] = []
 
     init(device: MTLDevice?, media: ProjectMediaResolver, mediaStore: MacTimelineMedia) {
         self.device = device
         self.media = media
         self.mediaStore = mediaStore
     }
+
+    /// Every engine made here is told to the session: relinks and proxy swaps reach it like the Program engine.
+    var registerEngine: ((any ProgramEngine) -> Void)?
 
     func makeSourceEngine() -> any AppMonitorEngine {
         let tap = MacPictureTap(engine: engine(audio: true))
@@ -43,7 +48,16 @@ final class MacMonitorBackend: AppMonitorBackend {
 
     private func engine(audio: Bool) -> any ProgramEngine {
         guard let device else { return StubProgramEngine() }
-        do { return try PlaybackEngine(device: device, media: media, audio: audio ? AudioEngine(media: media) : nil) } catch {
+        do {
+            let out = audio ? AudioEngine(media: media) : nil
+            if let out {
+                out.setOutputDevice(uid: AppSettings.load().audioOutputUID)
+                audioEngines.append(out)
+            }
+            let e = try PlaybackEngine(device: device, media: media, audio: out)
+            registerEngine?(e)
+            return e
+        } catch {
             SQLog.error("shared UI: monitor engine unavailable: \(error)")
             return StubProgramEngine()
         }
@@ -67,6 +81,10 @@ final class MacTimelineMedia: TimelineMediaSource, Sendable {
         var atlas = ThumbnailAtlas(slot: MacTimelineMedia.thumbnailSlot)
         var queued: Set<ThumbnailAtlas.Key> = []
         var failed: Set<UUID> = []
+        /// Bumped when a path value changes (Reconnect Media keeps the count) or the offline set changes.
+        var pathsRevision = 0
+        var offline: Set<UUID> = []
+        var offlineChecked = Date.distantPast
     }
     private let state = Mutex(State())
     private let thumbnailer = Thumbnailer()
@@ -74,7 +92,10 @@ final class MacTimelineMedia: TimelineMediaSource, Sendable {
     /// The project's media changed: the path table the decodes read.
     func set(_ project: Project) {
         let map = Dictionary(project.media.map { ($0.id, $0.path) }, uniquingKeysWith: { a, _ in a })
-        state.withLock { $0.paths = map }
+        state.withLock { s in
+            if s.paths != map { s.pathsRevision += 1 }
+            s.paths = map
+        }
     }
 
     /// A stable id for a file outside the project (start screen posters).
@@ -138,6 +159,22 @@ final class MacTimelineMedia: TimelineMediaSource, Sendable {
             }
         }
         return picture
+    }
+
+    /// Changes whenever a path, waveform, thumbnail or failure arrives: the timeline replays its cached clip layer until then.
+    var drawRevision: Int? {
+        state.withLock { s in
+            // Files appear and vanish while the app runs: look again at most once a second, and only a change bumps the revision.
+            if Date().timeIntervalSince(s.offlineChecked) >= 1 {
+                s.offlineChecked = Date()
+                let now = Set(s.paths.filter { !FileManager.default.fileExists(atPath: $0.value) }.keys)
+                if now != s.offline { s.offline = now; s.pathsRevision += 1 }
+            }
+            var h = Hasher()
+            h.combine(s.pathsRevision)
+            h.combine(s.paths.count); h.combine(s.waveforms.count); h.combine(s.failed.count); h.combine(s.atlas.generation)
+            return h.finalize()
+        }
     }
 
     /// The atlas for the renderer: (slot, image, generation).

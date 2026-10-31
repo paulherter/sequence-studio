@@ -17,6 +17,17 @@ extension ShellHost {
         return PasteMedia.route(target: target, hasOwnClipData: false, hasFiles: !c.fileURLs.isEmpty, hasImage: c.imageData != nil)
     }
 
+    /// Where a pasted image is written (the Mac `AppController.pasteMedia`): an unsaved project keeps the file where it is, so
+    /// it goes somewhere that survives a restart; a saved one copies it on import, so the Preferences scratch folder (or temp) does.
+    static func pastedImageFolder(saved: Bool, locations: StorageLocations = AppSettings.load().locations) -> URL {
+        if !saved {
+            return FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
+                .appendingPathComponent("Sequence Studio/Pasted Images", isDirectory: true)
+        }
+        return locations.scratchDirectory("Pasted Images")
+            ?? FileManager.default.temporaryDirectory.appendingPathComponent("SQPastedImages", isDirectory: true)
+    }
+
     /// True when Paste imported something from the clipboard.
     func pasteMedia() -> Bool {
         guard let read = mediaClipboard else { return false }
@@ -31,11 +42,7 @@ extension ShellHost {
             guard let png = content.imageData else { return false }
             // A saved project copies the file into its Files folder on import, so the temp folder is enough; an unsaved one
             // keeps the file where it is, so it goes somewhere that survives a restart.
-            // shortcut: no Preferences scratch folder here (the Mac asks `settings.locations`); upgrade when the shell has settings.
-            let folder: URL = session.fileURL == nil
-                ? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
-                    .appendingPathComponent("Sequence Studio/Pasted Images", isDirectory: true)
-                : FileManager.default.temporaryDirectory.appendingPathComponent("SQPastedImages", isDirectory: true)
+            let folder = Self.pastedImageFolder(saved: session.fileURL != nil)
             do {
                 let url = try PasteMedia.writeImage(png, into: folder)
                 flash("Importing pasted image…")

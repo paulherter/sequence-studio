@@ -23,7 +23,9 @@ extension TimelinePanel {
         // viewport-change hook).
         let view = (geometry.scrollX, geometry.pointsPerSecond)
         defer {
-            if isPlaying, view != (geometry.scrollX, geometry.pointsPerSecond) { follow.userScrolled(whilePlaying: true) }
+            let moved = view != (geometry.scrollX, geometry.pointsPerSecond)
+            if moved { zoomAnimation = nil }                         // a scroll or drag of the view ends a running ease (Mac `setScroll`)
+            if isPlaying, moved { follow.userScrolled(whilePlaying: true) }
             publishHover(e)
         }
         switch e {
@@ -77,12 +79,13 @@ extension TimelinePanel {
         pressCursor = cursor(atPoint: p, modifiers: mods)
         if toolState.keepAttached { keepAttachedUsed = true }
         // A press ends the skim (the Mac `clearSkimmer`; the host's skim returns the monitor to the playhead).
-        let skimEnd: [TimelineAction] = skimmerTime == nil ? [] : [.skim(nil)]
+        let skimAt = skimmerTime
+        let skimEnd: [TimelineAction] = skimAt == nil ? [] : [.skim(nil)]
         skimmerTime = nil
-        return typed + skimEnd + pressed(p, modifiers: mods)
+        return typed + skimEnd + pressed(p, modifiers: mods, skimmedTime: skimAt)
     }
 
-    private mutating func pressed(_ p: CGPoint, modifiers mods: InputModifiers) -> [TimelineAction] {
+    private mutating func pressed(_ p: CGPoint, modifiers mods: InputModifiers, skimmedTime: Time? = nil) -> [TimelineAction] {
         let clicks = clickCount(at: p)
         let shift = mods.contains(.shift), command = mods.contains(.command), option = mods.contains(.option)
         let tool = toolState.timelineTool
@@ -188,6 +191,11 @@ extension TimelinePanel {
         if selectedTransition != nil, !shift, !command {
             selectedTransition = nil
             out.append(.selectTransition(nil, keepClips: false))
+        }
+        // Fast Cut: a plain press over the tracks also puts the playhead where the skimmer was (the Mac `mouseDown`).
+        if let t = skimmedTime, clicks == 1, mods.intersection([.shift, .command, .option]).isEmpty {
+            playhead = t
+            out.append(.seek(t))
         }
         feedInteraction()
         interaction.mouseDown(p, modifiers: Self.gestureModifiers(mods))
@@ -406,6 +414,9 @@ extension TimelinePanel {
             if HostKeyRepeat.shared.isRepeat { return [] }     // a held Delete deletes once (the Mac `isRepeatable` filter)
             if mods.isEmpty, let word = deleteSelectedWord() { return word }     // a selected word goes alone
             guard mods.subtracting(.shift).isEmpty, interaction.hasDeleteTarget, gesture == nil else { return nil }
+            // The Mac order (`AppController.execute(.delete)`): a selected transition goes first, then a gap (ripple close).
+            if selectedTransition != nil { return nil }
+            if selection.isEmpty, captionSelection.isEmpty, let gap = interaction.gapSelection { return [.closeGap(gap)] }
             // Delete / Backspace lift (clear), Shift ripples (the Mac key map's clear / ripple delete).
             guard let c = interaction.deleteSelection(ripple: mods.contains(.shift)) else { return [] }
             var out = refreshFromInteraction()
@@ -432,9 +443,17 @@ extension TimelinePanel {
 
     // MARK: Autoscroll (`autoscrollTick`)
 
+    /// A drag sits near the left or right edge: the host must draw every frame so the autoscroll keeps its pace even when
+    /// the pointer rests (the Mac runs a 60 Hz timer for it).
+    public var isAutoscrolling: Bool {
+        guard let l = lastDrag, gesture != nil, toolState.timelineTool != .hand, toolState.timelineTool != .zoom else { return false }
+        return TimelineAutoscroll.velocity(pointerX: l.x, viewLeft: TimelineGeometry.contentOriginX, viewRight: size.width) != 0
+    }
+
     /// Call once per frame: a drag near the left or right edge scrolls and replays the drag at the new scroll.
     public mutating func tick() -> [TimelineAction] {
         stepSpringBack()
+        stepZoomAnimation()
         guard let l = lastDrag, gesture != nil, toolState.timelineTool != .hand, toolState.timelineTool != .zoom else {
             lastAutoscroll = nil
             return []
@@ -455,6 +474,12 @@ extension TimelinePanel {
         guard let p = lastDrag, let g = gesture else { return [] }
         switch g {
         case .marker(_, _, true, _): dragMarker(to: p); return []
+        case .clipMarker(let h, _, true):
+            let r = clipMarkerTarget(h, at: p)
+            timeline.moveClipMarker(h.marker, on: h.clip, to: r.time)
+            scrubSnapTime = r.hit?.time
+            return []
+        case .itemLane: return itemLaneDragged(to: p)
         case .inOut(_, _, _, true, _): dragInOut(to: p); return []
         case .scrub:
             let t = scrubTime(at: p, shift: dragModifiers.contains(.shift))
@@ -563,8 +588,11 @@ extension TimelinePanel {
         let dx = abs(end.x - start.x), dy = abs(end.y - start.y)
         let r: (scale: Double, scrollX: Double)
         if max(dx, dy) < TimelineInteraction.dragThreshold {
-            r = TimelineZoom.zoomClick(scale: geometry.pointsPerSecond, scrollX: Double(geometry.scrollX),
-                                       anchorX: Double(start.x - TimelineGeometry.contentOriginX), zoomOut: zoomOut, range: zoomLimits)
+            let t = zoomTarget
+            let c = TimelineZoom.zoomClick(scale: t.scale, scrollX: t.scrollX,
+                                           anchorX: Double(start.x - TimelineGeometry.contentOriginX), zoomOut: zoomOut, range: zoomLimits)
+            startZoomAnimation(toScale: c.scale, toScroll: c.scrollX, mode: .anchored(x: Double(start.x - TimelineGeometry.contentOriginX)))
+            return
         } else {
             func seconds(_ x: CGFloat) -> Double {
                 let t = geometry.unsnappedTime(atX: x)
@@ -573,6 +601,7 @@ extension TimelinePanel {
             r = TimelineZoom.zoomMarquee(startSeconds: seconds(start.x), endSeconds: seconds(end.x),
                                          viewport: Double(contentViewportWidth), range: zoomLimits)
         }
+        zoomAnimation = nil
         geometry.pointsPerSecond = r.scale
         geometry.scrollX = CGFloat(r.scrollX)
         clampScroll()

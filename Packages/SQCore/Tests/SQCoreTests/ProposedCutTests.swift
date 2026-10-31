@@ -79,4 +79,13 @@ private func makeTimeline() -> (Timeline, Clip) {
         tl.proposeCuts([r(2, 1), r(6, 2)], kind: .silence)
         #expect(tl.proposedCutTotal == s(3))
     }
+
+    @Test func reviewRowsAndSummaryText() {
+        let cut = Timeline.ProposedCut(id: UUID(), range: TimeRange(start: Time(72, 5), duration: Time(7, 5)), kind: .silence)
+        #expect(cut.rowTitle == "0:14.4   1.4 s")
+        let scene = Timeline.ProposedCut(id: UUID(), range: TimeRange(start: Time(75, 1), duration: .zero), kind: .scene)
+        #expect(scene.rowTitle == "1:15.0   scene change")
+        #expect(Timeline.ProposedCut.reviewSummary(count: 0, checked: 0, removed: .zero) == "No proposed cuts.")
+        #expect(Timeline.ProposedCut.reviewSummary(count: 5, checked: 3, removed: Time(21, 5)) == "3 of 5 checked, 4.2 s will be removed.")
+    }
 }

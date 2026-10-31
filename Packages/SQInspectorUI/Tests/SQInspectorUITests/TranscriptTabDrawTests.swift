@@ -32,6 +32,16 @@ private final class Words: TranscriptionService, @unchecked Sendable {
         t.mouseDown(at: p, clickCount: count); t.mouseUp(at: p)
     }
 
+    @Test func withoutASequenceTheTabShowsTheEmptyState() {
+        let tab = TranscriptTabDraw()
+        tab.size = CGSize(width: 320, height: 480)
+        #expect(tab.showsEmptyState)
+        var c = Canvas(width: 320, height: 480, atlas: nil, scale: 1)
+        tab.draw(&c)
+        tab.model = CaptionsPanelModel(service: Words())
+        #expect(!tab.showsEmptyState)
+    }
+
     @Test func idleShowsTheTranscribeButtonOnly() {
         let m = CaptionsPanelModel(service: Words())
         m.sourceURL = URL(fileURLWithPath: "/tmp/a.wav")

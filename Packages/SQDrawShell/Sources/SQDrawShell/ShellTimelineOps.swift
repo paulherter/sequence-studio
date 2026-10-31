@@ -139,6 +139,24 @@ extension ShellCommands {
         case .jumpCutAlternate:
             if let reason = s.jumpCutRefusal { return reason }
             _ = s.jumpCutAlternate()
+        case .audioGainDown, .audioGainUp, .audioGainDown6, .audioGainUp6:
+            let db: Double = c == .audioGainDown ? -1 : c == .audioGainUp ? 1 : c == .audioGainDown6 ? -6 : 6
+            return s.nudgeAudioGainReport(byDB: db) ?? "Select an audio clip first."
+        case .cutToBeats, .snapToBeats:
+            // Clip > Beat Edits (the Mac `requestBeatEdit`).
+            guard s.hasBeatMarkers else { return "Run Markers on Beat on the music first." }
+            guard !s.selection.isEmpty else { return "Select the clips to edit first." }
+            let cut = c == .cutToBeats
+            guard let n = cut ? s.cutToBeats() : s.snapToBeats() else { return s.lastError ?? "" }   // a refused edit reports itself
+            if cut { return n == 0 ? "No beat falls inside the selection." : "Cut at \(n) beat\(n == 1 ? "" : "s")." }
+            return n == 0 ? "The selected clips already end on beats." : "Snapped \(n) clip end\(n == 1 ? "" : "s") to beats."
+        case .switchAngle(let n):
+            switch s.switchAngle(n) {
+            case .switched, .unchanged: break
+            case .noAnglesClip: return "No Angles clip is selected or under the playhead."
+            case .noSuchAngle(let count): return "This Angles clip has \(count) angles."
+            case .refused: return s.lastError ?? "Could not switch the angle."
+            }
         case .tagDialogue: if !s.toggleAudioTag(.dialogue) { return "Select an audio clip first." }
         case .tagMusic: if !s.toggleAudioTag(.music) { return "Select an audio clip first." }
         case .tagSFX: if !s.toggleAudioTag(.sfx) { return "Select an audio clip first." }

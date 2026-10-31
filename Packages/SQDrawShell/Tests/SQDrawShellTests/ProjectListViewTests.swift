@@ -138,6 +138,16 @@ import SQEditorSession
         v.draw(&c, theme: DrawTheme())
         #expect(c.list.quads.count > 20)
     }
+
+    /// Another dock tab on top leaves the Project panel without a frame: it must draw nothing (its header "..." used to
+    /// show at the window's top-left).
+    @Test func drawsNothingWithoutAFrame() {
+        let (v, _, _) = view()
+        v.frame = .zero
+        var c = Canvas(width: 300, height: 400, atlas: GlyphAtlas(), scale: 1)
+        v.draw(&c, theme: DrawTheme())
+        #expect(c.list.quads.isEmpty)
+    }
 }
 
 @MainActor

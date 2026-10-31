@@ -62,11 +62,11 @@ extension TimelinePanel {
         let textWidth = min(body.maxX, visible.maxX) - textLeft - 4
         guard textWidth >= 14, !name.isEmpty else { return }
         let size = DrawTheme.TypeSize.clipName.cg
-        let lineH = cv.size(of: "Ag", fontSize: size).height
+        let lineH = cv.size(of: "Ag", fontSize: size, face: cv.medium).height
         let mid = body.height >= 18 ? body.minY + 12.5 - 3.5 : body.minY + 10 - 3.5
         cv.saveGState()
         cv.clip(to: CGRect(x: textLeft, y: body.minY, width: textWidth, height: body.height))
-        cv.draw(name, at: CGPoint(x: textLeft, y: (mid - lineH / 2).rounded()), fontSize: size, TimelineSkin.text(on: captionFill), maxWidth: textWidth)
+        cv.draw(name, at: CGPoint(x: textLeft, y: (mid - lineH / 2).rounded()), fontSize: size, TimelineSkin.text(on: captionFill), face: cv.medium)   // cut by the clip, not ellipsized (the Mac `ClipLayer`)
         cv.restoreGState()
     }
 

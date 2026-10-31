@@ -5,6 +5,15 @@ import SQCore
 /// Clip > Fit Music to Length: cuts or loops the selected music clip at bar boundaries (`SQAnalysis.MusicFit`) so it ends
 /// at the target length. The chosen version becomes split + trim pieces with a smooth crossfade at every join, one undo step.
 extension EditorSession {
+    /// "Version 1: 30.0 s, exact, cut 2 bars" for a row of the Fit Music dialog (AppKit sheet and shared dialog).
+    public static func musicFitRowTitle(_ v: MusicFit.Version, index: Int) -> String {
+        func seconds(_ t: Time) -> Double { Double(t.value) / Double(t.timescale) }
+        let err = seconds(v.lengthError)
+        let fit = abs(err) < 0.05 ? "exact" : String(format: "%@%.1f s", err > 0 ? "+" : "-", abs(err))
+        let bars = v.jumpBars == 1 ? "1 bar" : "\(v.jumpBars) bars"
+        return String(format: "Version %d: %.1f s, %@, %@ %@", index + 1, seconds(v.length), fit, v.removesAudio ? "cut" : "loop", bars)
+    }
+
     /// The one selected audio clip Fit Music works on: media audio at normal speed (retimed clips are refused).
     public var musicFitClip: Clip? {
         let c = selectedAudioClips

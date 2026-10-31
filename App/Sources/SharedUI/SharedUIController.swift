@@ -1,6 +1,7 @@
 import AppKit
 import CoreVideo
 import Metal
+import SQAnalysis
 import SQAppShell
 import SQCore
 import SQDrawEditor
@@ -9,6 +10,8 @@ import SQDrawMonitor
 import SQDrawShell
 import SQDrawTimeline
 import SQEditorSession
+import SQEditorUI
+import SQMedia
 import SQExport
 import SQInspectorUI
 import SQMonitorUI
@@ -55,6 +58,12 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
     lazy var timelineHost = makeTimelineHost()
     lazy var projectList = ProjectListView(host: shell)
     let files = MacShellFilePicker()
+    /// Conform to Constant Frame Rate jobs of the Project menu.
+    let conformRunner = ConformRunner()
+    /// Background work of every kind (SharedUIController+Jobs.swift); polled while the app runs.
+    let jobCenter = JobCenter()
+    /// Dock progress and the "Export finished" notification.
+    let exportNotifier = ExportNotifier()
     /// The Program picture: the engine's CAMetalLayer, under the UI view, moved onto the picture quad every frame.
     let viewer = ViewerView(frame: .zero)
     /// The clipping containers of the Program and Source viewers (a zoom above Fit makes the quad larger than its card).
@@ -90,24 +99,43 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         h.withTimeline = { [weak self] change in if let self { change(&timelinePanel) } }
         h.modifiers = { MacKeys.modifiers(flags: NSEvent.modifierFlags.rawValue) }
         h.graphics = { [weak self] in self?.graphics.editor }
-        h.monitor.magic = MacMagicMasks(model: inspector.model, session: session) { [weak self] in self?.shell.onStatus?($0) }
+        let magic = MacMagicMasks(model: inspector.model, session: session) { [weak self] in self?.shell.onStatus?($0) }
+        magic.onTracked = { [weak self] in self?.shell.magicHealth?.forget() }
+        h.monitor.magic = magic
         return h
     }()
     /// The Library and Effects cards (SharedUILibrary.swift).
     lazy var library: LibraryHost = makeLibraryHost()
+    let libraryFrames = LibraryPreviewFrames()
     lazy var effects: EffectsHost = makeEffectsHost()
     /// The Text card; its swatches open Controls' color picker.
     lazy var captions: CaptionsHost = {
         let h = CaptionsHost(session: session, menus: shell.menuBar.controller, shell: shell)
         h.useTranscription { SpeechAnalyzerTranscriber() }
+        shell.voiceover = Self.voiceoverBackend
         h.pickColor = { [weak self] color, anchor, change in self?.inspector.pickColor(color, anchor: anchor, change) }
         return h
     }()
+    /// Voiceover from Text speaks with the Mac's voices (`SpeechRenderer`); the shell flow itself is portable.
+    static var voiceoverBackend: ShellVoiceoverBackend {
+        ShellVoiceoverBackend(
+            voices: {
+                let all = SpeechRenderer.voices()
+                let first = SpeechRenderer.defaultVoiceID(in: all, remembered: VoiceoverMemory.voice())
+                let ordered = all.filter { $0.id == first } + all.filter { $0.id != first }
+                return ordered.map { (id: $0.id, title: "\($0.name) (\($0.language))" + ($0.isEnhanced ? " - enhanced" : "")) }
+            },
+            render: { text, voice, rate, url in
+                do { return try await SpeechRenderer.render(text: text, voiceID: voice, rate: rate, to: url) }
+                catch SpeechError.noAudio { throw ShellVoiceoverError.noAudio }
+            })
+    }
     /// Window > Keystones as a dock panel (SQAppShell `KeystonesHost`); Controls' text animations read its list.
     lazy var keystones: KeystonesHost = {
         let h = KeystonesHost(session: session, menus: shell.menuBar.controller, shell: shell)
         h.withTimeline = { [weak self] change in if let self { change(&timelinePanel) } }
         h.timelineHost = { [weak self] in self?.timelineHost }
+        h.inspectorDropClip = { [weak self] in self?.inspectorDropClip($0) }
         h.openEase = { [weak self] source, anchor in self?.inspector.openEase(source, anchor: anchor) }
         h.dock(in: shell.dock)
         inspector.keystones = h.model
@@ -195,11 +223,16 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         projectModel = ProjectPanelModel(project: session.project, onEdit: { [weak session] p, name in
             session?.perform(name) { $0 = p }
         })
+        session.engine.audioScrubbing = AppSettings.load().audioScrubbing
+        session.setSelectionFollowsPlayhead(AppSettings.load().selectionFollowsPlayhead)
+        session.newSequenceEditMode = AppSettings.load().newSequenceEditMode
         shell = ShellHost(session: session, map: KeymapStore().load().map, recents: RecentProjects.load())
         shell.effectDefaultsLibrary = .shared   // Preferences > Editing lists the defaults the Mac list shows
         backend = MacMonitorBackend(device: device, media: media, mediaStore: mediaStore)
         super.init()
         backend.window = { [weak self] in self?.window }
+        backend.registerEngine = { [weak session] in session?.addAuxiliaryEngine($0) }
+        wireJobs()
         wireShell()
         wireMedia()
         wireExport()
@@ -227,6 +260,7 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         projectList.onCollect = { [weak self] in self?.collectFiles() }
         projectModel.projectFolder = { [weak session] in MediaManagement.projectFolder(forProjectAt: session?.fileURL) }
         shell.revealFile = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
+        shell.revealFiles = { NSWorkspace.shared.activateFileViewerSelecting($0) }
         shell.openURL = { NSWorkspace.shared.open($0) }
         shell.aboutSupporters = { AppController.bundledSupporters() }
         shell.copyText = { s in NSPasteboard.general.clearContents(); NSPasteboard.general.setString(s, forType: .string) }
@@ -280,7 +314,8 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
             guard let self else { return next?(c) ?? false }
             let zooms = CommandRouting.zoomTarget(focus: shell.focus, effectControlsFocused: false) == .timeline
             guard let line = timelinePanel.runSpeedCommand(c, session: session)
-                    ?? timelinePanel.runViewCommand(c, session: session, zooms: zooms, host: timelineHost) else { return next?(c) ?? false }
+                    ?? timelinePanel.runViewCommand(c, session: session, zooms: zooms, host: timelineHost,
+                                                 ownsDelete: shell.focus == nil || shell.focus == .timeline) else { return next?(c) ?? false }
             if !line.isEmpty { shell.onStatus?(line) }
             return true
         }
@@ -311,6 +346,8 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         projectList.onDrag = { [weak self] refs, phase, x, y in
             guard let self, let item = TimelineDropRoute.source(refs) else { return }
             let p: TimelineDropRoute.Phase = switch phase { case .moved: .moved; case .ended: .ended; case .canceled: .canceled }
+            // Over the Program or Source monitor the items insert, overwrite or open there, not on the timeline.
+            if monitors.projectDragged(refs, phase: p, x: x, y: y) { return }
             let core = monitors.source.core
             TimelineDropRoute.drag(item, phase: p, x: x, y: y, modifiers: MacKeys.modifiers(flags: NSEvent.modifierFlags.rawValue),
                                    panel: &timelinePanel, session: session,
@@ -319,11 +356,14 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
     }
 
     /// File > Export on the shared dialog: the AVFoundation encoder and the Mac export sources (ExportCoordinator's
-    /// provider without its proxy, render-cache and dialogue-silence inputs).
-    /// shortcut: no proxies, render-cache segments, track audio presets or dialogue-silence ducking in the export; upgrade by moving
+    /// provider: track audio presets, proxies and render-cache segments as `ExportCoordinator.makeModel` reads them).
+    /// shortcut: no dialogue-silence ducking pass in the export (the live duck holds whole clips); upgrade by moving
     /// ExportCoordinator.makeModel's provider into a shared builder both paths call.
     private func wireExport() {
         shell.exportQueue = ExportQueue()
+        shell.untrackedMagicFrames = { tl, sequences in MagicMatteStore.shared.untrackedFrames(in: tl, sequences: sequences) }
+        shell.audioOutputs = { AudioOutputDevices.available().map { AudioOutputChoices.Device(uid: $0.uid, name: $0.name) } }
+        applyAudioOutputDevice()
         // The AVFoundation encoder writes every Mac codec and the audio, GIF and image-sequence files (the AppKit sheet's list).
         shell.exportCodecs = [.h264, .hevc, .prores422Proxy, .prores422LT, .prores422, .prores422HQ, .prores4444]
         shell.exportFileOutputs = true
@@ -332,10 +372,9 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         } else if let movies = FileManager.default.urls(for: .moviesDirectory, in: .userDomainMask).first { shell.exportDirectory = movies }
         let session = session
         // Stems as `ExportCoordinator.makeModel`: one plan per sequence, the audio is the sequence with the other roles muted.
-        // shortcut: stems mix without the clips' audio presets (the AppKit app reads them from the inspector); upgrade when the
-        // shared inspector hands its presets out.
-        shell.configureExport = { model in
+        shell.configureExport = { [weak self] model in
             let project = session.project
+            let presets = self?.inspector.audioPresets ?? [:]
             let timelines = Dictionary(project.timelines.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
             model.stemPlans = timelines.mapValues { StemPlan.stems(for: $0) }.filter { !$0.value.isEmpty }
             model.stemPresetStore = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask).first.map {
@@ -343,7 +382,7 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
             }
             let resolver = session.media, ducking = project.liveDucking
             model.stemAudio = { _, stem, range in
-                TimelineAudioSource(timeline: stem.timeline, sequences: timelines, range: range, presets: [:],
+                TimelineAudioSource(timeline: stem.timeline, sequences: timelines, range: range, presets: presets,
                                     liveDucking: ducking, resolver: resolver)
             }
             // `ExportCoordinator.makeModel`: the picture in the sheet, the export's compositor, small and silent.
@@ -360,19 +399,24 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
             }
         }
         shell.exportFrameImage = { buffer in Self.rgbaImage(bgra: buffer) }
-        shell.exportSources = { id, settings in
-            let (view, all, resolver, ids, styleKit, legacy, ducking) = try await MainActor.run {
+        shell.exportSources = { [weak self] id, settings in
+            let (view, all, resolver, ids, styleKit, legacy, ducking, presets, spans) = try await MainActor.run {
                 let project = session.project
                 guard let view = project.variantView(of: id, variant: settings.variant) else { throw ExportSequenceMissing() }
                 var all = Dictionary(project.timelines.map { ($0.id, $0) }, uniquingKeysWith: { a, _ in a })
                 for (k, v) in view.sequences { all[k] = v }
-                return (view, all, session.media, project.media.map(\.id), project.styleKit, project.usesLegacyBuiltInFont, project.liveDucking)
+                // The preview render cache: the export reads the segments playback reads (only without a format variant).
+                let spans = settings.variant == nil ? (session.renderCache?.exportSpans(for: view.timeline, sequences: all) ?? []) : []
+                return (view, all, session.media, project.media.map(\.id), project.styleKit, project.usesLegacyBuiltInFont, project.liveDucking,
+                        self?.inspector.audioPresets ?? [:], spans)
             }
+            let useProxies = AppSettings.load().useProxiesForExport
             await resolver.prepare(ids)
             await CaptionLookLibrary.shared.reload()
             return try ExportSourceBuilder.make(timeline: view.timeline, sequences: all, settings: settings, resolver: resolver,
-                                                liveDucking: ducking,
-                                                captionLibrary: CaptionLookRegistry.shared.library(for: styleKit, legacyFont: legacy))
+                                                presets: presets, liveDucking: ducking,
+                                                captionLibrary: CaptionLookRegistry.shared.library(for: styleKit, legacyFont: legacy),
+                                                useProxies: useProxies, renderCache: spans)
         }
     }
 
@@ -396,7 +440,7 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         w.titlebarAppearsTransparent = true
         w.isReleasedWhenClosed = false
         w.delegate = self
-        w.minSize = NSSize(width: 960, height: 600)
+        w.contentMinSize = NSSize(width: 640, height: 400)
         let v = SharedUIView(controller: self)
         // The engine's layer under the (transparent where the picture is) UI view.
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 1440, height: 900))
@@ -563,8 +607,28 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
 
     /// Settings closed or the Interface Size changed: re-read the scale and the meter look.
     func applySettings() {
+        applySessionSettings()
         setScale(backingScale)
         meters.meter.meter.style = MeterStyle.current()
+        applyAudioOutputDevice()
+    }
+
+    /// The remembered editing settings the session itself reads (the Mac `restoreAudioScrubbing` and the end of
+    /// `SettingsWindow.changed`): audio scrubbing, selection follows playhead, the edit mode of new sequences. Run at
+    /// launch and whenever Preferences closes, so a saved value reaches the engine in this window too.
+    func applySessionSettings() {
+        let s = AppSettings.load()
+        session.engine.audioScrubbing = s.audioScrubbing
+        session.setSelectionFollowsPlayhead(s.selectionFollowsPlayhead)
+        session.newSequenceEditMode = s.newSequenceEditMode
+    }
+
+    /// Settings > Audio Output: both monitors' audio engines play on the chosen device (a missing one falls back to the
+    /// system default), as `AppController.applyAudioOutputDevice`.
+    func applyAudioOutputDevice() {
+        let uid = AppSettings.load().audioOutputUID
+        let program = (engine as? PlaybackEngine)?.audio as? AudioEngine
+        for e in ([program].compactMap { $0 } + backend.audioEngines) { e.setOutputDevice(uid: uid) }
     }
 
     /// Moves the shown monitor's layer onto the picture quad and its container onto the quad's clip (view points); hides
@@ -611,7 +675,9 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         let template = captions.templateImage.map { [($0.0, $0.1, $0.2)] } ?? []
         let stills = effects.tileImage.map { [($0.0, $0.1, $0.2)] } ?? []
         let export = shell.exportPreviewImage.map { [$0] } ?? []
-        return meters.images + [mediaStore.thumbnailImage] + template + stills + export
+        let base = meters.images + [mediaStore.thumbnailImage] + template + stills + export
+        let live = libraryFrames.current(library, slotTaken: base.contains { $0.0 == LibraryPreviewFrames.slot }).map { [$0] } ?? []
+        return base + live
     }
 
     /// The hosts' pictures for the renderer's image slots (Scopes), as CGImages remade only when their generation moved.
@@ -782,6 +848,9 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         d.measure = TextMeasure(atlas: atlas, scale: scale)
         d.frame = CGRect(x: 0, y: top, width: CGFloat(width) / k, height: max(CGFloat(height) / k - top - bottom, 0))
         d.layout()
+        let m = d.workspace.minimumContentSize   // the Mac window floor follows the visible layout (AppController.contentMinSize)
+        let floor = NSSize(width: max(m.width, 640), height: max(m.height + bottom + top, 400))
+        if window?.contentMinSize != floor { window?.contentMinSize = floor }
         monitors.syncTab(dock: d)
         layoutTitleRow(width: CGFloat(width) / k, barHeight: top)
         colorPage.layoutSwitch(centeredIn: CGFloat(width) / k, barHeight: top, shown: !startOverEditor)
@@ -870,7 +939,11 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         case .keyDown(let k, let m):
             // Esc closes Trim mode first (the Mac key monitor, TL-08); not while a drag runs, that Esc cancels the drag.
             if k == .escape, m.isEmpty, shell.trim.isActive, !timelinePanel.isDragging { shell.trim.exit(); return }
-            if let actions = timelinePanel.key(k, modifiers: m) { for a in actions { applyTimeline(a) }; return }
+            // Delete, Return and the zoom keys belong to the focused panel (a monitor zooms its picture, a list deletes its
+            // rows); only the timeline, or nothing focused, takes them here. Tool letters stay global (the Mac key monitor).
+            if Self.timelineOwnsKey(k, focus: shell.focus), let actions = timelinePanel.key(k, modifiers: m) {
+                for a in actions { applyTimeline(a) }; return
+            }
             if shell.handle(e, scale: scale) { return }
             own = false
         }
@@ -879,6 +952,15 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
             if case .mouseMoved = e {} else { return }
         }
         for intent in screen.handle(e, snapshot()) { apply(intent) }
+    }
+
+    /// False for the keys that act on the focused panel's selection or zoom when another panel than the timeline has focus.
+    nonisolated static func timelineOwnsKey(_ k: InputKey, focus: PanelID?) -> Bool {
+        switch k {
+        case .delete, .backspace, .enter, .plus, .minus, .character("="), .character("\\"):
+            return focus == nil || focus == .timeline
+        default: return true
+        }
     }
 
     func keyUp(_ k: InputKey) {
@@ -898,8 +980,9 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
     /// inserts. True when the release was taken by the timeline; false: the caller falls back to `drop(_:)`.
     @discardableResult
     func fileDrag(_ urls: [URL], phase: TimelineDropRoute.Phase, x: Float, y: Float) -> Bool {
-        if phase == .canceled { timelinePanel.dropExit(); return false }
+        if phase == .canceled { timelinePanel.dropExit(); monitors.filesDragged([], phase: .canceled, x: x, y: y); return false }
         guard !urls.isEmpty, urls.allSatisfy({ !ProjectFile.isProjectURL($0) && ShellImportKind.of($0) == .media }) else { return false }
+        if monitors.filesDragged(urls, phase: phase, x: x, y: y) { timelinePanel.dropExit(); return true }   // the Source monitor takes the files
         let context = LibraryDropRoute.Context(presets: [], importAndPlace: { [weak self] urls, a in self?.importAndPlace(urls, at: a) },
                                                status: { [weak self] in self?.status = $0 })
         return LibraryDropRoute.drag(.library(.files(urls)), phase: phase, x: x, y: y,
@@ -999,7 +1082,9 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         s.grade = colorPage.gradeStatus
         s.linkedSelectionOff = !timelinePanel.toolState.linkedSelection
         s.relinkOffer = shell.relinkOffer?.text ?? ""
-        s.exportProgress = shell.exportProgress
+        // The ring opens the Jobs popover: it shows for exports and for background work (proxies, conform, transcription...).
+        s.exportProgress = shell.exportProgress ?? jobCenter.overallProgress
+        exportNotifier.update(progress: shell.exportProgress)
         return s
     }
 

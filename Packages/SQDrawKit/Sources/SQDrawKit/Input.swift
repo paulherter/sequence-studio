@@ -18,6 +18,9 @@ public struct InputModifiers: OptionSet, Sendable, Hashable {
     /// The secondary button (right click; Control-click on the Mac): the host sends a `mouseDown` with this flag and the
     /// matching `mouseUp` at once, so a panel opens its context menu on the press (as `rightMouseDown` does).
     public static let secondary = InputModifiers(rawValue: 8)
+    /// The Control key as a shortcut modifier. Only the Mac host sets it (`MacKeys.keyModifiers`); Windows folds Ctrl into
+    /// `command`. Mouse events never carry it (Control-click is `secondary`).
+    public static let control = InputModifiers(rawValue: 16)
 }
 
 /// One input event in pixels (y down).

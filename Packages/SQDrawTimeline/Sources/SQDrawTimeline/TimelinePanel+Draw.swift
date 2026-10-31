@@ -29,7 +29,9 @@ extension TimelinePanel {
         let rows = self.rows
         cv.saveGState()
         cv.clip(to: content)
-        drawLanes(&cv, rows: rows, clip: content)
+        drawLanesThroughCache(&cv, rows: rows, clip: content)
+        drawLaneDecorations(&cv, rows: rows, clip: content)
+        drawLaneVeils(&cv, rows: rows, clip: content)
         drawItemLanes(&cv, rows: rows, clip: content)
         drawCaptionLanes(&cv, clip: content)
         drawTransitions(&cv, rows: rows, clip: content)
@@ -55,13 +57,9 @@ extension TimelinePanel {
     func drawLanes(_ cv: inout Canvas, rows: [TrackRow], clip: CGRect) {
         let split = Self.splitRow(rows)
         let soloActive = Self.audioSoloActive(in: timeline)
-        // shortcut: the sync offsets are recomputed per draw (the Mac keeps them with the timeline); cache them when a
-        // large timeline draws slowly.
-        let syncBadges = timeline.syncOffsets()
         let visibleX = CGRect(x: clip.minX, y: 0, width: clip.width, height: size.height)
         let mainRow = fastCutMainRow(rows)
         let magneticHosts = mainRow == nil ? [] : FastCutMarks.attachHosts(of: selection, in: timeline)
-        let duck = duckContext()                                 // N8b: the live duck curve on Music tracks
         var threads: [(rect: CGRect, x: CGFloat)] = []
         for (rowIndex, row) in rows.enumerated() {
             let laneRect = CGRect(x: clip.minX, y: row.y, width: clip.width, height: row.height)
@@ -74,19 +72,34 @@ extension TimelinePanel {
             cv.fill(CGRect(x: clip.minX, y: row.maxY - lineHeight, width: clip.width, height: lineHeight),
                     rowIndex == split ? theme.trackHeaderLine : theme.trackRowLine)
             let ink = track.kind == .audio ? waveformInk(track) : .clear
-            for c in track.clips {
+            let inactive = Self.isInactive(track, soloActive: soloActive)
+            var run: SliverRun?
+            for c in track.clips[visibleClipIndices(track, from: clip.minX, to: clip.maxX)] {
                 let x0 = geometry.x(for: c.timeline.start), x1 = geometry.x(for: c.timeline.end)
                 guard x1 >= clip.minX, x0 <= clip.maxX else { continue }
                 let rect = CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height)
                 let selected = selection.contains(c.id)
-                drawClip(&cv, c, rect: rect, visible: clip, selected: selected, track: track)
+                if rect.width < 3 {
+                    // LOD: slivers of one color that touch become one fill (and one veil), so a zoomed-out hour is a few quads.
+                    let body = rect.insetBy(dx: 0, dy: 1)
+                    let fill = selected ? theme.yellow : (isOffline(c) ? skin.offlineClip : theme.clip(labels.label(for: c)))
+                    let fade: Float? = inactive ? (selected ? 0.5 : 0.72) : (c.isEnabled ? nil : 0.68)
+                    if var r = run, r.fill == fill, r.fade == fade, body.minX - r.maxX <= 0.25 {
+                        r.maxX = max(r.maxX, body.maxX); run = r
+                    } else {
+                        run?.flush(&cv, laneColor: laneColor)
+                        run = SliverRun(minX: body.minX, maxX: body.maxX, y: body.minY, height: body.height, fill: fill, fade: fade)
+                    }
+                } else {
+                    run?.flush(&cv, laneColor: laneColor); run = nil
+                    drawClip(&cv, c, rect: rect, visible: clip, selected: selected, track: track)
+                }
                 if !(c.markers ?? []).isEmpty { drawClipMarkerFlags(&cv, c, rect: rect, visible: clip) }
                 if rect.width >= 3 {                       // the LOD sliver draws the body only
                     if let n = syncBadges[c.id] { drawSyncBadge(&cv, frames: n, rect: rect, visible: visibleX) }
                     if track.kind == .audio {
                         drawWaveform(&cv, c, rect: rect, visible: clip, ink: ink)
                         if VolumeLine.isAvailable(rowHeight: row.height) { drawVolumeLine(&cv, c, rect: rect, visible: clip, selected: selected) }
-                        if let duck, duck.clips.contains(c.id) { drawDuckCurve(&cv, clipRect: rect, visible: visibleX, ranges: duck.ranges, ducking: duck.ducking) }
                     } else {
                         if speedBandClips.contains(c.id), SpeedBand.isAvailable(rowHeight: row.height) {
                             drawSpeedBand(&cv, c, rect: rect, visible: clip, selected: selected)
@@ -96,25 +109,64 @@ extension TimelinePanel {
                         }
                         if FXBadge.state(for: c) == .applied { drawFXBadge(&cv, rect: rect, visible: visibleX) }
                     }
-                    if keyLanes != nil { drawKeyLane(&cv, c, rect: rect, visible: visibleX, selected: selected) }
                     if gradeOutline.contains(c.id) { drawGradeOutline(&cv, rect: rect) }
                     if let p = analysisProgress[c.id] { drawAnalysisProgress(&cv, rect: rect, progress: p) }
                 }
-                if track.kind == .video { drawTrackConfidence(&cv, c, rect: rect, visible: visibleX) }
                 if magneticHosts.contains(c.id) { drawMagneticHint(&cv, rect: rect) }
                 if let mainRow, row.track != mainRow.track, let a = c.attachment {
                     threads.append((rect, geometry.x(for: c.timeline.start + a.point)))
                 }
-                let inactive = Self.isInactive(track, soloActive: soloActive)
-                if let fade: CGFloat = inactive ? (selected ? 0.5 : 0.72) : (c.isEnabled ? nil : 0.68) {
-                    let body = rect.insetBy(dx: 0, dy: 1)
-                    cv.fill(roundedRect: body, radius: min(DrawTheme.Radius.small.cg, body.height / 2), laneColor.alpha(Float(fade)))
-                }
             }
+            run?.flush(&cv, laneColor: laneColor)
         }
         if let mainRow {
             for t in threads where t.x >= clip.minX - 4 && t.x <= clip.maxX + 4 { drawAttachThread(&cv, clipRect: t.rect, x: t.x, main: mainRow) }
         }
+    }
+
+    /// A run of touching sub-3 pt clips of one color (and one veil) drawn as a single fill.
+    struct SliverRun {
+        var minX: CGFloat, maxX: CGFloat, y: CGFloat, height: CGFloat
+        var fill: DrawColor
+        var fade: Float?
+        func flush(_ cv: inout Canvas, laneColor: DrawColor) {
+            let r = CGRect(x: minX, y: y, width: maxX - minX, height: height)
+            cv.fill(r, fill)
+            if let fade { cv.fill(r, laneColor.alpha(fade)) }
+        }
+    }
+
+    mutating func refreshDrawCaches() {
+        contentRevision &+= 1
+        transitionLayerTracks = Set(timeline.tracks.lazy.filter { t in t.clips.contains { $0.isTransitionLayer } }.map(\.id))
+        syncBadges = timeline.syncOffsets()
+        var ends: [Track.ID: [Time]] = [:]
+        for t in timeline.tracks {
+            var run: [Time] = []
+            run.reserveCapacity(t.clips.count)
+            var top = Time.zero
+            for i in t.clips.indices {
+                let e = t.clips[i].timeline.end
+                if i == 0 || e > top { top = e }
+                run.append(top)
+            }
+            ends[t.id] = run
+        }
+        prefixEnds = ends
+    }
+
+    /// Clips of `track` that can touch view x range `from...to`: clips are sorted by start, and the prefix-max of the ends
+    /// is monotone, so both bounds are binary searches (the per-clip test in the loop stays the exact one).
+    func visibleClipIndices(_ track: Track, from: CGFloat, to: CGFloat) -> Range<Int> {
+        let n = track.clips.count
+        guard n > 64, let ends = prefixEnds[track.id], ends.count == n else { return 0..<n }
+        let pad = geometry.frameDuration * 2
+        let t0 = geometry.unsnappedTime(atX: from) - pad, t1 = geometry.unsnappedTime(atX: to) + pad
+        var lo = 0, hi = n                                   // first index whose prefix end reaches t0
+        while lo < hi { let m = (lo + hi) / 2; if ends[m] < t0 { lo = m + 1 } else { hi = m } }
+        var a = lo, b = n                                    // first index starting after t1
+        while a < b { let m = (a + b) / 2; if track.clips[m].start > t1 { b = m } else { a = m + 1 } }
+        return lo..<max(lo, a)
     }
 
     /// `ClipDrawing.draw`: body, trim hints, edge, selection ring, thumbnail well and name.
@@ -156,7 +208,7 @@ extension TimelinePanel {
         let mid = flat && body.height >= 18 ? body.minY + 12.5 - 3.5 : body.minY + 10 - 3.5
         cv.saveGState()
         cv.clip(to: CGRect(x: textLeft, y: body.minY, width: textWidth, height: min(body.height, DrawTheme.Metrics.clipNameBand.cg + 6)))
-        cv.draw(name, at: CGPoint(x: textLeft, y: (mid - lineH / 2).rounded()), fontSize: size, color, maxWidth: textWidth, face: cv.medium)
+        cv.draw(name, at: CGPoint(x: textLeft, y: (mid - lineH / 2).rounded()), fontSize: size, color, face: cv.medium)   // cut by the clip rect, not ellipsized (the Mac clip layer)
         cv.restoreGState()
     }
 
@@ -270,15 +322,19 @@ extension TimelinePanel {
         cv.fill(TimelineSkin.lineFrame(centerX: x, y: clip.minY, height: clip.height), theme.playhead)
     }
 
+    /// `updateRazorGuide`: where a click would cut, with the live Shift (every track) and Option (ignore links) as held.
+    func razorGuideRects(rows: [TrackRow], clip: CGRect) -> [CGRect] {
+        guard toolState.timelineTool == .razor, let p = hoverPoint, gesture == nil, p.x >= TimelineGeometry.contentOriginX,
+              p.y >= TimelineGeometry.rulerHeight, p.y < size.height - Self.zoomBarHeight else { return [] }
+        let live = liveModifiers?() ?? []
+        let tracks = interaction.razorGuideTracks(at: p, shift: live.contains(.shift), option: live.contains(.option))
+        guard !tracks.isEmpty else { return [] }
+        return RazorGuide.rects(x: geometry.x(for: interaction.razorCutTime(atX: p.x)), tracks: Set(tracks), rows: rows)
+            .filter { $0.intersects(clip) }
+    }
+
     func drawGestureOverlay(_ cv: inout Canvas, rows: [TrackRow], clip: CGRect) {
-        // Razor guide lines (`razorGuideRects`): white 1 pt over the tracks the cut will reach.
-        if toolState.timelineTool == .razor, let p = hoverPoint, gesture == nil, p.x >= clip.minX, p.y >= clip.minY {
-            let x = geometry.x(for: interaction.razorCutTime(atX: p.x)).rounded()
-            for id in interaction.razorGuideTracks(at: p, shift: false) {
-                guard let row = rows.first(where: { $0.track == id }) else { continue }
-                cv.fill(CGRect(x: x - 0.5, y: row.y + 1, width: 1, height: row.height - 2), .white)
-            }
-        }
+        for r in razorGuideRects(rows: rows, clip: clip) { cv.fill(r, .white) }
         if let t = interaction.snapTime ?? scrubSnapTime {
             let x = geometry.x(for: t).rounded()
             cv.fill(CGRect(x: x - 0.5, y: clip.minY, width: 1, height: clip.height), skin.snapLine)

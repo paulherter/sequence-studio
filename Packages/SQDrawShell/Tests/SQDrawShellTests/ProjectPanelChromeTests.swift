@@ -85,6 +85,42 @@ import SQEditorSession
         #expect(names(v, m).filter { $0.count == 1 } == ["B", "A"])
     }
 
+    func drag(_ v: ProjectListView, from a: CGPoint, to b: CGPoint) {
+        _ = v.handle(.mouseDown(x: Float(a.x), y: Float(a.y), modifiers: []), scale: 1)
+        _ = v.handle(.mouseDragged(x: Float(b.x), y: Float(b.y)), scale: 1)
+        _ = v.handle(.mouseUp(x: Float(b.x), y: Float(b.y)), scale: 1)
+    }
+
+    @Test func draggingAColumnEdgeResizesItAndSavesTheWidth() throws {
+        let (v, m, _, d) = view()
+        let fmt = try #require(v.columnFrames().first { $0.column == .format })
+        let y = v.subheaderRect.midY
+        drag(v, from: CGPoint(x: fmt.minX, y: y), to: CGPoint(x: fmt.minX - 30, y: y))
+        let after = try #require(v.columnFrames().first { $0.column == .format })
+        #expect(abs((after.maxX - after.minX) - (fmt.maxX - fmt.minX + 30)) < 0.5)
+        #expect(m.sortColumn == nil)
+        #expect(ProjectColumnLayout.load(from: d).userWidth(of: .format) != nil)
+        // Never narrower than the column's minimum.
+        let now = try #require(v.columnFrames().first { $0.column == .format })
+        drag(v, from: CGPoint(x: now.minX, y: y), to: CGPoint(x: now.minX + 500, y: y))
+        let narrow = try #require(v.columnFrames().first { $0.column == .format })
+        #expect(narrow.maxX - narrow.minX == ProjectPanelModel.Column.format.minWidth)
+    }
+
+    @Test func draggingATitleMovesTheColumnButNeverBeforeName() throws {
+        let (v, m, _, d) = view()
+        let frames = v.columnFrames()
+        let fmt = try #require(frames.first { $0.column == .format }), dur = try #require(frames.first { $0.column == .duration })
+        let y = v.subheaderRect.midY
+        drag(v, from: CGPoint(x: fmt.minX + 10, y: y), to: CGPoint(x: dur.maxX - 4, y: y))
+        #expect(v.columns.visible == [.name, .duration, .format])
+        #expect(ProjectColumnLayout.load(from: d).visible == [.name, .duration, .format])
+        #expect(m.sortColumn == nil)
+        let name = try #require(v.columnFrames().first)
+        drag(v, from: CGPoint(x: name.minX + 20, y: y), to: CGPoint(x: name.maxX + 5, y: y))
+        #expect(v.columns.visible.first == .name)
+    }
+
     @Test func optionsMenuSwitchesToIconsAndPersists() throws {
         let (v, _, h, d) = view()
         click(v, CGPoint(x: v.optionsRect.midX, y: v.optionsRect.midY))

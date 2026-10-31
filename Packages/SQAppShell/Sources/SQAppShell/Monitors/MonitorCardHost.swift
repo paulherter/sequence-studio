@@ -47,6 +47,20 @@ public final class MonitorCardHost {
         wireProgram(effects: effects, timelineHost: timelineHost)
         wireSource(projectList: projectList, menus: menus)
         wireTools()
+        // MON-33: Finder files dropped on the Source monitor are imported, then the first opens in Source.
+        source.panel.model.onDropFiles = { [weak self] urls in
+            guard let self, let model = shell.projectModel else { return }
+            shell.spawn { [weak self] in
+                await model.importFiles(urls)
+                guard let self else { return }
+                shell.onProjectChanged?()
+                if let id = urls.lazy.compactMap({ model.mediaID(forImported: $0) }).first { source.open(id) }
+            }
+        }
+        // Preferences > Dropped Frames: the Program monitor's drop dot (EditorPanels.applySettings).
+        monitor.model.dropIndicatorEnabled = AppSettings.load(from: qualityDefaults ?? .standard).dropIndicator
+        let nextDots = shell.onSettingsChanged
+        shell.onSettingsChanged = { [weak monitor] s in nextDots?(s); monitor?.model.dropIndicatorEnabled = s.dropIndicator }
         if let qualityDefaults {
             monitor.rememberQuality(in: qualityDefaults)
             let next = shell.onSettingsChanged
@@ -74,6 +88,7 @@ public final class MonitorCardHost {
         }
         // The Type tool (Create slot in Text mode) and the graphic text edits (MonitorTextHost).
         m.text.graphics = { [weak self] in self?.graphics() }
+        m.panel.handToolOn = { [weak self] in self?.toolState.tool == .hand }
         m.panel.typeToolOn = { [weak self] in
             guard let s = self?.toolState else { return false }
             return s.tool == .type && s.createMode == .text
@@ -110,7 +125,7 @@ public final class MonitorCardHost {
                 let core = s.core
                 let at = core.mediaID.map { (media: $0, time: core.currentTime) }
                 if let line = PosterFrameCommand.run(clear: c == .clearPosterFrame, selected: projectList.selection, source: at,
-                                                     model: model) { shell?.onStatus?(line) }
+                                                     hovered: projectList.hoveredFrame, model: model) { shell?.onStatus?(line) }
                 return true
             }
             return s?.command(c) == true || next?(c) == true
@@ -190,6 +205,54 @@ public final class MonitorCardHost {
     public func exportFrame() {
         program.exportFrame(suggestedName: (session.activeTimeline?.name ?? "Frame") + ".png",
                             files: shell.files as? PanelFileChooser) { [weak shell] in shell?.onStatus?($0) }
+    }
+
+    // MARK: Project drops on the monitor
+
+    /// Project items dragged over the shown monitor (`MonitorPanelView.performDragOperation`): the card shows its drop
+    /// highlight, the Program names the half under the pointer; on release the Program inserts (left half) or overwrites
+    /// (right half) at the playhead, the Source opens the clips. `x, y` are window pixels. True when the release was taken.
+    @discardableResult
+    public func projectDragged(_ refs: [BinItemRef], phase: TimelineDropRoute.Phase, x: Float, y: Float) -> Bool {
+        let panel = source.isShown ? source.panel : monitor.panel
+        func clear() { for p in [monitor.panel, source.panel] { p.dropHighlight = false; p.dropZone = nil } }
+        let ids = refs.compactMap { if case .media(let id) = $0 { id } else { nil } }
+        let k = CGFloat(max(panel.scale, 0.01))
+        let local = CGPoint(x: CGFloat(x) / k - panel.frame.minX, y: CGFloat(y) / k - panel.frame.minY)
+        let over = !ids.isEmpty && phase != .canceled && panel.frame.contains(CGPoint(x: CGFloat(x) / k, y: CGFloat(y) / k))
+        guard over else { clear(); return false }
+        let zone = MonitorDropZone.zone(atX: local.x, width: panel.frame.width)
+        if phase == .moved {
+            clear()
+            panel.dropHighlight = true
+            panel.dropZone = panel.model.mode == .program ? zone : nil
+            return false
+        }
+        clear()
+        if panel.model.mode == .program {
+            _ = session.placeMedia(ids, mode: zone == .insert ? .insert : .overwrite)   // SH-54: drop media = Insert / Overwrite at the playhead
+            onPlaced?()
+        } else {
+            _ = source.core.open(all: ids)
+        }
+        return true
+    }
+
+    /// Finder files dragged over the Source tab (`MonitorPanelView.droppedFiles`): the card shows its drop highlight; on release
+    /// the files are imported and the first one opens in Source (MON-33). True when the release was taken. The Program tab
+    /// leaves Finder files to the timeline and the import fallback. `x, y` are window pixels.
+    @discardableResult
+    public func filesDragged(_ urls: [URL], phase: TimelineDropRoute.Phase, x: Float, y: Float) -> Bool {
+        let panel = source.panel
+        func clear() { panel.dropHighlight = false; panel.dropZone = nil }
+        let k = CGFloat(max(panel.scale, 0.01))
+        let files = urls.filter { !$0.hasDirectoryPath }
+        let over = source.isShown && !files.isEmpty && phase != .canceled && panel.frame.contains(CGPoint(x: CGFloat(x) / k, y: CGFloat(y) / k))
+        clear()
+        guard over else { return false }
+        if phase == .moved { panel.dropHighlight = true; return false }
+        panel.model.onDropFiles?(files)
+        return true
     }
 
     // MARK: Source drags
@@ -276,6 +339,8 @@ public final class MonitorCardHost {
         if source.core.isPlaying, isPlaying || !source.isShown { source.core.pause() }
         refreshOfflineAndSize()
         monitor.hidesTransformBox = shell.dock.store.page == .color
+        monitor.panel.isFocused = shell.focus == .programMonitor
+        source.panel.isFocused = shell.focus == .sourceMonitor
         if source.isShown {
             refreshAnglesGrid()
             source.layout(card, scale: scale)

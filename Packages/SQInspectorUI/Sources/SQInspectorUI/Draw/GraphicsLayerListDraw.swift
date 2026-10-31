@@ -163,7 +163,7 @@ import SQDrawKit
         for (i, r) in rows.enumerated() {
             let f = rowFrame(i)
             guard f.maxY > 0, f.minY < listHeight else { continue }
-            if dropOnto == i { c.fill(f, t.accentTint) }
+            if dropOnto == i || effectTarget == i { c.fill(f, t.accentTint) }
             else if LayerListLogic.isSelected(r, document: d, selection: sel) { c.fill(f, focused ? t.accentTint : t.selection) }
             else if hover == .row(i) || hover == .eye(i) || hover == .lock(i) { c.fill(f, t.fill) }
             if let label = r.label { c.fill(CGRect(x: 0, y: f.minY, width: CGFloat(DrawTheme.Spacing.xs), height: f.height), t.clip(label)) }
@@ -192,8 +192,9 @@ import SQDrawKit
             if let s = strip(i), let clip = editor.clip { drawStrip(&c, stripFrame(i), s.times, s.range, clip.duration, local) }
         }
         if rows.isEmpty, editor.document != nil {
-            c.draw(SQL10n.string("No layers"), in: CGRect(x: 0, y: 0, width: size.width, height: min(listHeight, 60)), fontSize: fs,
-                   t.label3, align: .center)
+            // The Mac list's empty state: "No layers yet" and its hint.
+            c.drawEmptyState(title: SQL10n.string("No layers yet"), hint: SQL10n.string("Add text or a shape below."),
+                             in: CGRect(x: 0, y: 0, width: size.width, height: listHeight), theme: t)
         }
         if let gap = dropGap, dropOnto == nil {
             let y = CGFloat(gap) * Self.rowHeight - scrollY
@@ -435,6 +436,24 @@ import SQDrawKit
             })
         }
         return items
+    }
+
+    // MARK: Effects dropped from the Effects panel (the Mac `effectDragUpdated` / `effectDrop`)
+
+    /// The layer row an Effects drag is over (accent tint); nil elsewhere. Group rows take no effect.
+    private(set) var effectTarget: Int?
+
+    /// `p` in list coordinates, nil when the drag left.
+    func effectDragOver(at p: CGPoint?) {
+        effectTarget = p.flatMap { rowIndex(atY: $0.y) }.flatMap { rows[$0].layerID != nil ? $0 : nil }
+    }
+
+    /// Effects released on a layer row: the layer is selected, then takes them. Nil when `p` is not on a layer row.
+    func dropEffects(_ kinds: [String], at p: CGPoint) -> GraphicsEditor.EffectDrop? {
+        defer { effectTarget = nil }
+        guard let i = rowIndex(atY: p.y), let id = rows[i].layerID else { return nil }
+        if !editor.selectedLayers.contains(id) { editor.select([id]); changed() }
+        return editor.addEffects(kinds, to: id)
     }
 
     // MARK: Rename (a TextFieldControl over the name)

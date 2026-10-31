@@ -6,6 +6,18 @@ import SQInspectorUI
 import SQUIKit
 
 extension CaptionsHost {
+    /// Shows the Text panel's List tab and starts typing into the caption's row (AppKit `TextPanelView.editCaption`).
+    @discardableResult
+    public func editCaption(_ id: CaptionItem.ID) -> Bool {
+        guard let shell, shell.session.activeTimeline?.captionTracks.contains(where: { $0.items.contains { $0.id == id } }) == true
+        else { return false }
+        shell.dock.show(.text)
+        panel.select(.captions)
+        if frame.width > 0 { panel.size = frame.size }
+        panel.captions.beginEditing(id)
+        return true
+    }
+
     /// Sequence > Transcribe and Create Captions (the AppKit `AppController.transcribeAndCreateCaptions`): opens the Text panel on
     /// its Transcribe tab, then transcribes the sequence and creates captions with the default caption look in one go. The
     /// outcome is said in the status line. Nil (after saying why) when there is nothing to start; otherwise the running task

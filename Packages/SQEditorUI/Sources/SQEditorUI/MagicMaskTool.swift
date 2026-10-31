@@ -234,6 +234,45 @@ public final class MagicMaskTool {
         }
     }
 
+    private var softAsked: (Time, UInt8)?
+
+    /// Hover without the tool's own overlay image (the shared monitor draws the highlight itself): the object under frame
+    /// fraction `p` of the selected clip's frame, and the frame's segmentation is started when it is not ready. nil when the
+    /// pointer is over the background, the frame is not ready (asked again by the next call) or Magic has no source.
+    /// `soft` false: the hard labels; the soft matte is made in the background and returned by a later call.
+    public func hoverMatte(at p: Vec2) -> (label: UInt8, matte: SubjectMatte, soft: Bool, frame: Time)? {
+        hoverPoint = p
+        guard overlay.maskTool == .magic, !isPlaying(), let src = source else { return nil }
+        guard session.isReady(media: src.media, sourceTime: src.sourceTime) else { ensurePrepared(src); return nil }
+        guard let hit = session.hover(at: p) else { return nil }
+        if !hit.soft, softAsked?.0 != src.sourceTime || softAsked?.1 != hit.label {
+            let label = hit.label
+            softAsked = (src.sourceTime, label)
+            Task { @MainActor [weak self] in _ = await self?.session.softMatte(label) }
+        }
+        return (hit.label, hit.matte, hit.soft, src.sourceTime)
+    }
+
+    /// Hover on a clip that is not selected (the shared monitor draws the highlight itself): the object under frame fraction
+    /// `p` of `clip` at `localPlayhead`. Only while the selection gives Magic nothing to work on (as `preview`); the frame is
+    /// segmented in the background and asked again by the next call.
+    public func previewMatte(_ clip: Clip, localPlayhead: Time, at p: Vec2) -> (label: UInt8, matte: SubjectMatte, soft: Bool, frame: Time)? {
+        guard overlay.maskTool == .magic, !isPlaying(), source == nil, Self.canUse(clip), let url = mediaURL(clip.media) else { return nil }
+        let fd = model.frameDuration
+        let local = min(max(localPlayhead, .zero).snapped(to: fd), max(clip.duration - fd, .zero))
+        let src = Source(clip: clip.id, media: clip.media, url: url, sourceTime: clip.sourceInstant(atLocal: local))
+        previewSource = src
+        hoverPoint = p
+        guard session.isReady(media: src.media, sourceTime: src.sourceTime) else { ensurePrepared(src); return nil }
+        guard let hit = session.hover(at: p) else { return nil }
+        if !hit.soft, softAsked?.0 != src.sourceTime || softAsked?.1 != hit.label {
+            let label = hit.label
+            softAsked = (src.sourceTime, label)
+            Task { @MainActor [weak self] in _ = await self?.session.softMatte(label) }
+        }
+        return (hit.label, hit.matte, hit.soft, src.sourceTime)
+    }
+
     private func clearHover(keepPoint: Bool = false) {
         hover = nil
         if !keepPoint { hoverPoint = nil }

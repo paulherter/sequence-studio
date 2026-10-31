@@ -114,6 +114,28 @@ private let fd = Time(1, 25)
         #expect(k.handle(.mouseDragged(x: 0, y: 0)) == nil)                    // no press: not the card's
     }
 
+    @Test func dragPointFollowsTheDragAndClearsOnRelease() {
+        var k = palette()
+        let r = k.rowRect(1), (x, y) = px(CGPoint(x: r.midX, y: r.midY))
+        _ = k.handle(.mouseDown(x: x, y: y, modifiers: []))
+        #expect(k.dragPoint == nil)
+        _ = k.handle(.mouseDragged(x: x - 400, y: y + 300))
+        #expect(k.dragPoint == CGPoint(x: CGFloat(x - 400) / 2, y: CGFloat(y + 300) / 2))
+        _ = k.handle(.mouseUp(x: x - 400, y: y + 300))
+        #expect(k.dragPoint == nil)
+    }
+
+    @Test func changedChipAndHelpTipDraw() {
+        var k = palette()
+        k.changed = [k.keystones[0].id]
+        var c = Canvas(list: DrawList(width: 2000, height: 800), atlas: nil, scale: 2)
+        k.draw(&c)
+        #expect(!c.list.quads.isEmpty)
+        let r = k.rowRect(0)
+        #expect(k.help(at: CGPoint(x: r.midX, y: r.midY)) != nil)
+        #expect(k.help(at: .zero) == nil)
+    }
+
     @Test func escCancelsTheDragAndDoubleClickApplies() {
         var k = palette()
         nonisolated(unsafe) var t = 10.0

@@ -100,60 +100,81 @@ extension ShellHost {
         }
         configureExport?(model)
 
-        let sheet = ShellExportSheet(model: model, codecs: exportCodecs, fileOutputs: exportFileOutputs)
-        if let files {
-            sheet.chooseFolder = { [weak files] in await files?.chooseFolder(prompt: SQL10n.string("Choose")) }
+        // Canceled at a preflight question: the sheet opens again over the same model.
+        while true {
+            let sheet = ShellExportSheet(model: model, codecs: exportCodecs, fileOutputs: exportFileOutputs)
+            if let files {
+                sheet.chooseFolder = { [weak files] in await files?.chooseFolder(prompt: SQL10n.string("Choose")) }
+            }
+            sheet.copyText = copyText
+            sheet.preview.frameImage = exportFrameImage
+            sheet.rebuild()
+            let d = ShellDialog("Export")
+            d.headerless = true
+            d.width = ShellDialog.M.widthL
+            d.cardHeight = ShellDialog.M.heightL
+            d.content = sheet
+            d.footerNote = { model.outputSummaryText }
+            d.addButton("Export", role: .default)
+            d.addButton("Cancel", role: .cancel)
+            d.addButton("Other Formats\u{2026}")
+            d.buttonEnabled = { i in i != 0 || model.canExport }
+            var pending: EditorCommand?
+            d.canClose = { [weak d] r in
+                switch r.rawValue {
+                case 0: sheet.commitEditing(); return model.canExport
+                case 2:
+                    guard let d, let below = d.buttonFrames[2] else { return false }
+                    d.menu.popUp(items: Self.otherExportFormats.map { c in
+                        SQMenuItem(title: SQL10n.string(c.title)) { [weak d] in pending = c; d?.press(.second) }
+                    }, below: below)
+                    return false
+                default: return true
+                }
+            }
+            let answer = await ask(d)
+            sheet.preview.close()
+            if let c = pending { _ = execute(c); return }
+            guard answer == .first, let dir = model.outputDirectory else { return }
+            do { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) } catch {
+                presentError("Could not create the export folder", error); return
+            }
+            exportDirectory = dir
+            defaults.set(dir.path, forKey: Self.exportDirectoryKey)
+            defaults.set(model.presetID, forKey: Self.lastPresetKey)
+            defaults.set(model.preferences.encoded(), forKey: Self.exportPreferencesKey)
+            // Canceled at a question: the dialog comes back with the same settings (ExportCoordinator.submitFromDialog).
+            guard let ids = await preflightAndSubmit(model, directory: dir, queue: queue) else { continue }
+            guard !ids.isEmpty else { return }
+            await followExports(ids, in: queue)
+            return
         }
-        sheet.copyText = copyText
-        sheet.preview.frameImage = exportFrameImage
-        sheet.rebuild()
-        let d = ShellDialog("Export")
-        d.headerless = true
-        d.width = ShellDialog.M.widthL
-        d.cardHeight = ShellDialog.M.heightL
-        d.content = sheet
-        d.footerNote = { model.outputSummaryText }
-        d.addButton("Export", role: .default)
-        d.addButton("Cancel", role: .cancel)
-        d.addButton("Other Formats\u{2026}")
-        d.buttonEnabled = { i in i != 0 || model.canExport }
-        var pending: EditorCommand?
-        d.canClose = { [weak d] r in
-            switch r.rawValue {
-            case 0: sheet.commitEditing(); return model.canExport
-            case 2:
-                guard let d, let below = d.buttonFrames[2] else { return false }
-                d.menu.popUp(items: Self.otherExportFormats.map { c in
-                    SQMenuItem(title: SQL10n.string(c.title)) { [weak d] in pending = c; d?.press(.second) }
-                }, below: below)
-                return false
-            default: return true
+    }
+
+    /// `ExportCoordinator.preflightAndSubmit`: the notes of `ExportPreflightReport` (one question, "Export Anyway"), the
+    /// question about files already in the folder (Keep Both / Replace), then the queue. nil = canceled at a question.
+    func preflightAndSubmit(_ model: ExportDialogModel, directory dir: URL, queue: ExportQueue) async -> [UUID]? {
+        let report = await ExportPreflightReport.build(model: model, project: session.project, directory: dir,
+                                                       untrackedMagicFrames: untrackedMagicFrames)
+        if !report.isEmpty {
+            let q = ShellDialog(SQL10n.string(report.title), informative: report.lines.joined(separator: "\n\n"))
+            q.addButton(SQL10n.string("Export Anyway"))
+            q.addButton(SQL10n.string("Cancel"), role: .cancel)
+            guard await ask(q) == .first else { return nil }
+        }
+        var replace = false
+        if let question = ExportPreflightReport.existingFilesQuestion(ExportPreflight.existingTargets(of: model.buildJobs(outputDirectory: dir))) {
+            let q = ShellDialog(question.title, informative: question.message)
+            q.addButton(SQL10n.string("Keep Both"))
+            q.addButton(SQL10n.string("Replace"))
+            q.addButton(SQL10n.string("Cancel"), role: .cancel)
+            switch await ask(q) {
+            case .first: replace = false
+            case .second: replace = true
+            default: return nil
             }
         }
-        let answer = await ask(d)
-        sheet.preview.close()
-        if let c = pending { _ = execute(c); return }
-        guard answer == .first, let dir = model.outputDirectory else { return }
-        do { try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true) } catch {
-            presentError("Could not create the export folder", error); return
-        }
-        exportDirectory = dir
-        defaults.set(dir.path, forKey: Self.exportDirectoryKey)
-        defaults.set(model.presetID, forKey: Self.lastPresetKey)
-        defaults.set(model.preferences.encoded(), forKey: Self.exportPreferencesKey)
-        // ExportCoordinator.preflightWarnings: offline media export as the offline picture.
-        let offline = ExportPreflight.offlineMedia(in: model.selectedID, project: session.project)
-        if !offline.isEmpty {
-            let shown = offline.prefix(5).map { "• \($0.name)" }.joined(separator: "\n")
-            let more = offline.count > 5 ? "\n• and \(offline.count - 5) more" : ""
-            let q = ShellDialog("Media is offline", informative: "\(offline.count) media file\(offline.count == 1 ? " is" : "s are") offline and export as the offline picture:\n\(shown)\(more)")
-            q.addButton("Export Anyway")
-            q.addButton("Cancel", role: .cancel)
-            guard await ask(q) == .first else { return }
-        }
-        let ids = await model.submit(to: queue, outputDirectory: dir, run: true, replaceExisting: true)
-        guard !ids.isEmpty else { return }
-        await followExports(ids, in: queue)
+        return await model.submit(to: queue, outputDirectory: dir, run: true, replaceExisting: replace)
     }
 
     /// Status lines while the jobs run; the outcome as a dialog at the end.
@@ -173,21 +194,38 @@ extension ShellHost {
         }
     }
 
-    private func finishExports(_ all: [ExportJobStatus]) {
+    func finishExports(_ all: [ExportJobStatus]) {
         exportProgress = nil
         let failed = all.compactMap { s -> String? in if case .failed(let why) = s.state { "“\(s.name)”: \(why)" } else { nil } }
         let done = all.compactMap { s -> URL? in if case .done(let url) = s.state { url } else { nil } }
+        onExportsFinished?(done, failed)
         if !failed.isEmpty {
             presentMessage("Export failed", failed.joined(separator: "\n"))
             return
         }
         guard let url = done.first else { return }
         onStatus?(SQL10n.format("Exported “%@”", url.lastPathComponent))
-        spawn {
-            let d = ShellDialog("Export finished", informative: done.map(\.path).joined(separator: "\n"))
-            d.addButton("OK")
-            if self.revealFile != nil { d.addButton("Show in Explorer") }
-            if await self.ask(d) == .second { self.revealFile?(url) }
+        spawn { await self.presentExportFinished(done, url: url) }
+    }
+
+    /// "Export finished": the files, Show in Explorer/Finder, and the quiet support reminder of the Mac progress window
+    /// (at most once per 7 days, off for good with "Don’t show again").
+    func presentExportFinished(_ done: [URL], url: URL, defaults: UserDefaults = .standard) async {
+        let remind = SupportReminder.mayShow(exportSucceeded: true, lastShown: defaults.object(forKey: SupportReminder.defaultsKey) as? Date,
+                                             now: Date(), turnedOff: defaults.bool(forKey: SupportReminder.offKey))
+        let d = ShellDialog("Export finished", informative: done.map(\.path).joined(separator: "\n"))
+        d.addButton("OK")
+        let reveal = revealFile != nil ? d.addButton("Show in Explorer") : nil
+        var support: SQDialogModel.Button?
+        if remind {
+            support = d.addButton("Enjoying Sequence Studio? Support it")
+            d.addButton("Don’t show again", leading: true)
+            defaults.set(Date(), forKey: SupportReminder.defaultsKey)
         }
+        let answer = await ask(d)
+        let idx = answer.rawValue
+        if reveal != nil, idx == 1 { revealFile?(url) }
+        else if support != nil, idx == (reveal != nil ? 2 : 1) { openURL?(SupportLinks.url) }
+        else if support != nil, idx == (reveal != nil ? 3 : 2) { defaults.set(true, forKey: SupportReminder.offKey) }
     }
 }

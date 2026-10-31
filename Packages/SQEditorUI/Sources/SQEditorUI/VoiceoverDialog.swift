@@ -101,10 +101,6 @@ public final class VoiceoverFieldsController: NSObject {
 
     /// "About 12 s." under the fields; explains when nothing can be made.
     nonisolated static func hintText(for text: String, rate: Double, hasVoices: Bool) -> String {
-        guard hasVoices else { return "No voices are installed. Add one in System Settings > Accessibility > Spoken Content." }
-        let clean = Voiceover.cleaned(text)
-        guard !clean.isEmpty else { return "Type the text first." }
-        let s = Int(Voiceover.estimatedSeconds(of: clean, rate: rate).rounded())
-        return s < 1 ? "Under a second." : "About \(s) s."
+        Voiceover.hintText(for: text, rate: rate, hasVoices: hasVoices)
     }
 }

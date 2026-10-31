@@ -40,6 +40,17 @@ private func clip(_ start: Int64, _ frames: Int64) -> Clip {
         #expect(!p.toolState.slipKeyframesStay)
     }
 
+    @Test func addMarkerTwiceOpensTheMarkerEditor() {
+        var (p, s, d) = setup()
+        var opened: [TimelineEditorRequest] = []
+        let host = TimelineHost()
+        host.open = { opened.append($0); return true }
+        #expect(p.runViewCommand(.addMarker, session: s, host: host, defaults: d) == "")
+        #expect(s.activeTimeline!.markers.count == 1 && opened.isEmpty)
+        _ = p.runViewCommand(.addMarker, session: s, host: host, defaults: d)
+        #expect(s.activeTimeline!.markers.count == 1 && opened.count == 1)
+    }
+
     @Test func snappingToggleIsSavedWithTheSequenceAndUndoBringsItBack() {
         var (p, s, d) = setup()
         #expect(p.toolState.snapping)
@@ -107,6 +118,7 @@ private func clip(_ start: Int64, _ frames: Int64) -> Clip {
         #expect(p.runViewCommand(.zoomIn, session: s, zooms: false, defaults: d) == nil)
         let pps = p.geometry.pointsPerSecond
         #expect(p.runViewCommand(.zoomIn, session: s, defaults: d) == "")
+        p.settleZoomAnimation()                                   // the Mac eases the step
         #expect(p.geometry.pointsPerSecond > pps)
         #expect(p.runViewCommand(.copy, session: s, defaults: d) == nil)
     }

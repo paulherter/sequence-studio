@@ -16,7 +16,19 @@ import SQUIKit
 public struct TimelinePanel {
     public var theme: DrawTheme
     /// What is drawn: the committed timeline, or the gesture's preview while a drag runs.
-    public internal(set) var timeline: Timeline
+    public internal(set) var timeline: Timeline {
+        didSet { refreshDrawCaches() }
+    }
+    /// Per-clip sync badges and per-track prefix-max clip ends, rebuilt when `timeline` changes (the Mac view keeps its
+    /// `syncBadges` the same way), so a scrub or scroll frame does not scan every clip.
+    var syncBadges: [Clip.ID: Int64] = [:]
+    var prefixEnds: [Track.ID: [Time]] = [:]
+    /// Bumped with every `timeline` change: the layer cache's stamp for the model.
+    var contentRevision = 0
+    /// Tracks that hold a transition layer clip, so a frame does not scan every clip for them.
+    var transitionLayerTracks: Set<Track.ID> = []
+    /// The cached clip layer (TimelinePanel+LaneCache.swift); a class so `draw` stays non-mutating.
+    let laneCache = LaneCache()
     /// The session's timeline as last synced.
     public internal(set) var committed: Timeline
     public internal(set) var geometry: TimelineGeometry
@@ -43,6 +55,9 @@ public struct TimelinePanel {
     var toolHold = ToolHold()
 
     var fitted = false
+    /// The running ease of a key, zoom-tool click or backslash zoom (start = panel clock) and the backslash toggle's remembered level.
+    var zoomAnimation: (anim: ZoomAnimation, start: Double)?
+    var fitToggle = ZoomFitToggle()
     var gesture: Gesture?
     /// Modifiers held at mouse down (the host reports none on drag / up events).
     var downModifiers: InputModifiers = []
@@ -70,6 +85,11 @@ public struct TimelinePanel {
     var slipTwoUpShown = false
     /// The running media drag over the panel (host driven, `dropHover`).
     public internal(set) var dropPreview = DropPreview()
+    /// What an effect, preset or transition drag from the Effects panel would land on (the Mac `effectDropTarget` and
+    /// `transitionState.dropTarget` / `layerDrop`): the clip, the cut or clip end, or the empty spot for a transition layer.
+    public internal(set) var effectDropTarget: Clip.ID?
+    public internal(set) var transitionDropTarget: TransitionDropTarget?
+    public internal(set) var transitionLayerDropTarget: TransitionLayerDropTarget?
     /// The gesture hint last reported (`onGestureHint`), so a hint goes to the status line once.
     var lastHint: String?
     /// The zoom scroll bar under the tracks (TimelinePanel+ZoomBar.swift).
@@ -246,36 +266,59 @@ public struct TimelinePanel {
         return (clips + captions).max() ?? .zero
     }
 
-    /// `TimelineView.fitScale`: the whole sequence fills the content width with a 16 pt margin on each side.
-    var fitScale: Double {
-        let end = contentEnd
-        guard end > .zero else { return 1 }
-        let seconds = Double(end.value) / Double(end.timescale)
-        return max(Double(contentViewportWidth) - 2 * Double(DrawTheme.Spacing.lg), 1) / seconds
+    /// Span `\` fits (`TimelineView.fitSpan`): In/Out when set, else the whole sequence.
+    var fitSpan: TimeRange {
+        timeline.inOut.flatMap { $0.isEmpty ? nil : $0 } ?? TimeRange(start: .zero, duration: contentEnd)
+    }
+
+    /// `TimelineView.fitScale`: the fit span fills the content width with a 16 pt margin on each side.
+    var fitScale: Double { Self.scaleFilling(fitSpan, width: contentViewportWidth) }
+
+    /// Like `fitScale`, but always for the whole sequence (In/Out must not limit how far one can zoom out).
+    var wholeSequenceFitScale: Double {
+        contentEnd > .zero ? Self.scaleFilling(TimeRange(start: .zero, duration: contentEnd), width: contentViewportWidth) : fitScale
+    }
+
+    static func scaleFilling(_ span: TimeRange, width: CGFloat) -> Double {
+        guard !span.isEmpty else { return 1 }
+        let seconds = Double(span.duration.value) / Double(span.duration.timescale)
+        return max(Double(width) - 2 * Double(DrawTheme.Spacing.lg), 1) / seconds
     }
 
     var zoomLimits: ClosedRange<Double> {
         let fd = geometry.frameDuration
-        return TimelineZoom.limits(fit: fitScale, viewportWidth: Double(contentViewportWidth),
+        return TimelineZoom.limits(fit: wholeSequenceFitScale, viewportWidth: Double(contentViewportWidth),
                                    frameSeconds: Double(fd.value) / Double(fd.timescale))
     }
 
     mutating func fitIfNeeded() {
         guard !fitted, contentViewportWidth > 0 else { return }
         fitted = true
-        geometry.pointsPerSecond = fitScale
+        geometry.pointsPerSecond = wholeSequenceFitScale
         geometry.scrollX = 0
     }
 
-    /// `\`: the whole sequence in view.
+    /// `\`: fit the span (In/Out when set, else the whole sequence); pressed again it returns to the previous zoom (Premiere).
+    /// Animated like the Mac (`ZoomAnimation`, stepped by `tick`).
     public mutating func zoomToFit() {
-        geometry.pointsPerSecond = fitScale
-        geometry.scrollX = 0
-        clampScroll()
+        let now = zoomTarget
+        switch fitToggle.press(scale: now.scale, scrollX: now.scrollX, fit: fitScale) {
+        case .restore(let scale, let scrollX):
+            startZoomAnimation(toScale: TimelineZoom.clamp(scale, to: zoomLimits), toScroll: scrollX, mode: .free)
+        case .fit:
+            let span = fitSpan
+            guard !span.isEmpty else { return }
+            let startSeconds = Double(span.start.value) / Double(span.start.timescale)
+            let scale = TimelineZoom.clamp(fitScale, to: zoomLimits)
+            startZoomAnimation(toScale: scale, toScroll: startSeconds * scale - Double(DrawTheme.Spacing.lg), mode: .free)
+        }
     }
 
     /// `TimelineView.setZoom`: keeps the time under `anchorX` (panel points) fixed; nil = the playhead when visible.
+    /// Immediate (wheel, pinch, bar); it ends a running zoom animation.
     public mutating func setZoom(pointsPerSecond pps: Double, anchorX: CGFloat? = nil) {
+        zoomAnimation = nil
+        endSpringBack(settle: false)
         let new = TimelineZoom.clamp(pps, to: zoomLimits)
         guard new != geometry.pointsPerSecond else { return }
         let anchor = anchorX ?? defaultZoomAnchor
@@ -286,9 +329,63 @@ public struct TimelinePanel {
         clampScroll()
     }
 
-    /// `=` / `-` (one key step).
-    public mutating func zoomIn() { setZoom(pointsPerSecond: geometry.pointsPerSecond * TimelineZoom.keyStep) }
-    public mutating func zoomOut() { setZoom(pointsPerSecond: geometry.pointsPerSecond / TimelineZoom.keyStep) }
+    /// `=` / `-`: one animated step; a press during a running animation continues from its target.
+    public mutating func zoomIn() { animateZoomStep(factor: TimelineZoom.keyStep) }
+    public mutating func zoomOut() { animateZoomStep(factor: 1 / TimelineZoom.keyStep) }
+
+    // MARK: Zoom animation (keys, zoom-tool click, fit)
+
+    /// Scale and scroll the view shows now, or the running animation's target.
+    var zoomTarget: (scale: Double, scrollX: Double) {
+        zoomAnimation.map { ($0.anim.toScale, $0.anim.toScroll) } ?? (geometry.pointsPerSecond, Double(geometry.scrollX))
+    }
+
+    /// A zoom animation runs: the host keeps drawing frames until it lands.
+    public var isZooming: Bool { zoomAnimation != nil }
+
+    mutating func animateZoomStep(factor: Double, anchorX: CGFloat? = nil) {
+        let t = zoomTarget
+        let new = TimelineZoom.clamp(t.scale * factor, to: zoomLimits)
+        let anchor = Double((anchorX ?? defaultZoomAnchor) - TimelineGeometry.contentOriginX)
+        startZoomAnimation(toScale: new, toScroll: TimelineZoom.anchoredScroll(oldScale: t.scale, newScale: new, scrollX: t.scrollX, anchorX: anchor),
+                           mode: .anchored(x: anchor))
+    }
+
+    /// Animates from the shown state to `toScale`/`toScroll` (the anchored end state is derived from the shown state, so
+    /// a restart mid-animation does not snap in the last frame).
+    mutating func startZoomAnimation(toScale: Double, toScroll: Double, mode: ZoomAnimation.Mode) {
+        endSpringBack()
+        let from = (scale: geometry.pointsPerSecond, scroll: Double(geometry.scrollX))
+        zoomAnimation = nil
+        var toScroll = toScroll
+        if case .anchored(let x) = mode {
+            toScroll = TimelineZoom.anchoredScroll(oldScale: from.scale, newScale: toScale, scrollX: from.scroll, anchorX: x)
+        }
+        guard toScale != from.scale || toScroll != from.scroll else { return }
+        zoomAnimation = (ZoomAnimation(fromScale: from.scale, fromScroll: from.scroll, toScale: toScale, toScroll: max(toScroll, 0), mode: mode),
+                         clock())
+    }
+
+    /// One frame of a running zoom animation (`TimelineView.zoomAnimationTick`).
+    mutating func stepZoomAnimation() {
+        guard let z = zoomAnimation else { return }
+        let p = ZoomAnimation.progress(elapsed: clock() - z.start)
+        let s = z.anim.state(progress: p)
+        geometry.pointsPerSecond = TimelineZoom.clamp(s.scale, to: zoomLimits)
+        geometry.scrollX = CGFloat(s.scrollX)
+        clampScroll()
+        if p >= 1 { zoomAnimation = nil }
+    }
+
+    /// Jumps a running zoom animation to its end state.
+    public mutating func settleZoomAnimation() {
+        guard let z = zoomAnimation else { return }
+        zoomAnimation = nil
+        let s = z.anim.state(progress: 1)
+        geometry.pointsPerSecond = TimelineZoom.clamp(s.scale, to: zoomLimits)
+        geometry.scrollX = CGFloat(s.scrollX)
+        clampScroll()
+    }
 
     var defaultZoomAnchor: CGFloat {
         let x = geometry.x(for: playhead)

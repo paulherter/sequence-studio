@@ -8,7 +8,6 @@ import SQMedia
 extension MonitorPanel {
     /// Tab labels in the header instead of the title (the Mac tab group of Program and Source); the host draws one panel
     /// per tab on the same card and switches on `onSelectTab`.
-    static let tabGap = CGFloat(DrawTheme.Spacing.md)
     static let waveInset: CGFloat = 8
     static let waveVerticalInset: CGFloat = 24
 
@@ -20,20 +19,29 @@ extension MonitorPanel {
             return c.draw(title, in: CGRect(x: x, y: headerRect.minY, width: headerRect.width / 2, height: headerRect.height),
                           fontSize: fontSize, t.label)
         }
-        var cursor = x
+        // The dock's tab strip (`ShellDock.layout` / `draw`): medium labels with 10 pt padding, 2 pt apart, a 2 pt line under
+        // the selected tab (accent while the monitor has focus).
+        let pad: CGFloat = 10, height: CGFloat = 22
+        let start = headerRect.minX + CGFloat(DrawTheme.Spacing.sm) - 2
+        var cursor = start
+        let y = (headerRect.minY + (headerRect.height - 1 - height) / 2).rounded()
         for (i, label) in tabs.enumerated() {
-            let w = c.size(of: label, fontSize: fontSize).width.rounded(.up)
-            let r = CGRect(x: cursor, y: headerRect.minY, width: w, height: headerRect.height)
+            let w = c.size(of: label, fontSize: fontSize, face: c.medium).width.rounded(.up) + 2 * pad
+            let r = CGRect(x: cursor, y: y, width: w, height: height)
             tabRects.append(r)
-            c.draw(label, in: r, fontSize: fontSize, i == selectedTab ? t.label : t.label3)
-            cursor += w + Self.tabGap
+            c.draw(label, in: r, fontSize: fontSize, i == selectedTab ? t.label : t.label3, align: .center, face: c.medium)
+            if i == selectedTab {
+                let u = CGRect(x: r.minX + pad, y: headerRect.maxY - 2, width: max(r.width - 2 * pad, 0), height: 2)
+                c.fill(roundedRect: u, radius: 1, isFocused ? t.accent : t.label3)
+            }
+            cursor += w + 2
         }
-        return cursor - Self.tabGap - x
+        return cursor - 2 - x
     }
 
     /// The tab under `p` (window points), if any.
     public func tab(at p: CGPoint) -> Int? {
-        tabRects.firstIndex { $0.insetBy(dx: -Self.tabGap / 2, dy: 0).contains(p) }
+        tabRects.firstIndex { $0.insetBy(dx: -1, dy: 0).contains(p) }
     }
 
     /// Audio-only media in the Source monitor: the waveform replaces the picture.

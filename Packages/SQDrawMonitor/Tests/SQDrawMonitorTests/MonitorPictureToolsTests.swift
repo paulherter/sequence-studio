@@ -35,6 +35,28 @@ import SQEditorSession
 
     // MARK: Create tool
 
+    @Test func cursorsFollowTheToolAndStayDuringDrags() {
+        let p = panel()
+        let c = at(p, 0.5, 0.5)
+        func cursor(_ e: InputEvent) -> DrawCursor? { HostHover.shared.beginEvent(e); _ = p.handle(e); return HostHover.shared.cursor }
+        var now = 0.0
+        p.clock = { now }
+        p.onCreateShape = { _, _, _ in }
+        p.createModeNow = { .rectangle }
+        #expect(cursor(.mouseMoved(x: Float(c.x), y: Float(c.y))) == .crosshair)
+        #expect(cursor(.mouseDown(x: Float(c.x), y: Float(c.y), modifiers: [])) == .crosshair)
+        #expect(cursor(.mouseDragged(x: Float(c.x + 30), y: Float(c.y + 30))) == .crosshair)
+        _ = p.handle(.mouseUp(x: Float(c.x + 30), y: Float(c.y + 30)))
+        p.createModeNow = { .text }
+        #expect(cursor(.mouseMoved(x: Float(c.x), y: Float(c.y))) == nil)
+        p.createModeNow = { nil }
+        now = 5
+        p.handToolOn = { true }
+        #expect(cursor(.mouseDown(x: Float(c.x), y: Float(c.y), modifiers: [])) == .closedHand)
+        #expect(cursor(.mouseDragged(x: Float(c.x + 5), y: Float(c.y))) == .closedHand)
+        #expect(cursor(.mouseUp(x: Float(c.x + 5), y: Float(c.y))) == .openHand)
+    }
+
     @Test func createDragMakesARectangleInSequencePixels() {
         let p = panel()
         p.createModeNow = { .rectangle }

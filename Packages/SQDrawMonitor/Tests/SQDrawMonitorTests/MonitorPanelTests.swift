@@ -105,6 +105,94 @@ import SQUIKit
         #expect(picked == [1])
     }
 
+    /// The header tabs lay out like the dock's tab strip (10 pt padding, 2 pt apart, first tab `sm - 2` in), and the header line
+    /// is no longer the full-width marker.
+    @Test func tabsFollowTheDockStripLayout() {
+        let p = panel()
+        p.tabs = ["Program", "Source"]
+        draw(p)
+        #expect(p.tabRects.count == 2)
+        #expect(p.tabRects[0].minX == p.headerRect.minX + CGFloat(DrawTheme.Spacing.sm) - 2)
+        #expect(p.tabRects[1].minX == p.tabRects[0].maxX + 2)
+        #expect(p.tabRects[0].width >= 20)
+    }
+
+    @Test func emptyProgramOffersNewSequenceAndTheClickCallsIt() {
+        let p = panel()
+        p.model.hasSequence = false
+        var calls = 0
+        p.model.onNewSequence = { calls += 1 }
+        draw(p)
+        let r = p.newSequenceRect
+        #expect(r.width > 0)
+        _ = p.handle(.mouseDown(x: Float(r.midX), y: Float(r.midY), modifiers: []))
+        _ = p.handle(.mouseUp(x: Float(r.midX), y: Float(r.midY)))
+        #expect(calls == 1)
+        p.model.hasSequence = true
+        draw(p)
+        #expect(p.newSequenceRect == .zero)
+    }
+
+    @Test func emptyProgramStacksPipHintAndButtonAndOnlyWithAHost() {
+        let p = panel()
+        p.model.hasSequence = false
+        p.model.onNewSequence = {}
+        draw(p)
+        #expect(p.emptyMascotRect == .zero)                       // no mascot closure: the text stack as before
+        var drawn: [CGRect] = []
+        p.emptyMascot = { _, r in drawn.append(r) }
+        draw(p)
+        let pip = p.emptyMascotRect
+        #expect(drawn == [pip])
+        #expect(pip.width == MonitorPanel.emptyMascotSide && pip.height == MonitorPanel.emptyMascotSide)
+        #expect(abs(pip.midX - p.slot.midX) <= 0.5)
+        #expect(pip.maxY + 14 <= p.newSequenceRect.minY)          // Pip above the hint, the button below it
+        #expect(p.slot.contains(pip) && p.slot.contains(p.newSequenceRect))
+        p.model.hasSequence = true
+        p.model.timelineIsEmpty = true
+        draw(p)
+        #expect(p.emptyMascotRect.width > 0)                      // an empty timeline keeps Pip and the hint (no button)
+        p.model.timelineIsEmpty = false
+        draw(p)
+        #expect(p.emptyMascotRect == .zero)
+    }
+
+    @Test func sourceEmptyStateHasNoPip() {
+        let p = panel(.source)
+        p.emptyMascot = { _, _ in Issue.record("Source draws no Pip") }
+        draw(p)
+        #expect(p.emptyMascotRect == .zero)
+    }
+
+    @Test func headerLineIsAccentOnlyWhileFocusedAndSitsAtTheHeaderBottom() {
+        let p = panel()
+        let r = MonitorPanel.activeLineRect(header: p.headerRect)
+        #expect(r.maxY == p.headerRect.maxY && r.height == 2)
+        #expect(r.minX == p.headerRect.minX + CGFloat(DrawTheme.Spacing.sm))
+        func lineColors() -> [DrawColor] {
+            var c = Canvas(width: 800, height: 500, atlas: nil, scale: 1)
+            p.draw(&c)
+            return [p.theme.accent, p.theme.label3].filter { col in
+                c.list.quads.contains { $0.w == c.px(r).w && $0.h == c.px(r).h && $0.r == col.r && $0.g == col.g && $0.b == col.b }
+            }
+        }
+        p.isFocused = true
+        #expect(lineColors().contains(p.theme.accent))
+        p.isFocused = false
+        #expect(!lineColors().contains(p.theme.accent))
+    }
+
+    @Test func dropHighlightPaintsTheCardAndTheHalfZone() {
+        let p = panel()
+        var c = Canvas(width: 800, height: 500, atlas: nil, scale: 1)
+        p.draw(&c)
+        let plain = c.list.quads.count
+        p.dropHighlight = true
+        var c2 = Canvas(width: 800, height: 500, atlas: nil, scale: 1)
+        p.draw(&c2)
+        #expect(c2.list.quads.count > plain)
+    }
+
     @Test func wheelAtFitDoesNotPan() {
         let p = panel()
         _ = p.handle(.scroll(x: 400, y: 200, dx: 0, dy: 40, modifiers: []))
@@ -251,6 +339,16 @@ import SQUIKit
         p.poll(now: 10.5)                                 // same buffer number: playback stopped
         #expect(p.loudness.reading.momentaryLUFS == nil)
         #expect(p.loudness.reading.integratedLUFS == -22)
+    }
+
+    @Test func meterFollowsTheBallisticsSettingAtEachBuffer() {
+        let d = UserDefaults(suiteName: "sq.test.meterstyle.\(UUID().uuidString)")!
+        d.set(MeterStyle.fast.rawValue, forKey: MeterStyle.defaultsKey)
+        let p = MeterPanel(monitorDefaults: d)
+        p.layout(DrawRect(x: 0, y: 0, w: 120, h: 300), scale: 1)
+        p.reading = { (ObjectIdentifier(MeterPanel.self), 1, [0.5, 0.5]) }
+        p.poll(now: 10)
+        #expect(p.meter.style == .fast)
     }
 
     @Test func clickOnLoudnessResetsAndRightClickOpensTheMenu() {

@@ -236,7 +236,7 @@ import SQDrawKit
             guard let self, let e else { return }
             if scaleLinked { e.setScaleLinked(axis: axis, v / 100) } else { e.setValue(.scale, axis: axis, v / 100) }
         } }
-        let link = GraphicsFormDraw.IconItem(icon: .link, title: "Link Scale", selected: { [weak self] in self?.scaleLinked ?? true }) {
+        let link = GraphicsFormDraw.IconItem(icon: .link, title: "Link Scale", selected: { [weak self] in self?.scaleLinked ?? true }, offIcon: .unlink) {
             [weak self] in self?.scaleLinked.toggle()
         }
         f.numbers("Scale", unit: "%", keyed: keyed(.scale), reset: [100, 100],
@@ -479,10 +479,25 @@ import SQDrawKit
     func showStatus(_ text: String) { status = (SQL10n.string(text), clock() + 3) }
 
     /// Effects dropped from the Effects panel on the body: they go to the selected layer when exactly one is selected.
-    public func dropEffects(_ kinds: [String]) {
-        guard hasClip, !kinds.isEmpty else { return }
-        guard editor.selectedLayers.count == 1 else { showDrop(.refused("Select one layer to add an effect.")); return }
+    /// True when the panel took the drop (a Graphic is open and the drag carried effects), as the Mac `performDragOperation`.
+    @discardableResult
+    public func dropEffects(_ kinds: [String]) -> Bool { dropEffects(kinds, at: nil) }
+
+    /// The same at a point of the panel: on a layer row the effects go to that layer (the Mac `LayerListView.effectDrop`),
+    /// elsewhere to the one selected layer.
+    @discardableResult
+    public func dropEffects(_ kinds: [String], at p: CGPoint?) -> Bool {
+        guard hasClip, !kinds.isEmpty else { return false }
+        if let p, region(at: p) == .list, let r = list.dropEffects(kinds, at: local(p, .list)) { showDrop(r); return true }
+        guard editor.selectedLayers.count == 1 else { showDrop(.refused("Select one layer to add an effect.")); return true }
         showDrop(editor.addEffects(kinds))
+        return true
+    }
+
+    /// An Effects drag is over the panel at `p` (nil: it left): the layer row under it takes the accent tint.
+    public func effectDragOver(at p: CGPoint?) {
+        guard hasClip, let p, region(at: p) == .list else { list.effectDragOver(at: nil); return }
+        list.effectDragOver(at: local(p, .list))
     }
 
     // MARK: Drawing
@@ -500,8 +515,8 @@ import SQDrawKit
         let sm = CGFloat(DrawTheme.Spacing.sm)
         let summary = SQL10n.string(ClipSectionMode.layerSummary(clip))
         let sw = c.size(of: summary, fontSize: fs).width
-        c.draw(clip.name, in: CGRect(x: sm, y: 0, width: max(save.minX - sm * 2 - sw - sm, 0), height: Self.headerHeight), fontSize: fs, t.label)
-        c.draw(summary, in: CGRect(x: save.minX - sm - sw, y: 0, width: sw, height: Self.headerHeight), fontSize: fs, t.label2)
+        c.draw(clip.name, in: CGRect(x: sm, y: 0, width: max(save.minX - sm * 2 - sw - sm, 0), height: Self.headerHeight), fontSize: fs, t.label, face: c.semibold)
+        c.draw(summary, in: CGRect(x: save.minX - sm - sw, y: 0, width: sw, height: Self.headerHeight), fontSize: fs, t.label3)
         c.fill(CGRect(x: 0, y: Self.headerHeight - 1, width: size.width, height: 1), t.separator)
         // List.
         list.size = listFrame.size
@@ -539,17 +554,13 @@ import SQDrawKit
 
     var emptyButtonFrame: CGRect {
         let w: CGFloat = 150, h = ControlsGrid.controlHeight
-        return CGRect(x: ((size.width - w) / 2).rounded(), y: (size.height / 2 + 30).rounded(), width: w, height: h)
+        return CGRect(x: ((size.width - w) / 2).rounded(), y: (size.height / 2 + 24).rounded(), width: w, height: h)
     }
 
     private func drawEmpty(_ c: inout Canvas) {
         let t = theme, state = emptyState, blocker = makeGraphicBlocker
-        let mid = (size.height / 2).rounded(), inset = CGFloat(DrawTheme.Spacing.lg)
-        let w = max(size.width - inset * 2, 0)
-        c.draw(SQL10n.string(state.title), in: CGRect(x: inset, y: mid - 40, width: w, height: 20), fontSize: CGFloat(DrawTheme.TypeSize.body),
-               t.label, align: .center)
-        c.draw(blocker ?? SQL10n.string(state.hint), in: CGRect(x: inset, y: mid - 18, width: w, height: 40),
-               fontSize: CGFloat(DrawTheme.TypeSize.caption), t.label2, align: .center)
+        c.drawEmptyState(title: SQL10n.string(state.title), hint: blocker ?? SQL10n.string(state.hint),
+                         in: CGRect(origin: .zero, size: size), reserve: 34, theme: t)
         let title = state == .editedInControls ? "Make Graphic" : "New Graphics Clip"
         InspectorDraw.button(&c, title: SQL10n.string(title), in: emptyButtonFrame, hovering: hover == .emptyAction,
                                 pressed: pressed == .emptyAction, enabled: state != .editedInControls || blocker == nil,
@@ -688,8 +699,10 @@ import SQDrawKit
             guard plain, !editor.selectedLayers.isEmpty else { return false }
             editor.deleteSelected(); sync(); return true
         case .enter where plain && !modifiers.contains(.shift):
-            // shortcut: a text layer renames too (the draw-list text block has no focus call yet); upgrade with a
-            // TextBlockDraw.focusTextBox like the Mac TextBlockView.
+            // A text layer puts the caret in its text box, any other single layer or group renames its row (the Mac
+            // `editSelectedLayer`).
+            guard editor.selectedLayers.count == 1, let layer = editor.selectedLayer else { return false }
+            if case .text = layer.content, let block = textBlock { return block.focusTextBox() }
             return list.beginRenameSelected()
         case .character("a") where modifiers.contains(.command):
             selectAll(); return true

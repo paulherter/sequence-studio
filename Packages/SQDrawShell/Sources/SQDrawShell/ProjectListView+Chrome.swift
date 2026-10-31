@@ -253,7 +253,7 @@ extension ProjectListView {
 
     /// The column frames of the list: Name takes what the other columns leave (at least its minimum); columns that do not
     /// fit any more drop from the right. Automatic widths follow `ProjectColumnSizing`: the widest text plus padding.
-    /// shortcut: no horizontal scrolling or column drag/resize; add them with a pointer-hover pass for the header.
+    /// Columns resize and move by dragging the header (ProjectListView+Columns); no horizontal scrolling.
     public func columnFrames(_ refs: [BinItemRef]? = nil) -> [ColumnFrame] {
         let measure = host?.measure ?? TextMeasure(atlas: nil, scale: 1)
         let list = refs ?? rows().map(\.ref)
@@ -300,10 +300,7 @@ extension ProjectListView {
         guard subheaderRect.contains(p) else { return true }
         if viewMode == .icons { goUp(); return true }
         if m.contains(.secondary) { host?.menuBar.controller.present(items: columnMenu(), at: p); return true }
-        // A click on a title sorts by it; again flips the order (the outline's sort descriptors).
-        if let col = columnFrames().first(where: { p.x >= $0.minX && p.x < $0.maxX })?.column {
-            model.setSort(col, ascending: model.sortColumn == col ? !model.sortAscending : true)
-        }
+        beginColumnPress(at: p)
         return true
     }
 

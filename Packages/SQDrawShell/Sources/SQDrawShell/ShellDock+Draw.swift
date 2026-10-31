@@ -22,7 +22,9 @@ extension ShellDock {
             c.fill(CGRect(x: g.strip.minX, y: g.strip.maxY - 1, width: g.strip.width, height: 1), t.separator)
             for (i, p) in g.panels.enumerated() where g.tabs[i].width > 0 {
                 let r = g.tabs[i], on = p == g.selected
-                c.draw(EditorCommand.localizedPanelTitle(p), in: r, fontSize: Self.tabFont, on ? t.label : t.label3, align: .center,
+                // A hovered tab reads like the selected one (the Mac `TabButton.refresh`), none while a tab is dragged.
+                let hover = !on && dragTab == nil && pointer.map(r.contains) == true
+                c.draw(EditorCommand.localizedPanelTitle(p), in: r, fontSize: Self.tabFont, on || hover ? t.label : t.label3, align: .center,
                        face: c.medium)
                 // The selected tab's underline (v9 `.tab[aria-selected]::after`): accent while the group has focus.
                 if on {

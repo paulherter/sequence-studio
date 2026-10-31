@@ -31,8 +31,20 @@ public enum ShellKeys {
     }
 
     /// The command a key press runs with `focus`, or nil (`InputModifiers.command` is the Ctrl key on Windows).
-    public static func command(_ k: InputKey, _ m: InputModifiers, focus: PanelID?, map: CommandMap) -> EditorCommand? {
-        guard let key = key(k) else { return nil }
+    /// `mac`: the Mac window, where Command and Control are two keys and a chord is looked up as pressed (Windows has one
+    /// Ctrl that reaches both kinds of binding).
+    public static func command(_ k: InputKey, _ m: InputModifiers, focus: PanelID?, map: CommandMap, mac: Bool = false) -> EditorCommand? {
+        guard var key = key(k) else { return nil }
+        // Forward Delete runs Delete unless the map binds Forward Delete itself (Fn+Backspace, an external Del key).
+        if key == .forwardDelete, !map.entries.contains(where: { $0.binding.key == .forwardDelete }) { key = .delete }
+        if mac || m.contains(.control) {
+            var mods: KeyModifiers = []
+            if m.contains(.command) { mods.insert(.command) }
+            if m.contains(.control) { mods.insert(.control) }
+            if m.contains(.option) { mods.insert(.option) }
+            if m.contains(.shift) { mods.insert(.shift) }
+            return map.command(for: KeyBinding(key, mods), focus: focus)
+        }
         return WindowsKeyRoute.command(key, ctrl: m.contains(.command), alt: m.contains(.option), shift: m.contains(.shift),
                                        focus: focus, map: map)
     }

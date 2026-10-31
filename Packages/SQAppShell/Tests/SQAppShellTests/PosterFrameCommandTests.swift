@@ -32,4 +32,16 @@ struct PosterFrameCommandTests {
         #expect(m.project.media(a)?.posterTime == nil)
         #expect(PosterFrameCommand.run(clear: false, selected: [], source: (a, .zero), model: m) == "Select a clip first.")
     }
+
+    @Test func theHoveredFrameWinsOverTheSourceFrame() {
+        let (m, a, b) = model()
+        #expect(PosterFrameCommand.run(clear: false, selected: [.media(a)], source: (a, Time(5, 1)),
+                                       hovered: (a, Time(2, 1)), model: m) == nil)
+        #expect(m.project.media(a)?.posterTime == Time(2, 1))
+        // A hovered clip that is not selected is ignored.
+        #expect(PosterFrameCommand.run(clear: false, selected: [.media(a)], source: (a, Time(7, 1)),
+                                       hovered: (b, Time(2, 1)), model: m) == nil)
+        #expect(m.project.media(a)?.posterTime == Time(7, 1))
+        #expect(m.project.media(b)?.posterTime == nil)
+    }
 }

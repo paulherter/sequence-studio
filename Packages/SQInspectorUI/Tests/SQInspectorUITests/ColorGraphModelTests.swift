@@ -152,6 +152,30 @@ import SQRender
         }
     }
 
+    /// The shared Steps graph enables Import Color Decision… once the host gives it a chooser, and the import words
+    /// its notices the same way as the Mac page.
+    @Test func sharedStepMenuImportsAColorDecision() throws {
+        let (m, _) = model()
+        m.startEmptyGraph()
+        let id = try #require(m.selectedStep)
+        func item(_ menus: ColorGraphMenus) -> SQMenuItem? { menus.stepMenuItems(id).first { $0.title == "Import Color Decision…" } }
+        #expect(item(ColorGraphMenus(model: m))?.isEnabled == false, "no chooser, no import")
+        let file = FileManager.default.temporaryDirectory.appendingPathComponent("sq-\(UUID()).ccc")
+        let two = "<ColorCorrectionCollection><ColorCorrection id=\"a\"><SOPNode><Slope>2 2 2</Slope></SOPNode></ColorCorrection><ColorCorrection id=\"b\"><SOPNode><Slope>3 3 3</Slope></SOPNode></ColorCorrection></ColorCorrectionCollection>"
+        try Data(two.utf8).write(to: file)
+        defer { try? FileManager.default.removeItem(at: file) }
+        var told: [(String, String)] = []
+        var menus = ColorGraphMenus(model: m)
+        menus.importDecision = menus.makeDecisionImport(choose: { $0(file) }, tell: { told.append(($0, $1)) })
+        let entry = try #require(item(menus))
+        #expect(entry.isEnabled)
+        entry.action?()
+        #expect(m.step(id)?.primaries.gain == ColorTriple(all: 2))
+        #expect(told.count == 1 && told[0].0.contains("2 color decisions"))
+        let bad = ColorGraphMenus.importDecision(Data("<x/>".utf8), fileExtension: "cc", fileName: "x.cc", into: id, model: m)
+        #expect(bad?.detail.contains("no color decision") == true)
+    }
+
     @Test func proPageShowsTheGraphAndItsMenus() throws {
         let (m, _) = model()
         let view = ColorInspectorView(model: m)

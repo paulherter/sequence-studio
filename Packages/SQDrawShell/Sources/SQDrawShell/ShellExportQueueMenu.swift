@@ -32,8 +32,8 @@ extension ShellHost {
             case .waiting, .running:
                 let id = s.id
                 sub.append(SQMenuItem(title: "Cancel", action: { [weak self] in
-                    guard let q = self?.exportQueue else { return }
-                    Task { await q.cancel(id) }
+                    guard let self else { return }
+                    spawn { await self.stopExport(id) }
                 }))
             case .done(let url):
                 sub.append(SQMenuItem(title: reveal, isEnabled: revealFile != nil, action: { [weak self] in self?.revealFile?(url) }))
@@ -61,7 +61,10 @@ extension ShellHost {
         pop.onReveal = { [weak self] url in self?.revealFile?(url) }
         let queue = exportQueue
         pop.onCancelBackground = { [weak self] id in self?.cancelBackgroundJob?(id) }
-        pop.onCancel = { id in guard let q = queue else { return }; Task { await q.cancel(id) } }
+        pop.onCancel = { [weak self] id in
+            guard let self, queue != nil else { return }
+            spawn { await self.stopExport(id) }
+        }
         queuePopover = pop
         menuBar.controller.dismiss()
         refreshQueuePopover(pop)
@@ -101,5 +104,21 @@ extension ShellHost {
             pop.update(all, background: await self.backgroundJobs?() ?? [])
             pop.layout(in: CGRect(origin: .zero, size: self.size))
         }
+    }
+
+    /// Cancel on a job. A running one asks first (the Mac progress window's inline "Stop the export? The partial file is
+    /// deleted." with Keep Exporting / Stop Export); a waiting one has no file yet and is dropped at once. True when the job
+    /// was canceled.
+    @discardableResult
+    func stopExport(_ id: UUID) async -> Bool {
+        guard let q = exportQueue else { return false }
+        if let st = await q.status(id), case .running = st.state {
+            let d = ShellDialog(SQL10n.string("Stop the export?"), informative: SQL10n.string("The partial file is deleted."))
+            d.addButton(SQL10n.string("Keep Exporting"), role: .cancel)
+            d.addButton(SQL10n.string("Stop Export"), role: .destructive)
+            guard await ask(d) == .second else { return false }
+        }
+        await q.cancel(id)
+        return true
     }
 }

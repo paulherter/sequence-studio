@@ -132,7 +132,8 @@ final class SharedUIView: NSView, @preconcurrency NSTextInputClient {
         var due = dirty || playing || Date().timeIntervalSince(lastDraw) > 0.2
         if HostHover.shared.needsFrame(now: ProcessInfo.processInfo.systemUptime) { due = true }   // a tip comes due
         if HostScroll.shared.needsFrame() { due = true }                 // a list flings or springs back (rubber band)
-        if controller.timelinePanel.isSpringingBack { due = true }       // Fast Cut rubber band settles every frame
+        if controller.timelinePanel.isSpringingBack || controller.timelinePanel.isZooming || controller.timelinePanel.isAutoscrolling { due = true }   // rubber band, zoom ease and edge autoscroll run every frame
+        if controller.library.model.preview.isPlaying { due = true }    // the Library preview's picture and scrub bar move
         if controller.shell.exportPreviewPlaying { due = true }          // the Export sheet's picture plays
         if metal != nil, ticks >= Self.selfCheckTicks, completedFrames == 0 {
             fallBackToCoreGraphics("no GPU frame completed in \(ticks) display ticks (\(presentedFrames) encoded)")
@@ -240,6 +241,7 @@ final class SharedUIView: NSView, @preconcurrency NSTextInputClient {
             let title = controller.shell.windowTitle
             if win.title != title { win.title = title }
             win.isDocumentEdited = controller.session.isDirty
+            if win.representedURL != controller.session.fileURL { win.representedURL = controller.session.fileURL }   // the title bar's proxy icon
         }
     }
 
@@ -428,8 +430,9 @@ final class SharedUIView: NSView, @preconcurrency NSTextInputClient {
     // MARK: Keys and text
 
     override func keyDown(with e: NSEvent) {
-        let mods = MacKeys.modifiers(flags: e.modifierFlags.rawValue)
-        let key = MacKeys.key(code: e.keyCode)
+        let mods = MacKeys.keyModifiers(flags: e.modifierFlags.rawValue)
+        // Shortcuts follow the cap, not the key position (Cmd-Z, Cmd-+, Cmd-- on a German QWERTZ keyboard).
+        let key = MacKeys.key(code: e.keyCode, base: e.characters(byApplyingModifiers: []))
         var committed = "", composing = hasMarkedText()
         if !mods.contains(.command) {
             collecting = ""

@@ -25,8 +25,51 @@ private final class FakeEncoder: ExportEncoding, @unchecked Sendable {
     }
 }
 
+/// Writes its file, then waits until it is canceled (a running export).
+private final class HangingEncoder: ExportEncoding, @unchecked Sendable {
+    func export(video: any FrameSource, audio: (any AudioSource)?, settings: ExportSettings, to url: URL,
+                progress: @escaping @Sendable (Double) -> Void) async throws -> LoudnessReport? {
+        try Data([1]).write(to: url)
+        progress(0.3)
+        while true { try Task.checkCancellation(); try await Task.sleep(for: .milliseconds(5)) }
+    }
+}
+
 @MainActor
 @Suite struct ShellExportTests {
+    /// The Mac progress window's Stop confirmation: Cancel on a running export asks "Stop the export?"; Keep Exporting leaves
+    /// it running, Stop Export cancels it and the partial file is gone.
+    @Test func stoppingARunningExportAsksFirst() async throws {
+        let h = ShellHost(session: Self.session(), map: .premiereDefault)
+        var flows: [Task<Void, Never>] = []
+        h.spawn = { f in flows.append(Task { @MainActor in await f() }) }
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sq-shell-stop-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let q = ExportQueue(encoder: HangingEncoder(), freeSpaceProbe: { _ in nil })
+        h.exportQueue = q
+        let job = ExportJob(name: "Main", settings: ExportPreset.all[0].settings, outputDirectory: dir) { ExportSources(video: NoFrames()) }
+        let id = await q.enqueue(job)
+        let run = Task { await q.runAll() }
+        for _ in 0..<400 { if case .running? = await q.status(id)?.state { break }; try await Task.sleep(for: .milliseconds(5)) }
+        let url = try #require(await q.status(id)?.outputURL)
+        h.spawn { _ = await h.stopExport(id) }
+        for _ in 0..<400 where h.dialog == nil { try await Task.sleep(for: .milliseconds(5)) }
+        let keep = try #require(h.dialog)
+        #expect(keep.messageText == "Stop the export?" && keep.informativeText == "The partial file is deleted.")
+        keep.press(.first)                                       // Keep Exporting
+        for t in flows { await t.value }
+        if case .running? = await q.status(id)?.state {} else { Issue.record("export should still run") }
+        flows = []
+        h.spawn { _ = await h.stopExport(id) }
+        for _ in 0..<400 where h.dialog == nil || h.dialog === keep { try await Task.sleep(for: .milliseconds(5)) }
+        h.dialog?.press(.second)                                 // Stop Export
+        for t in flows { await t.value }
+        await run.value
+        if case .cancelled? = await q.status(id)?.state {} else { Issue.record("export should be canceled") }
+        #expect(!FileManager.default.fileExists(atPath: url.path))
+    }
+
     static func session(inOut: Bool = false) -> EditorSession {
         let clip = Clip(name: "c", media: UUID(), kind: .video, source: TimeRange(start: .zero, duration: Time(2, 1)), start: .zero)
         var tl = Timeline(name: "Main", frameDuration: Time(1, 25), tracks: [Track(kind: .video, clips: [clip]), Track(kind: .audio)])
@@ -172,6 +215,46 @@ private final class FakeEncoder: ExportEncoding, @unchecked Sendable {
         #expect(encoder.written.first?.0.deletingLastPathComponent().standardizedFileURL.pathComponents
                 == dir.standardizedFileURL.pathComponents)
         #expect(lines.last == "Exported “\(encoder.written.first?.0.lastPathComponent ?? "")”")
+    }
+
+    /// ExportCoordinator.preflightAndSubmit: a file already in the folder asks Keep Both / Replace / Cancel; Cancel brings the
+    /// sheet back over the same settings, Replace writes under the same name.
+    @Test func existingFileAsksAndCancelReopensTheSheet() async throws {
+        let s = Self.session()
+        let h = ShellHost(session: s, map: .premiereDefault)
+        var flows: [@MainActor () async -> Void] = []
+        h.spawn = { flows.append($0) }
+        h.size = CGSize(width: 1000, height: 700)
+        let dir = FileManager.default.temporaryDirectory.appendingPathComponent("sq-shell-export-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: dir) }
+        let encoder = FakeEncoder()
+        h.exportQueue = ExportQueue(encoder: encoder, freeSpaceProbe: { _ in nil })
+        h.exportSources = { _, _ in ExportSources(video: NoFrames()) }
+        h.exportDirectory = dir
+        #expect(h.execute(.export))
+        let flow = Task { @MainActor in await flows[0]() }
+        func nextDialog(after old: ShellDialog?) async -> ShellDialog? {
+            for _ in 0..<400 where h.dialog == nil || h.dialog === old { try? await Task.sleep(for: .milliseconds(5)) }
+            return h.dialog
+        }
+        let sheetDialog = try #require(await nextDialog(after: nil))
+        let model = try #require((sheetDialog.content as? ShellExportSheet)?.model)
+        let job = try #require(model.buildJobs(outputDirectory: dir).first)
+        try Data([1]).write(to: dir.appendingPathComponent("\(job.name).\(job.settings.fileExtension)"))
+        sheetDialog.press(.first)
+        let question = try #require(await nextDialog(after: sheetDialog))
+        #expect(question.messageText.hasSuffix("already exists in this folder"))
+        question.press(.third)                                   // Cancel
+        let again = try #require(await nextDialog(after: question))
+        #expect((again.content as? ShellExportSheet)?.model === model)
+        #expect(encoder.written.isEmpty)
+        again.press(.first)
+        let second = try #require(await nextDialog(after: again))
+        second.press(.second)                                    // Replace
+        await flow.value
+        #expect(encoder.written.count == 1)
+        #expect(encoder.written.first?.0.lastPathComponent == "\(job.name).\(job.settings.fileExtension)")
     }
 
     /// The Mac sheet keeps Export disabled while something is invalid: the press does nothing and the sheet stays.

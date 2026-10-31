@@ -139,6 +139,8 @@ public final class MeterPanel {
         if let t = loudnessTargetProvider?() { loudness.target = t }
         if let peaks = feed.peaks(for: reading?()) {
             lastBufferTime = now
+            let wanted = MeterStyle.current(monitorDefaults)   // the Settings page changed it (AudioMeterView.update)
+            if wanted != meter.style { meter.style = wanted }
             meter.update(peaks: peaks, at: now)
             if let l = loudnessReading?() { loudness.update(l, at: now) }
         } else if now - lastBufferTime > Self.staleSeconds {

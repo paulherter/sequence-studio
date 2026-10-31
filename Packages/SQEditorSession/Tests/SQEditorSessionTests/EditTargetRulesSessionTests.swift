@@ -136,6 +136,17 @@ private func track(_ clips: [Clip], targeted: Bool = false) -> Track {
         #expect(ss.undoName == "Ripple Delete")
     }
 
+    @Test func committedRippleDeleteSaysWhichTrack() throws {
+        let a = clip(0, 2)
+        let ss = session([track([a, clip(2, 2)]), track([clip(0, 1), clip(2, 1)])])
+        var out = ss.activeTimeline!
+        try out.rippleDelete([a.id])
+        ss.commit(TimelineCommit(timeline: out, edits: [.rippleDelete([a.id])], undoName: "Ripple Delete", selection: []))
+        #expect(ss.lastError == "Ripple Delete limited by clip on V2")
+        ss.undo()
+        #expect(ss.activeTimeline!.tracks[0].clips.map(\.start) == [s(0), s(2)])
+    }
+
     @Test func unclampedRippleDeleteSaysNothing() {
         let a = clip(0, 2)
         let ss = session([track([a, clip(2, 2)]), track([clip(5, 1)])])

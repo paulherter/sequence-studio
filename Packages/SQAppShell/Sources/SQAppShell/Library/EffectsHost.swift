@@ -36,6 +36,12 @@ public final class EffectsHost {
     public var modifiers: () -> InputModifiers = { [] }
     /// An effect, preset or transition was placed from a drag.
     public var onPlaced: (@MainActor () -> Void)?
+    /// The clip shown in Effect Controls when the window point is over that panel (a drop there adds to it); nil elsewhere.
+    public var inspectorDropClip: (@MainActor (CGPoint) -> Clip.ID?)?
+    /// Effects released on the Graphics card: the selected layer takes them (`GraphicsHost.dropEffects`); true when taken.
+    public var graphicsDrop: (@MainActor ([String], CGPoint) -> Bool)?
+    /// The drag is over window point `p` (nil: it ended): the Graphics card tints the layer row under it.
+    public var graphicsDragOver: (@MainActor (CGPoint?) -> Void)?
     public private(set) var dragLabel: (title: String, x: Float, y: Float)?
 
     /// `library` is the Library host's model: its saved presets show under "Presets" and apply from here.
@@ -87,6 +93,7 @@ public final class EffectsHost {
         let ph: TimelineDropRoute.Phase = switch phase { case .moved: .moved; case .ended: .ended; case .canceled: .canceled }
         let title = ids.first.flatMap { id in panel.allEntries.first { $0.id == id }?.title } ?? ""
         dragLabel = phase == .moved ? (title, x, y) : nil
+        graphicsDragOver?(phase == .moved ? CGPoint(x: p.x + frame.minX, y: p.y + frame.minY) : nil)
         let mods = modifiers()
         let context = LibraryDropRoute.Context(presets: library.presets, importAndPlace: { _, _ in },
                                                status: { [weak shell] in shell?.onStatus?($0) })
@@ -94,6 +101,14 @@ public final class EffectsHost {
         withTimeline { [session] panel in
             placed = LibraryDropRoute.drag(.effects(ids), phase: ph, x: x, y: y, modifiers: mods, panel: &panel, session: session,
                                            context: context)
+        }
+        if !placed, phase == .ended, let clip = inspectorDropClip?(CGPoint(x: p.x + frame.minX, y: p.y + frame.minY)) {
+            placed = LibraryDropRoute.dropOnClips(ids, targets: [clip], session: session, context: context)
+        }
+        // The Graphics card takes plain effects for its selected layer (not presets, not transitions).
+        if !placed, phase == .ended {
+            let kinds = ids.filter { !$0.hasPrefix(LibraryDropRoute.presetPrefix) && EffectDragPayload.transitionKind(forID: $0) == nil }
+            if !kinds.isEmpty, graphicsDrop?(kinds, CGPoint(x: p.x + frame.minX, y: p.y + frame.minY)) == true { return }
         }
         if placed { onPlaced?() }
     }

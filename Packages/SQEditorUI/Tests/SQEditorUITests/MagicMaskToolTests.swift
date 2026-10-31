@@ -337,6 +337,19 @@ private final class StatusFlag: Sendable {
         #expect(r.overlay.magicHover != nil)
     }
 
+    /// The shared monitor draws the hover itself: `hoverMatte` answers the object under the pointer without an overlay image,
+    /// nil beside it, while playing, and when Magic is off.
+    @Test func hoverMatteAnswersForTheSharedMonitor() async {
+        let r = Rig()
+        await r.park(on: r.a, at: 1)
+        let hit = r.tool.hoverMatte(at: Rig.object)
+        #expect(hit != nil && hit.map { $0.matte.width > 0 } == true)
+        #expect(r.overlay.magicHover == nil)
+        #expect(r.tool.hoverMatte(at: Vec2(0.95, 0.95)) == nil)
+        r.overlay.maskTool = nil
+        #expect(r.tool.hoverMatte(at: Rig.object) == nil)
+    }
+
     /// The highlight belongs to its frame: on the next clip the same label is another object and is drawn anew.
     @Test func hoverIsRebuiltForAnotherClip() async {
         let r = Rig()

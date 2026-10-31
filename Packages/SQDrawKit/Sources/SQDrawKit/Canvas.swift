@@ -234,3 +234,24 @@ public struct Canvas {
         return out
     }
 }
+
+extension Canvas {
+    /// The AppKit `EmptyStateView` text block: a 15 pt semibold title in `label`, a wrapped body hint (at most 3 lines) in
+    /// `label2`, 4 pt apart, centered in `r`. `reserve` is the height kept free below for a button (centered with the text).
+    /// Returns the bottom of the hint.
+    @discardableResult
+    public mutating func drawEmptyState(title: String, hint: String, in r: CGRect, reserve: CGFloat = 0, theme t: DrawTheme) -> CGFloat {
+        let titleH: CGFloat = 20, lineH: CGFloat = 14, gap = CGFloat(DrawTheme.Spacing.xs)
+        let w = max(r.width - 2 * CGFloat(DrawTheme.Spacing.lg), 0)
+        let lines = Array(wrap(hint, width: w, fontSize: CGFloat(DrawTheme.TypeSize.body)).prefix(3))
+        let block = titleH + (lines.isEmpty ? 0 : gap + CGFloat(lines.count) * lineH) + reserve
+        let top = (r.midY - block / 2).rounded()
+        let x = r.minX + CGFloat(DrawTheme.Spacing.lg)
+        draw(title, in: CGRect(x: x, y: top, width: w, height: titleH), fontSize: 15, t.label, align: .center, face: semibold)
+        for (i, line) in lines.enumerated() {
+            draw(line, in: CGRect(x: x, y: top + titleH + gap + CGFloat(i) * lineH, width: w, height: lineH),
+                 fontSize: CGFloat(DrawTheme.TypeSize.body), t.label2, align: .center)
+        }
+        return top + block - reserve
+    }
+}

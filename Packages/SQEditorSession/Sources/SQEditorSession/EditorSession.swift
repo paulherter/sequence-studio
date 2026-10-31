@@ -498,10 +498,19 @@ public final class EditorSession {
 
     /// Applies a finished timeline gesture (`TimelineInteraction`) as ONE undo step by replaying its edits.
     public func commit(_ c: TimelineCommit) {
+        var clamp: String?
         let ok = attemptRipple(c.undoName) { t in
-            if c.edits.isEmpty { t = c.timeline } else { for e in c.edits { try e.apply(to: &t) } }
+            clamp = nil
+            if c.edits.isEmpty { t = c.timeline } else {
+                for e in c.edits {
+                    // Same as `deleteSelection`: a ripple delete the tracks cut short says so in the status line.
+                    if case .rippleDelete(let ids) = e { let o = try t.rippleDeleteOutcome(ids).outcome; clamp = t.clampMessage(o) }
+                    else { try e.apply(to: &t) }
+                }
+            }
         }
         guard ok else { return }
+        if let clamp { setError("Ripple Delete \(clamp)") }
         setSelection(clips: c.selection, captions: c.captionSelection)
     }
 

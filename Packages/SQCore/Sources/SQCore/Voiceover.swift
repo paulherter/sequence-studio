@@ -94,3 +94,15 @@ extension Timeline {
         return VoiceoverPlacement(clip: clip.id, track: work.id, createdTrack: created)
     }
 }
+
+extension Voiceover {
+    /// "About 12 s." under the voiceover fields; explains when nothing can be made. One text for the AppKit sheet and the
+    /// shared dialog.
+    public static func hintText(for text: String, rate: Double, hasVoices: Bool) -> String {
+        guard hasVoices else { return "No voices are installed. Add one in System Settings > Accessibility > Spoken Content." }
+        let clean = cleaned(text)
+        guard !clean.isEmpty else { return "Type the text first." }
+        let s = Int(estimatedSeconds(of: clean, rate: rate).rounded())
+        return s < 1 ? "Under a second." : "About \(s) s."
+    }
+}

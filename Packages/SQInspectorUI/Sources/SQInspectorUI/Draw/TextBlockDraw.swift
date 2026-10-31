@@ -1284,6 +1284,20 @@ import SQDrawKit
         boxText = text
     }
 
+    /// Puts the caret at the end of the text box (the Mac `TextBlockView.focusTextBox`); false when the box is hidden.
+    @discardableResult
+    public func focusTextBox() -> Bool {
+        guard showsTextBox else { return false }
+        if focused != nil { resignFocus() }
+        if editor == nil {
+            var e = TextEditState(boxText, selectAll: false)
+            e.place(e.text.count)
+            editor = e
+            typed = false
+        }
+        return true
+    }
+
     public func resignFocus() {
         endTyping()
         guard let fl = focused else { return }

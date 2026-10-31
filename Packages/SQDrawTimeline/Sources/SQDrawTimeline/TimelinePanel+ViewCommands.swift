@@ -30,8 +30,9 @@ extension TimelinePanel {
 
     /// Runs `c` when it is a view command: nil = not one of them (the host goes on), "" = done, else a status line.
     /// `zooms`: the zoom commands go to the timeline (`CommandRouting.zoomTarget` is `.timeline`); else they pass on.
+    /// `ownsDelete`: the timeline (or nothing) has the focus, so Delete may close the selected gap; another panel keeps it.
     @MainActor public mutating func runViewCommand(_ c: EditorCommand, session s: EditorSession, zooms: Bool = true,
-                                                  host: TimelineHost? = nil,
+                                                  host: TimelineHost? = nil, ownsDelete: Bool = true,
                                                   defaults: UserDefaults = .standard) -> String? {
         let edges = interaction.edgeSelection
         func trim(_ n: Int, moveFallback: Bool) -> String {
@@ -47,6 +48,12 @@ extension TimelinePanel {
         case .slipKeyframesStayTool:
             toolState.selectSlipKeyframesStay()
             return SQL10n.string(EditorCommand.slipKeyframesStayTool.title)
+        case .delete, .rippleDelete:
+            // A selected gap closes (the Mac `deleteSelectedGap`, after a selected transition); clips go on to the host.
+            guard ownsDelete, gesture == nil, s.selectedTransition == nil, s.selection.isEmpty, s.captionSelection.isEmpty,
+                  let gap = interaction.gapSelection else { return nil }
+            s.closeGap(gap)
+            return ""
         case .toggleSnapping:
             toolState.snapping.toggle()
             toolState.storeToggles(defaults)
@@ -98,9 +105,18 @@ extension TimelinePanel {
         case .extendEdit:
             guard let e = edges else { return Self.needEditLine }
             s.extendEdit(e)
+        case .saveAsTemplate: return Self.open(.saveTemplate, host)
+        case .createAnglesClip: return Self.open(.createAnglesClip, host)
+        case .toggleAnimationZones:
+            guard let host else { return "Select a title clip first." }
+            TimelineMenus.toggleZones(session: s, host: host)
         case .editMarker:
             guard let id = s.markerAtPlayhead() else { return "No marker at the playhead." }
             return Self.open(.marker(id), host)
+        case .addMarker:
+            // The Mac (AppController+Commands): M on a marker that is already there opens its editor.
+            guard let r = s.markAtPlayhead() else { return "" }
+            return r.openEdit ? Self.open(.marker(r.id), host) : ""
         case .addAndEditMarker:
             guard let r = s.markAtPlayhead() else { return "" }
             return Self.open(.marker(r.id), host)

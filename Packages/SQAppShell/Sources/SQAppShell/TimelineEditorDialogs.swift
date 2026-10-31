@@ -282,9 +282,10 @@ public final class TimelineEditorDialogs {
 
     // MARK: Captions
 
-    /// A caption without words: its text in one field (lines separated by " / "), one undo step.
+    /// The Text panel types into the caption's row (`editCaptionInPanel`); without that host: its text in one field (lines separated by " / "), one undo step.
     /// shortcut: one line field instead of the Mac in-place multi-line editor; upgrade when shell forms get a text area.
     public func editCaptionText(_ id: CaptionItem.ID) -> Bool {
+        if shell.editCaptionInPanel?(id) == true { return true }
         guard let item = session.activeTimeline?.captionTracks.lazy.flatMap(\.items).first(where: { $0.id == id }) else { return false }
         session.select(clips: [], captions: [id])
         let d = ShellDialog("Edit Caption", informative: "Separate lines with \" / \".")

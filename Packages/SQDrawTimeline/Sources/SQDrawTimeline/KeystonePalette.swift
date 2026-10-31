@@ -32,6 +32,8 @@ public struct KeystonePalette: Sendable {
     public var isVisible = false
     public var keystones: [Keystone] = []
     public var selectedID: UUID?
+    /// Built-in keystones the user edited: their row carries the "changed" chip (the Mac `KeystoneChip`).
+    public var changed: Set<UUID> = []
     /// Docked in a dock card (the Mac `KeystonesPanelView` as a Window > Keystones panel): the list fills the card, the
     /// card's tab strip carries the title and the "..." (`layout(docked:)`); no own header, shadow or close button.
     public private(set) var isDocked = false
@@ -49,6 +51,8 @@ public struct KeystonePalette: Sendable {
     }
     private var press: (index: Int, start: CGPoint)?
     public private(set) var dragging: Keystone?
+    /// Where the pointer is (window points) while a row is dragged; nil otherwise. The host tints the drop target under it.
+    public private(set) var dragPoint: CGPoint?
     private var lastClick: (index: Int, time: Double)?
     private var hoverPoint: CGPoint?
 
@@ -107,6 +111,11 @@ public struct KeystonePalette: Sendable {
         return keystones.indices.contains(i) ? i : nil
     }
 
+    /// The hover tip of the row at window point `p`: what the keystone animates (the Mac row tooltip).
+    public func help(at p: CGPoint) -> String? {
+        row(at: p).map { KeystonesPanelModel.subtitle(keystones[$0]) }
+    }
+
     public func contains(x: Float, y: Float) -> Bool {
         isVisible && frame.contains(CGPoint(x: CGFloat(x / scale), y: CGFloat(y / scale)))
     }
@@ -140,11 +149,12 @@ public struct KeystonePalette: Sendable {
             if dragging == nil, hypot(p.x - pr.start.x, p.y - pr.start.y) < Self.dragSlop { return [] }
             let ks = keystones[pr.index]
             dragging = ks
+            dragPoint = p
             lastClick = nil
             return [.drag(ks, x: x, y: y)]
         case .mouseUp(let x, let y):
             guard press != nil else { return nil }
-            defer { press = nil; dragging = nil }
+            defer { press = nil; dragging = nil; dragPoint = nil }
             guard let ks = dragging else { return [] }
             return [.drop(ks, x: x, y: y)]
         case .mouseMoved(let x, let y):
@@ -162,7 +172,7 @@ public struct KeystonePalette: Sendable {
                let k = keystones.first(where: { $0.id == selectedID }) { return [.delete(k)] }
             guard key == .escape, press != nil else { return nil }
             let was = dragging != nil
-            press = nil; dragging = nil
+            press = nil; dragging = nil; dragPoint = nil
             return was ? [.cancel] : []
         }
     }
@@ -194,10 +204,8 @@ public struct KeystonePalette: Sendable {
         let pad = CGFloat(DrawTheme.Spacing.sm)
         if keystones.isEmpty, isDocked {
             // The Mac panel's empty state.
-            c.draw(SQL10n.string("No keystones yet"), in: CGRect(x: frame.minX, y: frame.midY - 18, width: frame.width, height: 18),
-                   fontSize: CGFloat(DrawTheme.TypeSize.body), theme.label2, align: .center)
-            c.draw(SQL10n.string("Save the keyframes of a clip as a keystone to reuse them."), in: CGRect(x: frame.minX, y: frame.midY, width: frame.width, height: 16),
-                   fontSize: CGFloat(DrawTheme.TypeSize.caption), theme.label3, align: .center)
+            c.drawEmptyState(title: SQL10n.string("No keystones yet"),
+                             hint: SQL10n.string("Save the keyframes of a clip as a keystone to reuse them."), in: frame, theme: theme)
             return
         }
         c.saveGState()
@@ -214,8 +222,16 @@ public struct KeystonePalette: Sendable {
             let meta = KeystonesPanelModel.subtitle(k)
             let mw = min(c.size(of: meta, fontSize: font).width, rr.width * 0.5)
             let metaX = rr.maxX - 2 * pad - mw
-            c.draw(k.name, in: CGRect(x: nameX, y: rr.minY, width: max(metaX - nameX - pad, 0), height: rr.height), fontSize: font,
-                   theme.label2)
+            let chipText = SQL10n.string("changed")
+            let chipW = changed.contains(k.id) ? ceil(c.size(of: chipText, fontSize: font).width) + 2 * pad - CGFloat(DrawTheme.Spacing.sm) : 0
+            let nameW = min(c.size(of: k.name, fontSize: font).width,
+                            max(metaX - nameX - pad - (chipW > 0 ? chipW + CGFloat(DrawTheme.Spacing.xs) : 0), 0))
+            c.draw(k.name, in: CGRect(x: nameX, y: rr.minY, width: nameW, height: rr.height), fontSize: font, theme.label2)
+            if chipW > 0 {
+                let chip = CGRect(x: nameX + nameW + CGFloat(DrawTheme.Spacing.xs), y: rr.midY - 10, width: chipW, height: 20)
+                c.fill(roundedRect: chip, radius: 10, theme.fill)
+                c.draw(chipText, in: chip, fontSize: font, theme.label2, align: .center)
+            }
             c.draw(meta, in: CGRect(x: metaX, y: rr.minY, width: mw, height: rr.height), fontSize: font, theme.label3)
         }
         c.restoreGState()

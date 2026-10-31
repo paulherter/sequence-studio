@@ -34,6 +34,29 @@ private final class PickerStub: ShellFilePicker {
         #expect(!ShellCommands.enabled(.insert, session: s, panels: p))   // no source loaded
     }
 
+    /// Delete follows the focused panel: panels without a delete command swallow it, the Graphics / Keystones / Captions
+    /// panels run their own action, the timeline and monitors fall through to the clips.
+    @Test(arguments: [
+        (PanelID.effects, false, false), (.colorInspector, false, false), (.markerList, false, false),
+        (.keystones, true, false), (.text, true, false), (.timeline, false, true), (.programMonitor, false, true), (.library, false, true),
+    ])
+    func deleteRoutesPerFocusedPanel(panel: PanelID, ownAction: Bool, reachesTimeline: Bool) {
+        let s = Self.session()
+        let h = ShellHost(session: s, map: .premiereDefault)
+        var ran: [CommandRouting.EditAction] = []
+        for a in [CommandRouting.EditAction.deleteKeystones, .deleteCaptions, .deleteGraphicsLayers] { h.editActions[a] = { ran.append(a) } }
+        h.dock.focused = panel
+        let taken = h.runFocusedEdit(.delete)
+        if reachesTimeline { #expect(taken == nil) } else { #expect(taken == true) }
+        #expect(ran.isEmpty == !ownAction)
+    }
+
+    @Test func clickingAPanelMovesTheKeyScope() {
+        let h = ShellHost(session: Self.session(), map: .premiereDefault)
+        h.dock.focused = .effectControls
+        #expect(h.focus == .effectControls)
+    }
+
     @Test func sessionCommandsRunAndPanelCommandsAreLeftToTheHost() {
         let s = Self.session()
         #expect(ShellCommands.run(.markIn, session: s) == "")

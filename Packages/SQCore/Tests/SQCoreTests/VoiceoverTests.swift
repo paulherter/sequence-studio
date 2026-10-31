@@ -104,4 +104,12 @@ import Foundation
         #expect(t.tracks.flatMap(\.clips).first { $0.id == r.clip }!.start == Time(1, 30))
         #expect(throws: EditError.self) { try t.placeVoiceover(media: UUID(), name: "VO", duration: .zero, at: .zero) }
     }
+
+    @Test func hintTextExplainsWhatIsMissing() {
+        #expect(Voiceover.hintText(for: "Hi", rate: 0.5, hasVoices: false).hasPrefix("No voices"))
+        #expect(Voiceover.hintText(for: "  ", rate: 0.5, hasVoices: true) == "Type the text first.")
+        #expect(Voiceover.hintText(for: "Hi", rate: 0.5, hasVoices: true) == "Under a second.")
+        let words = Array(repeating: "word", count: 150).joined(separator: " ")
+        #expect(Voiceover.hintText(for: words, rate: 0.5, hasVoices: true) == "About 60 s.")
+    }
 }

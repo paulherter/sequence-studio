@@ -51,6 +51,9 @@ public struct AnalysisFlowUI {
     public let sceneJob = AnalysisJob<Int?>()
     public let reframeJob = AnalysisJob<ReframeOutcome>()
     public let stabilizeJob = AnalysisJob<StabilizeOutcome>()
+    /// A Stabilizer analysis started from an Effect Controls Analyze row: the clips it covers and its progress 0...1;
+    /// nil when it ended. The Controls panel shows it on the rows (`StabilizeRunState`).
+    public var onStabilizeProgress: (@MainActor (Set<Clip.ID>, Double?) -> Void)?
     /// Match Color to Clip: set while the Program engine shows a solo view (a second request waits for it); `colorMatchRun`
     /// counts runs so a late capture of a timed-out run is ignored.
     var colorMatchBusy = false

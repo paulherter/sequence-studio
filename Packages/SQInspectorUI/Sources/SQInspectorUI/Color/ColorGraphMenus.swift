@@ -20,6 +20,41 @@ import SQUIKit
         self.tidyUp = tidyUp ?? { [model] in model.tidyUpSteps() }
     }
 
+    /// Imports a color decision file (ASC CDL / CMX EDL) into a Step and words what the user must be told: nil when
+    /// one decision was applied; a notice when the file holds several (the first is applied); a failure when nothing
+    /// could be read. Shared by the Mac Pro page and the portable Steps graph.
+    public static func importDecision(_ data: Data, fileExtension ext: String, fileName: String, into id: UUID,
+                                      model: ColorInspectorModel) -> (title: String, detail: String)? {
+        do {
+            let n = try model.importColorDecision(data, fileExtension: ext, into: id)
+            guard n > 1 else { return nil }
+            return ("\(n) color decisions found, applied the first", "The other decisions were not applied.")
+        } catch {
+            let why: String
+            switch error as? ColorDecisionImport.ImportError {
+            case .noDecisions?: why = "The file holds no color decision (ASC CDL Slope / Offset / Power / Saturation)."
+            case .badValue(let what)?: why = "A \(what) value is not a number."
+            case nil: why = SQL10n.errorText(error)
+            }
+            return (SQL10n.format("Could not import “%@”", fileName), why)
+        }
+    }
+
+    /// The file chooser plus the import for a host that has a one-file chooser (`choose`) and a message sink.
+    public func makeDecisionImport(choose: @escaping @MainActor (@escaping @MainActor (URL?) -> Void) -> Void,
+                                   tell: @escaping @MainActor (String, String) -> Void) -> @MainActor (UUID) -> Void {
+        let model = model
+        return { id in
+            choose { url in
+                guard let url else { return }
+                let data = (try? Data(contentsOf: url)) ?? Data()
+                if let m = Self.importDecision(data, fileExtension: url.pathExtension, fileName: url.lastPathComponent, into: id, model: model) {
+                    tell(m.title, m.detail)
+                }
+            }
+        }
+    }
+
     /// The entries of a LUT menu (None, Automatic for the In LUT, the library and recents, Choose File…).
     public func lutItems(_ t: LUTTarget) -> [SQMenuItem] {
         let model = model

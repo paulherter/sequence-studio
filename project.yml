@@ -110,7 +110,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.paulherter.SequenceStudio
         PRODUCT_NAME: Sequence Studio
-        MARKETING_VERSION: "0.1"
+        MARKETING_VERSION: "0.1.1"
         CURRENT_PROJECT_VERSION: "1"
         PRODUCT_MODULE_NAME: SequenceStudio
         GENERATE_INFOPLIST_FILE: NO

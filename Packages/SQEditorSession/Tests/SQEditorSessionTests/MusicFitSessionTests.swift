@@ -34,6 +34,14 @@ import SQCore
         #expect(v[0].length == s(12) && v[0].lengthError == .zero)
     }
 
+    @Test func rowTitleNamesLengthFitAndJoin() {
+        let (sess, _) = make(inOut: TimeRange(start: .zero, duration: s(12)))
+        let v = sess.musicFitVersions(grid: grid())
+        let title = EditorSession.musicFitRowTitle(v[0], index: 0)
+        #expect(title.hasPrefix("Version 1: 12.0 s, exact, "))
+        #expect(title.hasSuffix("bars") || title.hasSuffix("bar"))
+    }
+
     @Test func applyIsOneUndoStepWithCrossfade() {
         let (sess, m) = make(inOut: TimeRange(start: .zero, duration: s(12)))
         let v = sess.musicFitVersions(grid: grid())[0]

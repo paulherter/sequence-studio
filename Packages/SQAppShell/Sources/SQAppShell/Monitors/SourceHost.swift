@@ -166,6 +166,7 @@ public final class SourceHost {
         if case .replaceMode(let mode) = c { return replaceWithMode(mode) }
         if c == .matchFrame { matchFrame(); return true }
         if c == .reverseMatchFrame { reverseMatchFrame(); return true }
+        if c == .appendToMainTrack || c == .attachBacktimed { return fastCutPlacement(c) }
         if c == .placeOnTop, loaded { core.edit(.overwrite, placeOnTop: true); return true }
         if let edit {
             guard loaded else { return false }
@@ -173,6 +174,27 @@ public final class SourceHost {
             return true
         }
         return isFocused && isShown && core.handle(c)
+    }
+
+    /// Append to Main Track and Attach Backtimed (the Mac `AppController+TimelineOps`): the Source clip, else the media selected
+    /// in the Project panel; both work in Fast Cut only.
+    func fastCutPlacement(_ c: EditorCommand) -> Bool {
+        guard session.activeTimeline?.editMode == .magnetic else {
+            shell.onStatus?("Switch the sequence to Fast Cut first (Shift+G)."); return true
+        }
+        let picked = shell.projectList?.selection ?? []
+        let media = core.mediaID.map { [$0] } ?? picked.compactMap { if case .media(let id) = $0 { id } else { nil } }
+        if c == .appendToMainTrack {
+            guard session.fastCutCommandEnabled(c) else { shell.onStatus?("Select the right clips first."); return true }
+            shell.onStatus?(SQL10n.string(session.appendToMainTrack(media: media)))
+        } else if core.mediaID != nil {
+            core.edit(.overwrite, placeOnTop: true, backtimed: true)
+        } else if media.isEmpty {
+            shell.onStatus?("Open a clip in the Source view first (double-click it in the Project panel).")
+        } else {
+            session.placeMedia(media, mode: .overwrite, placeOnTop: true, backtimed: true, patched: true)
+        }
+        return true
     }
 
     /// Clip > Replace and Fit > Replace Modes (the Mac AppController+ReplaceModes): the one selected clip plays the Source clip.

@@ -75,6 +75,17 @@ private let fd = Time(1, 25)
         #expect(s.activeTimeline!.tracks.flatMap(\.clips).count == before)
     }
 
+    @Test func effectDropOnEffectControlsAddsItToTheShownClip() {
+        let (_, s) = setup()
+        let calls = Calls()
+        let clip = s.activeTimeline!.tracks[0].clips[0].id
+        #expect(LibraryDropRoute.dropOnClips([ClipEffect.gaussianBlurKind], targets: [clip], session: s, context: calls.context))
+        #expect(s.activeTimeline!.tracks[0].clips[0].effects.contains { $0.kind == ClipEffect.gaussianBlurKind })
+        // Transitions are not effects, and no clip means nothing happens.
+        #expect(!LibraryDropRoute.dropOnClips([ClipEffect.gaussianBlurKind], targets: [], session: s, context: calls.context))
+        #expect(!LibraryDropRoute.dropOnClips([EffectDragPayload.transitionID(.crossDissolve)], targets: [clip], session: s, context: calls.context))
+    }
+
     @Test func effectDropAddsItToTheClipUnderThePointer() {
         var (p, s) = setup()
         let calls = Calls()
@@ -83,6 +94,36 @@ private let fd = Time(1, 25)
         #expect(LibraryDropRoute.drag(.effects([kind]), phase: .ended, x: x, y: y, modifiers: [], panel: &p, session: s,
                                       context: calls.context))
         #expect(s.activeTimeline!.tracks[0].clips[0].effects.contains { $0.kind == kind })
+    }
+
+    @Test func effectDragLightsUpTheClipAndClearsOnRelease() {
+        var (p, s) = setup()
+        let calls = Calls()
+        let row = p.geometry.rows(for: p.timeline)[0], y = Float(row.y + row.height / 2), x = Float(p.geometry.x(for: fd * 50))
+        let kind = ClipEffect.gaussianBlurKind
+        #expect(!LibraryDropRoute.drag(.effects([kind]), phase: .moved, x: x, y: y, modifiers: [], panel: &p, session: s, context: calls.context))
+        #expect(p.effectDropTarget == p.timeline.tracks[0].clips[0].id)
+        // Over the audio-only effect on a video clip without link: no highlight.
+        _ = LibraryDropRoute.drag(.effects([kind]), phase: .moved, x: 5000, y: 5000, modifiers: [], panel: &p, session: s, context: calls.context)
+        #expect(p.effectDropTarget == nil)
+        _ = LibraryDropRoute.drag(.effects([kind]), phase: .moved, x: x, y: y, modifiers: [], panel: &p, session: s, context: calls.context)
+        _ = LibraryDropRoute.drag(.effects([kind]), phase: .canceled, x: x, y: y, modifiers: [], panel: &p, session: s, context: calls.context)
+        #expect(p.effectDropTarget == nil)
+    }
+
+    @Test func transitionDragShowsTheBoxAsLongAsTheKindsPreset() throws {
+        var (p, s) = setup()
+        let calls = Calls()
+        let row = p.geometry.rows(for: p.timeline)[0]
+        let x = Float(p.geometry.x(for: .zero) + 3), y = Float(row.y + 5)
+        let id = EffectDragPayload.transitionID(.quickFade)
+        _ = LibraryDropRoute.drag(.effects([id]), phase: .moved, x: x, y: y, modifiers: [], panel: &p, session: s, context: calls.context)
+        let t = try #require(p.transitionDropTarget)
+        let want = try #require(TransitionKind.quickFade.presetDuration(frameDuration: fd))
+        #expect(abs(t.rect.width - p.geometry.width(of: want)) < 1.5)
+        #expect(p.effectDropTarget == nil)
+        _ = LibraryDropRoute.drag(.effects([id]), phase: .ended, x: 5000, y: 5000, modifiers: [], panel: &p, session: s, context: calls.context)
+        #expect(p.transitionDropTarget == nil)
     }
 
     @Test func applyNamesWhatIsMissing() {

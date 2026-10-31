@@ -21,6 +21,9 @@ import SQDrawKit
     /// A popup opened: the host shows the SQ menu at `anchor` (panel coordinates).
     public var onMenu: (@MainActor (_ items: [SQMenuItem], _ anchor: CGRect) -> Void)?
     /// Choose File… / Add LUTs to Library…: the host's file chooser for .cube files (paths, empty = canceled).
+    /// Import Color Decision… in the Step menu (see `ColorStepsDraw`).
+    public var chooseDecisionFile: (@MainActor (@escaping @MainActor (URL?) -> Void) -> Void)?
+    public var tellUser: (@MainActor (String, String) -> Void)?
     public var chooseLUTFiles: (@MainActor (_ multiple: Bool, _ done: @escaping @MainActor ([String]) -> Void) -> Void)?
     public var clock: @MainActor () -> Double = { ProcessInfo.processInfo.systemUptime }
     public private(set) var scrollY: CGFloat = 0

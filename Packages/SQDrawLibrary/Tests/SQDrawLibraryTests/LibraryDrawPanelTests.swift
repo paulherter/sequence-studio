@@ -256,6 +256,19 @@ private struct Env {
         #expect(p.sliderRect == nil)
         #expect(p.viewButtonRect.maxX == p.size.width - LibraryDrawPanel.pad)
     }
+
+    @Test func listModeReservesAColumnHeaderRowAboveTheItems() async throws {
+        let env = try await Env()
+        defer { env.cleanup() }
+        let p = env.panel
+        _ = await env.model.addFolder(url: env.media)
+        p.model.viewMode = .grid
+        p.refresh()
+        let gridTop = p.listRect.minY
+        p.model.viewMode = .list
+        p.refresh()
+        #expect(p.listRect.minY == gridTop + LibraryDrawPanel.rowHeight)
+    }
 }
 
 @MainActor
@@ -324,5 +337,77 @@ private struct Env {
         env.panel.refresh()
         env.panel.mouseDown(at: CGPoint(x: env.panel.size.width - 2, y: env.panel.size.height - 2), modifiers: [])
         #expect(env.panel.marquee == nil)
+    }
+
+    @Test func draggingTheSidebarEdgeResizesAndStoresIt() async throws {
+        let env = try await Env()
+        defer { env.cleanup() }
+        let panel = env.panel
+        panel.refresh()
+        let edge = CGPoint(x: panel.sidebarW, y: 200)
+        #expect(panel.cursor(at: edge) == .resizeLeftRight)
+        panel.mouseDown(at: edge, modifiers: [])
+        panel.mouseDragged(to: CGPoint(x: edge.x + 40, y: 200))
+        panel.mouseUp(at: CGPoint(x: edge.x + 40, y: 200))
+        #expect(panel.sidebarW == 176 && panel.contentX == 176)
+        #expect(panel.defaults.double(forKey: LibraryDrawPanel.sidebarWidthKey) == 176)
+        panel.mouseDown(at: CGPoint(x: 176, y: 200), modifiers: [])
+        panel.mouseDragged(to: CGPoint(x: 5, y: 200))
+        panel.mouseUp(at: CGPoint(x: 5, y: 200))
+        #expect(panel.sidebarW == 96)
+        let again = LibraryDrawPanel(model: env.model, defaults: panel.defaults)
+        again.size = panel.size
+        #expect(again.sidebarW == 96)
+    }
+
+    #if canImport(AVFoundation)
+    @Test func anAudioItemGetsAPreviewBarWithPlayPauseAndStopsOnLeaving() async throws {
+        let env = try await Env()
+        defer { env.cleanup() }
+        let panel = env.panel
+        _ = await env.model.addFolder(url: env.media)
+        panel.setViewMode(.list)
+        panel.refresh()
+        #expect(panel.previewBarHeight == 0 && !panel.handlePlayPause())
+        let i = panel.cells.firstIndex { if case .item(let it) = $0 { it.entry.kind == .audio } else { false } }!
+        panel.mouseDown(at: env.center(i), modifiers: [])
+        #expect(panel.previewMode == .audio && panel.previewBarHeight > 0 && panel.viewerRect == nil)
+        #expect(panel.listRect.maxY == panel.size.height - panel.previewBarHeight)
+        // The play button toggles; so does Space.
+        let wasPlaying = env.model.preview.isPlaying
+        let play = panel.playButtonRect
+        panel.mouseDown(at: CGPoint(x: play.midX, y: play.midY), modifiers: [])
+        panel.mouseUp(at: CGPoint(x: play.midX, y: play.midY))
+        #expect(env.model.preview.isPlaying != wasPlaying)
+        #expect(panel.handlePlayPause())
+        #expect(env.model.preview.isPlaying == wasPlaying)
+        panel.pausePreview()
+        #expect(!env.model.preview.isPlaying)
+        // Clicking empty space ends the preview and hides the bar.
+        panel.mouseDown(at: CGPoint(x: panel.size.width - 2, y: panel.listRect.maxY - 2), modifiers: [])
+        #expect(env.model.previewItem == nil && panel.previewBarHeight == 0)
+    }
+
+    #endif
+
+    @Test func theViewerHeightDragsLikeTheMacBarAndKeepsItsKey() async throws {
+        let env = try await Env()
+        defer { env.cleanup() }
+        let panel = env.panel
+        panel.size = CGSize(width: 600, height: 700)
+        _ = await env.model.addFolder(url: env.media)
+        panel.setViewMode(.list)
+        panel.refresh()
+        let i = panel.cells.firstIndex { if case .item(let it) = $0 { it.entry.kind == .image } else { false } }!
+        panel.mouseDown(at: env.center(i), modifiers: [])
+        #expect(panel.previewMode == .image)
+        let before = panel.viewerRect!.height
+        let top = CGPoint(x: panel.previewBarRect.midX, y: panel.previewBarRect.minY + 2)
+        #expect(panel.cursor(at: top) == .resizeUpDown)
+        panel.mouseDown(at: top, modifiers: [])
+        panel.mouseDragged(to: CGPoint(x: top.x, y: top.y - 30))
+        panel.mouseUp(at: CGPoint(x: top.x, y: top.y - 30))
+        #expect(panel.viewerRect!.height == before + 30)
+        #expect(panel.defaults.double(forKey: "sq.library.previewHeight") == Double(before + 30))
     }
 }

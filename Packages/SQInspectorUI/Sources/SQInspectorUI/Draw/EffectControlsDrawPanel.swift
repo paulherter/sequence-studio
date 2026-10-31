@@ -491,12 +491,8 @@ import SQDrawKit
     static let emptyTitle = "No clip selected", emptyHint = "Select a clip in the timeline to see its Controls."
 
     private func drawEmptyState(_ c: inout Canvas) {
-        let t = theme, mid = (size.height / 2).rounded(), inset = CGFloat(DrawTheme.Spacing.lg)
-        let w = max(size.width - inset * 2, 0)
-        c.draw(SQL10n.string(Self.emptyTitle), in: CGRect(x: inset, y: mid - 22, width: w, height: 20),
-               fontSize: CGFloat(DrawTheme.TypeSize.body), t.label, align: .center)
-        c.draw(SQL10n.string(Self.emptyHint), in: CGRect(x: inset, y: mid, width: w, height: 20),
-               fontSize: CGFloat(DrawTheme.TypeSize.caption), t.label2, align: .center)
+        c.drawEmptyState(title: SQL10n.string(Self.emptyTitle), hint: SQL10n.string(Self.emptyHint),
+                         in: CGRect(origin: .zero, size: size), theme: theme)
     }
 
     /// RowBackground: fill, the 1 pt row line at the bottom, a hairline at the top of a group.
@@ -604,17 +600,16 @@ import SQDrawKit
         let resettable = s.properties.contains { !model.isDefault($0) } || !on
         icon(&c, .reset, in: g.resetFrame(height: h), buttonTint(hovered: hover == .sectionReset(s), enabled: resettable, alpha: a))
         // Title (bodyStrong), your-default marker, summary right aligned up to the eye slot.
-        // shortcut: the glyph atlas has one face, so the bold title draws regular; upgrade with a bold atlas face.
-        let fs = CGFloat(DrawTheme.TypeSize.body), titleX = ControlsGrid.headerLabelX
+        let fs = CGFloat(DrawTheme.TypeSize.body), titleX = ControlsGrid.headerLabelX, bold = c.semibold
         let rightX = eyeFrame(h).minX - ControlsGrid.gap
         let user = model.hasUserDefault(s)
         let markerW: CGFloat = user ? 14 : 0
         let lh = ControlsGrid.labelHeight, ly = ((h - lh) / 2).rounded()
         var name = SQL10n.string(s.title)
         if case .mask(let id) = s, let m = model.clip?.mask(id) { name = m.name }
-        let titleW = min(ceil(c.size(of: name, fontSize: fs).width) + 4, max(rightX - titleX - markerW, 0))
-        c.draw(Self.middleCut(name, width: titleW) { c.size(of: $0, fontSize: fs).width },
-               in: CGRect(x: titleX, y: ly, width: titleW, height: lh), fontSize: fs, on ? t.label : t.label3)
+        let titleW = min(ceil(c.size(of: name, fontSize: fs, face: bold).width) + 4, max(rightX - titleX - markerW, 0))
+        c.draw(Self.middleCut(name, width: titleW) { c.size(of: $0, fontSize: fs, face: bold).width },
+               in: CGRect(x: titleX, y: ly, width: titleW, height: lh), fontSize: fs, on ? t.label : t.label3, face: bold)
         if user {
             let marker = CGRect(x: titleX + titleW + 2, y: 0, width: 10, height: h)
             defaultMarkers[s] = marker

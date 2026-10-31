@@ -49,6 +49,14 @@ public final class ShellHost {
     public internal(set) var fullScreenStarted: TimeInterval = 0
     /// The platform hides or restores its window chrome with Full Screen.
     public var onFullScreenChange: (@MainActor (Bool) -> Void)?
+    /// The Mac window: Command and Control are separate shortcut modifiers (`ShellKeys.command`). On by default on macOS.
+    public var macKeys: Bool = {
+        #if os(macOS)
+        true
+        #else
+        false
+        #endif
+    }()
     var shuttleRouter = KeyRouter(map: .premiereDefault, focus: nil, clock: { ProcessInfo.processInfo.systemUptime })
     var shuttleDeadline: Task<Void, Never>?
     public weak var files: (any ShellFilePicker)?
@@ -63,6 +71,8 @@ public final class ShellHost {
     public var onStatus: (@MainActor (String) -> Void)?
     /// The host's panels run a command the shell does not own (zoom, panels, import...); true when handled.
     public var onCommand: (@MainActor (EditorCommand) -> Bool)?
+    /// What a focused panel does for an edit verb that only it owns (Delete layers, keystones, captions; Select All layers).
+    public var editActions: [CommandRouting.EditAction: @MainActor () -> Void] = [:]
     /// Menu rows that are not commands (About, Support, workspaces...); true when handled.
     public var onAction: (@MainActor (ShellAction) -> Bool)?
     /// The project in the window changed (opened, new, closed, saved under a new name): the host refreshes its panels.
@@ -80,6 +90,14 @@ public final class ShellHost {
     public var probe: ProjectPanelModel.Probe?
     /// Shows a file in the platform's file browser (Explorer /select, Finder); the crash report's Reveal.
     public var revealFile: (@MainActor (URL) -> Void)?
+    /// Shows several files selected in one file-browser window (Finder); nil = reveal them one by one with `revealFile`.
+    public var revealFiles: (@MainActor ([URL]) -> Void)?
+
+    /// Reveal in Finder / Explorer for a whole selection (the Mac `menuReveal` selects them all in one window).
+    public func reveal(_ urls: [URL]) {
+        guard !urls.isEmpty else { return }
+        if let revealFiles { revealFiles(urls) } else { for u in urls { revealFile?(u) } }
+    }
     /// Where New Project creates the project folder (the Mac remembers the last choice; first default: the projects root).
     public var newProjectLocation: URL = StorageLocations.load().projectsRoot
     /// Preferences changed and were saved (the host applies them to its panels and engine).
@@ -133,7 +151,18 @@ public final class ShellHost {
     public var isAnonymizing: (@MainActor () -> Bool)?
     /// Sequence > Transcribe and Create Captions: the Text panel's host (SQAppShell `CaptionsHost.autoCaptions`) sets this when
     /// it exists; true when it answered (started or said why not).
+    /// Magic mask frames of a sequence without a matte, for the export preflight note (the Mac passes `MagicMatteStore`);
+    /// nil counts none.
+    public var untrackedMagicFrames: ((Timeline, [Timeline.ID: Timeline]) -> Int)?
     public var runAutoCaptions: (@MainActor () -> Bool)?
+    /// Double-click on a caption, Edit in Text: the Text panel's host shows the List tab and types into that caption's row
+    /// (the Mac `TextPanelView.editCaption`); true when it did. Without a host the timeline falls back to a dialog.
+    public var editCaptionInPanel: (@MainActor (CaptionItem.ID) -> Bool)?
+    /// Text to speech for Voiceover from Text (the Mac passes `SpeechRenderer`); nil: the command says it is not available.
+    public var voiceover: ShellVoiceoverBackend?
+    /// Commands a panel host runs itself (the Text panel's Remove Filler Words and Disguise Voice read its transcript):
+    /// true when the handler answered. Asked before `onCommand`.
+    public var commandHandlers: [EditorCommand: @MainActor () -> Bool] = [:]
     /// Clip > Cut Tools > Whoosh at Selected Cuts: the Library host's SFX bin flow (`LibraryHost.whooshFromSFXBin`).
     public var runWhooshAtCuts: (@MainActor () -> Void)?
     /// A running analysis job's status line (Find Scene Changes, Stabilize, Auto Reframe); nil clears it. The Mac
@@ -208,6 +237,9 @@ public final class ShellHost {
     public internal(set) var queuePopover: ExportQueuePopover?
     /// The status bar's ring while exports run (0...1); nil hides it (ShellBackgroundOffers.swift).
     public internal(set) var exportProgress: Double?
+    /// The exports this window followed have ended (the Mac's notification when the app is in the background): the files
+    /// that finished and the failure lines.
+    public var onExportsFinished: (@MainActor (_ done: [URL], _ failed: [String]) -> Void)?
     /// The status bar's background relink offer ("Found 4 offline files · Reconnect"); nil hides the chip.
     public internal(set) var relinkOffer: ShellRelinkOffer?
     /// The codecs the platform's encoder writes (the presets are filtered to them).
@@ -234,9 +266,11 @@ public final class ShellHost {
         self.session = session
         self.map = map
         self.recents = recents
+        restoreCaptionsInMonitor()
         session.askFormatChange = { [weak self] current, proposed in await self?.askChangeSequenceFormat(current, proposed) ?? true }
         menuBar.refresh = { [weak self] in self?.menus() ?? [] }
         menuBar.menus = menus()
+        dock.onFocus = { [weak self] p in self?.focus = p }
         layout()
     }
 
@@ -360,6 +394,7 @@ public final class ShellHost {
     /// it is disabled or nobody runs it (a key press then goes on to the panel under it).
     @discardableResult
     public func execute(_ c: EditorCommand) -> Bool {
+        if let taken = runFocusedEdit(c) { return taken }
         guard enabled(c) else { return false }
         switch c {
         case .newProject: spawn { await self.newProjectForm() }
@@ -378,6 +413,8 @@ public final class ShellHost {
             if c == .paste, pasteMedia() { return true }
             if runTrimCommand(c) { return true }
             if let done = executePanelCommand(c) { return done }
+            if let handler = commandHandlers[c], handler() { return true }
+            if performAudioFlowCommand(c) { return true }
             if onCommand?(c) == true { return true }
             if runAnalysisCommand(c) { return true }
             if runLibraryImportCommand(c) { return true }
@@ -416,13 +453,13 @@ public final class ShellHost {
         if let s = startScreen {
             // The start screen is modal: its own keys first, then only the commands that start or open a project.
             if s.handle(e, scale: scale) { return true }
-            if case .keyDown(let k, let m) = e, let c = ShellKeys.command(k, m, focus: focus, map: map),
+            if case .keyDown(let k, let m) = e, let c = ShellKeys.command(k, m, focus: focus, map: map, mac: macKeys),
                ShellStartScreen.allowedCommands.contains(c) { _ = execute(c) }
             return true
         }
         if case .keyDown(let k, let m) = e {
             if k == .escape, m.isEmpty { return escapeKey() }
-            if let c = ShellKeys.command(k, m, focus: focus, map: map) { return keyCommand(c, key: k) }
+            if let c = ShellKeys.command(k, m, focus: focus, map: map, mac: macKeys) { return keyCommand(c, key: k) }
         }
         return false
     }

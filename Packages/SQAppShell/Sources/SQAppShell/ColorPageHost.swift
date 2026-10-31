@@ -156,6 +156,16 @@ public final class ColorPageHost {
         }
         grade.chooseLUTFiles = pickLUTs
         steps.chooseLUTFile = { done in pickLUTs(false) { done($0.first) } }
+        // Import Color Decision… (ASC CDL / CMX EDL) in the Step menu: the shell's one-file chooser, messages as dialogs.
+        let pickDecision: @MainActor (@escaping @MainActor (URL?) -> Void) -> Void = { [weak shell] done in
+            guard let files = shell?.files else { return done(nil) }
+            Task { @MainActor in
+                done(await files.chooseFile(prompt: SQL10n.string("Choose a color decision file (ASC CDL or CMX EDL)"), directory: nil))
+            }
+        }
+        let tell: @MainActor (String, String) -> Void = { [weak shell] title, detail in shell?.presentMessage(title, detail) }
+        steps.chooseDecisionFile = pickDecision; steps.tellUser = tell
+        grade.chooseDecisionFile = pickDecision; grade.tellUser = tell
         // The Color strips' detail and buttons: the dock keeps their room free (whoever set the seam before keeps theirs).
         let previousTools = shell.dock.stripTools
         let measure = shell.dock

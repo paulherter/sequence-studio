@@ -3,6 +3,12 @@ import Testing
 @testable import SQTimelineUI
 
 struct ToolStripLayoutTests {
+    /// Positive-area overlap: `CGRect.intersects` counts touching edges as an overlap off the Mac.
+    static func overlaps(_ a: CGRect, _ b: CGRect) -> Bool {
+        let i = a.intersection(b)
+        return !i.isNull && i.width > 0 && i.height > 0
+    }
+
     private let bounds = CGRect(x: 0, y: 0, width: 800, height: 300)
 
     @Test func dragNearAnEdgeDocksThere() {
@@ -17,7 +23,7 @@ struct ToolStripLayoutTests {
     @Test func dockedStripTakesItsThicknessFromTheContent() {
         for edge in [ToolStripEdge.left, .right, .top, .bottom] {
             let f = ToolStripLayout.frames(edge: edge, bounds: bounds, toolCount: 5, floatOrigin: .zero)
-            #expect(!f.strip.intersects(f.content))
+            #expect(!Self.overlaps(f.strip, f.content))
             #expect(f.strip.union(f.content) == bounds)
         }
         let left = ToolStripLayout.frames(edge: .left, bounds: bounds, toolCount: 5, floatOrigin: .zero)
@@ -50,7 +56,7 @@ struct ToolStripLayoutTests {
             let rect = CGRect(origin: .zero, size: size)
             #expect(s.tools.allSatisfy { rect.contains($0) && $0.width == 28 && $0.height == 28 })
             #expect(rect.contains(s.grip))
-            #expect(s.tools.allSatisfy { !$0.intersects(s.grip) })
+            #expect(s.tools.allSatisfy { !Self.overlaps($0, s.grip) })
         }
     }
 }

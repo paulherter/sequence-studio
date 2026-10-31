@@ -12,7 +12,7 @@ import SQUIKit
 /// Effect point handles (an effect's center, Corner Warp corners) sit on top of everything else. The selected clip's
 /// masks are drawn and edited on the layer (TransformOverlay+Masks); with the Mask tool on, the box rests and presses
 /// draw masks.
-/// shortcut: no Magic pick, no text tool; add them as later monitor steps (the Windows port plan "Panel status: monitors").
+/// Text editing and Magic picks live in MonitorPanel+Text and the Mask tool half of this class.
 @MainActor
 public final class TransformOverlay {
     public enum Phase: Sendable, Equatable { case began, changed, ended }
@@ -78,6 +78,8 @@ public final class TransformOverlay {
     public var onMaskToolClick: ((Vec2, InputModifiers) -> Void)?
     /// Magic mode only: the pointer moved over the layer (frame fraction), or left it (nil); sent when that changes.
     public var onMaskToolHover: ((Vec2?) -> Void)?
+    /// Magic mode: the Add | Remove switch (top left of the picture). true = Remove; Option at the click flips it.
+    public var magicSubtract = false
     var magicHoverPoint: Vec2?
     /// Ellipse / Rectangle dragged out with the Mask tool: the shape, sent once on release.
     public var onMaskShapeDrawn: ((MaskShapeKind, MaskPath) -> Void)?
@@ -117,6 +119,8 @@ public final class TransformOverlay {
     /// The Ellipse / Rectangle being dragged out.
     var drawPreview: MaskPath?
     private var pressModifiers: InputModifiers = []
+    /// The hover cursor at the press: a handle drag keeps it (the Mac sets it on hover and leaves it during the drag).
+    private var heldCursor: DrawCursor?
     var canvasRect: CGRect = .zero
     private var liveTransform: ClipTransform?
     private var liveCrop: CropInsets?
@@ -169,6 +173,7 @@ public final class TransformOverlay {
     public func hits(_ p: CGPoint, canvasRect r: CGRect) -> Bool {
         guard isShown, !r.isEmpty else { return false }
         if let mode = maskTool {
+            if mode == .magic, magicSwitchHit(p, in: r) != nil { return true }
             if mode != .magic, maskHit(p, in: r) != nil { return true }
             return maskFramePoint(p, in: r) != nil
         }
@@ -187,17 +192,32 @@ public final class TransformOverlay {
     /// handle, the four-way move over the body, the crosshair on the anchor.
     public func hoverCursor(at p: CGPoint, canvasRect r: CGRect) -> DrawCursor? {
         guard isShown, !r.isEmpty else { return nil }
-        if maskTool != nil { return maskFramePoint(p, in: r) != nil ? .crosshair : nil }
+        if maskTool == .magic, magicSwitchHit(p, in: r) != nil { return nil }
+        if let mode = maskTool {
+            // Mask tool: the whole overlay is a crosshair, the active mask's inside moves it (Pen / shapes).
+            if mode != .magic, case .inside? = maskHit(p, in: r) { return .move }
+            return maskFramePoint(p, in: r) != nil ? .crosshair : nil
+        }
         if pointHit(p, in: r) != nil { return .crosshair }
         let g = geometry(in: r)
         if let e = cropEdge(at: p, g) { return e.isVertical ? .resizeLeftRight : .resizeUpDown }
-        if maskHit(p, in: r) != nil { return .crosshair }
+        if let h = maskHit(p, in: r) { if case .inside = h { return .move }; return .crosshair }
         guard let hit = transformHit(p, g) else { return nil }
         switch hit {
         case .anchor: return .crosshair
         case .rotate(let h): return DrawCursor.rotate(angle: g.viewAngle(of: h))
         case .body: return .move
         case .handle(let h): return Self.resizeCursor(angle: g.viewAngle(of: h))
+        }
+    }
+
+    /// The pointer shape while a drag runs (HostHover forgets the request on every drag event): the closed hand for a
+    /// picture or mask move, the hover shape kept for handles, nil for motion path keys.
+    public var dragCursor: DrawCursor? {
+        switch drag {
+        case nil, .key?, .tangent?: return nil
+        case .body?, .maskMove?: return .closedHand
+        default: return heldCursor
         }
     }
 
@@ -211,6 +231,8 @@ public final class TransformOverlay {
         guard hits(p, canvasRect: r) else { return false }
         canvasRect = r
         pressModifiers = modifiers
+        heldCursor = hoverCursor(at: p, canvasRect: r)
+        if maskTool == .magic, let remove = magicSwitchHit(p, in: r) { magicSubtract = remove; return true }
         if maskTool != nil { return maskToolDown(p, modifiers: modifiers) }
         // Point-parameter handles sit on top of everything else.
         if let h = pointHit(p, in: r) {
@@ -381,6 +403,7 @@ public final class TransformOverlay {
             drawMaskTint(&c, in: r, theme: t)
             drawMasks(&c, in: r, theme: t)
             drawShapePreview(&c, in: r, theme: t)
+            if maskTool == .magic { drawMagicSwitch(&c, in: r, theme: t) }
             return
         }
         drawMasks(&c, in: r, theme: t)

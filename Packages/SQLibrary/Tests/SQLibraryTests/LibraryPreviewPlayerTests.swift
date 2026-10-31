@@ -38,3 +38,14 @@ import Testing
         #expect(p.videoMuted && !p.audioMuted)
     }
 }
+
+@Suite struct LibrarySidebarWidthTests {
+    @Test func defaultsAndClamps() {
+        #expect(LibraryPreviewMath.sidebarWidth(stored: nil, panelWidth: 600) == 136)
+        #expect(LibraryPreviewMath.sidebarWidth(stored: 10, panelWidth: 600) == 96)
+        #expect(LibraryPreviewMath.sidebarWidth(stored: 900, panelWidth: 2000) == 320)
+        #expect(LibraryPreviewMath.sidebarWidth(stored: 300, panelWidth: 400) == 240)
+        #expect(LibraryPreviewMath.sidebarWidth(stored: 200, panelWidth: 200) == 96)
+        #expect(LibraryPreviewMath.sidebarWidth(stored: .nan, panelWidth: 600) == 136)
+    }
+}

@@ -64,7 +64,8 @@ extension TimelinePanel {
     func drawTransitionLayers(_ cv: inout Canvas, rows: [TrackRow], clip: CGRect) {
         let fd = timeline.format.frameDuration
         for row in rows where row.kind == .video {
-            guard row.maxY > clip.minY, row.y < clip.maxY, let track = timeline.track(row.track) else { continue }
+            guard row.maxY > clip.minY, row.y < clip.maxY, transitionLayerTracks.contains(row.track),
+                  let track = timeline.track(row.track) else { continue }
             for c in track.clips where c.isTransitionLayer {
                 guard let r = c.resolvedTransitionLayer(frameDuration: fd) else { continue }
                 let x0 = geometry.x(for: r.span.start), x1 = geometry.x(for: r.span.end)

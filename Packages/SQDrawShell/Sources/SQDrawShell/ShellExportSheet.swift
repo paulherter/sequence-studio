@@ -286,7 +286,7 @@ public final class ShellExportSheet: ShellDialogContent {
         switch k {
         case .check(let title, _): title.isEmpty ? 16 : M.checkBox + 6 + ceil(m.width(title, size: M.body))
         case .unit(let s): ceil(m.width(s, size: M.body))
-        case .text(let s, _, let caption): ceil(m.width(s, size: caption ? M.caption : M.body))
+        case .text(let s, _, let caption): ceil(m.width(s, size: caption ? M.caption : M.body)) + 4   // the text field's cell inset
         case .segmented(let labels, _, _, let w): CGFloat(labels.count) * w + 2
         case .button(let s): ceil(m.width(s, size: M.body)) + 2 * M.buttonPad
         case .popup: 120
@@ -700,7 +700,8 @@ public final class ShellExportSheet: ShellDialogContent {
         case .unit(let s):
             c.draw(s, in: r, fontSize: M.body, t.label2.alpha(a))
         case .text(let s, let tone, let caption):
-            c.draw(s, in: r, fontSize: caption ? M.caption : M.body, color(tone, t).alpha(a))
+            // The AppKit text field: 2 pt cell inset, and white text smooths heavier than the atlas draws it (medium face).
+            c.draw(s, in: r, fontSize: caption ? M.caption : M.body, color(tone, t).alpha(a), inset: 2, face: tone == .label ? c.medium : 0)
         case .segmented(let labels, let selected, let disabled, let sw):
             let track = CGRect(x: r.minX, y: r.minY, width: CGFloat(labels.count) * sw + 2, height: r.height)
             c.fill(roundedRect: track, radius: 6, t.inkFill(0.06))

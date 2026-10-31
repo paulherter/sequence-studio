@@ -122,6 +122,7 @@ public struct TextEditState: Sendable, Equatable {
         case .enter: return .commit
         case .escape: return .cancel
         case .character(let c):
+            if modifiers.contains(.control) { return .ignored }        // Mac Control chords are shortcuts, not text
             if modifiers.contains(.command) { return command(c, shift: shift) }
             insert(String(c)); return .edited
         case .space: insert(" "); return .edited

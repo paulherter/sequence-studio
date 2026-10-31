@@ -54,4 +54,32 @@ import SQEditorSession
         #expect(url.lastPathComponent.hasPrefix("Pasted Image "))
         #expect(FileManager.default.fileExists(atPath: url.path))
     }
+
+    @Test func aSavedProjectPastesImagesIntoTheScratchFolderAnUnsavedOneIntoSupport() {
+        let scratch = FileManager.default.temporaryDirectory.appendingPathComponent("sq-scratch-\(UUID().uuidString)", isDirectory: true)
+        let l = StorageLocations(scratchFolder: scratch)
+        #expect(ShellHost.pastedImageFolder(saved: true, locations: l).path == scratch.appendingPathComponent("Pasted Images").path)
+        #expect(ShellHost.pastedImageFolder(saved: false, locations: l).path.hasSuffix("Sequence Studio/Pasted Images"))
+        try? FileManager.default.removeItem(at: scratch)
+    }
+
+    @Test func revealOfSeveralFilesUsesTheListHookOrFallsBackToOneByOne() {
+        let h = host()
+        let a = URL(fileURLWithPath: "/a.mov"), b = URL(fileURLWithPath: "/b.mov")
+        var single: [URL] = [], list: [[URL]] = []
+        h.revealFile = { single.append($0) }
+        h.reveal([a, b])
+        #expect(single == [a, b])
+        h.revealFiles = { list.append($0) }
+        h.reveal([a, b])
+        #expect(list == [[a, b]] && single.count == 2)
+    }
+
+    @Test func theHostHearsWhenFollowedExportsEnd() {
+        let h = host()
+        var heard = 0
+        h.onExportsFinished = { done, failed in if done.isEmpty && failed.isEmpty { heard += 1 } }
+        h.finishExports([])
+        #expect(heard == 1 && h.exportProgress == nil)
+    }
 }

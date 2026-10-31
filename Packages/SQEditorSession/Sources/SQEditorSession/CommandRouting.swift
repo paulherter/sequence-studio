@@ -45,7 +45,7 @@ public enum CommandRouting {
     // MARK: Edit verbs by focused panel
 
     /// What an edit verb does for a focus target.
-    public enum EditAction: Sendable, Equatable {
+    public enum EditAction: Sendable, Hashable {
         /// The timeline's own path continues (also Effect Controls' Delete, which has its own order of targets).
         case fallThrough
         /// The panel has no such command: the key does nothing and the item is disabled. Never the timeline's clips.

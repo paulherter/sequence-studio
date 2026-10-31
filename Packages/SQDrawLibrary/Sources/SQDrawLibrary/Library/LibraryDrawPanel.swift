@@ -28,9 +28,11 @@ public enum LibraryRequest: Equatable, Sendable {
 /// Command / Shift, the item, preset, folder and pack menus (`LibraryMenus`), the "..." options (view, sort, preset
 /// filters), the empty states, double-click to place or apply a preset, and drags out (files, templates, titles, effect
 /// presets) that the host routes onto the timeline. Coordinates are panel-local points, y down.
-/// shortcut: the preview player plays sound on the Mac only (off the Mac the portable player is silent), the panel draws
-/// no video picture or transport, only a progress line under the playing item, and LUT tiles show their icon, not the look on the test picture; upgrade when
-/// the draw toolkit has a live picture slot per panel.
+/// The preview bar at the bottom (`LibraryDrawPanel+Preview.swift`) is the AppKit `LibraryPreviewBar`: viewer, scrub bar,
+/// skip, play/pause, mute and volume, with draggable dividers (viewer height, sidebar width; both persisted).
+/// shortcut: the preview player plays sound on the Mac only (off the Mac the portable player is silent), the viewer shows the
+/// host's live frame (`previewFrame`) or the item's poster, and LUT tiles show their icon, not the look on the test picture;
+/// upgrade when the draw toolkit has a live picture slot per panel.
 @MainActor
 public final class LibraryDrawPanel {
     public enum DragPhase: Sendable, Equatable { case moved, ended, canceled }
@@ -72,6 +74,12 @@ public final class LibraryDrawPanel {
     public var hasFocus = false
     static let unfocusedSelection = DrawColor(hex: 0x4F4F51)
     public let defaults: UserDefaults
+    /// The width the user dragged the sidebar to (nil = default); see `sidebarW` for the clamped value.
+    var storedSidebarWidth: Double?
+    /// The viewer height while a divider drag runs, before it is stored.
+    var barDrag: BarDrag?
+    /// The host's live picture of the playing video: the image slot and the frame's pixel size; nil = show the poster.
+    public var previewFrame: (@MainActor () -> (slot: Int, size: CGSize)?)?
     public var size: CGSize = .zero
     public var theme = DrawTheme()
     /// The item's thumbnail for a tile rect (the host's media atlas: poster frame of a video, the picture of an image),
@@ -91,7 +99,7 @@ public final class LibraryDrawPanel {
     public internal(set) var selected: Set<String> = []
     let scrollBody = ScrollBody()
     /// The scroll offset; the body adds momentum and the rubber band.
-    public private(set) var scroll: CGFloat {
+    public internal(set) var scroll: CGFloat {
         get { scrollBody.position }
         set { scrollBody.position = newValue }
     }
@@ -103,11 +111,11 @@ public final class LibraryDrawPanel {
     private var press: (point: CGPoint, cell: Int?)?
     /// The rubber band of a drag that started on the grid's empty background (`LibraryDrawPanel+Marquee.swift`).
     var marquee: Marquee?
-    public private(set) var isDragging = false
-    private var dragPayload: LibraryDragPayload?
+    public internal(set) var isDragging = false
+    var dragPayload: LibraryDragPayload?
     private var lastClick: (key: String, time: Double)?
     private var draggingSlider = false
-    private var hover: CGPoint?
+    var hover: CGPoint?
     var search = TextFieldControl()
 
     public init(model: LibraryPanelModel, defaults: UserDefaults = .standard) {
@@ -115,6 +123,7 @@ public final class LibraryDrawPanel {
         self.defaults = defaults
         tileFraction = defaults.object(forKey: LibraryTileGeometry.tileSizeKey) == nil
             ? LibraryTileGeometry.defaultFraction : defaults.double(forKey: LibraryTileGeometry.tileSizeKey)
+        storedSidebarWidth = defaults.object(forKey: Self.sidebarWidthKey) == nil ? nil : defaults.double(forKey: Self.sidebarWidthKey)
         search.alignment = .left
         search.fontSize = CGFloat(DrawTheme.TypeSize.body)
         search.text = model.query
@@ -181,10 +190,10 @@ public final class LibraryDrawPanel {
 
     // MARK: Geometry
 
-    var contentX: CGFloat { showsSidebar ? Self.sidebarWidth : 0 }
+    var contentX: CGFloat { showsSidebar ? sidebarW : 0 }
     /// The sidebar sits under the search row, which spans the whole panel (the AppKit panel: field, view switch, slider).
     var sidebarRect: CGRect {
-        CGRect(x: 0, y: Self.searchRowHeight, width: showsSidebar ? Self.sidebarWidth : 0, height: max(size.height - Self.searchRowHeight, 0))
+        CGRect(x: 0, y: Self.searchRowHeight, width: showsSidebar ? sidebarW : 0, height: max(size.height - Self.searchRowHeight, 0))
     }
     var sliderRect: CGRect? {
         guard model.viewMode == .grid else { return nil }
@@ -200,9 +209,11 @@ public final class LibraryDrawPanel {
     }
     var searchClearRect: CGRect { CGRect(x: searchFieldRect.maxX - 20, y: searchFieldRect.midY - 8, width: 16, height: 16) }
     var chipsTop: CGFloat { Self.searchRowHeight }
+    /// The list's column header (Name / Kind / Size, the AppKit table header); the grid and an empty list have none.
+    var listHeaderHeight: CGFloat { model.viewMode == .list && cells.contains { !$0.isHeader } ? Self.rowHeight : 0 }
     var listRect: CGRect {
-        let top = Self.searchRowHeight + (showsChips ? Self.chipsInset - 3 + Self.chipRowHeight * CGFloat(chipRows) : 0)
-        return CGRect(x: contentX, y: top, width: max(size.width - contentX, 0), height: max(size.height - top, 0))
+        let top = Self.searchRowHeight + (showsChips ? Self.chipsInset - 3 + Self.chipRowHeight * CGFloat(chipRows) : 0) + listHeaderHeight
+        return CGRect(x: contentX, y: top, width: max(size.width - contentX, 0), height: max(size.height - top - previewBarHeight, 0))
     }
 
     /// Chip frames: All, then the filter kinds (`LibraryPanelModel.filterKinds`), wrapped onto as many rows as the
@@ -288,7 +299,7 @@ public final class LibraryDrawPanel {
     }
 
     func sidebarRowRect(_ i: Int) -> CGRect {
-        CGRect(x: 0, y: sidebarRect.minY + Self.sidebarInset + CGFloat(i) * Self.rowHeight, width: Self.sidebarWidth, height: Self.rowHeight)
+        CGRect(x: 0, y: sidebarRect.minY + Self.sidebarInset + CGFloat(i) * Self.rowHeight, width: sidebarW, height: Self.rowHeight)
     }
 
     var addFolderButtonRect: CGRect {
@@ -514,6 +525,8 @@ public final class LibraryDrawPanel {
     public func mouseDown(at p: CGPoint, modifiers m: InputModifiers) {
         refresh()
         press = nil
+        barDrag = nil
+        if mouseDownPreview(at: p, modifiers: m) { return }
         if let i = sidebarIndex(at: p) {
             endSearchEditing()
             let row = sidebar[i]
@@ -574,6 +587,7 @@ public final class LibraryDrawPanel {
     }
 
     public func mouseDragged(to p: CGPoint) {
+        if barDrag != nil { dragPreview(to: p); return }
         if draggingSlider { setSlider(x: p.x); return }
         if marquee != nil { dragMarquee(to: p); return }
         guard let start = press, let i = start.cell else { return }
@@ -588,7 +602,8 @@ public final class LibraryDrawPanel {
     }
 
     public func mouseUp(at p: CGPoint) {
-        defer { press = nil; isDragging = false; dragPayload = nil; draggingSlider = false; marquee = nil }
+        defer { press = nil; isDragging = false; dragPayload = nil; draggingSlider = false; marquee = nil; barDrag = nil }
+        if barDrag != nil { endPreviewDrag(at: p); return }
         if draggingSlider || marquee != nil { return }
         guard let start = press, let i = start.cell else { return }
         guard isDragging, let d = dragPayload else {
@@ -651,10 +666,7 @@ public final class LibraryDrawPanel {
             guard let i = cells.firstIndex(where: { selected.contains($0.key) }), case .preset(let pc) = cells[i] else { return false }
             activate(pc)
             return true
-        case .space:
-            guard !model.isShowingPresets, model.previewItem != nil else { return false }
-            model.preview.togglePlayPause()
-            return true
+        case .space: return handlePlayPause()
         default: return false
         }
     }
@@ -702,6 +714,7 @@ public final class LibraryDrawPanel {
         }
         if viewButtonRect.contains(p) { return model.viewMode == .grid ? "Show as List" : "Show as Grid" }
         if let s = sliderRect, s.contains(p) { return "Tile Size" }
+        if let h = previewHelp(at: p) { return h }
         guard let i = cellIndex(at: p) else { return nil }
         switch cells[i] {
         case .header: return nil
@@ -720,16 +733,18 @@ public final class LibraryDrawPanel {
         if showsChips { _ = chipFrames(c) }  // measure first: `listRect` follows the chip rows
         drawSearchRow(&c)
         if showsChips { drawChips(&c) }
+        if listHeaderHeight > 0 { drawListHeader(&c) }
         c.saveGState()
         c.clip(to: listRect)
         if contentCount == 0 { drawEmpty(&c) } else if model.viewMode == .list { drawList(&c) } else { drawGrid(&c) }
         drawMarquee(&c)
         c.restoreGState()
+        drawPreviewBar(&c)
     }
 
     private func drawSidebar(_ c: inout Canvas) {
         let t = theme
-        c.fill(CGRect(x: Self.sidebarWidth - 1, y: Self.searchRowHeight, width: 1, height: max(size.height - Self.searchRowHeight, 0)), t.separator)
+        c.fill(CGRect(x: sidebarW - 1, y: Self.searchRowHeight, width: 1, height: max(size.height - Self.searchRowHeight, 0)), t.separator)
         c.saveGState()
         c.clip(to: sidebarRect)
         for (i, row) in sidebar.enumerated() {
@@ -740,11 +755,11 @@ public final class LibraryDrawPanel {
                 c.fill(roundedRect: r.insetBy(dx: CGFloat(DrawTheme.Spacing.xs), dy: 1), radius: CGFloat(DrawTheme.Radius.small), hasFocus ? t.accentFill : Self.unfocusedSelection)
             }
             // The AppKit sidebar: a folder icon on the group rows only; the items are plain text.
-            let ink = row.isOffline ? t.label3 : (isSel ? t.label : t.label2)
+            let ink = row.isOffline ? t.label3 : t.label   // NSTableCellView turns its text field white, whatever textColor says
             let textX: CGFloat = row.isGroup ? 32 : 26
             if row.isGroup { c.draw(icon: .folder, at: CGPoint(x: 14, y: r.midY - 6), size: 12, t.label3) }
             c.draw(row.title, in: CGRect(x: textX, y: r.minY, width: max(r.maxX - textX - 4, 0), height: r.height),
-                   fontSize: CGFloat(DrawTheme.TypeSize.body), row.isGroup ? t.label2 : ink)
+                   fontSize: Self.listFont, row.isGroup ? t.label : ink)
         }
         c.restoreGState()
     }
@@ -828,9 +843,28 @@ public final class LibraryDrawPanel {
         }
     }
 
+    private var listColWidths: [CGFloat] { model.isShowingPresets ? [84, 92] : [64, 64, 92] }
+
+    /// The AppKit table header: Name, then the text columns, in label3 semibold over a separator.
+    private func drawListHeader(_ c: inout Canvas) {
+        let t = theme
+        let r = CGRect(x: listRect.minX, y: listRect.minY - listHeaderHeight, width: listRect.width, height: listHeaderHeight)
+        c.fill(CGRect(x: r.minX, y: r.maxY - 1, width: r.width, height: 1), t.separator)
+        let size = CGFloat(DrawTheme.TypeSize.body)
+        c.draw("Name", in: CGRect(x: r.minX + Self.pad + 4, y: r.minY, width: r.width / 2, height: r.height), fontSize: size, t.label3, face: c.semibold)
+        guard listRect.width > 300 else { return }
+        var right = r.maxX - Self.pad
+        let titles = model.isShowingPresets ? ["Kind", "Created"] : ["Kind", "Size", "Created"]
+        for (i, (w, s)) in zip(listColWidths, titles).enumerated().reversed() {
+            c.draw(s, in: CGRect(x: right - w, y: r.minY, width: w, height: r.height), fontSize: size, t.label3,
+                   align: i == 0 ? .left : .right, face: c.semibold)
+            right -= w
+        }
+    }
+
     private func drawList(_ c: inout Canvas) {
         let t = theme
-        let colWidths: [CGFloat] = model.isShowingPresets ? [84, 92] : [64, 64, 92]
+        let colWidths = listColWidths
         let showColumns = listRect.width > 300
         for pl in placed() {
             let rr = cellRect(pl)
@@ -845,8 +879,9 @@ public final class LibraryDrawPanel {
             var right = rr.maxX - Self.pad
             if showColumns {
                 let texts = columns(cell)
-                for (w, s) in zip(colWidths, texts).reversed() {
-                    c.draw(s, in: CGRect(x: right - w, y: rr.minY, width: w, height: rr.height), fontSize: 10, t.label3)
+                for (i, (w, s)) in zip(colWidths, texts).enumerated().reversed() {
+                    c.draw(s, in: CGRect(x: right - w, y: rr.minY, width: w, height: rr.height), fontSize: Self.listFont, t.label3,
+                           align: i == 0 ? .left : .right)
                     right -= w
                 }
             }
@@ -855,7 +890,7 @@ public final class LibraryDrawPanel {
                 right -= 16
             }
             c.draw(name, in: CGRect(x: x + 18, y: rr.minY, width: max(right - x - 22, 0), height: rr.height),
-                   fontSize: CGFloat(DrawTheme.TypeSize.body), t.label2)
+                   fontSize: Self.listFont, t.label)
             drawProgress(&c, cell, under: CGRect(x: pill.minX, y: pill.maxY - 2, width: pill.width, height: 2))
         }
     }
@@ -883,9 +918,11 @@ public final class LibraryDrawPanel {
         c.strokePolyline(pts, width: 1.2, t.label2)
         let count = "\(g.totalCount)"
         let cw = c.size(of: count, fontSize: 10).width
-        c.draw(g.title, in: CGRect(x: x + 14, y: rr.minY, width: max(rr.maxX - x - 22 - cw - Self.pad, 0), height: rr.height),
-               fontSize: CGFloat(DrawTheme.TypeSize.body), t.label2)
-        c.draw(count, at: CGPoint(x: rr.maxX - Self.pad - cw, y: rr.midY - 6), fontSize: 10, t.label3)
+        // The AppKit header: the title in label, the count right after it (Spacing.sm), not at the edge.
+        let avail = max(rr.maxX - x - 22 - cw - CGFloat(DrawTheme.Spacing.sm) - Self.pad, 0)
+        let tw = min(c.size(of: g.title, fontSize: CGFloat(DrawTheme.TypeSize.body)).width, avail)
+        c.draw(g.title, in: CGRect(x: x + 14, y: rr.minY, width: avail, height: rr.height), fontSize: CGFloat(DrawTheme.TypeSize.body), t.label)
+        c.draw(count, at: CGPoint(x: x + 14 + tw + CGFloat(DrawTheme.Spacing.sm), y: rr.midY - 6), fontSize: 10, t.label3)
     }
 
     /// The preview's position under the playing item (shortcut: no transport drawn).

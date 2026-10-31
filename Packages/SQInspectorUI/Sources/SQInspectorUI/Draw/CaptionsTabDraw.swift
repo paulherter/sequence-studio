@@ -39,6 +39,8 @@ import SQUIKit
     private(set) var matchCase = false
     /// The caption being typed into and its field (over the row's text column).
     private(set) var editing: (id: CaptionItem.ID, field: TextFieldControl)?
+    /// A row is open for typing.
+    public var isEditingCaption: Bool { editing != nil }
     private(set) var focus: Control?
     private var hover: Control?
     private var pressed: Control?

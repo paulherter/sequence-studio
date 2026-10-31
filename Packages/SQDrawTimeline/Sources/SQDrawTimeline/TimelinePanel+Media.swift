@@ -41,12 +41,16 @@ public protocol TimelineMediaSource: AnyObject {
     func picture(media: UUID, at: Time?) -> TimelinePicture?
     /// The media file is missing (the clip draws as "Media offline").
     func isOffline(media: UUID) -> Bool
+    /// A stamp that changes whenever any answer above may change (a waveform or picture arrived, the paths changed). The panel
+    /// replays its clip layer while the stamp holds; nil = cannot say, the layer is drawn fresh every frame.
+    var drawRevision: Int? { get }
 }
 
 extension TimelineMediaSource {
     public var waveformCache: WaveformCache? { nil }
     public func picture(media: UUID, at: Time?) -> TimelinePicture? { nil }
     public func isOffline(media: UUID) -> Bool { false }
+    public var drawRevision: Int? { nil }
 }
 
 /// Media drawing, translated from `ClipDrawing.draw` (thumbnail tiles), `WaveformTileCache.draw` / `drawClipping`,

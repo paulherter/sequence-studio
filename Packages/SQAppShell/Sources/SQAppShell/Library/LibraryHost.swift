@@ -34,6 +34,15 @@ public final class LibraryHost {
     public var poster: (@MainActor (URL) -> ProjectPoster?)?
     /// Files were imported and placed (the host refreshes its media tables).
     public var onPlaced: (@MainActor () -> Void)?
+    /// The clip shown in Effect Controls when the window point is over that panel (a drop there adds to it); nil elsewhere.
+    public var inspectorDropClip: (@MainActor (CGPoint) -> Clip.ID?)?
+    /// The sequence is playing: a Library preview pauses (the Mac panel pauses it when the sequence starts).
+    public var isSequencePlaying: () -> Bool = { false }
+    /// The live picture of the playing preview video (image slot and pixel size); nil = the poster shows.
+    public var previewFrame: (@MainActor () -> (slot: Int, size: CGSize)?)? {
+        get { panel.previewFrame }
+        set { panel.previewFrame = newValue }
+    }
     /// The pointer in window pixels while a drag runs (the host draws the drag label there).
     public private(set) var dragLabel: (title: String, x: Float, y: Float)?
 
@@ -124,7 +133,7 @@ public final class LibraryHost {
                 _ = await model.addFolder(url: url)
             }
         case .reveal(let urls):
-            if let u = urls.first { shell.revealFile?(u) }
+            shell.reveal(urls)
         case .whoosh(let url): whoosh(url)
         case .applyTextTemplate(let id):
             guard let entry = TextTemplateCatalog.entry(id: id) else { return }
@@ -246,6 +255,9 @@ public final class LibraryHost {
             placed = LibraryDropRoute.drag(.library(payload), phase: ph, x: x, y: y, modifiers: mods, panel: &panel, session: session,
                                            context: context)
         }
+        if !placed, phase == .ended, case .effectPreset(let id) = payload, let clip = inspectorDropClip?(CGPoint(x: p.x + frame.minX, y: p.y + frame.minY)) {
+            placed = LibraryDropRoute.dropOnClips([LibraryDropRoute.presetPrefix + id.uuidString], targets: [clip], session: session, context: context)
+        }
         if placed, case .files = payload {} else if placed { onPlaced?() }
     }
 
@@ -284,7 +296,8 @@ public final class LibraryHost {
     public func layout(_ card: CGRect?, scale s: Float) {
         scale = CGFloat(s)
         frame = card ?? .zero
-        guard frame.width > 0 else { hasFocus = false; return }
+        guard frame.width > 0 else { hasFocus = false; panel.pausePreview(); return }   // another dock tab: the preview pauses
+        if isSequencePlaying() { panel.pausePreview() }
         panel.size = frame.size
         panel.refresh()
     }
@@ -318,7 +331,9 @@ public final class LibraryHost {
             panel.mouseDown(at: q, modifiers: m)
         case .mouseDragged(let x, let y):
             guard isPressed else { return false }
-            panel.mouseDragged(to: local(x, y))
+            let q = local(x, y)
+            panel.mouseDragged(to: q)
+            HostHover.current.request(panel.cursor(at: q))
         case .mouseUp(let x, let y):
             guard isPressed else { return false }
             isPressed = false
@@ -326,7 +341,7 @@ public final class LibraryHost {
         case .mouseMoved(let x, let y):
             let q = local(x, y)
             panel.mouseMoved(to: inside(q) ? q : nil)
-            if inside(q) { HostHover.current.offerTip(panel.help(at: q)) }
+            if inside(q) { HostHover.current.offerTip(panel.help(at: q)); HostHover.current.request(panel.cursor(at: q)) }
             return false
         case .scroll(let x, let y, _, let dy, _):
             let q = local(x, y)

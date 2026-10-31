@@ -405,9 +405,13 @@ public final class EffectsDrawPanel {
         c.fill(CGRect(origin: .zero, size: size), t.panel)
         let f = searchFieldRect
         search.fontSize = 11
+        // `SQSearchField`: the magnifier at 9, the text from 28 (as the Library field).
+        search.textInset = 28
+        search.quiet = true
         search.draw(&c, in: f, theme: t, focused: search.isEditing)
+        c.draw(icon: .search, at: CGPoint(x: f.minX + 9, y: f.midY - 6), size: 12, t.label3)
         if searchText.isEmpty, !search.isEditing {
-            c.draw("Search effects", in: f, fontSize: 11, t.label3, inset: 8)
+            c.draw("Search effects", in: f, fontSize: 11, t.label3, inset: 28)
         } else if !searchText.isEmpty {
             let x = searchClearRect
             c.draw(icon: .closeCircleFilled, at: CGPoint(x: x.minX + 1, y: x.minY + 1), size: x.width - 2, t.label3)
@@ -471,7 +475,7 @@ public final class EffectsDrawPanel {
                 c.draw(s, at: CGPoint(x: right - w, y: rr.midY - 6), fontSize: 10, t.label3)
                 right -= w + gap
             }
-            c.draw(r.title, in: CGRect(x: x, y: rr.minY, width: max(right - x, 0), height: rr.height), fontSize: 12, t.label2)
+            c.draw(r.title, in: CGRect(x: x, y: rr.minY, width: max(right - x, 0), height: rr.height), fontSize: 12, t.label)   // NSTableCellView turns its text field white, whatever textColor says
         }
     }
 

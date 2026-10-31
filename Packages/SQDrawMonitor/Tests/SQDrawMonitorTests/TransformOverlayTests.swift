@@ -84,6 +84,22 @@ import SQUIKit
         #expect(o.hoverCursor(at: CGPoint(x: rect.midX + 40, y: rect.midY + 30), canvasRect: rect) == .move)
     }
 
+    @Test func dragCursorKeepsWhatIsHeld() {
+        let (o, _) = overlay()
+        #expect(o.dragCursor == nil)
+        let corner = CGPoint(x: rect.maxX, y: rect.maxY)
+        _ = o.mouseDown(corner, modifiers: [], canvasRect: rect)
+        #expect(o.dragCursor == .resizeDiagonalDown)
+        o.mouseUp(corner)
+        _ = o.mouseDown(CGPoint(x: rect.maxX + 10, y: rect.minY - 10), modifiers: [], canvasRect: rect)
+        #expect(o.dragCursor == .rotateTopRight)
+        o.mouseUp(corner)
+        _ = o.mouseDown(CGPoint(x: rect.midX + 40, y: rect.midY + 30), modifiers: [], canvasRect: rect)
+        #expect(o.dragCursor == .closedHand)
+        o.mouseUp(corner)
+        #expect(o.dragCursor == nil)
+    }
+
     @Test func outsideACornerRotates() {
         let (o, r) = overlay()
         let p = CGPoint(x: rect.maxX + 10, y: rect.minY - 10)

@@ -22,6 +22,33 @@ import Testing
         #expect(MacKeys.key(code: 56) == nil)                 // Shift alone
     }
 
+    /// (key code, character the cap types unmodified on a German layout, expected key): the cap wins over the US position.
+    @Test(arguments: [
+        (UInt16(6), "y", InputKey.character("y")),        // Z position, Y cap
+        (UInt16(16), "z", .character("z")),               // Y position, Z cap
+        (UInt16(30), "+", .plus),                         // US "]" position carries the German "+"
+        (UInt16(44), "-", .minus),                        // US "/" position carries the German "-"
+        (UInt16(24), "´", .plus),                         // dead-key cap: non-ASCII, position stays
+        (UInt16(33), "ü", .character("[")),               // non-ASCII cap: position
+        (UInt16(41), "ö", .character(";")),
+        (UInt16(43), ",", .character(",")),
+        (UInt16(47), ".", .character(".")),
+        (UInt16(42), "#", .character("\\")),              // "#" is no shortcut char: position
+        (UInt16(18), "1", .character("1")),
+        (UInt16(69), "+", .plus),                         // keypad keeps its position
+        (UInt16(51), "\u{7F}", .backspace),              // named keys ignore the character
+        (UInt16(49), " ", .space),
+        (UInt16(36), "\r", .enter),
+    ])
+    func germanCapsFollowTheCharacter(code: UInt16, base: String, expected: InputKey) {
+        #expect(MacKeys.key(code: code, base: base) == expected)
+    }
+
+    @Test func aFrenchDigitRowKeepsPositionsWhenTheBaseIsPunctuation() {
+        #expect(MacKeys.key(code: 18, base: "&") == .character("1"))
+        #expect(MacKeys.key(code: 18, base: nil) == .character("1"))
+    }
+
     @Test func modifierFlags() {
         let shift: UInt = 1 << 17, control: UInt = 1 << 18, option: UInt = 1 << 19, command: UInt = 1 << 20
         #expect(MacKeys.modifiers(flags: command | shift) == [.command, .shift])
@@ -70,5 +97,20 @@ import Testing
         #expect(MacKeys.events(key: nil, modifiers: [], committed: "<", composing: false)
                 == [.keyDown(.character("<"), modifiers: [])])
         #expect(MacKeys.events(key: nil, modifiers: [], committed: "\u{F700}", composing: false).isEmpty)
+    }
+
+    @Test func controlIsAShortcutModifierForKeysButNotForClicks() {
+        let flags: UInt = (1 << 18) | (1 << 19)
+        #expect(MacKeys.keyModifiers(flags: flags) == [.control, .option])
+        #expect(MacKeys.modifiers(flags: flags) == [.option], "a Control-click is the secondary button, not a modifier")
+        // Ctrl+K keeps the Control flag and never types text (the input method may offer "\u{0B}").
+        #expect(MacKeys.events(key: .character("k"), modifiers: .control, committed: "\u{0B}", composing: false)
+                == [.keyDown(.character("k"), modifiers: .control)])
+    }
+
+    @Test func aControlChordDoesNotTypeIntoATextField() {
+        var t = TextEditState("ab", selectAll: false)
+        #expect(t.handle(.character("k"), modifiers: .control) == .ignored)
+        #expect(t.text == ["a", "b"])
     }
 }

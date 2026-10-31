@@ -49,4 +49,21 @@ public enum LibraryPreviewMath {
 
     /// Dragging the divider up (negative y change in a flipped view) makes the viewer taller.
     public static func resizedHeight(start: Double, dragDeltaY: Double) -> Double { start - dragDeltaY }
+
+    // MARK: Sidebar width (the divider between the folder tree and the items)
+
+    public static let defaultSidebarWidth: Double = 136
+    public static let minSidebarWidth: Double = 96
+    public static let maxSidebarWidth: Double = 320
+    /// Width the item area keeps at least.
+    public static let contentReserve: Double = 160
+
+    /// The sidebar width to show: the stored one (or the default) within min/max, leaving `contentReserve` for the items.
+    /// A panel narrower than min + reserve keeps the minimum.
+    public static func sidebarWidth(stored: Double?, panelWidth: Double) -> Double {
+        let w = stored.flatMap { $0.isFinite ? $0 : nil } ?? defaultSidebarWidth
+        var top = maxSidebarWidth
+        if panelWidth > 0 { top = min(top, panelWidth - contentReserve) }
+        return max(min(w, top), minSidebarWidth)
+    }
 }

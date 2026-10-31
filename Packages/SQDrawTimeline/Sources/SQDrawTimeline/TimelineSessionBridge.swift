@@ -13,6 +13,7 @@ public enum TimelineSessionBridge {
     public static func apply(_ a: TimelineAction, to s: EditorSession, host: TimelineHost? = nil) -> String? {
         switch a {
         case .commit(let c): s.commit(c)
+        case .closeGap(let g): s.closeGap(g)
         case .select(let clips, let captions): s.select(clips: clips, captions: captions)
         case .seek(let t): s.seek(to: t)
         case .beginScrub: s.beginScrub()

@@ -58,8 +58,8 @@ import Testing
         let (h, _, shell, _) = setup()
         var forwarded: [EditorCommand] = []
         shell.onCommand = { forwarded.append($0); return true }
-        h.apply(.command(.addMarker))
-        #expect(forwarded == [.addMarker])
+        h.apply(.command(.lift))
+        #expect(forwarded == [.lift])
     }
 
     @Test func tabActionsReachTheSession() {

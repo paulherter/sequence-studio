@@ -1,3 +1,4 @@
+#if os(macOS)
 import AppKit
 import Foundation
 import SQCore
@@ -83,3 +84,4 @@ import Testing
         }
     }
 }
+#endif

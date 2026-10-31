@@ -20,6 +20,7 @@ extension Timeline {
         public var id: Marker.ID
         public var range: TimeRange
         public var kind: ProposedCutKind
+        public init(id: Marker.ID, range: TimeRange, kind: ProposedCutKind) { self.id = id; self.range = range; self.kind = kind }
     }
 
     /// The pending "proposed cut" markers, in time order.
@@ -83,5 +84,24 @@ extension Timeline {
         work.markers.removeAll { gone.contains($0.id) }
         self = work                                   // extract already moved the remaining markers (closeCaptionSpan)
         return removed
+    }
+}
+
+extension Timeline.ProposedCut {
+    /// "0:12.4   1.4 s": start in minutes:seconds and the length of the pause (the review list's row).
+    public var rowTitle: String {
+        func sec(_ t: Time) -> Double { Double(t.value) / Double(t.timescale) }
+        let start = max(sec(range.start), 0)
+        let m = Int(start) / 60
+        let s = start - Double(m * 60)
+        if kind == .scene { return String(format: "%d:%04.1f   scene change", m, s) }
+        return String(format: "%d:%04.1f   %.1f s", m, s, sec(range.duration))
+    }
+
+    /// "3 of 5 checked, 4.2 s will be removed." under the review list.
+    public static func reviewSummary(count: Int, checked: Int, removed: Time) -> String {
+        guard count > 0 else { return "No proposed cuts." }
+        let sec = Double(removed.value) / Double(removed.timescale)
+        return "\(checked) of \(count) checked, \(String(format: "%.1f", sec)) s will be removed."
     }
 }

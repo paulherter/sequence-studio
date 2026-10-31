@@ -30,6 +30,33 @@ extension TransformOverlay {
         c.draw(imageSlot: slot, in: p.rect, source: p.source, tint: t.yellow.alpha(1))
     }
 
+    /// The Add | Remove switch: two segments top left of the picture area.
+    func magicSwitchRects(in r: CGRect) -> (add: CGRect, remove: CGRect) {
+        let inset = CGFloat(DrawTheme.Spacing.sm), w: CGFloat = 64, h: CGFloat = 22
+        let add = CGRect(x: r.minX + inset, y: r.minY + inset, width: w, height: h)
+        return (add, add.offsetBy(dx: w, dy: 0))
+    }
+
+    /// Which segment `p` is on: false = Add, true = Remove, nil = not on the switch.
+    func magicSwitchHit(_ p: CGPoint, in r: CGRect) -> Bool? {
+        guard !r.isEmpty else { return nil }
+        let s = magicSwitchRects(in: r)
+        if s.add.contains(p) { return false }
+        if s.remove.contains(p) { return true }
+        return nil
+    }
+
+    func drawMagicSwitch(_ c: inout Canvas, in r: CGRect, theme t: DrawTheme) {
+        guard !r.isEmpty else { return }
+        let s = magicSwitchRects(in: r), radius = CGFloat(DrawTheme.Radius.control)
+        let size = CGFloat(DrawTheme.TypeSize.caption)
+        c.fill(roundedRect: s.add.union(s.remove), radius: radius, t.viewerHUD)
+        let on = magicSubtract ? s.remove : s.add
+        c.fill(roundedRect: on.insetBy(dx: 2, dy: 2), radius: radius - 1, t.accentFill)
+        c.draw("Add", in: s.add, fontSize: size, t.label, align: .center)
+        c.draw("Remove", in: s.remove, fontSize: size, t.label, align: .center)
+    }
+
     /// The frame fraction under `p` when it lies on the layer.
     func maskFramePoint(_ p: CGPoint, in r: CGRect) -> Vec2? {
         guard let n = maskGeometry(in: r).framePoint(p), (0...1).contains(n.x), (0...1).contains(n.y) else { return nil }

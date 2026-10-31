@@ -111,6 +111,11 @@ public struct DrawList: Sendable {
         return DrawList(width: r.w, height: r.h, quads: out)
     }
 
+    /// Adds quads built earlier (a layer cache replays them). They carry their own clips, so the clip stack is not touched.
+    public mutating func append(quads more: [DrawQuad]) { quads.append(contentsOf: more) }
+    /// The quads from index `start` on (what one drawing step added).
+    public func quads(from start: Int) -> [DrawQuad] { Array(quads[start...]) }
+
     public var clip: DrawRect { clips[clips.count - 1] }
     public mutating func pushClip(_ r: DrawRect) { clips.append(clip.intersection(r)) }
     public mutating func popClip() { if clips.count > 1 { clips.removeLast() } }

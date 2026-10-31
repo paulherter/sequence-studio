@@ -99,6 +99,19 @@ private func ev(_ x: CGFloat, _ y: CGFloat, _ kind: Int, _ m: InputModifiers = [
         #expect(s.activeTimeline!.tracks[1].clips[0].audioFadeIn > .zero)
     }
 
+    @Test func fadeDragKeepsTheLeftRightCursorAndLineDragTheUpDownOne() {
+        var (p, s) = setup()
+        let (c, rect) = target(p, s, track: 1)
+        let h = VolumeLine.fadeHandlePoints(clip: c, clipRect: rect).head
+        _ = run(&p, s, ev(h.x, h.y, 0))
+        #expect(p.cursor(at: Float(h.x), y: Float(h.y)) == .resizeLeftRight)
+        _ = run(&p, s, ev(h.x, h.y, 2))
+        let lane = VolumeLine.lane(in: rect)
+        let x = rect.midX.rounded(), y = VolumeLine.y(forDB: 0, in: lane).rounded()
+        _ = run(&p, s, ev(x, y, 0))
+        #expect(p.cursor(at: Float(x), y: Float(y)) == .resizeUpDown)
+    }
+
     @Test func opacityLineShowsOffFullAndDrags() {
         var (p, s) = setup()
         var (c, rect) = target(p, s, track: 0)

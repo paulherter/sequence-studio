@@ -10,6 +10,8 @@ import SQUIKit
 public enum TimelineAction: Sendable, Equatable {
     /// A finished gesture (move, trim, ripple, roll, slip, slide, razor, rate stretch, marquee delete...).
     case commit(TimelineCommit)
+    /// Delete on a selected gap: ripple-closes it (`EditorSession.closeGap`; Fast Cut: a spacer on the main track).
+    case closeGap(GapSelection)
     case select(clips: Set<Clip.ID>, captions: Set<CaptionItem.ID>)
     case seek(Time)
     case beginScrub

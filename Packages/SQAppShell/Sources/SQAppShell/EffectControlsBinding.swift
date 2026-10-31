@@ -1,17 +1,37 @@
 import Foundation
+import SQCore
 import SQEditorSession
 import SQInspectorUI
 
 /// Connects an Effect Controls model to the session (edits, gestures, scrubs, sync on change): what the Program monitor's
 /// on-picture overlay (transform handles, masks) and the Effect Controls panel (`InspectorHost`) both need.
 public enum EffectControlsBinding {
+    /// The clips whose Stabilizer plan the edit changes (its options differ in more than the Rolling Shutter strength).
+    @MainActor
+    static func replanTargets(_ session: EditorSession, _ edited: [Clip]) -> [Clip.ID] {
+        let clips = session.activeTimeline?.tracks.flatMap(\.clips) ?? []
+        return edited.compactMap { c in
+            guard let was = clips.first(where: { $0.id == c.id })?.effect(ofKind: ClipEffect.stabilizeKind),
+                  let now = c.effect(ofKind: ClipEffect.stabilizeKind),
+                  !StabilizerOptions(effect: was).samePlan(as: StabilizerOptions(effect: now)) else { return nil }
+            return c.id
+        }
+    }
+
     @MainActor
     public static func connect(_ model: EffectControlsModel, to session: EditorSession) {
         model.onEdit = { [weak session] clip, name, coalescing in
-            session?.replaceDisplayedClip(clip, name: name, continuesGesture: coalescing)
+            guard let session else { return }
+            let changed = replanTargets(session, [clip])
+            session.replaceDisplayedClip(clip, name: name, continuesGesture: coalescing)
+            // Result / Smoothness / Crop Limit of a Stabilizer: re-plan from the cached analysis (no new Stabilize run).
+            if !changed.isEmpty { session.scheduleStabilizerReplan(clips: changed, lookup: AnalysisFlows.stabilizationLookup) }
         }
         model.onEditMany = { [weak session] clips, name, coalescing in
-            session?.replaceDisplayedClips(clips, name: name, continuesGesture: coalescing)
+            guard let session else { return }
+            let changed = replanTargets(session, clips)
+            session.replaceDisplayedClips(clips, name: name, continuesGesture: coalescing)
+            if !changed.isEmpty { session.scheduleStabilizerReplan(clips: changed, lookup: AnalysisFlows.stabilizationLookup) }
         }
         model.onAudioEdit = { [weak session] clip, name, coalescing in
             session?.replaceClip(clip, name: name, continuesGesture: coalescing)

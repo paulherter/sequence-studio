@@ -16,6 +16,12 @@ struct ShellKeysTests {
         #expect(ShellKeys.command(.minus, .command, focus: .timeline, map: map) == .videoTracksShorter)
     }
 
+    @Test func macForwardDeleteFallsBackToDelete() {
+        let del = ShellKeys.command(.backspace, [], focus: .timeline, map: map, mac: true)
+        #expect(del != nil)
+        #expect(ShellKeys.command(.delete, [], focus: .timeline, map: map, mac: true) == del)
+    }
+
     @Test func altAloneIsATapButAltWithAKeyOrClickIsNot() {
         var t = AltTap()
         var taps: [Bool] = []

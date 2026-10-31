@@ -50,6 +50,49 @@ import SQDrawKit
         _ = p.key(.enter, modifiers: [])
     }
 
+    @Test func effectsDroppedOnThePanelGoToTheOneSelectedLayer() {
+        let (_, e, p) = rig()
+        let had = e.selectedLayer?.effects.count ?? 0
+        #expect(e.selectedLayers.count == 1)
+        #expect(p.dropEffects([ClipEffect.gaussianBlurKind]))
+        #expect((e.selectedLayer?.effects.count ?? 0) == had + 1)
+        #expect(!p.dropEffects([]))
+        e.selectAllLayers()
+        #expect(p.dropEffects([ClipEffect.gaussianBlurKind]))            // taken, but refused with a status line
+        #expect(p.status?.text == "Select one layer to add an effect.")
+    }
+
+    @Test func effectsDroppedOnALayerRowGoToThatLayerAndSelectIt() {
+        let (_, e, p) = rig()
+        click(p, rowPoint(p, 1))
+        let other = e.selectedLayer?.id
+        let target = rowPoint(p, 0)
+        p.effectDragOver(at: target)
+        #expect(p.list.effectTarget == 0)
+        p.effectDragOver(at: nil)
+        #expect(p.list.effectTarget == nil)
+        #expect(p.dropEffects([ClipEffect.gaussianBlurKind], at: target))
+        #expect(e.selectedLayer?.id != other)
+        #expect(e.selectedLayer?.effects.count == 1)
+        #expect(p.list.effectTarget == nil)
+    }
+
+    @Test func returnEditsTheTextOfATextLayerAndRenamesOtherLayers() {
+        let (_, e, p) = rig()
+        click(p, rowPoint(p, 0))
+        #expect(e.selectedLayer?.isText == true)
+        #expect(p.key(.enter, modifiers: []))
+        #expect(p.textBlock?.editor != nil)
+        click(p, rowPoint(p, 1))
+        #expect(p.key(.enter, modifiers: []))
+        #expect(p.list.renameField != nil)
+    }
+
+    @Test func effectDropIsIgnoredWithoutAGraphic() {
+        let (_, _, p) = rig(layers: false)
+        #expect(!p.dropEffects([ClipEffect.gaussianBlurKind]))
+    }
+
     @Test func emptyStateMakesANewGraphicsClip() {
         let (_, e, p) = rig(layers: false)
         #expect(e.clip == nil && p.emptyState == .noGraphic)

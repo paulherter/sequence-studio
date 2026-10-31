@@ -42,6 +42,9 @@ extension ProjectListView {
         return HoverScrubState(item: i, media: id, time: t, x: p.x)
     }
 
+    /// The clip and frame under the pointer in the icon view (Set Poster Frame uses it).
+    public var hoveredFrame: (media: MediaRef.ID, time: Time)? { scrub.map { ($0.media, $0.time) } }
+
     /// The poster a grid tile draws: the scrubbed frame while the pointer is over it (the poster until it loads).
     func tilePoster(_ i: Int, media m: MediaRef.ID) -> ProjectPoster? {
         if let s = scrub, s.item == i, s.media == m, let p = posterAt?(m, s.time) { return p }
