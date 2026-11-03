@@ -22,6 +22,7 @@ import Synchronization
 final class AppController {
     let session: EditorSession
     let engine: WinProgramEngine
+    var cacheStrip = CacheStripGate(interval: 1.0)
     var screen = EditorScreen()
     /// The Timeline panel (SQDrawTimeline, the Mac panel translated) drawn over the screen's timeline area.
     var timelinePanel = TimelinePanel()
@@ -120,6 +121,8 @@ final class AppController {
         self.session = session
         // Proxies: the session hands its media to the proxy service at open and after every import (the Mac AutoProxy).
         session.autoProxy = WinProxies.shared.intake
+        // Media saved without a detected color space (Sony S-Log3 is untagged) is probed in the background, as on the Mac.
+        session.installColorDetector { url in FFmpegMediaProbe.detectColor(url) }
         // The Mac EditorPanels wiring: imports are session edits; a large one fills the bin as one undo step.
         let probe: ProjectPanelModel.Probe = { try FFmpegMediaProbe.probe($0) }
         projectModel = ProjectPanelModel(project: session.project, probe: probe, onEdit: { [weak session] p, name in
@@ -127,6 +130,7 @@ final class AppController {
         })
         // The keys saved by Keyboard Shortcuts (sq.keymap), the default template until one is changed.
         shell = ShellHost(session: session, map: KeymapStore().load().map, recents: RecentProjects.load())
+        shell.drawsStartMascots = true
         shell.saveRecents = { $0.save() }
         shell.onStatus = { [weak self] in self?.status = $0 }
         // Find Scene Changes through FFmpeg; the job line shares the status line (WinAnalysisBackend.swift).
@@ -147,6 +151,7 @@ final class AppController {
         shell.projectModel = projectModel
         screen.projectWidth = 280
         projectList.onOpenSequence = { [weak session] in session?.openSequenceTab($0) }
+        projectList.onOpenVariant = { [weak session] in session?.openSequenceTab($0, variant: $1) }
         projectList.onCollect = { [weak shell] in if let shell { Task { await shell.collectFiles() } } }   // Fix > Collect
         shell.probe = probe
         shell.revealFile = { WinShell.reveal($0) }
@@ -221,6 +226,9 @@ final class AppController {
         timelinePanel.sync(timeline: timeline, selection: session.selection, captions: session.captionSelection,
                            playhead: session.playhead, selectedTransition: session.selectedTransition,
                            labels: session.project.labelResolver, lineKeys: Set(session.selectedLineKeys.map(\.key)))
+        if let spans = cacheStrip.spans(now: ProcessInfo.processInfo.systemUptime, generation: engine.cacheGeneration &* 2 &+ (s.isPlaying ? 1 : 0),
+                                        duration: session.activeTimeline?.duration, undoName: session.undoName,
+                                        fetch: { engine.cachedSpans }) { timelinePanel.cachedRanges = spans }
         meters.scopes.hint = colorPage.scopesHint
         layoutMeters(scale: scale)
         timelinePanel.layout(layoutToolStrip(screen.timelineView.frame), scale: screen.theme.scale)

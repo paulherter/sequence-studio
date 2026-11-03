@@ -109,9 +109,11 @@ extension ShellHost {
         }
         let initial = SilenceSettings.remembered(defaults)
         let d = ShellDialog("Remove Silences",
-                            informative: (clips.count == 1 ? first.name : "\(clips.count) clips")
-                                + "\nSilences are cut and the gaps closed on every sync-locked track, so picture, music and B-roll stay in sync.")
+                            informative: "Silences are cut and the gaps closed on every sync-locked track, so picture, music and B-roll stay in sync.")
+        d.headerSubtitle = clips.count == 1 ? first.name : "\(clips.count) clips"   // art.html 30: muted, inline after the title
         let form = ShellForm(ShellSilenceForm.rows(initial))
+        form.sliderTrackWidth = 170   // art.html 30
+        form.extraGapBefore = [ShellSilenceForm.previewRow: 6, ShellSilenceForm.previewRow + 1: 5]   // art.html 30: 30 above the summary, 24 above the note
         func settings() -> SilenceSettings { ShellSilenceForm.settings(form) }
         func refresh() {
             let c = cuts(settings())
@@ -125,6 +127,7 @@ extension ShellHost {
         d.addButton("Remove")
         d.addButton("Cancel", role: .cancel)
         d.addButton("Mark for Review")
+        d.ghostButtons = [2]   // art.html 30: a plain text button
         let r = await ask(d)
         silencePreview?([])
         guard r == .first || r == .third else { return }

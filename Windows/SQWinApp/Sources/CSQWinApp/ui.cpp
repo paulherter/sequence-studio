@@ -43,6 +43,8 @@ struct SQUi {
     ComPtr<ID3D12Device> dev;
     ComPtr<ID3D12CommandQueue> queue;
     ComPtr<IDXGISwapChain3> swap;
+    HANDLE waitable = nullptr;   // signaled when the swap chain can take another frame: the window loop wakes with the display
+
     ComPtr<ID3D12Resource> back[kBuffers];
     ComPtr<ID3D12Resource> offscreen;
     ComPtr<ID3D12DescriptorHeap> rtvHeap, srvHeap;
@@ -216,14 +218,23 @@ static SQUi *create(void *hwnd, int width, int height, ID3D12Device *sharedDev, 
         g->queue = sharedQueue;
         snprintf(g->adapter, sizeof g->adapter, "%s", sharedName ? sharedName : "");
     }
-    for (UINT i = 0; !g->dev && factory->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter)) != DXGI_ERROR_NOT_FOUND; i++) {
-        DXGI_ADAPTER_DESC1 d; adapter->GetDesc1(&d);
-        if (!(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) &&
-            SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g->dev)))) {
-            WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, g->adapter, sizeof g->adapter, nullptr, nullptr);
-            break;
-        }
+    // Same order as the shared device (d3d12.cpp): hardware first, then WARP; SQ_FORCE_WARP=1 takes only WARP.
+    char force[8] = {};
+    const bool forceWarp = GetEnvironmentVariableA("SQ_FORCE_WARP", force, sizeof force) && force[0] == '1';
+    for (int pass = forceWarp ? 1 : 0; pass < 2 && !g->dev; pass++) {
         adapter.Reset();
+        for (UINT i = 0; !g->dev && factory->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter)) != DXGI_ERROR_NOT_FOUND; i++) {
+            DXGI_ADAPTER_DESC1 d; adapter->GetDesc1(&d);
+            const bool software = (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+            if ((pass == 0 && software) || (forceWarp && !software)) { adapter.Reset(); continue; }
+            if (SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g->dev)))) {
+                char n[96] = {};
+                WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, n, sizeof n, nullptr, nullptr);
+                snprintf(g->adapter, sizeof g->adapter, "%s%s", n, software ? " (software)" : "");
+                break;
+            }
+            adapter.Reset();
+        }
     }
     if (!g->dev) { snprintf(err, errLen, "no D3D12 adapter"); sq_ui_destroy(g); return nullptr; }
 
@@ -235,10 +246,13 @@ static SQUi *create(void *hwnd, int width, int height, ID3D12Device *sharedDev, 
         sd.Width = width; sd.Height = height; sd.Format = kBackFormat;
         sd.SampleDesc.Count = 1; sd.BufferUsage = DXGI_USAGE_RENDER_TARGET_OUTPUT;
         sd.BufferCount = kBuffers; sd.SwapEffect = DXGI_SWAP_EFFECT_FLIP_DISCARD;
+        sd.Flags = DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT;
         ComPtr<IDXGISwapChain1> sc1;
         CHECK(factory->CreateSwapChainForHwnd(g->queue.Get(), g->hwnd, &sd, nullptr, nullptr, &sc1), "swap chain");
         factory->MakeWindowAssociation(g->hwnd, DXGI_MWA_NO_ALT_ENTER);
         CHECK(sc1.As(&g->swap), "swap chain 3");
+        g->swap->SetMaximumFrameLatency(2);
+        g->waitable = g->swap->GetFrameLatencyWaitableObject();
     }
     D3D12_DESCRIPTOR_HEAP_DESC hd = {};
     hd.Type = D3D12_DESCRIPTOR_HEAP_TYPE_RTV; hd.NumDescriptors = kBuffers;
@@ -344,7 +358,7 @@ int sq_ui_resize(SQUi *g, int width, int height) {
     waitIdle(g);
     for (UINT i = 0; i < kBuffers; i++) g->back[i].Reset();
     g->offscreen.Reset();
-    if (g->swap && FAILED(g->swap->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, 0))) return -1;
+    if (g->swap && FAILED(g->swap->ResizeBuffers(0, width, height, DXGI_FORMAT_UNKNOWN, DXGI_SWAP_CHAIN_FLAG_FRAME_LATENCY_WAITABLE_OBJECT))) return -1;
     g->width = width; g->height = height;
     return makeTargets(g) ? 0 : -2;
 }
@@ -423,6 +437,15 @@ int sq_ui_set_quads(SQUi *g, const float *quads, int count) {
     if (count > 0) memcpy(g->quadMap + (size_t)g->frame * kMaxQuads * kQuadBytes, quads, (size_t)count * kQuadBytes);
     g->quadCount = count;
     return 0;
+}
+
+#include <timeapi.h>
+#pragma comment(lib, "winmm.lib")
+// 1 ms timer granularity: waits and sleeps otherwise round up to the 15.6 ms Windows tick (uneven frame pacing).
+void sq_fine_timer(void) { timeBeginPeriod(1); }
+
+void sq_ui_wait_frame(SQUi *g, int timeoutMs) {
+    if (g && g->waitable) WaitForSingleObjectEx(g->waitable, (DWORD)timeoutMs, TRUE);
 }
 
 int sq_ui_render(SQUi *g, float r, float gr, float b, uint8_t *rgbaOut, int vsync) {

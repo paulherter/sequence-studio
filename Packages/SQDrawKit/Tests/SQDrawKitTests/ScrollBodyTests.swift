@@ -107,12 +107,15 @@ import Testing
         #expect(b.offsetNow(t) == 100)
     }
 
-    @Test func aMouseWheelClampsAtOnceAndNeverBounces() {
+    @Test func aMouseWheelEasesToItsTargetClampedAndNeverBounces() {
         let b = body(max: 100)
         b.scroll(by: -50, gesture: ScrollGesture(deltaY: 5), now: 0)
         #expect(b.offsetNow(0) == 0)
-        b.scroll(by: 500, gesture: ScrollGesture(deltaY: -5), now: 0.1)
-        #expect(b.offsetNow(0.1) == 100)
+        b.scroll(by: 40, gesture: ScrollGesture(deltaY: -1), now: 0.1)
+        let mid = b.offsetNow(0.1 + ScrollBody.easeTime)
+        #expect(mid > 20 && mid < 30)                    // 63 % of the notch after one time constant
+        b.scroll(by: 500, gesture: ScrollGesture(deltaY: -5), now: 0.2)
+        #expect(b.offsetNow(2) == 100)                   // clamped at the end, no bounce
         #expect(!b.isAnimating)
     }
 
@@ -178,6 +181,7 @@ extension ScrollBody {
         #expect(b.scrollerAlpha(now: 10.5) == 1)
         #expect(b.scrollerAlpha(now: 10 + ScrollerBar.visibleFor + ScrollerBar.fade + 0.01) == 0)
         #expect(b.needsFrames(now: 10.5))
+        b.advance(to: 20)                                  // the wheel's ease is long done
         #expect(!b.needsFrames(now: 20))
     }
 

@@ -1,7 +1,4 @@
 import Foundation
-#if canImport(AppKit)
-import AppKit
-#endif
 
 /// The one column grid of the Controls column (Effect Controls) and every inspector row. All rows of all sections use
 /// it at every panel width, so column edges, row heights and gaps are the same everywhere. Numbers: `Theme.Inspector`.
@@ -23,18 +20,13 @@ public struct ControlsGrid: Equatable, Sendable {
         public static let ringX: CGFloat = 8, toggleWidth: CGFloat = 14, columnGap: CGFloat = 6, nameWidth: CGFloat = 88
         public static let rowIndent: CGFloat = 12, valueWidth: CGFloat = 50, trailing: CGFloat = 12
         public static let resetWidth: CGFloat = 22, navigationWidth: CGFloat = 72, labelHeight: CGFloat = 14
-        public static let rowHeight: CGFloat = 26, sectionGap: CGFloat = 4, controlHeight: CGFloat = 22
+        public static let rowHeight: CGFloat = 24, sectionGap: CGFloat = 4, controlHeight: CGFloat = 22
         public static let nameX = ringX + toggleWidth + columnGap
         public static let controlX = nameX + nameWidth + columnGap
         public static let controlColumnWidth = 3 * valueWidth + 2 * columnGap
     }
-    #if canImport(AppKit)
-    private typealias T = Theme.Inspector
-    private static let rowControl = Theme.Row.control
-    #else
     private typealias T = Tokens
     private static let rowControl = Tokens.controlHeight
-    #endif
 
     /// Width of the row (the Controls column up to the divider).
     public var width: CGFloat
@@ -101,20 +93,6 @@ public struct ControlsGrid: Equatable, Sendable {
     /// Frames `label` in the label column and keeps long names readable without widening the column or shrinking the font:
     /// the name takes `maxX` when the row has free room there (a row without a control passes `valueMaxX`), otherwise it is cut
     /// in the middle and an SQ tooltip shows the full name. Returns the frame it set.
-    #if canImport(AppKit)
-    @MainActor
-    public func place(_ label: NSTextField, height: CGFloat, maxX: CGFloat? = nil) -> CGRect {
-        label.lineBreakMode = .byTruncatingMiddle
-        let natural = ceil(label.attributedStringValue.size().width)
-        var frame = labelFrame(height: height)
-        if let maxX, natural > frame.width {
-            frame.size.width = min(natural, max(maxX - Self.labelX, frame.width))
-        }
-        label.frame = frame
-        label.sqToolTip = Self.truncates(textWidth: natural, frameWidth: frame.width) ? label.stringValue : nil
-        return frame
-    }
-    #endif
     /// Whether a name `textWidth` wide does not fit a label `frameWidth` wide (it gets the middle cut and the tooltip).
     public static func truncates(textWidth: CGFloat, frameWidth: CGFloat) -> Bool { textWidth > frameWidth + 0.5 }
 
@@ -157,9 +135,3 @@ public struct ControlsRowProbe: Sendable {
     }
 }
 
-#if canImport(AppKit)
-@MainActor
-public protocol ControlsRowProbing: NSView {
-    var rowProbe: ControlsRowProbe { get }
-}
-#endif

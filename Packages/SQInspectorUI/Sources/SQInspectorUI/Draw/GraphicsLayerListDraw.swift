@@ -164,7 +164,7 @@ import SQDrawKit
             let f = rowFrame(i)
             guard f.maxY > 0, f.minY < listHeight else { continue }
             if dropOnto == i || effectTarget == i { c.fill(f, t.accentTint) }
-            else if LayerListLogic.isSelected(r, document: d, selection: sel) { c.fill(f, focused ? t.accentTint : t.selection) }
+            else if LayerListLogic.isSelected(r, document: d, selection: sel) { c.fill(f, t.current) }
             else if hover == .row(i) || hover == .eye(i) || hover == .lock(i) { c.fill(f, t.fill) }
             if let label = r.label { c.fill(CGRect(x: 0, y: f.minY, width: CGFloat(DrawTheme.Spacing.xs), height: f.height), t.clip(label)) }
             let outside = r.layerID.flatMap { d.layer($0) }.map { LayerListLogic.isOutsideRange($0, local: local) } ?? false

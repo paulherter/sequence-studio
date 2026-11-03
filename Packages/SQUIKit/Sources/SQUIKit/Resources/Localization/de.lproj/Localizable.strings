@@ -461,7 +461,7 @@
 "Allow local tools to edit the open project" = "Lokalen Werkzeugen erlauben, das offene Projekt zu bearbeiten";
 "Scales text and controls everywhere. Applies the next time Sequence Studio starts." = "Skaliert Text und Bedienelemente überall. Gilt ab dem nächsten Start von Sequence Studio.";
 "Changed projects are saved to a recovery copy; your project file is only written when you save." = "Geänderte Projekte werden in eine Wiederherstellungskopie gesichert; deine Projektdatei wird nur beim Sichern geschrieben.";
-"Changed projects are saved to a recovery copy; this offers to restore it after an unclean quit." = "Geänderte Projekte werden in eine Wiederherstellungskopie gesichert; so wird sie nach einem unsauberen Beenden angeboten.";
+"After a crash, Sequence Studio offers the recovery copy the next time it starts." = "Nach einem Absturz bietet Sequence Studio beim nächsten Start die Wiederherstellungskopie an.";
 "Not set up in this build yet: nothing is contacted." = "In diesem Build noch nicht eingerichtet: Es wird nichts kontaktiert.";
 "Asks one address for the newest version number; nothing else is sent." = "Fragt eine Adresse nach der neuesten Versionsnummer; sonst wird nichts gesendet.";
 "The language spoken in your footage. A project can pick another language in the Captions panel." = "Die in deinem Material gesprochene Sprache. Ein Projekt kann im Untertitel-Fenster eine andere wählen.";
@@ -684,7 +684,7 @@
 "Look" = "Look";
 "Mark All" = "Alle markieren";
 "Match" = "Abgleichen";
-"Match Case" = "Groß-/Kleinschreibung";
+"Match case" = "Groß-/Kleinschreibung";
 "Middle" = "Mitte";
 "Mix" = "Mix";
 "Mode" = "Modus";

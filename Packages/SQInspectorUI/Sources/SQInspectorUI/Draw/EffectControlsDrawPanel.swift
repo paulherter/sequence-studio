@@ -88,7 +88,7 @@ import SQDrawKit
     /// Rows from the model, with the Mac rebuild's arguments; call after every model change.
     public func relayout() {
         rows = EffectControlsLayout.rows(sections: model.visibleSections, collapsed: model.collapsedSections,
-                                         expanded: model.graphEditor ? [] : model.expanded, blendModeRow: true, groupHeaders: false,
+                                         expanded: model.graphEditor ? [] : model.expanded, blendModeRow: true, groupHeaders: true, firstGroupHeader: false,
                                          openColorGroups: model.openColorGroups,
                                          subjectMasks: model.subjectMaskIDs, pictureMasks: model.pictureMaskIDs,
                                          colorRangeMasks: model.colorRangeMaskIDs, gradeRanges: model.gradeRangeEffects,
@@ -96,7 +96,11 @@ import SQDrawKit
                                          transformCrop: model.transformCropProperties)
         placeSection()
         syncFields()
+        // Another clip starts at the top; the same clip never scrolls past the end of a list that got shorter.
+        if model.clip?.id != scrolledClip { scrolledClip = model.clip?.id; scrollY = 0 }
+        scrollY = min(scrollY, max(contentHeight - size.height, 0))
     }
+    private var scrolledClip: Clip.ID?
 
     /// The clip's content section (Audio, Shape, Color Matte, ...): set by the host; placed like the Mac skeleton.
     public var clipSections: ClipSectionsDraw? {
@@ -260,7 +264,7 @@ import SQDrawKit
             let pic = model.displayPicture
             f.range = p.displayRange(picture: pic); f.step = p.displayStep(picture: pic)
             f.unit = p.displayUnit(picture: pic); f.decimals = p.displayDecimals(picture: pic)
-            f.isPlain = true; f.leadingText = true      // board `.hv`: plain accent numbers; the capsule shows while typing
+            f.isPlain = false; f.leadingText = false     // art.html: value in a well, right aligned
             if p == .rotation {      // turns + degrees from 360 up ("1x 30.0°"), typing "1x30" or "390" both work
                 let current = f.isMixed ? 0 : f.value
                 f.valueFormatter = { RotationText.format($0) }
@@ -502,7 +506,7 @@ import SQDrawKit
     private func background(_ c: inout Canvas, _ h: CGFloat, fill: DrawColor, bottomLine: Bool = true, topSeparator: Bool = false) {
         c.fill(CGRect(x: 0, y: 0, width: size.width, height: h), fill)
         rowFill = fill
-        if bottomLine { c.fill(CGRect(x: 0, y: h - 1, width: size.width, height: 1), theme.trackRowLine) }
+        if bottomLine { c.fill(CGRect(x: 0, y: h - 1, width: size.width, height: 1), theme.rowLine) }
         if topSeparator { c.fill(CGRect(x: 0, y: 0, width: size.width, height: 1), theme.separator) }
     }
 
@@ -547,9 +551,10 @@ import SQDrawKit
         switch r.kind {
         case .section(let s): drawSectionHeader(s, &c, h, hover: hover)
         case .group(let g):
-            background(&c, h, fill: t.panel, topSeparator: r.y > 0)
-            let lead = ControlsGrid.headerToggleX
-            c.draw(SQL10n.string(g.title).uppercased(), in: CGRect(x: lead, y: (h - 13) / 2, width: max(size.width - 2 * lead, 0), height: 13),
+            // The same header as the one above the rows ("Video"): caption text, one hairline under it.
+            background(&c, h, fill: t.panel)
+            let lead = CGFloat(DrawTheme.Spacing.md)
+            c.draw(SQL10n.string(g.title), in: CGRect(x: lead, y: 0, width: max(size.width - 2 * lead, 0), height: h),
                    fontSize: CGFloat(DrawTheme.TypeSize.caption), t.label3)
         case .placeholder:
             background(&c, h, fill: t.panel)
@@ -587,7 +592,7 @@ import SQDrawKit
     private func drawSectionHeader(_ s: EffectSection, _ c: inout Canvas, _ h: CGFloat, hover: Target) {
         let t = theme, g = grid
         let rowHovered = hoverPoint.map { if case .header = target(at: $0) { true } else { [.chevron(s), .eye(s), .sectionReset(s)].contains(target(at: $0)) } } ?? false
-        background(&c, h, fill: model.isSectionSelected(s) ? t.selection : t.panel)
+        background(&c, h, fill: model.isSectionSelected(s) ? t.current : t.panel)
         let collapsed = model.collapsedSections.contains(s)
         icon(&c, collapsed ? .chevronRight : .chevronDown, in: g.headerToggleFrame(height: h), size: 9, t.label3)
         let on = model.isEffectEnabled(s), mixed = model.isEffectEnabledMixed(s)
@@ -647,7 +652,7 @@ import SQDrawKit
         let t = theme, ref = RowRef.property(p)
         let opened = model.expanded.contains(p) && p.hasGraph && !model.graphEditor
         // `.kp.sel`: a selected row. Open curve: the name row and the pane under it are one lighter element.
-        let fill = model.graphProperties.contains(p) ? t.selection : (opened ? t.graphPane : t.panel)
+        let fill = model.graphProperties.contains(p) ? t.current : (opened ? t.graphPane : t.panel)
         background(&c, h, fill: fill, bottomLine: !opened)
         drawKeyControls(ref, &c, h, state: model.keyframeControlState(p), showsOpen: p.hasGraph, isOpen: model.expanded.contains(p),
                         resettable: !model.isDefault(p), hover: hover)

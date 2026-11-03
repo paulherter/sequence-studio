@@ -124,6 +124,14 @@ final class WinProxies {
 
     func removeListener(_ id: UUID) { listeners[id] = nil }
 
+    /// A proxy that fails its integrity check or a decode leaves the cache (the original plays) and is made again.
+    func discardCorrupt(_ look: ProxyLookup, source path: String) {
+        guard let id = look.record, let r = cache.allRecords().first(where: { ProxyRecordID($0) == id }) else { return }
+        cache.remove(fingerprint: r.fingerprint, kind: r.kind)
+        let kind = look.kind
+        Task { try? await generate(path, kind: kind) }
+    }
+
     private func notifyReady() { for f in listeners.values { f() } }
 
     /// Proxy playback (`sq.proxy.playback`): Auto uses proxies while playing on a weak PC.

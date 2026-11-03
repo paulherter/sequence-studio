@@ -7,7 +7,7 @@ import Synchronization
 final class WinPlayStats: Sendable {
     static let shared = WinPlayStats()
 
-    enum Stage: String, CaseIterable, Sendable { case decode, download, reduce, upload, texture, grade, proxyOpen, videoLayers, key, title, layers, record, compose, position, plan, runloop, tick, ui, present }
+    enum Stage: String, CaseIterable, Sendable { case decode, download, reduce, upload, texture, grade, proxyOpen, commit, captionPass, presentPass, videoLayers, key, title, layers, record, compose, position, plan, runloop, tick, ui, present, arrive, finish, session }
     private struct State {
         var ms: [Stage: Double] = [:]
         var count: [Stage: Int] = [:]
@@ -15,6 +15,7 @@ final class WinPlayStats: Sendable {
         var layers = 0, layerFrames = 0, layersMax = 0, culled = 0
         var waits = 0
         var decoders: [String: Int] = [:]
+        var decodeBy: [String: (ms: Double, n: Int)] = [:]
     }
     private let state = Mutex(State())
 
@@ -45,6 +46,11 @@ final class WinPlayStats: Sendable {
     /// A window frame while playing whose sequence frame was not ready (a decode still running).
     func waited() { state.withLock { $0.waits += 1 } }
 
+    /// A decode (one picture) of the decoder `label` (size and kind): the share per file kind in the play test.
+    func decoded(_ label: String, _ ms: Double) {
+        state.withLock { let o = $0.decodeBy[label] ?? (0, 0); $0.decodeBy[label] = (o.ms + ms, o.n + 1) }
+    }
+
     func decoderOpened(_ name: String) { state.withLock { $0.decoders[name, default: 0] += 1 } }
 
     /// "stage: mean ms (max ms, n)" lines for the play test.
@@ -59,6 +65,9 @@ final class WinPlayStats: Sendable {
                               mean, st.layersMax, st.culled, st.waits))
             if !st.decoders.isEmpty {
                 out.append("decoders " + st.decoders.sorted { $0.key < $1.key }.map { "\($0.value)x \($0.key)" }.joined(separator: ", "))
+            }
+            for (k, v) in st.decodeBy.sorted(by: { $0.key < $1.key }) {
+                out.append(String(format: "decode by %@: %.1f ms mean, %d pictures", k, v.ms / Double(v.n), v.n))
             }
             return out
         }

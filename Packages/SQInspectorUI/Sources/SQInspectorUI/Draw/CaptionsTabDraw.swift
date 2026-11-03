@@ -303,13 +303,13 @@ import SQUIKit
         let t = theme, fs = CGFloat(DrawTheme.TypeSize.body)
         c.fill(CGRect(origin: .zero, size: size), t.panel)
         drawField(&c, find, .find, placeholder: "Find")
-        drawField(&c, replace, .replace, placeholder: "Replace With")
+        drawField(&c, replace, .replace, placeholder: "Replace with")
         InspectorDraw.button(&c, title: SQL10n.string("Replace All"), in: frame(.replaceAll), hovering: hover == .replaceAll,
                              pressed: pressed == .replaceAll, enabled: !findText.isEmpty && !rows.isEmpty, t)
         let mc = frame(.matchCase), box = CGRect(x: mc.minX, y: mc.midY - 7, width: 14, height: 14)
         InspectorDraw.checkbox(&c, matchCase ? .on : .off, box: box, hovering: hover == .matchCase, pressed: pressed == .matchCase,
                                enabled: true, t)
-        c.draw(SQL10n.string("Match Case"), in: CGRect(x: box.maxX + 6, y: mc.minY, width: mc.width - 20, height: mc.height),
+        c.draw(SQL10n.string("Match case"), in: CGRect(x: box.maxX + 6, y: mc.minY, width: mc.width - 20, height: mc.height),
                fontSize: fs, t.label)
 
         let lf = frame(.list)
@@ -341,7 +341,7 @@ import SQUIKit
         c.draw(hint, in: CGRect(x: Self.pad, y: fy, width: max(cf.minX - 2 * Self.pad, 0), height: Self.footerHeight),
                fontSize: fs, t.label3)
         InspectorDraw.button(&c, title: SQL10n.string("Create Captions…"), in: cf, hovering: hover == .create,
-                             pressed: pressed == .create, enabled: onCreateCaptions != nil, accent: true, t)
+                             pressed: pressed == .create, enabled: onCreateCaptions != nil, accent: false, t)
     }
 
     private func drawField(_ c: inout Canvas, _ f: TextFieldControl, _ k: Control, placeholder: String) {
@@ -465,7 +465,7 @@ import SQUIKit
     public func help(at p: CGPoint) -> String? {
         switch control(at: p) {
         case .create: onCreateCaptions == nil ? SQL10n.string(createHint) : nil
-        case .matchCase: SQL10n.string("Match Case")
+        case .matchCase: SQL10n.string("Match case")
         default: nil
         }
     }

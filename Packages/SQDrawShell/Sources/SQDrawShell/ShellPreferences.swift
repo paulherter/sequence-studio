@@ -26,7 +26,7 @@ public enum ShellPreferences {
         /// The Mac `SettingsPage.icon`.
         public var icon: SQIcon {
             switch self {
-            case .general: .slidersHorizontal; case .playback: .play; case .editing: .pencil; case .audio: .waveform; case .media: .folder
+            case .general: .slidersHorizontal; case .playback: .playCircle; case .editing: .pencil; case .audio: .waveform; case .media: .folder
             case .advanced: .code
             }
         }
@@ -151,7 +151,7 @@ public enum ShellPreferences {
     static func languageTitle(_ id: String) -> String { Locale.current.localizedString(forIdentifier: id) ?? id }
     /// The Mac `liveDuckAmount`: 0.5...40 dB in 0.5 steps, one decimal, 12 by default, no unit shown.
     static func duckAmountField(_ db: Double?) -> ShellForm.NumberField {
-        ShellForm.NumberField(id: "duckAmount", value: db ?? 12, range: 0.5...40, step: 0.5, decimals: 1, defaultValue: 12)
+        ShellForm.NumberField(id: "duckAmount", value: db ?? 12, range: 0.5...40, step: 0.5, decimals: 1, unit: "dB", defaultValue: 12)
     }
     /// The Edit API status line (`SettingsWindow.applyAPIState`): Copy address only while there is a port.
     static func apiStatus(_ s: ShellEditAPI.State) -> ShellForm.Status {
@@ -199,7 +199,7 @@ public enum ShellPreferences {
         var tinted: Set<String> = [], statuses: [String: ShellForm.Status] = [:]
         var listLines: [String: [ShellForm.ListLine]] = [:]
         /// `SQFormRow.row(label, fixed(popup, w), help:)`.
-        func popup(_ id: String, _ label: String, _ options: [String], _ sel: Int, width: CGFloat = 180, help: String? = nil) {
+        func popup(_ id: String, _ label: String, _ options: [String], _ sel: Int, width: CGFloat = 196, help: String? = nil) {
             rows.append(.popup(id: id, label: label, options: options, selected: sel))
             widths[id] = width
             if let help { helps[id] = help }
@@ -228,7 +228,7 @@ public enum ShellPreferences {
                   AppSettings.autosaveChoices.firstIndex(of: s.autosaveInterval) ?? 2,
                   help: "Changed projects are saved to a recovery copy; your project file is only written when you save.")
             check("recovery", "Recovery", "Offer to restore after an unclean quit", s.offerRecovery,
-                  help: "Changed projects are saved to a recovery copy; this offers to restore it after an unclean quit.")
+                  help: "After a crash, Sequence Studio offers the recovery copy the next time it starts.")
             check("updates", "Updates", "Check for a newer version at launch", s.checkForUpdates,
                   help: UpdateCheck.feedURL.isEmpty ? "Not set up in this build yet: nothing is contacted."
                       : "Asks one address for the newest version number; nothing else is sent.")
@@ -298,7 +298,7 @@ public enum ShellPreferences {
             rows.append(.caption("Ducking"))
             check("liveDuck", "Live Ducking", "Duck music under dialogue while mixing", x.duckAmount != nil,
                   help: "Music-role tracks follow Dialogue-role tracks while mixing (playback and export). Off by default. A clip that also has baked Auto Duck keys ducks twice.")
-            checkFields.append(("liveDuck", duckAmountField(x.duckAmount), 92))
+            checkFields.append(("liveDuck", duckAmountField(x.duckAmount), 72))
             popup("duckPreset", "Duck Preset", duckPresetTitles, duckPresetIndex(x),
                   help: "Soft is a shallow duck with a slow return for voice-over. Hard is a deep, quick duck for fast speech. Change the amount or any timing value and it shows Custom.")
             popup("duckTiming", "Duck Timing", DuckTimingChoices.titles, DuckTimingChoices.index(of: x.duckTiming),
@@ -528,9 +528,23 @@ extension ShellHost {
     /// Preferences (Ctrl+,): every change is saved at once, as in the Mac window; the sidebar swaps the page's rows.
     /// Choose… / Use Default and Restore Factory act at once and rebuild the page.
     public func showPreferences(defaults: UserDefaults = .standard) async {
+        var start = ShellPreferences.Page.general
+        // Reset to Defaults (ghost button, footer left, art.html Settings): back to the factory values, then the same page again.
+        while let page = await presentPreferences(defaults: defaults, start: start) {
+            AppSettings.standard.save(to: defaults)
+            var x = ShellPreferences.Extras()
+            x.uiLanguage = ShellPreferences.Extras.load(from: defaults).uiLanguage
+            x.save(to: defaults)
+            onSettingsChanged?(AppSettings.standard)
+            start = page
+        }
+    }
+
+    /// One Preferences window; the page it was left on when Reset to Defaults was pressed, else nil.
+    private func presentPreferences(defaults: UserDefaults, start: ShellPreferences.Page) async -> ShellPreferences.Page? {
         var settings = AppSettings.load(from: defaults)
         var extras = ShellPreferences.Extras.load(from: defaults)
-        var page = ShellPreferences.Page.general
+        var page = start
         var note = ""
         var cacheUsed = "Calculating…"
         let d = ShellDialog("Settings")   // the Mac `SettingsWindow` title
@@ -538,6 +552,8 @@ extension ShellHost {
         d.width = ShellDialog.M.widthL
         d.cardHeight = ShellDialog.M.heightL
         d.addButton("Done")
+        d.addButton("Reset to Defaults", leading: true)
+        d.ghostButtons = [1]
         func context() -> ShellPreferences.Context {
             var c = ShellPreferences.Context()
             c.audioOutputs = audioOutputs?()
@@ -552,6 +568,7 @@ extension ShellHost {
         }
         func install(_ p: ShellPreferences.Page) {
             page = p
+            d.headerSubtitle = p.title
             let c = context()
             let f = ShellPreferences.form(p, settings, extras, c)
             f.onChange = { [weak self, weak d, weak f] id, v in
@@ -621,7 +638,7 @@ extension ShellHost {
                 if page == .media { install(page); self.relayout(d) }
             }
         }
-        install(.general)
+        install(start)
         refreshUsed()
         // A server that starts or fails after the switch updates the line while the page is open (`onState`).
         editAPI?.stateChanged = { [weak self, weak d] in
@@ -629,8 +646,9 @@ extension ShellHost {
             f.statuses["api"] = ShellPreferences.apiStatus(api.state())
             self.relayout(d)
         }
-        _ = await ask(d)
+        let answer = await ask(d)
         editAPI?.stateChanged = nil
+        return answer == .second ? page : nil
     }
 
     /// Runs a button of a Preferences row (the folder already chosen); the new folder note, nil to keep the old one.

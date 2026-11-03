@@ -2166,7 +2166,8 @@ public struct EffectRow: Equatable, Sendable {
         case speedControl(SpeedControl)
         /// Blend Mode pop-up under the Opacity row (only when the view asks for it).
         case blendMode
-        /// "Video" / "Audio" group header above the sections of that side (only when the view asks for it).
+        /// "Video" / "Audio" group header above the sections of that side (only when the view asks for it); Effect Controls
+        /// shows it where the second side starts, the first one is named by the panel header.
         case group(EffectGroup)
         /// W6.7: Invert, Mode, Path stopwatch and delete of the path mask whose section is above.
         case maskControls(ClipMask.ID)
@@ -2234,7 +2235,7 @@ public enum EffectControlsLayout {
     /// `rowHeight`, and `sectionGap` between two sections.
     public static func rows(sections: [EffectSection], collapsed: Set<EffectSection>,
                             expanded: Set<EffectProperty>,
-                            blendModeRow: Bool = false, groupHeaders: Bool = false,
+                            blendModeRow: Bool = false, groupHeaders: Bool = false, firstGroupHeader: Bool = true,
                             openColorGroups: Set<String> = [],
                             subjectMasks: [ClipMask.ID] = [],
                             pictureMasks: Set<ClipMask.ID> = [],
@@ -2248,7 +2249,11 @@ public enum EffectControlsLayout {
         func add(_ k: EffectRow.Kind, _ height: CGFloat) { out.append(EffectRow(kind: k, y: y, height: height)); y += height }
         var lastGroup: EffectGroup?
         for s in sections {
-            if groupHeaders, group(of: s) != lastGroup { add(.group(group(of: s)), ControlsMetrics.group); lastGroup = group(of: s) }
+            // `firstGroupHeader: false`: the panel's own header names the first group; only the switch to the other one repeats it.
+            if groupHeaders, group(of: s) != lastGroup {
+                if firstGroupHeader || lastGroup != nil { add(.group(group(of: s)), ControlsMetrics.group) }
+                lastGroup = group(of: s)
+            }
             if !out.isEmpty { y += ControlsMetrics.sectionGap }
             add(.section(s), ControlsMetrics.section)
             guard !collapsed.contains(s) else { continue }

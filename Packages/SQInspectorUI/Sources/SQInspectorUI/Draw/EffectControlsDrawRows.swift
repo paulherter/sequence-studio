@@ -458,7 +458,7 @@ extension EffectControlsDrawPanel {
         default: fill = t.panel
         }
         c.fill(CGRect(x: 0, y: 0, width: size.width, height: h), fill)
-        c.fill(CGRect(x: 0, y: h - 1, width: size.width, height: 1), t.trackRowLine)
+        c.fill(CGRect(x: 0, y: h - 1, width: size.width, height: 1), t.rowLine)
         let body = CGFloat(DrawTheme.TypeSize.body)
         for w in ws {
             let hovered = hover == .widget(w.key), pressed = pressTarget == .widget(w.key)

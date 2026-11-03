@@ -53,17 +53,17 @@ public final class LibraryDrawPanel {
         var isHeader: Bool { if case .header = self { true } else { false } }
     }
 
-    public static let sidebarWidth: CGFloat = 136
+    public static let sidebarWidth: CGFloat = 132
     public static let searchRowHeight: CGFloat = 38
     public static let chipRowHeight: CGFloat = 24
-    public static let rowHeight: CGFloat = 26
+    public static let rowHeight: CGFloat = 24
     public static let sectionHeight: CGFloat = 24
     static let pad = CGFloat(DrawTheme.Spacing.sm)
     static let dragSlop: CGFloat = 4
     static let doubleClick: Double = 0.4
     static let sliderWidth: CGFloat = 64
     /// `Theme.Typography.list`: sidebar rows and kind chips.
-    static let listFont: CGFloat = 12
+    static let listFont: CGFloat = 11
     /// Space between the search row and the first chip row.
     static let chipsInset: CGFloat = 8
     /// Space between the search row and the first sidebar row.
@@ -197,15 +197,15 @@ public final class LibraryDrawPanel {
     }
     var sliderRect: CGRect? {
         guard model.viewMode == .grid else { return nil }
-        return CGRect(x: size.width - Self.pad - Self.sliderWidth, y: 7, width: Self.sliderWidth, height: 24)
+        return CGRect(x: size.width - Self.pad - Self.sliderWidth, y: 8, width: Self.sliderWidth, height: 22)
     }
     var viewButtonRect: CGRect {
         let right = sliderRect.map { $0.minX - Self.pad } ?? size.width - Self.pad
-        return CGRect(x: right - 24 - (sliderRect == nil ? 0 : 5), y: 7, width: 24, height: 24)
+        return CGRect(x: right - 22 - (sliderRect == nil ? 0 : 5), y: 8, width: 22, height: 22)
     }
     var searchFieldRect: CGRect {
         // Measured against the AppKit panel (2x crop): the field starts 2 pt left of the pad and ends 11 pt before the view switch.
-        CGRect(x: Self.pad - 2, y: 7, width: max(viewButtonRect.minX - 11 - (Self.pad - 2), 0), height: 24)
+        CGRect(x: Self.pad - 2, y: 8, width: max(viewButtonRect.minX - 11 - (Self.pad - 2), 0), height: 22)
     }
     var searchClearRect: CGRect { CGRect(x: searchFieldRect.maxX - 20, y: searchFieldRect.midY - 8, width: 16, height: 16) }
     var chipsTop: CGFloat { Self.searchRowHeight }
@@ -752,7 +752,7 @@ public final class LibraryDrawPanel {
             guard r.minY < size.height else { break }
             let isSel = row.section != nil && row.section == model.selection
             if isSel {
-                c.fill(roundedRect: r.insetBy(dx: CGFloat(DrawTheme.Spacing.xs), dy: 1), radius: CGFloat(DrawTheme.Radius.small), hasFocus ? t.accentFill : Self.unfocusedSelection)
+                c.fill(roundedRect: r.insetBy(dx: CGFloat(DrawTheme.Spacing.xs), dy: 1), radius: CGFloat(DrawTheme.Radius.control), t.current)      // art.html `--current`, radius 6
             }
             // The AppKit sidebar: a folder icon on the group rows only; the items are plain text.
             let ink = row.isOffline ? t.label3 : t.label   // NSTableCellView turns its text field white, whatever textColor says
@@ -769,7 +769,7 @@ public final class LibraryDrawPanel {
         let f = searchFieldRect
         // `SQSearchField`: the magnifier at 9, the text from 28 (measured in the AppKit render, as the Marker List field).
         search.textInset = 28
-        search.quiet = true
+        search.quiet = false      // field well (art.html `--well`)
         search.draw(&c, in: f, theme: t, focused: search.isEditing)
         c.draw(icon: .search, at: CGPoint(x: f.minX + 9, y: f.midY - 6), size: 12, t.label3)
         if searchText.isEmpty, !search.isEditing {
@@ -783,7 +783,7 @@ public final class LibraryDrawPanel {
             c.fill(roundedRect: track, radius: 1, t.fill)
             let kx = track.minX + 5 + CGFloat(tileFraction) * (track.width - 10)   // the knob travels 5 pt in from the ends
             c.fill(roundedRect: CGRect(x: track.minX, y: track.minY, width: max(kx - track.minX, 0), height: 2), radius: 1, t.accent)
-            c.fill(roundedRect: CGRect(x: kx - 5, y: s.midY - 5, width: 10, height: 10), radius: 5, .white)
+            c.fill(roundedRect: CGRect(x: kx - 4, y: s.midY - 4, width: 8, height: 8), radius: 4, .white)
         }
         let v = viewButtonRect
         let hot = hover.map { v.contains($0) } == true
@@ -795,8 +795,9 @@ public final class LibraryDrawPanel {
         let t = theme
         for chip in chipFrames(c) {
             let on = chip.kind.map { model.kindFilter.contains($0) } ?? model.kindFilter.isEmpty
-            c.fill(roundedRect: chip.frame, radius: chip.frame.height / 2, on ? t.fillPressed : t.fill)
-            c.draw(chip.title, in: chip.frame, fontSize: Self.listFont, on ? t.label : t.label2, align: .center)
+            // The active filter is a filled chip in the current fill (artifact: level-2 pills).
+            if on { c.fill(roundedRect: chip.frame.insetBy(dx: 2, dy: 1), radius: CGFloat(DrawTheme.Radius.small), t.current) }
+            c.draw(chip.title, in: chip.frame, fontSize: Self.listFont, on ? t.label : t.label3, align: .center)
         }
     }
 
@@ -806,15 +807,8 @@ public final class LibraryDrawPanel {
         // The AppKit empty state is centered in the pane under the search row (chips included), 20 pt in from the edges.
         let pane = CGRect(x: contentX, y: Self.searchRowHeight, width: max(size.width - contentX, 0), height: max(size.height - Self.searchRowHeight, 0))
         let r = pane.insetBy(dx: 20, dy: 0)
-        let lines = c.wrap(text.hint, width: r.width, fontSize: Self.listFont).prefix(3)
-        let block = 20 + 6 + CGFloat(lines.count) * 14
-        let top = pane.midY - block / 2
-        c.draw(text.title, in: CGRect(x: r.minX, y: top, width: r.width, height: 20),
-               fontSize: 15, t.label2, align: .center, face: c.semibold)
-        for (i, line) in lines.enumerated() {
-            c.draw(line, in: CGRect(x: r.minX, y: top + 26 + CGFloat(i) * 14, width: r.width, height: 14),
-                   fontSize: Self.listFont, t.label3, align: .center)
-        }
+        // One quiet line, no art (art.html R7); the add-folder button stays below it when offered.
+        _ = c.drawEmptyState(title: text.title, hint: text.hint, in: r, art: true, theme: t)
         if offersAddFolder {
             let b = addFolderButtonRect
             c.fill(roundedRect: b, radius: CGFloat(DrawTheme.Radius.small), t.fill)
@@ -872,7 +866,7 @@ public final class LibraryDrawPanel {
             let cell = cells[pl.index]
             if case .header(let g) = cell { drawSectionHeader(&c, g, in: rr); continue }
             let pill = rr.insetBy(dx: CGFloat(DrawTheme.Spacing.xs), dy: 1)
-            if selected.contains(cell.key) { c.fill(roundedRect: pill, radius: CGFloat(DrawTheme.Radius.small), t.accentFill) }
+            if selected.contains(cell.key) { c.fill(roundedRect: pill, radius: CGFloat(DrawTheme.Radius.small), t.current) }
             let x = rr.minX + Self.pad + 4
             let (symbol, name, fav) = label(cell)
             c.draw(icon: symbol, at: CGPoint(x: x, y: rr.midY - 6), size: 12, t.label3)

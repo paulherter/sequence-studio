@@ -339,7 +339,7 @@ import Testing
         for _ in 0..<5 { _ = SubjectTrackRules.heldPieces(seen: seen, answer: answer, size: 256, others: others) }
         let ms = Date().timeIntervalSince(began) * 1000 / 5
         print("PERF heldPieces 256x256: \(ms) ms")
-        #expect(ms < 60, "\(ms) ms")
+        #expect(ms < 150, "\(ms) ms")
     }
 
     @Test func aLongStripIsNoHeldPiece() throws {

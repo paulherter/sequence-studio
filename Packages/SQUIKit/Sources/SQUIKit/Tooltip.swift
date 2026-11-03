@@ -1,4 +1,4 @@
-import AppKit
+import Foundation
 
 /// Tooltip text convention (INTERACTION-AUDIT §9): the control's name plus its key, "Name (Key)"; just the name when it
 /// has no key. Never a sentence: explanations belong in DESIGN.md or the status line, so a trailing period is dropped.
@@ -20,12 +20,5 @@ public enum Tooltip {
     /// Name plus the command's current key.
     public static func text(_ name: String, command: EditorCommand, map: CommandMap = .current) -> String {
         text(name, binding: map.binding(for: command))
-    }
-}
-
-public extension NSView {
-    /// Sets `toolTip` by the convention (name plus the command's key, when given).
-    @MainActor func setTooltip(_ name: String, command: EditorCommand? = nil) {
-        sqToolTip = command.map { Tooltip.text(name, command: $0) } ?? Tooltip.text(name, shortcut: nil)
     }
 }

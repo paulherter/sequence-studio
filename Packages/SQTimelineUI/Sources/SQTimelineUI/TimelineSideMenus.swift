@@ -54,8 +54,7 @@ public enum TimelineSideMenus {
                 switches.append(SQMenuItem(title: "Solo", isChecked: track.isSolo) { toggle(.solo) })
             }
             switches.append(SQMenuItem(title: "Lock Track", isChecked: track.isLocked) { toggle(.lock) })
-            switches.append(SQMenuItem(title: "Sync Lock", isChecked: track.syncLock,
-                                       help: "Keeps this track in step when a ripple edit moves another track") { toggle(.syncLock) })
+            switches.append(SQMenuItem(title: "Sync Lock", isChecked: track.syncLock) { toggle(.syncLock) })
             switches.append(.separator)
         }
         var rows = switches

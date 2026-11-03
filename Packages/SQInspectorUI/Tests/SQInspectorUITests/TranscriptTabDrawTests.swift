@@ -47,7 +47,7 @@ private final class Words: TranscriptionService, @unchecked Sendable {
         m.sourceURL = URL(fileURLWithPath: "/tmp/a.wav")
         let tab = TranscriptTabDraw()
         tab.model = m
-        #expect(tab.isIdle && tab.transcribeTitle == "Transcribe" && tab.transcribeIsAccent)
+        #expect(tab.isIdle && tab.transcribeTitle == "Transcribe" && !tab.transcribeIsAccent)
         #expect(tab.control(at: CGPoint(x: 20, y: 11)) == .transcribe)
         #expect(tab.control(at: CGPoint(x: 100, y: 40)) == nil)
     }

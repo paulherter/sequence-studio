@@ -605,7 +605,7 @@ public final class ShellExportSheet: ShellDialogContent {
             let row = CGRect(x: lf.minX, y: y, width: lf.width, height: M.listRowH)
             // The Mac list shows the selected output by the settings column only; hover gets a soft body.
             if hover == .output(r.id) {
-                c.fill(roundedRect: row.insetBy(dx: 4, dy: 1), radius: 4, t.fillHover.alpha(0.5))
+                c.fill(roundedRect: row.insetBy(dx: 4, dy: 1), radius: CGFloat(DrawTheme.Radius.small), t.fillHover.alpha(0.5))
             }
             let cb = CGRect(x: row.minX + 12, y: row.midY - M.checkBox / 2, width: M.checkBox, height: M.checkBox)
             InspectorDraw.checkbox(&c, r.isChecked ? .on : .off, box: cb, hovering: hover == .outputCheck(r.id),
@@ -704,11 +704,11 @@ public final class ShellExportSheet: ShellDialogContent {
             c.draw(s, in: r, fontSize: caption ? M.caption : M.body, color(tone, t).alpha(a), inset: 2, face: tone == .label ? c.medium : 0)
         case .segmented(let labels, let selected, let disabled, let sw):
             let track = CGRect(x: r.minX, y: r.minY, width: CGFloat(labels.count) * sw + 2, height: r.height)
-            c.fill(roundedRect: track, radius: 6, t.inkFill(0.06))
+            SegmentDraw.track(&c, track, t)
             for (k, l) in labels.enumerated() {
                 let seg = CGRect(x: track.minX + 1 + CGFloat(k) * sw, y: track.minY + 1, width: sw, height: track.height - 2)
-                if k == selected { c.fill(roundedRect: seg, radius: 4, t.fillPressed) }
-                else if hover == .segment(p, k), !disabled.contains(k) { c.fill(roundedRect: seg, radius: 4, t.fill) }
+                if k == selected { SegmentDraw.selected(&c, seg, t) }
+                else if hover == .segment(p, k), !disabled.contains(k) { c.fill(roundedRect: seg, radius: CGFloat(DrawTheme.Radius.small), t.fill) }
                 let on = it.enabled && !disabled.contains(k)
                 c.draw(l, in: seg, fontSize: M.body, on ? t.label : t.label3, align: .center)
             }

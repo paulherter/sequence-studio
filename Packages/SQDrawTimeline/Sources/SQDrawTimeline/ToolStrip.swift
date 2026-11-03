@@ -138,11 +138,7 @@ public struct ToolStrip: Sendable {
             let g = Self.glyphSize
             cv.draw(icon: ToolStripTools.icon(tool, state: state), at: CGPoint(x: r.midX - g / 2, y: r.midY - g / 2), size: g,
                     on ? theme.label : theme.label2)
-            guard ToolStripTools.hasVariants(tool) else { continue }
-            // v9 `.grp::after`: 4 pt triangle, 4 pt in from the right and bottom, t3 (t1 on the picked tool).
-            let m = r.insetBy(dx: 4, dy: 4), k: CGFloat = 4
-            cv.fill(polygon: [CGPoint(x: m.maxX, y: m.maxY), CGPoint(x: m.maxX - k, y: m.maxY), CGPoint(x: m.maxX, y: m.maxY - k)],
-                    on ? theme.label : theme.label3)
+            // Flat icons: the artifact draws no variant triangle (DIFF2-D E24); variants open on long press as before.
         }
     }
 

@@ -358,10 +358,6 @@ public enum ShellMenuBar {
 
     /// The support color of the heart row (`Theme.Colors.support`).
     static var supportTint: SQMenuTint? {
-        #if canImport(AppKit)
-        Theme.Colors.support
-        #else
         PaletteColor(hex: 0xEA4AAA)   // `Theme.Colors.support`
-        #endif
     }
 }

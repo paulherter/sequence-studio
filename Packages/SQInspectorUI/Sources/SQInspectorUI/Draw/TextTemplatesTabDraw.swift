@@ -34,6 +34,7 @@ import SQUIKit
 
     public init() {
         search.alignment = .left
+        search.textInset = 28      // the magnifier at 9, the text from 28 (as the Library search field)
         search.fontSize = CGFloat(DrawTheme.TypeSize.body)
     }
 
@@ -100,8 +101,9 @@ import SQUIKit
         var f = search
         f.hovering = hover == .search
         f.draw(&c, in: sf, theme: t, focused: search.isEditing)
+        c.draw(icon: .search, at: CGPoint(x: sf.minX + 9, y: sf.midY - 6), size: 12, t.label3)
         if f.text.isEmpty, !f.isEditing {
-            c.draw(SQL10n.string("Search templates"), in: sf.insetBy(dx: 6, dy: 0), fontSize: f.fontSize, t.label3)
+            c.draw(SQL10n.string("Search templates"), in: sf, fontSize: f.fontSize, t.label3, inset: 28)
         }
 
         let area = scrollFrame
@@ -123,7 +125,7 @@ import SQUIKit
     private func drawTile(_ c: inout Canvas, _ tile: TextTemplateTile, in r: CGRect, hovering: Bool) {
         let t = theme, radius = CGFloat(DrawTheme.Radius.control)
         let well = CGRect(x: r.minX, y: r.minY, width: r.width, height: r.height - 18).insetBy(dx: 1, dy: 1)
-        c.fill(roundedRect: well, radius: radius, hovering ? t.fillHover : t.content)
+        c.fill(roundedRect: well, radius: radius, hovering ? DrawColor.black.alpha(0.78) : DrawColor.black)   // a dark preview ground in both themes (the samples are light text)
         c.saveGState()
         c.clip(to: well)
         // The saved or rendered picture (`TextTemplateTileAtlas`); until it is made, the template's own font and color
@@ -133,11 +135,11 @@ import SQUIKit
         } else if let st = tile.style {
             let face = c.face(family: st.fontName, weight: st.weight, italic: st.italic)
             let col = st.color, ink = col.alpha > 0.05
-                ? DrawColor(Float(col.red), Float(col.green), Float(col.blue), Float(col.alpha)) : t.label2
-            c.draw(tile.sampleText, in: well.insetBy(dx: 4, dy: 0), fontSize: CGFloat(DrawTheme.TypeSize.title), ink, align: .center,
+                ? DrawColor(Float(col.red), Float(col.green), Float(col.blue), Float(col.alpha)) : DrawColor.white
+            c.draw(tile.sampleText, in: well.insetBy(dx: 4, dy: 0), fontSize: CGFloat(DrawTheme.TypeSize.body), ink, align: .center,
                    face: face)
         } else {
-            c.draw(tile.sampleText, in: well.insetBy(dx: 4, dy: 0), fontSize: CGFloat(DrawTheme.TypeSize.title), t.label2, align: .center)
+            c.draw(tile.sampleText, in: well.insetBy(dx: 4, dy: 0), fontSize: CGFloat(DrawTheme.TypeSize.body), DrawColor.white, align: .center)
         }
         c.restoreGState()
         c.stroke(roundedRect: well, radius: radius, width: 1, hovering ? t.accent : t.separator)

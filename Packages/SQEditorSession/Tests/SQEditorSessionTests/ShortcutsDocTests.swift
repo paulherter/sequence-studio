@@ -3,7 +3,7 @@ import Testing
 @testable import SQEditorSession
 
 /// docs/SHORTCUTS.md is generated from the key map. Regenerate with `SQ_WRITE_SHORTCUTS=1 SQ_TEST_FILTER=ShortcutsDoc
-/// scripts/test.sh SQEditorUI`; `docIsUpToDate` fails when the file is stale.
+/// scripts/test.sh SQEditorSession`; `docIsUpToDate` fails when the file is stale.
 @Suite struct ShortcutsDocTests {
     static let docURL = URL(fileURLWithPath: #filePath)
         .deletingLastPathComponent().deletingLastPathComponent().deletingLastPathComponent()

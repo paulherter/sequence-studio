@@ -118,6 +118,13 @@ public struct TextEditState: Sendable, Equatable {
     @discardableResult
     public mutating func handle(_ key: InputKey, modifiers: InputModifiers = []) -> Outcome {
         let shift = modifiers.contains(.shift)
+        // The system layout's text for this press wins over the key position (Y is not Z, Shift gives capitals, AltGr @).
+        if let typed = HostTypedText.shared.text, !typed.isEmpty {
+            switch key {
+            case .character, .space, .plus, .minus: insert(typed); return .edited
+            default: break
+            }
+        }
         switch key {
         case .enter: return .commit
         case .escape: return .cancel

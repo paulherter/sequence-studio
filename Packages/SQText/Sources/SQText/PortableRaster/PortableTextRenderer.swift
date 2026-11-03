@@ -128,6 +128,9 @@ public enum PortableTextRenderer {
                 group.fill(mask { m in for c in outlines { m.add(c) } }, color: LinearCanvas.linear(color))
             }
         }
+        for (color, outlines) in glyphs.colorLayers(highlight: highlight) {
+            group.fill(mask { m in for c in outlines { m.add(c) } }, color: LinearCanvas.linear(color))
+        }
         for b in bars {
             group.fill(mask { $0.add(rectPolygon(b.rect)) }, color: LinearCanvas.linear(style.lineStyle(b.styleIndex).color))
         }
@@ -155,7 +158,10 @@ extension PortableTextRenderer {
 
 /// Glyph outlines of a layout in raster pixels (y down), with the UTF-16 offset of each glyph in its line's text.
 struct GlyphPlacer {
-    struct Placed { let line: Int; let offset: Int; let outline: [[SIMD2<Double>]] }
+    /// `layers` is set for a color glyph (emoji): its stacked outlines with their colors (nil color = the text color);
+    /// `outline` is then all of them (what strokes and shadows use).
+    struct Placed { let line: Int; let offset: Int; let outline: [[SIMD2<Double>]]
+        var layers: [(outline: [[SIMD2<Double>]], color: RGBAColor?)]? = nil }
     let placed: [Placed]
     let layout: TextLayoutResult
     let style: TextStyle
@@ -178,19 +184,33 @@ struct GlyphPlacer {
             let baseline = l.y + l.baseline
             var offset = 0
             var previous: Int?
-            for scalar in l.text.unicodeScalars {
-                let g = font.glyph(for: scalar)
-                if let p = previous { pen += font.face.kern(p, g, coords: coords) * unit }
+            let scalars = Array(l.text.unicodeScalars)
+            let plan = PortableFallback.plan(scalars, primary: font)
+            for (idx, scalar) in scalars.enumerated() {
+                let (pick, skip) = plan[idx]
                 carets[li][offset] = pen
-                let k = unit * s, ox = (pen - ink.x) * s, oy = (baseline - ink.y) * s
+                defer { offset += scalar.utf16.count }
+                if skip { continue }
+                let face = pick.font ?? font, g = pick.glyph
+                let gcoords = pick.font == nil ? coords : []
+                let gunit = ls.size / Double(face.unitsPerEm)
+                if pick.font == nil, let p = previous { pen += font.face.kern(p, g, coords: coords) * unit }
+                let k = gunit * s, ox = (pen - ink.x) * s, oy = (baseline - ink.y) * s
                 let italic = choice.shear ? shear : 0
-                let contours = OutlineFonts.polylines(font.contours(glyph: g, coords: coords), pixelsPerUnit: k) { x, y in
-                    SIMD2(ox + (x + italic * y) * k, oy - y * k)
+                func shape(_ glyph: Int) -> [[SIMD2<Double>]] {
+                    OutlineFonts.polylines(face.contours(glyph: glyph, coords: gcoords), pixelsPerUnit: k) { x, y in
+                        SIMD2(ox + (x + italic * y) * k, oy - y * k)
+                    }
                 }
-                if !contours.isEmpty { out.append(Placed(line: li, offset: offset, outline: contours)) }
-                pen += font.advance(glyph: g, coords: coords) * unit + style.tracking
-                offset += scalar.utf16.count
-                previous = g
+                if pick.font != nil, let color = face.face.colorGlyphs?.layers(of: g) {
+                    let layers = color.map { (outline: shape($0.glyph), color: $0.color) }
+                    out.append(Placed(line: li, offset: offset, outline: layers.flatMap(\.outline), layers: layers))
+                } else {
+                    let contours = shape(g)
+                    if !contours.isEmpty { out.append(Placed(line: li, offset: offset, outline: contours)) }
+                }
+                pen += (pick.advance.map(Double.init) ?? face.advance(glyph: g, coords: gcoords)) * gunit + style.tracking
+                previous = pick.font == nil ? g : nil
             }
             carets[li][offset] = pen
         }
@@ -208,11 +228,20 @@ struct GlyphPlacer {
     func fillGroups(highlight: TextHighlight?) -> [(RGBAColor, [[SIMD2<Double>]])] {
         let paint = fillColors(highlight: highlight)
         var groups: [(RGBAColor, [[SIMD2<Double>]])] = []
-        for p in placed {
+        for p in placed where p.layers == nil {
             guard let c = paint(p) else { continue }
             if let i = groups.firstIndex(where: { $0.0 == c }) { groups[i].1 += p.outline } else { groups.append((c, p.outline)) }
         }
         return groups
+    }
+
+    /// The layers of the color glyphs (emoji) with their colors; a layer without color takes the glyph's text color.
+    func colorLayers(highlight: TextHighlight?) -> [(RGBAColor, [[SIMD2<Double>]])] {
+        let paint = fillColors(highlight: highlight)
+        return placed.flatMap { p -> [(RGBAColor, [[SIMD2<Double>]])] in
+            guard let layers = p.layers, let text = paint(p) else { return [] }
+            return layers.compactMap { l in l.outline.isEmpty ? nil : (l.color ?? text, l.outline) }
+        }
     }
 
     /// The fill color of one placed glyph (nil: not drawn, an unlit word of an `onlyLit` highlight).

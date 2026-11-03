@@ -7,7 +7,7 @@ public enum CommandMenuKeys {
     /// Shortcut text of an editor command in the current key map ("" when unbound or not showable).
     @MainActor public static func shortcut(_ command: EditorCommand, map: CommandMap = .current) -> String {
         guard let b = map.binding(for: command), let e = equivalent(for: b) else { return "" }
-        return SQMenuShortcut.glyphs(key: e.key, modifiers: e.modifiers)
+        return SQMenuShortcut.glyphs(key: e.key, keyModifiers: b.modifiers)
     }
 
     /// AppKit key equivalent (character + modifiers) of a binding; nil for keys a menu cannot show (arrows, function keys).

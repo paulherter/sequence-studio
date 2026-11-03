@@ -28,7 +28,7 @@ public final class ShellShortcutsEditor {
     /// Set Shortcut waits for a key press.
     public private(set) var capturing = false
     public private(set) var info = ShellShortcutsEditor.idleInfo
-    var search = TextFieldControl()
+    var search: TextFieldControl = { var f = TextFieldControl(); f.bare = true; return f }()
     let scrollBody = ScrollBody()
     /// The scroll offset; the body adds momentum and the rubber band.
     var scroll: CGFloat {

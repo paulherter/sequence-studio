@@ -486,7 +486,7 @@ extension TimelinePanel {
                 let r = CGRect(x: x, y: row.maxY + CGFloat(index) * laneH, width: w, height: laneH)
                 guard r.minY >= TimelineGeometry.rulerHeight, r.maxY <= bottom else { continue }
                 let sel = itemLanes.selectedClip == c.id && itemLanes.selectedItems.contains(l.id)
-                cv.fill(r, theme.panel)
+                cv.fill(r, theme.lane)
                 if sel { cv.fill(r, theme.selection) }
                 cv.fill(CGRect(x: x, y: r.maxY - 1, width: w, height: 1), theme.trackHeaderLine)
                 let color = sel ? theme.label : theme.label2

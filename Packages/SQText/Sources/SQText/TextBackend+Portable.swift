@@ -39,18 +39,32 @@ private struct PortableLines: LineTypesetting {
         var total = 0.0
         var i = 0
         var previous: Int?
+        // Decode the scalars first so the fallback plan sees whole sequences.
+        var scalars: [Unicode.Scalar] = [], widths: [Int] = []
         while i < units.count {
             let n = UTF16.isLeadSurrogate(units[i]) && i + 1 < units.count ? 2 : 1
-            let scalar = n == 2
+            scalars.append(n == 2
                 ? UnicodeScalar(0x10000 + (UInt32(units[i]) - 0xD800) << 10 + (UInt32(units[i + 1]) - 0xDC00)) ?? "\u{FFFD}"
-                : UnicodeScalar(UInt32(units[i])) ?? "\u{FFFD}"
-            let g = font.glyph(scalar)
-            if let p = previous { total += font.kern(p, g) }
-            total += font.advance(glyph: g) + tracking
-            previous = g
+                : UnicodeScalar(UInt32(units[i])) ?? "\u{FFFD}")
+            widths.append(n); i += n
+        }
+        let plan = PortableFallback.plan(scalars, primary: font.choice.font)
+        for (idx, scalar) in scalars.enumerated() {
+            let n = widths[idx]
+            let (pick, skip) = plan[idx]
+            if !skip {
+                if let fb = pick.font {
+                    total += Double(pick.advance ?? fb.advance(glyph: pick.glyph)) * font.size / Double(fb.unitsPerEm) + tracking
+                    previous = nil
+                } else {
+                    let g = pick.glyph
+                    if let p = previous { total += font.kern(p, g) }
+                    total += font.advance(glyph: g) + tracking
+                    previous = g
+                }
+            }
             let isSpace = scalar.properties.isWhitespace
             for k in 0..<n { p.append(k == n - 1 ? total : p.last!); ws.append(isSpace) }
-            i += n
         }
         prefix = p; whitespace = ws; metrics = font.metrics
     }

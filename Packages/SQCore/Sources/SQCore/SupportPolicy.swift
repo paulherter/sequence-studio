@@ -91,7 +91,7 @@ public enum FeedbackLinks {
         c.scheme = "mailto"
         c.path = address
         let body = "What were you doing?\n\n\nWhat happened / what did you expect?\n\n\n"
-            + "---\nSequence Studio \(appVersion) (\(build)), \(os)\n"
+            + "---\nSequence Studio \(appVersion)\(build.isEmpty ? "" : " (\(build))"), \(os)\n"
             + "(Please attach the newest file from Help > Reveal Logs and Reports if it crashed.)\n"
         c.queryItems = [URLQueryItem(name: "subject", value: "Sequence Studio feedback"),
                         URLQueryItem(name: "body", value: body)]

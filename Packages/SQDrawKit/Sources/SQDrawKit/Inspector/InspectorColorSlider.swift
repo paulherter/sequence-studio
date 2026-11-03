@@ -11,7 +11,7 @@ public enum InspectorColorRamp: Sendable, Equatable {
     /// The ramp's stops (location 0...1, color): `Theme.Palette.whiteBalanceTemperature`, `whiteBalanceTint`,
     /// `saturationRamp`; nil for the plain track.
     public var stops: [(Float, DrawColor)]? {
-        let gray = DrawColor(0.54, 0.54, 0.54)
+        let gray = DrawTheme.rampNeutral
         switch self {
         case .plain: return nil
         case .temperature: return [(0, DrawColor(hex: 0x4F8FF0)), (0.5, gray), (1, DrawColor(hex: 0xF0A53C))]

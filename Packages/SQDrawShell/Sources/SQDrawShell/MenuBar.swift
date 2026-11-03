@@ -9,7 +9,7 @@ import SQDrawKit
 /// (the host sends `altTapped()`), Esc closes.
 @MainActor
 public final class MenuBar {
-    public static let defaultHeight: CGFloat = 28
+    public static let defaultHeight: CGFloat = 26
     /// Bar height in points: 28 alone, or the host's title bar height when the titles sit in it (Windows: the 44 pt top bar).
     public var height: CGFloat = MenuBar.defaultHeight { didSet { layoutTitles() } }
     /// False when the bar sits on a title bar the host already painted: no fill, no bottom edge.
@@ -17,8 +17,9 @@ public final class MenuBar {
     /// False on the Mac: the shared menus live in the system menu bar (`SharedUIMainMenu`), the window shows no titles.
     /// The controller still opens the bar's popups (the Workspace popup).
     public var showsTitles = true { didSet { layoutTitles() } }
-    static let titlePad: CGFloat = 10
-    static let fontSize: CGFloat = 12
+    static let titlePad: CGFloat = 8
+    static let fontSize: CGFloat = 11
+    static let titleRadius: CGFloat = 4
 
     public var menus: [ShellMenu] = [] { didSet { layoutTitles() } }
     public let controller = MenuController()
@@ -115,16 +116,16 @@ public final class MenuBar {
     public func draw(_ c: inout Canvas, theme t: DrawTheme, width: CGFloat) {
         if drawsBackground {
             c.fill(CGRect(x: origin.x, y: origin.y, width: width, height: height), t.titlebar)
-            c.fill(CGRect(x: origin.x, y: origin.y + height - 1, width: width, height: 1), t.separator)
+            c.fill(CGRect(x: origin.x, y: origin.y + height - 1, width: width, height: 1), t.hair)
         }
         for (i, m) in menus.enumerated() where titleFrames.indices.contains(i) {
             let r = titleFrames[i]
-            if open == i { c.fill(roundedRect: r.insetBy(dx: 0, dy: max(3, (r.height - 22) / 2)), radius: SQMenuLayout.rowRadius, t.fillHover) }
-            c.draw(m.title, in: r, fontSize: Self.fontSize, t.label, align: .center)
+            if open == i { c.fill(roundedRect: r.insetBy(dx: 0, dy: max(3, (r.height - 20) / 2)), radius: Self.titleRadius, t.current) }
+            c.draw(m.title, in: r, fontSize: Self.fontSize, t.label, align: .center, face: c.medium)
         }
         if let r = overflowFrame {
-            if open == titleFrames.count { c.fill(roundedRect: r.insetBy(dx: 0, dy: max(3, (r.height - 22) / 2)), radius: SQMenuLayout.rowRadius, t.fillHover) }
-            c.draw(Self.overflowTitle, in: r, fontSize: Self.fontSize, t.label, align: .center)
+            if open == titleFrames.count { c.fill(roundedRect: r.insetBy(dx: 0, dy: max(3, (r.height - 20) / 2)), radius: Self.titleRadius, t.current) }
+            c.draw(Self.overflowTitle, in: r, fontSize: Self.fontSize, t.label, align: .center, face: c.medium)
         }
     }
 

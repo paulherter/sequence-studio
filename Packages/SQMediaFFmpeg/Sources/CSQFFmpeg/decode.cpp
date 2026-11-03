@@ -2,6 +2,7 @@
 #include "common.h"
 #include <string.h>
 #include <thread>
+#include <cstdlib>
 #include <vector>
 
 struct SQFFDecoder {
@@ -22,7 +23,7 @@ static AVPixelFormat pickD3D11(AVCodecContext *, const AVPixelFormat *f) {
     return AV_PIX_FMT_NONE;   // no hardware path for this stream: decoding fails, the caller falls back to software
 }
 
-int sq_dec_open(const char *codecName, const uint8_t *extradata, int extradataSize, int width, int height, int tbNum,
+int sq_dec_open(const char *codecName, const uint8_t *extradata, int extradataSize, int width, int height, int bitsPerCodedSample, int tbNum,
                 int tbDen, int hardware, int extraHWFrames, SQFFDecoder **out, char *err, int errLen) {
     *out = nullptr;
     const AVCodecDescriptor *desc = avcodec_descriptor_get_by_name(codecName);
@@ -33,6 +34,7 @@ int sq_dec_open(const char *codecName, const uint8_t *extradata, int extradataSi
     dec->ctx = avcodec_alloc_context3(codec);
     dec->pkt = av_packet_alloc();
     dec->ctx->width = width; dec->ctx->height = height;
+    dec->ctx->bits_per_coded_sample = bitsPerCodedSample;
     dec->ctx->pkt_timebase = AVRational{tbNum, tbDen};
     if (extradataSize > 0) {
         dec->ctx->extradata = (uint8_t *)av_mallocz(extradataSize + AV_INPUT_BUFFER_PADDING_SIZE);
@@ -49,7 +51,12 @@ int sq_dec_open(const char *codecName, const uint8_t *extradata, int extradataSi
         dec->ctx->extra_hw_frames = extraHWFrames;
         dec->hardware = true;
     } else {
-        dec->ctx->thread_count = 0;   // automatic
+        // Measured on the PC (16 threads, 4K H.264 and 1080p ProRes in the project): automatic frame threading took 481 % of
+        // a core in playback, two slice threads 339 % with no dropped frame. SQ_DEC_THREADS / SQ_DEC_THREAD_TYPE
+        // (1 frame, 2 slice, 3 both) override it for experiments.
+        const char *tc = getenv("SQ_DEC_THREADS"), *tt = getenv("SQ_DEC_THREAD_TYPE");
+        dec->ctx->thread_count = tc ? atoi(tc) : 2;
+        dec->ctx->thread_type = tt ? atoi(tt) : FF_THREAD_SLICE;
     }
     if ((e = avcodec_open2(dec->ctx, codec, nullptr)) < 0) { sqSetError(err, errLen, "codec open", e); sq_dec_close(dec); return e; }
     snprintf(dec->name, sizeof dec->name, "%s (%s)", codec->name, hardware ? "d3d11va" : "software");
@@ -97,6 +104,14 @@ int sq_dec_receive(SQFFDecoder *dec, SQFFFrame **out) {
 }
 
 void sq_dec_flush(SQFFDecoder *dec) { avcodec_flush_buffers(dec->ctx); }
+
+// Preview decode (scrubbing a heavy software-decoded clip): no in-loop deblocking and FFmpeg's non-spec speedups. The pictures
+// drift from the exact ones, so the caller flushes and drops them when it turns this off.
+void sq_dec_set_fast(SQFFDecoder *dec, int on) {
+    if (dec->hardware) return;
+    dec->ctx->skip_loop_filter = on ? AVDISCARD_ALL : AVDISCARD_DEFAULT;
+    if (on) dec->ctx->flags2 |= AV_CODEC_FLAG2_FAST; else dec->ctx->flags2 &= ~AV_CODEC_FLAG2_FAST;
+}
 
 static AVPixelFormat pixelsOf(const AVFrame *f) {
     if (f->format == AV_PIX_FMT_D3D11 && f->hw_frames_ctx)
@@ -149,6 +164,36 @@ int sq_frame_download(const SQFFFrame *f, uint8_t *buf, int cap) {
         sws_scale(sws, src->data, src->linesize, 0, h, dst, ds);
         sws_freeContext(sws);
     }
+    av_frame_free(&sw);
+    return 0;
+}
+
+int sq_frame_has_alpha(const SQFFFrame *f) {
+    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get(pixelsOf(f->frame));
+    return d && (d->flags & AV_PIX_FMT_FLAG_ALPHA) ? 1 : 0;
+}
+
+int sq_frame_download_rgba(const SQFFFrame *f, uint8_t *buf, int cap) {
+    const AVFrame *src = f->frame;
+    AVFrame *sw = nullptr;
+    int e = 0;
+    if (src->format == AV_PIX_FMT_D3D11) {
+        sw = av_frame_alloc();
+        if ((e = av_hwframe_transfer_data(sw, src, 0)) < 0) { av_frame_free(&sw); return e; }
+        src = sw;
+    }
+    int w = src->width, h = src->height;
+    if (cap < w * h * 4) { av_frame_free(&sw); return AVERROR(ENOSPC); }
+    uint8_t *dst[4] = { buf, nullptr, nullptr, nullptr }; int ds[4] = { w * 4, 0, 0, 0 };
+    SwsContext *sws = sws_getContext(w, h, (AVPixelFormat)src->format, w, h, AV_PIX_FMT_RGBA, SWS_POINT, nullptr, nullptr, nullptr);
+    if (!sws) { av_frame_free(&sw); return AVERROR(EINVAL); }
+    const AVPixFmtDescriptor *sd = av_pix_fmt_desc_get((AVPixelFormat)src->format);
+    if (sd && !(sd->flags & AV_PIX_FMT_FLAG_RGB)) {   // YUV (ProRes 4444 ...): BT.709, as the video path
+        const int *c709 = sws_getCoefficients(SWS_CS_ITU709);
+        sws_setColorspaceDetails(sws, c709, src->color_range == AVCOL_RANGE_JPEG ? 1 : 0, c709, 1, 0, 1 << 16, 1 << 16);
+    }
+    sws_scale(sws, src->data, src->linesize, 0, h, dst, ds);
+    sws_freeContext(sws);
     av_frame_free(&sw);
     return 0;
 }

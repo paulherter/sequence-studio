@@ -24,3 +24,4 @@ Packages/SQInspectorUI/Sources/SQInspectorUI/Draw/TransitionControlsDraw.swift:c
 Packages/SQInspectorUI/Sources/SQInspectorUI/Draw/CaptionStyleTabDraw.swift:color-literal  caption content colors (karaoke default, kit color fallback) and picker-to-model conversions, never app chrome (Inspector slice)
 App/Sources/SharedUI/SharedUIView.swift:color-literal  converts the theme's divider token to a CGColor, no color of its own (Mac shared UI slice)
 App/Sources/SharedUI/SharedUIMainMenu.swift:native-control  the macOS main menu bar of the shared-UI app (system bar like MenuBuilder), no popup or sheet (Mac shared UI slice)
+Packages/SQUIKit/Sources/SQUIKit/DesignTokens.swift:color-literal  the token source itself: artifact surface hex (raised, well, knob) defined once for Mac and Windows

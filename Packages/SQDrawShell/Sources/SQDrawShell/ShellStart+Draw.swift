@@ -14,12 +14,14 @@ extension ShellStartScreen {
         var frame: DrawColor { t.titlebar }
         var panel: DrawColor { t.panel }
         var well: DrawColor { t.content }
-        var raised: DrawColor { t.overlay }
+        /// art.html `--sunken` (cards) and `--raised` (secondary buttons).
+        var sunken: DrawColor { t.content }
+        var raised: DrawColor { t.raised }
         var soft: DrawColor { t.inkFill(0.06) }
         var softHover: DrawColor { t.inkFill(0.09) }
         var poster: DrawColor { t.fill }
         /// `Theme.Colors.field`.
-        var field: DrawColor { DrawColor.black.alpha(t.palette.isDark ? 0.28 : 0.05) }
+        var field: DrawColor { t.well }
         var warning: DrawColor { DrawColor(Float(t.palette.warning.r) / 255, Float(t.palette.warning.g) / 255, Float(t.palette.warning.b) / 255, 1) }
         var support: DrawColor { DrawColor(hex: 0xEA4AAA) }
         var badge: DrawColor { DrawColor.black.alpha(0.72) }
@@ -30,21 +32,43 @@ extension ShellStartScreen {
 
     public func draw(_ c: inout Canvas, theme t: DrawTheme) {
         let k = Colors(t: t)
-        c.fill(frame, k.canvas)
+        // Artifact: the whole window is chrome; the rail sits flush on it, a hairline closes the 44 pt top bar.
+        c.fill(frame, k.frame)
         drawTopBar(&c, t, k)
+        c.fill(CGRect(x: frame.minX, y: topBar.maxY - 1, width: frame.width, height: topBar.height > 0 ? 1 : 0), t.hair)
         drawRail(&c, t, k)
         drawPane(&c, t, k)
+        drawMascots(&c)
         drawStatus(&c, t, k)
+    }
+
+    /// Pip on hosts without real mascot views (`ShellHost.drawsStartMascots`): above the empty pane's title, or peeking over the
+    /// support card (clipped at the card's top edge plus the tuck, as the Mac clip view).
+    private func drawMascots(_ c: inout Canvas) {
+        guard host?.drawsStartMascots == true else { return }
+        if let base = emptyMascotBase {
+            let side: CGFloat = 120   // SQMascotPlace.startEmpty (AppKit-only, so not usable here)
+            mascots.draw(.wink, slot: 0, in: CGRect(x: base.x - side / 2, y: base.y - side, width: side, height: side), into: &c)
+        } else if let card = mascotCard {
+            let side: CGFloat = 52   // SQMascotPlace.startProjects
+            let top = card.minY - side   // peekTuck is 0
+            c.saveGState()
+            c.clip(to: CGRect(x: card.minX, y: top, width: card.width, height: card.minY - top))
+            mascots.draw(.peek, slot: 1, in: CGRect(x: card.maxX - 16 - side, y: top, width: side, height: side), into: &c)
+            c.restoreGState()
+        }
     }
 
     private func drawTopBar(_ c: inout Canvas, _ t: DrawTheme, _ k: Colors) {
         if barFrame == nil {
             c.fill(topBar, k.frame)
-            c.draw("Sequence Studio", in: CGRect(x: topBar.minX + titleInset, y: topBar.minY, width: 200, height: topBar.height),
-                   fontSize: M.fCap, t.label2)
+            // The own Mac start window shows the window buttons only (art.html "Start"); the title is for hosts without them.
+            if titleInset != M.lights { c.draw("Sequence Studio", in: CGRect(x: topBar.minX + titleInset, y: topBar.minY, width: 200, height: topBar.height),
+                   fontSize: M.fHead, t.label, face: c.semibold) }
         }
         let f = searchRect
-        c.fill(roundedRect: f, radius: M.rCtl, t.field)
+        c.fill(roundedRect: f, radius: M.rCtl, k.field)
+        c.stroke(roundedRect: f.insetBy(dx: 0.25, dy: 0.25), radius: M.rCtl, width: 0.5, t.hair2)
         c.draw(icon: .search, at: CGPoint(x: f.minX + M.s2, y: f.midY - 6), size: 12, t.label3)
         let textRect = CGRect(x: f.minX + M.s2 + 18, y: f.minY, width: f.width - 18 - M.s2 - 26, height: f.height)
         search.draw(&c, in: textRect, theme: t, focused: search.isEditing)
@@ -54,7 +78,11 @@ extension ShellStartScreen {
         } else if !query.isEmpty {
             c.draw(icon: .closeCircleFilled, at: searchClearRect.origin, size: 16, t.label3)
         }
-        if search.isEditing { c.stroke(roundedRect: f.insetBy(dx: -1, dy: -1), radius: M.rCtl + 1, width: 2, t.accent) }
+        if search.isEditing {
+            // art.html `.well.focus`: 1 px accent inset + 3 px glow (accent .25).
+            c.stroke(roundedRect: f.insetBy(dx: -1.5, dy: -1.5), radius: M.rCtl + 1.5, width: 3, t.accent.alpha(0.25))
+            c.stroke(roundedRect: f.insetBy(dx: 0.5, dy: 0.5), radius: M.rCtl, width: 1, t.accent)
+        }
     }
 
     private func drawStatus(_ c: inout Canvas, _ t: DrawTheme, _ k: Colors) {
@@ -76,12 +104,12 @@ extension ShellStartScreen {
             case .openOther: button(&c, t, k, "Open…", icon: .folder, hint: ShellPlatformText.commandKey("o"), r, primary: false, hover: hover == h)
             case .tab(let tb):
                 if tb == .home {
-                    c.draw("Browse", in: CGRect(x: r.minX + M.s3, y: r.minY - 16 - M.s1, width: r.width, height: 16), fontSize: M.fCap, t.label3,
+                    c.draw("Browse", in: CGRect(x: r.minX + M.s3, y: r.minY - 22, width: r.width, height: 16), fontSize: M.fCap, t.label3,
                            face: c.semibold)
                 }
                 // `RailRow`: pressed fill on the open tab, soft on hover; 12 pt icon centered in 16, 12 pt title (medium when open).
                 let on = tab == tb, ink = on || hover == h ? t.label : t.label2
-                if on || hover == h { c.fill(roundedRect: r, radius: M.rCtl, on ? t.fillHover : k.soft) }
+                if on || hover == h { c.fill(roundedRect: r, radius: M.rInner, on ? t.current : t.hover) }
                 c.draw(icon: tb.icon, at: CGPoint(x: r.minX + M.s3 + 2, y: r.midY - M.fLab / 2), size: M.fLab, ink)
                 c.draw(tb.rawValue, in: CGRect(x: r.minX + M.s3 + M.s4 + M.s2, y: r.minY, width: r.width - 60, height: r.height),
                        fontSize: M.fLab, ink, face: on ? c.medium : 0)
@@ -93,32 +121,47 @@ extension ShellStartScreen {
                 InspectorDraw.checkbox(&c, reopenLast ? .on : .off, box: b, hovering: hover == h, pressed: false, enabled: true, t)
                 c.draw("Open last project on launch", in: CGRect(x: b.maxX + M.s2, y: r.minY, width: r.width - 22, height: r.height),
                        fontSize: M.fLab, t.label2)
+            case .support(.support) where r.height < M.control: break   // drawn over the card below
             case .appearance, .feedback, .support:
                 // `LinkButton`: 28 square, 8 radius, 13 pt icon.
                 if hover == h { c.fill(roundedRect: r, radius: M.rCtl, k.soft) }
-                let icon: SQIcon = h == .appearance ? .contrast : h == .feedback ? .mail
-                    : h == .support(.github) ? .code : h == .support(.discord) ? .discord : .heart
-                c.draw(icon: icon, at: CGPoint(x: r.midX - M.fBody / 2, y: r.midY - M.fBody / 2), size: M.fBody,
+                let icon: SQIcon = h == .appearance ? .info : h == .feedback ? .mail
+                    : h == .support(.github) ? .code : h == .support(.discord) ? .chats : .heart
+                c.draw(icon: icon, at: CGPoint(x: r.midX - M.iconBody / 2, y: r.midY - M.iconBody / 2), size: M.iconBody,
                        h == .support(.support) ? k.support : t.label2)
             default: break
             }
         }
         // Support card (`supportCard`).
         let s = supportCardRect
-        c.fill(roundedRect: s, radius: M.rCard, k.soft)
-        c.draw(icon: .heart, at: CGPoint(x: s.minX + M.s3, y: s.minY + M.s3 + 2), size: M.fLab, k.support)
-        c.draw(SupportEntry.support.menuTitle, in: CGRect(x: s.minX + M.s3 + M.fLab + M.s2, y: s.minY + M.s3, width: s.width - 40, height: 16),
+        c.fill(roundedRect: s, radius: M.rCard, k.panel)
+        c.stroke(roundedRect: s.insetBy(dx: 0.25, dy: 0.25), radius: M.rCard, width: 0.5, t.hair)
+        // Pip's face (art.html): a light shield, two eyes, a smile, 18 pt.
+        let pip = CGRect(x: s.minX + M.s3, y: s.minY + 10, width: 18, height: 18)
+        let pipEye: CGFloat = 1
+        c.fill(roundedRect: pip, radius: M.rCtl - 1, t.label)
+        c.fill(roundedRect: CGRect(x: pip.minX + 5, y: pip.minY + 5, width: 2, height: 4), radius: pipEye, t.canvas)
+        c.fill(roundedRect: CGRect(x: pip.maxX - 7, y: pip.minY + 5, width: 2, height: 4), radius: pipEye, t.canvas)
+        c.fill(roundedRect: CGRect(x: pip.midX - 2.5, y: pip.minY + 11.5, width: 5, height: 1.5), radius: pipEye * 0.75, t.canvas)
+        c.draw(SupportEntry.support.menuTitle, in: CGRect(x: s.minX + M.s3 + 18 + M.s2, y: s.minY + 13, width: s.width - 50, height: 16),
                fontSize: M.fLab, t.label, face: c.semibold)
-        _ = c.drawWrapped(SupportLinks.tagline, in: CGRect(x: s.minX + M.s3, y: s.minY + M.s3 + 16 + M.s2, width: s.width - 2 * M.s3, height: 60),
+        _ = c.drawWrapped(SupportLinks.tagline, in: CGRect(x: s.minX + M.s3, y: s.minY + 35, width: s.width - 2 * M.s3, height: 60),
                           fontSize: M.fLab, lineHeight: 16, t.label2)
+        if let r = railSpots().first(where: { $0.1 == .support(.support) && $0.0.height < M.control })?.0 {
+            // art.html support card button: raised, hair2 edge, pink heart, "Support…" (medium 11).
+            c.fill(roundedRect: r, radius: M.rCtl, hover == .support(.support) ? t.raisedHover : k.raised)
+            c.stroke(roundedRect: r.insetBy(dx: 0.25, dy: 0.25), radius: M.rCtl, width: 0.5, t.hair2)
+            c.draw(icon: .heart, at: CGPoint(x: r.minX + M.s2, y: r.midY - 5.5), size: 11, k.support)
+            c.draw("Support…", in: CGRect(x: r.minX + M.s2 + 11 + M.s2, y: r.minY, width: r.width - 30, height: r.height), fontSize: M.fLab, t.label, face: c.medium)
+        }
     }
 
     /// `StartButton`: 28 high, 8 radius, 12 pt medium; primary = accent fill (6 % brighter on hover), raised = overlay with the
     /// soft fill over it on hover; 12 pt icon leading, 8 gap, the key hint (11 pt medium) at the right.
     func button(_ c: inout Canvas, _ t: DrawTheme, _ k: Colors, _ title: String, icon: SQIcon? = nil, hint: String? = nil,
                 _ r: CGRect, primary: Bool, hover: Bool) {
-        c.fill(roundedRect: r, radius: M.rCtl, primary ? (hover ? t.accentFill.lifted(0.06) : t.accentFill) : k.raised)
-        if !primary, hover { c.fill(roundedRect: r, radius: M.rCtl, k.soft) }
+        c.fill(roundedRect: r, radius: M.rCtl, primary ? (hover ? t.accentFill.lifted(0.06) : t.accentFill) : (hover ? t.raisedHover : k.raised))
+        if !primary { c.stroke(roundedRect: r.insetBy(dx: 0.25, dy: 0.25), radius: M.rCtl, width: 0.5, t.hair2) }
         let ink = primary ? DrawColor.white : t.label
         var x = r.minX + M.s3
         if let icon {
@@ -126,9 +169,9 @@ extension ShellStartScreen {
             x += M.fLab + M.s2
         }
         if icon == nil && hint == nil {
-            c.draw(title, in: r, fontSize: M.fLab, ink, align: .center, face: c.medium)
+            c.draw(title, in: r, fontSize: M.fLab, ink, align: .center, face: c.semibold)
         } else {
-            c.draw(title, in: CGRect(x: x, y: r.minY, width: r.maxX - x, height: r.height), fontSize: M.fLab, ink, face: c.medium)
+            c.draw(title, in: CGRect(x: x, y: r.minY, width: r.maxX - x, height: r.height), fontSize: M.fLab, ink, face: c.semibold)
         }
         if let hint {
             c.draw(hint, in: r.insetBy(dx: M.s3, dy: 0), fontSize: M.fCap, primary ? DrawColor.white.alpha(0.78) : t.label3, align: .right,
@@ -147,15 +190,21 @@ extension ShellStartScreen {
             titleRect.origin.x += titleWidth + M.s2
             c.draw("\(shown.count)", in: titleRect, fontSize: M.fLab, t.label3)
             let s = sortRect
-            c.fill(roundedRect: s, radius: M.rCtl, hover == .sort ? k.softHover : k.soft)
+            c.fill(roundedRect: s, radius: M.rCtl, hover == .sort ? t.raisedHover : t.well)
+            c.stroke(roundedRect: s.insetBy(dx: 0.25, dy: 0.25), radius: M.rCtl, width: 0.5, t.hair2)
             c.draw(sort.rawValue, in: s.insetBy(dx: M.s3, dy: 0), fontSize: M.fLab, t.label)
             c.draw(icon: .chevronDown, at: CGPoint(x: s.maxX - M.s2 - M.fCap, y: s.midY - M.fCap / 2), size: M.fCap, t.label3)
             // `IconSegments`: field background, the chosen segment raised.
             let seg = layoutToggleRect
-            c.fill(roundedRect: seg, radius: M.rCtl, k.field)
+            c.fill(roundedRect: seg, radius: M.rCtl, t.well)
+            c.stroke(roundedRect: seg.insetBy(dx: 0.25, dy: 0.25), radius: M.rCtl, width: 0.5, t.hair)
             for list in [false, true] {
                 let r = layoutSegment(list), on = listLayout == list
-                if on { c.fill(roundedRect: r, radius: M.rInner, k.raised) }
+                if on {
+                    c.shadow(roundedRect: r, radius: M.rInner, blur: 2, dy: 1, DrawColor(0, 0, 0, 0.3), opaqueAbove: true)
+                    c.fill(roundedRect: r, radius: M.rInner, k.raised)
+                    c.stroke(roundedRect: r.insetBy(dx: 0.25, dy: 0.25), radius: M.rInner, width: 0.5, t.hair2)
+                }
                 c.draw(icon: list ? .list : .grid, at: CGPoint(x: r.midX - M.fLab / 2, y: r.midY - M.fLab / 2), size: M.fLab,
                        on ? t.label : t.label3)
             }
@@ -179,11 +228,11 @@ extension ShellStartScreen {
     private func drawElement(_ c: inout Canvas, _ t: DrawTheme, _ k: Colors, _ e: Element) {
         switch e {
         case .heading(let s, let r, let tile):
-            c.draw(s, in: r, fontSize: tile ? M.fHead : M.fLab, tile ? t.label : t.label2, face: c.semibold)
+            c.draw(s, in: r, fontSize: M.fLab, t.label2, face: c.semibold)
         case .caption(let s, let r):
             c.draw(s, in: r, fontSize: M.fLab, t.label3)
         case .tile(let r):
-            c.fill(roundedRect: r, radius: M.rCard, k.soft)
+            c.fill(roundedRect: r, radius: M.rCard, k.sunken)
         case .card(let entry, let r):
             drawCard(&c, t, k, entry, r)
         case .listHeader(let r):
@@ -197,10 +246,10 @@ extension ShellStartScreen {
         case .listRow(let entry, let r):
             drawListRow(&c, t, k, entry, r)
         case .continueBox(let entry, let r):
-            let pic = CGRect(x: r.minX, y: r.minY, width: M.continueThumb * 16 / 9, height: r.height)
+            let pic = CGRect(x: r.minX, y: r.minY, width: M.continueWidth, height: r.height)
             posterWell(&c, t, k, info: infos[entry.path], path: entry.path, gone: false, pic)
-            let x = pic.maxX + M.s4
-            c.draw(entry.name, in: CGRect(x: x, y: r.minY, width: r.maxX - x, height: 20), fontSize: M.fHead, t.label)
+            let x = pic.maxX + 19
+            c.draw(entry.name, in: CGRect(x: x, y: r.minY - 3, width: r.maxX - x, height: 20), fontSize: M.fHead, t.label)
             let info = infos[entry.path]
             let rows = [("Frame", info.map { "\($0.size) · \($0.aspect)" } ?? "–"), ("Rate", info?.rate ?? "–"),
                         ("Length", info?.length ?? "–"), ("Edited", StartLabels.relative(entry.opened))]
@@ -209,25 +258,36 @@ extension ShellStartScreen {
                 c.draw(kv.0, in: CGRect(x: x, y: y, width: M.kvLabel, height: 16), fontSize: M.fLab, t.label3)
                 c.draw(kv.1, in: CGRect(x: x + M.kvLabel, y: y, width: r.maxX - x - M.kvLabel, height: 16), fontSize: M.fLab, t.label)
             }
-            button(&c, t, k, "Open", hint: "⏎", openRect(r), primary: true, hover: hover == .continueOpen)
+            button(&c, t, k, "Open", hint: "⏎", openRect(r), primary: false, hover: hover == .continueOpen)
         case .quick(let tmpl, let r):
             let h: Hit = tmpl.map { .quickSize($0.id) } ?? .allFormats
-            c.fill(roundedRect: r, radius: M.rCtl, k.raised)
-            if hover == h { c.fill(roundedRect: r, radius: M.rCtl, k.soft) }
-            let x = r.minX + M.s3 + M.controlSmall + M.s3
+            if hover == h { c.fill(roundedRect: r, radius: M.rCtl, t.hover) }
+            let x = r.minX + M.s3 + M.iconBox + M.s3
+            // art.html `.tile`: a 32 square `raised` box holding a gray glyph.
+            c.fill(roundedRect: CGRect(x: r.minX + M.s3, y: r.midY - M.iconBox / 2, width: M.iconBox, height: M.iconBox), radius: M.rCtl, k.raised)
             if let tmpl {
-                frameGlyph(&c, k, width: tmpl.format.width, height: tmpl.format.height,
-                           box: CGRect(x: r.minX + M.s3, y: r.midY - M.controlSmall / 2, width: M.controlSmall, height: M.controlSmall))
+                let tile = CGRect(x: r.minX + M.s3, y: r.midY - M.iconBox / 2, width: M.iconBox, height: M.iconBox)
+                if !tmpl.variants.isEmpty {
+                    c.draw(icon: .stack, at: CGPoint(x: tile.midX - 7, y: tile.midY - 7), size: 14, t.label2)
+                } else {
+                    // art.html: Phosphor phone / monitor glyphs; a square frame has no such glyph and keeps the drawn outline.
+                    let f = tmpl.format
+                    if f.width == f.height {
+                        frameGlyph(&c, k, width: f.width, height: f.height, color: t.label2, box: tile.insetBy(dx: 9, dy: 8))
+                    } else {
+                        c.draw(icon: f.height > f.width ? .deviceMobile : .monitor, at: CGPoint(x: tile.midX - 7, y: tile.midY - 7), size: 14, t.label2)
+                    }
+                }
                 c.draw(tmpl.name, in: CGRect(x: x, y: r.midY - 17, width: r.maxX - x - M.s2, height: 17), fontSize: M.fLab, t.label)
                 c.draw("\(tmpl.format.width) × \(tmpl.format.height)", in: CGRect(x: x, y: r.midY, width: r.maxX - x, height: 15),
                        fontSize: M.fCap, t.label3)
             } else {
-                c.draw(icon: .ellipsis, at: CGPoint(x: r.minX + M.s3 + 5, y: r.midY - 7), size: 14, t.label2)
+                c.draw(icon: .ellipsis, at: CGPoint(x: r.minX + M.s3 + (M.iconBox - 14) / 2, y: r.midY - 7), size: 14, t.label3)
                 c.draw("All formats…", in: CGRect(x: x, y: r.minY, width: r.maxX - x, height: r.height), fontSize: M.fLab, t.label)
             }
         case .templateCard(let tmpl, let r):
             let h = Hit.template(tmpl.id)
-            c.fill(roundedRect: r, radius: M.rCard, hover == h ? k.softHover : k.soft)
+            c.fill(roundedRect: r, radius: M.rCard, hover == h ? t.raised : k.sunken)
             let f = tmpl.format
             let well = CGRect(x: r.minX + M.thumbInset, y: r.minY + M.thumbInset, width: r.width - 2 * M.thumbInset, height: M.templateThumb)
             posterWell(&c, t, k, info: StartProjectInfo(width: f.width, height: f.height, fps: 0, seconds: 0), path: nil, gone: false, well)
@@ -235,7 +295,7 @@ extension ShellStartScreen {
         case .lesson(let i, let r):
             let l = Self.lessons[i]
             let h = Hit.lesson(i)
-            c.fill(roundedRect: r, radius: M.rCard, hover == h ? k.softHover : k.soft)
+            c.fill(roundedRect: r, radius: M.rCard, hover == h ? t.raised : k.sunken)
             c.draw(icon: l.icon, at: CGPoint(x: r.minX + M.s4 + 4, y: r.midY - 8), size: 16, t.label2)
             let x = r.minX + M.s4 + M.s6 + M.s3
             c.draw(l.title, in: CGRect(x: x, y: r.midY - 18, width: r.maxX - x - M.s4, height: 18), fontSize: M.fBody, t.label)
@@ -248,8 +308,12 @@ extension ShellStartScreen {
     /// `ProjectCard`: picture well, name, "1080 × 1920 · 2 h ago", "…" on hover, ring on the highlighted one.
     private func drawCard(_ c: inout Canvas, _ t: DrawTheme, _ k: Colors, _ e: RecentProjects.Entry, _ r: CGRect) {
         let gone = missing.contains(e.path), hovering = hover == .card(e.path) || hover == .cardMore(e.path)
-        c.fill(roundedRect: r, radius: M.rCard, hovering ? k.softHover : k.soft)
-        if e.path == highlightedPath { c.stroke(roundedRect: r, radius: M.rCard, width: 2, t.accent) }
+        c.fill(roundedRect: r, radius: M.rCard, hovering ? t.raised : k.sunken)
+        if e.path == highlightedPath {
+            c.stroke(roundedRect: r, radius: M.rCard, width: 2, t.label)
+            // art.html defines the white ring only; the dark inner line is for the dark appearance.
+            if t.palette.isDark { c.stroke(roundedRect: r.insetBy(dx: 2.5, dy: 2.5), radius: M.rCard - 2, width: 1, DrawColor.black.alpha(0.45)) }
+        }
         let well = CGRect(x: r.minX + M.thumbInset, y: r.minY + M.thumbInset, width: r.width - 2 * M.thumbInset, height: M.thumb)
         posterWell(&c, t, k, info: infos[e.path], path: e.path, gone: gone, well)
         let when = StartLabels.relative(e.opened)
@@ -265,8 +329,8 @@ extension ShellStartScreen {
     /// `ProjectListRow`: 40 x 32 picture, name (medium), size, aspect, rate, length, edited, "…" on hover.
     private func drawListRow(_ c: inout Canvas, _ t: DrawTheme, _ k: Colors, _ e: RecentProjects.Entry, _ r: CGRect) {
         let gone = missing.contains(e.path), hovering = hover == .card(e.path) || hover == .cardMore(e.path)
-        if e.path == highlightedPath { c.fill(roundedRect: r, radius: M.rCtl, t.fillPressed) }
-        else if hovering { c.fill(roundedRect: r, radius: M.rCtl, k.soft) }
+        if e.path == highlightedPath { c.fill(roundedRect: r, radius: M.rCtl, t.current) }
+        else if hovering { c.fill(roundedRect: r, radius: M.rCtl, t.hover) }
         let info = infos[e.path]
         let col = listColumns(r)
         let thumb = CGRect(x: r.minX + M.s2, y: r.midY - Self.listThumbSize.height / 2, width: Self.listThumbSize.width, height: Self.listThumbSize.height)
@@ -295,20 +359,22 @@ extension ShellStartScreen {
         }
         text(StartLabels.relative(e.opened), col.edited, 96, t.label2)
         if hovering {
-            c.draw(icon: .ellipsis, at: CGPoint(x: col.more.midX - M.fBody / 2, y: col.more.midY - M.fBody / 2), size: M.fBody, t.label2)
+            c.draw(icon: .ellipsis, at: CGPoint(x: col.more.midX - M.iconBody / 2, y: col.more.midY - M.iconBody / 2), size: M.iconBody, t.label2)
         }
     }
 
     private func cardText(_ c: inout Canvas, _ t: DrawTheme, _ name: String, _ subtitle: String, sub: DrawColor,
                           nameColor: DrawColor? = nil, below well: CGRect, _ r: CGRect) {
         let x = r.minX + M.s3, w = r.width - M.s3 - M.s1 - M.controlSmall
-        c.draw(name, in: CGRect(x: x, y: well.maxY + M.thumbInset + M.s2, width: w, height: 16), fontSize: M.fBody, nameColor ?? t.label)
-        c.draw(subtitle, in: CGRect(x: x, y: well.maxY + M.thumbInset + M.s2 + 18, width: w, height: 14), fontSize: M.fCap, sub)
+        c.draw(name, in: CGRect(x: x, y: well.maxY + M.thumbInset + 5, width: w, height: 16), fontSize: M.fBody, nameColor ?? t.label)
+        c.draw(subtitle, in: CGRect(x: x, y: well.maxY + M.thumbInset + 5 + 17, width: w, height: 14), fontSize: M.fMini, sub)
     }
 
     /// `PosterWell`: the frame in its aspect on the well, badges for aspect and length, the missing-file states.
     private func posterWell(_ c: inout Canvas, _ t: DrawTheme, _ k: Colors, info: StartProjectInfo?, path: String?, gone: Bool, _ r: CGRect) {
-        c.fill(roundedRect: r, radius: M.rCtl, k.well)
+        // art.html `.thumb`: the viewer color with a hair2 inset ring.
+        c.fill(roundedRect: r, radius: M.rInner, t.viewer)
+        c.stroke(roundedRect: r.insetBy(dx: 0.25, dy: 0.25), radius: M.rInner, width: 0.5, t.hair2)
         let box = r.insetBy(dx: M.s3, dy: M.s3)
         let ar = info.map { CGFloat($0.width) / CGFloat(Swift.max($0.height, 1)) } ?? 16 / 9
         let w = Swift.min(box.width, box.height * ar), h = w / ar
@@ -316,11 +382,12 @@ extension ShellStartScreen {
         if !gone, let path, let p = cardPoster(path: path) {
             c.draw(imageSlot: p.slot, in: pic, source: p.cropped(toFill: pic))
         } else {
-            c.fill(roundedRect: pic, radius: CGFloat(DrawTheme.Radius.small), k.poster)
-            if !gone, info?.mediaMissing != true { c.draw(icon: .film, at: CGPoint(x: pic.midX - 6.5, y: pic.midY - 6.5), size: M.fBody, t.label3) }
+            // Viewer-relative so light mode keeps the dark placeholder (art.html light `.thumb`), not the white `raised`.
+            c.fill(roundedRect: pic, radius: CGFloat(DrawTheme.Radius.small), t.viewer.lifted(0.08))
+            if !gone, info?.mediaMissing != true { c.draw(icon: .film, at: CGPoint(x: pic.midX - 6.5, y: pic.midY - 6.5), size: M.iconBody, t.label3) }
         }
         if gone || info?.mediaMissing == true {
-            c.draw(icon: gone ? .warning : .unlink, at: CGPoint(x: r.midX - 6.5, y: r.midY - 14), size: M.fBody, k.warning)
+            c.draw(icon: gone ? .warning : .unlink, at: CGPoint(x: r.midX - 6.5, y: r.midY - 14), size: M.iconBody, k.warning)
             c.draw(gone ? "File missing" : "Locate media…", in: CGRect(x: r.minX, y: r.midY + 2, width: r.width, height: 14),
                    fontSize: M.fCap, k.warning, align: .center)
         }
@@ -342,9 +409,14 @@ extension ShellStartScreen {
     }
 
     /// `FrameGlyph`: a rectangle in the frame's aspect, fitted in `box`, in the video clip color.
-    private func frameGlyph(_ c: inout Canvas, _ k: Colors, width: Int, height: Int, box: CGRect) {
+    private func frameGlyph(_ c: inout Canvas, _ k: Colors, width: Int, height: Int, color: DrawColor? = nil, box: CGRect) {
         let ar = CGFloat(width) / CGFloat(Swift.max(height, 1))
         let w = ar >= 1 ? box.width : box.width * ar, h = ar >= 1 ? box.height / Swift.max(ar, 0.01) : box.height
-        c.fill(roundedRect: CGRect(x: box.midX - w / 2, y: box.midY - h / 2, width: w, height: h), radius: CGFloat(DrawTheme.Radius.small), k.clipVideo)
+        // Line glyph (art.html `.tile` phone / monitor outline), 1.25 pt stroke; a monitor gets a stand line.
+        let g = CGRect(x: box.midX - w / 2, y: box.midY - h / 2, width: w, height: h)
+        let wide = ar >= 1
+        let body = wide ? g.insetBy(dx: 0, dy: 1.5).offsetBy(dx: 0, dy: -1.5) : g
+        c.stroke(roundedRect: body.insetBy(dx: 0.6, dy: 0.6), radius: CGFloat(DrawTheme.Radius.small), width: 1.25, color ?? k.clipVideo)
+        if wide { c.fill(CGRect(x: g.midX - 3, y: body.maxY + 1, width: 6, height: 1.25), color ?? k.clipVideo) }
     }
 }

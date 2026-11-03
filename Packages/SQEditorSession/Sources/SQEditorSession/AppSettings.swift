@@ -244,6 +244,7 @@ public struct AppSettings: Sendable, Equatable {
         d.set(onboardingSeen, forKey: Key.onboardingSeen)
         d.set(refreshGrowingFiles, forKey: Key.refreshGrowing)
         d.set(useProxiesForExport, forKey: Key.proxiesForExport)
+        d.synchronize()      // Windows writes the file only on request; a killed or closed app would lose the flags
     }
 
     /// A BCP-47 identifier as the language list uses it ("de-DE"): letters and hyphens, 2 to 12 characters.

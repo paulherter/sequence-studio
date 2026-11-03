@@ -42,6 +42,7 @@ extension ShellHost {
         d.addButton("OK")
         d.addButton("Cancel", role: .cancel)
         d.addButton("Delete Marker", role: .destructive, leading: true)
+        d.ghostButtons = [2]   // art.html 18: red text, no fill
         return d
     }
 

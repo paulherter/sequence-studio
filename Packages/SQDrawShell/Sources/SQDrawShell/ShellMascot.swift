@@ -140,8 +140,11 @@ public enum ShellMascot {
         if !tight { marks(p, Gfx(m: base), &c) }
     }
 
-    static let violet = DrawColor(hex: 0xA48CF0), lensFill = DrawColor(hex: 0xDFE6FF), spark = DrawColor(hex: 0xF7B23B)
-    static let heartColor = DrawColor(hex: 0xF2577F), ok = DrawColor(hex: 0x30C463)
+    static let brandViolet = DrawColor(hex: 0xA48CF0), lensFill = DrawColor(hex: 0xDFE6FF), spark = DrawColor(hex: 0xF7B23B)
+    /// Set while the empty-state mascot draws: the approved design has no violet, its sleep marks take a neutral gray.
+    nonisolated(unsafe) static var markOverride: DrawColor?
+    static var violet: DrawColor { markOverride ?? brandViolet }
+    static let heartColor = DrawColor(hex: 0xF2577F), ok = DrawColor(hex: 0x30C463), neutralMark = DrawColor(hex: 0x8A8A8E)
 
     static func lens(_ p: SQMascotPose, _ g: Gfx, _ c: inout Canvas) {
         let lg = Gfx(m: g.m.concat(.move(p[.mgx], p[.mgy])).concat(.scale(p[.mgs], p[.mgs])))

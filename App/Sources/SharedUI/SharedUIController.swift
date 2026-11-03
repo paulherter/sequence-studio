@@ -10,11 +10,9 @@ import SQDrawMonitor
 import SQDrawShell
 import SQDrawTimeline
 import SQEditorSession
-import SQEditorUI
 import SQMedia
 import SQExport
 import SQInspectorUI
-import SQMonitorUI
 import SQPlayback
 import SQText
 import SQTimelineUI
@@ -23,19 +21,12 @@ import SQUIKit
 
 /// The Mac app on the shared draw-list UI (the Windows port plan, "Panel status: Mac on shared UI"): the same SQDrawShell
 /// shell (menu bar, dock, start screen, dialogs), EditorScreen and SQDrawTimeline panels the Windows app runs, drawn by
-/// `CoreGraphicsRenderer` in `SharedUIView`. The default on the Mac; the AppKit UI runs only with `SQ_APPKIT_UI=1` (or `--appkit-ui`).
+/// `CoreGraphicsRenderer` in `SharedUIView`. The one UI of the Mac app.
 /// It mirrors the Windows `AppController` (Windows/SQWinApp) and runs the hosts moved to SQAppShell (Effect Controls with the
 /// shared color picker, Graphics, Captions, Library, Effects, audio meters, Scopes, the Program and Source monitors). The Program and Source pictures are Metal `PlaybackEngine`s presenting into
 /// `viewer` / the backend's `sourceViewer` under the UI view, each inside a clipping container placed on the picture quad.
 @MainActor
 final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegate {
-    static var isRequested: Bool {
-        let env = ProcessInfo.processInfo.environment
-        if env["SQ_SHARED_UI"] == "1" || env["SQ_SHARED_UI_SHOT"] != nil || CommandLine.arguments.contains("--shared-ui") { return true }
-        // The AppKit UI is the fallback: SQ_APPKIT_UI=1 (or --appkit-ui), and the AppKit-only panel render mode.
-        return env["SQ_APPKIT_UI"] != "1" && !CommandLine.arguments.contains("--appkit-ui") && env["SQ_RENDER_PANELS"] == nil
-    }
-
     /// Panels this host draws; the others get `ShellDock.drawPlaceholder`.
     static let hostedPanels: Set<PanelID> = [.programMonitor, .sourceMonitor, .effectControls, .project, .timeline, .audioMeter,
                                                     .scopes, .graphics, .text, .library, .effects, .colorInspector, .steps, .colorClips,
@@ -65,7 +56,7 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
     /// Dock progress and the "Export finished" notification.
     let exportNotifier = ExportNotifier()
     /// The Program picture: the engine's CAMetalLayer, under the UI view, moved onto the picture quad every frame.
-    let viewer = ViewerView(frame: .zero)
+    let viewer = MacPictureView(frame: .zero)
     /// The clipping containers of the Program and Source viewers (a zoom above Fit makes the quad larger than its card).
     let viewerClip = NSView(frame: .zero)
     let sourceClip = NSView(frame: .zero)
@@ -153,7 +144,7 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         d.templateThumbnail = { [engine] in
             var png: Data?
             await engine.withFullSizeFrame { result in
-                if case .frame(let texture) = result { png = EditorPanels.thumbnailPNG(texture) }
+                if case .frame(let texture) = result { png = MacShellSupport.thumbnailPNG(texture) }
             }
             return png
         }
@@ -255,6 +246,7 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         shell.projectModel = projectModel
         screen.projectWidth = 280
         projectList.onOpenSequence = { [weak session] in session?.openSequenceTab($0) }
+        projectList.onOpenVariant = { [weak session] in session?.openSequenceTab($0, variant: $1) }
         projectList.showsTitle = false   // the dock's tab strip names it
         projectList.dock(in: shell.dock)   // and carries the count, New Folder and "..."
         projectList.onCollect = { [weak self] in self?.collectFiles() }
@@ -262,7 +254,7 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         shell.revealFile = { NSWorkspace.shared.activateFileViewerSelecting([$0]) }
         shell.revealFiles = { NSWorkspace.shared.activateFileViewerSelecting($0) }
         shell.openURL = { NSWorkspace.shared.open($0) }
-        shell.aboutSupporters = { AppController.bundledSupporters() }
+        shell.aboutSupporters = { MacShellSupport.bundledSupporters() }
         shell.copyText = { s in NSPasteboard.general.clearContents(); NSPasteboard.general.setString(s, forType: .string) }
         // Cmd-C / X / V inside an open drawn field use the system pasteboard (the field editor of the AppKit app).
         TextClipboard.shared.writeSystem = shell.copyText
@@ -434,8 +426,8 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         let w = SQEditorWindow(contentRect: NSRect(x: 0, y: 0, width: 1440, height: 900),
                          styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                          backing: .buffered, defer: false)
-        w.appearance = Theme.windowAppearance
-        w.backgroundColor = Theme.Colors.titlebar
+        w.appearance = MacWindowStyle.appearance
+        w.backgroundColor = MacWindowStyle.titlebar
         w.titleVisibility = .hidden
         w.titlebarAppearsTransparent = true
         w.isReleasedWhenClosed = false
@@ -445,7 +437,6 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         // The engine's layer under the (transparent where the picture is) UI view.
         let root = NSView(frame: NSRect(x: 0, y: 0, width: 1440, height: 900))
         for (clip, v, e) in [(viewerClip, viewer, engine), (sourceClip, backend.sourceViewer, monitors.source.engine.player)] {
-            v.drivesLayer = false
             v.onResize = { [weak e] in e?.redraw() }
             clip.wantsLayer = true
             clip.layer?.masksToBounds = true
@@ -567,7 +558,8 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
 
     private func placeAboutIcon() {
         let host = overlaysInStartWindow ? startWindow?.view : view
-        guard let r = (shell.dialog?.content as? ShellAboutContent)?.iconFrame, !shell.dialog!.menu.isOpen,
+        // The About card draws Pip's head itself (ShellAbout, art.html 43): no host picture.
+        guard false, let r = (shell.dialog?.content as? ShellAboutContent)?.iconFrame, !shell.dialog!.menu.isOpen,
               let host, let root = host.superview else {
             if aboutIcon.superview != nil { aboutIcon.removeFromSuperview() }
             return
@@ -777,12 +769,17 @@ final class SharedUIController: NSObject, NSApplicationDelegate, NSWindowDelegat
         var c = Canvas(list: list, atlas: atlas, scale: scale)
         // The title row replaces EditorScreen's plain top bar ("Sequence Studio", the centered name).
         c.fill(CGRect(x: 0, y: 0, width: size.width, height: shell.menuBar.height - 1), screen.theme.titlebar)
-        toolStrip.draw(&c, state: timelinePanel.toolState)
-        timelineHeader.draw(&c)
-        trimHost.draw(&c)
+        // A maximized or hidden Timeline leaves these with a zero slot: skip them or they draw over the top-left corner.
+        if shell.dock.shows(.timeline) {
+            toolStrip.draw(&c, state: timelinePanel.toolState)
+            timelineHeader.draw(&c)
+            trimHost.draw(&c)
+        }
         colorPage.layout()
         colorPage.refreshStepWindow(panel: monitors.monitor.panel, isEditingText: monitors.monitor.text.isEditing)
-        monitors.draw(&c, card: screen.monitor, scale: scale, isPlaying: s.isPlaying, theme: screen.theme)
+        if screen.monitor.w > 0, screen.monitor.h > 0 {
+            monitors.draw(&c, card: screen.monitor, scale: scale, isPlaying: s.isPlaying, theme: screen.theme)
+        }
         let d = shell.dock
         meters.showsScopes = d.shows(.scopes)
         meters.layout(meter: px(d.contentFrame(.audioMeter), k), scopes: px(d.contentFrame(.scopes), k), scale: scale)

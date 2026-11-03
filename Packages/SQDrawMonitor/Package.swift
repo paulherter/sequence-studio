@@ -3,8 +3,8 @@ import PackageDescription
 
 // The monitors on the shared draw-list toolkit (the Windows port plan, "Panel status: monitors"): the Mac monitor's
 // model (MonitorPanelModel), its menus and command routing moved here from SQMonitorUI, and the Program / Source
-// monitor panel translated from MonitorPanelView onto the SQDrawKit Canvas. The Mac AppKit views keep using the model
-// and menus through SQMonitorUI's re-export; Windows draws the panel.
+// monitor panel translated from MonitorPanelView onto the SQDrawKit Canvas.
+// and menus; Mac and Windows draw the panel.
 let package = Package(
     name: "SQDrawMonitor",
     platforms: [.macOS(.v26)],

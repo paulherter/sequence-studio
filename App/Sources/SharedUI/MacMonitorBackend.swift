@@ -8,7 +8,6 @@ import SQDrawKit
 import SQDrawTimeline
 import SQEditorSession
 import SQMedia
-import SQMonitorUI
 import SQPlayback
 import Synchronization
 
@@ -21,7 +20,7 @@ final class MacMonitorBackend: AppMonitorBackend {
     private let media: ProjectMediaResolver
     let mediaStore: MacTimelineMedia
     /// The Source picture: its engine's CAMetalLayer, placed like the Program viewer when the Source tab shows.
-    let sourceViewer = ViewerView(frame: .zero)
+    let sourceViewer = MacPictureView(frame: .zero)
     var window: () -> NSWindow? = { nil }
     /// The audio engines made here (the Source monitor's): Settings > Audio Output points them at the chosen device.
     private(set) var audioEngines: [AudioEngine] = []

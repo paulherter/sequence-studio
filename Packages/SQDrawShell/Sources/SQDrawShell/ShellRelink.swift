@@ -39,10 +39,10 @@ extension ShellHost {
         let title = searched == 0
             ? (total == 1 ? SQL10n.string("1 media file is offline") : SQL10n.format("%@ media files are offline", String(total)))
             : SQL10n.format("%@ of %@ found", String(found), String(total))
-        let names = missing.prefix(5).map { MediaPathResolver.fileName(of: $0.path) }.joined(separator: ", ")
-        let more = missing.count > 5 ? ", …" : ""
+        let names = missing.prefix(4).map { MediaPathResolver.fileName(of: $0.path) }.joined(separator: ", ")
+        let more = missing.count > 4 ? ",…" : ""   // tight: the list must fit one line (art.html 09)
         let detail = searched == 0
-            ? SQL10n.format("Not found: %@. Choose the folder they are in; subfolders are searched too.", names + more)
+            ? SQL10n.format("Not found: %@.\nChoose the folder they are in; subfolders are searched too.", names + more)
             : SQL10n.format("Still missing: %@. Add another folder or click Done.", names + more)
         return (title, detail)
     }
@@ -60,6 +60,7 @@ extension ShellHost {
             d.width = 440
             d.addButton(searched == 0 ? "Locate…" : "Add Folder…")
             d.addButton("Done", role: .cancel)
+            d.headerIcon = .warning   // art.html 09: the amber triangle before the title
             d.sheetStyle = true   // the Mac RelinkSheet: band footer, 56 pt header
             d.footerMascot = true   // Pip (`SQMascotPlace.mediaOffline`) at the left of the footer; the host draws him
             let answer = await ask(d)

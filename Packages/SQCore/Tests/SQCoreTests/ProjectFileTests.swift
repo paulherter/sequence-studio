@@ -34,6 +34,22 @@ import Testing
         return p
     }
 
+    @Test func singleFileProjectRoundTripsAndKeepsItsForm() throws {
+        let dir = try tempDir(); defer { try? fm.removeItem(at: dir.deletingLastPathComponent()) }
+        let file = dir.deletingLastPathComponent().appendingPathComponent("F.sqproj")
+        try Data("{}".utf8).write(to: file)                 // an existing plain file stays a file
+        let p = try sample()
+        try ProjectFile.write(p, to: file)
+        #expect(ProjectFile.isSingleFile(file))
+        #expect(try ProjectFile.read(from: file).name == p.name)
+        try ProjectFile.write(p, to: dir)                   // an existing package folder stays a package
+        #expect(!ProjectFile.isSingleFile(dir))
+        #expect(fm.fileExists(atPath: dir.appendingPathComponent("project.json").path))
+        let snap = try ProjectFile.autosave(p, in: file)    // a file's snapshots sit beside it
+        #expect(snap.deletingLastPathComponent().lastPathComponent == "F.sqproj.Autosave")
+        #expect(ProjectFile.latestAutosave(in: file)?.name == p.name)
+    }
+
     @Test func roundTrip() throws {
         let dir = try tempDir(); defer { try? fm.removeItem(at: dir.deletingLastPathComponent()) }
         let url = dir.appendingPathComponent("P.sqproj")

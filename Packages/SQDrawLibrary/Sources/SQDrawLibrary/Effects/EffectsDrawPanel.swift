@@ -18,7 +18,7 @@ public final class EffectsDrawPanel {
     public enum DragPhase: Sendable, Equatable { case moved, ended, canceled }
 
     public static let searchRowHeight: CGFloat = 38
-    public static let rowHeight: CGFloat = 26
+    public static let rowHeight: CGFloat = 24
     public static let indent: CGFloat = 14
     public static let tileWidth: CGFloat = 104
     static let dragSlop: CGFloat = 4
@@ -238,10 +238,11 @@ public final class EffectsDrawPanel {
         CGFloat(DrawTheme.Spacing.xs + DrawTheme.Spacing.sm) + CGFloat(min(max(depth, 0), 2)) * indent
     }
 
-    /// What dragging a row carries out of the panel: an effect or transition id (presets apply by double-click, folders
-    /// do not drag out; the Mac pasteboard writer).
+    /// What dragging a row carries out of the panel: an effect, transition or saved preset id (`preset.<uuid>`, which
+    /// `LibraryDropRoute` applies with the saved mode); folders and the built-in stack presets (they apply to the selection,
+    /// by double-click) do not drag out.
     static func dragIDs(for r: EffectsRow) -> [String] {
-        guard !r.isHeader, !r.isFolder, !r.itemID.hasPrefix("preset.") else { return [] }
+        guard !r.isHeader, !r.isFolder, !r.itemID.hasPrefix(EditorSession.builtInPresetPrefix) else { return [] }
         return [r.itemID]
     }
 
@@ -444,7 +445,7 @@ public final class EffectsDrawPanel {
                 c.fill(roundedRect: pill, radius: CGFloat(DrawTheme.Radius.small), t.accentFill)
                 c.stroke(roundedRect: pill, radius: CGFloat(DrawTheme.Radius.small), width: 2, t.accent)
             } else if selectedID == r.id {
-                c.fill(roundedRect: pill, radius: CGFloat(DrawTheme.Radius.small), t.accentFill)
+                c.fill(roundedRect: pill, radius: CGFloat(DrawTheme.Radius.small), t.current)
             }
             var x = Self.lead(depth: r.depth)
             if r.isHeader {

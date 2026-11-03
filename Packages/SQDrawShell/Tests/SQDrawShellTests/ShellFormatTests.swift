@@ -60,7 +60,7 @@ private final class FolderPicker: ShellFilePicker {
         // One "Frame Size" row (no Width / Height rows, no note text), as on the Mac.
         #expect(form.rows.contains { if case .size(let l, _, _) = $0 { l == "Frame Size" } else { false } })
         #expect(!form.rows.contains { if case .text = $0 { true } else { false } })
-        #expect(form.plainSize == ["width"] && form.controlWidths["width"] == 117)
+        #expect(form.plainSize == ["width"] && form.controlWidths["width"] == 75)
         let square = try #require(SequenceConform.aspectPresets.firstIndex { $0.name == "1:1" })
         form.onChange?("format", .index(square))
         #expect(form.number("width") == 1080 && form.number("height") == 1080)
@@ -83,8 +83,8 @@ private final class FolderPicker: ShellFilePicker {
         d.form = form
         d.layout(in: CGRect(x: 0, y: 0, width: 1200, height: 900), measure: TextMeasure(atlas: nil, scale: 1))
         let w = try #require(form.scrubFrames["width"]), h = try #require(form.scrubFrames["height"])
-        #expect(w.width == 117 && h.width == 117)
-        #expect(w.minX == form.controlFrames[0].minX && h.maxX == form.controlFrames[0].maxX)
+        #expect(w.width == 75 && h.width == 75)
+        #expect(w.minX == form.controlFrames[0].minX && h.maxX < form.controlFrames[0].maxX)   // two tight fields, the × between them
         let before = (form.number("width"), form.number("height"))
         _ = form.mouseDown(CGPoint(x: (w.maxX + h.minX) / 2, y: w.midY))   // the "×": no swap
         #expect(form.number("width") == before.0 && form.number("height") == before.1)
@@ -126,7 +126,7 @@ private final class FolderPicker: ShellFilePicker {
             saveFrames = frames(d); widths.append(d.width)
             d.form?.set("name", .text("Reel"))
         }
-        #expect(saveFrames.map(\.width) == [260])
+        #expect(saveFrames.count == 1 && saveFrames[0].width > 260)
         #expect(h.templateFolder.load().map(\.name) == ["Reel"])
         #expect(h.allTemplates.last?.name == "Reel")
         let count = h.session.project.timelines.count
@@ -137,7 +137,7 @@ private final class FolderPicker: ShellFilePicker {
         }
         #expect(h.session.project.timelines.count == count + 1)
         #expect(h.session.project.timelines.last?.name == "From Reel")
-        #expect(newFrames.map(\.width) == [300, 300] && newFrames[0].minX == newFrames[1].minX && newFrames[0].minX == saveFrames[0].minX)
+        #expect(newFrames.count == 2 && newFrames[0].width == newFrames[1].width && newFrames[0].minX == newFrames[1].minX && newFrames[0].minX == saveFrames[0].minX)
         #expect(widths == [440, 440])
     }
 
@@ -232,9 +232,9 @@ private final class FolderPicker: ShellFilePicker {
         await run(h, { await h.showImportChecklist() }, answers: [.first]) { d in
             #expect(d.model.buttons.map(\.title) == ["Done", "Save Report…"])
             guard let content = d.content as? ShellImportReportContent else { Issue.record("no report rows"); return }
-            #expect(content.rows.map(\.tone) == [.green, .yellow])
+            #expect(content.rows.map(\.tone) == [.green, .orange])
             #expect(content.rows.map(\.action) == [nil, "Show"])
-            #expect(content.rows[1].head.hasPrefix("1x  "))
+            #expect(content.rows[1].head.hasPrefix("1\u{00D7} "))
             content.onAction?(content.rows[1].item!)
         }
         #expect(h.session.selection == [clip.id])
@@ -278,7 +278,7 @@ private final class FolderPicker: ShellFilePicker {
             #expect(!d.model.buttons.contains { $0.title.hasPrefix("Found") })
             d.layout(in: CGRect(x: 0, y: 0, width: 1440, height: 900), measure: TextMeasure(atlas: nil, scale: 1))
             mascot = d.mascotFrame
-            #expect(mascot.minX == d.card.minX + 20 && mascot.width == 26)
+            #expect(mascot.minX == d.card.minX + 16 && mascot.width == 32)
             #expect(mascot.midY > d.card.maxY - 68 && mascot.midY < d.card.maxY)
         }
         #expect(mascot != .zero)

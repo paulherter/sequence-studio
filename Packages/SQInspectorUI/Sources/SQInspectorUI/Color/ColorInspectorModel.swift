@@ -943,12 +943,8 @@ public final class LUTLibraryStore {
         lastError = loadError
     }
 
-    /// Drops the cached look thumbnail of `path` (the Mac look previews; Windows draws no LUT thumbnails yet).
-    private static func invalidatePreview(_ path: String) {
-        #if canImport(AppKit)
-        ColorLookPreview.invalidate(path: path)
-        #endif
-    }
+    /// Drops the cached look thumbnail of `path` (no LUT thumbnails are drawn yet).
+    private static func invalidatePreview(_ path: String) {}
 
     @discardableResult
     public func importLUTs(_ urls: [URL]) -> [LUTEntry] {

@@ -19,7 +19,7 @@ public enum AboutContent {
     public static let acknowledgments: [Acknowledgment] = [
         .init(name: "Inter", version: "4.x", license: "SIL OFL 1.1", usedFor: "Interface and title font"),
         .init(name: "Google Fonts selection", version: "25 families", license: "SIL OFL 1.1", usedFor: "Title fonts"),
-        .init(name: "Lucide", version: "1.55.0", license: "ISC", usedFor: "Icons"),
+        .init(name: "Phosphor Icons", version: "2.1", license: "MIT", usedFor: "Icons"),
         .init(name: "RNNoise", version: "0.1.1", license: "BSD-3-Clause", usedFor: "Voice cleanup"),
         .init(name: "ThorVG", version: "1.1.2", license: "MIT", usedFor: "Lottie playback (with RapidJSON, LodePNG, jpgd)"),
         .init(name: "Gyroflow core", version: "gyroflow_core, telemetry-parser, rs-sync, mp4parse", license: "GPL-3.0 compatible", usedFor: "Stabilization and lens profiles"),

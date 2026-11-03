@@ -10,7 +10,9 @@ extension ShellHost {
     /// What to cover, with what and which of the people found on the playhead's frame. nil: canceled or nobody ticked.
     public func askAnonymize(clipName: String, people: [AnonymizePerson], defaults: UserDefaults = .standard) async -> AnonymizeChoice? {
         let initial = AnonymizeChoice.remembered(defaults)
-        let d = ShellDialog("Anonymize", informative: AnonymizeText.info(clipName: clipName))
+        // art.html 31: the clip name is a dim subtitle beside the title.
+        let d = ShellDialog("Anonymize", informative: AnonymizeText.info(clipName: clipName).split(separator: "\n", maxSplits: 1).dropFirst().joined())
+        d.headerSubtitle = clipName
         d.width = ShellDialog.M.widthS
         var rows: [ShellForm.Row] = [
             .segmented(id: "target", label: "Cover", options: AnonymizeTarget.allCases.map(\.title),
@@ -22,7 +24,9 @@ extension ShellHost {
         for (i, p) in people.enumerated() { rows.append(.check(id: "person\(i)", title: AnonymizeText.personLabel(i, p), on: true)) }
         rows.append(.text(AnonymizeText.hint))
         let form = ShellForm(rows)
-        form.extraGapBefore = [2: 8]   // `formText(top: 6)` over the stack spacing: measured 8 pt against the Mac PNG
+        form.flushChecks = true
+        form.infoNotes = [rows.count - 1]
+        form.extraGapBefore = [2: 8, 3: 8, rows.count - 1: 6]   // `formText(top: 6)` over the stack spacing: measured 8 pt against the Mac PNG
         form.setNote(2, AnonymizeText.peopleNote(count: people.count), strong: true, plain: true)
         d.form = form
         d.addButton("Anonymize")

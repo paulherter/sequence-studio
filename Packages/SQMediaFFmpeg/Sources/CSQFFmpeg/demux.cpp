@@ -50,6 +50,7 @@ int sq_demux_open(const char *path, SQFFDemux **out, char *err, int errLen) {
         snprintf(in.pixFmt, sizeof in.pixFmt, "%s", pd ? pd->name : "unknown");
         in.colorPrimaries = p->color_primaries; in.colorTransfer = p->color_trc; in.colorMatrix = p->color_space;
         in.colorRange = p->color_range;
+        in.bitsPerCodedSample = p->bits_per_coded_sample;
         if (p->extradata_size > 0) d->extradata.assign(p->extradata, p->extradata + p->extradata_size);
         while ((e = av_read_frame(fmt, pkt)) >= 0) {
             if (pkt->stream_index == vs) {

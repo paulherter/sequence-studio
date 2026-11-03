@@ -68,26 +68,29 @@ public enum ShellSequenceSettings {
         if !isNew {
             rows += [
                 .segmented(id: "channels", label: "Channels", options: ["Stereo", "Mono"], selected: settings.channelLayout == .mono ? 1 : 0,
-                           segmentWidth: 84),
+                           segmentWidth: 0),
                 .popup(id: "ducking", label: "Live Ducking", options: ducking.map(\.title),
                        selected: ProjectLiveDuckingChoices.index(of: projectDucking, in: ducking)),
-                .text("Music tracks get quieter while a Dialogue track speaks, in playback and export. Applies to the whole project; a track can opt out in its header menu."),
                 .caption("Working"),
                 .segmented(id: "mode", label: "Timeline", options: ["Normal", "Fast Cut"], selected: settings.editMode == .magnetic ? 1 : 0,
-                           segmentWidth: 84),
-                .text("Normal keeps classic tracks. Fast Cut closes gaps on the main track by itself."),
+                           segmentWidth: 0),
                 .caption("Timecode"),
                 .field(id: "start", label: "Starts at", value: start.text),
                 .segmented(id: "display", label: "Display", options: ["Timecode", "Frames"],
-                           selected: settings.timecodeDisplay == .frames ? 1 : 0, segmentWidth: 84),
+                           selected: settings.timecodeDisplay == .frames ? 1 : 0, segmentWidth: 0),
                 .caption("Preview"),
                 .popup(id: "quality", label: "Quality",
                        options: qualities.map { q in q.flatMap { MonitorQuality(rawValue: $0.rawValue)?.title } ?? "App setting" },
                        selected: qualities.firstIndex(of: settings.previewQuality) ?? 0),
-                .text("Starts at and Display change only what is shown. Quality is used while this sequence is open."),
             ]
         }
         let form = ShellForm(rows)
+        // art.html sequence settings: the hints sit under their control, in the field column, label3.
+        if !isNew {
+            form.helps["ducking"] = "Music tracks get quieter while a Dialogue track speaks, in playback and export. Applies to the whole project; a track can opt out in its header menu."
+            form.helps["mode"] = "Normal keeps classic tracks. Fast Cut closes gaps on the main track by itself."
+            form.helps["quality"] = "Starts at and Display change only what is shown. Quality is used while this sequence is open."
+        }
         // `SequenceSettingsSheet.accessory`: the short popups and Starts at are 120 wide, Live Ducking 200.
         for id in ["shape", "rate", "audio", "start", "quality"] { form.controlWidths[id] = 120 }
         form.controlWidths["ducking"] = 200
@@ -209,7 +212,7 @@ extension ShellHost {
                                      settings: SequenceSettings, projectDucking: ProjectLiveDucking?)
         async -> (settings: SequenceSettings, ducking: ProjectLiveDucking??)? {
         let d = ShellDialog(title, informative: info)
-        d.width = 600   // Mac SequenceSettingsSheet widthM (SQModal.Size.m is AppKit-only and does not build on Windows)
+        d.width = s.isNew ? 502 : 600   // art.html 12 (New Sequence 502); Mac SequenceSettingsSheet widthM (SQModal.Size.m is AppKit-only and does not build on Windows)
         d.form = s.form
         d.addButton(button)
         d.addButton("Cancel", role: .cancel)
@@ -225,6 +228,7 @@ extension ShellHost {
     func projectNotes() async {
         // `ProjectNotesDialog`: a multi-line box over the sheet width, the caret in it.
         let form = ShellForm([.textBox(id: "notes", value: session.project.notes, height: 180)])
+        form.placeholders["notes"] = "Client, deadline, delivery format…"
         form.beginEditing("notes")
         let d = ShellDialog("Project Notes", informative: "Notes stay with the project file: who it is for, deadlines, delivery specs, to-dos.")
         d.width = 520
@@ -273,7 +277,8 @@ extension ShellHost {
                     range: Double(hz.lowerBound) / 1000...Double(hz.upperBound) / 1000, unit: "Hz"),
             .slider(id: "db", label: "Level", value: spec.levelDB, range: Double(lv.lowerBound) / 100...Double(lv.upperBound) / 100, unit: "dB"),
         ])
-        let d = ShellDialog("Tone Settings", informative: "Sine tone, 1 kHz at -12 dB by default")
+        form.sliderTrackWidth = 170   // art.html 31
+        let d = ShellDialog("Tone Settings", informative: "Sine tone, 1 kHz at \u{2212}12 dB by default")
         d.width = 400
         d.form = form
         d.addButton(editing ? "OK" : "Add")

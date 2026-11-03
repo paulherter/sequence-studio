@@ -14,14 +14,4 @@ public enum WaveformTint {
         return clips.allSatisfy({ track.role(of: $0) == first }) ? first : nil
     }
 
-    #if canImport(AppKit)
-    @MainActor static func color(for role: AudioTag?) -> CGColor {
-        switch role {
-        case nil: WaveformTileCache.color
-        case .dialogue: Theme.Colors.accent.withAlphaComponent(0.85).cgColor
-        case .music: Theme.Colors.green.withAlphaComponent(0.75).cgColor
-        case .sfx: Theme.Colors.yellow.withAlphaComponent(0.75).cgColor
-        }
-    }
-    #endif
 }

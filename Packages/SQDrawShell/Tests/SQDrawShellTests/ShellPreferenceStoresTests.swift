@@ -41,8 +41,8 @@ import SQEditorSession
         #expect(captions(general) == ["New items"])
         #expect(general.checkLabels["recovery"] == "Recovery" && general.checkLabels["autoLanguage"] == "Auto Language")
         #expect(general.helps["uiLanguage"]?.hasSuffix("Applies the next time Sequence Studio starts.") == true)
-        #expect(general.controlWidths["autosave"] == 180)
-        #expect(general.labelColumn() == 132)   // Theme.Modal.labelColumnL (SQUIKit Theme is Mac-only)
+        #expect(general.controlWidths["autosave"] == 196)
+        #expect(general.labelColumn() == 154)   // Theme.Modal.labelColumnL (SQUIKit Theme is Mac-only)
         let playback = ShellPreferences.form(.playback, s, x)
         #expect(captions(playback) == ["Play around", "Feedback"])
         #expect(playback.controlWidths["preroll"] == 120 && playback.controlWidths["renderCacheCap"] == 120)
@@ -92,14 +92,14 @@ import SQEditorSession
         #expect(LiveDucking.current(d) == nil)
     }
 
-    /// The Mac Live Ducking row: the amount is a 92 pt field after the check title ("12.0", no unit), any 0.5 dB step.
+    /// The Mac Live Ducking row: the amount is a 72 pt field after the check title ("12.0", no unit), any 0.5 dB step.
     @Test func theDuckAmountIsAFieldAfterTheLiveDuckingCheck() {
         let d = defaults()
         LiveDucking.setAmount(10, defaults: d)
         var x = ShellPreferences.Extras.load(from: d)
         let f = ShellPreferences.form(.audio, AppSettings.load(from: d), x)
         #expect(!f.rows.contains { ShellForm.id(of: $0) == "duckAmount" })
-        #expect(f.checkFields["liveDuck"]?.width == 92 && f.checkFields["liveDuck"]?.field.decimals == 1)
+        #expect(f.checkFields["liveDuck"]?.width == 72 && f.checkFields["liveDuck"]?.field.decimals == 1)
         #expect(f.number("duckAmount") == 10)
         f.set("duckAmount", .number(13.3))
         ShellPreferences.apply(f, to: &x)

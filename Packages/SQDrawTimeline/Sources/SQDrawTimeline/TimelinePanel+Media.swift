@@ -186,16 +186,16 @@ extension TimelinePanel {
         guard rect.width >= 40 else { return }
         let size = DrawTheme.TypeSize.clipName.cg
         let textW = cv.size(of: "fx", fontSize: size).width
-        let w = textW + 6, h: CGFloat = 12
+        let w = textW + 8, h: CGFloat = 16      // draft: 16 high, radius 4
         let pill = CGRect(x: min(rect.maxX, visible.maxX) - 3 - w, y: rect.minY + 4, width: w, height: h)
         guard pill.minX >= rect.minX + ClipBodyMetrics.thumbnailWidth else { return }
-        cv.fill(roundedRect: pill, radius: 3, DrawColor.black.alpha(0.5))
-        cv.draw("fx", at: CGPoint(x: pill.minX + 3, y: pill.minY), fontSize: size, .white)
+        cv.fill(roundedRect: pill, radius: 4, DrawColor.black.alpha(0.5))
+        cv.draw("fx", at: CGPoint(x: pill.minX + 4, y: pill.minY + 2), fontSize: size, .white)
     }
 
     /// Width the clip name gives up for the fx pill (`ClipDrawing.fxBadgeReserve`).
     func fxBadgeReserve(clipWidth: CGFloat, size cv: inout Canvas) -> CGFloat {
-        clipWidth >= 40 ? cv.size(of: "fx", fontSize: DrawTheme.TypeSize.clipName.cg).width + 6 + 3 : 0
+        clipWidth >= 40 ? cv.size(of: "fx", fontSize: DrawTheme.TypeSize.clipName.cg).width + 8 + 3 : 0
     }
 
     /// `ClipDrawing.drawSyncBadge`: frames the linked partner has drifted ("+3"), red on the clip's left edge.

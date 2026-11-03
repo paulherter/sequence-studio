@@ -42,6 +42,7 @@ extension ProjectListView {
             guard accepts(root) else { return nil }
             return MoveTarget(bin: root, index: nil, cue: listRect, isLine: false)
         }
+        guard list[i].variant == nil else { return nil }
         let rr = rowRect(i), ref = list[i].ref
         let parent = project.rootBin.parent(of: ref) ?? project.rootBin.id
         // Between rows the line shows in every order, like the Mac outline; only where the order is the bin's own (no sort,

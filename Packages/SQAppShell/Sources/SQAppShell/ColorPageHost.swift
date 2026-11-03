@@ -325,19 +325,20 @@ public final class ColorPageHost {
     private func drawSwitch(_ c: inout Canvas, theme t: DrawTheme) {
         guard let f = frames[.pageSwitch] else { return }
         let fs = CGFloat(DrawTheme.TypeSize.body)
-        c.fill(roundedRect: f, radius: CGFloat(DrawTheme.Radius.control), t.fill)
+        SegmentDraw.track(&c, f, t)
         for (p, icon, title) in [(WorkspaceStore.Page.edit, SQIcon.pageEdit, "Edit"), (.color, .pageColor, "Color")] {
             guard let r = switchFrame(p) else { continue }
             let on = dock.store.page == p
             let inner = r.insetBy(dx: 2, dy: 2)
-            if on { c.fill(roundedRect: inner, radius: CGFloat(DrawTheme.Radius.small), t.fillPressed) }
-            else if hoverSwitch == p { c.fill(roundedRect: inner, radius: CGFloat(DrawTheme.Radius.small), t.fillHover) }
+            if on {
+                SegmentDraw.selected(&c, inner, t)
+            } else if hoverSwitch == p { c.fill(roundedRect: inner, radius: CGFloat(DrawTheme.Radius.small), t.hover) }
             let label = SQL10n.string(title)
-            let tw = c.size(of: label, fontSize: fs).width, iw: CGFloat = 14, gap = CGFloat(DrawTheme.Spacing.xs)
+            let tw = c.size(of: label, fontSize: fs).width, iw: CGFloat = 12, gap = CGFloat(DrawTheme.Spacing.xs)
             let x = (r.midX - (iw + gap + tw) / 2).rounded()
             let color = on ? t.label : t.label2
             c.draw(icon: icon, at: CGPoint(x: x, y: (r.midY - iw / 2).rounded()), size: iw, color)
-            c.draw(label, in: CGRect(x: x + iw + gap, y: r.minY, width: tw + 2, height: r.height), fontSize: fs, color)
+            c.draw(label, in: CGRect(x: x + iw + gap, y: r.minY, width: tw + 2, height: r.height), fontSize: fs, color, face: c.medium)
         }
     }
 

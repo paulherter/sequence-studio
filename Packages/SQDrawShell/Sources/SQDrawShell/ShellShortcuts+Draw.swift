@@ -9,13 +9,13 @@ import SQEditorSession
 extension ShellShortcutsEditor {
     /// `Theme.Modal.widthL`, `SQDialogMetrics`, `Theme.Row.list`, the Mac constraint constants.
     enum M {
-        static let cardW: CGFloat = 860, cardH: CGFloat = 640, header: CGFloat = 56, footer: CGFloat = 68
-        static let side: CGFloat = 20, pad: CGFloat = 16, gap: CGFloat = 8, radius: CGFloat = 14
-        static let control: CGFloat = 24, presetW: CGFloat = 210, layoutW: CGFloat = 150, countW: CGFloat = 110
-        static let wellPad: CGFloat = 16, row: CGFloat = 24, scopeW: CGFloat = 190
-        static let keyRadius: CGFloat = 8, wellRadius: CGFloat = 8, ctlRadius: CGFloat = 6
-        static let fBody: CGFloat = 12, fTitle: CGFloat = 13, fCap: CGFloat = 11
-        static let legendColumns = 5, legendColumnGap: CGFloat = 28, legendRow: CGFloat = 14
+        static let cardW: CGFloat = 860, cardH: CGFloat = 640, header: CGFloat = 48, footer: CGFloat = 56
+        static let side: CGFloat = 20, pad: CGFloat = 16, gap: CGFloat = 8, radius: CGFloat = 12
+        static let control: CGFloat = 24, presetW: CGFloat = 148, layoutW: CGFloat = 123, countW: CGFloat = 110
+        static let wellPad: CGFloat = 16, keyH: CGFloat = 24, keyPitchY: CGFloat = 34, row: CGFloat = 24, scopeW: CGFloat = 115
+        static let keyRadius: CGFloat = 4, wellRadius: CGFloat = 8, ctlRadius: CGFloat = 6
+        static let fBody: CGFloat = 11, fTitle: CGFloat = 13, fCap: CGFloat = 10
+        static let legendColumns = 5, legendColumnGap: CGFloat = 28, legendRow: CGFloat = 14, legendBar = CGSize(width: 10, height: 3)
     }
 
     enum Hit: Equatable {
@@ -51,19 +51,19 @@ extension ShellShortcutsEditor {
         let segW: CGFloat = platform == .mac ? 30 : 48
         var sx = x1 - segW * CGFloat(modifierChoices.count)
         p.modifiers = modifierChoices.map { _ in defer { sx += segW }; return CGRect(x: sx, y: y, width: segW, height: M.control) }
-        y += M.control
-        let wellH = CGFloat(KeyboardLayout.height) + 2 * M.wellPad
-        let pw = CGFloat(KeyboardLayout.width)
-        p.well = CGRect(x: p.body.midX - pw / 2, y: y, width: pw, height: wellH)
-        p.picture = CGRect(x: p.well.minX, y: y + M.wellPad, width: pw, height: CGFloat(KeyboardLayout.height))
+        y += M.control + 9
+        // art.html: keys 42 x 24 on a 48 x 34 pitch, the board left-aligned in a 182 high well (the model's 50 x 42 keys, 56 x 48 pitch).
+        let pw = CGFloat(KeyboardLayout.width) * Self.keyScaleX
+        p.well = CGRect(x: x0, y: y, width: x1 - x0, height: 182)
+        p.picture = CGRect(x: p.well.minX + M.wellPad, y: y + 7, width: pw, height: 4 * M.keyPitchY + M.keyH)
         p.legendTop = p.well.maxY + 11
-        p.info = CGRect(x: x0, y: p.well.maxY + 53.5 - 8, width: x1 - x0, height: 16)
+        p.info = CGRect(x: x0, y: p.well.maxY + 52, width: x1 - x0, height: 16)
         p.note = p.info.offsetBy(dx: 0, dy: 15)
-        p.search = CGRect(x: x0, y: p.well.maxY + 78, width: x1 - x0 - M.countW - M.gap, height: M.control)
+        p.search = CGRect(x: x0, y: p.well.maxY + 75, width: x1 - x0 - M.countW - M.gap, height: 22)
         p.count = CGRect(x: x1 - M.countW, y: p.search.minY, width: M.countW, height: M.control)
-        p.list = CGRect(x: x0, y: p.search.maxY + M.gap, width: x1 - x0, height: Swift.max(p.body.maxY - M.pad - p.search.maxY - M.gap, 0))
+        p.list = CGRect(x: x0, y: p.search.maxY + 10, width: x1 - x0, height: Swift.max(p.body.maxY - M.pad - p.search.maxY - 10, 0))
         // Footer: Set Shortcut, Assign to …, Remove at the left, Done at the right (`SQDialog.footerRow`).
-        let by = p.card.maxY - ShellDialog.M.alertFooterHeight, bh = ShellDialog.M.buttonHeight
+        let bh = ShellDialog.M.buttonHeight, by = p.card.maxY - M.footer + ((M.footer - bh) / 2).rounded()
         var bx = p.card.minX + M.side
         p.set = CGRect(x: bx, y: by, width: buttonWidth("Set Shortcut…"), height: bh)
         bx = p.set.maxX + M.gap
@@ -78,8 +78,11 @@ extension ShellShortcutsEditor {
         return p
     }
 
+    static let keyScaleX: CGFloat = 48.0 / 56.0
     func capRect(_ cap: KeyCap, _ p: Parts) -> CGRect {
-        CGRect(x: p.picture.minX + CGFloat(cap.x), y: p.picture.minY + CGFloat(cap.y), width: CGFloat(cap.w), height: CGFloat(cap.h))
+        let row = (CGFloat(cap.y) / CGFloat(KeyboardLayout.keyHeight + KeyboardLayout.gap)).rounded()
+        return CGRect(x: p.picture.minX + CGFloat(cap.x) * Self.keyScaleX, y: p.picture.minY + row * M.keyPitchY,
+                      width: CGFloat(cap.w) * Self.keyScaleX, height: M.keyH)
     }
 
     /// The caps of the picture; Windows names the modifier and edit keys in words.
@@ -203,32 +206,32 @@ extension ShellShortcutsEditor {
 
     /// Board colors of the command groups (`KeyboardLayoutView.color`: the system palette in the dark appearance).
     static func color(_ g: KeyGroup, _ t: DrawTheme) -> DrawColor {
-        switch g {
-        case .transport: t.accent
-        case .marking: DrawColor(hex: 0xFF9F0A)
-        case .tools: DrawColor(hex: 0x30D158)
-        case .editing: DrawColor(hex: 0xBF5AF2)
-        case .clipboard: DrawColor(hex: 0x64D2FF)
-        case .view, .other: DrawColor(hex: 0x98989D)
-        case .file: DrawColor(hex: 0xFF453A)
-        case .audio: DrawColor(hex: 0xFFD60A)
-        case .keyframes: DrawColor(hex: 0xFF375F)
-        }
+        // art.html legend swatches (same in both appearances).
+        // Order of `KeyGroup.allCases`: transport, marking, tools, editing, clipboard, view, file, audio, keyframes, other.
+        let table: [UInt32] = [0x4855C9, 0x8F620C, 0x2E7D50, 0x7445C9, 0x0E7A75, 0x55555D, 0xB63A70, 0x2A62C9, 0x6D6D74, 0x55555D]
+        let rgb = table[KeyGroup.allCases.firstIndex(of: g) ?? 9]
+        return DrawColor(hex: rgb)
     }
 
     public func draw(_ c: inout Canvas, theme t: DrawTheme) {
         let p = parts()
-        c.fill(frame, DrawColor(0, 0, 0, ShellDialog.M.scrimAlpha))
-        c.shadow(roundedRect: p.card, radius: M.radius, blur: 24, dy: 8, DrawColor(0, 0, 0, 0.35), opaqueAbove: true)
-        c.fill(roundedRect: p.card, radius: M.radius, t.overlay)
+        c.fill(frame, DrawColor(0, 0, 0, t.palette.isDark ? ShellDialog.M.scrimAlpha : ShellDialog.M.scrimAlphaLight))
+        c.shadow(roundedRect: p.card, radius: M.radius, blur: ShellDialog.M.shadowBlur, dy: ShellDialog.M.shadowDY,
+                 DrawColor(0, 0, 0, ShellDialog.M.shadowAlpha), opaqueAbove: true)
+        c.fill(roundedRect: p.card, radius: M.radius, t.panel)
+        // art.html `.dlg`: header 48 and footer 56 bands, each split by a 1 px `hair` line.
+        c.fill(CGRect(x: p.card.minX, y: p.card.minY + M.header - 1, width: p.card.width, height: 1), t.hair)
+        c.fill(CGRect(x: p.card.minX, y: p.card.maxY - M.footer, width: p.card.width, height: 1), t.hair)
         c.stroke(roundedRect: p.card.insetBy(dx: 0.25, dy: 0.25), radius: M.radius, width: 0.5, MenuListView.overlayEdge(t))
-        c.draw("Keyboard Shortcuts", in: CGRect(x: p.card.minX + M.side, y: p.card.minY + 20, width: p.card.width - 2 * M.side, height: 16),
-               fontSize: M.fTitle, t.label)
+        c.draw("Keyboard Shortcuts", in: CGRect(x: p.card.minX + M.side, y: p.card.minY + ((M.header - 16) / 2).rounded(), width: p.card.width - 2 * M.side, height: 16),
+               fontSize: M.fTitle, t.label, face: c.semibold)
         drawTopRow(&c, t, p)
         drawKeyboard(&c, t, p)
         drawLegend(&c, t, p)
-        c.draw(info, in: p.info, fontSize: M.fBody, capturing ? t.accent : t.label2)
-        c.draw("Keys follow your keyboard layout.", in: p.note, fontSize: M.fBody, t.label3)
+        // Artifact: one 10 pt line, the note follows the info.
+        c.draw(info, in: p.info, fontSize: M.fCap, capturing ? t.accent : t.label3)
+        let infoW = info.isEmpty ? 0 : textWidth(info, M.fCap) + 8
+        c.draw("Keys follow your keyboard layout.", in: CGRect(x: p.info.minX + infoW, y: p.info.minY, width: p.info.width - infoW, height: p.info.height), fontSize: M.fCap, t.label3)
         drawSearch(&c, t, p)
         drawList(&c, t, p)
         drawFooter(&c, t, p)
@@ -237,12 +240,14 @@ extension ShellShortcutsEditor {
 
     private func control(_ c: inout Canvas, _ t: DrawTheme, _ r: CGRect, _ title: String, hit: Hit, enabled: Bool = true,
                          on: Bool = false, chevron: Bool = false) {
-        let fill = on ? t.accentFill : (pressed == hit ? t.fillPressed : (hover == hit && enabled ? t.fillHover : t.fill))
-        c.fill(roundedRect: r, radius: M.ctlRadius, fill)
-        let text = on ? DrawColor.white : (enabled ? t.label : t.label3)
+        // art.html `.pop` (well body) for the popups, `.btn` (raised) for the buttons, both with a 0.5 `hair2` ring.
+        let fill = on ? t.accentFill : (chevron ? t.well : (pressed == hit ? t.pressed : (hover == hit && enabled ? t.raisedHover : t.raised)))
+        c.fill(roundedRect: r, radius: M.ctlRadius, enabled || on ? fill : t.hover)
+        if !on, enabled { c.stroke(roundedRect: r.insetBy(dx: 0.25, dy: 0.25), radius: M.ctlRadius, width: 0.5, t.hair2) }
+        let text = on ? DrawColor.white : (enabled ? t.label : t.label4)
         if chevron {
             c.draw(SQL10n.string(title), in: CGRect(x: r.minX + 10, y: r.minY, width: r.width - 32, height: r.height), fontSize: M.fBody, text)
-            c.draw(icon: .chevronDown, at: CGPoint(x: r.maxX - 20, y: r.midY - 6), size: 12, t.label2)
+            c.draw(icon: .chevronDown, at: CGPoint(x: r.maxX - 20, y: r.midY - 6), size: 12, t.label3)
         } else {
             c.draw(SQL10n.string(title), in: r, fontSize: M.fBody, text, align: .center)
         }
@@ -254,7 +259,10 @@ extension ShellShortcutsEditor {
         control(&c, t, p.reset, "Reset to Defaults", hit: .reset, enabled: canReset)
         for (i, r) in p.modifiers.enumerated() {
             let ch = modifierChoices[i]
-            control(&c, t, r, ch.label, hit: .modifier(i), on: modifiers.contains(ch.mod))
+            // Artifact: glyphs only on the panel color; the chosen one gets the `current` fill.
+            if modifiers.contains(ch.mod) { c.fill(roundedRect: r, radius: M.ctlRadius, t.current) }
+            else if hover == .modifier(i) { c.fill(roundedRect: r, radius: M.ctlRadius, t.hover) }
+            c.draw(SQL10n.string(ch.label), in: r, fontSize: M.fBody, modifiers.contains(ch.mod) ? t.label : t.label2, align: .center)
         }
     }
 
@@ -264,49 +272,58 @@ extension ShellShortcutsEditor {
         for cap in caps where !cap.isGhost {
             let r = capRect(cap, p)
             let group = cap.key.flatMap { model.group(for: $0) }
-            c.fill(roundedRect: r, radius: M.keyRadius, group.map { Self.color($0, t).alpha(0.24) } ?? t.fill)
-            c.stroke(roundedRect: r.insetBy(dx: 0.5, dy: 0.5), radius: M.keyRadius - 0.5, width: 1,
-                     group.map { Self.color($0, t).alpha(0.6) } ?? t.fieldEdge)
+            // art.html `.key`: raised cap with a `hair2` ring; a mapped key gets a 2 px bar of its group color under the label.
+            // Unmapped keys are dim: well body, t3 label, no bar.
+            let dim = group == nil || group == .other   // caps the map cannot bind (Tab, Caps, Shift, fn) are free keys too
+            c.fill(roundedRect: r, radius: M.keyRadius, dim ? t.well : t.raised)
+            c.stroke(roundedRect: r.insetBy(dx: 0.25, dy: 0.25), radius: M.keyRadius, width: 0.5, t.hair2)
+            if let g = group, g != .other, r.width > 12 {
+                c.fill(roundedRect: CGRect(x: r.minX + 6, y: r.maxY - 5, width: r.width - 12, height: 2), radius: M.legendBar.height / 3, Self.color(g, t))
+            }
             if let k = cap.key, k == selectedKey {
                 c.stroke(roundedRect: r.insetBy(dx: -1, dy: -1), radius: M.keyRadius + 1, width: 2, t.yellow)
             }
-            c.draw(cap.label, in: r.insetBy(dx: 2, dy: 0), fontSize: M.fBody, t.label, align: .center)
+            c.draw(cap.label, in: r.insetBy(dx: 2, dy: 0).offsetBy(dx: 0, dy: group == nil ? 0 : -1), fontSize: M.fBody, dim ? t.label3 : t.label, align: .center)
         }
     }
 
     private func drawLegend(_ c: inout Canvas, _ t: DrawTheme, _ p: Parts) {
         let groups = KeyGroup.allCases.filter { $0 != .other }
-        let widths = groups.map { 8 + 6 + textWidth($0.title, M.fBody) }
-        // Column widths: the widest item of each column (NSGridView), 28 between columns, 4 between the rows.
-        var colW = [CGFloat](repeating: 0, count: M.legendColumns)
-        for (i, w) in widths.enumerated() { colW[i % M.legendColumns] = Swift.max(colW[i % M.legendColumns], w) }
+        let widths = groups.map { 10 + 6 + textWidth($0.title, M.fBody) + 1 }
+        // art.html: the items flow in one wrapping row, 16 apart, 4 between the rows.
+        var x = p.body.minX + M.pad, row = 0
+        let maxX = p.body.maxX - M.pad
         for (i, g) in groups.enumerated() {
-            let col = i % M.legendColumns, row = i / M.legendColumns
-            let x = p.body.minX + M.pad + colW.prefix(col).reduce(0, +) + CGFloat(col) * M.legendColumnGap
+            if x > p.body.minX + M.pad, x + widths[i] > maxX { x = p.body.minX + M.pad; row += 1 }
             let y = p.legendTop + CGFloat(row) * (M.legendRow + 4)
-            c.fill(ellipseIn: CGRect(x: x, y: y + (M.legendRow - 8) / 2, width: 8, height: 8), Self.color(g, t))
-            c.draw(SQL10n.string(g.title), in: CGRect(x: x + 14, y: y, width: colW[col], height: M.legendRow), fontSize: M.fBody, t.label2)
+            c.fill(roundedRect: CGRect(x: x, y: y + (M.legendRow - M.legendBar.height) / 2, width: M.legendBar.width, height: M.legendBar.height), radius: M.legendBar.height / 2, Self.color(g, t))
+            c.draw(SQL10n.string(g.title), in: CGRect(x: x + 16, y: y, width: widths[i] - 16, height: M.legendRow), fontSize: M.fBody, t.label2)
+            x += widths[i] + 16
         }
     }
 
     private func drawSearch(_ c: inout Canvas, _ t: DrawTheme, _ p: Parts) {
         let f = p.search
-        c.fill(roundedRect: f, radius: M.ctlRadius, t.field)
+        c.fill(roundedRect: f, radius: M.ctlRadius, t.well)
+        c.stroke(roundedRect: f.insetBy(dx: 0.25, dy: 0.25), radius: M.ctlRadius, width: 0.5, t.hair2)
         c.draw(icon: .search, at: CGPoint(x: f.minX + 8, y: f.midY - 6), size: 12, t.label3)
         let textRect = CGRect(x: f.minX + 26, y: f.minY, width: f.width - 26 - 28, height: f.height)
         search.draw(&c, in: textRect, theme: t, focused: search.isEditing)
-        if query.isEmpty, !search.isEditing {
-            c.draw("Search", in: textRect, fontSize: M.fBody, t.label3)
+        if query.isEmpty {
+            c.draw("Search shortcuts", in: textRect, fontSize: M.fBody, t.label3)
         } else if !query.isEmpty {
             c.draw(icon: .closeCircleFilled, at: CGPoint(x: f.maxX - 22, y: f.midY - 8), size: 16, t.label3)
         }
-        if search.isEditing { c.stroke(roundedRect: f.insetBy(dx: -1, dy: -1), radius: M.ctlRadius + 1, width: 2, t.accent) }
+        if search.isEditing {
+            // art.html `.well.focus`: 1 px accent inset + 3 px glow (accent .25).
+            c.stroke(roundedRect: f.insetBy(dx: -1.5, dy: -1.5), radius: M.ctlRadius + 1.5, width: 3, t.accent.alpha(0.25))
+            c.stroke(roundedRect: f.insetBy(dx: 0.5, dy: 0.5), radius: M.ctlRadius, width: 1, t.accent)
+        }
         c.draw(countText, in: p.count, fontSize: M.fBody, t.label3, align: .right)
     }
 
     private func drawList(_ c: inout Canvas, _ t: DrawTheme, _ p: Parts) {
         let l = p.list
-        c.fill(roundedRect: l, radius: M.wellRadius, t.content)
         c.saveGState()
         c.clip(to: l)
         if rows.isEmpty {
@@ -318,8 +335,8 @@ extension ShellShortcutsEditor {
             let keyW = keyColumnWidth, pad: CGFloat = 12
             for i in first...last {
                 let r = CGRect(x: l.minX, y: l.minY + CGFloat(i) * M.row - scroll, width: l.width, height: M.row)
-                if i == selectedIndex { c.fill(r, search.isEditing ? t.selection : t.accentFill.alpha(0.35)) }
-                else if hover == .row(i) { c.fill(r, t.inkFill(0.06)) }
+                if i == selectedIndex { c.fill(roundedRect: r, radius: M.keyRadius, t.current) }
+                else if hover == .row(i) { c.fill(roundedRect: r, radius: M.keyRadius, t.hover) }
                 let it = rows[i].listing
                 let keyX = r.maxX - pad - M.scopeW - keyW
                 c.draw(SQL10n.string(it.command), in: CGRect(x: r.minX + pad, y: r.minY, width: keyX - r.minX - pad - 8, height: r.height), fontSize: M.fBody, t.label)
@@ -332,14 +349,16 @@ extension ShellShortcutsEditor {
 
     private func drawFooter(_ c: inout Canvas, _ t: DrawTheme, _ p: Parts) {
         func button(_ r: CGRect, _ title: String, _ h: Hit, enabled: Bool, accent: Bool) {
-            var fill = accent ? t.accentFill : (pressed == h ? t.fillPressed : (hover == h && enabled ? t.fillHover : t.fill))
+            // art.html `.btn`: raised + `hair2` ring; disabled = t4 text on `hover`; the primary (Done) is the accent fill.
+            var fill = accent ? t.accentFill : (pressed == h ? t.pressed : (hover == h && enabled ? t.raisedHover : t.raised))
             if accent, pressed == h { fill = fill.lifted(-0.1) }
-            if !enabled { fill = fill.alpha(fill.a * 0.5) }
+            if !enabled { fill = accent ? fill.alpha(fill.a * 0.3) : t.hover }
             c.fill(roundedRect: r, radius: ShellDialog.M.buttonRadius, fill)
-            let text = accent ? DrawColor.white : t.label
-            c.draw(SQL10n.string(title), in: r, fontSize: ShellDialog.M.buttonFont, enabled ? text : text.alpha(0.45), align: .center)
+            if !accent, enabled { c.stroke(roundedRect: r.insetBy(dx: 0.25, dy: 0.25), radius: ShellDialog.M.buttonRadius, width: 0.5, t.hair2) }
+            let text = accent ? DrawColor.white : (enabled ? t.label : t.label4)
+            c.draw(SQL10n.string(title), in: r, fontSize: ShellDialog.M.buttonFont, accent && !enabled ? text.alpha(0.45) : text, align: .center, face: c.medium)
         }
-        button(p.set, "Set Shortcut…", .set, enabled: selectedRow != nil && !capturing, accent: true)
+        button(p.set, "Set Shortcut…", .set, enabled: selectedRow != nil && !capturing, accent: false)
         if let a = p.assign { button(a, assignTitle, .assign, enabled: selectedRow != nil, accent: false) }
         if let r = p.remove { button(r, "Remove", .remove, enabled: true, accent: false) }
         button(p.done, "Done", .done, enabled: true, accent: true)

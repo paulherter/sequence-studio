@@ -23,6 +23,11 @@ nonisolated(unsafe) private var gKeyUps: [InputKey] = []
 nonisolated(unsafe) private var gFocusLost = false
 /// Indexes in `gEvents` of key downs that are auto-repeats (lParam bit 30: the key was already down).
 nonisolated(unsafe) private var gRepeats: Set<Int> = []
+/// Text the keyboard layout typed for the key down at an index of `gEvents` (WM_CHAR, ASCII): text fields type it instead
+/// of the key position (`HostTypedText`).
+nonisolated(unsafe) private var gTyped: [Int: String] = [:]
+/// Index in `gEvents` of the latest key down the key map knew (-1: the latest key down had no key map entry).
+nonisolated(unsafe) private var gLastKeyIndex = -1
 /// Alt pressed and released alone (the menu-bar key); counted for the main loop.
 nonisolated(unsafe) private var gAltTap = AltTap()
 nonisolated(unsafe) private var gAltTaps = 0
@@ -241,6 +246,7 @@ private func wndProc(_ hwnd: HWND?, _ msg: UINT, _ wp: WPARAM, _ lp: LPARAM) -> 
         gEvents.append(.mouseUp(x: x, y: y))
         return 0
     case UINT(WM_MOUSEWHEEL), UINT(WM_MOUSEHWHEEL):
+        gAltTap.other()   // Alt + wheel zooms the timeline: not an Alt tap that would open the menu bar
         var p = POINT(x: LONG(Int16(truncatingIfNeeded: lp)), y: LONG(Int16(truncatingIfNeeded: lp >> 16)))
         ScreenToClient(hwnd, &p)
         // The Mac gesture meaning (WinScroll): touchpad points with phases, a pinch (Ctrl + touchpad), mouse notches.
@@ -261,13 +267,19 @@ private func wndProc(_ hwnd: HWND?, _ msg: UINT, _ wp: WPARAM, _ lp: LPARAM) -> 
         if Int(wp) == Int(VK_MENU) { gAltTap.altDown() } else { gAltTap.other() }
         let k = key(Int(wp))
         gText.keyDown(k)
+        gLastKeyIndex = k == nil ? -1 : gEvents.count
         if let k {
             if (lp >> 30) & 1 != 0 { gRepeats.insert(gEvents.count) }
             gEvents.append(.keyDown(k, modifiers: keyModifiers()))
         }
         return 0
     case UINT(WM_CHAR), UINT(WM_DEADCHAR):
-        let out = msg == UINT(WM_DEADCHAR) ? gText.deadChar() : gText.char(UInt16(truncatingIfNeeded: wp))
+        // ASCII from the layout (Y/Z, Shift capitals, AltGr @ and symbols) belongs to the key down just queued.
+        let unit = UInt16(truncatingIfNeeded: wp)
+        if msg == UINT(WM_CHAR), unit >= 0x20, unit < 0x7F, gLastKeyIndex == gEvents.count - 1, gLastKeyIndex >= 0 {
+            gTyped[gLastKeyIndex, default: ""].append(Character(UnicodeScalar(UInt8(unit))))
+        }
+        let out = msg == UINT(WM_DEADCHAR) ? gText.deadChar() : gText.char(unit)
         switch out {
         case .none: break
         case .type(let c): gEvents.append(.keyDown(.character(c), modifiers: []))
@@ -329,6 +341,8 @@ final class AppWindow {
             wc.lpfnWndProc = wndProc
             wc.hInstance = hinst
             wc.hCursor = LoadCursorW(nil, UnsafePointer<UInt16>(bitPattern: 32512))  // IDC_ARROW
+            wc.hIcon = Self.appIcon(big: true)
+            wc.hIconSm = Self.appIcon(big: false)
             wc.lpszClassName = c.baseAddress
             return RegisterClassExW(&wc) != 0
         }
@@ -357,6 +371,52 @@ final class AppWindow {
         // Explorer drags while they hover (the timeline ghost); the release still arrives as WM_DROPFILES.
         _ = sq_drop_register(UnsafeMutableRawPointer(hwnd))
         ShowWindow(hwnd, SW_SHOW)
+    }
+
+    /// The app icon for the taskbar, Alt-Tab and the window: resource 1 of the exe (embedded by Windows/Installer/embed-icon.ps1),
+    /// else `SequenceStudio.ico` beside the exe (a development build), else nil (the system default).
+    static func appIcon(big: Bool) -> HICON? {
+        appIcon(width: GetSystemMetrics(big ? SM_CXICON : SM_CXSMICON), height: GetSystemMetrics(big ? SM_CYICON : SM_CYSMICON))
+    }
+
+    /// The app icon's own pixels at `size` (the 256 px entry of the .ico): the About card draws this, not a redraw.
+    static func appIconImage(size: Int32 = 256) -> RGBAImage? {
+        guard let icon = appIcon(width: size, height: size) else { return nil }
+        defer { DestroyIcon(icon) }
+        var info = ICONINFO()
+        guard GetIconInfo(icon, &info) else { return nil }
+        defer { DeleteObject(info.hbmColor); DeleteObject(info.hbmMask) }
+        guard let color = info.hbmColor else { return nil }
+        var bmp = BITMAP()
+        guard GetObjectW(color, Int32(MemoryLayout<BITMAP>.size), &bmp) > 0 else { return nil }
+        let w = Int(bmp.bmWidth), h = Int(bmp.bmHeight)
+        var bi = BITMAPINFO()
+        bi.bmiHeader.biSize = DWORD(MemoryLayout<BITMAPINFOHEADER>.size)
+        bi.bmiHeader.biWidth = LONG(w); bi.bmiHeader.biHeight = -LONG(h)   // top-down
+        bi.bmiHeader.biPlanes = 1; bi.bmiHeader.biBitCount = 32; bi.bmiHeader.biCompression = DWORD(BI_RGB)
+        var bgra = [UInt8](repeating: 0, count: w * h * 4)
+        guard let dc = GetDC(nil) else { return nil }
+        defer { ReleaseDC(nil, dc) }
+        guard GetDIBits(dc, color, 0, UINT(h), &bgra, &bi, UINT(DIB_RGB_COLORS)) == h else { return nil }
+        var rgba = [UInt8](repeating: 0, count: w * h * 4)
+        for i in 0..<(w * h) {   // BGRA -> RGBA (icon bitmaps keep straight alpha)
+            rgba[i * 4] = bgra[i * 4 + 2]; rgba[i * 4 + 1] = bgra[i * 4 + 1]; rgba[i * 4 + 2] = bgra[i * 4]; rgba[i * 4 + 3] = bgra[i * 4 + 3]
+        }
+        return RGBAImage(width: w, height: h, pixels: rgba)
+    }
+
+    private static func appIcon(width w: Int32, height h: Int32) -> HICON? {
+        if let i = LoadImageW(GetModuleHandleW(nil), UnsafePointer<UInt16>(bitPattern: 1), UINT(IMAGE_ICON), w, h, 0) {
+            return i.assumingMemoryBound(to: HICON__.self)
+        }
+        var buf = [UInt16](repeating: 0, count: 1024)
+        let n = Int(GetModuleFileNameW(nil, &buf, DWORD(buf.count)))
+        guard n > 0 else { return nil }
+        let exe = String(decoding: buf[0..<n], as: UTF16.self)
+        let dir = exe.split(separator: "\\", omittingEmptySubsequences: false).dropLast().joined(separator: "\\")
+        let path = wide(dir + "\\SequenceStudio.ico")
+        let i = path.withUnsafeBufferPointer { LoadImageW(nil, $0.baseAddress, UINT(IMAGE_ICON), w, h, UINT(LR_LOADFROMFILE)) }
+        return i?.assumingMemoryBound(to: HICON__.self)
     }
 
     /// Smallest window (points): the title row and the dock still fit without overlaps.
@@ -401,6 +461,8 @@ final class AppWindow {
         }
         let e = gEvents, g = gGestures
         repeatedEvents = gRepeats
+        typedEvents = gTyped
+        gTyped.removeAll()
         gEvents.removeAll()
         gGestures.removeAll()
         gRepeats.removeAll()
@@ -431,6 +493,8 @@ final class AppWindow {
     /// Keys released since the last call (InputEvent has no key-up; only Hold-S needs one).
     /// Indexes (in the last `pump()` events) of key downs that are auto-repeats.
     var repeatedEvents: Set<Int> = []
+    /// Text the layout typed for the key downs of the last `pump()` events, by index.
+    var typedEvents: [Int: String] = [:]
 
     func takeKeyUps() -> [InputKey] {
         let k = gKeyUps

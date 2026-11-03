@@ -29,7 +29,7 @@ extension ShellDock {
                 // The selected tab's underline (v9 `.tab[aria-selected]::after`): accent while the group has focus.
                 if on {
                     let u = CGRect(x: r.minX + Self.tabPadding, y: g.strip.maxY - 2, width: max(r.width - 2 * Self.tabPadding, 0), height: 2)
-                    c.fill(roundedRect: u, radius: 1, focused == p ? t.accent : t.label3)
+                    c.fill(roundedRect: u, radius: 1, t.label)
                 }
             }
         }

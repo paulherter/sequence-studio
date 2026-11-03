@@ -145,12 +145,12 @@ public struct AudioMeter: Sendable, Equatable {
         didSet { for i in channels.indices { channels[i].style = style } }
     }
 
-    /// Design v9 `.tlmeter`: 48 wide; the peak readout on top, two 5 pt bars 3 pt apart, the scale right of them, "L R" below.
-    public static let width: CGFloat = 48
-    static let barWidth: CGFloat = 5
-    static let gap: CGFloat = 3
+    /// Design v9 `.tlmeter`: 54 wide; the peak readout on top, two 6 pt bars 4 pt apart, the scale right of them, "L R" below.
+    public static let width: CGFloat = 54
+    static let barWidth: CGFloat = 6
+    static let gap: CGFloat = 4
     static let barsX: CGFloat = 8
-    static let scaleRight: CGFloat = 39
+    static let scaleRight: CGFloat = 46
     static let topInset: CGFloat = 22
     static let bottomInset: CGFloat = 22
     static let edgeInset: CGFloat = 8

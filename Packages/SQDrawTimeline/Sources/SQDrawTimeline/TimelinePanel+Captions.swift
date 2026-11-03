@@ -8,8 +8,8 @@ import SQUIKit
 /// the same rows (`captionRows`), culling, slivers, word boxes (`CaptionWordLayout`) and flat preview blocks.
 extension TimelinePanel {
     /// `Theme.Colors.clipCaption` (the caption label color) and `clipCaptionWord`.
-    var captionFill: DrawColor { theme.clip(.captionDefault) }
-    var captionWordFill: DrawColor { DrawColor(hex: 0x7F591B) }
+    var captionFill: DrawColor { theme.captionClip }
+    var captionWordFill: DrawColor { theme.captionClip }
 
     func drawCaptionLanes(_ cv: inout Canvas, clip: CGRect) {
         let visibleX = CGRect(x: clip.minX, y: 0, width: clip.width, height: size.height)
@@ -66,7 +66,7 @@ extension TimelinePanel {
         let mid = body.height >= 18 ? body.minY + 12.5 - 3.5 : body.minY + 10 - 3.5
         cv.saveGState()
         cv.clip(to: CGRect(x: textLeft, y: body.minY, width: textWidth, height: body.height))
-        cv.draw(name, at: CGPoint(x: textLeft, y: (mid - lineH / 2).rounded()), fontSize: size, TimelineSkin.text(on: captionFill), face: cv.medium)   // cut by the clip, not ellipsized (the Mac `ClipLayer`)
+        cv.draw(cv.ellipsized(name, fontSize: size, face: cv.medium, maxWidth: textWidth), at: CGPoint(x: textLeft, y: (mid - lineH / 2).rounded()), fontSize: size, TimelineSkin.text(on: captionFill), face: cv.medium)
         cv.restoreGState()
     }
 

@@ -105,8 +105,9 @@ extension TimelinePanel {
 
         drawPatch(&cv, track: track.id, height: height)
         let chip = targetChipRect(height: height)
-        cv.fill(roundedRect: chip, radius: DrawTheme.Radius.small.cg, track.isTargeted ? theme.accentFill : theme.fill)
-        cv.draw(label, in: chip, fontSize: 10, track.isTargeted ? theme.onClip : theme.label2, align: .center)
+        cv.fill(roundedRect: chip, radius: DrawTheme.Radius.small.cg, track.isTargeted ? theme.current : theme.raised)
+        if track.isTargeted { cv.stroke(roundedRect: chip.insetBy(dx: 0.5, dy: 0.5), radius: DrawTheme.Radius.small.cg, width: 1, theme.label2) }
+        cv.draw(label, in: chip, fontSize: 10, track.isTargeted ? theme.label : theme.label2, align: .center)
 
         let hovered = hoverTrack == track.id
         let sl = Self.layout(track, width: width, height: height, hovered: hovered)

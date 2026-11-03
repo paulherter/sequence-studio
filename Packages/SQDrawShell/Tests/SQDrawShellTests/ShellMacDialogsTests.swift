@@ -138,7 +138,7 @@ import SQEditorSession
         let t = Task { @MainActor in await h.askAnonymize(clipName: "C2156.MP4", people: people(), defaults: defaults) }
         let d = try #require(await waitForDialog(h))
         #expect(d.messageText == "Anonymize" && d.width == 440)
-        #expect(d.informativeText.hasPrefix("C2156.MP4\nEach person gets a mask"))
+        #expect(d.informativeText.hasPrefix("Each person gets a mask"))
         let f = try #require(d.form)
         // Cover, With, the people line, three people, the hint.
         #expect(f.rows.count == 7)
@@ -154,17 +154,6 @@ import SQEditorSession
         #expect(c == AnonymizeChoice(target: .skin, cover: .blur, people: [0, 2]))
         #expect(AnonymizeChoice.remembered(defaults) == (.skin, .blur))
     }
-
-#if os(macOS)
-    @Test func sequenceSettingsIsAsWideAsTheMacSheet() async throws {
-        let (h, _, _) = host()
-        let t = Task { @MainActor in await h.sequenceSettings() }
-        let d = try #require(await waitForDialog(h))
-        #expect(d.messageText == "Sequence Settings" && d.width == SQModal.Size.m.width && d.width == 600)
-        d.press(.second)
-        await t.value
-    }
-#endif
 
     @Test func newProjectPopupsAre28PointsLikeTheMacSheet() {
         let styles = ShellNewProject.popupStyles(templates: ProjectTemplate.builtIn)
@@ -186,7 +175,7 @@ import SQEditorSession
         let form = ShellForm([.buttons(id: "location", label: "Location", detail: "~/Movies", titles: ["Choose\u{2026}"])])
         form.chips["location"] = ShellForm.Chip(icon: .folder, buttonWidth: 92)
         _ = form.layout(origin: .zero, width: 600)
-        #expect(form.buttonFrames(0).first?.height == 28)
+        #expect(form.buttonFrames(0).first?.height == 26)
     }
 
     @Test func anonymizeWithNobodyTickedOrCanceledAnswersNil() async throws {

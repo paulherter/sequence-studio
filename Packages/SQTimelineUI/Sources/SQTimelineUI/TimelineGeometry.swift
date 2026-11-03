@@ -53,7 +53,7 @@ public struct CaptionRow: Sendable, Hashable {
 /// Time 0 sits at `contentOriginX - scrollX`. Rows: ruler, then video tracks top to bottom V(n)...V1, then audio A1...A(n)
 /// (video/audio order inside `Timeline.tracks` is bottom-up per kind).
 public struct TimelineGeometry: Sendable, Equatable {
-    public static let rulerHeight: CGFloat = 24
+    public static let rulerHeight: CGFloat = 22
     public static let toolColumnWidth = Theme.Metrics.toolColumn
     public static let headerWidth = Theme.Metrics.trackHeader
     public static let contentOriginX = toolColumnWidth + headerWidth

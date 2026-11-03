@@ -55,9 +55,11 @@ public struct ScrubFieldControl: Sendable {
 
     public init(value: Double) { self.value = value }
 
+    /// Draws a leading "-" before a digit as the true minus sign U+2212 (art.html dialogs: "−12 dB"); the typed text stays ASCII.
+    public var trueMinus = false
     public var displayText: String {
-        if let valueFormatter { return valueFormatter(value) }
-        return ScrubMath.format(value, decimals: decimals, unit: unit)
+        let text = valueFormatter?(value) ?? ScrubMath.format(value, decimals: decimals, unit: unit)
+        return trueMinus ? ScrubMath.typographicMinus(text) : text
     }
     var canReset: Bool { defaultValue != nil }
 
@@ -238,12 +240,13 @@ public struct ScrubFieldControl: Sendable {
             let fill = t.field
             c.fill(roundedRect: box, radius: radius, fill.alpha(fill.a * dim))
             if isEditing { c.fill(roundedRect: box, radius: radius, t.accentTint) }
+            c.stroke(roundedRect: box.insetBy(dx: 0.25, dy: 0.25), radius: radius, width: 0.5, t.hair2.alpha(t.hair2.a * dim))
             if hovering, isEnabled, !focused, !isEditing {
                 c.stroke(roundedRect: box.insetBy(dx: 0.5, dy: 0.5), radius: radius - 0.5, width: 1, t.fieldEdgeHover)
             }
             if focused || isEditing { InspectorDraw.focusLine(&c, box, radius: radius, t) }
         }
-        let valueColor = valueTint ?? (isPlain ? t.accent : t.label)
+        let valueColor = valueTint ?? t.label
         let size = CGFloat(DrawTheme.TypeSize.body)
         if let e = editor {
             InspectorDraw.editText(&c, e, in: box.insetBy(dx: 6, dy: 0), fontSize: size, color: t.label,

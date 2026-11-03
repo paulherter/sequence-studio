@@ -39,6 +39,9 @@ int sq_ui_set_image(SQUi *g, int slot, const uint8_t *rgba, int w, int h);
 /// The frame's quads, 20 floats each (SQDrawKit.DrawQuad).
 int sq_ui_set_quads(SQUi *g, const float *quads, int count);
 /// Clears, draws the quads, presents (when a window is attached). `rgbaOut` (width * height * 4) gets the picture.
+void sq_fine_timer(void);
+// Blocks until the swap chain takes another frame (the display's pace), at most `timeoutMs`; no-op without a window.
+void sq_ui_wait_frame(SQUi *g, int timeoutMs);
 int sq_ui_render(SQUi *g, float r, float gr, float b, uint8_t *rgbaOut, int vsync);
 void sq_ui_destroy(SQUi *g);
 

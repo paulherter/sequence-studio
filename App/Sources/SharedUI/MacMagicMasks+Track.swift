@@ -3,7 +3,6 @@ import SQAppShell
 import SQAnalysis
 import SQCore
 import SQEditorSession
-import SQEditorUI
 import SQInspectorUI
 
 // Track Mask Backward / Forward, Magic track controls and the click correction on the shared UI: the AppKit

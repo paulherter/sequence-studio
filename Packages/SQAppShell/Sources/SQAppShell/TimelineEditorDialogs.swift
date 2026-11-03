@@ -61,12 +61,14 @@ public final class TimelineEditorDialogs {
     /// "Track Volume and Pan" (the Mac `TrackMixDialog.present`): XS card, Volume and Pan `NumericSlider`s, one undo step.
     public func presentTrackMix(_ id: Track.ID) {
         guard let track = session.activeTimeline?.tracks.first(where: { $0.id == id }) else { return }
-        let d = ShellDialog("Track Volume and Pan", informative: track.name)
+        let d = ShellDialog("Track Volume and Pan")
+        d.headerSubtitle = track.name   // art.html 21: muted, inline after the title
         d.width = Self.widthXS
         let form = ShellForm([
             Self.volumeRow(track.volumeDB),
             .sliderNumber(label: "Pan", .init(id: "pan", value: track.pan * 100, range: -100...100, defaultValue: 0)),
         ])
+        form.sliderTrackWidth = 120   // art.html 21
         Self.formatVolume(form)
         form.setFormat("pan", format: { TrackMixText.text(pan: $0) }, parse: { TrackMixText.parse(pan: $0) })
         d.form = form
@@ -82,7 +84,8 @@ public final class TimelineEditorDialogs {
     /// "Sequence Volume" (the Mac `TrackMixDialog.presentSequenceVolume`): Volume, Keyframe at Playhead.
     public func presentSequenceVolume() {
         guard let t = session.activeTimeline else { return }
-        let d = ShellDialog("Sequence Volume", informative: t.name.isEmpty ? "Every track of this sequence" : "Every track of \(t.name)")
+        let d = ShellDialog("Sequence Volume")
+        d.headerSubtitle = t.name.isEmpty ? "Every track of this sequence" : "Every track of \(t.name)"
         d.width = Self.widthXS
         let level = t.masterVolumeDB(at: session.playhead)
         let form = ShellForm([Self.volumeRow(level), .check(id: "animate", title: "Keyframe at Playhead", on: t.isMasterVolumeKeyed)])
@@ -99,7 +102,7 @@ public final class TimelineEditorDialogs {
     /// The Mac "Tone Settings" sheet: frequency in Hz and level in dB, one undo step.
     public func editTone(_ id: Clip.ID) -> Bool {
         guard let spec = session.activeTimeline?.tracks.lazy.flatMap(\.clips).first(where: { $0.id == id })?.tone else { return false }
-        let d = ShellDialog("Tone Settings", informative: "Sine tone, 1 kHz at -12 dB by default")
+        let d = ShellDialog("Tone Settings", informative: "Sine tone, 1 kHz at \u{2212}12 dB by default")
         d.width = Self.widthXS
         d.form = ShellForm([.field(id: "freq", label: "Frequency", value: String(format: "%g", spec.frequencyHz), unit: "Hz"),
                             .field(id: "level", label: "Level", value: String(format: "%g", spec.levelDB), unit: "dB")])
@@ -134,7 +137,6 @@ public final class TimelineEditorDialogs {
         let d = ShellDialog("Save as Preset", informative: "Saves Transform, Opacity and effects with their keyframes and easing.")
         let form = ShellForm([.field(id: "name", label: "", value: clip.name),
                               .popup(id: "anchor", label: "", options: anchors.map { SQL10n.string($0.1) }, selected: 0)])
-        form.controlWidths = ["name": 400, "anchor": 400]
         d.form = form
         form.beginEditing("name")
         d.addButton("Save")
@@ -153,7 +155,7 @@ public final class TimelineEditorDialogs {
         guard let preset = session.presetFromSelectedTransition() else { return }
         askName("Save Transition as Preset",
                 informative: "Kind, length, alignment, easing and style are saved to the Library (Presets, Transitions).",
-                initial: preset.kind.name, width: 400) { [weak self] name in
+                initial: preset.kind.name) { [weak self] name in
             await self?.savePreset({ try EditorSession.transitionPresetItem(name: name, preset: preset) },
                                    done: SQL10n.format("Saved transition preset “%@”.", name), failure: "The preset could not be saved: %@")
         }
@@ -191,11 +193,10 @@ public final class TimelineEditorDialogs {
 
     /// One unlabeled name field `width` pt wide (the Mac sheets' accessory), Save / Cancel; `run` gets the trimmed name
     /// (`initial` for a blank field).
-    private func askName(_ title: String, informative: String, initial: String, width: CGFloat = 260,
+    private func askName(_ title: String, informative: String, initial: String,
                          _ run: @escaping @MainActor (String) async -> Void) {
         let d = ShellDialog(title, informative: informative)
         let form = ShellForm([.field(id: "name", label: "", value: initial)])
-        form.controlWidths = ["name": width]
         d.form = form
         form.beginEditing("name")
         d.addButton("Save")
@@ -222,7 +223,7 @@ public final class TimelineEditorDialogs {
                               .color(id: "color", label: "Color", value: Self.matteValue(.default)),
                               .sliderNumber(label: "Duration", .init(id: "duration", value: 5, range: 0.1...3600, step: 0.5,
                                                                      decimals: 1, unit: "s", defaultValue: 5))])
-        form.controlWidths = ["name": 220]
+        form.sliderTrackWidth = 110   // art.html 28
         d.form = form
         d.addButton("Add")
         d.addButton("Cancel", role: .cancel)
@@ -255,11 +256,10 @@ public final class TimelineEditorDialogs {
         d.form = ShellForm([
             .field(id: "name", label: "Name", value: fallback),
             .popup(id: "sync", label: "Sync by", options: syncs.map { SQL10n.string($0.title) }, selected: 0),
-            .popup(id: "sound", label: "Sound from", options: angles.enumerated().map { "\($0.offset + 1)  \($0.element.name)" },
+            .popup(id: "sound", label: "Sound from", options: angles.enumerated().map { "\($0.offset + 1) \($0.element.name)" },
                    selected: AngleSyncMode.defaultAudioAngle(angles)),
             .check(id: "follows", title: "Audio Follows Video", on: false),
         ])
-        d.form?.labeledPopupBleed = true   // the Mac formRow popups start 5 pt left of the column
         d.addButton("OK")
         d.addButton("Cancel", role: .cancel)
         shell.spawn { [weak self] in

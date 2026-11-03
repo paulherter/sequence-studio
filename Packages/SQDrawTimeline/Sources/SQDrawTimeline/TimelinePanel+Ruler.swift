@@ -31,7 +31,7 @@ extension TimelinePanel {
         cv.fill(CGRect(x: r.maxX - 1, y: 0, width: 1, height: r.height), theme.separator)
         let fs = DrawTheme.TypeSize.body.cg
         let s = cv.size(of: "Tracks", fontSize: fs)
-        cv.draw("Tracks", at: CGPoint(x: r.minX + DrawTheme.Spacing.sm.cg, y: ((r.height - s.height) / 2).rounded()), fontSize: fs, theme.label3)
+        cv.draw("Tracks", at: CGPoint(x: r.minX + DrawTheme.Spacing.sm.cg, y: ((r.height - s.height) / 2).rounded()), fontSize: fs, theme.label2)
     }
 
     func drawRulerInOut(_ cv: inout Canvas, clip: CGRect) {
@@ -86,14 +86,16 @@ extension TimelinePanel {
         let h = TimelineGeometry.rulerHeight, fd = geometry.frameDuration
         let fs = DrawTheme.TypeSize.caption.cg
         let lineHeight = cv.size(of: "0", fontSize: fs).height
+        // A marker glyph sits on its time; a label starting at the same tick moves right of the glyph.
+        let markerXs = timeline.markers.map { geometry.x(for: $0.time).rounded() }
         for (frame, major) in ticks(visibleMinX: clip.minX - 80, visibleMaxX: clip.maxX, nominalFPS: timecode.nominalFPS) {
             let x = geometry.x(for: fd * frame).rounded()
             if major {
-                cv.fill(CGRect(x: x, y: h - 8, width: 1, height: 8), theme.rulerLine)
-                cv.draw(timecode.string(forFrame: frame), at: CGPoint(x: x + 3.5, y: ((h - lineHeight) / 2).rounded()), fontSize: fs, theme.label3)
-            } else {
-                cv.fill(CGRect(x: x, y: h - 4, width: 1, height: 4), theme.rulerMinor)
+                cv.fill(CGRect(x: x, y: h - 8, width: 1, height: 8), theme.hair2)
+                let labelX = markerXs.contains { abs($0 - x) < 4 } ? x + 8 : x + 3.5
+                cv.draw(timecode.string(forFrame: frame), at: CGPoint(x: labelX, y: ((h - lineHeight) / 2).rounded()), fontSize: fs, theme.label3)
             }
+            // Minor ticks are not drawn: the artifact ruler shows only the labeled ticks.
         }
     }
 
@@ -102,12 +104,14 @@ extension TimelinePanel {
         for m in timeline.markers {
             let x = geometry.x(for: m.time).rounded()
             guard x <= clip.maxX + 8, max(x, geometry.x(for: m.time + m.duration)) >= clip.minX - 8 else { continue }
-            let c = skin.marker(m.color)
+            let c = theme.label2                                   // artifact .mk: gray t2
             if let bar = MarkerRange.barRect(m, geometry: geometry, rulerHeight: h), bar.maxX >= clip.minX {
                 cv.fill(bar, c.alpha(0.55))
                 cv.fill(CGRect(x: bar.maxX - 1, y: bar.minY - 3, width: 2, height: bar.height + 3), c)
             }
-            cv.fill(ellipseIn: CGRect(x: x - 3.5, y: h - 4 - 7, width: 7, height: 7), c)
+            let top = h - 4 - 9
+            cv.fill(polygon: [CGPoint(x: x - 3.5, y: top), CGPoint(x: x + 3.5, y: top), CGPoint(x: x + 3.5, y: top + 5.4),
+                              CGPoint(x: x, y: top + 9), CGPoint(x: x - 3.5, y: top + 5.4)], c)
         }
     }
 

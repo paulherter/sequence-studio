@@ -81,7 +81,7 @@ extension TimelinePanel {
                 let selected = selection.contains(c.id)
                 if rect.width < 3 {
                     // LOD: slivers of one color that touch become one fill (and one veil), so a zoomed-out hour is a few quads.
-                    let body = rect.insetBy(dx: 0, dy: 1)
+                    let body = rect.insetBy(dx: 0, dy: TimelineSkin.clipInset)
                     let fill = selected ? theme.yellow : (isOffline(c) ? skin.offlineClip : theme.clip(labels.label(for: c)))
                     let fade: Float? = inactive ? (selected ? 0.5 : 0.72) : (c.isEnabled ? nil : 0.68)
                     if var r = run, r.fill == fill, r.fade == fade, body.minX - r.maxX <= 0.25 {
@@ -171,22 +171,25 @@ extension TimelinePanel {
 
     /// `ClipDrawing.draw`: body, trim hints, edge, selection ring, thumbnail well and name.
     func drawClip(_ cv: inout Canvas, _ c: Clip, rect: CGRect, visible: CGRect, selected: Bool, track: Track) {
-        let body = rect.insetBy(dx: 0, dy: 1)
+        let body = rect.insetBy(dx: 0, dy: TimelineSkin.clipInset)
         let offline = isOffline(c)
         let fillColor = offline ? skin.offlineClip : theme.clip(labels.label(for: c))
         if body.width < 3 {                                   // LOD: a sliver is one plain fill
-            cv.fill(body, selected ? theme.yellow : fillColor)
+            cv.fill(body, selected ? theme.label : fillColor)
             return
         }
         // Clamp to the visible span (8 pt slack) so a long clip's rounded ends never draw far off-screen.
         let x0 = max(body.minX, visible.minX - 8), x1 = min(body.maxX, visible.maxX + 8)
         let drawn = CGRect(x: x0, y: body.minY, width: max(x1 - x0, 0), height: body.height)
-        let radius = min(DrawTheme.Radius.small.cg, body.height / 2)
+        let radius = min(DrawTheme.Radius.control.cg, body.height / 2)      // artifact: ~6 pt clip corners
         cv.fill(roundedRect: drawn, radius: radius, fillColor)
+        if offline { cv.fill(CGRect(x: drawn.minX + radius, y: body.minY, width: max(drawn.width - 2 * radius, 0), height: 2), skin.red) }
+        if selected { cv.fill(roundedRect: drawn, radius: radius, theme.current) }
         if selected { drawTrimHints(&cv, body: body, drawn: drawn) }
         cv.stroke(roundedRect: drawn.insetBy(dx: 0.25, dy: 0.25), radius: radius, width: 0.5, skin.clipEdge)
         if selected {
-            cv.stroke(roundedRect: drawn.insetBy(dx: 1, dy: 1), radius: max(radius - 1, 0), width: 2, theme.yellow)
+            cv.stroke(roundedRect: drawn.insetBy(dx: 1, dy: 1), radius: max(radius - 1, 0), width: 2, theme.label)
+            cv.stroke(roundedRect: drawn.insetBy(dx: 2.5, dy: 2.5), radius: max(radius - 2.5, 0), width: 1, DrawColor.black.alpha(0.45))
         }
         let flat = c.generator != nil || c.sequence != nil || offline
         let tall = !flat && drawn.height >= ClipBodyMetrics.bodyMinHeight
@@ -208,7 +211,7 @@ extension TimelinePanel {
         let mid = flat && body.height >= 18 ? body.minY + 12.5 - 3.5 : body.minY + 10 - 3.5
         cv.saveGState()
         cv.clip(to: CGRect(x: textLeft, y: body.minY, width: textWidth, height: min(body.height, DrawTheme.Metrics.clipNameBand.cg + 6)))
-        cv.draw(name, at: CGPoint(x: textLeft, y: (mid - lineH / 2).rounded()), fontSize: size, color, face: cv.medium)   // cut by the clip rect, not ellipsized (the Mac clip layer)
+        cv.draw(cv.ellipsized(name, fontSize: size, face: cv.medium, maxWidth: textWidth), at: CGPoint(x: textLeft, y: (mid - lineH / 2).rounded()), fontSize: size, color, face: cv.medium)
         cv.restoreGState()
     }
 
@@ -238,7 +241,7 @@ extension TimelinePanel {
             let x = geometry.x(for: c.start + m.time)
             guard x >= visible.minX - w, x <= visible.maxX + w else { continue }
             cv.fill(polygon: [CGPoint(x: x, y: rect.maxY), CGPoint(x: x + w / 2, y: rect.maxY - h), CGPoint(x: x - w / 2, y: rect.maxY - h)],
-                    skin.marker(m.color))
+                    theme.label2)
         }
     }
 
@@ -311,9 +314,10 @@ extension TimelinePanel {
         guard let io = timeline.inOut, !io.isEmpty else { return }
         let x0 = geometry.x(for: io.start), x1 = geometry.x(for: io.end)
         guard x1 > clip.minX, x0 < clip.maxX else { return }
-        cv.fill(CGRect(x: x0, y: clip.minY, width: x1 - x0, height: clip.height).intersection(clip), skin.inOutBand)
-        if x0 >= clip.minX { cv.fill(CGRect(x: x0, y: clip.minY, width: 1, height: clip.height), skin.inOutBandEdge) }
-        if x1 - 1 <= clip.maxX { cv.fill(CGRect(x: x1 - 1, y: clip.minY, width: 1, height: clip.height), skin.inOutBandEdge) }
+        cv.fill(CGRect(x: x0, y: clip.minY, width: x1 - x0, height: clip.height).intersection(clip), theme.label.alpha(0.04))
+        cv.fill(CGRect(x: x0, y: clip.minY, width: x1 - x0, height: 2).intersection(clip), theme.accent)   // work-area bar under the ruler (artifact)
+        if x0 >= clip.minX { cv.fill(CGRect(x: x0, y: clip.minY, width: 1, height: clip.height), theme.hair) }
+        if x1 - 1 <= clip.maxX { cv.fill(CGRect(x: x1 - 1, y: clip.minY, width: 1, height: clip.height), theme.hair) }
     }
 
     func drawPlayheadLine(_ cv: inout Canvas, clip: CGRect) {

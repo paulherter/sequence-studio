@@ -134,12 +134,19 @@ public final class ShellForm {
     }
 
     enum M {
-        static let sidePad: CGFloat = 20
+        static let sidePad: CGFloat = 16
         /// A settings page starts 8 pt lower than its sidebar.
         static let pageTop: CGFloat = 8
         static let rowGap: CGFloat = 12
+        /// art.html `.frm`: a dialog's rows are 26 pt, 4 apart, the label column 96 (measured in the crops) and 12 from the control.
+        static let dialogRow: CGFloat = 26, dialogRowGap: CGFloat = 4, dialogLabelWidth: CGFloat = 56, dialogLabelGap: CGFloat = 12
         /// Mac alignment-rect insets (NSTextField 2 pt each side, NSPopUpButton 5 pt on the left) of an unlabeled dialog row.
-        static let fieldBleed: CGFloat = 2
+        /// art.html: every dialog control sits flush on the content edges (the Mac frame bleeds are gone).
+        static let fieldBleed: CGFloat = 0
+        /// art.html `--h-c`: a well, field or popup in a dialog row is 22 high, centered in its 26 pt row; a check row is 22.
+        static let dialogControl: CGFloat = 22
+        static let dialogCheckRow: CGFloat = 22
+        static let fieldIconSize: CGFloat = 12
         static let popupBleed: CGFloat = 5
         static let rowHeight: CGFloat = 28
         static let checkRowHeight: CGFloat = 24
@@ -147,11 +154,7 @@ public final class ShellForm {
         /// The label column grows to its longest label up to this (the Mac form's labels never truncate).
         static let labelMax: CGFloat = 160
         /// Settings pages (`SQFormRow`): `Theme.Modal.labelColumnL`, help lines at most `SQFormRow.helpMaxWidth`, 4 below.
-        #if canImport(AppKit)
-        static let settingsLabelWidth = Theme.Modal.labelColumnL
-        #else
-        static let settingsLabelWidth: CGFloat = 132   // `Theme.Modal.labelColumnL` (SQUIKit Theme is Mac-only)
-        #endif
+        static let settingsLabelWidth: CGFloat = 154   // `Theme.Modal.labelColumnL` (SQUIKit Theme is Mac-only)
         static let helpMaxWidth: CGFloat = 440
         static let helpGap: CGFloat = 4
         static let captionFont: CGFloat = 10
@@ -161,7 +164,7 @@ public final class ShellForm {
         static let labelGap: CGFloat = 16
         static let controlGap: CGFloat = 8
         static let unitFieldWidth: CGFloat = 72
-        static let sliderFieldWidth: CGFloat = 72
+        static let sliderFieldWidth: CGFloat = 46, dialogSliderField: CGFloat = 56   // art.html 21, 30: a dialog's value box is 54-56 wide
         /// `NumericSlider.unitColumn`: the narrowest unit column after a slider's field.
         static let unitColumn: CGFloat = 24
         static let noteLine: CGFloat = 16
@@ -172,7 +175,7 @@ public final class ShellForm {
         /// The sidebar column (`SettingsPage.sidebarWidth`, 200 in the Mac L modal).
         static let sidebarWidth: CGFloat = 200
         /// `Theme.Row.list + Theme.Spacing.xs`, `Theme.Spacing.xxs` apart, inset `Theme.Spacing.sm`.
-        static let sidebarRow: CGFloat = 28
+        static let sidebarRow: CGFloat = 24
         static let sidebarGap: CGFloat = 2
         static let sidebarInset: CGFloat = 8
         /// `SQDialog.radioRow`: the radio and its title take 190 pt before the field.
@@ -183,7 +186,9 @@ public final class ShellForm {
         static let captionTop: CGFloat = 8
         static let captionLine: CGFloat = 14
         /// Extra space under a Settings page caption: measured 10 pt more than the plain stack gap in the Mac render (`SQFormRow.caption`).
-        static let captionAfter: CGFloat = 10
+        static let captionAfter: CGFloat = 4
+        /// art.html settings: a section heading sits ~35 under the block above and ~25 over its first row (heading attached to its group).
+        static let sectionTop: CGFloat = 18
         /// `SQFormRow.unitGrid` spacing; the `ScrubField` after a check title (`SettingsWindow` Live Ducking amount).
         static let gridGap: CGFloat = 8
         static let statusDot: CGFloat = 8
@@ -195,6 +200,8 @@ public final class ShellForm {
         static let chartLine: CGFloat = 12
         static let chartInner: CGFloat = 3
         /// `ProjectNotesDialog`: 6 pt text inset, body size lines.
+        static let listPad: CGFloat = 6
+        static let infoIndent: CGFloat = 18   // art.html 31: the (i) icon is 12 pt, 6 before the text
         static let boxInset: CGFloat = 6
         static let boxLine: CGFloat = 14
     }
@@ -280,6 +287,8 @@ public final class ShellForm {
     public var popupStyles: [String: PopupStyle] = [:]
     /// Number grids under rows by row id (`setGrid`).
     public private(set) var grids: [String: [GridCell]] = [:]
+    /// Fields of a settings page whose unit is drawn inside the field (`ScrubFieldControl.unit`).
+    private var insideUnits: Set<String> = []
     /// Number fields after a check row's title by check id (`setCheckField`), dimmed while the check is off.
     public private(set) var checkFields: [String: (field: NumberField, width: CGFloat)] = [:]
     /// Number fields whose value is drawn in `label` instead of accent (`ScrubField.valueTint = Theme.Colors.label`).
@@ -318,6 +327,8 @@ public final class ShellForm {
     /// option (the Mac `NSStackView([field, popup])` of the Find dialog). A field with an empty label starts at the card's
     /// inner edge (no label column).
     public var inlinePopups: Set<String> = []
+    /// A leading icon inside a field row's well by id (art.html 17: the Find field's magnifier); the text starts after it.
+    public var fieldIcons: [String: SQIcon] = [:]
     private var helpLines: [Int: [String]] = [:]
     public internal(set) var linkFrame: CGRect = .zero
     /// Text rows drawn in the warning color (`AudioGainDialog.setNote(warning:)`).
@@ -334,6 +345,11 @@ public final class ShellForm {
     private var selecting: (row: Int, start: CGPoint?)?
     public var measure = TextMeasure(atlas: nil, scale: 1)
     /// The label column of the last layout (`labelColumn`).
+    /// The Mac `NSPopUpButton` bleed exists on a settings page only; dialogs are flush (art.html).
+    var popupBleed: CGFloat { sidebar != nil ? M.popupBleed : 0 }
+    var rowH: CGFloat { sidebar == nil ? M.dialogRow : M.rowHeight }
+    var rowG: CGFloat { sidebar == nil ? M.dialogRowGap : M.rowGap }
+    var labelG: CGFloat { sidebar == nil ? M.dialogLabelGap : M.labelGap }
     public private(set) var labelWidth = M.labelWidth
     public let sidebar: Sidebar?
     /// The sidebar's page frames and the rule after the column (window points, set by `layout`).
@@ -350,17 +366,43 @@ public final class ShellForm {
     /// The widest row label, at least `M.labelWidth`, at most `M.labelMax`. A settings form (with a sidebar) has the Mac
     /// `SQFormRow` column: `Theme.Modal.labelColumnL`.
     /// Text size: 12 in dialogs, the Mac settings `body` 11 on a settings form.
-    var font: CGFloat { sidebar != nil ? M.settingsFont : M.font }
+    var font: CGFloat { sidebar != nil ? M.settingsFont : (dialogFontSize ?? CGFloat(DrawTheme.TypeSize.body)) }
+    /// Label and note size of a dialog form: body (11, art.html `--f-body`); the New Project sheet keeps 12.
+    public var dialogFontSize: CGFloat?
+    /// Every labeled row of a dialog puts a label column left of its control; unlabeled checks then sit in the control column.
+    var hasLabeledRows: Bool {
+        rows.contains { r in
+            switch r {
+            case .field(_, let l, _, _), .popup(_, let l, _, _), .slider(_, let l, _, _, _), .number(let l, _), .sliderNumber(let l, _),
+                 .size(let l, _, _), .segmented(_, let l, _, _, _), .color(_, let l, _): !l.isEmpty
+            default: false
+            }
+        }
+    }
+    /// An unlabeled check of a form with labeled rows: its box starts in the control column (art.html `.frm` checks).
+    func indentedCheck(_ id: String) -> Bool { sidebar == nil && checkLabels[id] == nil && hasLabeledRows && !flushChecks }
+    /// Unlabeled checks stay at the left edge even in a form with labeled rows (Anonymize's people list, art.html 31).
+    public var flushChecks = false
+    /// A radio group drawn as a numbered list in a well with a check on the current row (History, art.html 32).
+    public var numberedList = false
+    /// The number of the first row of a `numberedList`.
+    public var listNumberBase = 0
+    /// Note rows that start with a small (i) icon (art.html 31 detection note).
+    public var infoNotes: Set<Int> = []
     private var helpLine: CGFloat { sidebar != nil ? M.settingsHelpLine : M.noteLine }
 
     /// Segment widths: `sw` each, or (`sw` 0, the Mac `SQSegmented` default) each title at 11 pt plus 20.
     static func segmentWidths(_ options: [String], _ sw: CGFloat, _ m: TextMeasure) -> [CGFloat] {
-        options.map { sw > 0 ? sw : ceil(m.width(SQL10n.string($0), size: CGFloat(DrawTheme.TypeSize.body))) + 20 }
+        options.map { sw > 0 ? sw : ceil(m.width(SQL10n.string($0), size: CGFloat(DrawTheme.TypeSize.body))) + 24 }   // art.html `.seg span` padding 0 12
     }
+
+    /// A dialog's own label column (art.html `.frm` `grid-template-columns`), set by `ShellDialog.labelColumns`; nil = fits the labels.
+    var fixedLabelColumn: CGFloat?
 
     func labelColumn() -> CGFloat {
         if sidebar != nil { return M.settingsLabelWidth }
-        var w = M.labelWidth
+        if let fixedLabelColumn { return fixedLabelColumn }
+        var w = sidebar == nil ? M.dialogLabelWidth : M.labelWidth
         for r in rows {
             let label: String
             switch r {
@@ -385,7 +427,7 @@ public final class ShellForm {
             switch r {
             case .field(let id, _, let v, _):
                 values[id] = .text(v)
-                var f = TextFieldControl(text: v); f.alignment = .left; f.dialogStyle = sidebar == nil; fields[i] = f
+                var f = TextFieldControl(text: v); f.alignment = .left; f.dialogStyle = sidebar == nil; f.trueMinus = sidebar == nil; fields[i] = f
             case .popup(let id, _, _, let s): values[id] = .index(s)
             case .color(let id, _, let v): colors[id] = v
             case .check(let id, _, let on): values[id] = .bool(on)
@@ -394,7 +436,10 @@ public final class ShellForm {
                 var f = TextFieldControl(text: Self.format(v)); f.alignment = .right; fields[i] = f
             case .radio(let id, _, let s), .segmented(let id, _, _, let s, _): values[id] = .index(s)
             case .number(_, let f): addScrub(f)
-            case .sliderNumber(_, let f): addScrub(f); scrubs[f.id]?.isPlain = true; scrubs[f.id]?.leadingText = true
+            case .sliderNumber(_, let f):
+                addScrub(f)
+                // A settings page keeps the plain accent value; a dialog boxes it like every number field (art.html 21, 30).
+                if sidebar != nil { scrubs[f.id]?.isPlain = true; scrubs[f.id]?.leadingText = true }
             case .size(_, let w, let h): addScrub(w); addScrub(h)
             case .radioNumbers(let id, _, let s, let fs):
                 values[id] = .index(s)
@@ -408,7 +453,11 @@ public final class ShellForm {
     /// Puts a number grid under row `rowID` (`SQFormRow.row(extra: [unitGrid])`); the fields answer `onChange` by their ids.
     public func setGrid(_ rowID: String, _ cells: [GridCell]) {
         grids[rowID] = cells
-        for c in cells { addScrub(c.field) }
+        for c in cells {
+            addScrub(c.field)
+            // art.html settings: the unit sits inside the field ("300 ms"), not after it.
+            if sidebar != nil, !c.unit.isEmpty { scrubs[c.field.id]?.unit = c.unit; insideUnits.insert(c.field.id) }
+        }
     }
 
     /// Puts number field `f` (`width` pt) after check `checkID`'s title, 8 apart (`SettingsWindow.checkItem` with a trailing
@@ -416,6 +465,7 @@ public final class ShellForm {
     public func setCheckField(_ checkID: String, _ f: NumberField, width: CGFloat) {
         checkFields[checkID] = (f, width)
         addScrub(f)
+        if sidebar != nil, !f.unit.isEmpty { scrubs[f.id]?.unit = f.unit; insideUnits.insert(f.id) }
     }
 
     /// Replaces the note and bars of the `.chart` row `i` (a rerun); lay out again afterwards.
@@ -517,7 +567,7 @@ public final class ShellForm {
                     (sidebarFrames.last?.maxY ?? o.y) - o.y - sidebarShift)
         sidebarRule = sidebarShift > 0 && viewportHeight > 0
             ? CGRect(x: o.x + side, y: o.y + sidebarShift, width: 1, height: viewportHeight)
-            : CGRect(x: o.x + side, y: o.y, width: 1, height: h)
+            : CGRect(x: o.x + side, y: o.y, width: 1, height: max(h, viewportHeight))   // art.html: the rule runs to the footer on short pages too
         return h
     }
 
@@ -527,7 +577,7 @@ public final class ShellForm {
         var y = origin.y
         let x0 = origin.x + sidePad, inner = width - 2 * sidePad
         labelWidth = labelColumn()
-        let cx = x0 + labelWidth + M.labelGap, cw = origin.x + width - sidePad - cx
+        let cx = x0 + labelWidth + labelG, cw = origin.x + width - sidePad - cx
         for (i, r) in rows.enumerated() {
             if let iw = inlineWidth(i) {
                 // On the field row before it: the field gives up the popup's width and the gap.
@@ -539,12 +589,24 @@ public final class ShellForm {
                 controlFrames.append(CGRect(x: right - iw, y: prev.minY, width: iw, height: prev.height))
                 continue
             }
-            if i > 0 { y += M.rowGap + (extraGapBefore[i] ?? 0) } else { y += extraGapBefore[0] ?? 0 }
-            var h = M.rowHeight
+            // art.html settings Appearance group: a slider under a popup/slider sits 4 apart (tight group), not 12.
+            var gap = rowG
+            if sidebar != nil, i > 0, case .slider = r {
+                switch rows[i - 1] { case .popup, .slider: gap = M.dialogRowGap; default: break }
+            }
+            // art.html: a check after a field row sits on a 26 pt line like it (pitch 30), not on the 22 pt check row (pitch 26).
+            if sidebar == nil, i > 0, case .check = r {
+                switch rows[i - 1] { case .field, .popup, .number, .sliderNumber, .slider, .segmented, .size: gap += 2; default: break }
+            }
+            if sidebar != nil, i > 0, case .caption = rows[i - 1] { gap = 0 }
+            if sidebar != nil, i > 0, case .listBox = r, case .listBox = rows[i - 1] { gap = 8 }   // the group's first row hangs under its heading
+            if i > 0 { y += gap + (extraGapBefore[i] ?? 0) } else { y += extraGapBefore[0] ?? 0 }
+            let scrubsBefore = scrubFrames
+            var h = rowH
             var control = CGRect(x: cx, y: y, width: cw, height: h)
             switch r {
             case .text(let s):
-                let lines = measure.lines(SQL10n.string(s), width: inner, size: font)
+                let lines = measure.lines(SQL10n.string(s), width: inner - (infoNotes.contains(i) ? M.infoIndent : 0), size: font)
                 noteLines[i] = lines
                 h = CGFloat(lines.count) * (strongNotes.contains(i) ? M.strongLine : M.noteLine)
                 control = CGRect(x: x0, y: y, width: inner, height: h)
@@ -560,49 +622,55 @@ public final class ShellForm {
                 // The same frame bleed on a labeled row of a dialog (Color Matte's Name): wider than the control column.
                 if !label.isEmpty, unit.isEmpty, sidebar == nil, labeledFieldBleed { control.origin.x -= M.fieldBleed; control.size.width += 2 * M.fieldBleed }
                 // The text keeps its place inside the alignment rect: 6 pt from it, so 8 from a bleeding frame.
-                if let fh = fieldHeights[id], fh < h { control.origin.y += ((h - fh) / 2).rounded(); control.size.height = fh }
+                if let fh = fieldHeights[id] ?? (sidebar == nil ? M.dialogControl : nil), fh < h { control.origin.y += ((h - fh) / 2).rounded(); control.size.height = fh }
                 fields[i]?.textInset = sidebar == nil && (label.isEmpty || !labeledFieldBleed || control.minX < cx) ? 6 + M.fieldBleed : 6   // an accessory field: 8 in
+                if case .field(let fid, _, _, _) = rows[i], fieldIcons[fid] != nil { fields[i]?.textInset += M.fieldIconSize + 2 }
             case .check(let id, _, _):
-                h = M.checkRowHeight
+                h = sidebar == nil && checkLabels[id] == nil ? M.dialogCheckRow : M.checkRowHeight
                 // A label (even an empty one) puts the box in the control column; an empty one is the 24 pt row under a labeled
                 // one (the Mac Punch In Cuts zoom levels), a real one the 28 pt `formRow`.
-                let labeled = !(checkLabels[id] ?? "").isEmpty
-                control = checkLabels[id] != nil ? CGRect(x: cx, y: y + (labeled ? (M.rowHeight - h) / 2 : 0), width: cw, height: h)
+                let labeled = checkLabels[id] != nil   // an empty label is a 26 pt line too (art.html 28: zoom pitch 30)
+                control = checkLabels[id] != nil || indentedCheck(id) ? CGRect(x: cx, y: y + (labeled ? (rowH - h) / 2 : 0), width: cw, height: h)
                     : CGRect(x: x0, y: y, width: inner, height: h)
-                if labeled { h = M.rowHeight }
+                if labeled { h = rowH }
             case .radio(_, let options, _):
                 h = CGFloat(options.count) * M.checkRowHeight
                 control = CGRect(x: x0, y: y, width: inner, height: h)
+                // art.html 32: a numbered list in an inset well, 8 above and below the rows.
+                if numberedList { control.origin.y += M.listPad; h += 2 * M.listPad }
             case .gap(let g):
                 h = g; control = .zero
             case .number(_, let f):
-                if !f.unit.isEmpty { control.size.width = M.unitFieldWidth }
+                if let w = controlWidths[f.id] { control.size.width = w }   // art.html 23: Speed 87, Duration 118
+                else if !f.unit.isEmpty { control.size.width = M.unitFieldWidth }
                 else if link?.fields.contains(f.id) == true { control.size.width -= sidePad + M.linkWidth }
                 scrubFrames[f.id] = control
             case .sliderNumber(_, let f):
                 scrubFrames[f.id] = sliderNumberParts(control, unit: f.unit).field
             case .radioNumbers(_, let options, _, let fs):
-                h = CGFloat(options.count) * M.rowHeight + CGFloat(max(options.count - 1, 0)) * M.rowGap
+                h = CGFloat(options.count) * rowH + CGFloat(max(options.count - 1, 0)) * rowG
                 control = CGRect(x: x0, y: y, width: inner, height: h)
                 for (n, f) in fs.enumerated() where n < options.count {
-                    scrubFrames[f.id] = CGRect(x: x0 + M.radioColumn, y: y + CGFloat(n) * (M.rowHeight + M.rowGap),
-                                               width: f.unit.isEmpty ? inner - M.radioColumn : M.unitFieldWidth, height: M.rowHeight)
+                    scrubFrames[f.id] = CGRect(x: x0 + M.radioColumn, y: y + CGFloat(n) * (rowH + rowG),
+                                               width: f.unit.isEmpty ? inner - M.radioColumn : M.unitFieldWidth, height: rowH)
                 }
             case .caption:
-                h = M.captionTop + M.captionLine + (sidebar != nil ? M.captionAfter : 0)
+                let top = sidebar != nil && i > 0 ? M.sectionTop : M.captionTop
+                h = top + M.captionLine + (sidebar != nil ? M.captionAfter : 7)   // art.html 36, 41: 31 pt from a section header to its first row
                 // `SQFormRow.caption`: at the control column on a settings page.
-                control = sidebar != nil ? CGRect(x: cx, y: y + M.captionTop, width: cw, height: M.captionLine)
+                control = sidebar != nil ? CGRect(x: cx, y: y + top, width: cw, height: M.captionLine)
                     : CGRect(x: x0, y: y + M.captionTop, width: inner, height: M.captionLine)
             case .size(_, let w, let hf) where swapBetween.contains(w.id):
                 let fw = controlWidths[w.id] ?? M.sizeField
-                control.size.width = 2 * fw + 2 * M.controlGap + M.rowHeight
+                control.size.width = 2 * fw + 2 * M.controlGap + rowH
                 scrubFrames[w.id] = CGRect(x: cx, y: y, width: fw, height: h)
-                scrubFrames[hf.id] = CGRect(x: cx + fw + 2 * M.controlGap + M.rowHeight, y: y, width: fw, height: h)
+                scrubFrames[hf.id] = CGRect(x: cx + fw + 2 * M.controlGap + rowH, y: y, width: fw, height: h)
             case .size(_, let w, let hf) where plainSize.contains(w.id):
                 let fw = controlWidths[w.id] ?? M.sizeField
-                control.size.width = max(cw, 2 * fw + M.timesWidth + 2 * M.controlGap)
+                // art.html 25: two 75 pt boxes with the "×" tight between them, starting at the control column.
+                control.size.width = 2 * fw + 28
                 scrubFrames[w.id] = CGRect(x: cx, y: y, width: fw, height: h)
-                scrubFrames[hf.id] = CGRect(x: cx + control.size.width - fw, y: y, width: fw, height: h)
+                scrubFrames[hf.id] = CGRect(x: cx + fw + 28, y: y, width: fw, height: h)
             case .size(_, let w, let hf):
                 control.size.width = 2 * M.sizeField + M.timesWidth + 3 * M.controlGap + M.linkWidth
                 scrubFrames[w.id] = CGRect(x: cx, y: y, width: M.sizeField, height: h)
@@ -612,10 +680,15 @@ public final class ShellForm {
             case .popup(let id, let label, _, _):
                 // Unlabeled, like an unlabeled field: from the card's left edge (an `SQDialog` accessory popup).
                 // The Mac `SQDialog.popupRow` has no row padding: the row is the 22 pt popup, not a 28 pt row around it.
-                if label.isEmpty { h = popupStyles[id]?.height ?? CGFloat(InspectorTokens.capsule); control = CGRect(x: x0 - M.popupBleed, y: y, width: inner + M.popupBleed, height: h) }
+                if label.isEmpty {
+                    h = popupStyles[id]?.height ?? CGFloat(InspectorTokens.capsule)
+                    control = CGRect(x: x0 - popupBleed, y: y, width: inner + popupBleed, height: h)
+                    // art.html: the combo sits on a 26 pt line like the fields above it (pitch 30), not on a bare 22 pt row.
+                    if popupStyles[id] == nil, sidebar == nil { control.origin.y += ((rowH - h) / 2).rounded(); h = rowH }
+                }
                 if let w = controlWidths[id], !(label.isEmpty && w >= inner) {
                     if label.isEmpty { control.origin.x = x0 }
-                    control.size.width = min(w, label.isEmpty ? inner + M.popupBleed : cw)
+                    control.size.width = min(w, label.isEmpty ? inner + popupBleed : cw)
                 }
                 // A settings page's `NSPopUpButton` frame bleeds 5 pt left of the control column (help text and fields start at it).
                 if sidebar != nil || labeledPopupBleed, !label.isEmpty { control.origin.x -= M.popupBleed; control.size.width += M.popupBleed }
@@ -638,7 +711,7 @@ public final class ShellForm {
             case .listBox(_, _, let lines, _, let empty):
                 // Empty: the wrapped hint, 28 pt line height at least, 12 inside the box.
                 let hint = measure.lines(SQL10n.string(empty), width: M.helpMaxWidth - 24, size: font)
-                h = lines.isEmpty ? max(M.rowHeight, CGFloat(hint.count) * M.noteLine + 12) : CGFloat(lines.count) * M.rowHeight
+                h = lines.isEmpty ? max(listLineH, CGFloat(hint.count) * M.noteLine + 12) : CGFloat(lines.count) * listLineH
                 control = CGRect(x: cx, y: y, width: min(M.helpMaxWidth, cw), height: h)
                 noteLines[i] = hint
             case .slider, .buttons: break
@@ -646,26 +719,33 @@ public final class ShellForm {
             if case .check(let id, let title, _) = r, let cf = checkFields[id] {
                 // `checkItem`: box 14, 6, the title, 8, the field on the row's 28 pt line.
                 let tw = ceil(measure.width(SQL10n.string(title), size: font))
-                scrubFrames[cf.field.id] = CGRect(x: control.minX + 14 + 6 + tw + M.gridGap, y: y, width: cf.width, height: M.rowHeight)
+                scrubFrames[cf.field.id] = CGRect(x: control.minX + 14 + 6 + tw + M.gridGap, y: y, width: cf.width, height: rowH)
             }
             if let id = Self.id(of: r), let cells = grids[id], !cells.isEmpty {
                 let titleW = cells.map { ceil(measure.width(SQL10n.string($0.title), size: font)) }.max() ?? 0
                 var gy = y + h + M.helpGap
                 for cell in cells {
-                    gridTitleFrames[cell.field.id] = CGRect(x: cx, y: gy, width: titleW, height: M.rowHeight)
-                    scrubFrames[cell.field.id] = CGRect(x: cx + titleW + M.gridGap, y: gy, width: M.unitFieldWidth, height: M.rowHeight)
-                    gy += M.rowHeight + M.gridGap
+                    if sidebar != nil {
+                        // art.html settings: the title right-aligned in the label column, a 22 pt field at the control column, 26 pt pitch.
+                        gridTitleFrames[cell.field.id] = CGRect(x: x0, y: gy, width: labelWidth - labelInset, height: M.dialogRow - 4)
+                        scrubFrames[cell.field.id] = CGRect(x: cx, y: gy, width: M.unitFieldWidth, height: M.dialogRow - 4)
+                        gy += M.dialogRow
+                        continue
+                    }
+                    gridTitleFrames[cell.field.id] = CGRect(x: cx, y: gy, width: titleW, height: rowH)
+                    scrubFrames[cell.field.id] = CGRect(x: cx + titleW + M.gridGap, y: gy, width: M.unitFieldWidth, height: rowH)
+                    gy += rowH + M.gridGap
                 }
-                h = gy - M.gridGap - y
+                h = gy - (sidebar != nil ? 4 : M.gridGap) - y
             }
             if let id = Self.id(of: r), let st = statuses[id] {
                 // The Mac status stack is as tall as its tallest view: 14 for dot + text, 28 once a button joins them.
-                let line = CGRect(x: cx, y: y + h + M.helpGap, width: cw, height: st.button != nil ? M.rowHeight : M.captionLine)
+                let line = CGRect(x: cx, y: y + h + M.helpGap, width: cw, height: st.button != nil ? rowH : M.captionLine)
                 statusFrames[i] = line
                 if let b = st.button {
                     let tw = ceil(measure.width(SQL10n.string(st.text), size: font))
                     let bw = ceil(measure.width(SQL10n.string(b), size: font)) + 2 * InspectorDraw.buttonPadding + (st.buttonIcon != nil ? 18 : 0)
-                    statusButtonFrames[i] = CGRect(x: cx + M.statusDot + M.gridGap + tw + M.gridGap, y: line.minY, width: bw, height: M.rowHeight)
+                    statusButtonFrames[i] = CGRect(x: cx + M.statusDot + M.gridGap + tw + M.gridGap, y: line.minY, width: bw, height: rowH)
                 }
                 h = line.maxY - y
             }
@@ -675,6 +755,12 @@ public final class ShellForm {
                 helpTops[i] = y + max(h, control.maxY - y) + M.helpGap
                 h = helpTops[i]! - y + CGFloat(lines.count) * helpLine
             }
+            if sidebar == nil {
+                // art.html `--h-c`: number boxes are 22 high, centered on their 26 pt line.
+                for (id, f) in scrubFrames where scrubsBefore[id] != f && f.height == rowH {
+                    scrubFrames[id] = CGRect(x: f.minX, y: f.minY + ((rowH - M.dialogControl) / 2).rounded(), width: f.width, height: M.dialogControl)
+                }
+            }
             rowFrames.append(CGRect(x: origin.x, y: y, width: width, height: h))
             controlFrames.append(control)
             y += h
@@ -682,8 +768,13 @@ public final class ShellForm {
         if let link {
             let boxes = link.fields.compactMap { scrubFrames[$0] }
             if let top = boxes.map(\.midY).min(), let bottom = boxes.map(\.midY).max() {
-                linkFrame = CGRect(x: origin.x + width - sidePad - M.linkWidth, y: ((top + bottom) / 2 - M.rowHeight / 2).rounded(),
-                                   width: M.linkWidth, height: M.rowHeight)
+                linkFrame = CGRect(x: origin.x + width - sidePad - M.linkWidth, y: ((top + bottom) / 2 - rowH / 2).rounded(),
+                                   width: M.linkWidth, height: rowH)
+                // art.html 23: in a dialog the link is a 24 pt bordered button right beside the last linked field, on its row.
+                if sidebar == nil, let last = boxes.last, let lastID = link.fields.last, let lb = scrubFrames[lastID] {
+                    linkFrame = CGRect(x: lb.maxX + M.controlGap, y: lb.midY - M.linkWidth / 2, width: M.linkWidth, height: M.linkWidth)
+                    _ = last
+                }
             }
         }
         return y - origin.y
@@ -701,15 +792,30 @@ public final class ShellForm {
 
     /// `NumericSlider.layout` with `unitOutside`: the unit column (24 at least) at the right, `controlGap`, the 72 field,
     /// 12, the slider in the rest.
+    private var sliderField: CGFloat { sidebar == nil ? M.dialogSliderField : M.sliderFieldWidth }
+
+    /// art.html dialog slider rows: a fixed track (170 by default per dialog, 120/110 in Track Mix and Color Matte) with the
+    /// 64 pt value box 12 after it and the unit behind that; nil keeps the track filling the control frame.
+    public var sliderTrackWidth: CGFloat?
+    private static let fixedSliderField: CGFloat = 64
+
     private func sliderNumberParts(_ c: CGRect, unit: String) -> (track: CGRect, field: CGRect) {
+        if sidebar == nil, let tw = sliderTrackWidth {
+            let track = CGRect(x: c.minX, y: c.minY, width: tw, height: c.height)
+            return (track, CGRect(x: track.maxX + 12, y: c.minY, width: Self.fixedSliderField, height: c.height))
+        }
         let uw = max(M.unitColumn, ceil(measure.width(SQL10n.string(unit), size: font)))
-        let field = CGRect(x: c.maxX - uw - M.controlGap - M.sliderFieldWidth, y: c.minY, width: M.sliderFieldWidth, height: c.height)
+        let field = CGRect(x: c.maxX - uw - M.controlGap - sliderField, y: c.minY, width: sliderField, height: c.height)
         return (CGRect(x: c.minX, y: c.minY, width: max(field.minX - 12 - c.minX, 0), height: c.height), field)
     }
 
     private func sliderParts(_ i: Int) -> (track: CGRect, field: CGRect) {
         let c = controlFrames[i]
-        let field = CGRect(x: c.maxX - M.sliderFieldWidth, y: c.minY, width: M.sliderFieldWidth, height: c.height)
+        if sidebar == nil, let tw = sliderTrackWidth {
+            let track = CGRect(x: c.minX, y: c.minY, width: tw, height: c.height)
+            return (track, CGRect(x: track.maxX + 12, y: c.minY, width: Self.fixedSliderField, height: c.height))
+        }
+        let field = CGRect(x: c.maxX - sliderField, y: c.minY, width: sliderField, height: c.height)
         return (CGRect(x: c.minX, y: c.minY, width: field.minX - 12 - c.minX, height: c.height), field)
     }
 
@@ -727,12 +833,15 @@ public final class ShellForm {
         return out
     }
 
+    /// One line of a `.listBox`: art.html `.boxlist .row` is 24 on a settings page (blocks 32 apart), else the form row.
+    private var listLineH: CGFloat { sidebar != nil ? 24 : rowH }
+
     /// The Restore button of each line of a `.listBox` row: 12 inside the box, 28 pt lines.
     func listButtonFrames(_ i: Int) -> [CGRect] {
         guard controlFrames.indices.contains(i), case .listBox(_, _, let lines, let title, _) = rows[i] else { return [] }
         let c = controlFrames[i]
         let w = max(ceil(measure.width(SQL10n.string(title), size: font)) + 2 * M.buttonPadding, M.minButton)
-        return lines.indices.map { CGRect(x: c.maxX - 12 - w, y: c.minY + CGFloat($0) * M.rowHeight, width: w, height: M.rowHeight) }
+        return lines.indices.map { CGRect(x: c.maxX - 12 - w, y: c.minY + CGFloat($0) * listLineH, width: w, height: listLineH) }
     }
 
     /// One list line with an icon, the name, the gray detail (cut at the end) and the warning word, 12 inside the box,
@@ -811,6 +920,15 @@ public final class ShellForm {
         let next = at.map { $0 + (forward ? 1 : -1) } ?? (forward ? 0 : order.count - 1)
         guard order.indices.contains(next) else { focused = nil; return false }
         focus(order[next])
+        return true
+    }
+
+    /// A dialog opens with its first row's text field focused (the Mac accessory field is first responder; art.html 10, 15, 17, 36).
+    /// False when the first focusable row is not a text field or a settings page (sidebar) is shown.
+    @discardableResult
+    public func focusFirstTextField() -> Bool {
+        guard sidebar == nil, focused == nil, let first = focusable.first, fields[first] != nil, case .field = rows[first] else { return false }
+        focus(first)
         return true
     }
 
@@ -1062,7 +1180,7 @@ public final class ShellForm {
         case .listBox(let id, _, _, _, _):
             if let n = listButtonFrames(i).firstIndex(where: { $0.contains(p) }) { onChange?(id, .index(n)) }
         case .radioNumbers(let id, let options, _, let fs):
-            let n = Int((p.y - controlFrames[i].minY) / (M.rowHeight + M.rowGap))
+            let n = Int((p.y - controlFrames[i].minY) / (rowH + rowG))
             if options.indices.contains(n), !(fs.indices.contains(n) && disabled.contains(fs[n].id)) {
                 values[id] = .index(n); onChange?(id, .index(n))
             }
@@ -1093,7 +1211,7 @@ public final class ShellForm {
     func swapFrame(_ i: Int) -> CGRect {
         let c = controlFrames[i]
         if case .size(_, let w, _) = rows[i], swapBetween.contains(w.id) {
-            return CGRect(x: c.minX + (controlWidths[w.id] ?? M.sizeField) + M.controlGap, y: c.minY, width: M.rowHeight, height: c.height)
+            return CGRect(x: c.minX + (controlWidths[w.id] ?? M.sizeField) + M.controlGap, y: c.minY, width: rowH, height: c.height)
         }
         return CGRect(x: c.maxX - M.linkWidth, y: c.minY, width: M.linkWidth, height: c.height)
     }
@@ -1153,6 +1271,7 @@ public final class ShellForm {
     private func addScrub(_ f: NumberField) {
         var sc = ScrubFieldControl(value: ScrubMath.clamp(f.value, to: f.range))
         sc.range = f.range; sc.step = f.step; sc.decimals = f.decimals; sc.defaultValue = f.defaultValue
+        sc.trueMinus = sidebar == nil
         scrubs[f.id] = sc
         values[f.id] = .number(sc.value)
     }
@@ -1234,13 +1353,20 @@ public final class ShellForm {
 
     static func dim(_ c: DrawColor) -> DrawColor { c.alpha(c.a * InspectorTokens.disabledAlpha) }
 
+    /// Number fields that show their unit inside the box ("100.0 %", art.html 23) instead of after it.
+    public func showUnitInside(_ id: String) {
+        guard let f = rows.compactMap({ r -> NumberField? in if case .number(_, let f) = r, f.id == id { return f }; return nil }).first else { return }
+        insideUnits.insert(id)
+        scrubs[id]?.unit = f.unit
+    }
+
     private func drawScrub(_ c: inout Canvas, _ f: NumberField, focused: Bool, _ t: DrawTheme) {
         guard var sc = scrubs[f.id], let box = scrubFrames[f.id] else { return }
         let off = scrubOff(f.id)
         sc.isEnabled = !off
-        sc.valueTint = labelTinted.contains(f.id) ? t.label : t.accent
+        sc.valueTint = t.label
         sc.draw(&c, in: box, theme: t, focused: focused && !off)
-        if !f.unit.isEmpty {
+        if !f.unit.isEmpty, !insideUnits.contains(f.id) {
             c.draw(SQL10n.string(f.unit), in: CGRect(x: box.maxX + M.controlGap, y: box.minY, width: 300, height: box.height),
                    fontSize: CGFloat(DrawTheme.TypeSize.body), off ? Self.dim(t.label3) : t.label3)   // `SQUnitLabel`
         }
@@ -1250,14 +1376,14 @@ public final class ShellForm {
     private func drawRadio(_ c: inout Canvas, on: Bool, enabled: Bool, at o: CGPoint, _ t: DrawTheme) {
         let dot = CGRect(x: o.x, y: o.y, width: 14, height: 14)
         // Off: fill + 0.5 edge. On: fill + 1.5 accent ring + 6 pt accent dot.
-        c.fill(ellipseIn: dot, enabled ? t.fill : Self.dim(t.fill))
+        c.fill(ellipseIn: dot, enabled ? t.well : Self.dim(t.well))
         if on {
             let a = enabled ? t.accent : Self.dim(t.accent)
             c.stroke(ellipseIn: dot.insetBy(dx: 0.75, dy: 0.75), width: 1.5, a)
             c.fill(ellipseIn: dot.insetBy(dx: 4, dy: 4), a)
         } else {
-            let e = t.inkFill(0.10)
-            c.stroke(ellipseIn: dot.insetBy(dx: 0.25, dy: 0.25), width: 0.5, enabled ? e : Self.dim(e))
+            let e = t.edge
+            c.stroke(ellipseIn: dot.insetBy(dx: 0.5, dy: 0.5), width: 1, enabled ? e : Self.dim(e))
         }
     }
 
@@ -1268,8 +1394,9 @@ public final class ShellForm {
         // `SQDialog.labelText` and `SQFormRow.row`: form labels are right aligned against the controls.
         let labelAlign: DrawList.TextAlign = .right
         for (i, r) in rows.enumerated() where rowFrames.indices.contains(i) {
-            let row = rowFrames[i], box = controlFrames[i]
-            let labelRect = CGRect(x: row.minX + sidePad, y: row.minY, width: labelWidth - labelInset, height: M.rowHeight)
+            let row = rowFrames[i]
+            var box = controlFrames[i]
+            let labelRect = CGRect(x: row.minX + sidePad, y: row.minY, width: labelWidth - labelInset, height: rowH)
             let hover = hovered == i
             switch r {
             case .text:
@@ -1277,16 +1404,25 @@ public final class ShellForm {
                 let strong = strongNotes.contains(i)
                 let color = warningNotes.contains(i) ? t.yellow : strong ? t.label : t.label2
                 let line = strong ? M.strongLine : M.noteLine
+                if infoNotes.contains(i) {
+                    let ic = CGRect(x: box.minX, y: box.minY + 2, width: 12, height: 12)
+                    c.stroke(ellipseIn: ic.insetBy(dx: 0.5, dy: 0.5), width: 1, t.label3)
+                    c.draw("i", in: ic.offsetBy(dx: 0, dy: 0.5), fontSize: CGFloat(DrawTheme.TypeSize.caption), t.label3, align: .center)
+                    box.origin.x += M.infoIndent; box.size.width -= M.infoIndent
+                }
                 for l in noteLines[i] ?? [] {
                     // A strong note is medium weight, unless it is the plain `SQDialog.formText(note: false)` (regular, label color).
                     if strong && !plainStrongNotes.contains(i) { c.draw(l, in: CGRect(x: box.minX, y: y, width: box.width, height: line), fontSize: font, color, face: c.medium) }
                     else { c.draw(l, in: CGRect(x: box.minX, y: y, width: box.width, height: line), fontSize: font, color) }
                     y += line
                 }
-            case .field(_, let label, _, let unit):
+            case .field(let fid, let label, _, let unit):
                 c.draw(SQL10n.string(label), in: labelRect, fontSize: font, t.label2, align: labelAlign)
                 fields[i]?.fontSize = sidebar == nil ? dialogFieldFontSize : M.font
                 fields[i]?.draw(&c, in: box, theme: t, focused: focused == i)
+                if let icon = fieldIcons[fid] {
+                    c.draw(icon: icon, at: CGPoint(x: box.minX + M.fieldBleed + 6, y: box.midY - M.fieldIconSize / 2), size: M.fieldIconSize, t.label2)
+                }
                 if !unit.isEmpty {
                     c.draw(unit, in: CGRect(x: box.maxX + M.controlGap, y: box.minY, width: 60, height: box.height), fontSize: font, t.label3)
                 }
@@ -1295,10 +1431,25 @@ public final class ShellForm {
                 // `SQColorWell` in a form row: a capsule filling the control column, 20 high, the color under a hairline.
                 let well = CGRect(x: box.minX, y: box.midY - 10, width: box.width, height: 20)
                 let v = colors[id] ?? SQColorValue(h: 0, s: 0, b: 0)
-                if v.a < 1 { c.fill(roundedRect: well, radius: 10, t.fill) }
-                c.fill(roundedRect: well, radius: 10, ColorPickerControl.draw(v))
-                c.stroke(roundedRect: well.insetBy(dx: 0.25, dy: 0.25), radius: 10, width: 0.5, t.inkFill(hover || picker != nil ? 0.30 : 0.14))
-                if focused == i { InspectorDraw.focusLine(&c, box.insetBy(dx: 0, dy: 3), radius: 6, t) }
+                if sidebar == nil {
+                    // art.html 19: a field-height box with a small swatch and the color's name, like the Name field above it.
+                    let field = CGRect(x: box.minX, y: box.midY - M.dialogControl / 2, width: box.width, height: M.dialogControl)
+                    let r = CGFloat(DrawTheme.Radius.control)
+                    c.fill(roundedRect: field, radius: r, t.field)
+                    c.stroke(roundedRect: field.insetBy(dx: 0.25, dy: 0.25), radius: r, width: 0.5, hover || picker != nil ? t.fieldEdgeHover : t.hair2)
+                    let sw = CGRect(x: field.minX + 8, y: field.midY - 4, width: 8, height: 8)
+                    c.fill(roundedRect: sw, radius: 2, ColorPickerControl.draw(v))
+                    c.stroke(roundedRect: sw.insetBy(dx: 0.25, dy: 0.25), radius: 2, width: 0.5, t.hair2)
+                    c.draw(v.hex.uppercased().replacingOccurrences(of: "#", with: "").trimmingCharacters(in: .whitespaces) == "000000" ? "Black" : "#" + v.hex.uppercased().replacingOccurrences(of: "#", with: ""),
+                           in: CGRect(x: field.minX + 22, y: field.minY, width: max(field.width - 30, 0), height: field.height),
+                           fontSize: CGFloat(DrawTheme.TypeSize.body), t.label)
+                    if focused == i { InspectorDraw.focusLine(&c, field, radius: r, t) }
+                    break
+                }
+                if v.a < 1 { c.fill(roundedRect: well, radius: CGFloat(DrawTheme.Radius.menu), t.fill) }
+                c.fill(roundedRect: well, radius: CGFloat(DrawTheme.Radius.menu), ColorPickerControl.draw(v))
+                c.stroke(roundedRect: well.insetBy(dx: 0.25, dy: 0.25), radius: CGFloat(DrawTheme.Radius.menu), width: 0.5, t.inkFill(hover || picker != nil ? 0.30 : 0.14))
+                if focused == i { InspectorDraw.focusLine(&c, box.insetBy(dx: 0, dy: 3), radius: CGFloat(DrawTheme.Radius.control), t) }
             case .popup(let id, let label, let options, _):
                 c.draw(SQL10n.string(label), in: labelRect, fontSize: font, t.label2, align: labelAlign)
                 let sel = index(id) ?? 0
@@ -1319,7 +1470,7 @@ public final class ShellForm {
                     c.draw(key, in: CGRect(x: box.maxX - 28 - 56, y: box.minY, width: 56, height: box.height), fontSize: 11, t.label3,
                            align: .right)
                 }
-                if focused == i { InspectorDraw.focusLine(&c, box.insetBy(dx: 0, dy: 3), radius: 6, t) }
+                if focused == i { InspectorDraw.focusLine(&c, box.insetBy(dx: 0, dy: 3), radius: CGFloat(DrawTheme.Radius.control), t) }
             case .check(let id, let title, _):
                 let on = !disabled.contains(id)
                 if let label = checkLabels[id] {
@@ -1338,33 +1489,51 @@ public final class ShellForm {
                 drawScrub(&c, f, focused: focused == i, t)
             case .radioNumbers(let id, let options, _, let fs):
                 for (n, o) in options.enumerated() {
-                    let ry = box.minY + CGFloat(n) * (M.rowHeight + M.rowGap)
+                    let ry = box.minY + CGFloat(n) * (rowH + rowG)
                     let off = fs.indices.contains(n) && disabled.contains(fs[n].id)
-                    drawRadio(&c, on: index(id) == n, enabled: !off, at: CGPoint(x: box.minX, y: ry + M.rowHeight / 2 - 7), t)
-                    c.draw(SQL10n.string(o), in: CGRect(x: box.minX + 20, y: ry, width: M.radioColumn - 24, height: M.rowHeight),
+                    drawRadio(&c, on: index(id) == n, enabled: !off, at: CGPoint(x: box.minX, y: ry + rowH / 2 - 7), t)
+                    c.draw(SQL10n.string(o), in: CGRect(x: box.minX + 20, y: ry, width: M.radioColumn - 24, height: rowH),
                            fontSize: CGFloat(DrawTheme.TypeSize.body), off ? Self.dim(t.label) : t.label)
                     if fs.indices.contains(n) { drawScrub(&c, fs[n], focused: false, t) }
                 }
                 if focused == i, let n = index(id), fs.indices.contains(n), scrubs[fs[n].id]?.isEditing != true {
-                    let ry = box.minY + CGFloat(n) * (M.rowHeight + M.rowGap)
-                    InspectorDraw.focusLine(&c, CGRect(x: box.minX - 3, y: ry + 4, width: M.radioColumn - 8, height: M.rowHeight - 8),
-                                            radius: 4, t)
+                    let ry = box.minY + CGFloat(n) * (rowH + rowG)
+                    InspectorDraw.focusLine(&c, CGRect(x: box.minX - 3, y: ry + 4, width: M.radioColumn - 8, height: rowH - 8),
+                                            radius: CGFloat(DrawTheme.Radius.small), t)
                 }
             case .sliderNumber(let label, let f):
                 c.draw(SQL10n.string(label), in: labelRect, fontSize: font, t.label2, align: labelAlign)
                 let span = f.range.upperBound - f.range.lowerBound
                 InspectorDraw.slider(&c, fraction: span > 0 ? ((number(f.id) ?? 0) - f.range.lowerBound) / span : 0,
+                                     origin: sidebar == nil && f.range.lowerBound == -f.range.upperBound ? 0.5 : 0,
                                      in: sliderNumberParts(box, unit: f.unit).track, enabled: !scrubOff(f.id), t)
                 drawScrub(&c, f, focused: focused == i, t)
-            case .slider(let id, let label, _, let range, _):
+            case .slider(let id, let label, _, let range, let unit):
                 c.draw(SQL10n.string(label), in: labelRect, fontSize: font, t.label2, align: labelAlign)
                 let parts = sliderParts(i)
+                if sliderTrackWidth != nil, sidebar == nil, !unit.isEmpty {
+                    c.draw(SQL10n.string(unit), in: CGRect(x: parts.field.maxX + M.controlGap, y: parts.field.minY, width: 40, height: parts.field.height),
+                           fontSize: font, t.label3)
+                }
                 let span = range.upperBound - range.lowerBound
                 InspectorDraw.slider(&c, fraction: span > 0 ? ((number(id) ?? 0) - range.lowerBound) / span : 0, in: parts.track,
                                      enabled: true, t)
                 if fields[i]?.isEditing != true { fields[i]?.text = Self.format(number(id) ?? 0) }
-                fields[i]?.fontSize = M.font
+                fields[i]?.fontSize = font
                 fields[i]?.draw(&c, in: parts.field, theme: t, focused: focused == i)
+            case .radio(let id, let options, _) where numberedList:
+                c.fill(roundedRect: box.insetBy(dx: 0, dy: -M.listPad), radius: CGFloat(DrawTheme.Radius.control), t.well)
+                for (n, o) in options.enumerated() {
+                    let r = CGRect(x: box.minX + 4, y: box.minY + CGFloat(n) * M.checkRowHeight, width: box.width - 8, height: M.checkRowHeight)
+                    let current = index(id) == n
+                    if current { c.fill(roundedRect: r, radius: CGFloat(DrawTheme.Radius.small), t.current) }   // art.html 11: the current row is `current`
+                    c.draw("\(n + listNumberBase)", in: CGRect(x: r.minX + 8, y: r.minY, width: 14, height: r.height),
+                           fontSize: CGFloat(DrawTheme.TypeSize.body), t.label3, align: .right)
+                    c.draw(SQL10n.string(o), in: CGRect(x: r.minX + 32, y: r.minY, width: r.width - 56, height: r.height),
+                           fontSize: CGFloat(DrawTheme.TypeSize.body), t.label)
+                    if current { c.draw(icon: .check, at: CGPoint(x: r.maxX - 22, y: r.midY - 7), size: 14, t.label) }
+                }
+                if focused == i { InspectorDraw.focusLine(&c, box, radius: CGFloat(DrawTheme.Radius.small), t) }
             case .radio(let id, let options, _):
                 for (n, o) in options.enumerated() {
                     let ry = box.minY + CGFloat(n) * M.checkRowHeight
@@ -1372,14 +1541,14 @@ public final class ShellForm {
                     c.draw(SQL10n.string(o), in: CGRect(x: box.minX + 20, y: ry, width: box.width - 20, height: M.checkRowHeight),
                            fontSize: CGFloat(DrawTheme.TypeSize.body), t.label)   // `SQRadio` title: Typography.body
                 }
-                if focused == i { InspectorDraw.focusLine(&c, box, radius: 4, t) }
+                if focused == i { InspectorDraw.focusLine(&c, box, radius: CGFloat(DrawTheme.Radius.small), t) }
             case .buttons(let id, let label, let detail, let titles, _):
                 if !label.isEmpty { c.draw(SQL10n.string(label), in: labelRect, fontSize: font, t.label2, align: labelAlign) }
                 let frames = buttonFrames(i)
                 let textRight = (frames.first?.minX ?? box.maxX) - M.controlGap
                 if let chip = chips[id] {
                     let r = CGRect(x: box.minX, y: box.minY, width: max(0, textRight - box.minX), height: box.height)
-                    c.fill(roundedRect: r, radius: 8, t.fill)
+                    c.fill(roundedRect: r, radius: CGFloat(DrawTheme.Radius.overlay), t.fill)
                     c.draw(icon: chip.icon, at: CGPoint(x: r.minX + 12, y: (r.midY - 8).rounded()), size: 16, t.label2)
                     let tx = r.minX + 12 + 16 + 8 + labelInset, tw = max(r.maxX - 12 - tx, 0)
                     c.draw(measure.truncatedMiddle(detail, width: tw, size: font), in: CGRect(x: tx, y: r.minY, width: tw, height: r.height),
@@ -1391,9 +1560,9 @@ public final class ShellForm {
                 for (n, r) in frames.enumerated() {
                     InspectorDraw.button(&c, title: SQL10n.string(titles[n]), in: r, hovering: hover && hoveredPoint.map(r.contains) == true,
                                             pressed: false, enabled: buttonEnabled(i, n),
-                                         height: chips[id] != nil ? M.rowHeight : CGFloat(InspectorTokens.capsule), t)   // the Mac's Choose... is 28 pt
+                                         height: chips[id] != nil ? rowH : CGFloat(InspectorTokens.capsule), t)   // the Mac's Choose... is 28 pt
                 }
-                if focused == i, let first = frames.first { InspectorDraw.focusLine(&c, first, radius: 6, t) }
+                if focused == i, let first = frames.first { InspectorDraw.focusLine(&c, first, radius: CGFloat(DrawTheme.Radius.control), t) }
             case .listBox(_, let label, let lines, let button, let empty):
                 c.draw(SQL10n.string(label), in: labelRect, fontSize: font, t.label2, align: labelAlign)
                 c.fill(roundedRect: box, radius: CGFloat(DrawTheme.Radius.control), t.inkFill(0.06))
@@ -1415,9 +1584,10 @@ public final class ShellForm {
                 }
             case .caption(let s):
                 if sidebar != nil {
-                    c.draw(SQL10n.string(s), in: box, fontSize: M.captionFont, t.label3, face: c.atlas?.mediumFace ?? 0)
+                    // art.html settings pages: the section heading is semibold in the label color (.sechead).
+                    c.draw(SQL10n.string(s), in: box, fontSize: CGFloat(DrawTheme.TypeSize.body), t.label, face: c.semibold)
                 } else {
-                    c.draw(SQL10n.string(s), in: box, fontSize: CGFloat(DrawTheme.TypeSize.body), t.label3)
+                    c.draw(SQL10n.string(s), in: box, fontSize: CGFloat(DrawTheme.TypeSize.body), t.label, face: c.medium)   // art.html .sechead: 600, label color
                 }
             case .size(let label, let w, let h):
                 c.draw(SQL10n.string(label), in: labelRect, fontSize: font, t.label2, align: labelAlign)
@@ -1439,15 +1609,17 @@ public final class ShellForm {
             case .segmented(let id, let label, let options, _, let sw):
                 c.draw(SQL10n.string(label), in: labelRect, fontSize: font, t.label2, align: labelAlign)
                 let track = CGRect(x: box.minX, y: box.midY - 11, width: box.width, height: 22)
-                c.fill(roundedRect: track, radius: 6, t.inkFill(0.06))
+                SegmentDraw.track(&c, track, t)
                 let widths = Self.segmentWidths(options, sw, measure)
                 for (n, o) in options.enumerated() {
                     let seg = CGRect(x: track.minX + 1 + widths[..<n].reduce(0, +), y: track.minY + 1, width: widths[n], height: track.height - 2)
-                    if n == index(id) { c.fill(roundedRect: seg, radius: 4, t.fillPressed) }
-                    else if hover, hoveredPoint.map(seg.contains) == true { c.fill(roundedRect: seg, radius: 4, t.fill) }
+                    if n == index(id) {
+                        SegmentDraw.selected(&c, seg, t)
+                    }
+                    else if hover, hoveredPoint.map(seg.contains) == true { c.fill(roundedRect: seg, radius: CGFloat(DrawTheme.Radius.small), t.hover) }
                     c.draw(SQL10n.string(o), in: seg, fontSize: CGFloat(DrawTheme.TypeSize.body), t.label, align: .center)
                 }
-                if focused == i { InspectorDraw.focusLine(&c, track, radius: 6, t) }
+                if focused == i { InspectorDraw.focusLine(&c, track, radius: CGFloat(DrawTheme.Radius.control), t) }
             case .label(_, let label):
                 c.draw(SQL10n.string(label), in: labelRect, fontSize: font, t.label2, align: labelAlign)
             case .chart(_, let title, let bars):
@@ -1459,10 +1631,11 @@ public final class ShellForm {
             if let id = Self.id(of: r), let cells = grids[id] {
                 for cell in cells {
                     if let tr = gridTitleFrames[cell.field.id] {
-                        c.draw(SQL10n.string(cell.title), in: tr, fontSize: font, scrubOff(cell.field.id) ? Self.dim(t.label3) : t.label3)
+                        c.draw(SQL10n.string(cell.title), in: tr, fontSize: font, scrubOff(cell.field.id) ? Self.dim(t.label3) : t.label3,
+                               align: sidebar != nil ? .right : .left)
                     }
                     drawScrub(&c, cell.field, focused: focused == i && focusedScrub == cell.field.id, t)
-                    if !cell.unit.isEmpty, let fb = scrubFrames[cell.field.id] {
+                    if !cell.unit.isEmpty, !insideUnits.contains(cell.field.id), let fb = scrubFrames[cell.field.id] {
                         c.draw(SQL10n.string(cell.unit), in: CGRect(x: fb.maxX + M.gridGap, y: fb.minY, width: 60, height: fb.height),
                                fontSize: font, t.label3)
                     }
@@ -1471,20 +1644,24 @@ public final class ShellForm {
             if let id = Self.id(of: r), let st = statuses[id], let line = statusFrames[i] { drawStatus(&c, i, st, line, t) }
             if let lines = helpLines[i] {
                 var y = helpTops[i] ?? box.maxY + M.helpGap
-                let x = sidebar != nil ? row.minX + sidePad + labelWidth + M.labelGap : box.minX
+                let x = sidebar != nil ? row.minX + sidePad + labelWidth + labelG : box.minX
                 for l in lines {
                     c.draw(l, in: CGRect(x: x, y: y, width: M.helpMaxWidth, height: helpLine), fontSize: font, t.label3); y += helpLine
                 }
             }
             if let id = Self.id(of: r), let hint = hints[id], !hint.isEmpty {
                 let x = box.maxX + M.controlGap + labelInset
-                c.draw(SQL10n.string(hint), in: CGRect(x: x, y: box.minY, width: max(row.maxX - sidePad - x, 0), height: M.rowHeight),
+                c.draw(SQL10n.string(hint), in: CGRect(x: x, y: box.minY, width: max(row.maxX - sidePad - x, 0), height: rowH),
                        fontSize: CGFloat(DrawTheme.TypeSize.body), t.label3)
             }
         }
         if let link, linkFrame.width > 0 {
             let on = bool(link.id) == true, off = link.fields.contains(where: disabled.contains)
-            let tint = on ? t.accent : t.label2
+            let tint = on && sidebar != nil ? t.accent : t.label2   // art.html 23: a dialog's link glyph stays neutral
+            if sidebar == nil {
+                c.fill(roundedRect: linkFrame, radius: CGFloat(DrawTheme.Radius.control), off ? t.hover : t.raised)
+                c.stroke(roundedRect: linkFrame.insetBy(dx: 0.25, dy: 0.25), radius: CGFloat(DrawTheme.Radius.control), width: 0.5, t.hair2)
+            }
             c.draw(icon: on ? .link : .unlink, at: CGPoint(x: linkFrame.midX - 6, y: (linkFrame.midY - 6).rounded()), size: 12,
                    off ? Self.dim(tint) : tint)
         }
@@ -1497,8 +1674,8 @@ public final class ShellForm {
         case .ok: t.green
         case .warning: MenuListView.color(palette: t.palette.warning)
         }
-        c.fill(roundedRect: CGRect(x: line.minX, y: (line.midY - M.statusDot / 2).rounded(), width: M.statusDot, height: M.statusDot),
-               radius: CGFloat(DrawTheme.Radius.small), dot)
+        // art.html: a 4 pt dot, centered in the 8 pt slot before the text.
+        c.fill(ellipseIn: CGRect(x: line.minX + M.statusDot / 4, y: line.midY - M.statusDot / 4, width: M.statusDot / 2, height: M.statusDot / 2), dot)
         let tx = line.minX + M.statusDot + M.gridGap
         let right = statusButtonFrames[i]?.minX ?? line.maxX
         c.draw(SQL10n.string(st.text), in: CGRect(x: tx, y: line.minY, width: max(right - tx, 0), height: line.height), fontSize: font,
@@ -1529,13 +1706,16 @@ public final class ShellForm {
         let top = max(bars.map(\.count).max() ?? 1, 1)
         let colW = (chart.width - M.gridGap * CGFloat(bars.count - 1)) / CGFloat(bars.count)
         let baseline = chart.maxY - M.chartLine - M.chartInner
+        c.fill(CGRect(x: chart.minX, y: baseline, width: chart.width, height: 1), t.hair2)   // one shared baseline
         for (n, b) in bars.enumerated() {
             let x = chart.minX + CGFloat(n) * (colW + M.gridGap)
             let h = b.count == 0 ? 0 : max(3, (M.chartBarMax * CGFloat(b.count) / CGFloat(top)).rounded())
             let bar = CGRect(x: x, y: baseline - h, width: colW, height: h)
             if h > 0 {
-                c.fill(roundedRect: bar, radius: 3, t.accentFill)
-                c.fill(CGRect(x: bar.minX, y: bar.maxY - min(3, h / 2), width: bar.width, height: min(3, h / 2)), t.accentFill)
+                // art.html 33: neutral gray bars, the tallest one a step lighter.
+                let tint = t.label4   // art.html 33: one flat gray, rounded top corners
+                c.fill(roundedRect: bar, radius: 3, tint)
+                c.fill(CGRect(x: bar.minX, y: bar.maxY - min(3, h / 2), width: bar.width, height: min(3, h / 2)), tint)
             }
             c.draw("\(b.count)", in: CGRect(x: x, y: bar.minY - M.chartInner - M.chartLine, width: colW, height: M.chartLine),
                    fontSize: cap, t.label2, align: .center)
@@ -1548,10 +1728,14 @@ public final class ShellForm {
     private func drawTextBox(_ c: inout Canvas, _ i: Int, id: String, _ t: DrawTheme) {
         let box = controlFrames[i], size = CGFloat(DrawTheme.TypeSize.body)
         let radius = CGFloat(8)
-        c.fill(roundedRect: box, radius: radius, t.field)
-        c.stroke(roundedRect: box.insetBy(dx: 0.5, dy: 0.5), radius: radius - 0.5, width: 1,
-                 boxEditor != nil && focused == i ? t.accent.alpha(0.45) : t.inkFill(0.10))
+        c.fill(roundedRect: box, radius: radius, t.well)
+        c.stroke(roundedRect: box.insetBy(dx: 0.5, dy: 0.5), radius: radius - 0.5, width: boxEditor != nil && focused == i ? 1 : 0.5,
+                 boxEditor != nil && focused == i ? t.accent.alpha(0.45) : t.hair2)
         let visible = box.insetBy(dx: M.boxInset, dy: M.boxInset)
+        // art.html notes: the placeholder (label4) shows while the box is empty, with or without the caret.
+        if (text(id) ?? "").isEmpty || (boxEditor != nil && focused == i && boxEditor?.text.isEmpty == true), let ph = placeholders[id], !ph.isEmpty {
+            c.draw(SQL10n.string(ph), in: CGRect(x: visible.minX, y: visible.minY, width: visible.width, height: M.boxLine), fontSize: size, t.label4)
+        }
         if let e = boxEditor, focused == i {
             let line = CGFloat(e.position(of: e.caret).line)
             if (line + 1) * M.boxLine - boxScroll > visible.height { boxScroll = (line + 1) * M.boxLine - visible.height }
@@ -1578,14 +1762,14 @@ public final class ShellForm {
         for (n, r) in sidebarFrames.enumerated() where sidebar.items.indices.contains(n) {
             let on = n == sel
             if on || sidebarHovered == n {
-                c.fill(roundedRect: r, radius: CGFloat(DrawTheme.Radius.control), on ? t.fill : t.fillHover)
+                c.fill(roundedRect: r, radius: CGFloat(DrawTheme.Radius.small), on ? t.current : t.hover)
             }
-            if on, sidebarFocused { InspectorDraw.focusLine(&c, r, radius: CGFloat(DrawTheme.Radius.control), t) }
+            if on, sidebarFocused { InspectorDraw.focusLine(&c, r, radius: CGFloat(DrawTheme.Radius.small), t) }
             let item = sidebar.items[n]
             c.draw(icon: item.icon, at: CGPoint(x: r.minX + 12, y: (r.midY - 7).rounded()), size: 14, on ? t.label : t.label3)
             c.draw(SQL10n.string(item.title), in: CGRect(x: r.minX + 12 + 14 + 8, y: r.minY, width: max(r.width - 42, 0), height: r.height),
                    fontSize: font, on ? t.label : t.label2)
         }
-        c.fill(sidebarRule, t.separator)
+        c.fill(sidebarRule, t.hair)
     }
 }

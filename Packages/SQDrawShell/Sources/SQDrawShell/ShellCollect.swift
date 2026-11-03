@@ -12,8 +12,8 @@ extension ShellHost {
     /// `projectURL` stands in for the session's file (the shot harness asks as an untitled project with `unsaved`).
     public func collectFiles(projectURL: URL? = nil, unsaved: Bool = false) async {
         guard let url = unsaved ? nil : (projectURL ?? session.fileURL) else {
-            presentError("Save the project first", NSError(domain: "SQ", code: 2, userInfo: [NSLocalizedDescriptionKey:
-                "Collect Files needs a project folder. Use File > Save As… or create the project with New Project."]))
+            presentMessage("Save the project first",
+                           "Collect Files needs a project folder. Use File > Save As… or create the project with New Project.")   // art.html 02: no icon
             return
         }
         let folder = MediaManagement.importedFolder(forProjectAt: url)

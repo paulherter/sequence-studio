@@ -118,6 +118,14 @@ public enum MonitorMenus {
         return fallback.isEmpty ? "Sequence" : fallback
     }
 
+    /// Program title: the sequence name, plus " · name" of the variant shown (none for the sequence's own format).
+    public static func programTitle(_ items: [MonitorPanelModel.SequenceItem], current: UUID?, fallback: String,
+                                    formats: [MonitorPanelModel.FormatItem], format: UUID?) -> String {
+        let base = sequenceTitle(items, current: current, fallback: fallback)
+        guard let f = format, let v = formats.first(where: { $0.id == f }) else { return base }
+        return "\(base) · \(v.name)"
+    }
+
     /// Format popup: the sequence's own format (nil id), its variants, then Add Format (aspect presets) and Remove Format.
     @MainActor
     public static func formatItems(base: String, _ items: [MonitorPanelModel.FormatItem], current: UUID?,

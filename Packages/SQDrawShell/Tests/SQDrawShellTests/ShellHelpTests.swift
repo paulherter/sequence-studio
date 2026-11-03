@@ -2,6 +2,7 @@ import Foundation
 import Testing
 import SQCore
 import SQUIKit
+import SQDrawKit
 import SQEditorSession
 @testable import SQDrawShell
 
@@ -67,7 +68,7 @@ import SQEditorSession
         let icon = try #require(about.iconFrame)
         guard case .icon = about.parts.first else { Issue.record("no icon first"); return }
         #expect(icon.width == 88 && abs(icon.midX - d.card.midX) < 0.5)
-        let buttons = about.parts.compactMap { if case .button(let s, let r, _, _) = $0 { (s, r) } else { nil } }
+        let buttons = about.parts.compactMap { if case .button(let s, let r, _, _, _) = $0 { (s, r) } else { nil } }
         #expect(buttons.map(\.0) == AboutContent.links(discord: SupportLinks.discord).map(\.title))
         let gh = buttons[0].1
         _ = d.handle(.mouseDown(x: Float(gh.midX), y: Float(gh.midY), modifiers: []), scale: 1)
@@ -94,6 +95,18 @@ import SQEditorSession
         }
         #expect(!texts([]).contains("Supporters"))
         #expect(texts(["Ada", "Linus"]).contains("Supporters"))
+    }
+
+    @Test func aboutIconDrawsAsPolygonsAndMacKeepsTheHostIcon() throws {
+        let c = ShellAboutContent(page: .about) { _ in }
+        c.layout(CGRect(x: 0, y: 0, width: 480, height: 0), measure: TextMeasure(atlas: nil, scale: 1))
+        var cv = Canvas(width: 480, height: 400, atlas: nil, scale: 1)
+        ShellAppIcon.draw(in: try #require(c.iconFrame), into: &cv)
+        #expect(cv.list.quads.count > 20)
+        #expect(c.drawsIcon == ShellAboutContent.drawsIconByDefault)
+        #if !os(Windows)
+        #expect(!c.drawsIcon)
+        #endif
     }
 
     @Test func revealLogsShowsTheLogFileOrItsFolder() {

@@ -24,21 +24,6 @@ public enum ClipMarkerFlags {
         public var time: Time
     }
 
-    #if canImport(AppKit)
-    public static func draw(clip: Clip, frameDuration: Time, geometry: TimelineGeometry, rect: CGRect, visible: CGRect) {
-        guard let cg = NSGraphicsContext.current?.cgContext, rect.width >= minClipWidth else { return }
-        for m in clip.visibleMarkers(frameDuration: frameDuration) {
-            let x = geometry.x(for: clip.start + m.time)
-            guard x >= visible.minX - flagWidth, x <= visible.maxX + flagWidth else { continue }
-            cg.setFillColor(Theme.Palette.marker(m.color).cgColor)
-            cg.move(to: CGPoint(x: x, y: rect.maxY))
-            cg.addLine(to: CGPoint(x: x + flagWidth / 2, y: rect.maxY - flagHeight))
-            cg.addLine(to: CGPoint(x: x - flagWidth / 2, y: rect.maxY - flagHeight))
-            cg.closePath()
-            cg.fillPath()
-        }
-    }
-    #endif
 
     /// The flag under `point`, nil when the point is not in the bottom strip of a clip that has flags.
     public static func hit(at point: CGPoint, in timeline: Timeline, geometry: TimelineGeometry) -> Hit? {

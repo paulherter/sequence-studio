@@ -16,6 +16,10 @@ extension MonitorPanelModel {
         let shown = session.sequenceTabs.tabs.first(where: { $0.shown == session.activeTimelineID })?.root ?? session.activeTimelineID
         if sequenceItems != open { sequenceItems = open }
         if sequenceCurrent != shown { sequenceCurrent = shown }
+        // The switcher's callbacks (Compare > Frame Format and the title popup); they were never connected before.
+        if onPickFormat == nil { onPickFormat = { [weak session] id in session?.setActiveVariant(id) } }
+        if onAddFormat == nil { onAddFormat = { [weak session] p in session?.addVariant(p) } }
+        if onRemoveFormat == nil { onRemoveFormat = { [weak session] id in session?.removeVariant(id) } }
         if onPickSequence == nil { onPickSequence = { [weak session] id in session?.selectSequenceTab(root: id) } }
         if formatBaseName != base { formatBaseName = base }
         let name = t?.name ?? ""

@@ -14,15 +14,7 @@ public enum ColorDetection {
     /// dropped the `colr` atom): its base-layer compatibility id then names HLG or PQ.
     public static func detect(colorPrimaries: String?, transfer: String?, sony: SonyMetadata?,
                               dolbyVision: DolbyVisionConfig? = nil, canon: CanonMetadata? = nil) -> ColorSpaceID {
-        let t = transfer?.lowercased() ?? ""
-        if t.contains("hlg") { return .hlgBT2020 }
-        if t.contains("2084") || t.contains("_pq") { return .pqBT2020 }
-        // Apple Log: the CoreMedia value is a reverse-DNS id ("com.apple.log") from kCMFormatDescriptionLogTransferFunction_AppleLog (see `transferTag`), matched with separators stripped; Apple Log 2 also maps to Apple Log (no separate curve yet).
-        if t.filter({ $0 != "_" && $0 != "." && $0 != "-" }).contains("applelog") { return .appleLog }
-        if let dv = dolbyVision?.baseLayerColorSpace, dv.isHDR { return dv }
-        if let sony, sony.isSLog3SGamut3Cine { return .sLog3SGamut3Cine }
-        if let space = canon?.colorSpace { return space }
-        return .rec709
+        ColorTagDetection.detect(colorPrimaries: colorPrimaries, transfer: transfer, sony: sony, dolbyVision: dolbyVision, canon: canon)
     }
 
     /// The Dolby Vision configuration record of a format description (`dvvC` / `dvcC` / `dvwC` sample description atom).

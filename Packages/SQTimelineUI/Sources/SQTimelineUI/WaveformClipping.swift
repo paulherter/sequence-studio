@@ -47,17 +47,4 @@ public enum WaveformClipping {
         return (near, over)
     }
 
-    #if canImport(AppKit)
-    /// `bandRects` as paths.
-    static func bands(columns: [[WaveformColumn]], rect: CGRect, style: WaveformStyle, firstColumn: Int = 0) -> (near: CGPath, over: CGPath) {
-        let r = bandRects(columns: columns, rect: rect, style: style, firstColumn: firstColumn)
-        let near = CGMutablePath(), over = CGMutablePath()
-        r.near.forEach { near.addRect($0) }
-        r.over.forEach { over.addRect($0) }
-        return (near, over)
-    }
-
-    static var nearColor: CGColor { Theme.Colors.yellow.cgColor }
-    static var overColor: CGColor { Theme.Colors.red.cgColor }
-    #endif
 }

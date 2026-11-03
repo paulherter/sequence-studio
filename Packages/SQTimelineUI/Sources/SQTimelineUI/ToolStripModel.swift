@@ -47,7 +47,7 @@ public enum ToolStripLayout {
     public static let thickness: CGFloat = 38
     /// Height of the bar as a row (docked top / bottom, floating).
     public static let rowThickness: CGFloat = 36
-    public static let toolSize: CGFloat = 28
+    public static let toolSize: CGFloat = 24
     /// Vertical bar: 18 pt grip + 2 pt margin. Row: a 24 pt wide grip.
     public static let gripLength: CGFloat = 20
     public static let rowGripLength: CGFloat = 24

@@ -38,6 +38,7 @@ typedef struct {
     char codec[32];               // FFmpeg codec name ("h264", "hevc", ...)
     char pixFmt[32];
     int colorPrimaries, colorTransfer, colorMatrix, colorRange;   // AVColor* values
+    int bitsPerCodedSample;       // QuickTime Animation (qtrle) and other RLE codecs need it to pick their pixel format
 } SQFFVideoInfo;
 
 // Opens `path` and indexes every packet of the best video stream.
@@ -64,7 +65,7 @@ typedef struct {
 } SQFFFrameInfo;
 
 // `hardware` != 0 decodes with D3D11VA (fails when the GPU cannot decode the stream: the caller falls back).
-int sq_dec_open(const char *codec, const uint8_t *extradata, int extradataSize, int width, int height,
+int sq_dec_open(const char *codec, const uint8_t *extradata, int extradataSize, int width, int height, int bitsPerCodedSample,
                 int tbNum, int tbDen, int hardware, int extraHWFrames, SQFFDecoder **out, char *err, int errLen);
 void sq_dec_close(SQFFDecoder *dec);
 const char *sq_dec_name(const SQFFDecoder *dec);
@@ -74,11 +75,17 @@ int sq_dec_send(SQFFDecoder *dec, const uint8_t *data, int size, int64_t pts, in
 int sq_dec_receive(SQFFDecoder *dec, SQFFFrame **out);
 // Drops buffered pictures (before a seek).
 void sq_dec_flush(SQFFDecoder *dec);
+// Preview decode for software decoders: skips the loop filter (faster, pictures drift from exact). Flush after turning it off.
+void sq_dec_set_fast(SQFFDecoder *dec, int on);
 
 void sq_frame_info(const SQFFFrame *f, SQFFFrameInfo *info);
 // Bytes `sq_frame_download` writes: planes packed, NV12 (8 bit) or P010 (16 bit) layout.
 int sq_frame_download_size(const SQFFFrame *f);
 int sq_frame_download(const SQFFFrame *f, uint8_t *buf, int cap);
+// Pictures with an alpha channel (QuickTime Animation, ProRes 4444, WebM VP9 alpha ...): 1 when the decoded pixel format has alpha.
+int sq_frame_has_alpha(const SQFFFrame *f);
+// Those pictures as 8-bit RGBA with straight alpha (width * height * 4 bytes; YUV sources through BT.709).
+int sq_frame_download_rgba(const SQFFFrame *f, uint8_t *buf, int cap);
 // The same layout box-reduced by `divisor` (1, 2, 4) in one pass, on `threads` threads: 4:2:0 / 4:2:2 / 4:4:4 at 8 or
 // 10 bits, planar or NV12 / P010 (hardware frames after transfer). Size 0 / result 1: not this frame (use the plain one).
 int sq_frame_download_reduced_size(const SQFFFrame *f, int divisor, int *outWidth, int *outHeight);

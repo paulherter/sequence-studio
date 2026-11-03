@@ -236,22 +236,46 @@ public struct Canvas {
 }
 
 extension Canvas {
+    /// `text` cut to `maxWidth` with a trailing ellipsis (binary search on the measured width); unchanged when it fits.
+    public func ellipsized(_ text: String, fontSize: CGFloat, face: Int = 0, maxWidth: CGFloat) -> String {
+        if size(of: text, fontSize: fontSize, face: face).width <= maxWidth { return text }
+        let chars = Array(text)
+        var lo = 0, hi = chars.count
+        while lo < hi {
+            let mid = (lo + hi + 1) / 2
+            let t = String(chars[..<mid]).trimmingCharacters(in: .whitespaces) + "\u{2026}"
+            if size(of: t, fontSize: fontSize, face: face).width <= maxWidth { lo = mid } else { hi = mid - 1 }
+        }
+        return lo == 0 ? "" : String(chars[..<lo]).trimmingCharacters(in: .whitespaces) + "\u{2026}"
+    }
+
     /// The AppKit `EmptyStateView` text block: a 15 pt semibold title in `label`, a wrapped body hint (at most 3 lines) in
     /// `label2`, 4 pt apart, centered in `r`. `reserve` is the height kept free below for a button (centered with the text).
     /// Returns the bottom of the hint.
     @discardableResult
-    public mutating func drawEmptyState(title: String, hint: String, in r: CGRect, reserve: CGFloat = 0, theme t: DrawTheme) -> CGFloat {
+    public mutating func drawEmptyState(title: String, hint: String, in r: CGRect, reserve: CGFloat = 0, art: Bool = false,
+                                        theme t: DrawTheme) -> CGFloat {
         let titleH: CGFloat = 20, lineH: CGFloat = 14, gap = CGFloat(DrawTheme.Spacing.xs)
         let w = max(r.width - 2 * CGFloat(DrawTheme.Spacing.lg), 0)
         let lines = Array(wrap(hint, width: w, fontSize: CGFloat(DrawTheme.TypeSize.body)).prefix(3))
-        let block = titleH + (lines.isEmpty ? 0 : gap + CGFloat(lines.count) * lineH) + reserve
-        let top = (r.midY - block / 2).rounded()
+        // The mascot above the title (artifact empty states) when a renderer is registered and the pane is tall enough.
+        let artSide: CGFloat = 44, artH = art && Self.emptyStateArt != nil && r.height > 150 ? artSide + 12 : 0
+        let block = artH + titleH + (lines.isEmpty ? 0 : gap + CGFloat(lines.count) * lineH) + reserve
+        var top = (r.midY - block / 2).rounded()
+        if artH > 0, let draw = Self.emptyStateArt {
+            draw(CGRect(x: r.midX - artSide / 2, y: top, width: artSide, height: artSide), &self)
+            top += artH
+        }
         let x = r.minX + CGFloat(DrawTheme.Spacing.lg)
         draw(title, in: CGRect(x: x, y: top, width: w, height: titleH), fontSize: 15, t.label, align: .center, face: semibold)
         for (i, line) in lines.enumerated() {
             draw(line, in: CGRect(x: x, y: top + titleH + gap + CGFloat(i) * lineH, width: w, height: lineH),
                  fontSize: CGFloat(DrawTheme.TypeSize.body), t.label2, align: .center)
         }
-        return top + block - reserve
+        return top + block - artH - reserve
     }
+
+    /// Draws the mascot into a rect; registered once by SQDrawShell (the art lives there).
+    /// shortcut: a process-wide hook set at start up, move the mascot art into SQDrawKit to drop it.
+    nonisolated(unsafe) public static var emptyStateArt: ((CGRect, inout Canvas) -> Void)?
 }

@@ -14,6 +14,12 @@ import Testing
         #expect(AppVersion.number(from: nil) == AppVersion.fallbackNumber)
     }
 
+    @Test func aboutLineLeavesOutAnEmptyBuild() {
+        #expect(AppVersion.fallbackNumber == "0.1.2")
+        if AppVersion.build.isEmpty { #expect(AppVersion.aboutLine == "Version \(AppVersion.display)") }
+        #expect(!AppVersion.aboutLine.contains("?"))
+    }
+
     @Test func plistReadsProjectVersion() throws {
         let plist = try String(contentsOf: root.appendingPathComponent("App/Info.plist"), encoding: .utf8)
         #expect(plist.contains("<string>$(MARKETING_VERSION)</string>"))

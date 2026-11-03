@@ -286,19 +286,19 @@ final class SharedUIView: NSView, @preconcurrency NSTextInputClient {
         case .closedHand: .closedHand
         case .pointingHand: .pointingHand
         case .notAllowed: .operationNotAllowed
-        case .dragCopy: TimelineCursors.cursor(for: .copy)
-        case .zoomIn: TimelineCursors.cursor(for: .zoom)
-        case .trimIn: TimelineCursors.cursor(for: .trimIn)
-        case .trimOut: TimelineCursors.cursor(for: .trimOut)
-        case .rippleIn: TimelineCursors.cursor(for: .rippleIn)
-        case .rippleOut: TimelineCursors.cursor(for: .rippleOut)
-        case .rateIn: TimelineCursors.cursor(for: .rateIn)
-        case .rateOut: TimelineCursors.cursor(for: .rateOut)
-        case .roll: TimelineCursors.cursor(for: .roll)
-        case .slip: TimelineCursors.cursor(for: .slip)
-        case .slide: TimelineCursors.cursor(for: .slide)
-        case .razor: TimelineCursors.cursor(for: .razor)
-        case .trackSelect: TimelineCursors.cursor(for: .trackSelect)
+        case .dragCopy: MacTimelineCursors.cursor(for: .copy)
+        case .zoomIn: MacTimelineCursors.cursor(for: .zoom)
+        case .trimIn: MacTimelineCursors.cursor(for: .trimIn)
+        case .trimOut: MacTimelineCursors.cursor(for: .trimOut)
+        case .rippleIn: MacTimelineCursors.cursor(for: .rippleIn)
+        case .rippleOut: MacTimelineCursors.cursor(for: .rippleOut)
+        case .rateIn: MacTimelineCursors.cursor(for: .rateIn)
+        case .rateOut: MacTimelineCursors.cursor(for: .rateOut)
+        case .roll: MacTimelineCursors.cursor(for: .roll)
+        case .slip: MacTimelineCursors.cursor(for: .slip)
+        case .slide: MacTimelineCursors.cursor(for: .slide)
+        case .razor: MacTimelineCursors.cursor(for: .razor)
+        case .trackSelect: MacTimelineCursors.cursor(for: .trackSelect)
         case .resizeDiagonalDown: OverlayCursors.resize(angle: 45)
         case .resizeDiagonalUp: OverlayCursors.resize(angle: 135)
         case .move: OverlayCursors.move
@@ -441,8 +441,11 @@ final class SharedUIView: NSView, @preconcurrency NSTextInputClient {
             collecting = nil
             composing = composing || hasMarkedText()
         }
-        HostKeyRepeat.shared.with(e.isARepeat) {
-            for ev in MacKeys.events(key: key, modifiers: mods, committed: committed, composing: composing) { send(ev) }
+        let typed = MacKeys.typedText(key: key, modifiers: mods, committed: committed, composing: composing)
+        HostTypedText.shared.with(typed) {
+            HostKeyRepeat.shared.with(e.isARepeat) {
+                for ev in MacKeys.events(key: key, modifiers: mods, committed: committed, composing: composing) { send(ev) }
+            }
         }
     }
 

@@ -233,22 +233,4 @@ public enum ProjectColumnSizing {
     /// Room for the sort arrow next to a header title.
     public static let headerExtra: CGFloat = 12
     static let maxAuto: CGFloat = 150
-
-    // shortcut: the column widths read the Mac Theme spacing tokens; upgrade when the tokens move to the shared toolkit.
-    #if os(macOS)
-    /// Everything in the name cell besides the text: disclosure area, indentation of the deepest folder, icon, gaps.
-    public static func nameChrome(maxDepth: Int) -> CGFloat {
-        21 + CGFloat(max(maxDepth, 0)) * Theme.Spacing.treeIndent + 6 + 20 + Theme.Spacing.iconToLabel + Theme.Spacing.xs   // icon lead 6, box 20
-    }
-
-    public static func width(of c: ProjectPanelModel.Column, header: CGFloat, content: CGFloat, maxDepth: Int) -> CGFloat {
-        let pad = 2 * Theme.Spacing.xs
-        if c == .name {
-            let w = max(content + nameChrome(maxDepth: maxDepth), header + pad + headerExtra)
-            return min(max(w, nameRange.lowerBound), nameRange.upperBound)
-        }
-        let w = max(content + pad, header + pad + headerExtra)
-        return min(max(w, c.minWidth), c == .filePath ? 360 : maxAuto)
-    }
-    #endif
 }

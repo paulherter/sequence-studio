@@ -119,7 +119,19 @@ public struct KeyboardLayoutModel: Sendable {
     }
 }
 
-#if !canImport(AppKit)
+#if canImport(AppKit)
+import AppKit
+
+extension KeyboardLayout.Style {
+    /// The layout of the current keyboard input source; US when unknown.
+    @MainActor public static var system: KeyboardLayout.Style {
+        let id = NSTextInputContext.current?.selectedKeyboardInputSource ?? ""
+        if ["German", "Swiss", "Austrian"].contains(where: { id.localizedCaseInsensitiveContains($0) }) { return .german }
+        if id.isEmpty, ["DE", "AT", "CH"].contains(Locale.current.region?.identifier ?? "") { return .german }
+        return .us
+    }
+}
+#else
 extension KeyboardLayout.Style {
     /// The keyboard layout off the Mac: the region of the user's locale (German, Austrian, Swiss: German), else US.
     /// shortcut: reads the locale, not the active Windows keyboard layout (GetKeyboardLayout); upgrade with that.

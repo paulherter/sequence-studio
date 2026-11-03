@@ -94,7 +94,7 @@ import SQUIKit
     var transcribeIsAccent: Bool {
         guard let m = model, !isRunning else { return false }
         if case .failed = phase { return true }
-        return m.transcript == nil
+        return false
     }
 
     var statusText: String {
@@ -322,7 +322,7 @@ import SQUIKit
         guard let m = model else {
             // TextPanelView.emptyLabel: no sequence, no transcript page.
             c.drawEmptyState(title: SQL10n.string(Self.noSequenceTitle), hint: SQL10n.string(Self.noSequenceHint),
-                             in: CGRect(origin: .zero, size: size), theme: t)
+                             in: CGRect(origin: .zero, size: size), art: true, theme: t)
             return
         }
         measure(c, m)
@@ -338,14 +338,12 @@ import SQUIKit
                                  pressed: pressed == .cancel, enabled: true, t)
         }
         if isIdle {
-            // The empty state under the top row: 15 pt semibold heading, 11 pt hint, centered in the rest of the panel.
-            let top = Self.rowHeight, mid = top + (size.height - top) / 2
-            c.draw(statusText, in: CGRect(x: Self.pad, y: mid - 18, width: size.width - 2 * Self.pad, height: 20),
-                   fontSize: 15, t.label, align: .center, face: c.semibold)
-            if m.canTranscribe {
-                c.draw(SQL10n.string("The words of the sequence appear here."),
-                       in: CGRect(x: Self.pad, y: mid + 4, width: size.width - 2 * Self.pad, height: 16), fontSize: fs, t.label2, align: .center)
-            }
+            // The empty state under the top row: mascot, 15 pt semibold heading (no period), 11 pt hint, centered.
+            let top = Self.rowHeight
+            var title = statusText
+            if title.hasSuffix(".") { title.removeLast() }
+            c.drawEmptyState(title: title, hint: m.canTranscribe ? SQL10n.string("The words of the sequence appear here.") : "",
+                             in: CGRect(x: 0, y: top, width: size.width, height: size.height - top), art: true, theme: t)
             return
         }
         var failed = false
@@ -375,7 +373,7 @@ import SQUIKit
         c.fill(roundedRect: f.bar, radius: 1, t.accentFill)
         drawText(&c, m, in: f.text)
         InspectorDraw.button(&c, title: SQL10n.string("Create Captions…"), in: f.create, hovering: hover == .create,
-                             pressed: pressed == .create, enabled: m.canCreateCaptions, accent: true, t)
+                             pressed: pressed == .create, enabled: m.canCreateCaptions, accent: false, t)
     }
 
     /// Button and popup widths from the canvas (SQButton.intrinsicContentSize; the popup is as wide as its widest item).

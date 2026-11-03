@@ -7,7 +7,7 @@ import SQUIKit
 import SQDrawKit
 
 /// The whole Effect Controls panel on the shared toolkit: `EffectControlsView.layout` translated. Clip line across the
-/// top, then the "Property" header beside the keyframe ruler, then the rows column (`EffectControlsDrawPanel`) left of
+/// top, then the "Video" / "Audio" header beside the keyframe ruler, then the rows column (`EffectControlsDrawPanel`) left of
 /// the divider and the keyframe lanes (`EffectKeyframeLanesDraw`) right of it, scrolling together. Coordinates: points,
 /// y down, (0, 0) = the panel's top-left.
 @MainActor public final class EffectControlsDrawView {
@@ -67,7 +67,7 @@ import SQDrawKit
     /// Clip line plus the header row; no clip = the rows column (its empty state) fills the panel.
     var top: CGFloat { hasClip ? ControlsMetrics.clipLine + ControlsMetrics.header : showsCaptions ? ControlsMetrics.clipLine : 0 }
     /// No clip and the column lists the captions (EffectControlsView.showsCaptions): the clip line names the caption
-    /// track and the count; no "Property" header, ruler or lanes.
+    /// track and the count; no "Video" header, ruler or lanes.
     private var showsCaptions: Bool { !hasClip && rowsPanel.clipSections?.mode == .captions }
     /// Left edge of the lanes = the divider.
     var laneX: CGFloat { hasClip ? EffectControlsSplit.clamp(labelWidth, total: size.width) : size.width }
@@ -212,7 +212,7 @@ import SQDrawKit
         c.restoreGState()
     }
 
-    /// v9 `.clhead`: icon, name, meta with the panel's 12 pt inset; then "Property" over the rows column.
+    /// v9 `.clhead`: icon, name, meta with the panel's 12 pt inset; then "Video" (or "Audio" on an audio-only clip) over the rows column; the other side repeats it where its effects start.
     private func drawHeader(_ c: inout Canvas) {
         guard let clip = model.clip else { return }
         let t = theme, ch = ControlsMetrics.clipLine, rh = ControlsMetrics.header
@@ -226,10 +226,15 @@ import SQDrawKit
         c.draw(name, in: CGRect(x: nameX, y: 0, width: nameW, height: ch), fontSize: fs, t.label, face: c.semibold)
         let infoX = nameX + nameW + CGFloat(DrawTheme.Spacing.sm)
         c.draw(clipMeta(clip), in: CGRect(x: infoX, y: 0, width: max(size.width - trail - infoX, 0), height: ch), fontSize: fs, t.label3)
-        c.fill(CGRect(x: 0, y: ch - 1, width: size.width, height: 1), t.trackRowLine)
-        c.draw(SQL10n.string("Property"), in: CGRect(x: lead, y: ch, width: max(laneX - lead - trail, 0), height: rh),
+        c.fill(CGRect(x: 0, y: ch - 1, width: size.width, height: 1), t.rowLine)
+        c.draw(SQL10n.string(firstGroup.title), in: CGRect(x: lead, y: ch, width: max(laneX - lead - trail, 0), height: rh),
                fontSize: CGFloat(DrawTheme.TypeSize.caption), t.label3)
-        c.fill(CGRect(x: 0, y: ch + rh - 1, width: laneX, height: 1), t.trackRowLine)
+        c.fill(CGRect(x: 0, y: ch + rh - 1, width: laneX, height: 1), t.rowLine)
+    }
+
+    /// The side the first effect row belongs to: the header over the rows names it.
+    private var firstGroup: EffectGroup {
+        model.visibleSections.first.map(EffectControlsLayout.group(of:)) ?? (model.clip?.kind == .audio ? .audio : .video)
     }
 
     /// The caption track in focus and "Captions · count" on the clip line (EffectControlsView.updateHeader).
@@ -244,7 +249,7 @@ import SQDrawKit
         let infoX = nameX + nameW + CGFloat(DrawTheme.Spacing.sm)
         c.draw(SQL10n.string("Captions") + " \u{00B7} \(s.count)", in: CGRect(x: infoX, y: 0, width: max(size.width - ControlsGrid.trailing - infoX, 0), height: ch),
                fontSize: fs, t.label3)
-        c.fill(CGRect(x: 0, y: ch - 1, width: size.width, height: 1), t.trackRowLine)
+        c.fill(CGRect(x: 0, y: ch - 1, width: size.width, height: 1), t.rowLine)
     }
 
     private func clipMeta(_ c: Clip) -> String {

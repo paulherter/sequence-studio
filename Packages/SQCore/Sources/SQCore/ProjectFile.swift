@@ -689,8 +689,37 @@ public enum ProjectFile {
         return project
     }
 
+    /// New projects are one plain file where a package would show up as a folder (Windows). A path that already exists keeps
+    /// its form: a folder stays a package, a file stays a file. Both open on every platform.
+    public static let newProjectsAreFiles: Bool = {
+        #if os(Windows)
+        true
+        #else
+        false
+        #endif
+    }()
+
+    /// true when `url` is a project saved as one file (not a package folder).
+    public static func isSingleFile(_ url: URL, fileManager fm: FileManager = .default) -> Bool {
+        var isDir: ObjCBool = false
+        return fm.fileExists(atPath: url.path, isDirectory: &isDir) && !isDir.boolValue
+    }
+
+    /// The JSON file of the project at `url`: the file itself, or `project.json` inside the package folder.
+    static func documentFile(_ url: URL, fileManager fm: FileManager = .default) -> URL {
+        isSingleFile(url, fileManager: fm) ? url : url.appendingPathComponent(fileName)
+    }
+
     public static func write(_ project: Project, to url: URL, fileManager fm: FileManager = .default) throws {
         let data = try encode(project)
+        var isDir: ObjCBool = false
+        let exists = fm.fileExists(atPath: url.path, isDirectory: &isDir)
+        if exists ? !isDir.boolValue : newProjectsAreFiles {
+            try fm.createDirectory(at: url.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try backupIfOlder(url, for: url, fileManager: fm)
+            try atomicWrite(data, to: url, fileManager: fm)
+            return
+        }
         try fm.createDirectory(at: url, withIntermediateDirectories: true)
         try backupIfOlder(url.appendingPathComponent(fileName), for: url, fileManager: fm)
         try atomicWrite(data, to: url.appendingPathComponent(fileName), fileManager: fm)
@@ -734,7 +763,7 @@ public enum ProjectFile {
     }
 
     public static func read(from url: URL, migrations: Migrations? = nil) throws -> Project {
-        try readFile(url.appendingPathComponent(fileName), migrations: migrations)
+        try readFile(documentFile(url), migrations: migrations)
     }
 
     static func readFile(_ file: URL, migrations: Migrations?) throws -> Project {
@@ -794,11 +823,18 @@ public enum ProjectFile {
         return f.date(from: s)
     }
 
+    /// Snapshot folder of a project: `Autosave/` inside a package, `<name>.sqproj.Autosave/` beside a single file.
+    static func autosaveFolder(for url: URL, fileManager fm: FileManager = .default) -> URL {
+        isSingleFile(url, fileManager: fm)
+            ? url.deletingLastPathComponent().appendingPathComponent(url.lastPathComponent + "." + autosaveDir, isDirectory: true)
+            : url.appendingPathComponent(autosaveDir)
+    }
+
     /// Writes `Autosave/<yyyyMMdd-HHmmss-SSS>.json` (UTC) and keeps only the newest `keep` snapshots.
     @discardableResult
     public static func autosave(_ project: Project, in url: URL, keep: Int = 10, date: Date = Date(),
                                 fileManager fm: FileManager = .default) throws -> URL {
-        let dir = url.appendingPathComponent(autosaveDir)
+        let dir = autosaveFolder(for: url, fileManager: fm)
         try fm.createDirectory(at: dir, withIntermediateDirectories: true)
         // A clock set back must not sort the new snapshot below the older ones (it would be pruned and never "latest"):
         // the name is at least 1 ms after the newest existing snapshot.
@@ -816,7 +852,7 @@ public enum ProjectFile {
 
     /// Snapshots, oldest first (names sort chronologically).
     public static func autosaves(in url: URL, fileManager fm: FileManager = .default) -> [URL] {
-        let dir = url.appendingPathComponent(autosaveDir)
+        let dir = autosaveFolder(for: url, fileManager: fm)
         let items = (try? fm.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
         return items.filter { $0.pathExtension == "json" && !$0.lastPathComponent.hasPrefix(".") }
             .sorted { $0.lastPathComponent < $1.lastPathComponent }

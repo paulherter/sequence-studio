@@ -40,7 +40,7 @@ public final class ScopesPanel {
     /// The waveform settings (trace intensity of the Waveform and RGB Parade), shared with every scopes view.
     public var settings = ScopeTraceSettings.shared
     /// The settings button's side (points), at the right end of a Waveform / Parade popup row.
-    static let settingsButtonSize: CGFloat = 16
+    static let settingsButtonSize: CGFloat = 14
 
     public init() {}
 
@@ -209,7 +209,7 @@ public final class ScopesPanel {
                 let lw = c.size(of: "Skin tone", fontSize: 11).width
                 c.draw("Skin tone", in: CGRect(x: s.popup.maxX - lw, y: s.popup.minY, width: lw, height: s.popup.height),
                        fontSize: 11, t.label2)
-                c.fill(CGRect(x: s.popup.maxX - lw - 6 - 12, y: s.popup.midY.rounded(), width: 12, height: 1), MonitorPanel.color(t.palette.warning))
+                c.fill(CGRect(x: s.popup.maxX - lw - 6 - 14, y: s.popup.midY.rounded() - 1, width: 14, height: 2), t.label3)
             } else {
                 if let b = settingsButton(i) {
                     if hoverSettings == i { c.fill(roundedRect: b, radius: CGFloat(DrawTheme.Radius.control), t.fillHover) }

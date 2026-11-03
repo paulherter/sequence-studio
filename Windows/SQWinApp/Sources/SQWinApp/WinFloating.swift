@@ -140,6 +140,8 @@ final class WinFloatingWindow {
                 wc.lpfnWndProc = floatingProc
                 wc.hInstance = GetModuleHandleW(nil)
                 wc.hCursor = LoadCursorW(nil, UnsafePointer<UInt16>(bitPattern: 32512))
+                wc.hIcon = AppWindow.appIcon(big: true)
+                wc.hIconSm = AppWindow.appIcon(big: false)
                 wc.lpszClassName = c.baseAddress
                 return RegisterClassExW(&wc) != 0
             }

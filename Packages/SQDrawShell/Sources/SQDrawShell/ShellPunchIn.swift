@@ -30,6 +30,7 @@ extension ShellHost {
         ]
         for (i, v) in choices.enumerated() { rows.append(.check(id: "zoom\(i)", title: title(v), on: initial.scales.contains(v))) }
         let form = ShellForm(rows)
+        form.controlWidths["ease"] = 178   // art.html 28
         // The first level carries the "Zoom" label, the others sit under it in the control column.
         for i in choices.indices { form.checkLabels["zoom\(i)"] = i == 0 ? "Zoom" : "" }
         d.form = form

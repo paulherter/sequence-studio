@@ -57,6 +57,45 @@ import SQEditorSession
         #expect(opened == id)
     }
 
+    @Test func variantRowsSitUnderTheirSequenceAndOpenOnDoubleClick() throws {
+        let (v, m, h) = view()
+        let vid = try #require(h.session.addVariant(name: "Vertical", width: 1080, height: 1920))
+        m.setProject(h.session.project)
+        let rows = v.rows()
+        #expect(rows[0].variant == nil && rows[1].variant == vid && rows[1].ref == rows[0].ref)
+        #expect(rows[1].depth == rows[0].depth + 1)
+        var t = 10.0
+        v.now = { t }
+        var opened: (Timeline.ID, FormatVariant.ID)?
+        var sequenceOpened = false
+        v.onOpenVariant = { opened = ($0, $1) }
+        v.onOpenSequence = { _ in sequenceOpened = true }
+        let (x, y) = center(v, row: 1)
+        _ = v.handle(.mouseDown(x: x, y: y, modifiers: []), scale: 1)
+        #expect(opened == nil)
+        t += 0.2
+        _ = v.handle(.mouseDown(x: x, y: y, modifiers: []), scale: 1)
+        guard case .sequence(let sid) = rows[0].ref else { Issue.record("no sequence row"); return }
+        #expect(opened?.0 == sid && opened?.1 == vid)
+        #expect(!sequenceOpened)
+        #expect(v.selection.isEmpty)
+    }
+
+    @Test func shiftSelectionOverVariantRowsHoldsTheSequenceOnce() throws {
+        let (v, m, h) = view()
+        _ = try #require(h.session.addVariant(name: "Vertical", width: 1080, height: 1920))
+        _ = try #require(h.session.addVariant(name: "Square", width: 1080, height: 1080))
+        let bin = try #require(m.newBin(name: "Shots"))
+        m.setProject(h.session.project)
+        let last = try #require(v.rows().firstIndex { $0.ref == .bin(bin) })
+        let (x0, y0) = center(v, row: 0)
+        _ = v.handle(.mouseDown(x: x0, y: y0, modifiers: []), scale: 1)
+        let (x1, y1) = center(v, row: last)
+        _ = v.handle(.mouseDown(x: x1, y: y1, modifiers: .shift), scale: 1)
+        #expect(v.selection.count == Set(v.selection).count)
+        #expect(v.selection.first == v.rows()[0].ref && v.selection.last == .bin(bin))
+    }
+
     @Test func dragOutOfTheListReportsTheRowUntilReleaseOrEsc() {
         let (v, _, _) = view()
         var seen: [(ProjectListView.DragPhase, Int, Float)] = []

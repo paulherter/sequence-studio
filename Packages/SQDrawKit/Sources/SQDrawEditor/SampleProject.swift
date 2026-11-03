@@ -6,10 +6,11 @@ import SQCore
 public enum SampleProject {
     /// `frames`: the file's length in frames at `frameDuration` (at least 2 seconds' worth).
     /// `title`: a text clip on V2 over the whole of Shot A (`SampleTitle.ref()`), for the title comparison.
+    /// `titleShadow`: the title clip also carries a Drop Shadow clip effect (the compositor's shadow pass, not the text's own).
     /// `layers`: that many more video tracks above, each a scaled, turned, semi-transparent copy of the file over the
     /// whole sequence (same source times as V1), for playback load.
     public static func make(mediaPath: String, fileSize: Int64, width: Int, height: Int, frameDuration fd: Time,
-                            frames: Int64, title: GeneratorRef? = nil, layers: Int = 0) -> Project {
+                            frames: Int64, title: GeneratorRef? = nil, titleShadow: Bool = false, layers: Int = 0) -> Project {
         let media = MediaRef(id: UUID(uuidString: "5A5A0000-0000-4000-8000-000000000001")!, name: "sample.mp4",
                              path: mediaPath, fingerprint: MediaFingerprint(size: fileSize), duration: fd * frames)
         let firstLen = frames * 2 / 5, secondIn = frames / 2
@@ -30,10 +31,19 @@ public enum SampleProject {
         let (va, aa) = pair(ida, linkA, name: "Shot A", src: 0, len: firstLen, at: 0)
         let (vb, ab) = pair(idb, linkB, name: "Shot B", src: secondIn, len: frames - secondIn, at: firstLen)
         let v1 = Track(id: UUID(uuidString: "5A5A0000-0000-4000-8000-0000000000F1")!, kind: .video, clips: [va, vb], name: "V1")
-        let titleClip = title.map {
-            Clip(id: UUID(uuidString: "5A5A0000-0000-4000-8000-0000000000C1")!, name: "Title",
+        let titleClip = title.map { gen -> Clip in
+            var c = Clip(id: UUID(uuidString: "5A5A0000-0000-4000-8000-0000000000C1")!, name: "Title",
                  media: UUID(uuidString: "5A5A0000-0000-4000-8000-0000000000C0")!, kind: .video,
-                 source: TimeRange(start: .zero, duration: fd * firstLen), start: .zero, generator: $0)
+                 source: TimeRange(start: .zero, duration: fd * firstLen), start: .zero, generator: gen)
+            if titleShadow { c.animation.scale = AnimatedProperty(Vec2(0.4, 0.4)) }
+            if titleShadow, var sh = ClipEffect.make(kind: ClipEffect.dropShadowKind) {
+                sh.parameters[ClipEffect.shadowOpacityKey] = AnimatedProperty(80)
+                sh.parameters[ClipEffect.shadowDirectionKey] = AnimatedProperty(135)
+                sh.parameters[ClipEffect.shadowDistanceKey] = AnimatedProperty(14)
+                sh.parameters[ClipEffect.shadowSoftnessKey] = AnimatedProperty(30)
+                c.effects.append(sh)
+            }
+            return c
         }
         let v2 = Track(id: UUID(uuidString: "5A5A0000-0000-4000-8000-0000000000F2")!, kind: .video,
                        clips: titleClip.map { [$0] } ?? [], name: "V2")

@@ -247,6 +247,9 @@ public final class LibraryHost {
         let x = Float(p.x + frame.minX) * s, y = Float(p.y + frame.minY) * s
         let ph: TimelineDropRoute.Phase = switch phase { case .moved: .moved; case .ended: .ended; case .canceled: .canceled }
         dragLabel = phase == .moved ? (Self.label(payload, presets: model.presets), x, y) : nil
+        if phase == .moved {
+            HostDragPreview.shared.show(title: dragLabel?.title ?? "", icon: Self.icon(payload), at: CGPoint(x: p.x + frame.minX, y: p.y + frame.minY))
+        } else { HostDragPreview.shared.clear() }
         let mods = modifiers()
         let context = LibraryDropRoute.Context(presets: model.presets, importAndPlace: { [weak self] urls, a in self?.importAndPlace(urls, at: a) },
                                                status: { [weak shell] in shell?.onStatus?($0) })
@@ -282,10 +285,13 @@ public final class LibraryHost {
         }
     }
 
-    /// The drag's name under the pointer over every panel (the Mac drag image); the host calls it after the panels.
-    public func drawDragLabel(_ c: inout Canvas, scale: Float, theme: DrawTheme) {
-        guard let d = dragLabel, !d.title.isEmpty else { return }
-        PanelDragLabel.draw(&c, d.title, at: CGPoint(x: CGFloat(d.x) / CGFloat(scale), y: CGFloat(d.y) / CGFloat(scale)), theme: theme)
+    static func icon(_ payload: LibraryDragPayload) -> SQIcon {
+        switch payload {
+        case .files: .file
+        case .textTemplate: .text
+        case .titleBlock: .text
+        case .effectPreset: .sparkles
+        }
     }
 
     // MARK: Frame, draw, events
@@ -400,17 +406,5 @@ final class PanelStripOptions {
             return true
         default: return false
         }
-    }
-}
-
-/// The name of what is dragged out of a panel, in a small pill beside the pointer (the Mac drag image).
-enum PanelDragLabel {
-    static func draw(_ c: inout Canvas, _ title: String, at p: CGPoint, theme t: DrawTheme) {
-        let fs = CGFloat(DrawTheme.TypeSize.body)
-        let w = min(c.size(of: title, fontSize: fs).width + 16, 240)
-        let r = CGRect(x: p.x + 12, y: p.y + 8, width: w, height: 22)
-        c.fill(roundedRect: r, radius: CGFloat(DrawTheme.Radius.small), t.panel)
-        c.stroke(roundedRect: r, radius: CGFloat(DrawTheme.Radius.small), width: 1, t.separator)
-        c.draw(title, in: r, fontSize: fs, t.label, inset: 8)
     }
 }

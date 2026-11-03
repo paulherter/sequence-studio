@@ -73,6 +73,8 @@ public enum ShellSpeedDuration {
         rows.append(.check(id: "ripple", title: "Move Later Clips", on: model.ripple))
         let form = ShellForm(rows)
         form.link = ShellForm.Link(id: "link", fields: ["speed", "duration"])
+        form.controlWidths = ["speed": 87, "duration": 118, "frames": 198]   // art.html 23
+        form.showUnitInside("speed")
         form.set("link", .bool(model.isLinked))
         form.setFormat("duration", format: { frames in timecode.format(Time(Int64(frames.rounded()) * fd.value, fd.timescale)) },
                        parse: { text in timecode.parse(text).map { frameCount($0, fd) } })
@@ -142,8 +144,11 @@ extension ShellHost {
         let target = session.activeTimeline.map { AudioGain.targetLUFS(for: clips, in: $0) } ?? AudioTag.dialogue.targetLUFS
         let ready = items.contains { ($0.lufs ?? AudioGain.silentLUFS) > AudioGain.silentLUFS }
         let form = ShellAudioGain.form(items: items, target: target, ready: ready)
-        let d = ShellDialog("Audio Gain", informative: AudioGainPlan.infoText(items: items)
-            .replacingOccurrences(of: "Peak amplitude: -", with: "Peak amplitude: \u{2212}"))
+        // art.html 24: the clip name is a dim subtitle beside the title, the peak line is the body.
+        let info = AudioGainPlan.infoText(items: items).replacingOccurrences(of: "Peak amplitude: -", with: "Peak amplitude: \u{2212}")
+        let parts = info.split(separator: "\n", maxSplits: 1).map(String.init)
+        let d = ShellDialog("Audio Gain", informative: parts.count > 1 ? parts[1] : "")
+        d.headerSubtitle = parts.first
         d.form = form
         d.addButton("OK")
         d.addButton("Cancel", role: .cancel)

@@ -3,13 +3,12 @@ import PackageDescription
 
 // DECISIONS "SQEditorUI split": the session layer above SQUIKit. EditorSession and its extensions, ProgramEngine,
 // workspace model, settings, tool state, project panel model. Knows no timeline, monitor or inspector view code.
-// SQEditorUI re-exports it.
 #if os(Windows)
 // Windows (the Windows port plan, seam 5): the session and model layer without SQRender, AppKit and the Apple-only
 // services. A new source file that imports an Apple framework or SQRender goes on this list.
 let appleOnly = [
     "AudioExtraction.swift", "AutoProxy.swift", "EditorSession+VoiceRecording.swift", "CaptionLanguageGuess.swift", "CommandMenuKeys.swift", "EditorSession+CaptionTranslate.swift",
-    "KeyboardLayoutView.swift", "MagicMaskSession.swift", "MediaDiskWatcher.swift", "PasteMedia.swift", "PlaybackEngine+ProgramEngine.swift",
+    "FrameSampler.swift", "MagicMaskSession.swift", "MediaDiskWatcher.swift", "PasteMedia.swift", "PlaybackEngine+ProgramEngine.swift",
     "PasteboardTypes.swift", "ProjectMediaResolver.swift", "ProjectThumbnails.swift", "RenderCacheController.swift",
 ]
 // Tests that need neither an Apple framework nor a Mac-only service.

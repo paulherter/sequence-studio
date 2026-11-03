@@ -18,14 +18,14 @@ public final class ShellStartScreen {
     public enum Tab: String, CaseIterable, Sendable {
         case home = "Home", recent = "Recent", templates = "Templates", learn = "Learn"
         var icon: SQIcon {
-            switch self { case .home: .home; case .recent: .clock; case .templates: .group; case .learn: .book }
+            switch self { case .home: .home; case .recent: .clock; case .templates: .layout; case .learn: .book }
         }
     }
     public enum Sort: String, CaseIterable, Sendable { case opened = "Last opened", name = "Name", size = "Frame size" }
 
     /// What a press lands on.
     public enum Hit: Hashable, Sendable {
-        case newProject, openOther, tab(Tab), reopenLast, appearance, feedback, support(SupportEntry), search, clearSearch, sort
+        case newProject, openOther, emptyNew, emptyOpen, tab(Tab), reopenLast, appearance, feedback, support(SupportEntry), search, clearSearch, sort
         /// The grid / list toggle of Recent (`true` = list).
         case layout(Bool)
         case card(String), cardMore(String), continueOpen, quickSize(String), allFormats, template(String), lesson(Int)
@@ -47,20 +47,21 @@ public final class ShellStartScreen {
         case button(String, Hit, CGRect, primary: Bool)
     }
 
-    // Start screen tokens (`StartScreenTokens`: Theme.Metrics.start*, Theme.Radius.start*, Theme.Typography.start*).
+    // Start screen tokens (`StartScreenTokens`: Theme.Metrics.start*; spacing, radii and type are the shared ladders).
     enum M {
         static let s1: CGFloat = 4, s2: CGFloat = 8, s3: CGFloat = 12, s4: CGFloat = 16, s5: CGFloat = 20, s6: CGFloat = 24
         static let rail: CGFloat = 252, status: CGFloat = 28, gap: CGFloat = 8, top: CGFloat = 44, paneHeader: CGFloat = 56
         /// Room the Mac window buttons take at the left of the start window's top bar (`Theme.Metrics.startLights`).
-        static let lights: CGFloat = 78
-        static let control: CGFloat = 28, controlSmall: CGFloat = 24, row: CGFloat = 28, search: CGFloat = 260
-        static let cardMin: CGFloat = 168, learnMin: CGFloat = 260, learnCard: CGFloat = 64, quickTile: CGFloat = 52
-        static let thumb: CGFloat = 150, templateThumb: CGFloat = 120, thumbInset: CGFloat = 4, continueThumb: CGFloat = 190
+        static let lights: CGFloat = 90
+        static let control: CGFloat = 28, controlSmall: CGFloat = 24, row: CGFloat = 24, search: CGFloat = 260, iconBox: CGFloat = 32
+        static let cardMin: CGFloat = 230, learnMin: CGFloat = 260, learnCard: CGFloat = 64, quickTile: CGFloat = 48
+        static let thumb: CGFloat = 140, templateThumb: CGFloat = 120, thumbInset: CGFloat = 4, continueThumb: CGFloat = 184, continueWidth: CGFloat = 337
         static let badge: CGFloat = 20, kvLabel: CGFloat = 64
-        static let rCtl: CGFloat = 8, rInner: CGFloat = 6, rCard: CGFloat = 12
-        static let fMini: CGFloat = 10, fCap: CGFloat = 11, fLab: CGFloat = 12, fBody: CGFloat = 13, fHead: CGFloat = 15, fTitle: CGFloat = 20
+        static let rCtl: CGFloat = 6, rInner: CGFloat = 4, rCard: CGFloat = 8
+        /// Artifact type sizes: body 11, caption 10-11, title 13 (`art.html`); `iconBody` is the 13 pt glyph size.
+        static let fMini: CGFloat = 10, fCap: CGFloat = 11, fLab: CGFloat = 11, fBody: CGFloat = 11, fHead: CGFloat = 13, fTitle: CGFloat = 13, iconBody: CGFloat = 13
         /// Support card: title row, three lines of the tagline, padding.
-        static let supportCard: CGFloat = 96
+        static let supportCard: CGFloat = 128
         /// Name and caption under a card picture.
         static let cardText: CGFloat = s2 + 16 + 2 + 14 + s3
     }
@@ -119,7 +120,8 @@ public final class ShellStartScreen {
         set { scrollBody.position = newValue }
     }
     public internal(set) var hover: Hit?
-    var search = TextFieldControl()
+    let mascots = ShellMascotStage()
+    var search: TextFieldControl = { var f = TextFieldControl(); f.bare = true; return f }()
 
     public init(host: ShellHost, defaults: UserDefaults = .standard) {
         self.host = host
@@ -169,25 +171,27 @@ public final class ShellStartScreen {
     var paneHeader: CGRect { CGRect(x: paneRect.minX, y: paneRect.minY, width: paneRect.width, height: M.paneHeader) }
     /// The scrolling part of the pane.
     var contentRect: CGRect {
-        CGRect(x: paneRect.minX, y: paneHeader.maxY + M.s2, width: paneRect.width, height: max(paneRect.maxY - paneHeader.maxY - M.s2, 0))
+        CGRect(x: paneRect.minX, y: paneHeader.maxY + 2, width: paneRect.width, height: max(paneRect.maxY - paneHeader.maxY - 2, 0))
     }
     var searchRect: CGRect {
         let bar = barFrame ?? topBar
-        return CGRect(x: bar.maxX - M.s3 - M.search, y: (bar.midY - M.control / 2).rounded(), width: M.search, height: M.control)
+        return CGRect(x: bar.maxX - M.s3 - M.search, y: (bar.midY - M.controlSmall / 2).rounded(), width: M.search, height: M.controlSmall)   // art.html: 24 high
     }
     var searchClearRect: CGRect { CGRect(x: searchRect.maxX - 22, y: searchRect.midY - 8, width: 16, height: 16) }
 
     /// The rail's buttons, tab rows and option rows.
     func railSpots() -> [(CGRect, Hit)] {
         let r = railRect.insetBy(dx: M.s2, dy: 0)
-        var y = railRect.minY + M.s3
+        var y = railRect.minY + 9
         var out: [(CGRect, Hit)] = []
         out.append((CGRect(x: r.minX, y: y, width: r.width, height: M.control), .newProject)); y += M.control + M.s2
-        out.append((CGRect(x: r.minX, y: y, width: r.width, height: M.control), .openOther)); y += M.control + M.s4 + 16 + M.s1
+        out.append((CGRect(x: r.minX, y: y, width: r.width, height: M.control), .openOther)); y += M.control + M.s4 + 5 + 16 + M.s1
         for t in Tab.allCases { out.append((CGRect(x: r.minX, y: y, width: r.width, height: M.row), .tab(t))); y += M.row + 2 }
         // `options`: the checkbox row (24 high), 4 gap, the link buttons (28 square, 2 apart), 4 in from the rail's inset.
         let links = railRect.maxY - M.s2 - M.control
         out.append((CGRect(x: r.minX + M.s1, y: links - M.s1 - M.controlSmall, width: r.width - M.s2, height: M.controlSmall), .reopenLast))
+        let card = supportCardRect
+        out.append((CGRect(x: card.minX + M.s3, y: card.minY + 94, width: 86, height: 21), .support(.support)))   // art.html: "Support…" button in the card
         var x = r.minX + M.s1
         for h in [Hit.appearance, .feedback] + SupportEntry.visible(discord: SupportLinks.discord).reversed().map({ Hit.support($0) }) {
             out.append((CGRect(x: x, y: links, width: M.control, height: M.control), h)); x += M.control + 2
@@ -215,17 +219,18 @@ public final class ShellStartScreen {
     /// `SortButton`: 12 + title + 8 + 11 pt chevron + 8, 28 high, 16 from the pane edge.
     var sortRect: CGRect {
         let w = ceil((host?.measure ?? TextMeasure(atlas: nil, scale: 1)).width(sort.rawValue, size: M.fLab)) + M.s3 + M.s2 + M.fCap + M.s2
-        return CGRect(x: paneHeader.maxX - M.s4 - w, y: paneHeader.midY - M.control / 2, width: w, height: M.control)
+        // Artifact: popup 124 x 22.
+        return CGRect(x: paneHeader.maxX - M.s4 - 124, y: paneHeader.midY - 11, width: max(w, 124), height: 22)
     }
 
     /// `IconSegments`: two 28 x 24 segments in a 2 pt frame, 8 left of the sort button.
     var layoutToggleRect: CGRect {
-        let w = 2 * M.control + 3 * M.s1 / 2 + M.s1 / 2
-        return CGRect(x: sortRect.minX - M.s2 - w, y: paneHeader.midY - M.control / 2, width: w, height: M.control)
+        // Artifact: segmented toggle 53 x 21 (two 24 x 17 segments in a 2 pt frame).
+        return CGRect(x: sortRect.minX - M.s2 - 53, y: paneHeader.midY - 10.5, width: 53, height: 21)
     }
     func layoutSegment(_ list: Bool) -> CGRect {
         let t = layoutToggleRect
-        return CGRect(x: t.minX + 2 + (list ? M.control + 2 : 0), y: t.minY + 2, width: M.control, height: M.controlSmall)
+        return CGRect(x: t.minX + 2 + (list ? 25 : 0), y: t.minY + 2, width: 24, height: 17)
     }
 
     /// `ListCol`: the right-hand columns of a list row (name takes the rest), `gapM` 12 apart, 8 inside the row.
@@ -270,9 +275,9 @@ public final class ShellStartScreen {
             y += CGFloat(rows) * height + CGFloat(rows - 1) * spacing
         }
         func group(_ text: String, first: Bool) {
-            y += first ? 0 : M.s5
+            y += first ? 0 : M.s3
             out.append(.heading(text, CGRect(x: x0, y: y, width: w, height: 16), tile: false))
-            y += 16 + M.s3
+            y += 16 + M.s2
         }
         let cardHeight = 2 * M.thumbInset + M.thumb + M.cardText
         let templateHeight = 2 * M.thumbInset + M.templateThumb + M.cardText
@@ -300,15 +305,15 @@ public final class ShellStartScreen {
             func tile(_ content: () -> Void) {
                 let top = y
                 let at = out.count
-                y += M.s4
+                y += 10
                 content()
                 y += M.s4
                 out.insert(.tile(CGRect(x: x0, y: top, width: w, height: y - top)), at: at)
-                y += M.s4
+                y += 18
             }
             let inner = x0 + M.s4, iw = w - 2 * M.s4
             tile {
-                out.append(.heading("Continue", CGRect(x: inner, y: y, width: iw, height: 20), tile: true)); y += 20 + M.s3
+                out.append(.heading("Continue", CGRect(x: inner, y: y, width: iw, height: 16), tile: true)); y += 16 + 14
                 if let last = current {
                     out.append(.continueBox(last, CGRect(x: inner, y: y, width: iw, height: M.continueThumb))); y += M.continueThumb
                 } else {
@@ -316,23 +321,24 @@ public final class ShellStartScreen {
                 }
             }
             tile {
-                out.append(.heading("Start from a size", CGRect(x: inner, y: y, width: iw, height: 20), tile: true)); y += 20 + M.s3
+                out.append(.heading("Start from a size", CGRect(x: inner, y: y, width: iw, height: 16), tile: true)); y += 16 + 4
                 out.append(.caption("Creates the project in the projects folder and opens it.", CGRect(x: inner, y: y, width: iw, height: 16)))
-                y += 16 + M.s3
+                y += 16 + 15
                 let items: [ProjectTemplate?] = builtIn.map { Optional($0) } + [nil]
-                let cw = (iw - M.s2) / 2
+                // art.html: flat 48 high rows reaching 8 out of the tile padding, two columns 16 apart.
+                let cw = (iw + 2 * M.s2 - M.s4) / 2
                 for (i, t) in items.enumerated() {
-                    out.append(.quick(t, CGRect(x: inner + CGFloat(i % 2) * (cw + M.s2), y: y + CGFloat(i / 2) * (M.quickTile + M.s2),
+                    out.append(.quick(t, CGRect(x: inner - M.s2 + CGFloat(i % 2) * (cw + M.s4), y: y + CGFloat(i / 2) * (M.quickTile + M.s2),
                                                 width: cw, height: M.quickTile)))
                 }
                 let rows = (items.count + 1) / 2
-                y += CGFloat(rows) * M.quickTile + CGFloat(rows - 1) * M.s2
+                y += CGFloat(rows) * M.quickTile + CGFloat(rows - 1) * M.s2 + 7
             }
             // `StartTemplatesModel.yourTemplates` (SQEditorUI): the first four of the user's own.
             let yours = (shown: Array(userTemplates.prefix(4)), total: userTemplates.count)
             if !yours.shown.isEmpty {
                 tile {
-                    out.append(.heading("Your templates", CGRect(x: inner, y: y, width: iw, height: 20), tile: true)); y += 20 + M.s3
+                    out.append(.heading("Your templates", CGRect(x: inner, y: y, width: iw, height: 16), tile: true)); y += 16 + 4
                     out.append(.caption("Click one, name the video, press Return.", CGRect(x: inner, y: y, width: iw, height: 16)))
                     y += 16 + M.s3
                     let (n, cw) = Self.columns(width: iw, min: M.cardMin, spacing: M.s4)
@@ -370,8 +376,8 @@ public final class ShellStartScreen {
         let mid = CGPoint(x: contentRect.midX, y: contentRect.midY)
         let bw: CGFloat = 120
         let buttons: [Element] = recents.isEmpty
-            ? [.button("New project", .newProject, CGRect(x: mid.x - bw - M.s1, y: mid.y + 24, width: bw, height: M.control), primary: true),
-               .button("Open…", .openOther, CGRect(x: mid.x + M.s1, y: mid.y + 24, width: bw, height: M.control), primary: false)]
+            ? [.button("New project", .emptyNew, CGRect(x: mid.x - bw - M.s1, y: mid.y + 24, width: bw, height: M.control), primary: true),
+               .button("Open…", .emptyOpen, CGRect(x: mid.x + M.s1, y: mid.y + 24, width: bw, height: M.control), primary: false)]
             : [.button("Clear search", .clearSearch, CGRect(x: mid.x - bw / 2, y: mid.y + 24, width: bw, height: M.control), primary: false)]
         return (title, text, buttons)
     }
@@ -416,8 +422,8 @@ public final class ShellStartScreen {
     }
 
     func openRect(_ box: CGRect) -> CGRect {
-        let textX = box.minX + M.continueThumb * 16 / 9 + M.s4
-        return CGRect(x: textX, y: box.maxY - M.control, width: 96, height: M.control)
+        let textX = box.minX + M.continueWidth + 19
+        return CGRect(x: textX, y: box.minY + 141, width: 78, height: M.control)   // art.html: under the four fact rows
     }
 
     // MARK: Events
@@ -493,8 +499,8 @@ public final class ShellStartScreen {
     func press(_ h: Hit, at p: CGPoint) {
         guard let host else { return }
         switch h {
-        case .newProject: _ = host.execute(.newProject)
-        case .openOther: _ = host.execute(.openProject)
+        case .newProject, .emptyNew: _ = host.execute(.newProject)
+        case .openOther, .emptyOpen: _ = host.execute(.openProject)
         case .tab(let t): tab = t
         case .reopenLast: defaults.set(!reopenLast, forKey: Self.reopenLastKey)
         // shortcut: Appearance opens Preferences (its Appearance row) instead of the Mac popover; upgrade with a drawn popover.

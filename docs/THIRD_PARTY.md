@@ -85,12 +85,14 @@ who received the binary. The Rust dependencies are fully reproducible from `Vend
 gyroflow rev `5fa0309a`, with the one exception of the lens-profile download above. Anyone may rebuild with
 `scripts/build-gyro.sh`.
 
-## Lucide icons (SQUIKit/Resources/Icons)
+## Phosphor icons (SQUIKit/Resources/Icons)
 
-- Lucide, lucide-static 1.55.0, ISC licence, https://github.com/lucide-icons/lucide. Only the SVGs in use are bundled,
-  loaded solely by `SQIcon` (SQUIKit), rendered as template images.
-- Our own drawings (own work, same 24x24 stroke grid): toolSlip, toolSlide, toolRipple, toolRoll, toolRateStretch,
-  keyframe, pageEdit, pageColor, markIn, markOut, markInOut, textOverline.
+- Phosphor Icons (Regular and Fill weights), MIT licence, https://github.com/phosphor-icons/core. Only the SVGs in use are
+  bundled (`ph-<name>[-fill].svg`, 256 grid, filled outlines), loaded solely by `SQIcon` (SQUIKit), rendered as template
+  images. Lucide (ISC) was used before 2026-11 and is no longer bundled.
+- Our own drawings (`sq-<case>.svg`, own work, 24 grid, stroke 1.5 = Phosphor's 16/256): the cases marked `own` in the design
+  kit's icon-map.json (tool and mark glyphs, text overline/direction, distribute, power, page icons and more).
+- `scripts/gen-icons.mjs` regenerates the files and `SQIcon+Resources.swift` from the kit's icon-map.json.
 
 ## Beat tracking (SQAnalysis/BeatDetector.swift)
 

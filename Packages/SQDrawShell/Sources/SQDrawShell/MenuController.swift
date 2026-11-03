@@ -113,8 +113,8 @@ public final class MenuController {
             let row = parent.rowFrames[nav.highlighted(level: level - 1) ?? 0]
             let size = view.visibleSize
             let topY = SQMenuLayout.submenuTop(parentMaxY: flip(parent.frame.minY), rowMinY: row.minY, parentScroll: parent.scrollOffset)
-            var o = SQMenuLayout.origin(size: size, anchor: CGPoint(x: parent.frame.maxX - 3, y: topY), screen: screen)
-            if parent.frame.maxX - 3 + size.width > screen.maxX { o.x = max(screen.minX, parent.frame.minX - size.width + 3) }
+            var o = SQMenuLayout.origin(size: size, anchor: CGPoint(x: parent.frame.maxX - SQMenuLayout.submenuOverlap, y: topY), screen: screen)
+            if parent.frame.maxX - SQMenuLayout.submenuOverlap + size.width > screen.maxX { o.x = max(screen.minX, parent.frame.minX - size.width + SQMenuLayout.submenuOverlap) }
             view.origin = CGPoint(x: o.x, y: flip(o.y + size.height))
         }
         views.append(view)

@@ -44,6 +44,19 @@ public final class FFmpegFrame: SQFrameStorage, @unchecked Sendable {
         return out
     }
 
+    /// The decoded pixel format has an alpha channel (QuickTime Animation, ProRes 4444 ...): such pictures go through
+    /// `downloadRGBA()`, the NV12 download has no alpha.
+    public var hasAlpha: Bool { sq_frame_has_alpha(handle) != 0 }
+
+    /// 8-bit RGBA, straight alpha, width * height * 4 bytes. Blocking.
+    public func downloadRGBA() throws -> [UInt8] {
+        let size = width * height * 4
+        var out = [UInt8](repeating: 0, count: size)
+        let r = out.withUnsafeMutableBufferPointer { sq_frame_download_rgba(handle, $0.baseAddress, Int32(size)) }
+        guard r == 0 else { throw FFmpegError.failed("frame download", r) }
+        return out
+    }
+
     /// Pixels in the same layout, box-reduced by `divisor` (1, 2, 4) in one pass on `threads` threads (no zero fill, no
     /// full-size copy first); nil when this frame's size or format has no such path (use `download()`). Blocking.
     public func download(divisor: Int, threads: Int = 8) throws -> (bytes: [UInt8], width: Int, height: Int)? {

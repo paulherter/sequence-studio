@@ -10,6 +10,16 @@ import Testing
         #expect(ProjectOpenRouting.route(for: URL(fileURLWithPath: "/a/b.mov")) == .unsupported)
     }
 
+    @Test func resolvesChosenFolderToProject() {
+        let none: (URL) -> Bool = { _ in false }
+        let pkg = URL(fileURLWithPath: "/v/MacBook OLED kaufen.sqproj")
+        #expect(ProjectOpenRouting.projectFolder(chosen: pkg, hasProjectJSON: none)?.path == pkg.path)
+        #expect(ProjectOpenRouting.projectFolder(chosen: pkg.appendingPathComponent("media"), hasProjectJSON: none)?.path == pkg.path)
+        let plain = URL(fileURLWithPath: "/v/Plain")
+        #expect(ProjectOpenRouting.projectFolder(chosen: plain, hasProjectJSON: none) == nil)
+        #expect(ProjectOpenRouting.projectFolder(chosen: plain, hasProjectJSON: { $0.path == plain.path })?.path == plain.path)
+    }
+
     @Test func mapsProjectFileErrors() throws {
         let missing = try #require(ProjectOpenRouting.message(for: ProjectFileError.missing, fileName: "x"))
         #expect(missing.detail.contains("not a Sequence Studio project"))

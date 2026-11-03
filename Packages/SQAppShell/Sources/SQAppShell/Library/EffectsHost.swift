@@ -93,6 +93,8 @@ public final class EffectsHost {
         let ph: TimelineDropRoute.Phase = switch phase { case .moved: .moved; case .ended: .ended; case .canceled: .canceled }
         let title = ids.first.flatMap { id in panel.allEntries.first { $0.id == id }?.title } ?? ""
         dragLabel = phase == .moved ? (title, x, y) : nil
+        if phase == .moved { HostDragPreview.shared.show(title: title, icon: .sparkles, at: CGPoint(x: p.x + frame.minX, y: p.y + frame.minY)) }
+        else { HostDragPreview.shared.clear() }
         graphicsDragOver?(phase == .moved ? CGPoint(x: p.x + frame.minX, y: p.y + frame.minY) : nil)
         let mods = modifiers()
         let context = LibraryDropRoute.Context(presets: library.presets, importAndPlace: { _, _ in },
@@ -111,11 +113,6 @@ public final class EffectsHost {
             if !kinds.isEmpty, graphicsDrop?(kinds, CGPoint(x: p.x + frame.minX, y: p.y + frame.minY)) == true { return }
         }
         if placed { onPlaced?() }
-    }
-
-    public func drawDragLabel(_ c: inout Canvas, scale: Float, theme: DrawTheme) {
-        guard let d = dragLabel, !d.title.isEmpty else { return }
-        PanelDragLabel.draw(&c, d.title, at: CGPoint(x: CGFloat(d.x) / CGFloat(scale), y: CGFloat(d.y) / CGFloat(scale)), theme: theme)
     }
 
     /// Places the panel on the dock's Effects card (`card` in points, nil while hidden) and picks up preset changes.

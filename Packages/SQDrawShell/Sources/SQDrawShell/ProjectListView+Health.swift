@@ -65,7 +65,7 @@ extension ProjectListView {
     func drawHealth(_ c: inout Canvas, theme t: DrawTheme) {
         guard let r = healthRect else { return }
         c.fill(r, t.panel)
-        c.fill(CGRect(x: r.minX, y: r.minY, width: r.width, height: 1), t.separator)
+        c.fill(CGRect(x: r.minX, y: r.minY, width: r.width, height: 1), t.hair)
         let fs = CGFloat(DrawTheme.TypeSize.caption)
         let w = t.palette.warning, warning = DrawColor(Float(w.r) / 255, Float(w.g) / 255, Float(w.b) / 255, Float(w.a))
         let texts = Dictionary(Self.healthTexts(health), uniquingKeysWith: { a, _ in a })
@@ -79,7 +79,7 @@ extension ProjectListView {
             c.fill(ellipseIn: CGRect(x: rect.minX, y: rect.midY - d / 2, width: d, height: d), dot)
             let tx = rect.minX + d + CGFloat(DrawTheme.Spacing.xs)
             c.draw(texts[part] ?? "", in: CGRect(x: tx, y: rect.minY, width: max(rect.maxX - tx, 0), height: rect.height),
-                   fontSize: fs, healthHover == part && part != .inFolder ? t.label : t.label2)
+                   fontSize: fs, healthHover == part && part != .inFolder ? t.label : t.label3)
         }
     }
 

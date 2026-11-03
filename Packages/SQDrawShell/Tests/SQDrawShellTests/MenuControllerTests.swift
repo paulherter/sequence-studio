@@ -50,7 +50,7 @@ struct MenuControllerTests {
         let p = CGPoint(x: c.views[0].origin.x + r.midX, y: c.views[0].origin.y + r.midY)
         _ = c.handle(.mouseMoved(x: Float(p.x), y: Float(p.y)), scale: 1)
         #expect(c.depth == 2)
-        #expect(c.views[1].origin.x == c.views[0].frame.maxX - 3)
+        #expect(c.views[1].origin.x == c.views[0].frame.maxX - SQMenuLayout.submenuOverlap)
         #expect(c.views[1].origin.y == c.views[0].origin.y + r.minY - SQMenuLayout.inset)
     }
 
@@ -117,8 +117,8 @@ struct ShellDialogTests {
         d.addButton("Save", role: .save); d.addButton("Cancel", role: .cancel); d.addButton("Don't Save", role: .dontSave)
         d.layout(in: CGRect(x: 0, y: 0, width: 1000, height: 800), measure: m)
         #expect(d.card.midX == 500)
-        #expect(d.buttonFrames[2]!.minX == d.card.minX + 20)          // Don't Save alone on the left
-        #expect(d.buttonFrames[0]!.maxX == d.card.maxX - 20)          // Save, the main action, rightmost
+        #expect(d.buttonFrames[2]!.minX == d.card.minX + 16)          // Don't Save alone on the left
+        #expect(d.buttonFrames[0]!.maxX == d.card.maxX - 16)          // Save, the main action, rightmost
         #expect(d.buttonFrames[1]!.maxX == d.buttonFrames[0]!.minX - 8)
     }
 

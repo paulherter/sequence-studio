@@ -84,6 +84,11 @@ struct SQDrawKitTests {
         #expect(t.label == DrawColor(hex: 0xE6E6E8))
         #expect(t.clip(.videoDefault) == DrawColor(hex: LabelColor.videoDefault.rgb))
         #expect(DrawTheme(scale: 2).px(DrawTheme.Metrics.trackHeader) == 312)
+        // G8/G7: selection ink 0.14 and row hover 0.08 in both appearances; row lines use the divider tone.
+        for mode in [AppearanceMode.dark, .light] {
+            let d = DrawTheme(settings: AppearanceSettings(mode: mode))
+            #expect(d.selection.a == 0.14 && d.rowHover.a == 0.08 && d.rowSeparator == d.divider)
+        }
     }
 
     #if canImport(AppKit)
@@ -99,6 +104,17 @@ struct SQDrawKitTests {
         #expect(Double(DrawTheme.Radius.small) == Double(Theme.Radius.small))
         #expect(Double(DrawTheme.Radius.panel) == Double(Theme.Radius.panel))
         #expect(Double(DrawTheme.Spacing.md) == Double(Theme.Spacing.md))
+        #expect(Double(DrawTheme.Radius.menu) == Double(Theme.Radius.menu) && Double(DrawTheme.Radius.overlay) == Double(Theme.Radius.overlay))
+        #expect(Double(DrawTheme.Radius.card) == Double(Theme.Radius.card) && Double(DrawTheme.Radius.control) == Double(Theme.Radius.control))
+        #expect(Theme.Spacing.scale == [DrawTheme.Spacing.xxs, DrawTheme.Spacing.xs, DrawTheme.Spacing.snug, DrawTheme.Spacing.sm, DrawTheme.Spacing.md,
+                                        DrawTheme.Spacing.lg, DrawTheme.Spacing.wide, DrawTheme.Spacing.xl, DrawTheme.Spacing.xxl].map(CGFloat.init))
+        #expect(Double(DrawTheme.Height.panelList) == Double(Theme.Row.panelList))
+        #expect(Double(DrawTheme.Height.compact) == Double(Theme.Row.control) && Double(DrawTheme.Height.normal) == Double(Theme.Row.controlLarge))
+        #expect(Double(DrawTheme.Height.large) == Double(Theme.Dialog.buttonHeight))
+        #expect(Double(DrawTheme.TypeSize.caption) == Double(Theme.Typography.captionSize) && Double(DrawTheme.TypeSize.body) == Double(Theme.Typography.bodySize))
+        #expect(Double(DrawTheme.TypeSize.list) == Double(Theme.Typography.listSize) && Double(DrawTheme.TypeSize.title) == Double(Theme.Typography.titleSize))
+        #expect(Double(DrawTheme.TypeSize.heading) == Double(Theme.Typography.headingSize) && Double(DrawTheme.TypeSize.display) == Double(Theme.Typography.displaySize))
+        #expect(Double(DrawTheme.TypeSize.clipName) == Double(Theme.Typography.clipName.pointSize))
     }
     #endif
 }
@@ -218,6 +234,19 @@ struct SQDrawEditorTests {
 }
 
 @Suite struct SampleProjectTests {
+    @Test func titleShadowAddsTheCompositorDropShadowAndEmojiTextCarriesEmoji() throws {
+        let fd = Time(1, 25)
+        func clip(_ title: GeneratorRef?, shadow: Bool) -> Clip? {
+            SampleProject.make(mediaPath: "/m/s.mp4", fileSize: 1, width: 1280, height: 720, frameDuration: fd, frames: 250,
+                               title: title, titleShadow: shadow).timelines[0].tracks[1].clips.first
+        }
+        let plain = try #require(clip(try SampleTitle.ref(), shadow: false))
+        let shadowed = try #require(clip(try SampleTitle.ref(), shadow: true))
+        #expect(plain.effects.isEmpty)
+        #expect(shadowed.effects.map(\.kind) == [ClipEffect.dropShadowKind])
+        #expect(try SampleTitle.ref(emoji: true) != SampleTitle.ref())
+    }
+
     @Test func twoShotsWithLinkedSoundAndStableIDs() throws {
         let fd = Time(1, 25)
         let p = SampleProject.make(mediaPath: "/m/sample.mp4", fileSize: 1000, width: 1280, height: 720,

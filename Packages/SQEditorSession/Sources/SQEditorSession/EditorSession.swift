@@ -311,6 +311,12 @@ public final class EditorSession {
     // (SQMediaFFmpeg) behind the same closures.
     @ObservationIgnored var mediaInfoProbe: @Sendable (URL) async -> MediaInfo? = { _ in nil }
     @ObservationIgnored var colorDetector: @Sendable (URL) async -> (space: ColorSpaceID, embeddedLUTName: String?)? = { _ in nil }
+
+    /// The platform's color detection (FFmpeg on Windows) for media saved before detection existed; runs it once now.
+    public func installColorDetector(_ detect: @escaping @Sendable (URL) async -> (space: ColorSpaceID, embeddedLUTName: String?)?) {
+        colorDetector = detect
+        detectMissingColor()
+    }
     #endif
 
     deinit {

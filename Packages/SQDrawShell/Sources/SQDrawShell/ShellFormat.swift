@@ -29,7 +29,7 @@ public enum ShellChangeFormat {
         var rows: [ShellForm.Row] = []
         if let name { rows.append(.field(id: "name", label: "Name", value: name)) }
         rows += [
-            .popup(id: "format", label: "Format", options: presets.map { "\($0.name)  (\($0.width) × \($0.height))" } + ["Custom"],
+            .popup(id: "format", label: "Format", options: presets.map { "\($0.name) (\($0.width) × \($0.height))" } + ["Custom"],
                    selected: start),
             // The Mac "Frame Size" row: width × height in two number fields.
             .size(label: "Frame Size", width: .init(id: "width", value: Double(presets[start].width), range: dims),
@@ -45,7 +45,7 @@ public enum ShellChangeFormat {
         let form = ShellForm(rows)
         // Board: both size fields 1fr of the 260 pt control column, minus the "×" and two gaps = 117 pt.
         form.plainSize = ["width"]
-        form.controlWidths["width"] = 117
+        form.controlWidths["width"] = 75
         form.onChange = { [weak form] id, v in
             guard let form else { return }
             switch id {
@@ -113,7 +113,6 @@ extension ShellHost {
             .popup(id: "template", label: "", options: templates.map { "\($0.name) (\($0.format.width) × \($0.format.height))" },
                    selected: 0),
         ])
-        form.controlWidths = ["name": 300, "template": 300]
         // `newSequenceFromTemplate`: the popup is 24 pt (`Theme.Row.controlLarge`), 8 pt under the field.
         form.popupStyles["template"] = ShellForm.PopupStyle(height: 24)
         form.extraGapBefore = [0: -4, 1: -4]   // the Mac box: field drawn 4 pt above the box top, 8 pt gap to the popup
@@ -133,10 +132,9 @@ extension ShellHost {
         guard let tl = session.activeTimeline else { flash("Open a sequence first."); return }
         // The Mac accessory: one 260 pt field, no label, focused.
         let form = ShellForm([.field(id: "name", label: "", value: tl.name)])
-        form.controlWidths = ["name": 260]
         form.beginEditing("name")
         let d = ShellDialog("Save Sequence as Template", informative: "New projects start with its format, tracks and variants, "
-                            + "its titles, emoji and adjustment layers, and this project's Looks. Footage and music are left out.")
+                            + "its titles, emoji and adjustment layers, and this project’s Looks. Footage and music are left out.")
         d.width = ShellChangeFormat.sheetWidth
         d.form = form
         d.addButton("Save")

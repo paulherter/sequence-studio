@@ -19,7 +19,11 @@ packages:
   SQExport: { path: Packages/SQExport }
   SQTranscribe: { path: Packages/SQTranscribe }
   SQAnalysis: { path: Packages/SQAnalysis }
-  SQEditorUI: { path: Packages/SQEditorUI }
+  SQUIKit: { path: Packages/SQUIKit }
+  SQTimelineUI: { path: Packages/SQTimelineUI }
+  SQInspectorUI: { path: Packages/SQInspectorUI }
+  SQDrawLibrary: { path: Packages/SQDrawLibrary }
+  SQText: { path: Packages/SQText }
   SQLibrary: { path: Packages/SQLibrary }
   SQPremiereImport: { path: Packages/SQPremiereImport }
   SQEditAPI: { path: Packages/SQEditAPI }
@@ -90,7 +94,11 @@ targets:
       - package: SQExport
       - package: SQTranscribe
       - package: SQAnalysis
-      - package: SQEditorUI
+      - package: SQUIKit
+      - package: SQTimelineUI
+      - package: SQInspectorUI
+      - package: SQDrawLibrary
+      - package: SQText
       - package: SQLibrary
       - package: SQPremiereImport
       - package: SQEditAPI
@@ -110,7 +118,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: de.paulherter.SequenceStudio
         PRODUCT_NAME: Sequence Studio
-        MARKETING_VERSION: "0.1.1"
+        MARKETING_VERSION: "0.1.2"
         CURRENT_PROJECT_VERSION: "1"
         PRODUCT_MODULE_NAME: SequenceStudio
         GENERATE_INFOPLIST_FILE: NO

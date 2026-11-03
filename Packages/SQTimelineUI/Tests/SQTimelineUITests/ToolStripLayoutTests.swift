@@ -54,7 +54,7 @@ struct ToolStripLayoutTests {
             let size = edge.isVertical ? CGSize(width: t, height: len) : CGSize(width: len, height: t)
             let s = ToolStripLayout.slots(edge: edge, toolCount: n, size: size)
             let rect = CGRect(origin: .zero, size: size)
-            #expect(s.tools.allSatisfy { rect.contains($0) && $0.width == 28 && $0.height == 28 })
+            #expect(s.tools.allSatisfy { rect.contains($0) && $0.width == 24 && $0.height == 24 })
             #expect(rect.contains(s.grip))
             #expect(s.tools.allSatisfy { !Self.overlaps($0, s.grip) })
         }

@@ -1,16 +1,8 @@
 import Foundation
-#if canImport(AppKit)
-import AppKit
-/// The platform image a menu row can carry (`SQMenuIcon.image`).
-public typealias SQMenuPlatformImage = NSImage
-/// Tint of a leading menu symbol.
-public typealias SQMenuTint = NSColor
-#else
 /// Off the Mac a menu image is whatever the host's image cache hands out (opaque to the model).
 public typealias SQMenuPlatformImage = AnyObject
 /// Off the Mac a tint is a palette color (the shared toolkit converts it).
 public typealias SQMenuTint = PaletteColor
-#endif
 
 // SQMenu: the app's own context menu (FB-S). This file is the pure part (model, navigation, layout, icon table, switch), portable
 // (the Windows app draws it through SQDrawKit). `SQMenuController.swift` shows it in floating borderless panels on the Mac.
@@ -62,10 +54,14 @@ public struct SQMenuItem: Equatable {
     public var leadingTint: SQMenuTint?
     /// Help text drawn as a caption line under the title (the SQ replacement for `NSMenuItem.toolTip`).
     public var help: String?
+    /// Destructive row (red text): set by title, so callers need no edit.
+    public var isDestructive = false
+    static let destructiveTitles: Set<String> = ["Delete", "Ripple Delete", "Delete Track", "Remove Folder", "Close Panel", "Clear Used Media"]
 
     public init(title: String, icon: SQMenuIcon = .none, shortcut: String = "", isEnabled: Bool = true, isChecked: Bool = false,
                 help: String? = nil, submenu: [SQMenuItem]? = nil, action: (@MainActor () -> Void)? = nil) {
         self.help = help.map { SQL10n.string($0) }
+        self.isDestructive = Self.destructiveTitles.contains(title)
         self.kind = .action; self.title = SQL10n.string(title); self.icon = icon; self.shortcut = shortcut
         self.isEnabled = isEnabled; self.isChecked = isChecked; self.submenu = submenu; self.action = action
     }
@@ -258,17 +254,6 @@ public enum SQMenuFilter {
 public enum SQMenuShortcut {
     /// `NSMenuItem.identifier` prefix carrying the exact shortcut text (layout independent), preferred over the key equivalent.
     public static let hintPrefix = "sq.hint:"
-    #if canImport(AppKit)
-    /// "⌃⌥⇧⌘" + key, in Apple's order. Empty key gives an empty string.
-    public static func glyphs(key: String, modifiers: NSEvent.ModifierFlags) -> String {
-        var m: KeyModifiers = []
-        if modifiers.contains(.control) { m.insert(.control) }
-        if modifiers.contains(.option) { m.insert(.option) }
-        if modifiers.contains(.shift) { m.insert(.shift) }
-        if modifiers.contains(.command) { m.insert(.command) }
-        return glyphs(key: key, keyModifiers: m)
-    }
-    #endif
 
     /// "⌃⌥⇧⌘" + key, in Apple's order: the glyph text of `glyphs(key:modifiers:)` from a portable modifier set.
     public static func glyphs(key: String, keyModifiers m: KeyModifiers) -> String {
@@ -319,14 +304,11 @@ public enum SQMenuShortcut {
 }
 
 public enum SQMenuLayout {
-    // Design B (`.menu`, `.mi`, `.msep`, `.mcap`): layer fill `overlay`, radius 10, padding 4, rows 24 with radius 6, padding
-    // 8 left / 12 right, 8 gaps, check column 14, separator 1 px with 4/8 margin (9 high), caption 11 semibold. Width 220...320.
-    #if canImport(AppKit)
-    public static let rowHeight: CGFloat = Theme.Menu.rowHeight
-    #else
+    // Artifact (`.menu`, `.mi`, `.msep`, `.mcap`): layer fill `overlay`, radius 10, padding 5, rows 24 with radius 4, padding
+    // 8 each side, 8 gaps, check column 12 (only when a row is checked), separator 1 px with 4/6 margin (9 high), shortcut gap 28.
+    // Width min 200.
     // The `Theme.Menu` values (OverlayTokens.swift is AppKit); the Mac build reads them from Theme.
     public static let rowHeight: CGFloat = 24
-    #endif
     public static let separatorHeight: CGFloat = 9
     /// Extra row height for a help caption line.
     public static let helpHeight: CGFloat = 12
@@ -336,22 +318,6 @@ public enum SQMenuLayout {
     public static let maxListRows = 10
     /// Tallest a list menu dropped from a control (no submenus) may be.
     public static let listCapHeight: CGFloat = inset * 2 + CGFloat(maxListRows) * rowHeight
-    #if canImport(AppKit)
-    static var helpFont: NSFont { Theme.Typography.caption }
-
-    /// Lines of the item's help text wrapped at `helpWidth` (0 without help).
-    public static func helpLines(_ i: SQMenuItem) -> Int {
-        guard let h = i.help, !h.isEmpty else { return 0 }
-        let r = (h as NSString).boundingRect(with: CGSize(width: helpWidth, height: 10_000), options: [.usesLineFragmentOrigin],
-                                             attributes: [.font: helpFont])
-        return max(1, Int((r.height / ceil(helpFont.boundingRectForFont.height)).rounded()))
-    }
-    public static let headerHeight: CGFloat = Theme.Menu.captionHeight
-    public static let inset: CGFloat = Theme.Menu.inset
-    /// Left padding of a row (8); `trailPad` is the right one (12).
-    public static let rowPad: CGFloat = Theme.Menu.rowPadLeft
-    public static let trailPad: CGFloat = Theme.Menu.rowPadRight
-    #else
     /// Off the Mac the toolkit measures text: lines of `text` wrapped at `width` in the `size` pt UI font (help: caption 10,
     /// caption rows: body 11), and the height of one such line. Set by the host once its font is loaded.
     nonisolated(unsafe) public static var measureLines: (_ text: String, _ width: CGFloat, _ size: CGFloat) -> Int = { t, w, s in
@@ -364,42 +330,29 @@ public enum SQMenuLayout {
         return measureLines(h, helpWidth, 10)
     }
     public static let headerHeight: CGFloat = 22
-    public static let inset: CGFloat = 4
+    /// Header text sits this far above the header row's bottom.
+    public static let headerBottom: CGFloat = 4
+    public static let shortcutGap: CGFloat = 28
+    public static let swatchSize: CGFloat = 10
+    public static let swatchRadius: CGFloat = 3
+    public static let sepPad: CGFloat = 6
+    public static let submenuOverlap: CGFloat = 8
+    public static let inset: CGFloat = 5
     public static let rowPad: CGFloat = 8
-    public static let trailPad: CGFloat = 12
-    #endif
     public static let gap: CGFloat = 8
-    public static let checkColumn: CGFloat = 14
-    public static let dotColumn: CGFloat = 16
-    #if canImport(AppKit)
-    public static let cornerRadius: CGFloat = Theme.Menu.radius
-    public static let rowRadius: CGFloat = Theme.Menu.itemRadius
-    public static let minWidth: CGFloat = Theme.Menu.minWidth
-    #else
+    public static let checkColumn: CGFloat = 12
+    public static let dotColumn: CGFloat = 18
     public static let cornerRadius: CGFloat = 10
-    public static let rowRadius: CGFloat = 6
-    public static let minWidth: CGFloat = 160
-    #endif
+    public static let rowRadius: CGFloat = 4
+    public static let minWidth: CGFloat = 200
     public static let iconColumn: CGFloat = 22
     /// Wrap width of a caption row's text, and the room a leading symbol takes.
     public static let captionWidth: CGFloat = 240
     public static let captionPad: CGFloat = 6
     public static let symbolColumn: CGFloat = 22
-    #if canImport(AppKit)
-    static var captionFont: NSFont { Theme.Typography.body }
-
-    /// Height of a caption wrapped at `captionWidth`.
-    public static func captionHeight(_ text: String) -> CGFloat {
-        let r = (text as NSString).boundingRect(with: CGSize(width: captionWidth, height: 10_000),
-                                                options: [.usesLineFragmentOrigin, .usesFontLeading],
-                                                attributes: [.font: captionFont])
-        return ceil(r.height) + 2 * captionPad
-    }
-    #else
     public static func captionHeight(_ text: String) -> CGFloat {
         CGFloat(measureLines(text, captionWidth, 11)) * lineHeight(11) + 2 * captionPad
     }
-    #endif
 
     public static func heights(_ items: [SQMenuItem]) -> [CGFloat] {
         items.map { i in

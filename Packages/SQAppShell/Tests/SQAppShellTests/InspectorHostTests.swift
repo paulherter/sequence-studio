@@ -161,4 +161,25 @@ struct HostPanelFactsTests {
         shell.focus = .colorInspector
         #expect(shell.menuEnabled(.copy) == color.controller.canCopyGrade)
     }
+
+    /// Delete with Effect Controls focused and a built-in section (Transform) selected does nothing; it never deletes the
+    /// timeline clip that is also selected.
+    @Test func deleteInControlsOnABuiltInSectionKeepsTheClip() throws {
+        let clip = Clip(name: "A", media: UUID(), kind: .video, source: TimeRange(start: .zero, duration: Time(2, 1)), start: .zero)
+        var v = Track(kind: .video)
+        try v.overwrite(clip)
+        let s = EditorSession(project: Project(name: "P", timelines: [Timeline(name: "Main", frameDuration: Time(1, 30), tracks: [v])]),
+                              fileURL: nil, engine: PictureEngineStub())
+        let shell = ShellHost(session: s, map: .premiereDefault, recents: RecentProjects(entries: []))
+        shell.size = CGSize(width: 1280, height: 800)
+        let host = InspectorHost(session: s, menus: shell.menuBar.controller, shell: shell, sampler: SamplerStub())
+        s.select(clips: [clip.id])
+        host.model.selectedSection = .motion
+        shell.focus = .effectControls
+        #expect(shell.execute(.delete))
+        #expect(s.activeTimeline?.tracks.flatMap(\.clips).contains { $0.id == clip.id } == true)
+        shell.focus = .timeline
+        _ = shell.execute(.delete)
+        #expect(s.activeTimeline?.tracks.flatMap(\.clips).contains { $0.id == clip.id } != true)
+    }
 }

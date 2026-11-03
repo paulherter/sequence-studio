@@ -79,17 +79,17 @@ import SQDrawKit
         let (_, panel, _) = try rig()
         let model = try #require(panel.model)
         let id = try #require(model.effects.first?.id)
-        // Curves: boxes inset 12, 150 / 90 high, the plot 6 pt inside; the channel dots 19 apart centered on the panel.
+        // Curves: boxes inset 12, 138 / 67 high, the plot 6 pt inside; the channel dots 19 apart centered on the panel.
         let rgb = try #require(panel.frame(.curve(.rgb(id)))), hue = try #require(panel.frame(.curve(.hue(id))))
-        #expect(rgb.minX == 12 && rgb.width == 340 - 24 && rgb.height == 150 && hue.height == 90)
+        #expect(rgb.minX == 12 && rgb.width == 340 - 24 && rgb.height == 138 && hue.height == 67)
         let plot = ColorGradeDraw.curvePlot(rgb)
-        #expect(plot.minX == 18 && plot.width == rgb.width - 12 && plot.height == 138)
+        #expect(plot.minX == 18 && plot.width == rgb.width - 12 && plot.height == 126)
         let dots = try (0..<4).map { try #require(panel.frame(.channel(.rgb(id), $0))) }
         #expect(dots.allSatisfy { $0.width == 19 } && dots[1].minX - dots[0].minX == 19)
         #expect(abs((dots[0].minX + dots[3].maxX) / 2 - 170) <= 1)
         // Wheels: the disc is the cell minus the 24 pt master column, the master a 14 pt vertical slider 10 pt right of it.
         let disc = try #require(panel.frame(.wheel(.slot(id, .midtones)))), master = try #require(panel.frame(.master(.slot(id, .midtones))))
-        #expect(disc.width == 62 && disc.height == 62 && master.width == 14 && master.height == 62 && master.minX == disc.maxX + 10)
+        #expect(disc.width == 46 && disc.height == 46 && master.width == 14 && master.height == 46 && master.minX == disc.maxX + 10)
         let zone = try #require(panel.frame(.wheel(.zone(id, .global))))
         #expect(zone.width == 42)
         #expect(panel.titleLead(.slot(id, .midtones)) == 33 && panel.titleLead(.step(UUID(), .lift)) == 20)
@@ -449,8 +449,8 @@ import SQDrawKit
         let model = try #require(panel.model)
         let id = try #require(model.effects.first?.id)
         let rows = panel.rows
-        // One effect: no effect band, the first row is Basic's header (4 gap + 25).
-        #expect(rows.first?.style == .section && rows.first?.height == 29)
+        // One effect: no effect band, the first row is Basic's header (4 gap + 24).
+        #expect(rows.first?.style == .section && rows.first?.height == 28)
         #expect(!rows.contains { $0.style == .effect })
         // Slider rows are 24 high, the slider 20 from x 124 to the inset, the number 48 wide at the right end.
         let row = try #require(rows.first { $0.controls.contains { $0.0 == .slider(.param(id, .temperature)) } })
@@ -458,7 +458,7 @@ import SQDrawKit
         let f = try #require(panel.frame(.slider(.param(id, .temperature))))
         #expect(f.minX == 124 && f.maxX == 340 - 12 && f.height == 20)
         let parts = panel.sliderParts(f)
-        #expect(parts.track.maxX == 340 - 12 - 56 && parts.field.width == 48 && parts.field.maxX == 340 - 12)
+        #expect(parts.track.maxX == 340 - 12 - 54 && parts.field.width == 46 && parts.field.maxX == 340 - 12)
         // The LUT row is 28 high: the popup ends 65 before the edge, the star sits at the inset.
         let lut = try #require(rows.first { $0.controls.contains { $0.0 == .lut(id, .input) } })
         #expect(lut.height == 28)

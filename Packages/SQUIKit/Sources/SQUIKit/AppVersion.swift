@@ -8,18 +8,19 @@ public enum AppVersion {
     public static let stage = "Alpha"
 
     /// Used when the process has no bundle version (tests, command-line tools).
-    static let fallbackNumber = "0.1"
+    static let fallbackNumber = "0.1.2"
 
     /// Marketing version, "0.1".
     public static var number: String { number(from: Bundle.main.infoDictionary) }
     /// Build number set by packaging, "1".
-    public static var build: String { (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "?" }
+    /// Empty without a bundle (Windows, tests): the About line then leaves the "(build)" part out.
+    public static var build: String { (Bundle.main.infoDictionary?["CFBundleVersion"] as? String) ?? "" }
     /// "0.1 Alpha".
     public static var display: String { display(number: number) }
     /// "Sequence Studio 0.1 Alpha".
     public static var fullName: String { "Sequence Studio " + display }
     /// "Version 0.1 Alpha (1)", the About line.
-    public static var aboutLine: String { "Version \(display) (\(build))" }
+    public static var aboutLine: String { build.isEmpty ? "Version \(display)" : "Version \(display) (\(build))" }
 
     static func number(from info: [String: Any]?) -> String {
         let v = (info?["CFBundleShortVersionString"] as? String) ?? ""

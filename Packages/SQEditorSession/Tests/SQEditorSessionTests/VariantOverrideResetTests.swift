@@ -49,4 +49,12 @@ import SQCore
         #expect(!s.hasVariantOverride(.position, clip: c))
         #expect(!s.resetVariantOverride(.position, clip: c))
     }
+
+    @Test func openingAVariantRowShowsTheVariantAtItsSize() {
+        let (s, _, v) = make()
+        s.setActiveVariant(nil)
+        s.openSequenceTab(s.activeTimeline!.id, variant: v)
+        #expect(s.activeVariantID == v)
+        #expect(s.displayFormat?.width == 1080 && s.displayFormat?.height == 1920)
+    }
 }

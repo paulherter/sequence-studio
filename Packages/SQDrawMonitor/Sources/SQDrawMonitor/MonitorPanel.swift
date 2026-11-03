@@ -236,7 +236,7 @@ public final class MonitorPanel {
             drawAnglesGrid(&c)
         } else if let empty = emptyText, let title = empty.title {
             // Source with no clip: the Mac `EmptyStateView` (15 pt semibold title, body hint).
-            c.drawEmptyState(title: SQL10n.string(title), hint: SQL10n.string(empty.hint), in: slot, theme: t)
+            c.drawEmptyState(title: SQL10n.string(title), hint: SQL10n.string(empty.hint), in: slot, theme: t.onViewer)
         } else if let empty = emptyText {
             // ProgramEmptyView: Pip (72 pt, the host draws him), 14 pt gap, the hint, 14 pt gap, the button, centered as one stack.
             let showsPip = model.mode == .program && emptyMascot != nil
@@ -253,12 +253,12 @@ public final class MonitorPanel {
                 y = emptyMascotRect.maxY + 14
             }
             if let title = empty.title {
-                c.draw(title, in: CGRect(x: slot.minX, y: y, width: slot.width, height: 18), fontSize: 13, t.label2, align: .center)
+                c.draw(title, in: CGRect(x: slot.minX, y: y, width: slot.width, height: 18), fontSize: 13, t.onViewer.label2, align: .center)
                 y += 20
             }
             let lines = c.wrap(empty.hint, width: min(220, slot.width - 48), fontSize: 11)
             for line in lines {
-                c.draw(line, in: CGRect(x: slot.minX, y: y, width: slot.width, height: 16), fontSize: 11, t.label3, align: .center)
+                c.draw(line, in: CGRect(x: slot.minX, y: y, width: slot.width, height: 16), fontSize: 11, t.onViewer.label3, align: .center)
                 y += 16
             }
             // ProgramEmptyView: the large "New Sequence..." button under the hint while no sequence is open.
@@ -334,8 +334,9 @@ public final class MonitorPanel {
         }
         let contentText: String? = model.mode == .source
             ? MonitorMenus.sourceTitle(model.sourceItems, current: model.sourceCurrent)
-            : (model.hasSequence ? MonitorMenus.sequenceTitle(model.sequenceItems, current: model.sequenceCurrent,
-                                                              fallback: model.sequenceName) : nil)
+            : (model.hasSequence ? MonitorMenus.programTitle(model.sequenceItems, current: model.sequenceCurrent,
+                                                             fallback: model.sequenceName, formats: model.formatItems,
+                                                             format: model.formatCurrent) : nil)
         if let text = contentText {
             // The Mac strip lays the content popup right-aligned, next to Zoom and Quality (not after the tabs).
             let minX = headerRect.minX + pad + titleW + CGFloat(DrawTheme.Spacing.sm)
@@ -377,13 +378,13 @@ public final class MonitorPanel {
         guard let r = offlineCardRect(titleWidth: c.size(of: title, fontSize: 12, face: c.semibold).width, detailWidth: dw) else { return }
         c.fill(roundedRect: r, radius: CGFloat(DrawTheme.Radius.control), t.viewerHUD)
         let side = CGFloat(DrawTheme.Spacing.lg), inner = r.insetBy(dx: side, dy: 0)
-        c.draw(title, in: CGRect(x: inner.minX, y: r.minY + 6, width: inner.width, height: 15), fontSize: 12, t.label, align: .center,
+        c.draw(title, in: CGRect(x: inner.minX, y: r.minY + 6, width: inner.width, height: 15), fontSize: 12, DrawColor.white.alpha(0.92), align: .center,
                face: c.semibold)
         c.saveGState()
         c.clip(to: inner)
         // shortcut: a too long detail is cut at the card's right edge instead of truncated in the middle; add middle
         // truncation to Canvas when long file names show up in use.
-        c.draw(detail, in: CGRect(x: inner.minX, y: r.minY + 25, width: inner.width, height: 13), fontSize: 10, t.label2,
+        c.draw(detail, in: CGRect(x: inner.minX, y: r.minY + 25, width: inner.width, height: 13), fontSize: 10, DrawColor.white.alpha(0.6),
                align: dw > inner.width ? .left : .center)
         c.restoreGState()
     }
@@ -447,13 +448,13 @@ public final class MonitorPanel {
     /// 8 pt squares over `r` in the color picker's checker grays (`Theme.Palette.checker`).
     func drawCheckerboard(_ c: inout Canvas, _ r: CGRect) {
         let cell: CGFloat = 8
-        c.fill(r, DrawColor(0.30, 0.30, 0.30))
+        c.fill(r, DrawTheme.checkerDark)
         c.saveGState()
         c.clip(to: r)
         var y = r.minY, row = 0
         while y < r.maxY {
             var x = r.minX + (row % 2 == 0 ? cell : 0)
-            while x < r.maxX { c.fill(CGRect(x: x, y: y, width: cell, height: cell), DrawColor(0.45, 0.45, 0.45)); x += cell * 2 }
+            while x < r.maxX { c.fill(CGRect(x: x, y: y, width: cell, height: cell), DrawTheme.checkerLight); x += cell * 2 }
             y += cell; row += 1
         }
         c.restoreGState()
@@ -649,8 +650,14 @@ public final class MonitorPanel {
                                                 close: { [weak model] in model?.onCloseSource?() },
                                                 closeAll: { [weak model] in model?.onCloseAllSources?() })
             }
+            // Sequences first, then the shown sequence's frame formats (its variants), so they are one click away.
             return MonitorMenus.sequenceItems(model.sequenceItems, current: model.sequenceCurrent,
                                               pick: { [weak model] id in model?.onPickSequence?(id) })
+                + [.separator] + MonitorMenus.formatItems(
+                    base: model.formatBaseName, model.formatItems, current: model.formatCurrent,
+                    pick: { [weak model] id in model?.onPickFormat?(id) },
+                    add: { [weak model] p in model?.onAddFormat?(p) },
+                    remove: { [weak model] id in model?.onRemoveFormat?(id) })
         case .zone: return model.safeZoneMenu()
         case .zoom: return model.zoomMenu()
         case .quality: return model.qualityMenu()

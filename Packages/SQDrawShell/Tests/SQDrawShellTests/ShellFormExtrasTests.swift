@@ -39,11 +39,11 @@ import SQDrawKit
                                   .init(title: "Music", field: field("o.m", 1), unit: "s")])
         }
         let a = f.scrubFrames["o.d"]!, b = f.scrubFrames["o.m"]!
-        #expect(a.minY == f.rowFrames[0].minY + 28 + 4)
-        #expect(b.minY == a.maxY + 8)
+        #expect(a.minY == f.rowFrames[0].minY + 26 + 4 + 2)   // 22 pt box centered on its 26 pt line
+        #expect(b.minY == a.maxY + 8 + 4)
         #expect(a.width == 72 && a.minX == b.minX)
         #expect(a.minX > f.controlFrames[0].minX)          // after the title column
-        #expect(f.rowFrames[0].maxY == b.maxY)
+        #expect(f.rowFrames[0].maxY == b.maxY + 2)
         #expect(f.number("o.m") == 1)
     }
 
@@ -70,8 +70,8 @@ import SQDrawKit
             $0.setCheckField("liveDuck", amount, width: 92)
         }
         let box = f.scrubFrames["duckAmount"]!
-        #expect(box.width == 92 && box.height == 28)
-        #expect(box.minX == f.controlFrames[0].minX + 14 + 6 + ceil(TextMeasure(atlas: nil, scale: 1).width("Duck", size: 12)) + 8)
+        #expect(box.width == 92 && box.height == 22)
+        #expect(box.minX == f.controlFrames[0].minX + 14 + 6 + ceil(TextMeasure(atlas: nil, scale: 1).width("Duck", size: 11)) + 8)
         #expect(f.scrubOff("duckAmount"))
         click(d, CGPoint(x: box.midX, y: box.midY))
         #expect(f.bool("liveDuck") == false)                 // the click on the dimmed field does not toggle the check
@@ -92,8 +92,8 @@ import SQDrawKit
             $0.helps["api"] = "Only programs on this Mac can connect."
         }
         f.onChange = { id, _ in answered = id }
-        #expect(abs(f.rowFrames[0].height - (28 + 4 + 28 + 4 + 16)) < 0.01)   // line, status, one help line (dialog 16 pt lines)
-        let p = CGPoint(x: f.controlFrames[0].minX + 8 + 8 + 179 + 8 + 10, y: f.rowFrames[0].minY + 28 + 4 + 14)
+        #expect(abs(f.rowFrames[0].height - (26 + 4 + 26 + 4 + 16)) < 0.01)   // line, status, one help line (dialog 16 pt lines)
+        let p = CGPoint(x: f.controlFrames[0].minX + 8 + 8 + 179 + 8 + 10, y: f.rowFrames[0].minY + 26 + 4 + 14)
         click(d, p)
         #expect(answered == "api.status", "\(p) \(f.rowFrames[0]) \(f.controlFrames[0])")
         #expect(f.bool("api") == true)
@@ -119,7 +119,7 @@ import SQDrawKit
         let (d, f) = dialog([.textBox(id: "notes", value: "Hi", height: 180)])
         d.completion = { answer = $0 }
         #expect(f.controlFrames[0].height == 180)
-        #expect(f.controlFrames[0].minX == d.card.minX + 20 && f.controlFrames[0].maxX == d.card.maxX - 20)
+        #expect(f.controlFrames[0].minX == d.card.minX + 16 && f.controlFrames[0].maxX == d.card.maxX - 16)
         f.beginEditing("notes")
         #expect(f.isEditing)
         key(d, .enter)
@@ -166,9 +166,9 @@ import SQDrawKit
         let field = f.controlFrames[0], popup = f.controlFrames[1]
         #expect(popup.minY == field.minY && popup.height == field.height)
         #expect(popup.width == 80 && popup.minX == field.maxX + 8)
-        #expect(field.minX == f.rowFrames[0].minX + 18)                // no label column; the Mac field's 2 pt bleed
-        #expect(popup.maxX == f.rowFrames[0].maxX - 20)
-        #expect(f.rowFrames[2].minY == f.rowFrames[0].maxY + 12)       // the check row follows the shared line
+        #expect(field.minX == f.rowFrames[0].minX + 16)                // no label column; flush with the card padding
+        #expect(popup.maxX == f.rowFrames[0].maxX - 16)
+        #expect(f.rowFrames[2].minY == f.rowFrames[0].maxY + 6)        // the check row follows the shared line
         #expect(f.row(at: CGPoint(x: popup.midX, y: popup.midY)) == 1)
         var opened: [String] = []
         f.openPopup = { _, items, _ in opened = items.map(\.title) }
@@ -183,17 +183,17 @@ import SQDrawKit
         #expect(w == ceil(32 + max(f.measure.width("Name", size: CGFloat(DrawTheme.TypeSize.body)), f.measure.width("Label", size: CGFloat(DrawTheme.TypeSize.body)))))
     }
 
-    /// The Mac NSTextField bleeds 2 pt past its alignment rect; the unlabeled popup chrome sits 5 pt left of it.
+    /// Dialog fields and popups are flush with the card padding (art.html).
     @Test func unlabeledFieldAndPopupBleedLikeTheMac() {
         let (_, f) = dialog([.field(id: "name", label: "", value: "x"),
                              .popup(id: "a", label: "", options: ["One"], selected: 0)]) {
-            $0.controlWidths = ["name": 400, "a": 400]
+            $0.controlWidths = ["name": 408, "a": 408]
         }
         let row = f.rowFrames[0]
-        #expect(f.controlFrames[0].minX == row.minX + 18)
-        #expect(f.controlFrames[0].width == 404)
-        #expect(f.controlFrames[1].minX == row.minX + 15)
-        #expect(f.controlFrames[1].width == 405)
+        #expect(f.controlFrames[0].minX == row.minX + 16)
+        #expect(f.controlFrames[0].width == 408)
+        #expect(f.controlFrames[1].minX == row.minX + 16)
+        #expect(f.controlFrames[1].width == 408)
     }
 
     /// Per-form overrides for the Mac sheets: the side padding moves the controls, and an overridden field height wins.

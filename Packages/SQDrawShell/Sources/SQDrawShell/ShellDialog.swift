@@ -3,7 +3,7 @@ import SQCore
 import SQUIKit
 import SQDrawKit
 
-/// `SQDialog` translated onto the canvas: title, message and the footer of buttons on the overlay card (radius 14, .5 px edge)
+/// `SQDialog` translated onto the canvas: title, message and the footer of buttons on the overlay card (radius 12, .5 px edge)
 /// centered over the dimmed window. Button roles, order, Return/Esc and Ctrl-D/Ctrl-S are `SQDialogModel` and the
 /// `SQModal.response` rule, unchanged; the layout numbers are `SQDialogMetrics` / `Theme.Sheet` / `Theme.Modal`.
 /// A form dialog sets `form` (the `SQDialog.accessoryView` + `SQDialogForm` rows): it sits between the header and the
@@ -15,12 +15,12 @@ public final class ShellDialog {
     // `Theme.Modal` / `Theme.Sheet` / `Theme.Dialog` (OverlayTokens.swift and ThemeTokens.swift are AppKit).
     enum M {
         static let widthS: CGFloat = 440
-        /// `Theme.Modal.widthL` and `SQDialogMetrics.lBodyHeight` (heightL 640 - header 56 - footer 68 - side pad 20).
+        /// `Theme.Modal.widthL` and `SQDialogMetrics.lBodyHeight` (heightL 640 - header 48 - footer 56 - side pad 20).
         static let widthL: CGFloat = 860
         static let heightL: CGFloat = 640
-        static let lBodyHeight: CGFloat = 640 - 56 - 68 - 20
-        static let radius: CGFloat = 14
-        static let sidePad: CGFloat = 20
+        static let lBodyHeight: CGFloat = 640 - 48 - 56 - 20
+        static let radius: CGFloat = 12
+        static let sidePad: CGFloat = 16
         static let headerTop: CGFloat = 20
         static let headerBottom: CGFloat = 12
         static let headerGap: CGFloat = 8
@@ -30,18 +30,25 @@ public final class ShellDialog {
         static let buttonHeight: CGFloat = 28
         static let alertFooterHeight: CGFloat = buttonHeight + sidePad
         /// The sheet look of a dialog with a form or content (`SQDialog.sheetHeader`, `SQDialogFooterBand`): a header of at
-        /// least 56 with its text centered, `sidePad` under the body, a 68 high `titlebar` band with the buttons centered.
-        static let bandHeaderHeight: CGFloat = 56
-        static let bandFooterHeight: CGFloat = 68
+        /// least 48 with its text centered, `sidePad` under the body, a 56 high `titlebar` band with the buttons centered.
+        static let bandHeaderHeight: CGFloat = 48
+        static let bandFooterHeight: CGFloat = 56
         static let buttonPadding: CGFloat = 14
-        static let mascotSide: CGFloat = 26   // `SQMascotPlace.mediaOffline.side`
+        static let mascotSide: CGFloat = 32   // art.html 09: Pip is 32 in the footer, smiling
         static let buttonGap: CGFloat = 8
-        static let buttonRadius: CGFloat = 8
+        static let buttonRadius: CGFloat = 6
         static let titleFont: CGFloat = 13
-        static let noteFont: CGFloat = 12
+        static let noteFont: CGFloat = 11
         static let wrapSlack: CGFloat = 5
-        static let buttonFont: CGFloat = 12
-        static let scrimAlpha: Float = 0.35
+        static let buttonFont: CGFloat = 11
+        static let scrimAlpha: Float = 0.45
+        static let scrimAlphaLight: Float = 0.25
+        static let shadowBlur: CGFloat = 64, shadowDY: CGFloat = 24, shadowAlpha: Float = 0.55, shadowAlphaLight: Float = 0.2
+        /// art.html `.db` padding: 14 above the first form row (a 22 pt field in its 26 pt row then sits 16 under the hairline).
+        static let formTopPad: CGFloat = 14
+        /// Header icon (art.html `.dh .hi`, 14 pt) and its gap to the title (`.dh` gap 10).
+        static let headerIconSize: CGFloat = 14, headerIconGap: CGFloat = 10
+        static let hairHeight: CGFloat = 1
         /// Space kept between a tall card and the window edge; the form scrolls inside the card instead (the Mac modal's
         /// scroll view around a long settings page).
         static let windowMargin: CGFloat = 24
@@ -112,7 +119,19 @@ public final class ShellDialog {
 
     public private(set) var card: CGRect = .zero
     public private(set) var buttonFrames: [Int: CGRect] = [:]
+    /// Buttons drawn as ghost (no fill at rest, art.html `.btn.ghost`), by index.
+    /// A second, gray header word after the title (the Settings page name).
+    public var headerSubtitle: String?
+    /// A state icon before the title (art.html `.dh .hi`: amber triangle on warnings, red on errors).
+    public enum Tone: Sendable { case warning, error }
+    public var headerIcon: Tone?
+    public var ghostButtons: Set<Int> = []
+    private var autoFocused = false
     private var titleLines: [String] = []
+    /// Height of the header band above its hairline (0 = no title).
+    private var headerBand: CGFloat = 0
+    /// Form sheets with a note: 48 pt title band, the note in the body below it (art.html `.dlg`).
+    private var noteInBody = false
     private(set) var noteLines: [String] = []
     public private(set) var hovered: Int?
     public private(set) var pressed: Int?
@@ -127,9 +146,18 @@ public final class ShellDialog {
     private var lastMeasure: TextMeasure?
     private var textTop: CGFloat = 0
 
+    /// art.html `.frm` label columns by dialog title (each dialog has its own: 56 ... 104).
+    static let labelColumns: [String: CGFloat] = [
+        "Rename Workspace": 56, "Save as New Workspace": 56, "Marker": 64, "Clip Marker": 64, "Go to Timecode": 64,
+        "New Color Matte": 64, "Tone Settings": 72, "Track Volume and Pan": 64, "Sequence Volume": 64, "Speed": 72,
+        "Change Format": 96, "Duplicate as Format": 96, "Create Angles Clip": 80, "Create Captions": 96, "Punch In Cuts": 64,
+        "Remove Silences": 96, "Anonymize": 64, "Check Cuts": 80, "New Sequence": 96, "Sequence Settings": 104,
+    ]
+
     public init(_ message: String = "", informative: String = "") { messageText = message; informativeText = informative }
 
     /// The title's line height: `M.titleLine`, or 20 for a 15 pt heading (`NewProjectSheet` title frame).
+    var titleIndent: CGFloat { headerIcon == nil ? 0 : M.headerIconSize + M.headerIconGap }
     var titleLine: CGFloat { headingFontSize.map { ($0 + 5).rounded() } ?? M.titleLine }
 
     @discardableResult
@@ -143,23 +171,38 @@ public final class ShellDialog {
 
     public func layout(in window: CGRect, measure m: TextMeasure) {
         if model.buttons.isEmpty { addButton("OK", role: .default) }
-        if focused == nil { focused = model.initialFocusIndex }
+        if !autoFocused { autoFocused = true; if form?.focusFirstTextField() == true { focused = nil } }
+        if focused == nil, form?.focused == nil { focused = model.initialFocusIndex }
         let width = self.width, content = width - 2 * M.sidePad
         let titleSize = headingFontSize ?? M.titleFont
-        titleLines = messageText.isEmpty ? [] : m.lines(SQL10n.string(messageText), width: content - (closeButton ? M.buttonHeight : 0),
+        titleLines = messageText.isEmpty ? [] : m.lines(SQL10n.string(messageText), width: content - (closeButton ? M.buttonHeight : 0) - titleIndent,
                                                         size: titleSize)
         // shortcut: the atlas has no kerning, so its advances run ~1% wider than the Mac's NSTextField; the wrap gets that slack
         // (a 69-character note that fits the 400 pt column on the Mac must not break before its last word). Upgrade: kerned measure.
         noteLines = informativeText.isEmpty ? [] : m.lines(SQL10n.string(informativeText), width: content, size: M.noteFont)
         let sheet = isSheet
+        form?.fixedLabelColumn = Self.labelColumns[messageText]
         var text = M.headerTop + CGFloat(titleLines.count) * titleLine
         if !titleLines.isEmpty, !noteLines.isEmpty { text += M.headerGap }
         text += CGFloat(noteLines.count) * M.noteLine + M.headerBottom
-        // The start-sheet header (`NewProjectSheet`): title at 10, note at 31 in the 56 head, the form `sidePad` below it.
+        // The start-sheet header (`NewProjectSheet`): title at 10, note at 31 in the 48 head, the form `sidePad` below it.
         if headingFontSize != nil, sheet { text = M.bandHeaderHeight + M.sidePad }
         if headerless { titleLines = []; noteLines = []; text = 0 }
+        // An alert has the sheet bands too (art.html `.dlg`): a 48 header with the title, the note in the body, a 56 footer.
+        let alert = !sheet && !headerless
+        if alert {
+            let body = noteLines.isEmpty ? 0 : M.sidePad + CGFloat(noteLines.count) * M.noteLine + M.sidePad
+            text = (titleLines.isEmpty ? 0 : M.bandHeaderHeight) + body
+        }
+        noteInBody = sheet && !headerless && headingFontSize == nil && !titleLines.isEmpty && !noteLines.isEmpty
+        if noteInBody { text = M.bandHeaderHeight + M.sidePad + CGFloat(noteLines.count) * M.noteLine + M.headerBottom }
         var h = sheet && !headerless ? max(text, M.bandHeaderHeight) : text
-        textTop = headingFontSize != nil ? 0 : ((h - text) / 2).rounded()
+        textTop = headingFontSize != nil || alert || noteInBody ? 0 : ((h - text) / 2).rounded()
+        headerBand = alert ? (titleLines.isEmpty ? 0 : M.bandHeaderHeight) : (headerless || titleLines.isEmpty ? 0 : (headingFontSize != nil || noteInBody ? M.bandHeaderHeight : h))
+        // A form right under a plain 48 header (no note, no start-sheet heading) keeps `.db`'s 14 above its first row.
+        if let form, form.sidebar == nil, headingFontSize == nil, !noteInBody, !headerless, !titleLines.isEmpty {
+            h += M.formTopPad
+        }
         let formTop = h
         lastWindow = window; lastMeasure = m
         formHeight = 0
@@ -170,7 +213,7 @@ public final class ShellDialog {
         }
         let contentTop = h
         var contentHeight = self.content?.height(width: width) ?? 0
-        let footer = sheet ? (headerless ? 0 : M.sidePad) + M.bandFooterHeight : M.footerGap + M.alertFooterHeight
+        let footer = sheet ? (headerless ? 0 : M.sidePad) + M.bandFooterHeight : M.bandFooterHeight
         if let fixed = cardHeight, self.content != nil, form == nil {
             // `SQDialog.cardHeight` with a drawn body: header and footer keep their height, the body takes the rest.
             let room = window.height > 0 ? min(fixed, max(window.height - 2 * M.windowMargin, 0)) : fixed
@@ -191,7 +234,7 @@ public final class ShellDialog {
         }
         formScroll = min(max(formScroll, 0), max(formHeight - visible, 0))
         card = CGRect(x: (window.midX - width / 2).rounded(), y: (window.midY - h / 2).rounded(.down), width: width, height: h)   // the Mac sheet origin floors an odd half point
-        // `NewProjectSheet`: the close button 12 from the right edge, centered in the 56 header.
+        // `NewProjectSheet`: the close button 12 from the right edge, centered in the 48 header.
         closeFrame = closeButton && !headerless
             ? CGRect(x: card.maxX - 12 - M.buttonHeight, y: card.minY + ((M.bandHeaderHeight - M.buttonHeight) / 2).rounded(),
                      width: M.buttonHeight, height: M.buttonHeight)
@@ -209,8 +252,7 @@ public final class ShellDialog {
 
         // Footer: leading buttons at the left edge, the rest right aligned, 8 apart; centered in the band of a sheet, at the
         // top of the alert footer otherwise.
-        let y = sheet ? card.maxY - M.bandFooterHeight + ((M.bandFooterHeight - M.buttonHeight) / 2).rounded()
-            : card.maxY - M.alertFooterHeight
+        let y = card.maxY - M.bandFooterHeight + ((M.bandFooterHeight - M.buttonHeight) / 2).rounded()
         var left = card.minX + M.sidePad
         mascotFrame = .zero
         if footerMascot, sheet {
@@ -223,8 +265,10 @@ public final class ShellDialog {
         buttonFrames = [:]
         for i in leading {
             let w = buttonWidth(i, m)
-            buttonFrames[i] = CGRect(x: left, y: y, width: w, height: M.buttonHeight)
-            left += w + M.buttonGap
+            // art.html footer-left slot: a ghost button's label starts at the 17 pt inset (the box reaches into the padding).
+            let ghostShift = ghostButtons.contains(i) ? M.buttonPadding - 1 : 0
+            buttonFrames[i] = CGRect(x: left - ghostShift, y: y, width: w, height: M.buttonHeight)
+            left += w + M.buttonGap - ghostShift
         }
         var right = card.maxX - M.sidePad
         for i in trailing.reversed() {
@@ -387,16 +431,19 @@ public final class ShellDialog {
     // MARK: Drawing (`SQDialogCardView`, `SQButton`)
 
     public func draw(_ c: inout Canvas, theme t: DrawTheme, window: CGRect) {
-        c.fill(window, DrawColor(0, 0, 0, M.scrimAlpha))
-        c.shadow(roundedRect: card, radius: M.radius, blur: 24, dy: 8, DrawColor(0, 0, 0, 0.35), opaqueAbove: true)
-        // `SQDialogStyle.styleCard`: `panel` fill; a sheet's footer band is the card's bottom in `titlebar`.
+        c.fill(window, DrawColor(0, 0, 0, t.palette.isDark ? M.scrimAlpha : M.scrimAlphaLight))
+        c.shadow(roundedRect: card, radius: M.radius, blur: M.shadowBlur, dy: M.shadowDY,
+                 DrawColor(0, 0, 0, t.palette.isDark ? M.shadowAlpha : M.shadowAlphaLight), opaqueAbove: true)
+        // `SQDialogStyle.styleCard`: `panel` fill; a sheet's footer band is the card's bottom in `panel` with a hairline above.
         c.fill(roundedRect: card, radius: M.radius, t.panel)
-        if isSheet {
+        if headerBand > 0 { c.fill(CGRect(x: card.minX, y: card.minY + headerBand - M.hairHeight, width: card.width, height: M.hairHeight), t.hair) }
+        if !headerless {
             let band = CGRect(x: card.minX, y: card.maxY - M.bandFooterHeight, width: card.width, height: M.bandFooterHeight)
             c.saveGState()
             c.clip(to: band)
-            c.fill(roundedRect: card, radius: M.radius, t.titlebar)
+            c.fill(roundedRect: card, radius: M.radius, t.panel)
             c.restoreGState()
+            c.fill(CGRect(x: band.minX, y: band.minY, width: band.width, height: M.hairHeight), t.hair)
             if let status = footerStatus?() {
                 let trailing = model.displayOrder.filter { !(model.buttons[$0].isLeading && $0 != model.primaryIndex) }
                 let left = trailing.compactMap { buttonFrames[$0]?.minX }.min() ?? band.maxX - M.sidePad
@@ -413,18 +460,44 @@ public final class ShellDialog {
         }
         c.stroke(roundedRect: card.insetBy(dx: 0.25, dy: 0.25), radius: M.radius, width: 0.5, MenuListView.overlayEdge(t))
         let startHeader = headingFontSize != nil && isSheet
-        var y = card.minY + (startHeader ? 10 : textTop + M.headerTop)
+        let alert = !isSheet && !headerless
+        var y = card.minY + (startHeader ? 10 : (alert || noteInBody ? ((M.bandHeaderHeight - titleLine) / 2).rounded() + 1 : textTop + M.headerTop))
         // The start sheet's header labels are NSTextFields: 2 pt of cell padding before the text.
-        let x = card.minX + M.sidePad + (startHeader ? 2 : 0), w = card.width - 2 * M.sidePad
+        let x0 = card.minX + M.sidePad + (startHeader ? 2 : 0)
+        let x = x0 + titleIndent, w = card.width - 2 * M.sidePad - titleIndent
+        if let tone = headerIcon, !titleLines.isEmpty {
+            let iy = y - 1 + ((titleLine - M.headerIconSize) / 2).rounded()
+            if tone == .error {
+                // art.html 01: a circle with an exclamation mark (ring, bar, dot), drawn from primitives.
+                let r = CGRect(x: x0, y: iy, width: M.headerIconSize, height: M.headerIconSize)
+                c.stroke(roundedRect: r.insetBy(dx: 0.75, dy: 0.75), radius: r.width / 2, width: 1.5, t.errText)
+                let bar = CGRect(x: r.midX - 0.75, y: r.minY + 3.5, width: 1.5, height: 4.5)
+                let dot = CGRect(x: r.midX - 0.85, y: r.minY + 9, width: 1.7, height: 1.7)
+                c.fill(roundedRect: bar, radius: bar.width / 2, t.errText)
+                c.fill(roundedRect: dot, radius: dot.width / 2, t.errText)
+            } else {
+                c.draw(icon: .warning, at: CGPoint(x: x0, y: iy), size: M.headerIconSize, t.warning)
+            }
+        }
         // `Theme.Sheet.alertTitleFont`: 13 semibold.
+        let titleSize = headingFontSize ?? M.titleFont
         for l in titleLines {
-            c.draw(l, in: CGRect(x: x, y: y - 1, width: w, height: titleLine), fontSize: headingFontSize ?? M.titleFont, t.label,
+            c.draw(l, in: CGRect(x: x, y: y - 1, width: w, height: titleLine), fontSize: titleSize, t.label,
                    face: c.semibold)
             y += titleLine
         }
-        if !titleLines.isEmpty, !noteLines.isEmpty { y += startHeader ? 1 : M.headerGap }
+        // Settings: the page name after the title, `t3` (art.html `.dh` subtitle).
+        if let sub = headerSubtitle, !titleLines.isEmpty {
+            let tw = c.size(of: titleLines[0], fontSize: titleSize, face: c.semibold).width
+            c.draw(SQL10n.string(sub), in: CGRect(x: x + tw + 10, y: y - titleLine * CGFloat(titleLines.count) - 1, width: max(w - tw - 10, 0), height: titleLine),
+                   fontSize: M.noteFont, t.label3)
+        }
+        if alert || noteInBody { y = card.minY + headerBand + M.sidePad + 1 }
+        else if !titleLines.isEmpty, !noteLines.isEmpty { y += startHeader ? 1 : M.headerGap }
+        // art.html 00/01/02/09: the body of an alert sits at the card's left padding, under the icon's edge, not under the title.
+        let noteX = alert || noteInBody ? x0 : x, noteW = card.width - 2 * M.sidePad - (alert || noteInBody ? 0 : titleIndent)
         for l in noteLines {
-            c.draw(l, in: CGRect(x: x, y: startHeader ? y : y - 1, width: w + M.wrapSlack, height: M.noteLine), fontSize: M.noteFont,
+            c.draw(l, in: CGRect(x: noteX, y: startHeader ? y : y - 1, width: noteW + M.wrapSlack, height: M.noteLine), fontSize: M.noteFont,
                    startHeader ? t.label3 : t.label2)
             y += M.noteLine
         }
@@ -456,13 +529,25 @@ public final class ShellDialog {
             let b = model.buttons[i]
             let main = i == model.primaryIndex && b.role != .destructive
             let on = isEnabled(i)
-            var fill = main ? t.accentFill : (pressed == i && on ? t.fillPressed : (hovered == i && on ? t.fillHover : t.fill))
-            if main, pressed == i, on { fill = fill.lifted(-0.1) }
-            c.fill(roundedRect: r, radius: M.buttonRadius, on ? fill : fill.alpha(0.4))
-            if focused == i { c.stroke(roundedRect: r.insetBy(dx: -2, dy: -2), radius: M.buttonRadius + 2, width: 2, t.accent.alpha(0.6)) }
-            var text: DrawColor = main ? .white : (b.role == .destructive ? MenuListView.color(palette: t.palette.red) : t.label)
-            if !on { text = text.alpha(0.4) }
-            // `Theme.Sheet.buttonFont`: 12 medium.
+            let down = pressed == i && on, over = hovered == i && on
+            // art.html `.btn`: secondary = raised + 0.5 hair2 ring, primary = accent fill, ghost = clear (hover `hover`), danger = secondary
+            // with err text, disabled = t4 text on `hover`, disabled primary = accent .30.
+            if main {
+                var fill = on ? t.accentFill : t.accentFill.alpha(0.30)
+                if down { fill = fill.lifted(-0.1) } else if over { fill = fill.lifted(0.1) }
+                c.fill(roundedRect: r, radius: M.buttonRadius, fill)
+            } else if ghostButtons.contains(i) {
+                if down { c.fill(roundedRect: r, radius: M.buttonRadius, t.current) } else if over { c.fill(roundedRect: r, radius: M.buttonRadius, t.hover) }
+            } else if !on {
+                c.fill(roundedRect: r, radius: M.buttonRadius, t.hover)
+            } else {
+                c.fill(roundedRect: r, radius: M.buttonRadius, down ? t.pressed : (over ? t.raisedHover : t.raised))
+                c.stroke(roundedRect: r.insetBy(dx: 0.25, dy: 0.25), radius: M.buttonRadius, width: 0.5, t.hair2)
+            }
+            // art.html `.btn.focus`: a 2 px gap, then a 2 px accent ring.
+            if focused == i { c.stroke(roundedRect: r.insetBy(dx: -3, dy: -3), radius: M.buttonRadius + 3, width: 2, t.accent) }
+            var text: DrawColor = main ? .white : (b.role == .destructive ? t.errText : (ghostButtons.contains(i) ? (over || down ? t.label : t.label2) : t.label))
+            if !on { text = main ? DrawColor.white.alpha(0.45) : t.label4 }
             c.draw(buttonTitle(i), in: r.offsetBy(dx: 0, dy: 1), fontSize: M.buttonFont, text, align: .center, face: c.medium)
         }
         if closeFrame.width > 0 {
@@ -477,7 +562,7 @@ public final class ShellDialog {
     /// `NewProjectSheet` footer: preview 44 at 20, text 14 after it (12 semibold label / 11 label3), up to the buttons.
     private func drawFooterSummary(_ c: inout Canvas, _ s: FooterSummary, band: CGRect, _ t: DrawTheme) {
         let box = CGRect(x: band.minX + M.sidePad, y: band.minY + ((band.height - 44) / 2).rounded(), width: 44, height: 44)
-        c.fill(roundedRect: box, radius: 8, t.content)
+        c.fill(roundedRect: box, radius: CGFloat(DrawTheme.Radius.overlay), t.content)
         let side: CGFloat = 28, a = max(s.aspect, 0.05)
         let w = a >= 1 ? side : side * a, h = a >= 1 ? side / a : side
         let r = CGRect(x: box.minX + ((box.width - w) / 2).rounded(), y: box.minY + ((box.height - h) / 2).rounded(), width: w,

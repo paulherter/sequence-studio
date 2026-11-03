@@ -554,17 +554,21 @@ import SQDrawKit
 
     var emptyButtonFrame: CGRect {
         let w: CGFloat = 150, h = ControlsGrid.controlHeight
-        return CGRect(x: ((size.width - w) / 2).rounded(), y: (size.height / 2 + 24).rounded(), width: w, height: h)
+        // 12 pt under the hint text as the last draw measured it (the text block grows with the mascot and hint lines).
+        let y = emptyHintBottom.map { $0 + 12 } ?? size.height / 2 + 24
+        return CGRect(x: ((size.width - w) / 2).rounded(), y: y.rounded(), width: w, height: h)
     }
+
+    private var emptyHintBottom: CGFloat?
 
     private func drawEmpty(_ c: inout Canvas) {
         let t = theme, state = emptyState, blocker = makeGraphicBlocker
-        c.drawEmptyState(title: SQL10n.string(state.title), hint: blocker ?? SQL10n.string(state.hint),
-                         in: CGRect(origin: .zero, size: size), reserve: 34, theme: t)
+        emptyHintBottom = c.drawEmptyState(title: SQL10n.string(state.title), hint: blocker ?? SQL10n.string(state.hint),
+                                           in: CGRect(origin: .zero, size: size), reserve: 34, art: true, theme: t)
         let title = state == .editedInControls ? "Make Graphic" : "New Graphics Clip"
         InspectorDraw.button(&c, title: SQL10n.string(title), in: emptyButtonFrame, hovering: hover == .emptyAction,
                                 pressed: pressed == .emptyAction, enabled: state != .editedInControls || blocker == nil,
-                                accent: state != .editedInControls, t)
+                                accent: false, t)   // artifact: neutral small button
         drawStatus(&c)
     }
 

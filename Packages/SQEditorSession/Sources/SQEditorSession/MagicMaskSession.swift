@@ -347,7 +347,7 @@ public final class MagicMaskSession {
 /// Draws a matte as a tinted see-through image (Magic hover / pick highlight on the monitor).
 public enum MagicHighlight {
     /// Accent-colored image, alpha = matte * `alpha` (premultiplied RGBA, row 0 at the top).
-    public static func image(_ m: SubjectMatte, color: NSColor = Theme.Colors.accent, alpha: CGFloat = 0.45) -> CGImage? {
+    public static func image(_ m: SubjectMatte, color: NSColor = NSColor(srgbRed: 0.98, green: 0.80, blue: 0.20, alpha: 1), alpha: CGFloat = 0.45) -> CGImage? {
         let c = color.usingColorSpace(.sRGB) ?? .white
         let n = m.width * m.height
         // Accelerate, not a per-pixel Swift loop: that one took ~390 ms for a full-HD matte in Debug, per scrubbed frame.

@@ -108,7 +108,7 @@ public enum ShellNewProject {
         form.sidePad = 24
         form.labelInset = 2   // `NewProjectSheet` labels are NSTextFields: 2 pt cell padding
         form.extraGapBefore = [2: 4, 8: 4]
-        form.fieldHeights["name"] = 22; form.dialogFieldFontSize = 12; form.labeledFieldBleed = false
+        form.fieldHeights["name"] = 22; form.dialogFieldFontSize = 12; form.dialogFontSize = 12; form.labeledFieldBleed = false
         form.popupStyles = popupStyles(templates: templates)
         form.chips["location"] = ShellForm.Chip(icon: .folder, buttonWidth: 92)
         form.swapBetween = ["width"]

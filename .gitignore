@@ -24,3 +24,6 @@ Tools/SubjectMaskSpike/.build/
 
 # Internal UI reference screenshots (third-party images, never commit)
 docs/research/ui-ref-images/
+
+# Website sources are not part of this repo
+website/

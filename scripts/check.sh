@@ -78,7 +78,7 @@ if os.environ.get("FAST") == "1":
         if not suites or len(suites) > 80: continue                     # nothing to name, or most of the package anyway
         print(f"FILTER {p} (^|[./])(" + "|".join(sorted(suites)) + ")(/|$)")
 # UI packages UI lint scans (keep in sync with UI_PACKAGES in scripts/lint-ui.sh; DECISIONS "SQEditorUI split").
-UI_PACKAGES = ("SQUIKit", "SQEditorSession", "SQTimelineUI", "SQMonitorUI", "SQInspectorUI", "SQEditorUI")
+UI_PACKAGES = ("SQUIKit", "SQEditorSession", "SQTimelineUI", "SQInspectorUI")
 ui = any(f.endswith(".swift") and (f.startswith(tuple(f"Packages/{u}/Sources/" for u in UI_PACKAGES)) or f.startswith("App/")) for f in changed)
 app = any(f.startswith("App/") or f == "project.yml" for f in changed)
 print(f"LINT {int(ui)}")

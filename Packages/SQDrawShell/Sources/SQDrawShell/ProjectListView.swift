@@ -16,18 +16,21 @@ public final class ProjectListView {
     public struct Row: Equatable {
         public var ref: BinItemRef
         public var depth: Int
+        /// Set on a format variant row: `ref` is its sequence, the row is drawn one level in.
+        public var variant: FormatVariant.ID?
+        public init(ref: BinItemRef, depth: Int, variant: FormatVariant.ID? = nil) { self.ref = ref; self.depth = depth; self.variant = variant }
     }
     /// List or icon grid (the Mac `ProjectPanelView.ViewMode`, saved under the same key).
     public enum ViewMode: String, Sendable { case list, icons }
 
-    // Mac metrics: `Theme.Row.panelList` 26, `Theme.Spacing.md` lead 12, `Theme.Spacing.treeIndent` 14, chip 16.
-    public static let rowHeight: CGFloat = 26
+    // Mac metrics: `Theme.Row.panelList` 24, `Theme.Spacing.md` lead 12, `Theme.Spacing.treeIndent` 14, chip 16.
+    public static let rowHeight: CGFloat = 24
     public static let headerHeight: CGFloat = 30
     /// `ProjectPanelView.searchRowHeight` / `crumbHeight`; the outline's column header.
     public static let searchRowHeight: CGFloat = 38
     public static let crumbHeight: CGFloat = 28
     /// `PanelListHeader.height` = `Theme.Row.panelList`.
-    public static let columnHeaderHeight: CGFloat = 26
+    public static let columnHeaderHeight: CGFloat = 24
     static let nameLead: CGFloat = 12
     static let levelIndent: CGFloat = 14
     static let chip: CGFloat = 16
@@ -57,6 +60,8 @@ public final class ProjectListView {
     public internal(set) var hasFocus = false
     /// A double-click on a sequence opens it, on a media item it goes to the host (Source monitor where there is one).
     public var onOpenSequence: ((Timeline.ID) -> Void)?
+    /// Double-click on a format variant row: the sequence opens with that variant shown.
+    public var onOpenVariant: ((Timeline.ID, FormatVariant.ID) -> Void)?
     public var onOpenMedia: ((MediaRef.ID) -> Void)?
     /// Extract Audio (the item's sound as its own M4A item); nil on hosts without audio extraction.
     public var onExtractAudio: ((MediaRef.ID) -> Void)?
@@ -76,7 +81,9 @@ public final class ProjectListView {
     static let dragSlop: CGFloat = 4
     /// Clock for the double-click test.
     public var now: () -> Double = { ProcessInfo.processInfo.systemUptime }
-    private var lastClick: (ref: BinItemRef, time: Double)?
+    private var lastClick: (ref: BinItemRef, variant: FormatVariant.ID?, time: Double)?
+    /// The variant row last clicked (only highlights; a variant is not part of `selection`).
+    var variantSelection: FormatVariant.ID?
 
     /// Where the view mode, search row and columns are kept per user (the Mac panel's keys).
     public let defaults: UserDefaults
@@ -125,6 +132,10 @@ public final class ProjectListView {
         func add(_ items: [BinItem], _ depth: Int) {
             for i in items {
                 out.append(Row(ref: i.ref, depth: depth))
+                // A sequence's format variants sit right under it, indented (one click away from the Program popup).
+                if case .sequence(let id) = i.ref, let t = model.project.timeline(id) {
+                    for v in t.variants { out.append(Row(ref: i.ref, depth: depth + 1, variant: v.id)) }
+                }
                 if case .bin(let b) = i, expanded.contains(b.id) { add(model.children(of: b), depth + 1) }
             }
         }
@@ -198,7 +209,10 @@ public final class ProjectListView {
                 lastClick = nil
             }
             moveTarget = self.moveTarget(at: p, moving: selection)
-            if moveTarget == nil, !dragRefs.isEmpty { onDrag?(dragRefs, .moved, x, y) }
+            if moveTarget == nil, !dragRefs.isEmpty {
+                showDragPreview(at: p)
+                onDrag?(dragRefs, .moved, x, y)
+            } else { HostDragPreview.shared.clear() }
             return true
         case .mouseUp(let x, let y):
             if sizeSliderDragging { sizeSliderDragging = false; return true }
@@ -207,6 +221,7 @@ public final class ProjectListView {
             press = nil
             if isDragging {
                 isDragging = false
+                HostDragPreview.shared.clear()
                 defer { moveTarget = nil }
                 // Dropped on a folder or between rows of the panel: the items move there (the host sees a canceled drag).
                 if let t = moveTarget { dropMove(selection, on: t); if !dragRefs.isEmpty { onDrag?(dragRefs, .canceled, x, y) } }
@@ -222,6 +237,7 @@ public final class ProjectListView {
             press = nil
             isDragging = false
             moveTarget = nil
+            HostDragPreview.shared.clear()
             if !dragRefs.isEmpty { onDrag?(dragRefs, .canceled, 0, 0) }
             return true
         case .keyDown(let key, let m):
@@ -245,6 +261,16 @@ public final class ProjectListView {
     }
 
     /// What a drag carries: the selected media and sequences (folders do not drag onto the timeline).
+    /// The chip at the pointer from the first move of the drag: the first item's name and kind icon (and the count for several).
+    private func showDragPreview(at p: CGPoint) {
+        guard let first = dragRefs.first, let model else { return }
+        let kind = model.itemKind(of: first)
+        let symbol = kind == .nestedSequence ? ProjectItemIcon.icon(for: .sequence).symbol : ProjectItemIcon.icon(for: kind).symbol
+        let name = model.displayName(of: first)
+        let title = dragRefs.count > 1 ? "\(name) +\(dragRefs.count - 1)" : name
+        HostDragPreview.shared.show(title: title, icon: SQIcon(rawValue: symbol) ?? .unknown, at: p)
+    }
+
     var dragRefs: [BinItemRef] { selection.filter { if case .bin = $0 { false } else { true } } }
 
     func click(at p: CGPoint, modifiers m: InputModifiers) {
@@ -255,10 +281,25 @@ public final class ProjectListView {
             return
         }
         let ref = list[i]
+        if viewMode == .list, let v = rows()[i].variant, case .sequence(let sid) = ref {
+            // A variant row selects nothing (no drag, no delete of its sequence); a double-click opens it.
+            selection = []
+            if m.contains(.secondary) { return }
+            let t = now()
+            defer { lastClick = (ref, v, t) }
+            variantSelection = v
+            guard let last = lastClick, last.ref == ref, last.variant == v, t - last.time < Self.doubleClick else { return }
+            lastClick = nil
+            onOpenVariant?(sid, v)
+            return
+        }
+        variantSelection = nil
         if m.contains(.command) {
             if let at = selection.firstIndex(of: ref) { selection.remove(at: at) } else { selection.append(ref) }
         } else if m.contains(.shift), let anchor = selection.last, let a = list.firstIndex(of: anchor) {
-            selection = Array(list[min(a, i)...max(a, i)])
+            // Variant rows repeat their sequence's ref; keep each item once.
+            var seen = Set<BinItemRef>()
+            selection = list[min(a, i)...max(a, i)].filter { seen.insert($0).inserted }
         } else if !(m.contains(.secondary) && selection.contains(ref)) {
             selection = [ref]
         }
@@ -270,8 +311,8 @@ public final class ProjectListView {
             return
         }
         let t = now()
-        defer { lastClick = (ref, t) }
-        guard let last = lastClick, last.ref == ref, t - last.time < Self.doubleClick else { return }
+        defer { lastClick = (ref, nil, t) }
+        guard let last = lastClick, last.ref == ref, last.variant == nil, t - last.time < Self.doubleClick else { return }
         lastClick = nil
         open(ref)
     }
@@ -434,7 +475,21 @@ public final class ProjectListView {
             let rr = rowRect(i)
             guard rr.maxY >= listRect.minY, rr.minY <= listRect.maxY else { continue }
             // The outline's selection is full width; gray (unemphasized) while the list has no focus.
-            if selection.contains(r.ref) { c.fill(rr, hasFocus ? theme.accentFill : Self.unfocusedSelection) }
+            // Artifact: an inset rounded highlight (6 pt radius, margin from the panel edge), not a flat full-width band.
+            if r.variant != nil ? r.variant == variantSelection : selection.contains(r.ref) {
+                c.fill(roundedRect: rr.insetBy(dx: 4, dy: 1), radius: CGFloat(DrawTheme.Radius.control), theme.current)
+            }
+            if let v = r.variant, case .sequence(let sid) = r.ref, let f = model.project.timeline(sid)?.variants.first(where: { $0.id == v }) {
+                // A format variant: the row part again, named with its aspect ("Vertical 9:16").
+                let x = rr.minX + Self.nameLead + CGFloat(r.depth) * Self.levelIndent
+                let chip = CGRect(x: x, y: rr.midY - Self.chip / 2, width: Self.chip, height: Self.chip)
+                c.draw(icon: SQIcon(rawValue: ProjectItemIcon.icon(for: .sequence).symbol) ?? .unknown,
+                       at: CGPoint(x: chip.minX + 1, y: chip.minY + 1), size: Self.chip - 2, theme.label2)
+                let label = "\(f.name) \(SequenceConform.aspectLabel(width: f.width, height: f.height))"
+                c.draw(label, in: CGRect(x: chip.maxX + 10, y: rr.minY, width: max(nameEnd - chip.maxX - 14, 0), height: rr.height),
+                       fontSize: Self.listFont, theme.label)
+                continue
+            }
             var offline = false
             if case .media(let m) = r.ref { offline = model.isOffline(m) }
             let kind = model.itemKind(of: r.ref)
@@ -449,17 +504,27 @@ public final class ProjectListView {
             }
             // Kind chip: the label color (offline red) with the kind's glyph, as `ProjectIconBox.Chip`.
             let chipRect = CGRect(x: x, y: rr.midY - Self.chip / 2, width: Self.chip, height: Self.chip)
-            let fill = offline ? Self.offlineRed : theme.clip(kind == .bin ? .binDefault : model.label(of: r.ref))
-            c.fill(roundedRect: chipRect, radius: 4, fill)
-            let glyph = SQIcon(rawValue: ProjectItemIcon.icon(for: kind).symbol) ?? .unknown
-            c.draw(icon: glyph, at: CGPoint(x: chipRect.minX + 2, y: chipRect.minY + 2), size: Self.chip - 4, theme.onClip)
+            // Gray chip, the label color only as a small dot; an offline row gets a red "Offline" tag at the name column's end (artifact), no stripe.
+            // Artifact: plain line icons, no tile; both sequence kinds share the clapper glyph.
+            let symbol = kind == .nestedSequence ? ProjectItemIcon.icon(for: .sequence).symbol : ProjectItemIcon.icon(for: kind).symbol
+            let glyph = SQIcon(rawValue: symbol) ?? .unknown
+            c.draw(icon: glyph, at: CGPoint(x: chipRect.minX + 1, y: chipRect.minY + 1), size: Self.chip - 2, theme.label2)
+            let dotColor = theme.clip(kind == .bin ? .binDefault : model.label(of: r.ref))
+            c.fill(ellipseIn: CGRect(x: chipRect.maxX - 4, y: chipRect.maxY - 4, width: 5, height: 5), dotColor)
             let nameX = chipRect.maxX + 10
-            let text = offline ? Self.offlineRed : theme.label
-            c.draw(model.cellText(.name, r.ref), in: CGRect(x: nameX, y: rr.minY, width: max(nameEnd - nameX - 4, 0), height: rr.height),
+            let text = theme.label
+            c.draw(model.cellText(.name, r.ref), in: CGRect(x: nameX, y: rr.minY, width: max(nameEnd - nameX - 4 - (offline ? 68 : 0), 0), height: rr.height),
                    fontSize: Self.listFont, text)
+            if offline {
+                let tagFont = CGFloat(DrawTheme.TypeSize.caption)
+                let tagW = ceil(c.size(of: "Offline", fontSize: tagFont).width)
+                let tagX = nameEnd - 4 - tagW
+                c.draw("Offline", in: CGRect(x: tagX, y: rr.minY, width: tagW, height: rr.height), fontSize: tagFont, theme.errText, align: .right)
+                c.draw(icon: .warning, at: CGPoint(x: tagX - 14, y: rr.midY - 6), size: 12, theme.errText)
+            }
             for col in cols where col.column != .name {
                 let cell = CGRect(x: col.minX, y: rr.minY, width: col.maxX - col.minX, height: rr.height)
-                c.draw(model.cellText(col.column, r.ref), in: cell, fontSize: Self.listFont, offline ? text : theme.label2,
+                c.draw(model.cellText(col.column, r.ref), in: cell, fontSize: Self.listFont, theme.label2,
                        align: Self.rightAligned(col.column) ? .right : .left, inset: Self.cellInset)
             }
         }

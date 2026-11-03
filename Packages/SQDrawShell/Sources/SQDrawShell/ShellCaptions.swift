@@ -48,6 +48,7 @@ extension ShellHost {
             .number(label: "Caption Gap", ShellForm.NumberField(id: "gap", value: first.gap, range: 0...120, step: 1, unit: "frames",
                                                                 defaultValue: first.gap)),
         ])
+        form.controlWidths = ["chars": 62, "minDuration": 62, "gap": 62]   // art.html 27: 62 pt number boxes
         // A new style refills the four limits with its own.
         form.onChange = { id, value in
             guard id == "style", case .index(let i) = value, styles.indices.contains(i) else { return }

@@ -10,8 +10,8 @@ import SQPremiereImport
 public final class ShellImportReportContent: ShellDialogContent {
     enum M {
         static let sidePad: CGFloat = 20
-        static let rowHeight: CGFloat = 38
-        static let wellPad: CGFloat = 4
+        static let rowHeight: CGFloat = 40   // art.html 34: 40 per item, the list inset 8
+        static let wellPad: CGFloat = 8
         static let wellRadius: CGFloat = 6   // Theme.Dialog.reportWellRadius
         static let minHeight: CGFloat = 46, maxHeight: CGFloat = 300
         static let dot: CGFloat = 8
@@ -39,11 +39,11 @@ public final class ShellImportReportContent: ShellDialogContent {
         checklist.items.map { i in
             let tone: Tone = switch i.kind {
             case .cameOver: .green
-            case .approximated: .yellow
-            case .leftOut: .orange
+            case .approximated: .orange   // art.html 34: orange for approximated, red for left out
+            case .leftOut: .red
             case .missingFiles: .red
             }
-            let head = i.kind == .approximated || i.kind == .leftOut ? "\(i.count)x  \(i.title)" : i.title
+            let head = i.kind == .approximated || i.kind == .leftOut ? "\(i.count)\u{00D7} \(i.title)" : i.title
             let action: String? = switch i.kind {
             case .cameOver: nil
             case .missingFiles: canReconnect ? "Reconnect…" : nil
@@ -58,7 +58,7 @@ public final class ShellImportReportContent: ShellDialogContent {
         report.entries.sorted { ($0.status, $1.count, $0.feature) > ($1.status, $0.count, $1.feature) }.map { e in
             let tone: Tone = e.status == .dropped ? .red : e.status == .approximated ? .orange : .green
             let status = e.status.label.prefix(1).uppercased() + e.status.label.dropFirst()
-            return Row(tone: tone, head: "\(e.count)x  \(e.feature)", detail: e.note.isEmpty ? status : "\(status): \(e.note)")
+            return Row(tone: tone, head: "\(e.count)\u{00D7} \(e.feature)", detail: e.note.isEmpty ? status : "\(status): \(e.note)")
         }
     }
 
@@ -130,9 +130,9 @@ public final class ShellImportReportContent: ShellDialogContent {
             c.draw(r.head, in: CGRect(x: x, y: top, width: w, height: line), fontSize: M.bodySize, t.label, face: c.semibold)
             c.draw(SQL10n.string(r.detail), in: CGRect(x: x, y: top + line, width: w, height: line), fontSize: M.bodySize, t.label3)
             if let b, let title = r.action {
-                let fill = pressed == i ? t.fillPressed : (hovered == i ? t.fillHover : t.fill)
-                c.fill(roundedRect: b, radius: M.buttonRadius, fill)
-                c.draw(SQL10n.string(title), in: b, fontSize: M.buttonSize, t.label, align: .center, face: c.medium)
+                // art.html 34: Show is a plain label3 text on the row (a fill only while hovered or pressed).
+                if pressed == i || hovered == i { c.fill(roundedRect: b, radius: M.buttonRadius, pressed == i ? t.fillPressed : t.fillHover) }
+                c.draw(SQL10n.string(title), in: b, fontSize: M.bodySize, hovered == i || pressed == i ? t.label : t.label3, align: .center)
             }
         }
         c.restoreGState()

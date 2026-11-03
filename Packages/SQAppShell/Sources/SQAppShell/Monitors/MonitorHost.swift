@@ -66,15 +66,9 @@ public final class MonitorHost {
         let fd = session.activeTimeline?.frameDuration ?? Time(1, 25)
         model = MonitorPanelModel(frameDuration: fd, mode: .program)
         panel = MonitorPanel(model: model, title: "Program")
-        // Pip asleep above the empty-state hint (the Mac ProgramEmptyView, `SQMascotPlace.programEmpty`).
-        // `SQMascotPlace` is Mac-only (AppKit); off the Mac the same pose (`.sleep`) is used directly.
-        #if os(macOS)
-        let emptyPose = SQMascotPlace.programEmpty.animation
-        let emptyOn = SQMascotPlace.programEmpty.isEnabled
-        #else
+        // Pip asleep above the empty-state hint (`SQMascotPlace.programEmpty` on the Mac).
         let emptyPose = SQMascotAnim.sleep
         let emptyOn = true
-        #endif
         if emptyOn {
             let stage = ShellMascotStage()
             panel.emptyMascot = { c, r in stage.draw(emptyPose, slot: 0, in: r, into: &c) }
@@ -140,15 +134,16 @@ public final class MonitorHost {
         model.markIn = t?.inOut?.start
         model.markOut = t?.inOut?.end
         model.markerTimes = t?.markers.map(\.time) ?? []
-        if let t { panel.sequenceSize = CGSize(width: t.format.displayWidth, height: t.format.height) }
+        // The shown format: a variant renders at its own size, so the picture frame follows it.
+        if let f = session.displayFormat { panel.sequenceSize = CGSize(width: f.displayWidth, height: f.height) }
         model.syncFormats(from: session)            // the header's sequence popup and the format switcher
         syncZone()
     }
 
     /// The platform safe zone and its UI mock for the sequence's frame (EditorPanels' zone providers).
     private func syncZone() {
-        guard let t = session.activeTimeline else { panel.platformZone = nil; panel.platformMock = []; return }
-        let aspect = Double(t.format.displayWidth) / Double(max(t.format.height, 1))
+        guard let f = session.displayFormat else { panel.platformZone = nil; panel.platformMock = []; return }
+        let aspect = Double(f.displayWidth) / Double(max(f.height, 1))
         panel.platformZone = model.safeZone.normRect(frameAspect: aspect)
         panel.platformMock = model.showsPlatformMock ? model.safeZone.uiMock(frameAspect: aspect) : []
     }

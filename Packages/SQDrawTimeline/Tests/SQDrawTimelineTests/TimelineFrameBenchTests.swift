@@ -1,5 +1,4 @@
 #if os(macOS)
-import AppKit
 import Foundation
 import SQCore
 import SQDrawKit
@@ -39,19 +38,6 @@ import Testing
         var panel = TimelinePanel()
         panel.layout(DrawRect(x: 0, y: 0, w: Float(Self.w), h: Float(Self.h)), scale: 1)
         panel.sync(timeline: t, selection: [], playhead: .zero, selectedTransition: nil, labels: LabelResolver())
-        let view = TimelineView(timeline: t, frame: NSRect(x: 0, y: 0, width: Self.w, height: Self.h))
-        var bytes = [UInt8](repeating: 0, count: Self.w * Self.h * 4)
-        func appKitDraw() {
-            bytes.withUnsafeMutableBytes { buf in
-                let cg = CGContext(data: buf.baseAddress, width: Self.w, height: Self.h, bitsPerComponent: 8, bytesPerRow: Self.w * 4,
-                                   space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-                cg.translateBy(x: 0, y: CGFloat(Self.h)); cg.scaleBy(x: 1, y: -1)
-                NSGraphicsContext.saveGraphicsState()
-                NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: true)
-                view.draw(view.bounds)
-                NSGraphicsContext.restoreGraphicsState()
-            }
-        }
         func sharedFrame(_ playhead: Time) {
             panel.sync(timeline: t, selection: [], playhead: playhead, selectedTransition: nil, labels: LabelResolver())
             _ = panel.tick()
@@ -60,24 +46,21 @@ import Testing
         }
         var out: [String] = []
         for zoom in [8.0, 60.0] {
-            panel.setZoom(pointsPerSecond: zoom); view.setZoom(pointsPerSecond: zoom, motion: false)
+            panel.setZoom(pointsPerSecond: zoom)
             let heads = (0..<90).map { Self.fd * Int64($0 * 7) }
-            var shared: [Double] = [], appKit: [Double] = []
+            var shared: [Double] = []
             for p in heads {
                 shared.append(ms { sharedFrame(p) })
-                view.setPlayhead(p)
-                appKit.append(ms { appKitDraw() })
             }
-            out.append("scrub @\(zoom) pt/s  shared: \(stats(shared))  |  AppKit: \(stats(appKit))")
+            out.append("scrub @\(zoom) pt/s  shared: \(stats(shared))")
             #expect(shared.sorted()[shared.count / 2] < 200)
         }
-        var zs: [Double] = [], za: [Double] = []
+        var zs: [Double] = []
         for i in 0..<60 {
             let z = 4 * pow(1.06, Double(i))
             zs.append(ms { panel.setZoom(pointsPerSecond: z); sharedFrame(.zero) })
-            za.append(ms { view.setZoom(pointsPerSecond: z, motion: false); appKitDraw() })
         }
-        out.append("zoom sweep  shared: \(stats(zs))  |  AppKit: \(stats(za))")
+        out.append("zoom sweep  shared: \(stats(zs))")
         if ProcessInfo.processInfo.environment["SQ_TIMELINE_BENCH"] == "1" {
             let path = ProcessInfo.processInfo.environment["SQ_PERF_OUT"] ?? NSTemporaryDirectory() + "sqtimelineframe.txt"
             try? out.joined(separator: "\n").appending("\n").write(toFile: path, atomically: true, encoding: .utf8)

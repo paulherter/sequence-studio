@@ -19,7 +19,7 @@ let appleOnly = [
 // Tests that need no Apple framework and no SQMediaTestSupport (which writes clips with AVFoundation).
 let portableTests = [
     "EmbeddedLUTTests.swift", "MediaCollectTests.swift", "PeakPyramidTests.swift", "SQMediaTests.swift", "SampleIndexTests.swift", "SonyMetadataTests.swift",
-    "SourceTimecodeTests.swift", "TimingSupport.swift", "ToneAudioSourceTests.swift", "WebMTestWriter.swift",
+    "ColorTagDetectionTests.swift", "SourceTimecodeTests.swift", "TimingSupport.swift", "ToneAudioSourceTests.swift", "WebMTestWriter.swift",
 ]
 let package = Package(
     name: "SQMedia",

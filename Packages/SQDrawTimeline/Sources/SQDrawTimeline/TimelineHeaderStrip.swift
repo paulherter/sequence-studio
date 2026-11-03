@@ -198,7 +198,7 @@ public struct TimelineHeaderStrip {
         cv.draw(state.timecode, in: frames.timecode, fontSize: Self.bodyFont, theme.label3, align: .right)
         drawToggle(&cv, .snap, icon: .snap, on: state.snapping)
         drawToggle(&cv, .link, icon: .link, on: state.linkedSelection)
-        drawToggle(&cv, .marker, icon: .marker, on: nil)
+        drawToggle(&cv, .marker, icon: .bookmark, on: nil)
         // v9 flat popup: no fill until hovered, 11 pt label 10 pt in, 12 pt chevron 8 pt from the right.
         let fit = frames.fit
         if hovered == .fit || press == .control(.fit) { cv.fill(roundedRect: fit, radius: CGFloat(DrawTheme.Radius.small), theme.fillHover) }
@@ -207,13 +207,14 @@ public struct TimelineHeaderStrip {
         drawStrip(&cv)
     }
 
-    /// Snap / Linked Selection on = accent glyph, off = dim glyph; hover fill only (`TimelineToolSlotButton.toggle`).
+    /// Snap / Linked Selection on = raised box with label glyph, off = dim glyph; hover fill only (`TimelineToolSlotButton.toggle`).
     private func drawToggle(_ cv: inout Canvas, _ c: Control, icon: SQIcon, on: Bool?) {
         let r: CGRect
         switch c { case .snap: r = frames.snap; case .link: r = frames.link; default: r = frames.marker }
         if hovered == c || press == .control(c) { cv.fill(roundedRect: r, radius: CGFloat(DrawTheme.Radius.small), theme.fillHover) }
+        if on == true { cv.fill(roundedRect: r, radius: CGFloat(DrawTheme.Radius.small), theme.raised) }   // on = raised box, neutral glyph (artifact)
         let g = Self.glyph
-        cv.draw(icon: icon, at: CGPoint(x: r.midX - g / 2, y: r.midY - g / 2), size: g, on == true ? theme.accent : theme.label2)
+        cv.draw(icon: icon, at: CGPoint(x: r.midX - g / 2, y: r.midY - g / 2), size: g, on == true ? theme.label : theme.label3)
     }
 
     /// `SequenceTabsView.draw`: the active tab in label color over a 2 pt accent line (10 pt in), others label3 (label2
@@ -245,7 +246,7 @@ public struct TimelineHeaderStrip {
         let fast = state.editMode == .magnetic
         let tint = fast ? theme.accent : theme.label2
         let skin = TimelineSkin(theme: theme)
-        cv.fill(roundedRect: r, radius: r.height / 2, fast ? skin.accentTint : (hovered == .editMode ? theme.fillHover : theme.fill))
+        cv.fill(roundedRect: r, radius: CGFloat(DrawTheme.Radius.small), fast ? skin.accentTint : (hovered == .editMode ? theme.fillHover : theme.fill))
         let s = TimelineModeMenu.iconSize
         cv.draw(icon: TimelineModeMenu.icon(state.editMode), at: CGPoint(x: r.minX + TimelineModeMenu.leftPadding, y: r.midY - s / 2),
                 size: s, tint)

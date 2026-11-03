@@ -27,9 +27,9 @@ import SQDrawKit
     /// The label column fits its longest label (no "Interface Langu..."), within 104...160 pt.
     @Test func theLabelColumnGrowsToItsLongestLabel() {
         let (_, short) = dialog([.field(id: "name", label: "Name", value: "")])
-        #expect(short.labelWidth == 104)
+        #expect(short.labelWidth == 56)
         let (_, long) = dialog([.popup(id: "l", label: "Interface Language", options: ["English"], selected: 0)])
-        #expect(long.labelWidth == 119)                         // 18 characters at the atlas-free 0.55 em
+        #expect(long.labelWidth == 109)                         // 18 characters at the atlas-free 0.55 em, 11 pt
         let (_, huge) = dialog([.field(id: "x", label: String(repeating: "W", count: 40), value: "")])
         #expect(huge.labelWidth == 160)
     }
@@ -37,8 +37,8 @@ import SQDrawKit
     /// The Mac `SQDialog.popupRow` (Save as Preset): an unlabeled popup row is the 22 pt popup, 12 below the 28 pt name field.
     @Test func anUnlabeledPopupRowIsThe22ptPopup() {
         let (_, f) = dialog([.field(id: "name", label: "", value: "My Look"), .popup(id: "a", label: "", options: ["Anchor to In Point"], selected: 0)])
-        #expect(f.rowFrames[0].height == 28 && f.controlFrames[1].height == 22)
-        #expect(f.controlFrames[1].minY - f.controlFrames[0].maxY == 12)
+        #expect(f.rowFrames[0].height == 26 && f.controlFrames[1].height == 22)
+        #expect(f.controlFrames[1].minY - f.controlFrames[0].maxY == 8)   // 22 pt wells on 26 pt lines, 4 apart (pitch 30)
     }
 
     /// The Mac note wraps at the 400 pt column by kerned advances; the atlas has none, so the wrap has a few points of slack.
@@ -51,7 +51,7 @@ import SQDrawKit
         let long = ShellDialog("T", informative: String(repeating: "word ", count: 20))
         long.addButton("OK")
         long.layout(in: CGRect(x: 0, y: 0, width: 1200, height: 800), measure: TextMeasure(atlas: nil, scale: 1))
-        #expect(long.noteLines.allSatisfy { Double($0.count) * 12 * 0.55 <= 405 + 6 })
+        #expect(long.noteLines.allSatisfy { Double($0.count) * 11 * 0.55 <= 405 + 6 })
     }
 
     @Test func rowsStackWithTheMacFormMetricsBetweenHeaderAndFooter() {
@@ -59,10 +59,10 @@ import SQDrawKit
                              .popup(id: "t", label: "Template", options: ["Empty", "Vlog"], selected: 0),
                              .check(id: "c", title: "Open after", on: true)])
         #expect(f.rowFrames.count == 3)
-        #expect(f.rowFrames[1].minY - f.rowFrames[0].maxY == 12)
-        #expect(f.rowFrames[0].height == 28 && f.rowFrames[2].height == 24)
-        #expect(f.controlFrames[0].minX == d.card.minX + 20 + 104 + 16 - 2) // labeled fields bleed 2 pt like the Mac NSTextField frame
-        #expect(f.controlFrames[0].maxX == d.card.maxX - 20 + 2)
+        #expect(f.rowFrames[1].minY - f.rowFrames[0].maxY == 4)
+        #expect(f.rowFrames[0].height == 26 && f.rowFrames[2].height == 22)
+        #expect(f.controlFrames[0].minX == d.card.minX + 16 + 56 + 12) // flush with the control column (art.html, no Mac frame bleed)
+        #expect(f.controlFrames[0].maxX == d.card.maxX - 16)
         let footerTop = d.buttonFrames.values.map(\.minY).min() ?? 0
         #expect(f.rowFrames[2].maxY < footerTop)
         #expect(f.rowFrames[0].minY > d.card.minY)
@@ -95,8 +95,7 @@ import SQDrawKit
 
     @Test func tabWalksTheRowsAndSpaceTogglesTheCheck() {
         let (d, f) = dialog([.field(id: "name", label: "Name", value: "X"), .check(id: "c", title: "Open after", on: false)])
-        d.handle(.keyDown(InputKey.tab, modifiers: []), scale: 1)
-        #expect(f.focused == 0)
+        #expect(f.focused == 0)                                         // a dialog focuses its first text field
         d.handle(.keyDown(InputKey.tab, modifiers: []), scale: 1)
         #expect(f.focused == 1)
         d.handle(.keyDown(.space, modifiers: []), scale: 1)
@@ -142,7 +141,7 @@ import SQDrawKit
         let (d, f) = dialog([.sliderNumber(label: "Volume", field)])
         let c = f.controlFrames[0]
         let box = f.scrubFrames["vol"] ?? .zero
-        #expect(box.width == 72 && box.maxX == c.maxX - 24 - 8)
+        #expect(box.width == 56 && box.maxX == c.maxX - 24 - 8)
         #expect(f.number("vol") == -3)
         d.handle(.mouseDown(x: Float(c.minX), y: Float(c.midY), modifiers: []), scale: 1)
         d.handle(.mouseUp(x: Float(c.minX), y: Float(c.midY)), scale: 1)
@@ -180,7 +179,7 @@ import SQDrawKit
         f.onChange = { id, v in if id == "cache" { got.append(v) } }
         let frames = f.buttonFrames(0)
         #expect(frames.count == 2)
-        #expect(abs(frames[1].maxX - (d.card.maxX - 20)) < 0.5)
+        #expect(abs(frames[1].maxX - (d.card.maxX - 16)) < 0.5)
         #expect(frames[0].maxX < frames[1].minX)
         click(d, CGPoint(x: frames[0].midX, y: frames[0].midY))
         click(d, CGPoint(x: frames[1].midX, y: frames[1].midY))

@@ -27,12 +27,13 @@ import SQDrawKit
         #expect(height(rows, gaps: [1: 2]) - height(rows, gaps: [:]) == 2)
     }
 
-    @Test func aFilledIconDrawsMoreThanItsOutline() {
+    @Test func aFillWeightIconDrawsMoreThanARegularOne() {
         var filled = Canvas(width: 24, height: 24, atlas: nil, scale: 1)
         filled.draw(icon: .play, at: .zero, size: 24, DrawColor(1, 1, 1, 1))
         var open = Canvas(width: 24, height: 24, atlas: nil, scale: 1)
         open.draw(icon: .search, at: .zero, size: 24, DrawColor(1, 1, 1, 1))
         #expect(!filled.list.quads.isEmpty)
-        #expect(filled.list.quads.count > open.list.quads.count && open.list.quads.count > 0)
+        func ink(_ c: Canvas) -> Float { c.list.quads.reduce(0) { $0 + $1.w * $1.h * $1.a } }
+        #expect(ink(filled) > ink(open) && ink(open) > 0)
     }
 }

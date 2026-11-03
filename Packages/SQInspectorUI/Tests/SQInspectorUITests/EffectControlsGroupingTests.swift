@@ -33,6 +33,20 @@ import SQCore
         #expect(EffectControlsLayout.group(of: .motion) == .video && EffectControlsLayout.group(of: .volume) == .audio)
     }
 
+    @Test func panelHeaderNamesTheFirstSideSoOnlyTheSecondRepeats() {
+        func kinds(_ sections: [EffectSection]) -> [EffectRow.Kind] {
+            EffectControlsLayout.rows(sections: sections, collapsed: [], expanded: [], groupHeaders: true, firstGroupHeader: false).map(\.kind)
+        }
+        // Video and audio: one repeated "Audio" header, none above the first side.
+        let both = kinds([.motion, .volume])
+        #expect(both.first == .section(.motion))
+        #expect(both.filter { if case .group = $0 { true } else { false } } == [.group(.audio)])
+        #expect(both.firstIndex(of: .group(.audio)) == both.firstIndex(of: .section(.volume))! - 1)
+        // One side only: no repeated header at all.
+        #expect(!kinds([.motion]).contains(.group(.video)))
+        #expect(kinds([.volume]) == [.section(.volume), .property(.volume)])
+    }
+
     @Test func audioClipOnlyGetsAudioGroupWithVolumeRow() {
         let rows = EffectControlsLayout.rows(sections: [.volume], collapsed: [], expanded: [], groupHeaders: true)
         #expect(rows.map(\.kind) == [.group(.audio), .section(.volume), .property(.volume)])

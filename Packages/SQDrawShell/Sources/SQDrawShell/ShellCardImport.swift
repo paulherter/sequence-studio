@@ -63,6 +63,13 @@ extension ShellHost {
         browser.poster = ShellCardImport.poster
         let d = ShellDialog(SQL10n.format("Import from %@", name))
         d.width = ShellDialog.M.widthL
+        // art.html 42: a muted "8 videos · 4.1 GB" caption after the title.
+        let videos = items.filter { $0.kind == .video }.count, photos = items.count - videos
+        var parts: [String] = []
+        if videos > 0 { parts.append(SQL10n.plural(videos, one: "%@ video", other: "%@ videos")) }
+        if photos > 0 { parts.append(SQL10n.plural(photos, one: "%@ photo", other: "%@ photos")) }
+        parts.append(SQByteSize.string(items.reduce(0) { $0 + $1.size }))
+        d.headerSubtitle = parts.joined(separator: " \u{00B7} ")
         d.content = browser
         d.sheetStyle = true
         d.footerStatus = { [weak browser] in browser?.statusText ?? "" }
@@ -71,6 +78,7 @@ extension ShellHost {
         d.addButton("Copy & Import")
         d.addButton("Import without Copying")
         d.addButton("Select All", leading: true)
+        d.ghostButtons = [2]                                  // art.html 42: Select All is a plain text button
         ShellCardImport.current = browser
         let key = volume.standardizedFileURL.path
         ShellCardImport.dialogs[key] = d

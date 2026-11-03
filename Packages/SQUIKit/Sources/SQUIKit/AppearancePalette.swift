@@ -87,6 +87,8 @@ public struct AppearancePalette: Equatable, Sendable {
     public var mode: AppearanceMode
     public var canvas, divider, titlebar, panel, content, lane, timeline, overlay: PaletteColor
     public var label, label2, label3: PaletteColor
+    /// Disabled text (t4); fixed, not part of the 4.5:1 guard. `errText`: destructive menu rows.
+    public var label4, errText: PaletteColor
     /// White in dark mode, black in light: the ink of every translucent fill and line.
     public var ink: PaletteColor
     /// Multiplier of hairline alphas (Contrast slider).
@@ -100,7 +102,7 @@ public struct AppearancePalette: Equatable, Sendable {
     public func lineAlpha(_ dark: Double) -> Double { dark * lineScale * (isDark ? 1 : 0.8) }
 
     /// Opaque selection and field over the panel (the text contrast checks run on these).
-    public var selectionOnPanel: PaletteColor { panel.over(ink, isDark ? 0.14 : 0.08) }
+    public var selectionOnPanel: PaletteColor { panel.over(ink, 0.14) }
     public var fieldOnPanel: PaletteColor { panel.over(.black, isDark ? 0.28 : 0.05) }
 
     /// The lowest text contrast over the resting surfaces (shown in the Appearance popover; never under 4.5).
@@ -112,17 +114,17 @@ public struct AppearancePalette: Equatable, Sendable {
         return m
     }
 
-    private static let darkSurfaces: [UInt32] = [0x141416, 0x080809, 0x232326, 0x1E1E21, 0x19191C, 0x18181B, 0x151518, 0x2A2A2E]
-    private static let lightSurfaces: [UInt32] = [0xDCDCDF, 0xD0D0D4, 0xEEEEF0, 0xFFFFFF, 0xF7F7F8, 0xF4F4F5, 0xF1F1F3, 0xEBEBED]
-    private static let darkText: [UInt32] = [0xE6E6E8, 0xB2B2B8, 0x9C9CA2]
-    private static let lightText: [UInt32] = [0x19191C, 0x4C4C52, 0x5E5E64]
+    private static let darkSurfaces: [UInt32] = [0x0B0B0C, 0x0B0B0C, 0x141415, 0x1B1B1D, 0x151516, 0x18181A, 0x151516, 0x2A2A2D]
+    private static let lightSurfaces: [UInt32] = [0xC9C9CC, 0xC9C9CC, 0xE4E4E6, 0xF4F4F5, 0xECECEE, 0xEFEFF1, 0xECECEE, 0xFFFFFF]
+    private static let darkText: [UInt32] = [0xECECEE, 0xA7A7AE, 0x898992]
+    private static let lightText: [UInt32] = [0x19191C, 0x4C4C52, 0x62626A]
 
     public static func resolve(_ s: AppearanceSettings) -> AppearancePalette {
         let d = s.mode == .dark
         let ct = Double(s.contrast), bg = Double(s.background)
         let k = ct <= 50 ? 0.4 + ct * 0.012 : 1 + (ct - 50) * 0.016
         let f = d ? 2.2 : 1.6
-        let anchor = d ? PaletteColor(hex: 0x141416) : .white
+        let anchor = d ? PaletteColor(hex: 0x141415) : .white
         let src = (d ? darkSurfaces : lightSurfaces).map { PaletteColor(hex: $0) }
         // Canvas and divider (dark) only follow Background; every other surface spreads away from the anchor with Contrast.
         let surf: [PaletteColor] = src.enumerated().map { i, c in
@@ -135,9 +137,10 @@ public struct AppearancePalette: Equatable, Sendable {
             mode: s.mode, canvas: surf[0], divider: surf[1], titlebar: surf[2], panel: surf[3], content: surf[4],
             lane: surf[5], timeline: surf[6], overlay: surf[7],
             label: .white, label2: .white, label3: .white,
+            label4: PaletteColor(hex: d ? 0x5C5C63 : 0x9A9AA0), errText: PaletteColor(hex: d ? 0xFF5F55 : 0xC4281E),
             ink: d ? .white : .black,
             lineScale: ct <= 50 ? 0.5 + ct * 0.01 : 1 + (ct - 50) * 0.016,
-            accent: PaletteColor(hex: d ? 0xA56BFF : 0x7A33E0), accentFill: PaletteColor(hex: 0x7C3AED),   // P3 Violett (DECISIONS 2026-10-13)
+            accent: PaletteColor(hex: 0x007AFF), accentFill: PaletteColor(hex: 0x0069E8),   // approved design 2026-11-03
             warning: PaletteColor(hex: d ? 0xFF9F0A : 0xA35C00), red: PaletteColor(hex: d ? 0xFF453A : 0xC4281E),
             keyframe: PaletteColor(hex: d ? 0xD6D6D6 : 0x4C4C52))
         // Text: app values at contrast 50, shifted with the sliders, then raised until every resting surface reads at 4.5:1.

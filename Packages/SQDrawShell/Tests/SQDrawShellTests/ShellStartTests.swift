@@ -63,6 +63,16 @@ import SQEditorSession
         #expect(!h.isStartShown)
     }
 
+    @Test func hoverIsPerElementNotPerCommand() {
+        let (h, s, _) = host()   // no recents: the empty pane has its own New project / Open… buttons
+        let rail = s.railSpots().first { $0.1 == .newProject }!.0
+        let center = s.emptyState()!.buttons.compactMap { e -> CGRect? in if case .button(_, .emptyNew, let r, _) = e { return r }; return nil }.first!
+        _ = h.handle(.mouseMoved(x: Float(center.midX), y: Float(center.midY)), scale: 1)
+        #expect(s.hover == .emptyNew)
+        _ = h.handle(.mouseMoved(x: Float(rail.midX), y: Float(rail.midY)), scale: 1)
+        #expect(s.hover == .newProject)
+    }
+
     @Test func recentGridGroupsByDayAndClicksHitTheCards() {
         let (_, s, _) = host(recents: [Self.entry("Today One", daysAgo: 0), Self.entry("Week", daysAgo: 3), Self.entry("Old", daysAgo: 30)])
         #expect(s.tab == .recent)

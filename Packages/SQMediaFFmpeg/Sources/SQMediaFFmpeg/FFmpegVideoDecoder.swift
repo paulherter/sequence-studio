@@ -23,11 +23,20 @@ public final class FFmpegVideoDecoder: VideoDecoding, @unchecked Sendable {
         var cursor: FFmpegDecodeCursor?
         /// Pictures decoded past the previous range (reorder delay), by presentation index.
         var carry: [Int: DecodedFrame] = [:]
+        /// Whether the software decoder runs in preview mode right now (`setPreview`).
+        var preview = false
     }
     private let state: Mutex<State>
     /// Mirror of `State.hardware` behind its own lock: a decode holds `state` for its whole run (up to a GOP, over a
     /// second backwards), and the main thread asks `isHardware` on every pause (proxy lookup).
     private let hardwareFlag: Mutex<Bool>
+    /// The preview request (`setPreview`), applied by the next decode when the decoder is free.
+    private let previewFlag = Mutex(false)
+
+    /// Preview mode for scrubbing: a software decoder skips the loop filter (about a third faster on 4K 10-bit H.264) and
+    /// its pictures are not exact. Never blocks (a running decode applies it at its next call); a hardware decoder ignores it.
+    /// Turning it off restarts the next decode from a keyframe, so the exact pictures do not build on drifted references.
+    public func setPreview(_ on: Bool) { previewFlag.withLock { $0 = on } }
 
     /// Frames handed out beyond the decoder's own reference pictures before the D3D11 texture pool runs dry.
     /// shortcut: a fixed pool headroom; upgrade to copying into the renderer's own textures when playback holds more.
@@ -43,11 +52,20 @@ public final class FFmpegVideoDecoder: VideoDecoding, @unchecked Sendable {
         // Streams no PC hardware decoder takes (4:2:2, 4:4:4, 10-bit H.264, ProRes...) open the software decoder at once.
         let gpuCan = FFmpegHardwareDecode.supports(codec: demuxer.formatDescription.codec,
                                                    pixelFormat: FFmpegDemuxer.string(demuxer.raw.pixFmt))
-        if hardware && gpuCan { dec = try? Self.open(demuxer, hardware: true, extra: extraHWFrames); hw = dec != nil }
+        // SQ_FORCE_SW_DECODE=1 skips D3D11VA (tests the software path; a tester whose GPU driver fails in D3D11VA).
+        let forced = ProcessInfo.processInfo.environment["SQ_FORCE_SW_DECODE"] == "1"
+        if hardware && gpuCan && !forced {
+            do { dec = try Self.open(demuxer, hardware: true, extra: extraHWFrames); hw = true } catch {
+                Self.onFallback?("d3d11va open failed for \(demuxer.formatDescription.codec): \(error); using software")
+            }
+        }
         if dec == nil { dec = try Self.open(demuxer, hardware: false, extra: 0) }
         state = Mutex(State(decoder: dec, hardware: hw))
         hardwareFlag = Mutex(hw)
     }
+
+    /// Called when a hardware decoder could not open or failed mid-stream and software took over (the startup log).
+    nonisolated(unsafe) public static var onFallback: (@Sendable (String) -> Void)?
 
     deinit { state.withLock { s in if let d = s.decoder { sq_dec_close(d) } } }
 
@@ -62,7 +80,7 @@ public final class FFmpegVideoDecoder: VideoDecoding, @unchecked Sendable {
         var err = [CChar](repeating: 0, count: 256)
         let extradata = d.formatDescription.extradata
         let r = extradata.withUnsafeBufferPointer { e in
-            sq_dec_open(d.formatDescription.codec, e.baseAddress, Int32(e.count), d.raw.width, d.raw.height, d.raw.tbNum,
+            sq_dec_open(d.formatDescription.codec, e.baseAddress, Int32(e.count), d.raw.width, d.raw.height, d.raw.bitsPerCodedSample, d.raw.tbNum,
                         d.raw.tbDen, hardware ? 1 : 0, Int32(extra), &out, &err, Int32(err.count))
         }
         guard r == 0, let out else { throw FFmpegError.from("decoder", r, err) }
@@ -85,18 +103,45 @@ public final class FFmpegVideoDecoder: VideoDecoding, @unchecked Sendable {
         try decode(range, deliver: Optional(deliver))
     }
 
+    /// Like `decode(_:deliver:)`, but `isStale` is asked once the decoder is free (the state lock is taken): when it says yes
+    /// the request is dropped untouched (nothing delivered, the decoder stays where it was). A scrub queues one decode per
+    /// window frame behind the one running; only the newest is still wanted when its turn comes.
+    public func decode(_ range: ClosedRange<Int>, isStale: @escaping @Sendable () -> Bool,
+                       deliver: @escaping @Sendable (DecodedFrame) -> Void) async throws -> [DecodedFrame] {
+        try decode(range, deliver: Optional(deliver), isStale: isStale)
+    }
+
     /// Blocking decode under the state lock. A hardware failure mid-stream reopens the software decoder and retries once.
-    private func decode(_ range: ClosedRange<Int>, deliver: (@Sendable (DecodedFrame) -> Void)?) throws -> [DecodedFrame] {
+    private func decode(_ range: ClosedRange<Int>, deliver: (@Sendable (DecodedFrame) -> Void)?,
+                        isStale: (@Sendable () -> Bool)? = nil) throws -> [DecodedFrame] {
         let count = demuxer.index.count
         guard count > 0 else { return [] }
         let r = max(0, range.lowerBound)...min(count - 1, range.upperBound)
         guard r.lowerBound <= r.upperBound else { return [] }
         return try state.withLock { s in
+            if let isStale, isStale() { return [] }
+            let preview = previewFlag.withLock { $0 }
+            if preview != s.preview, let d = s.decoder {
+                s.preview = preview
+                sq_dec_set_fast(d, preview ? 1 : 0)
+                sq_dec_flush(d)
+                s.cursor = nil
+                s.carry.removeAll()
+            }
             do { return try decodeLocked(r, &s, deliver) } catch where s.hardware && error is FFmpegError {
+                Self.onFallback?("d3d11va decode failed (\(error)); reopening \(demuxer.formatDescription.codec) in software")
                 if let d = s.decoder { sq_dec_close(d) }
                 s.decoder = try Self.open(demuxer, hardware: false, extra: 0)
                 s.hardware = false
+                s.preview = false
                 hardwareFlag.withLock { $0 = false }
+                s.cursor = nil
+                s.carry.removeAll()
+                return try decodeLocked(r, &s, deliver)
+            } catch where error is FFmpegError {
+                // A software decode that failed midstream leaves the decoder in an unknown state: start over from a fresh seek once.
+                Self.onFallback?("decode failed (\(error)); retrying \(demuxer.formatDescription.codec) from a fresh start")
+                if let d = s.decoder { sq_dec_flush(d) }
                 s.cursor = nil
                 s.carry.removeAll()
                 return try decodeLocked(r, &s, deliver)

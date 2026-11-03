@@ -32,7 +32,7 @@ extension TimelinePanel {
             return Double(s.value) / Double(s.timescale)
         }, spans: spans)
         guard !weak.isEmpty else { return }
-        let body = rect.insetBy(dx: 0, dy: 1), h = TrackConfidenceStrip.height
+        let body = rect.insetBy(dx: 0, dy: TimelineSkin.clipInset), h = TrackConfidenceStrip.height
         // shortcut: clipped to the body rectangle, not its rounded corners (a 3 pt strip under a 4 pt radius); round the
         // clip when Canvas gets a rounded clip.
         cv.saveGState()

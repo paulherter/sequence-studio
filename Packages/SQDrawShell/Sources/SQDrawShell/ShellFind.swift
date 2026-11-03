@@ -15,12 +15,15 @@ extension ShellHost {
         ])
         form.placeholders = ["text": "Text"]
         form.inlinePopups = ["field"]
+        form.fieldIcons = ["text": .search]
         form.beginEditing("text")
         let d = ShellDialog("Find", informative: "Select the clips and sequences that match.")
         d.width = 440
         d.form = form
         d.addButton("Find")
         d.addButton("Cancel", role: .cancel)
+        // art.html 17: Find stays dimmed while there is nothing to look for (no text and not offline-only).
+        d.buttonEnabled = { [weak form] i in i != 0 || !(form?.text("text") ?? "").isEmpty || form?.bool("offline") == true }
         guard await ask(d) == .first else { return }
         let c = ProjectPanelModel.FindCriteria(text: form.text("text") ?? "", field: form.index("field") == 1 ? .label : .name,
                                                offlineOnly: form.bool("offline") ?? false)

@@ -36,7 +36,7 @@ extension ProjectListView {
     static let cellPad: CGFloat = CGFloat(DrawTheme.Spacing.xs)
     static let cellInset: CGFloat = CGFloat(DrawTheme.Spacing.sm)
     /// The Mac list's text: `Theme.Typography.list` 12 for rows, `listHeader` 11 semibold for the column titles.
-    static let listFont: CGFloat = 12
+    static let listFont: CGFloat = 11
     static let optionsSize: CGFloat = 22
 
     static func rightAligned(_ c: ProjectPanelModel.Column) -> Bool { c == .duration || c == .frameRate }
@@ -263,7 +263,7 @@ extension ProjectListView {
             var content: CGFloat = 0
             if let model { for r in list.prefix(200) { content = max(content, measure.width(model.cellText(c, r), size: Self.listFont)) } }
             let header = measure.width(c.title, size: 11)
-            let w = max(content + 2 * Self.cellPad, header + 2 * Self.cellPad + ProjectColumnSizing.headerExtra)
+            let w = max(content + 2 * Self.cellInset, header + 2 * Self.cellPad + ProjectColumnSizing.headerExtra)
             return min(max(w, c.minWidth), c == .filePath ? 360 : 150)
         }
         var widths = others.map(width)
@@ -327,7 +327,7 @@ extension ProjectListView {
             let range = Self.thumbRange.upperBound - Self.thumbRange.lowerBound
             InspectorDraw.slider(&c, fraction: Double((thumbSize - Self.thumbRange.lowerBound) / range), in: r, enabled: true, theme)
         }
-        if header.height > 0 { c.fill(CGRect(x: frame.minX, y: header.maxY - 1, width: frame.width, height: 1), theme.separator) }
+        if header.height > 0 { c.fill(CGRect(x: frame.minX, y: header.maxY - 1, width: frame.width, height: 1), theme.rowSeparator) }
         if isSearchVisible {
             let f = searchFieldRect
             search.fontSize = 11

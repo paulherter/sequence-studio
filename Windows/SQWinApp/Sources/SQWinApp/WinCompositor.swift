@@ -1,6 +1,7 @@
 import Foundation
 import SQAnalysis
 import SQCore
+import SQDrawKit
 import SQFrame
 import SQGPU
 import SQGPUD3D12
@@ -32,7 +33,9 @@ import SQText
 final class WinCompositor {
     /// One decoded picture of a layer: the plane cache key, the NV12 bytes and the track facts (rotation, matrix).
     /// `proxy`: the picture is the media's proxy (its own planes, never mixed with the original's of the same index).
-    struct Source { let media: UUID; let index: Int; let picture: NV12Picture; let info: VideoTrackInfo; var proxy = false }
+    struct Source { let media: UUID; let index: Int; let picture: NV12Picture; let info: VideoTrackInfo; var proxy = false
+                    /// A PNG's straight RGBA: drawn as an RGBA picture, transparency kept (the NV12 picture has none).
+                    var still: RGBAImage? = nil }
     private struct PlaneKey: Hashable { let media: UUID; let index: Int; let proxy: Bool; let width: Int }
     private struct Storage: SQFrameStorage { let slot: Int }
     private struct PresentU {   // Present.slang `PresentU`: SDR, unchanged gamma, linear sampling
@@ -49,6 +52,11 @@ final class WinCompositor {
     /// Forgets the uploaded planes (the engine's pictures changed size for the same frame: playback quality).
     func dropPlanes() { planes = [:] }
     private var working: D3D12GPUTexture?, output: D3D12GPUTexture?
+    /// Captions drawn ahead on worker threads while playing (`WinCaptionLane`); off, they draw on the calling thread.
+    var asyncCaptions = false
+    /// One frame of the sequence: how far apart the lane's look-ahead rasters are.
+    var frameStep = Time(1, 30)
+    let captionLane = WinCaptionLane()
     /// The ungraded canvas of Color page Split (nil otherwise).
     private var splitWorking: D3D12GPUTexture?
     /// Image-sequence frames at another size than the sequence (`downloadLinear(size:)`).
@@ -114,8 +122,10 @@ final class WinCompositor {
         }
         WinPlayStats.shared.add(.layers, Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6)
         var captionNodes: [RenderNode] = []
-        for c in captions {
-            if let r = try caption(c, format: format, pictures: &pictures, used: &usedTitles) { captionNodes.append(.layer(r)) }
+        try WinPlayStats.shared.time(.captionPass) {
+            for c in captions {
+                if let r = try caption(c, format: format, pictures: &pictures, used: &usedTitles) { captionNodes.append(.layer(r)) }
+            }
         }
         titles = usedTitles
         shapes = usedShapes
@@ -134,7 +144,7 @@ final class WinCompositor {
             try compositor.render(nodes: RenderNode.tree(requests: requests, layers: layers) + captionNodes, format: format, into: working,
                                   commandBuffer: cb, transparent: transparent) { f in (f.storage as? Storage).map { pictures[$0.slot] } }
         }
-        try presentPass(working, into: output, cb)
+        try WinPlayStats.shared.time(.presentPass) { try presentPass(working, into: output, cb) }
         if let splitGrade {
             let ungraded = zip(requests, layers).map { l, r in
                 var r = r
@@ -156,8 +166,11 @@ final class WinCompositor {
             splitWorking = nil      // a second canvas is only kept while Split is showing
         }
         lastReadback = readback ? device.readback(output, in: cb) : nil
-        let resource = device.prepareForSampling(output)
-        device.commit(cb)
+        let resource = WinPlayStats.shared.time(.commit) {
+            let r = device.prepareForSampling(output)
+            device.commit(cb)
+            return r
+        }
         guard device.lastCommitSucceeded, let resource else { throw AppError("compositor: the frame did not fit the GPU budgets") }
         lastMilliseconds = Double(DispatchTime.now().uptimeNanoseconds - start) / 1e6
         return NV12Picture(bytes: [], width: ow, height: oh, fullRange: true, rgba: true,
@@ -239,13 +252,21 @@ final class WinCompositor {
         guard let s = source(l) else {
             return RenderLayer(content: .placeholder(.offline), transform: l.transform, cornerRadius: l.cornerRadius).applying(l)
         }
+        if let img = s.still, let t = stillTexture(s.media, img) {
+            pictures.append(Picture(rgba: t, alphaMode: 1))
+            let frame = SQFrame(width: img.width, height: img.height, pixelFormat: .rgba8,
+                                storage: Storage(slot: pictures.count - 1))
+            return RenderLayer(content: .frame(frame, colorHint: s.info), transform: l.transform, cornerRadius: l.cornerRadius,
+                               nativeSize: (img.width, img.height)).applying(l)
+        }
         let key = PlaneKey(media: s.media, index: s.index, proxy: s.proxy, width: s.picture.width)
         let pic: Picture
         if let p = used[key] ?? planes[key] { pic = p } else { pic = try upload(s.picture) }
         used[key] = pic
         pictures.append(pic)
         let p = s.picture
-        let frame = SQFrame(width: p.width, height: p.height, pixelFormat: p.fullRange ? .nv12FullRange : .nv12,
+        let frame = SQFrame(width: p.width, height: p.height,
+                            pixelFormat: p.straightRGBA ? .rgba8 : (p.fullRange ? .nv12FullRange : .nv12),
                             storage: Storage(slot: pictures.count - 1))
         return RenderLayer(content: .frame(frame, colorHint: s.info), transform: l.transform, cornerRadius: l.cornerRadius,
                            nativeSize: (s.info.width, s.info.height)).applying(l)
@@ -260,7 +281,7 @@ final class WinCompositor {
         guard let ref else { return RenderLayer(content: .placeholder(.offline), transform: l.transform) }
         let dur = l.clipDuration ?? clipDurations[l.clip] ?? l.localTime
         guard let (frame, _) = try textPicture(ref, localTime: l.localTime, duration: dur, canvas: format, pictures: &pictures,
-                                                 used: &used) else {
+                                                 used: &used, lane: asyncCaptions) else {
             return RenderLayer(content: .placeholder(.loading), transform: hidden)    // empty text: invisible
         }
         let raster = SQFrame(width: frame.picture.width, height: frame.picture.height, pixelFormat: .rgba32f,
@@ -311,6 +332,17 @@ final class WinCompositor {
                            transform: l.transform)
     }
 
+    /// A PNG still as an RGBA8 texture, kept per media (a still never changes between frames).
+    private var stillTextures: [UUID: D3D12GPUDevice.Texture] = [:]
+    private func stillTexture(_ media: UUID, _ img: RGBAImage) -> D3D12GPUDevice.Texture? {
+        if let t = stillTextures[media] { return t }
+        guard let t = device.makeTexture(GPUTextureDescriptor(width: img.width, height: img.height, format: .rgba8Unorm)) else { return nil }
+        img.pixels.withUnsafeBytes { device.upload($0, bytesPerRow: img.width * 4, to: t) }
+        if stillTextures.count >= 24 { stillTextures.removeAll() }
+        stillTextures[media] = t
+        return t
+    }
+
     /// A linear premultiplied RGBA float picture (text, shapes) as a GPU texture.
     private func upload(_ p: PortableTextRenderer.Picture) throws -> Picture {
         guard let t = device.makeTexture(GPUTextureDescriptor(width: p.width, height: p.height, format: .rgba32Float,
@@ -326,7 +358,7 @@ final class WinCompositor {
                          used: inout [GeneratorRef: (frame: PortableTextFrame, picture: Picture)]) throws -> RenderLayer? {
         let canvas = format.layoutFormat
         guard let (frame, _) = try textPicture(c.ref, localTime: c.localTime, duration: c.duration, canvas: canvas,
-                                               pictures: &pictures, used: &used) else { return nil }
+                                               pictures: &pictures, used: &used, lane: asyncCaptions) else { return nil }
         var tr = frame.layerTransform(base: ClipTransform(position: c.position), canvas: canvas, pivotAtText: true)
         tr.opacity *= c.opacity
         let raster = SQFrame(width: frame.picture.width, height: frame.picture.height, pixelFormat: .rgba32f,
@@ -337,11 +369,17 @@ final class WinCompositor {
     /// The text frame of `ref` at `localTime` and its picture on the GPU (appended to `pictures`): the picture of the last
     /// frame is kept while the text animators' states stay the same; nil for empty text.
     private func textPicture(_ ref: GeneratorRef, localTime: Time, duration: Time, canvas: SequenceFormat, pictures: inout [Picture],
-                             used: inout [GeneratorRef: (frame: PortableTextFrame, picture: Picture)]) throws
+                             used: inout [GeneratorRef: (frame: PortableTextFrame, picture: Picture)], lane: Bool = false) throws
         -> (PortableTextFrame, Picture)? {
         let cached = used[ref] ?? titles[ref]
-        guard let f = try TextGenerator.portableFrame(ref: ref, localTime: localTime, clipDuration: duration, canvas: canvas,
-                                                      raster: cached?.frame) else { return nil }
+        let drawn: PortableTextFrame?
+        if lane {
+            drawn = captionLane.frame(ref: ref, localTime: localTime, duration: duration, step: frameStep, ahead: 10, canvas: canvas)
+        } else {
+            drawn = try TextGenerator.portableFrame(ref: ref, localTime: localTime, clipDuration: duration, canvas: canvas,
+                                                    raster: cached?.frame)
+        }
+        guard let f = drawn else { return nil }
         let pic: Picture
         if let cached, f.sharesPicture(with: cached.frame) { pic = cached.picture } else { pic = try upload(f.picture) }
         used[ref] = (f, pic)
@@ -357,6 +395,13 @@ final class WinCompositor {
     }
 
     private func upload(_ p: NV12Picture) throws -> Picture {
+        if p.straightRGBA {
+            guard let t = device.makeTexture(GPUTextureDescriptor(width: p.width, height: p.height, format: .rgba8Unorm)) else {
+                throw AppError("compositor: alpha texture \(p.width)x\(p.height)")
+            }
+            p.bytes.withUnsafeBytes { device.upload($0, bytesPerRow: p.width * 4, to: t) }
+            return Picture(rgba: t, alphaMode: 1)
+        }
         let w = p.width, h = p.height, deep = p.bitDepth > 8, sample = deep ? 2 : 1
         let t0 = DispatchTime.now().uptimeNanoseconds
         let luma = device.makeTexture(GPUTextureDescriptor(width: w, height: h, format: deep ? .r16Unorm : .r8Unorm, cpuAccessible: true))

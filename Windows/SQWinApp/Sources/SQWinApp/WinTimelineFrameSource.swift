@@ -73,6 +73,7 @@ final class WinTimelineFrameSource: FrameSource {
         paths = Dictionary(media.map { ($0.id, $0.path) }, uniquingKeysWith: { a, _ in a })
         let infos = MediaInfoTable()
         infos.set(Dictionary(media.map { ($0.id, $0.info) }, uniquingKeysWith: { a, _ in a }))
+        infos.setPaths(paths)
         colorResolver = WinMediaSource.colorResolver(infos)
         compositor = try WinCompositor(device: device)
         compositor.clipDurations = WinCompositor.clipDurations(of: timeline, sequences: sequences)

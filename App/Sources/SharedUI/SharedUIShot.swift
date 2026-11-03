@@ -80,8 +80,17 @@ enum SharedUIShot {
         probes.append(("menu-timeline-ruler", at(g.x(for: RenderDemoProject.frames(300)), TimelineGeometry.rulerHeight / 2)))
         if let y = rowMid("V1") { probes.append(("menu-timeline-track-header-v1", at(hx, y))) }
         if let y = rowMid("A3") { probes.append(("menu-timeline-track-header-a3", at(hx, y))) }
+        /// Pointer onto the row titled `title` of the open menu's first level (hover look, submenu opens).
+        func hover(_ title: String) {
+            guard let v = menus.views.first, let i = v.items.firstIndex(where: { $0.title == title }), v.rowFrames.indices.contains(i) else { return }
+            let r = v.rowFrames[i]
+            c.handle(.mouseMoved(x: Float((v.origin.x + r.midX) * 2), y: Float((v.origin.y + r.midY) * 2)))
+        }
         for (name, p) in probes {
-            let items = probe(p) { _ in shot("shared-\(name).png") }
+            let items = probe(p) { _ in
+                shot("shared-\(name).png")
+                if name == "menu-timeline-clip" { hover("Speed Ramp Presets"); shot("shared-\(name)-hover.png") }
+            }
             if items.isEmpty { print("shared ui shot: \(name) no menu"); continue }
             write(name, items)
         }
@@ -98,6 +107,7 @@ enum SharedUIShot {
             var seen = Set<String>(), n = 0
             for p in points where n < 6 {
                 let items = probe(p) { items in
+                    if items.contains(where: { $0.title == "Label" && $0.submenu != nil }) { hover("Label"); shot("shared-menu-\(panel.rawValue)-label-submenu.png") }
                     let key = items.map(\.title).joined(separator: "|")
                     guard !seen.contains(key) else { return }
                     let first = items.first { $0.kind == .action }?.title ?? "menu"
@@ -207,8 +217,7 @@ enum SharedUIShot {
         let metal = MetalDrawListRenderer()
         func shot(_ name: String) {
             let t0 = Date()
-            // The AppKit render shows a dialog's first field unfocused (the offscreen window is not key): no focus ring.
-            c.shell.dialog?.form?.blur()
+            // A dialog opens with its first text field focused (art.html 10, 15, 17, 36), so its ring shows.
             _ = c.frame(width: w, height: h)        // the first layout settles the dock and the zoom
             let list = c.frame(width: w, height: h)
             let t1 = Date()
@@ -288,6 +297,12 @@ enum SharedUIShot {
             }
             let (sw, sh) = (w, h)
             w = 2200; h = 1440
+            if let start = c.shell.startScreen {
+                let tab0 = start.tab
+                start.tab = .home
+                shot("shared-start-home.png")
+                start.tab = tab0
+            }
             shot("shared-start-window.png")
             w = sw; h = sh
             c.shell.startWindowSize = nil
@@ -326,6 +341,43 @@ enum SharedUIShot {
                 c.shell.dock.select(.effectControls)
                 c.shell.dock.focused = nil
                 shot("shared-edit.png")
+                if ProcessInfo.processInfo.environment["SQ_SHOT_ONLY"] == "shortcuts" {
+                    c.shell.showShortcuts()
+                    try? await Task.sleep(for: .milliseconds(200))
+                    shot("shared-shortcuts.png")
+                    c.handle(.keyDown(.escape, modifiers: []))
+                    try? await Task.sleep(for: .milliseconds(300))
+                    let lib = EffectDefaultsLibrary(fileURL: nil)
+                    if let blur = ClipEffect.make(kind: ClipEffect.gaussianBlurKind) {
+                        lib.update {
+                            $0.effects[ClipEffect.gaussianBlurKind] = blur
+                            $0.transitions[TransitionKind.crossDissolve.rawValue] = TransitionPreset(kind: .crossDissolve, duration: Time(1, 2))
+                        }
+                    }
+                    c.shell.effectDefaultsLibrary = lib
+                    Task { @MainActor in await c.shell.showPreferences() }
+                    try? await Task.sleep(for: .milliseconds(300))
+                    shot("shared-preferences.png")
+                    for page in ShellPreferences.Page.allCases.dropFirst() {
+                        c.shell.dialog?.form?.onChange?("page", .index(page.rawValue))
+                        try? await Task.sleep(for: .milliseconds(100))
+                        shot("shared-preferences-\(page).png")
+                    }
+                    exit(0)
+                }
+                if ProcessInfo.processInfo.environment["SQ_SHOT_ONLY"] == "menubar" {
+                    // Every menu-bar menu open, as a PNG (artifact 67-75).
+                    // The Mac bar is native (titles hidden), so each menu opens through the menu index.
+                    for (i, menu) in (c.shell.menuBar.refresh?() ?? c.shell.menuBar.menus).enumerated() {
+                        let slug = menu.title.lowercased().map { $0.isLetter || $0.isNumber ? String($0) : "-" }.joined()
+                            .split(separator: "-").joined(separator: "-")
+                        c.shell.menuBar.controller.dismiss()
+                        c.shell.menuBar.openMenu(i)
+                        shot("shared-menu-bar-\(slug).png")
+                    }
+                    c.shell.menuBar.controller.dismiss()
+                    exit(0)
+                }
                 if ProcessInfo.processInfo.environment["SQ_SHOT_ONLY"] == "keys" {
                     await keySweep(c)
                     exit(0)

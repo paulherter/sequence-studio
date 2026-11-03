@@ -231,19 +231,14 @@ import SQUIKit
         if c.atlas != nil {
             for k in Tab.allCases { segmentWidths[k] = c.size(of: SQL10n.string(k.title), fontSize: fs).width.rounded(.up) + 2 * Self.segmentInset }
         }
-        let all = tabs.map(frame)
-        if let first = all.first, let last = all.last {
-            // SQSegmented: the track is `fill2` with 6 pt corners, the segments sit 1 pt inside it.
-            c.fill(roundedRect: first.union(last).insetBy(dx: -Self.trackPadding, dy: 0), radius: CGFloat(DrawTheme.Radius.control),
-                   t.inkFill(0.06))
-        }
+        // The pills sit flat on the panel (artifact: only the active pill has a fill, no track behind them).
         for k in tabs {
             let f = frame(k), on = k == tab
             if on || hoverTab == k || pressedTab == k {
                 c.fill(roundedRect: f.insetBy(dx: 0, dy: Self.trackPadding), radius: CGFloat(DrawTheme.Radius.small),
-                       on ? t.fillPressed : t.fillHover)
+                       on ? t.raised : t.hover)
             }
-            c.draw(SQL10n.string(k.title), in: f, fontSize: fs, on ? DrawColor.white : t.label, align: .center)
+            c.draw(SQL10n.string(k.title), in: f, fontSize: fs, on ? t.label : t.label2, align: .center)
         }
         c.saveGState()
         c.clip(to: body)

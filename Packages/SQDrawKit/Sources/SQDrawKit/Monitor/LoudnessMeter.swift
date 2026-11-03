@@ -144,7 +144,7 @@ public struct LoudnessMeter: Sendable, Equatable {
 
         func bar(_ y: CGFloat, fill: Double, color: DrawColor) {
             let track = CGRect(x: barX, y: y, width: barW, height: rowH)
-            c.fill(roundedRect: track, radius: 4, Self.field(t))                // Theme.Radius.small
+            c.fill(roundedRect: track, radius: CGFloat(DrawTheme.Radius.small), Self.field(t))                // Theme.Radius.small
             var f = track; f.size.width = track.width * CGFloat(fill)
             c.fill(roundedRect: f, radius: min(4, f.width / 2), color)
         }

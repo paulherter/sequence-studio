@@ -103,6 +103,8 @@ extension ShellHost {
         let d = ShellDialog("History", informative: "Click a step to go back to it. Dimmed steps were undone.")
         let form = ShellForm([.radio(id: "row", options: shown.map { $0.isUndone ? "(" + $0.title + ")" : $0.title },
                                      selected: list.position - first)])
+        form.numberedList = true
+        form.listNumberBase = first
         form.onChange = { [weak self] _, v in
             guard let self, case .index(let i) = v else { return }
             session.jumpToHistoryRow(first + i)

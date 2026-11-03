@@ -159,7 +159,7 @@ public final class MarkerListHost {
             let rr = rowRect(i)
             guard rr.maxY >= listRect.minY, rr.minY <= listRect.maxY else { continue }
             let pill = rr.insetBy(dx: CGFloat(DrawTheme.Spacing.xs), dy: 1)
-            if i == selectedRow { c.fill(roundedRect: pill, radius: CGFloat(DrawTheme.Radius.small), t.accentFill) }
+            if i == selectedRow { c.fill(roundedRect: pill, radius: CGFloat(DrawTheme.Radius.small), t.current) }
             else if i == hovered { c.fill(roundedRect: pill, radius: CGFloat(DrawTheme.Radius.small), t.fillHover) }
             var cx = rr.minX
             for (ci, col) in Self.columns.enumerated() {
@@ -168,9 +168,10 @@ public final class MarkerListHost {
                 cx += w
                 switch ci {
                 case 0:
-                    let d: CGFloat = 8
-                    c.fill(roundedRect: CGRect(x: cell.midX - d / 2, y: cell.midY - d / 2, width: d, height: d), radius: d / 2,
-                           e.color.drawColor)
+                    // Artifact: a gray pentagon flag (as the ruler's); only the picked row is bright.
+                    let mx = cell.midX, my = cell.midY - 4
+                    c.fill(polygon: [CGPoint(x: mx - 4, y: my), CGPoint(x: mx + 4, y: my), CGPoint(x: mx + 4, y: my + 4),
+                                     CGPoint(x: mx, y: my + 8), CGPoint(x: mx - 4, y: my + 4)], i == selectedRow ? t.label : t.label3)
                 case 1: c.draw(model.text(for: e.time), in: cell, fontSize: CGFloat(DrawTheme.TypeSize.caption), t.label2, inset: 6)
                 case 2: c.draw(e.name.isEmpty ? e.scopeLabel : e.name, in: cell, fontSize: fs, t.label, inset: 6)
                 case 3: c.draw(model.durationText(of: e), in: cell, fontSize: CGFloat(DrawTheme.TypeSize.caption), t.label2, inset: 6)

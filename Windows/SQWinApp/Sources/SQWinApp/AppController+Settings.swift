@@ -8,6 +8,34 @@ import SQPlayback
 import SQUIKit
 import WinSDK
 
+/// The WASAPI output list, read off the main thread: one enumeration costs ~125 ms, which stalled Settings when its
+/// page asked for the list. Settings gets the last list at once; the next visit sees a device plugged in since.
+final class WinAudioDevices: @unchecked Sendable {
+    static let shared = WinAudioDevices()
+    private let lock = NSLock()
+    private var devices: [AudioOutputChoices.Device] = []
+    private var reading = false
+
+    private init() { refresh() }
+
+    func current() -> [AudioOutputChoices.Device] {
+        refresh()
+        lock.lock(); defer { lock.unlock() }
+        return devices
+    }
+
+    private func refresh() {
+        lock.lock()
+        if reading { lock.unlock(); return }
+        reading = true
+        lock.unlock()
+        Thread.detachNewThread { [self] in
+            let list = WASAPIAudioEngine.outputDevices().map { AudioOutputChoices.Device(uid: $0.uid, name: $0.name) }
+            lock.lock(); devices = list; reading = false; lock.unlock()
+        }
+    }
+}
+
 /// The monitor's DPI factor; the theme scale is this times Preferences > Interface Size.
 @MainActor private var windowDPIScale: Float = 1
 
@@ -19,7 +47,8 @@ import WinSDK
 extension AppController {
     func wirePreferences(dpiScale: Float) {
         windowDPIScale = dpiScale
-        shell.audioOutputs = { WASAPIAudioEngine.outputDevices().map { AudioOutputChoices.Device(uid: $0.uid, name: $0.name) } }
+        _ = WinAudioDevices.shared   // starts the first read now
+        shell.audioOutputs = { WinAudioDevices.shared.current() }
         wireEffectDefaults()
         let previous = shell.onSettingsChanged
         shell.onSettingsChanged = { [weak self] s in

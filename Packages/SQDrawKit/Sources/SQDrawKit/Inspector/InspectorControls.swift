@@ -13,8 +13,10 @@ public enum InspectorTokens {
     public static let innerRadius: CGFloat = 4
     public static let focusLineWidth: CGFloat = 1.5
     public static let disabledAlpha: Float = 0.4
-    public static let sliderTrack: CGFloat = 2
-    public static let sliderKnob: CGFloat = 10
+    public static let sliderTrack: CGFloat = 3
+    public static let sliderKnob: CGFloat = 4
+    public static let sliderKnobHeight: CGFloat = 12
+    public static let sliderRadius: CGFloat = 2, sliderRingRadius: CGFloat = 3
     /// Keyframe ring (KeyframeToggleView): 14 pt slot, 10 pt diamond, 1.2 pt dot.
     public static let ringSlot: CGFloat = 14
     public static let ringDiamond: CGFloat = 10
@@ -27,15 +29,15 @@ public enum InspectorTokens {
 }
 
 extension DrawTheme {
-    /// `Theme.Colors.field`: the number field / popup body.
-    public var field: DrawColor { palette.isDark ? DrawColor.black.alpha(0.28) : DrawColor.black.alpha(0.05) }
+    /// The number field / popup body: the artifact `--well`.
+    public var field: DrawColor { well }
     /// `Theme.Colors.fieldEdgeHover`.
     public var fieldEdgeHover: DrawColor { inkFill(0.18) }
     /// `Theme.Colors.accentTint`: an editing field, a selected row.
     public var accentTint: DrawColor { accent.alpha(palette.isDark ? 0.22 : 0.16) }
     public var focusLine: DrawColor { accent }
-    /// `Theme.Colors.selection` / `Theme.Selection.fill`: a selected row (ink at .14 dark / .08 light).
-    public var selection: DrawColor { Self.color(palette.ink.withAlpha(palette.isDark ? 0.14 : 0.08)) }
+    /// `Theme.Colors.selection` / `Theme.Selection.fill`: a selected row (ink at .14 in both appearances).
+    public var selection: DrawColor { Self.color(palette.ink.withAlpha(SQTokens.Alpha.selection)) }
     /// `Theme.Colors.graphPane`: an opened curve row and its pane.
     public var graphPane: DrawColor { DrawColor.white.alpha(0.03) }
     /// `Theme.Colors.fieldEdge`: a plot's grid and baseline.
@@ -99,7 +101,7 @@ public enum InspectorDraw {
         let side = InspectorTokens.switchSide
         let h = side * 2.0.squareRoot() / 2
         if animated {
-            c.fill(polygon: diamond(p, size: 2 * h), t.accent)
+            c.fill(polygon: diamond(p, size: 2 * h), t.label)
         } else {
             let inner = (side - 1.2) * 2.0.squareRoot()
             c.stroke(polygon: diamond(p, size: inner), width: 1.2, hovering ? t.label2 : t.label3)
@@ -107,7 +109,7 @@ public enum InspectorDraw {
     }
 
     /// Prev / key / next in three equal slots (KeyframeNavigationView), `rect` = the navigation frame. Like the Mac
-    /// IconButtons: Lucide chevrons (10 pt), the key diamond (`KeyframeToggleView.diamondImage`: 9 pt, 1.1 pt line, a
+    /// IconButtons: caret chevrons (10 pt), the key diamond (`KeyframeToggleView.diamondImage`: 9 pt, 1.1 pt line, a
     /// 1.1 pt dot, cut out of the fill on a key; `behind` = the row color showing through), disabled ones dimmed.
     public static func navigation(_ c: inout Canvas, _ s: KeyframeControlState, in rect: CGRect, enabled: Bool, behind: DrawColor? = nil,
                                   _ t: DrawTheme) {
@@ -135,17 +137,18 @@ public enum InspectorDraw {
 
     public enum Direction: Sendable { case left, right, down, up }
 
-    /// A chevron (Lucide chevron-*): two 1.5 pt strokes in a 10 pt box centered in `rect`.
+    /// A chevron (`SQIcon` caret): `size` is the glyph's long side; the Phosphor caret fills two thirds of its box, so the box is
+    /// 1.5 times larger, centered in `rect`.
     public static func chevron(_ c: inout Canvas, in rect: CGRect, direction: Direction, _ color: DrawColor, size: CGFloat = 8) {
-        let m = CGPoint(x: rect.midX, y: rect.midY), h = size / 2, q = size / 4
-        let pts: [CGPoint]
+        let box = size * 1.5
+        let icon: SQIcon
         switch direction {
-        case .left: pts = [CGPoint(x: m.x + q, y: m.y - h), CGPoint(x: m.x - q, y: m.y), CGPoint(x: m.x + q, y: m.y + h)]
-        case .right: pts = [CGPoint(x: m.x - q, y: m.y - h), CGPoint(x: m.x + q, y: m.y), CGPoint(x: m.x - q, y: m.y + h)]
-        case .down: pts = [CGPoint(x: m.x - h, y: m.y - q), CGPoint(x: m.x, y: m.y + q), CGPoint(x: m.x + h, y: m.y - q)]
-        case .up: pts = [CGPoint(x: m.x - h, y: m.y + q), CGPoint(x: m.x, y: m.y - q), CGPoint(x: m.x + h, y: m.y + q)]
+        case .left: icon = .chevronLeft
+        case .right: icon = .chevronRight
+        case .down: icon = .chevronDown
+        case .up: icon = .chevronUp
         }
-        c.strokePolyline(pts, width: 1.5, color)
+        c.draw(icon: icon, at: CGPoint(x: rect.midX - box / 2, y: rect.midY - box / 2), size: box, color)
     }
 
     /// The SQ checkbox (SQCheckbox.draw): 14 pt box, 4 pt corners; on = accent fill and a white check, mixed = a dash.
@@ -155,7 +158,7 @@ public enum InspectorDraw {
         let a: Float = enabled ? 1 : InspectorTokens.disabledAlpha
         let fill: DrawColor
         if s == .on { fill = pressed ? t.accentFill.lifted(0.35) : (hovering && enabled ? t.accentFill.lifted(0.2) : t.accentFill) }
-        else { fill = pressed ? t.fillPressed : (hovering && enabled ? t.fillHover : t.fill) }
+        else { fill = pressed ? t.pressed : (hovering && enabled ? t.raised : t.well) }
         let r = InspectorTokens.checkboxRadius
         c.fill(roundedRect: box, radius: r, fill.alpha(fill.a * a))
         switch s {
@@ -164,7 +167,7 @@ public enum InspectorDraw {
             c.strokePolyline([CGPoint(x: box.minX + w * 0.24, y: box.minY + h * 0.52), CGPoint(x: box.minX + w * 0.43, y: box.minY + h * 0.72),
                               CGPoint(x: box.minX + w * 0.78, y: box.minY + h * 0.30)], width: 1.5, DrawColor.white.alpha(a))
         case .off, .mixed:
-            c.stroke(roundedRect: box.insetBy(dx: 0.25, dy: 0.25), radius: r, width: 0.5, t.trackHeaderLine.alpha(t.trackHeaderLine.a * a))
+            c.stroke(roundedRect: box.insetBy(dx: 0.5, dy: 0.5), radius: r - 0.5, width: 1, t.edge.alpha(t.edge.a * a))
             if s == .mixed {
                 c.fill(CGRect(x: box.minX + box.width * 0.27, y: box.midY - 0.75, width: box.width * 0.46, height: 1.5), t.label.alpha(a))
             }
@@ -181,38 +184,41 @@ public enum InspectorDraw {
         let r = InspectorTokens.radius(box)
         let a: Float = enabled ? 1 : InspectorTokens.disabledAlpha
         if !plain || hovering || open {
-            let base = open ? t.fillPressed : (hovering && enabled ? t.fillHover : t.fill)
+            let base = open ? t.pressed : (hovering && enabled ? t.raisedHover : t.well)
             c.fill(roundedRect: box, radius: r, base.alpha(base.a * a))
+            c.stroke(roundedRect: box.insetBy(dx: 0.25, dy: 0.25), radius: r, width: 0.5, t.hair2.alpha(t.hair2.a * a))
         }
         let size = fontSize ?? CGFloat(DrawTheme.TypeSize.body)
         let chevronW: CGFloat = 16
-        c.draw(title, in: CGRect(x: box.minX + 10, y: box.minY, width: max(box.width - 10 - chevronW, 0), height: box.height),
+        c.draw(title, in: CGRect(x: box.minX + 8, y: box.minY, width: max(box.width - 8 - chevronW, 0), height: box.height),
                fontSize: size, t.label.alpha(t.label.a * a))
         popupChevron(&c, in: CGRect(x: box.maxX - 7 - 7, y: box.minY, width: 7, height: box.height), t, alpha: a)
     }
 
     /// `SQPopup.drawChevron`: a 1.2 pt round stroke in a 7 pt box, `#999` on a dark palette (the chevron is 4.6 wide, 2.3 tall).
     public static func popupChevron(_ c: inout Canvas, in r: CGRect, _ t: DrawTheme, alpha a: Float = 1) {
-        let base = t.palette.isDark ? DrawColor(hex: 0x999999) : t.label3
+        let base = t.label3
         let m = r.midY
         c.strokePolyline([CGPoint(x: r.minX + 1.2, y: m - 1.1), CGPoint(x: r.minX + 3.5, y: m + 1.2), CGPoint(x: r.minX + 5.8, y: m - 1.1)],
                          width: 1.2, base.alpha(base.a * a))
     }
 
-    /// The SQ slider (NumericSlider): 2 pt track, accent fill up to the knob, 10 pt knob with a soft shadow.
-    public static func slider(_ c: inout Canvas, fraction: Double, in rect: CGRect, enabled: Bool, _ t: DrawTheme) {
-        let k = InspectorTokens.sliderKnob, tr = InspectorTokens.sliderTrack
+    /// The SQ slider (art.html `.sl`): 3 pt `raised` track, `label2` (gray) fill up to the knob, 4 x 12 pill knob with a 1 pt black ring.
+    /// `origin` is the fraction the fill starts from (0 = the left end; 0.5 for a bipolar slider such as Pan, art.html 21).
+    public static func slider(_ c: inout Canvas, fraction: Double, origin: Double = 0, in rect: CGRect, enabled: Bool, _ t: DrawTheme) {
+        let k = InspectorTokens.sliderKnob, kh = InspectorTokens.sliderKnobHeight, tr = InspectorTokens.sliderTrack
         let x0 = rect.minX + k / 2, x1 = rect.maxX - k / 2
         let f = CGFloat(max(0, min(1, fraction)))
         let kx = x0 + (x1 - x0) * f
         let a: Float = enabled ? 1 : InspectorTokens.disabledAlpha
-        // `SQSlider.draw`: the track spans the whole frame (the knob travels inside it), the accent part runs to the knob center.
         let track = CGRect(x: rect.minX, y: rect.midY - tr / 2, width: rect.width, height: tr)
-        c.fill(roundedRect: track, radius: tr / 2, t.fill.alpha(t.fill.a * a))
-        c.fill(roundedRect: CGRect(x: rect.minX, y: track.minY, width: kx - rect.minX, height: tr), radius: tr / 2, t.accent.alpha(a))
-        let knob = CGRect(x: kx - k / 2, y: rect.midY - k / 2, width: k, height: k)
-        c.shadow(roundedRect: knob, radius: k / 2, blur: 1.5, dy: 0.5, DrawColor.black.alpha(0.6 * a))
-        c.fill(ellipseIn: knob, DrawColor(hex: 0xF2F2F2, alpha: a))
+        c.fill(roundedRect: track, radius: InspectorTokens.sliderRadius, t.raised.alpha(t.raised.a * a))
+        let ox = x0 + (x1 - x0) * CGFloat(max(0, min(1, origin)))
+        let fillX = origin > 0 ? min(ox, kx) : rect.minX, fillEnd = origin > 0 ? max(ox, kx) : kx
+        c.fill(roundedRect: CGRect(x: fillX, y: track.minY, width: fillEnd - fillX, height: tr), radius: InspectorTokens.sliderRadius, t.label2.alpha(t.label2.a * a))
+        let knob = CGRect(x: kx - k / 2, y: rect.midY - kh / 2, width: k, height: kh)
+        c.fill(roundedRect: knob.insetBy(dx: -1, dy: -1), radius: InspectorTokens.sliderRingRadius, DrawColor.black.alpha(0.5 * a))
+        c.fill(roundedRect: knob, radius: InspectorTokens.sliderRadius, DrawColor(hex: SQTokens.Hex.sliderKnob, alpha: a))
     }
 
     /// Fraction of a slider for a pointer at `x` (inverse of `slider`).

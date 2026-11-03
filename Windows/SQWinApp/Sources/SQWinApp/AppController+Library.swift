@@ -41,8 +41,7 @@ extension AppController {
     }
 
     func drawLibraryDragLabels(_ c: inout Canvas, scale: Float, theme: DrawTheme) {
-        library.drawDragLabel(&c, scale: scale, theme: theme)
-        effects.drawDragLabel(&c, scale: scale, theme: theme)
+        HostDragPreview.shared.draw(&c, theme: theme)
     }
 
     func handleLibraryPanels(_ e: InputEvent, scale: Float) -> Bool {

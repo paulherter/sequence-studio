@@ -1,5 +1,4 @@
 #if os(macOS)
-import AppKit
 import Foundation
 import SQCore
 import SQDrawKit
@@ -37,19 +36,6 @@ import Testing
         var panel = TimelinePanel()
         panel.layout(DrawRect(x: 0, y: 0, w: Float(Self.w), h: Float(Self.h)), scale: 1)
         panel.sync(timeline: t, selection: [], playhead: .zero, selectedTransition: nil, labels: LabelResolver())
-        let view = TimelineView(timeline: t, frame: NSRect(x: 0, y: 0, width: Self.w, height: Self.h))
-        var bytes = [UInt8](repeating: 0, count: Self.w * Self.h * 4)
-        func appKitDraw() {
-            bytes.withUnsafeMutableBytes { buf in
-                let cg = CGContext(data: buf.baseAddress, width: Self.w, height: Self.h, bitsPerComponent: 8, bytesPerRow: Self.w * 4,
-                                   space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue)!
-                cg.translateBy(x: 0, y: CGFloat(Self.h)); cg.scaleBy(x: 1, y: -1)
-                NSGraphicsContext.saveGraphicsState()
-                NSGraphicsContext.current = NSGraphicsContext(cgContext: cg, flipped: true)
-                view.draw(view.bounds)
-                NSGraphicsContext.restoreGraphicsState()
-            }
-        }
         var list = DrawList(width: Float(Self.w), height: Float(Self.h))
         func sharedFrame(_ playhead: Time) {
             panel.sync(timeline: t, selection: [], playhead: playhead, selectedTransition: nil, labels: LabelResolver())
@@ -61,17 +47,15 @@ import Testing
         out.append("syncOffsets: \(mean((0..<20).map { _ in ms { _ = t.syncOffsets() } }))")
         out.append("clip scan: \(mean((0..<20).map { _ in ms { var n = 0; for tr in t.tracks { for c in tr.clips where c.start.value > 5 { n += 1 } }; _ = n } }))")
         for zoom in [1.5, 60.0] {
-            panel.setZoom(pointsPerSecond: zoom); view.setZoom(pointsPerSecond: zoom, motion: false)
+            panel.setZoom(pointsPerSecond: zoom)
             panel.laneCache.invalidate()
             let cold = ms { sharedFrame(.zero) }          // first frame at this zoom: a cache miss
             out.append("  cold frame @\(zoom): \(String(format: "%.2f", cold)) ms")
             let heads = (0..<60).map { Self.fd * Int64($0 * 37) }
-            var shared: [Double] = [], appKit: [Double] = [], syncOnly: [Double] = []
+            var shared: [Double] = [], syncOnly: [Double] = []
             for p in heads {
                 shared.append(ms { sharedFrame(p) })
                 syncOnly.append(ms { panel.sync(timeline: t, selection: [], playhead: p, selectedTransition: nil, labels: LabelResolver()) })
-                view.setPlayhead(p)
-                appKit.append(ms { appKitDraw() })
             }
             let rows = panel.rows
             let content = CGRect(x: 156, y: 24, width: panel.size.width - 156, height: panel.size.height - 24)
@@ -93,7 +77,7 @@ import Testing
             part("transitions") { panel.drawTransitions(&$0, rows: rows, clip: content) }
             part("headers") { panel.drawHeaders(&$0, rows: rows) }
             part("ruler") { panel.drawRuler(&$0) }
-            out.append("10k clips scrub @\(zoom) pt/s  shared: \(mean(shared)) (sync alone \(mean(syncOnly)))  |  AppKit: \(mean(appKit))")
+            out.append("10k clips scrub @\(zoom) pt/s  shared: \(mean(shared)) (sync alone \(mean(syncOnly)))")
         }
         out.append("lane cache: \(panel.laneCache.hits) hits, \(panel.laneCache.misses) misses")
         // SQ_TIMELINE_SPIN=<seconds>: keep redrawing cold frames at 1.5 pt/s so `sample <pid>` can profile the miss path.

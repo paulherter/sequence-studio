@@ -47,10 +47,5 @@ public enum PanelID: String, Sendable, Codable, Hashable, CaseIterable {
     public static let dockable: [PanelID] = allCases.filter { $0 != .colorClips && $0 != .steps }
 
     /// Height of a tab strip above every group (DESIGN: panel header).
-    #if canImport(AppKit)
-    public static let headerHeight = Double(ShellMetrics.panelHeader)
-    #else
-    // shortcut: the unscaled DESIGN height off the Mac (UIScale is AppKit), upgrade with the shared toolkit's UI scale.
-    public static let headerHeight = 30.0
-    #endif
+    public static let headerHeight = 30.0   // unscaled; the shared UI scales it with DrawTheme
 }

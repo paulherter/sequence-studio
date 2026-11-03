@@ -409,7 +409,7 @@ public final class TransformOverlay {
         drawMasks(&c, in: r, theme: t)
 
         let q = g.quad
-        c.stroke(polygon: q, width: 1, stroke)
+        c.stroke(polygon: q, width: 1, t.accent)
         if let i = liveCrop ?? cropInsets {
             let cg = CropHandleGeometry(quad: q)
             let kept = cg.corners(i)
@@ -426,12 +426,12 @@ public final class TransformOverlay {
             }
             return
         }
-        // Board "Transform box": white 1 pt frame, white 8 pt squares with a dark edge, a white ring at the anchor.
+        // Approved design: accent 1 pt frame, white 8 pt squares with an accent edge, a white ring at the anchor.
         for h in TransformOverlayGeometry.Handle.allCases {
             let p = g.viewPoint(of: h)
             let rect = CGRect(x: p.x - 4, y: p.y - 4, width: 8, height: 8)
             c.fill(rect, stroke)
-            c.stroke(polygon: Self.corners(rect), width: 1, shadow)
+            c.stroke(polygon: Self.corners(rect), width: 1, t.accent)
         }
         let a = g.anchorViewPoint
         c.stroke(ellipseIn: CGRect(x: a.x - 5, y: a.y - 5, width: 10, height: 10), width: 1.2, stroke)

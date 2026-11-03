@@ -3,7 +3,7 @@ import SQUIKit
 
 /// The zoom/scroll bar under the Timeline and in Effect Controls (`ZoomScrollBar`) on the canvas: the same
 /// `ZoomScrollBarGesture` rules and `KeyframeZoomBarGeometry` mapping, the board `.zs` look (4 pt track, neutral body,
-/// 8 pt light knobs). Coordinates are the owner's points; `bounds` is the bar's rect.
+/// no knobs (the artifact: one flat bar)). Coordinates are the owner's points; `bounds` is the bar's rect.
 public struct ZoomScrollBarControl: Sendable, Equatable {
     public static let height = ZoomScrollBarGesture.height
     public private(set) var gesture = ZoomScrollBarGesture()
@@ -37,13 +37,10 @@ public struct ZoomScrollBarControl: Sendable, Equatable {
         let midY = bounds.midY
         let xl = bounds.minX + g.x(forFraction: h.lo), xh = bounds.minX + g.x(forFraction: h.hi)
         let inset = KeyframeZoomBarGeometry.sideInset
-        let track = CGRect(x: bounds.minX + inset, y: midY - 2, width: bounds.width - 2 * inset, height: 4)
-        c.fill(roundedRect: track, radius: 2, t.fill)
-        let body = CGRect(x: xl, y: midY - 2, width: max(xh - xl, 0), height: 4)
+        let track = CGRect(x: bounds.minX + inset, y: midY - 3, width: bounds.width - 2 * inset, height: 6)
+        c.fill(roundedRect: track, radius: 3, t.fill)
+        let body = CGRect(x: xl, y: midY - 3, width: max(xh - xl, 0), height: 6)
         let active = hovered == .body || gesture.isPanning
-        c.fill(roundedRect: body, radius: 2, DrawColor.white.alpha(active ? 0.30 : 0.20))   // neutral (the maintainer: no big blue bar)
-        for (x, part) in [(xl, KeyframeZoomBarGeometry.Part.lower), (xh, .upper)] {
-            c.fill(ellipseIn: CGRect(x: x - 4, y: midY - 4, width: 8, height: 8), DrawColor.white.alpha(hovered == part ? 0.85 : 0.55))
-        }
+        c.fill(roundedRect: body, radius: 3, DrawColor.white.alpha(active ? 0.30 : 0.20))   // neutral (the maintainer: no big blue bar)
     }
 }

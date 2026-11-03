@@ -88,8 +88,8 @@ struct CaptionListDraw {
         for i in first..<last {
             let r = rect(row: i, width: width), row = model.rows[i], m = mark(row: i)
             switch m {
-            case .selected: c.fill(r, t.accentTint)
-            case .playhead: c.fill(r, t.selection)
+            case .selected: c.fill(r, t.current)
+            case .playhead: c.fill(r, t.hover)
             case .none: if i == hovered { c.fill(r, t.fillHover) }
             }
             let cols = columns(row: i, width: width)

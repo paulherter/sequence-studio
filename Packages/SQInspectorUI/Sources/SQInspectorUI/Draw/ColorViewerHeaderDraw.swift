@@ -273,8 +273,8 @@ public final class ColorStripToolsDraw {
                 let title = SQL10n.string(b == .pro ? "Pro" : "Simple"), tw = ceil(c.size(of: title, fontSize: Self.fontSize).width)
                 let icon: CGFloat = 14, gap: CGFloat = 6
                 let x = r.midX - (icon + gap + tw) / 2
-                c.draw(icon: Self.icon(b), at: CGPoint(x: x, y: r.midY - icon / 2), size: icon, on ? .white : t.label2)
-                c.draw(title, in: CGRect(x: x + icon + gap, y: r.minY, width: tw + 2, height: r.height), fontSize: Self.fontSize, on ? .white : t.label)
+                c.draw(icon: Self.icon(b), at: CGPoint(x: x, y: r.midY - icon / 2), size: icon, on ? t.label : t.label2)
+                c.draw(title, in: CGRect(x: x + icon + gap, y: r.minY, width: tw + 2, height: r.height), fontSize: Self.fontSize, t.label)
                 continue
             }
             let on = isEnabled(b)

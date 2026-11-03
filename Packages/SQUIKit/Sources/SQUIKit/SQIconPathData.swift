@@ -188,6 +188,25 @@ extension SQIcon {
 public enum SQIconSVG {
     public struct Shape: Sendable, Equatable { public var fill: Bool; public var stroke: Bool }
 
+    /// The root `<svg>` of an icon file: width of its grid (viewBox) and, for stroked drawings, the line width in grid units.
+    public struct Document: Sendable, Equatable {
+        public var grid: CGFloat = 24
+        public var lineWidth: CGFloat = 1
+        public var fill = "black", stroke = "none"
+    }
+
+    public static func document(_ svg: String) -> Document {
+        var d = Document()
+        guard let root = elements(svg).first(where: { $0.name == "svg" }) else { return d }
+        let a = root.attributes
+        let box = SQIconPathData.numbers(a["viewBox"] ?? "")
+        if box.count == 4, box[2] > 0 { d.grid = box[2] }
+        d.lineWidth = a["stroke-width"].flatMap { Double($0) }.map { CGFloat($0) } ?? 1
+        d.fill = a["fill"] ?? "black"
+        d.stroke = a["stroke"] ?? "none"
+        return d
+    }
+
     /// Elements in document order: name and attributes. Only self-contained tags matter for the icon files.
     public static func elements(_ svg: String) -> [(name: String, attributes: [String: String])] {
         var out: [(String, [String: String])] = []
@@ -217,6 +236,7 @@ public enum SQIconSVG {
     /// Feeds every drawable element of `svg` into a fresh sink from `make` and reports it with its paint flags.
     public static func shapes<P: SQIconPathSink>(_ svg: String, make: () -> P) -> [(P, Shape)] {
         var out: [(P, Shape)] = []
+        let doc = document(svg)
         for (name, a) in elements(svg) {
             func num(_ k: String) -> CGFloat { CGFloat(Double(a[k] ?? "") ?? 0) }
             let p = make()
@@ -243,7 +263,7 @@ public enum SQIconSVG {
                 if name == "polygon" { p.sinkClose() }
             default: continue
             }
-            out.append((p, Shape(fill: (a["fill"] ?? "none") != "none", stroke: (a["stroke"] ?? "currentColor") != "none")))
+            out.append((p, Shape(fill: (a["fill"] ?? doc.fill) != "none", stroke: (a["stroke"] ?? doc.stroke) != "none")))
         }
         return out
     }
@@ -283,4 +303,9 @@ public enum SQIconSVG {
                     control2: CGPoint(x: r.minX + rx - k * rx, y: r.minY))
         p.sinkClose()
     }
+}
+
+public enum SQIconWeight {
+    /// Thinnest icon line in points (device-pixel friendly on 2x).
+    public static let minLine: CGFloat = 1
 }

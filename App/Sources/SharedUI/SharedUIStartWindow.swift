@@ -1,6 +1,5 @@
 import AppKit
 import SQDrawShell
-import SQEditorUI
 import SQUIKit
 
 /// The shared UI's start window (the Mac `StartWindowController` on the shared draw list): the start screen in a window of
@@ -18,7 +17,7 @@ final class SharedUIStartWindow: NSObject {
     private let empty = SQMascotPlace.startEmpty.makeView()
 
     init(controller: SharedUIController) {
-        let size = Theme.Metrics.startWindowSize
+        let size = MacWindowStyle.startWindowSize
         window = NSWindow(contentRect: NSRect(origin: .zero, size: size),
                           styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
                           backing: .buffered, defer: false)
@@ -28,9 +27,9 @@ final class SharedUIStartWindow: NSObject {
         window.title = "Sequence Studio"
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
-        window.appearance = Theme.windowAppearance
-        window.backgroundColor = Theme.Colors.canvas
-        window.contentMinSize = Theme.Metrics.startWindowMinSize
+        window.appearance = MacWindowStyle.appearance
+        window.backgroundColor = MacWindowStyle.canvas
+        window.contentMinSize = MacWindowStyle.startWindowMinSize
         window.tabbingMode = .disallowed
         let root = NSView(frame: NSRect(origin: .zero, size: size))
         view.frame = root.bounds
@@ -54,9 +53,9 @@ final class SharedUIStartWindow: NSObject {
 
     /// The system close / miniaturize / zoom buttons in the start top bar (the bar leaves `ShellStartScreen.M.lights`).
     func positionLights() {
-        SQWindowLights.install(in: window, layout: .init(barHeight: Theme.Metrics.startTop,
-                                                         firstCenterX: Theme.Metrics.startS4 + 7,
-                                                         pitch: 14 + Theme.Metrics.startS2 - 2))
+        SQWindowLights.install(in: window, layout: .init(barHeight: MacWindowStyle.startTopBar,
+                                                         firstCenterX: MacWindowStyle.startLightsFirstCenterX,
+                                                         pitch: MacWindowStyle.startLightsPitch))
     }
 
     func show() {

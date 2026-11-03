@@ -33,6 +33,7 @@ Compression=lzma2/normal
 SolidCompression=yes
 WizardStyle=modern
 UninstallDisplayName=Sequence Studio
+SetupIconFile={#StageDir}\SequenceStudio.ico
 UninstallDisplayIcon={app}\SQWinApp.exe
 CloseApplications=yes
 ChangesAssociations=yes
@@ -43,6 +44,7 @@ Name: "assoc"; Description: "Open .sqproj projects with Sequence Studio"
 
 [Files]
 Source: "{#StageDir}\SQWinApp.exe"; DestDir: "{app}"; Flags: ignoreversion
+Source: "{#StageDir}\SequenceStudio.ico"; DestDir: "{app}"; Flags: ignoreversion
 ; FFmpeg, ONNX Runtime, whisper.cpp, the Swift runtime and the VC++ runtime (app-local) beside the exe.
 Source: "{#StageDir}\*.dll"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\SubjectMask\*"; DestDir: "{app}\SubjectMask"; Flags: ignoreversion skipifsourcedoesntexist
@@ -50,13 +52,13 @@ Source: "{#StageDir}\SUPPORTERS.md"; DestDir: "{app}"; Flags: ignoreversion
 Source: "{#StageDir}\LICENSE"; DestDir: "{app}"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Sequence Studio"; Filename: "{app}\SQWinApp.exe"; WorkingDir: "{app}"
-Name: "{autodesktop}\Sequence Studio"; Filename: "{app}\SQWinApp.exe"; WorkingDir: "{app}"; Tasks: desktopicon
+Name: "{autoprograms}\Sequence Studio"; Filename: "{app}\SQWinApp.exe"; WorkingDir: "{app}"; IconFilename: "{app}\SequenceStudio.ico"
+Name: "{autodesktop}\Sequence Studio"; Filename: "{app}\SQWinApp.exe"; WorkingDir: "{app}"; IconFilename: "{app}\SequenceStudio.ico"; Tasks: desktopicon
 
 [Registry]
 Root: HKCU; Subkey: "Software\Classes\.sqproj"; ValueType: string; ValueData: "SequenceStudio.Project"; Flags: uninsdeletevalue uninsdeletekeyifempty; Tasks: assoc
 Root: HKCU; Subkey: "Software\Classes\SequenceStudio.Project"; ValueType: string; ValueData: "Sequence Studio project"; Flags: uninsdeletekey; Tasks: assoc
-Root: HKCU; Subkey: "Software\Classes\SequenceStudio.Project\DefaultIcon"; ValueType: string; ValueData: "{app}\SQWinApp.exe,0"; Tasks: assoc
+Root: HKCU; Subkey: "Software\Classes\SequenceStudio.Project\DefaultIcon"; ValueType: string; ValueData: "{app}\SequenceStudio.ico"; Tasks: assoc
 Root: HKCU; Subkey: "Software\Classes\SequenceStudio.Project\shell\open\command"; ValueType: string; ValueData: """{app}\SQWinApp.exe"" ""%1"""; Tasks: assoc
 
 [Run]

@@ -17,12 +17,12 @@ import SQLibrary
         static let toolbarTop: CGFloat = 4, toolbarBottom: CGFloat = 10, toolbarSide: CGFloat = 16
         static let sortWidth: CGFloat = 150
         static let layoutSegment: CGFloat = 40
-        static let tile = CGSize(width: 140, height: 80)
+        static let tile = CGSize(width: 132, height: 75)   // art.html 42: four columns
         static let tileName: CGFloat = 19
         static let tileGapX: CGFloat = 12, tileGapY: CGFloat = 14, gridPad: CGFloat = 16
         static let check: CGFloat = 12, checkInset: CGFloat = 6
         static let rowHeight: CGFloat = 24, rowThumb: CGFloat = 20, sizeColumn: CGFloat = 70
-        static let previewWidth: CGFloat = 301, previewPad: CGFloat = 16, previewPicture: CGFloat = 168
+        static let previewWidth: CGFloat = 261, previewPad: CGFloat = 16, previewPicture: CGFloat = 168
         static let status: CGFloat = 20
         static let font = CGFloat(DrawTheme.TypeSize.body)
         static let mini = CGFloat(DrawTheme.TypeSize.caption)
@@ -230,11 +230,11 @@ import SQLibrary
         drawPreview(&c, t)
     }
 
-    /// One SQSegmented track (ink 0.06, radius 6) with its selected segment lifted (radius 4, inset 1).
+    /// One segmented control in the shared `SegmentDraw` look, the selected segment inset 1.
     private func segmented(_ c: inout Canvas, _ frames: [CGRect], selected: Int?, _ t: DrawTheme) {
         guard let first = frames.first, let last = frames.last else { return }
-        c.fill(roundedRect: first.union(last), radius: 6, t.inkFill(0.06))
-        if let n = selected { c.fill(roundedRect: frames[n].insetBy(dx: 1, dy: 1), radius: 4, t.fillPressed) }
+        SegmentDraw.track(&c, first.union(last), t)
+        if let n = selected { SegmentDraw.selected(&c, frames[n].insetBy(dx: 1, dy: 1), t) }
     }
 
     private func drawToolbar(_ c: inout Canvas, _ t: DrawTheme) {
@@ -261,7 +261,7 @@ import SQLibrary
         let pic = CGRect(origin: r.origin, size: M.tile)
         let radius = CGFloat(DrawTheme.Radius.control)
         picture(&c, item, in: pic, radius: radius, t)
-        if previewID == item.id { c.stroke(roundedRect: pic.insetBy(dx: 1, dy: 1), radius: radius, width: 2, t.yellow) }
+        if previewID == item.id { c.stroke(roundedRect: pic.insetBy(dx: 1, dy: 1), radius: radius, width: 2, t.label) }
         else if hovered == item.id { c.stroke(roundedRect: pic.insetBy(dx: 0.5, dy: 0.5), radius: radius, width: 1, t.label3) }
         InspectorDraw.checkbox(&c, selection.ids.contains(item.id) ? .on : .off, box: checkFrame(r), hovering: false, pressed: false,
                                enabled: true, t)

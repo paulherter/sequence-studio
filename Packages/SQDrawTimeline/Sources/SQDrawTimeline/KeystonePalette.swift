@@ -56,8 +56,8 @@ public struct KeystonePalette: Sendable {
     private var lastClick: (index: Int, time: Double)?
     private var hoverPoint: CGPoint?
 
-    // Mac metrics: `Theme.Row.panelList` 26, panel header 30, `Theme.Spacing.sm` padding.
-    public static let rowHeight: CGFloat = 26
+    // Mac metrics: `Theme.Row.panelList` 24, panel header 30, `Theme.Spacing.sm` padding.
+    public static let rowHeight: CGFloat = 24
     public static let headerHeight = CGFloat(DrawTheme.Metrics.panelHeader)
     public static let width: CGFloat = 280
     static let dragSlop: CGFloat = 3
@@ -220,7 +220,8 @@ public struct KeystonePalette: Sendable {
             c.draw(icon: .diamond, at: CGPoint(x: rr.minX + 2 * pad, y: rr.midY - g / 2), size: g, theme.label3)
             let nameX = rr.minX + 2 * pad + 14 + CGFloat(DrawTheme.Spacing.xs)
             let meta = KeystonesPanelModel.subtitle(k)
-            let mw = min(c.size(of: meta, fontSize: font).width, rr.width * 0.5)
+            // The detail keeps its full text; only a very narrow card cuts it, leaving the name 60 pt.
+            let mw = min(ceil(c.size(of: meta, fontSize: font).width) + 1, max(rr.maxX - 2 * pad - nameX - 60, 0))
             let metaX = rr.maxX - 2 * pad - mw
             let chipText = SQL10n.string("changed")
             let chipW = changed.contains(k.id) ? ceil(c.size(of: chipText, fontSize: font).width) + 2 * pad - CGFloat(DrawTheme.Spacing.sm) : 0
@@ -229,7 +230,7 @@ public struct KeystonePalette: Sendable {
             c.draw(k.name, in: CGRect(x: nameX, y: rr.minY, width: nameW, height: rr.height), fontSize: font, theme.label2)
             if chipW > 0 {
                 let chip = CGRect(x: nameX + nameW + CGFloat(DrawTheme.Spacing.xs), y: rr.midY - 10, width: chipW, height: 20)
-                c.fill(roundedRect: chip, radius: 10, theme.fill)
+                c.fill(roundedRect: chip, radius: CGFloat(DrawTheme.Radius.menu), theme.fill)
                 c.draw(chipText, in: chip, fontSize: font, theme.label2, align: .center)
             }
             c.draw(meta, in: CGRect(x: metaX, y: rr.minY, width: mw, height: rr.height), fontSize: font, theme.label3)

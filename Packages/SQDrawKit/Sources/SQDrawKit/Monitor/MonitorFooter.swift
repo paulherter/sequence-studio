@@ -349,7 +349,7 @@ public struct MonitorFooter: Sendable {
         drawScrubBar(&c, s, theme: t)
         let size: CGFloat = 12    // Theme.Typography.shell / shellStrong
         if timecodeEdit != nil { drawTimecodeEdit(&c, theme: t) } else {
-            c.draw(s.timecode.format(s.currentTime), in: timecodeRect, fontSize: size, t.accent, align: .left, face: c.semibold)   // shellStrong
+            c.draw(s.timecode.format(s.currentTime), in: timecodeRect, fontSize: size, t.label, align: .left)   // regular (artifact)
         }
         for (a, r) in buttons {
             let isPlay = a == .playPause
@@ -358,7 +358,7 @@ public struct MonitorFooter: Sendable {
             let glyph = isPlay ? Self.playGlyph : Self.smallGlyph
             let icon: SQIcon = isPlay ? (s.isPlaying ? .pause : .play) : Self.symbols[a]!.0
             c.draw(icon: icon, at: CGPoint(x: r.midX - glyph / 2, y: r.midY - glyph / 2), size: glyph,
-                   isPlay ? t.label : t.label2)
+                   s.duration > .zero ? (isPlay ? t.label : t.label2) : t.label3.alpha(0.5))
         }
         for (h, r) in streamHandles {
             // StreamDragView.draw: fill2 capsule with a hairline edge, the 14 pt icon in label2.
@@ -368,7 +368,7 @@ public struct MonitorFooter: Sendable {
         }
         c.draw(icon: .markInOut, at: inOutIconRect.origin, size: inOutIconRect.width, t.label3)
         if durationRect.width > 0 {
-            c.draw(s.footerDurationText, in: durationRect, fontSize: size, t.label3, align: .right)
+            c.draw(s.footerDurationText, in: durationRect, fontSize: size, t.label2, align: .right)
         }
     }
 
@@ -383,8 +383,8 @@ public struct MonitorFooter: Sendable {
         if s.hasRange {
             let a = m.x(for: s.markIn ?? .zero), b = m.x(for: s.markOut ?? s.duration)
             if b > a {
-                let band = CGRect(x: a, y: 5, width: b - a, height: 6)
-                c.fill(roundedRect: band, radius: band.height / 2, t.accentTint)
+                let band = CGRect(x: a, y: 7, width: b - a, height: 2)      // artifact: a thin range line, not a band
+                c.fill(roundedRect: band, radius: band.height / 2, t.accent)
             }
         }
         for (mark, isIn) in [(s.markIn, true), (s.markOut, false)] {
@@ -395,10 +395,10 @@ public struct MonitorFooter: Sendable {
         }
         for time in s.markerTimes {
             let mx = m.x(for: time)
-            c.fill(polygon: [CGPoint(x: mx - 3, y: 0), CGPoint(x: mx + 3, y: 0), CGPoint(x: mx, y: 5)], t.yellow)
+            c.fill(polygon: [CGPoint(x: mx - 3, y: 0), CGPoint(x: mx + 3, y: 0), CGPoint(x: mx + 3, y: 3), CGPoint(x: mx, y: 6), CGPoint(x: mx - 3, y: 3)], t.label3)   // pentagon flag like the ruler
         }
         let x = m.x(for: s.currentTime)
-        c.fill(roundedRect: CGRect(x: x - 1, y: 1, width: 2, height: 14), radius: 1, t.playhead)
+        if s.duration > .zero { c.fill(roundedRect: CGRect(x: x - 1, y: 1, width: 2, height: 14), radius: 1, t.playhead) }
         c.restoreGState()
     }
 

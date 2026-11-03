@@ -61,7 +61,19 @@ public enum FFmpegMediaProbe {
         guard let duration, video != nil || audio != nil else { throw MediaError.unreadable }
         var info = MediaInfo(duration: duration, video: video, audio: audio)
         info.soundProbed = true
+        if let v = video {    // the camera color space (Sony S-Log3 files are untagged: the metadata decides), as the Mac import
+            let found = ColorTagDetection.detect(url: url, colorPrimaries: v.colorPrimaries, transfer: v.transfer)
+            info.detectedColorSpace = found.space
+            info.embeddedLUTName = found.embeddedLUTName
+        }
         return makeRef(url, duration: duration, info: info)
+    }
+
+    /// The color space (and embedded look LUT name) of a clip whose info predates detection (`EditorSession.colorDetector`).
+    public static func detectColor(_ url: URL) -> (space: ColorSpaceID, embeddedLUTName: String?)? {
+        guard let demux = try? FFmpegDemuxer(url: url) else { return nil }
+        let v = demux.trackInfo
+        return ColorTagDetection.detect(url: url, colorPrimaries: v.colorPrimaries, transfer: v.transfer)
     }
 
     /// `StillImage.trackInfo` (ImageIO file, Mac only).

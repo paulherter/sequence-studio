@@ -61,7 +61,7 @@ import SQDrawKit
         for row in rows {
             let top = row.y - scrollY
             guard top + row.height > 0, top < size.height else { continue }
-            c.fill(CGRect(x: 0, y: top + row.height - 1, width: size.width, height: 1), t.trackRowLine)   // one 1 pt line per row
+            c.fill(CGRect(x: 0, y: top + row.height - 1, width: size.width, height: 1), t.rowLine)   // one 1 pt line per row
             let cy = top + row.height / 2, side = ControlsMetrics.keySide
             switch row.kind {
             case .property(let p):
@@ -484,7 +484,7 @@ import SQDrawKit
                                  CGPoint(x: x - 6, y: 7)], t.playhead)
             }
         }
-        c.fill(CGRect(x: 0, y: rh - 1, width: size.width, height: 1), t.trackRowLine)
+        c.fill(CGRect(x: 0, y: rh - 1, width: size.width, height: 1), t.rowLine)
         c.restoreGState()
     }
 

@@ -213,6 +213,8 @@ public final class ShellHost {
     /// The start screen while it is up (`ShellStart.swift`) and what it was shown for.
     public internal(set) var startScreen: ShellStartScreen?
     /// The start screen's search sits in the window bar, not in a row of its own (the Mac; see `ShellStartScreen.barFrame`).
+    /// The start screen draws Pip itself (Windows); the Mac host lays real mascot views over it.
+    public var drawsStartMascots = false
     public var startSearchInBar = false { didSet { startLayout() } }
     /// The start screen has a window of its own of this size (the Mac `StartWindowController`): it fills it with its own top
     /// bar, the title after the window buttons. The host shows that window while `isStartShown`, sets `size` to it so
@@ -255,6 +257,14 @@ public final class ShellHost {
         guard let p = (dialog?.content as? ShellExportSheet)?.preview, let img = p.image else { return nil }
         return (ShellExportPreview.slot, img, p.generation)
     }
+    /// The real app icon picture (the Windows host reads it from the exe's icon); the About card draws it instead of the
+    /// 128 px redraw.
+    public var appIconImage: RGBAImage? { didSet { ShellAppIcon.hasImage = appIconImage != nil } }
+    /// The About card's icon for the renderer: (slot, image, generation) while the card is up.
+    public var aboutIconImage: (Int, RGBAImage, Int)? {
+        guard let img = appIconImage, dialog?.content is ShellAboutContent else { return nil }
+        return (ShellAppIcon.slot, img, 1)
+    }
     /// True while the Export sheet's preview plays (the host redraws every frame).
     public var exportPreviewPlaying: Bool { (dialog?.content as? ShellExportSheet)?.preview.isPlaying == true }
     /// Where the last export went (the form's Folder).
@@ -266,6 +276,11 @@ public final class ShellHost {
         self.session = session
         self.map = map
         self.recents = recents
+        Canvas.emptyStateArt = { rect, c in
+            ShellMascot.markOverride = ShellMascot.neutralMark
+            ShellMascot.draw(.sleep, in: rect, into: &c)
+            ShellMascot.markOverride = nil
+        }
         restoreCaptionsInMonitor()
         session.askFormatChange = { [weak self] current, proposed in await self?.askChangeSequenceFormat(current, proposed) ?? true }
         menuBar.refresh = { [weak self] in self?.menus() ?? [] }
@@ -477,7 +492,7 @@ public final class ShellHost {
         quickApply?.draw(&c, theme: theme)
         menuBar.drawMenus(&c, theme: theme)
         dialog?.draw(&c, theme: theme, window: CGRect(origin: .zero, size: size))
-        if let d = dialog, d.footerMascot, d.mascotFrame.width > 0 { ShellMascot.draw(.sad, in: d.mascotFrame, into: &c) }
+        if let d = dialog, d.footerMascot, d.mascotFrame.width > 0 { ShellMascot.draw(.wink, in: d.mascotFrame, into: &c) }
     }
 
     // MARK: Dialogs
@@ -495,13 +510,17 @@ public final class ShellHost {
         }
     }
 
-    public func presentMessage(_ title: String, _ detail: String) {
-        spawn { _ = await self.ask(ShellDialog(title, informative: detail)) }
+    public func presentMessage(_ title: String, _ detail: String, tone: ShellDialog.Tone? = nil) {
+        spawn {
+            let d = ShellDialog(title, informative: detail)
+            d.headerIcon = tone
+            _ = await self.ask(d)
+        }
     }
 
     public func presentError(_ title: String, _ error: Error) {
         SQLog.error("\(title): \(error.localizedDescription)")
-        presentMessage(title, SQL10n.errorText(error))
+        presentMessage(title, SQL10n.errorText(error), tone: .error)
     }
 
     /// Asks before the project in the window is replaced. True to go on.
@@ -509,7 +528,10 @@ public final class ShellHost {
         guard session.isDirty else { return true }
         let d = ShellDialog(SQL10n.format("Save changes to “%@”?", session.displayName),
                             informative: SaveChangesPrompt.detail(hasFile: session.fileURL != nil))
-        for b in SaveChangesPrompt.buttons { d.addButton(b.title, role: b.role, leading: b.isLeading) }
+        for (i, b) in SaveChangesPrompt.buttons.enumerated() {
+            d.addButton(b.title, role: b.role, leading: b.isLeading)
+            if b.isLeading { d.ghostButtons.insert(i) }   // art.html 05: Don't Save is a ghost text button
+        }
         let choice = SaveChangesPrompt.choice(await ask(d))
         let saved: Bool? = choice == .save ? await saveDocument() : nil
         return SaveChangesPrompt.outcome(choice, saveSucceeded: saved) == .proceed

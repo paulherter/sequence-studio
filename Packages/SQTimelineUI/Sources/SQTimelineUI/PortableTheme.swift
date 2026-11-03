@@ -1,4 +1,3 @@
-#if os(Windows)
 import Foundation
 
 /// The few `Theme` tokens the portable timeline logic reads (SQUIKit's `Theme` is AppKit and stays Mac-only). Values are
@@ -29,4 +28,3 @@ public enum Theme {
         }
     }
 }
-#endif

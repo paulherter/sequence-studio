@@ -290,7 +290,7 @@ public struct RecoveryScanner: Sendable {
             guard let info = infos.max(by: { $0.started < $1.started }), !infos.contains(where: isAlive) else { continue }
             let url = info.projectPath.map { URL(fileURLWithPath: $0) }
             if let url,
-               let saved = (try? fm.attributesOfItem(atPath: url.appendingPathComponent("project.json").path))?[.modificationDate] as? Date,
+               let saved = (try? fm.attributesOfItem(atPath: ProjectFile.documentFile(url).path))?[.modificationDate] as? Date,
                newest.date <= saved {
                 // Saved after the last autosave: nothing to recover, and a dead marker left here would be reported at
                 // every launch as a crash (the session is reported once, in this scan's `crashed`).

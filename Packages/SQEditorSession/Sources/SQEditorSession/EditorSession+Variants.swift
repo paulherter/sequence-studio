@@ -58,6 +58,12 @@ extension EditorSession {
         notify([.project, .selection])
     }
 
+    /// Double-click on a variant row of the Project panel: opens the sequence and shows that variant.
+    public func openSequenceTab(_ id: Timeline.ID, variant: FormatVariant.ID) {
+        openSequenceTab(id)
+        setActiveVariant(variant)
+    }
+
     /// Adds a variant to the active sequence ("Add Format", one undo step) and shows it. nil when refused.
     @discardableResult
     public func addVariant(name: String, width: Int, height: Int, conform: ConformMode = .fill) -> FormatVariant.ID? {

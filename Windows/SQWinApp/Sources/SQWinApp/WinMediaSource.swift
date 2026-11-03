@@ -20,9 +20,14 @@ struct WinMediaSource: Sendable {
         decoder = try FFmpegVideoDecoder(demuxer: demuxer, media: media)
         info = demuxer.trackInfo
         WinPlayStats.shared.decoderOpened("\(demuxer.trackInfo.width)x\(demuxer.trackInfo.height) \(decoder.decoderName)")
+        StartupLog.decoderOpened("\(demuxer.trackInfo.width)x\(demuxer.trackInfo.height) \(decoder.decoderName)")
     }
 
     var frameCount: Int { demuxer.index.count }
+
+    /// True when scrubbing can use the decoder's preview mode (software decoder; hardware decodes at full speed already).
+    var canPreview: Bool { !decoder.isHardware }
+    func setPreview(_ on: Bool) { decoder.setPreview(on) }
 
     /// The presentation index a layer at `sourceTime` shows (clamped; past the end: the last frame).
     func frameIndex(at sourceTime: Time) -> Int {
@@ -49,14 +54,18 @@ struct WinMediaSource: Sendable {
     }
 
     /// Decodes `range` and hands every picture to `deliver` as soon as it is downloaded (on the decoding thread, in
-    /// decode order), reduced by `divisor` (1, 2, 4; the playback quality and the layer's drawn size).
-    func streamPictures(_ range: ClosedRange<Int>, divisor: Int,
+    /// decode order), reduced by `divisor` (1, 2, 4; the playback quality and the layer's drawn size). `isStale` is asked
+    /// when the decoder is free: yes drops the request (a scrub moved on).
+    func streamPictures(_ range: ClosedRange<Int>, divisor: Int, isStale: @escaping @Sendable () -> Bool = { false },
                         deliver: @escaping @Sendable (Int, NV12Picture) -> Void) async throws {
         let index = demuxer.index
         let stats = WinPlayStats.shared
         let lap = Lap()
+        let label = "\(info.width)x\(info.height) \(decoder.decoderName)"
         let hand: @Sendable (DecodedFrame) -> Void = { f in
-            stats.add(.decode, lap.take())
+            let ms = lap.take()
+            stats.add(.decode, ms)
+            stats.decoded(label, ms)
             defer { _ = lap.take() }
             guard let i = index.frame(at: f.frame.presentationTime),
                   let p = try? Self.picture(f.frame, divisor: divisor, threaded: true) else { return }
@@ -71,7 +80,7 @@ struct WinMediaSource: Sendable {
             }
         }
         // Frames the decoder carried from an earlier call come back in the result, not through `hand`.
-        for f in try await decoder.decode(range, deliver: hand) {
+        for f in try await decoder.decode(range, isStale: isStale, deliver: hand) {
             if let i = index.frame(at: f.frame.presentationTime), let p = try Self.picture(f.frame, divisor: divisor, threaded: true) {
                 deliver(i, p)
             }
@@ -90,6 +99,12 @@ struct WinMediaSource: Sendable {
         guard let ff = frame.storage as? FFmpegFrame else { return nil }
         let full = frame.pixelFormat == .nv12FullRange || frame.pixelFormat == .p010FullRange
         let stats = WinPlayStats.shared
+        if ff.hasAlpha {   // keeps its transparency: full-size straight RGBA (the NV12 download drops alpha)
+            let bytes = try stats.time(.download) { try ff.downloadRGBA() }
+            var p = NV12Picture(bytes: bytes, width: frame.width, height: frame.height, fullRange: true)
+            p.straightRGBA = true
+            return p
+        }
         if divisor > 1 || threaded, let r = try stats.time(.download, { try ff.download(divisor: divisor) }) {
             var p = NV12Picture(bytes: r.bytes, width: r.width, height: r.height, fullRange: full)
             if r.bytes.count >= r.width * r.height * 3 { p.bitDepth = 10 }
@@ -109,10 +124,12 @@ struct WinMediaSource: Sendable {
     }
 
     /// The per-layer color pipelines (conversion, Lumetri, LUT files) as on the Mac (`ProjectMediaResolver.colorResolver`).
-    /// shortcut: no embedded LUTs (read from camera clip metadata on the Mac); add them with a portable metadata reader.
     static func colorResolver(_ table: MediaInfoTable) -> LayerColorResolver {
         let provider = CachingLUTProvider(file: { MediaManagement.resolveStoredPath($0, projectFolder: nil).flatMap { FileManager.default.contents(atPath: $0) } },
-                                          embedded: { _ in nil },
+                                          embedded: { id in    // the camera look LUT inside the clip, as the Mac
+            guard let path = table.path(id) else { return nil }
+            return (try? EmbeddedMeta.lut(inClip: URL(fileURLWithPath: path)))?.data
+        },
                                           stamp: { MediaManagement.resolveStoredPath($0, projectFolder: nil).flatMap { LUTStamp.ofFile($0) } })
         return LayerColorResolver(lutProvider: provider) { table.info($0) }
     }

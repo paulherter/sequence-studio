@@ -9,24 +9,24 @@ final class AppearancePaletteTests: XCTestCase {
 
     func testDarkDefaultKeepsTheAppValues() {
         let p = AppearancePalette.resolve(.standard)
-        XCTAssertEqual(p.panel, PaletteColor(hex: 0x1E1E21))
-        XCTAssertEqual(p.titlebar, PaletteColor(hex: 0x232326))
-        XCTAssertEqual(p.content, PaletteColor(hex: 0x19191C))
-        XCTAssertEqual(p.timeline, PaletteColor(hex: 0x151518))
-        XCTAssertEqual(p.overlay, PaletteColor(hex: 0x2A2A2E))
-        XCTAssertEqual(p.divider, PaletteColor(hex: 0x080809))
-        XCTAssertEqual(p.label, PaletteColor(hex: 0xE6E6E8))
-        XCTAssertEqual(p.label2, PaletteColor(hex: 0xB2B2B8))
-        XCTAssertEqual(p.label3, PaletteColor(hex: 0x9C9CA2))
-        XCTAssertEqual(p.accent, PaletteColor(hex: 0xA56BFF))
-        XCTAssertEqual(p.accentFill, PaletteColor(hex: 0x7C3AED))
+        XCTAssertEqual(p.panel, PaletteColor(hex: 0x1B1B1D))
+        XCTAssertEqual(p.titlebar, PaletteColor(hex: 0x141415))
+        XCTAssertEqual(p.content, PaletteColor(hex: 0x151516))
+        XCTAssertEqual(p.timeline, PaletteColor(hex: 0x151516))
+        XCTAssertEqual(p.overlay, PaletteColor(hex: 0x2A2A2D))
+        XCTAssertEqual(p.divider, PaletteColor(hex: 0x0B0B0C))
+        XCTAssertEqual(p.label, PaletteColor(hex: 0xECECEE))
+        XCTAssertEqual(p.label2, PaletteColor(hex: 0xA7A7AE))
+        XCTAssertEqual(p.label3, PaletteColor(hex: 0x909099))
+        XCTAssertEqual(p.accent, PaletteColor(hex: 0x007AFF))
+        XCTAssertEqual(p.accentFill, PaletteColor(hex: 0x0069E8))
     }
 
     func testLightIsDerivedAndUsesTheFilledAccent() {
         let p = AppearancePalette.resolve(AppearanceSettings(mode: .light))
-        XCTAssertEqual(p.panel, PaletteColor(hex: 0xFFFFFF))
-        XCTAssertEqual(p.accent, PaletteColor(hex: 0x7A33E0))
-        XCTAssertEqual(p.accentFill, PaletteColor(hex: 0x7C3AED))
+        XCTAssertEqual(p.panel, PaletteColor(hex: 0xF4F4F5))
+        XCTAssertEqual(p.accent, PaletteColor(hex: 0x007AFF))
+        XCTAssertEqual(p.accentFill, PaletteColor(hex: 0x0069E8))
         XCTAssertLessThan(p.label.luminance, 0.05)
         XCTAssertGreaterThanOrEqual(PaletteColor.white.contrast(with: p.accentFill), 4.5)
     }

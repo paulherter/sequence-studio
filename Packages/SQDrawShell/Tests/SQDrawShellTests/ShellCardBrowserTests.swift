@@ -29,7 +29,7 @@ import SQLibrary
         #expect(b.kindFrames[0].1.minX == 16 && b.kindFrames[0].1.minY == 4 && b.kindFrames[0].1.height == 22)
         #expect(b.layoutFrames[1].1.maxX == CGFloat(844))                              // toggles at the right edge
         #expect(b.sortFrame.maxX == b.layoutFrames[0].1.minX - 12 && b.sortFrame.width == ceil(CardSort.allCases.map { TextMeasure(atlas: nil, scale: 1).width($0.title, size: ShellCardBrowser.M.font) }.max() ?? 0) + 32)   // widest title + 32, like SQPopup
-        #expect(b.listFrame.minY == 37 && b.previewFrame.width == 301 && b.previewFrame.maxX == 860)
+        #expect(b.listFrame.minY == 37 && b.previewFrame.width == 261 && b.previewFrame.maxX == 860)
     }
 
     @Test func showsTheKindInTheChosenOrder() {

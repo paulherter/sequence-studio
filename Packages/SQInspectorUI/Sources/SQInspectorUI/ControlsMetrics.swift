@@ -12,25 +12,9 @@ public enum ControlsMetrics {
     public static let sectionGap: CGFloat = 0
     /// The crossover strip of the multiband compressor in the Audio section (`MultibandEditor.rowHeight`).
     public static let multibandRow: CGFloat = 32
-    #if canImport(AppKit)
-    /// Clip line under the panel header (v9 `.clhead`): icon, clip name, "Sequence · Track · in – out".
-    public static let clipLine: CGFloat = Theme.Row.panelHeader
-    /// Column header row (v9 `.kg.khead`): "Property" at the left, the mini ruler of the keyframe area at the right.
-    public static let header: CGFloat = Theme.Row.standard
-    /// VIDEO / AUDIO group label (`.grp`, `.kr.g`).
-    public static let group: CGFloat = ControlsGrid.headerHeight
-    /// Effect section row (`.fx`, `.kr.s`), separator at its top.
-    public static let section: CGFloat = ControlsGrid.headerHeight
-    /// Parameter row (`.kp`, `.kr`): one height for every row, whatever control it holds.
-    public static let parameter: CGFloat = ControlsGrid.rowHeight
-    public static let tallParameter: CGFloat = ControlsGrid.rowHeight
-    /// Opened keyframe row (`.epane`, `.eg`).
-    public static let graph: CGFloat = Theme.Inspector.graphHeight
-    #else
     public static let clipLine = Portable.clipLine, header = Portable.header, group = Portable.group
     public static let section = Portable.section, parameter = Portable.parameter
     public static let tallParameter = Portable.parameter, graph = Portable.graph
-    #endif
 
     /// Key glyphs in the lanes (v9 `.dm`): a 9 pt square with 1.5 pt corners turned 45 degrees (linear), a 10 pt
     /// circle (eased), a 9 pt square (hold); each with a 1.5 pt ring in the lane color.
@@ -49,9 +33,9 @@ public enum ControlsMetrics {
     public enum Portable {
         public static let clipLine: CGFloat = 30
         public static let header: CGFloat = 24
-        public static let group: CGFloat = 26
-        public static let section: CGFloat = 26
-        public static let parameter: CGFloat = 26
+        public static let group: CGFloat = 24
+        public static let section: CGFloat = 24
+        public static let parameter: CGFloat = 24
         public static let graph: CGFloat = 120
         /// `Theme.Inspector.popupWidth`: Blend Mode and choice popups.
         public static let popupWidth: CGFloat = 120

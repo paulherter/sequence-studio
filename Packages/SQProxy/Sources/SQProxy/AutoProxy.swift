@@ -64,8 +64,11 @@ public enum AutoProxyRule {
         // the original, so the proxy would never be used.
         if let v = video, v.isInterlaced, v.deinterlaceOff { return .skip(.keepsFields) }
         let gop = policy.decide(seek)
-        guard gop.needsProxy else { return gop }
         let pixels = video.map { $0.width * $0.height } ?? 0
+        // Intra-only media (ProRes) seeks fast, but without a hardware decoder every frame costs a full software decode
+        // (~36 ms per 1080p ProRes frame on the PC, spread over all cores): a half-size proxy plays for a fraction of it.
+        let heavyIntra = softwareDecode && pixels * 10 >= hdPixels * 9 && gop == .skip(.intraOnlyCodec)
+        guard gop.needsProxy || heavyIntra else { return gop }
         let kind: ProxyKind = pixels >= 2 * uhdPixels ? .proxyQuarter : .proxyHalf
         if mode == .always { return .needsProxy(kind) }
         guard let v = video else { return .skip(.unknown) }

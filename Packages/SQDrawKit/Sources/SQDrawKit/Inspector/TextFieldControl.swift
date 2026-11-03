@@ -14,9 +14,13 @@ public struct TextFieldControl: Sendable {
     public var isEnabled = true
     /// The dialog field (`SQDialog.makeField`): the whole 28 pt row, 6 pt corners, no hairline (inspector fields are 22 pt capsules).
     public var dialogStyle = false
+    /// Draws "-" before a digit as the true minus sign (dialogs, art.html).
+    public var trueMinus = false
     public var hovering = false
     /// The quiet search field (`SQSearchField`): the `fill2` body (0.06 ink) and no hairline.
     public var quiet = false
+    /// Draws only the text: the host paints the field body and focus ring (Start and Shortcuts search rows).
+    public var bare = false
     /// Text inset from the frame's side: 6, or 8 for a dialog field whose frame bleeds 2 pt past its alignment rect.
     public var textInset: CGFloat = 6
     /// Gray text in the empty field (the Mac placeholder string).
@@ -87,14 +91,14 @@ public struct TextFieldControl: Sendable {
         let box = dialogStyle ? bounds : Self.box(in: bounds)
         let dim: Float = isEnabled ? 1 : InspectorTokens.disabledAlpha
         let radius = dialogStyle ? CGFloat(DrawTheme.Radius.control) : InspectorTokens.radius(box)
-        c.fill(roundedRect: box, radius: radius, quiet ? t.inkFill(0.06).alpha(t.inkFill(0.06).a * dim) : t.field.alpha(t.field.a * dim))
-        if isEditing { c.fill(roundedRect: box, radius: radius, t.accentTint) }
-        if hovering, isEnabled, !isEditing {
+        if !bare { c.fill(roundedRect: box, radius: radius, quiet ? t.inkFill(0.06).alpha(t.inkFill(0.06).a * dim) : t.field.alpha(t.field.a * dim)) }
+        if bare {} else if isEditing { c.fill(roundedRect: box, radius: radius, t.accentTint) }
+        if bare {} else if hovering, isEnabled, !isEditing {
             c.stroke(roundedRect: box.insetBy(dx: 0.5, dy: 0.5), radius: radius - 0.5, width: 1, t.fieldEdgeHover)
-        } else if !dialogStyle, !quiet {
-            c.stroke(roundedRect: box.insetBy(dx: 0.25, dy: 0.25), radius: radius, width: 0.5, t.trackHeaderLine.alpha(t.trackHeaderLine.a * dim))
+        } else if !quiet {
+            c.stroke(roundedRect: box.insetBy(dx: 0.25, dy: 0.25), radius: radius, width: 0.5, t.hair2.alpha(t.hair2.a * dim))
         }
-        if focused || isEditing { InspectorDraw.focusLine(&c, box, radius: radius, t) }
+        if !bare, focused || isEditing { InspectorDraw.focusLine(&c, box, radius: radius, t) }
         let inner = (dialogStyle ? bounds : Self.box(in: bounds)).insetBy(dx: textInset, dy: 0)
         // `setQuietPlaceholder` / `placeholderString`: label3 while the field (or its open editor) is empty.
         if !placeholder.isEmpty, (editor?.string ?? text).isEmpty {
@@ -104,7 +108,7 @@ public struct TextFieldControl: Sendable {
             InspectorDraw.editText(&c, e, in: inner, fontSize: fontSize, color: t.label, alignRight: alignment == .right, t)
             return
         }
-        c.draw(text, in: inner, fontSize: fontSize, t.label.alpha(t.label.a * dim), align: alignment.listAlign)
+        c.draw(trueMinus ? ScrubMath.typographicMinus(text) : text, in: inner, fontSize: fontSize, t.label.alpha(t.label.a * dim), align: alignment.listAlign)
     }
 }
 
@@ -125,8 +129,9 @@ extension InspectorDraw {
         let a: Float = enabled ? 1 : InspectorTokens.disabledAlpha
         let base: DrawColor
         if accent { base = pressed ? t.accentFill.lifted(0.35) : (hovering && enabled ? t.accentFill.lifted(0.2) : t.accentFill) }
-        else { base = pressed ? t.fillPressed : (hovering && enabled ? t.fillHover : t.fill) }
+        else { base = pressed ? t.pressed : (hovering && enabled ? t.raisedHover : t.raised) }
         c.fill(roundedRect: box, radius: InspectorTokens.radius(box), base.alpha(base.a * a))
+        if !accent { c.stroke(roundedRect: box.insetBy(dx: 0.25, dy: 0.25), radius: InspectorTokens.radius(box), width: 0.5, t.hair2.alpha(t.hair2.a * a)) }
         let text = accent ? DrawColor.white : t.label
         c.draw(title, in: box.insetBy(dx: 4, dy: 0), fontSize: CGFloat(DrawTheme.TypeSize.body), text.alpha(text.a * a), align: .center)
     }
@@ -144,4 +149,18 @@ extension InputKey {
     /// Tab arrives as the character "\t" (no own case, so the hosts' exhaustive key switches stay valid): it moves focus
     /// to the next field, Shift+Tab to the previous one.
     public static let tab = InputKey.character("\t")
+}
+
+extension ScrubMath {
+    /// "-12 dB" drawn as "−12 dB": a hyphen that starts the text or follows a space and precedes a digit becomes U+2212.
+    public static func typographicMinus(_ s: String) -> String {
+        guard s.contains("-") else { return s }
+        var out = "", prev: Character?
+        let chars = Array(s)
+        for (i, ch) in chars.enumerated() {
+            if ch == "-", prev == nil || prev == " ", i + 1 < chars.count, chars[i + 1].isNumber { out.append("\u{2212}") } else { out.append(ch) }
+            prev = ch
+        }
+        return out
+    }
 }

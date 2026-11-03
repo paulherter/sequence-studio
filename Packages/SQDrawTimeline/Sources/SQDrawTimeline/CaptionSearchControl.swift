@@ -230,7 +230,7 @@ public struct CaptionSearchControl {
         let box = CGRect(x: mc.minX, y: mc.midY - 7, width: 14, height: 14)
         InspectorDraw.checkbox(&c, model.caseSensitive ? .on : .off, box: box, hovering: hovered == .matchCase,
                                pressed: pressed == .matchCase, enabled: true, t)
-        c.draw(SQL10n.string("Match Case"), in: CGRect(x: box.maxX + 6, y: mc.minY, width: mc.width - 20, height: mc.height),
+        c.draw(SQL10n.string("Match case"), in: CGRect(x: box.maxX + 6, y: mc.minY, width: mc.width - 20, height: mc.height),
                fontSize: CGFloat(DrawTheme.TypeSize.body), t.label)
     }
 }

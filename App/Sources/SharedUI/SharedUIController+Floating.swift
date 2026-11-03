@@ -3,7 +3,6 @@ import SQCore
 import SQDrawKit
 import SQDrawShell
 import SQEditorSession
-import SQEditorUI
 import SQUIKit
 
 /// Floating panels on the shared UI (the design notes "floating panels"): the portable `ShellFloating` decides which panels
@@ -33,10 +32,10 @@ final class SharedUIFloatingWindow: NSPanel {
         backgroundColor = .clear
         hasShadow = true
         isMovableByWindowBackground = false
-        appearance = Theme.windowAppearance
+        appearance = MacWindowStyle.appearance
         collectionBehavior = [.fullScreenAuxiliary, .moveToActiveSpace]
         root.wantsLayer = true
-        if let layer = root.layer { Theme.Overlay.style(layer) }        // the rounding and hairline of every floating layer
+        if let layer = root.layer { MacWindowStyle.styleOverlay(layer) }        // the rounding and hairline of every floating layer
         uiView.frame = root.bounds
         uiView.autoresizingMask = [.width, .height]
         root.addSubview(uiView)

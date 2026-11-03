@@ -60,7 +60,7 @@ import SQEditorSession
         f.disabled = ["p"]
         let d = dialog(f)
         let dur = try #require(f.scrubFrames["d"])
-        #expect(dur.maxX == f.linkFrame.minX - 20)                // the linked rows end sidePad + 24 before the edge
+        #expect(dur.maxX == f.linkFrame.minX - 8)                // the linked rows end sidePad + 24 before the edge
         click(d, CGPoint(x: f.linkFrame.midX, y: f.linkFrame.midY))
         #expect(f.bool("link") == false)
         let p = f.rowFrames[2]
@@ -81,7 +81,7 @@ import SQEditorSession
         f.disabled = ["c"]
         let d = dialog(f)
         let box = f.controlFrames[0]
-        #expect(abs(box.height - 108) < 0.01)                     // 3 rows of 28, 12 apart
+        #expect(abs(box.height - 86) < 0.01)                     // 3 rows of 26, 4 apart
         #expect(try #require(f.scrubFrames["b"]).minX == box.minX + 206)   // 190 label column + 16 gap, like SQDialog.radioRow
         click(d, CGPoint(x: box.minX + 30, y: box.minY + 40 + 14))
         #expect(f.index("mode") == 1)

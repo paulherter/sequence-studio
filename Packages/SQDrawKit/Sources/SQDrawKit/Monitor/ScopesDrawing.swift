@@ -10,7 +10,7 @@ import SQUIKit
 /// between a popup and its scope and between two scopes; the first scope box is 170 high when two are shown.
 public enum ScopeBoxLayout {
     public static let side: CGFloat = 12        // Theme.Spacing.md
-    public static let top: CGFloat = 10
+    public static let top: CGFloat = 8          // Theme.Spacing.sm (design: popup row padding-top 8)
     public static let gap: CGFloat = 8          // Theme.Spacing.sm
     public static let firstBox: CGFloat = 170
     /// The least height a second scope is worth showing at.
@@ -201,10 +201,8 @@ public enum ScopeOverlay {
             c.stroke(ellipseIn: p.insetBy(dx: 0.5, dy: 0.5), width: 1, major)
             c.stroke(ellipseIn: CGRect(x: p.midX - p.width / 4, y: p.midY - p.height / 4, width: p.width / 2, height: p.height / 2),
                      width: 1, major)
-            c.strokeLine(from: CGPoint(x: p.minX, y: p.midY), to: CGPoint(x: p.maxX, y: p.midY), width: 1, major)
-            c.strokeLine(from: CGPoint(x: p.midX, y: p.minY), to: CGPoint(x: p.midX, y: p.maxY), width: 1, major)
             let e = ScopeGraticule.skinToneLineEnd
-            c.strokeLine(from: pt(0.5, 0.5), to: pt(e.x, e.y), width: 1, DrawTheme.color(t.palette.warning))
+            c.strokeLine(from: pt(0.5, 0.5), to: pt(e.x, e.y), width: 2, t.label3)
             for (name, origin) in ScopeBoxLayout.vectorLabelOrigins(disc: disc, textHeight: textH.rounded(.up),
                                                                     widthOf: { c.size(of: $0, fontSize: font).width }) {
                 _ = c.draw(name, at: origin, fontSize: font, t.label3)

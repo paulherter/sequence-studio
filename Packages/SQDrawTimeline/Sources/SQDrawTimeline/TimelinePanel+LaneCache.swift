@@ -120,7 +120,7 @@ extension TimelinePanel {
                 guard x1 >= clip.minX, x0 <= clip.maxX, x1 - x0 >= 3 else { continue }
                 let fade: Float? = inactive ? (selection.contains(c.id) ? 0.5 : 0.72) : (c.isEnabled ? nil : 0.68)
                 guard let fade else { continue }
-                let body = CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height).insetBy(dx: 0, dy: 1)
+                let body = CGRect(x: x0, y: row.y, width: x1 - x0, height: row.height).insetBy(dx: 0, dy: TimelineSkin.clipInset)
                 cv.fill(roundedRect: body, radius: min(DrawTheme.Radius.small.cg, body.height / 2), laneColor.alpha(fade))
             }
         }

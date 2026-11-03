@@ -124,7 +124,7 @@ import SQEditorSession
         #expect(TextMeasure(atlas: nil, scale: 1).truncatedMiddle("~/Movies/Sequence Studio/Projects", width: 60, size: 12).contains("\u{2026}"))
     }
 
-    /// `NewProjectSheet`: 56 head (title at 10, note at 31), form 20 below it, Create 104 with "⏎", Cancel 76.
+    /// `NewProjectSheet`: 48 head (title at 10, note at 31), form 20 below it, Create 104 with "⏎", Cancel 76.
     @Test func newProjectHeaderAndButtonsAreTheMacSheets() {
         let form = ShellNewProject.form(templates: ProjectTemplate.builtIn, location: Self.dir)
         let d = ShellDialog("New project", informative: "Settings can change later in Sequence Settings.")
@@ -136,9 +136,9 @@ import SQEditorSession
         d.buttonWidths = [0: 104, 1: 76]
         d.buttonHints = [0: "\u{23CE}"]
         d.layout(in: CGRect(x: 0, y: 0, width: 1200, height: 900), measure: TextMeasure(atlas: nil, scale: 1))
-        #expect(d.formViewport.minY == d.card.minY + 76)
+        #expect(d.formViewport.minY == d.card.minY + 64)
         #expect(d.buttonFrames[0]?.width == 104 && d.buttonFrames[1]?.width == 76)
-        #expect(d.buttonFrames[0]?.maxX == d.card.maxX - 20)
+        #expect(d.buttonFrames[0]?.maxX == d.card.maxX - 16)
         #expect(d.buttonTitle(0) == "Create  \u{23CE}" && d.buttonTitle(1) == "Cancel")
     }
 

@@ -54,7 +54,7 @@ extension SharedUIShot {
             }
         }
         await open("notice-warning") {
-            c.shell.presentMessage("Media offline", "2 files could not be found. Reconnect them to see the picture again.")
+            c.shell.presentMessage("Media offline", "2 files could not be found. Reconnect them to see the picture again.", tone: .warning)
         }
         await open("notice-error") {
             c.shell.presentError("Project could not be saved", NSError(domain: "SQ", code: 1, userInfo: [NSLocalizedDescriptionKey: "The disk is full."]))

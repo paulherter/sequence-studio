@@ -1,3 +1,4 @@
+#if canImport(AppKit)
 import AppKit
 import CoreText
 import Synchronization
@@ -54,3 +55,4 @@ public enum FontFamilyList {
         NotificationCenter.default.addObserver(forName: NSFont.fontSetChangedNotification, object: nil, queue: nil, using: drop)
     }
 }
+#endif

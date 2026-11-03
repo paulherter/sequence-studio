@@ -21,6 +21,8 @@ final class UIRenderer {
     /// `hwnd` nil renders offscreen. With `device` the renderer runs on that device's ID3D12Device and queue.
     init(hwnd: UnsafeMutableRawPointer?, width: Int, height: Int, device: D3D12GPUDevice? = nil) throws {
         var err = [CChar](repeating: 0, count: 4096)
+        let env = ProcessInfo.processInfo.environment
+        if env["SQ_SIMULATE_GPU_FAIL"] == "1", env["SQ_FORCE_WARP"] != "1" { throw AppError("simulated GPU failure (SQ_SIMULATE_GPU_FAIL)") }
         // The quad shader: DrawQuads.slang's generated HLSL (the Mac draws the same module's MSL).
         let shader = GeneratedShaders.drawQuads
         let vs = shader.hlsl["quadVertex"] ?? "", ps = shader.hlsl["quadFragment"] ?? ""
@@ -36,6 +38,10 @@ final class UIRenderer {
     }
 
     deinit { sq_ui_destroy(gpu) }
+
+    /// Waits for the display's pace (the swap chain's waitable object): the window loop then starts each frame right
+    /// after a refresh, so the playhead advances at an even rhythm instead of at whatever time the loop got to it.
+    func waitForDisplay() { sq_ui_wait_frame(gpu, 50) }
 
     func resize(_ w: Int, _ h: Int) {
         guard w > 0, h > 0, w != width || h != height else { return }

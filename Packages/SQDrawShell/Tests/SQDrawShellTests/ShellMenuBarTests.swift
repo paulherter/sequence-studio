@@ -138,13 +138,14 @@ struct ShellMenuBarTests {
 @MainActor
 @Suite("MenuListView")
 struct MenuListViewTests {
+    let I = SQMenuLayout.inset
     let m = TextMeasure(atlas: nil, scale: 1)
 
     @Test func rowsStackFromTheInsetWithMenuHeights() {
         var v = MenuListView(items: [SQMenuItem(title: "Cut"), .separator, .header("Clips"), SQMenuItem(title: "Paste")])
         v.relayout(m)
-        #expect(v.rowFrames.map(\.minY) == [CGFloat(4), 28, 37, 59])
-        #expect(v.contentSize.height == CGFloat(59 + 24 + 4))
+        #expect(v.rowFrames.map(\.minY) == [I, I + 24, I + 33, I + 33 + SQMenuLayout.headerHeight])
+        #expect(v.contentSize.height == I + 33 + SQMenuLayout.headerHeight + 24 + I)
         #expect(v.width >= SQMenuLayout.minWidth)
     }
 
@@ -154,8 +155,8 @@ struct MenuListViewTests {
         v.relayout(m)
         #expect(v.visibleSize.height == 100)
         v.reveal(row: 10)
-        #expect(v.scrollOffset == v.rowFrames[10].maxY + 4 - 100)
-        #expect(v.index(at: CGPoint(x: 20, y: 95)) == 10)
+        #expect(v.scrollOffset == v.rowFrames[10].maxY + I - 100)
+        #expect(v.index(at: CGPoint(x: 20, y: 95)) == v.rowFrames.firstIndex { $0.contains(CGPoint(x: 20, y: 95 + v.scrollOffset)) })
         v.scroll(by: 10_000)
         #expect(v.scrollOffset == v.maxScroll)
     }
@@ -165,7 +166,7 @@ struct MenuListViewTests {
         v.filter = "cu"
         v.relayout(m)
         #expect(v.filterFrame != nil)
-        #expect(v.rowFrames[0].minY == CGFloat(4 + 24 + 9))
+        #expect(v.rowFrames[0].minY == I + 24 + 9)
     }
 
     @Test func drawPaintsPanelHighlightAndClips() {

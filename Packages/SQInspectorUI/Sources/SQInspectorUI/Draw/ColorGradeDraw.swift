@@ -91,8 +91,8 @@ import SQDrawKit
         static let inset: CGFloat = 12
         static let labelX: CGFloat = 28
         static let controlX: CGFloat = 124
-        static let valueWidth: CGFloat = 48
-        static let valueColumn: CGFloat = 56
+        static let valueWidth: CGFloat = 46
+        static let valueColumn: CGFloat = 54
         static let row: CGFloat = 24
         static let popupRow: CGFloat = 28
         /// The hue box in its group stack (measured on the Mac PNG, `window-color-expanded-online`): the "Curve" row is a
@@ -101,7 +101,7 @@ import SQDrawKit
         static let hueCurveTop: CGFloat = 7
         static let hueCurveBottom: CGFloat = 8.5
         static let slider: CGFloat = 20
-        static let section: CGFloat = 25
+        static let section: CGFloat = 24
         static let sectionGap: CGFloat = 4
         static let icon: CGFloat = 24
         static let chevronX: CGFloat = 12
@@ -109,11 +109,11 @@ import SQDrawKit
         /// A popup row's popup ends here before the panel's right inset (the star sits in the gap).
         static let popupTrailing: CGFloat = 65
         static let group: CGFloat = 22
-        static let rgbCurve: CGFloat = 150
-        static let hueCurve: CGFloat = 90
+        static let rgbCurve: CGFloat = 138
+        static let hueCurve: CGFloat = 67
         static let curveTop: CGFloat = 6
         static let curveBottom: CGFloat = 8
-        static let wheel: CGFloat = 96
+        static let wheel: CGFloat = 80
         /// The Input color rows sit on the "top" grid: label at the inset, controls from here.
         static let topControlX: CGFloat = 104
         /// The channel dots row: 9 pt dots 10 apart in a 19 pt row, the dots' top 6 pt down.

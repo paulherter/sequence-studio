@@ -71,7 +71,7 @@ public struct RecentProjects: Sendable, Equatable, Codable {
     }
 
     public func save(to defaults: UserDefaults = .standard, key: String = "sq.recentProjects") {
-        if let data = try? JSONEncoder().encode(self) { defaults.set(data, forKey: key) }
+        if let data = try? JSONEncoder().encode(self) { defaults.set(data, forKey: key); defaults.synchronize() }
     }
 }
 

@@ -228,30 +228,24 @@ static bool submit(SQD3D *g, bool wait = true) {
     return ok;
 }
 
-#define FAIL(msg, hr) do { snprintf(err, errLen, "%s (0x%08lx)", msg, (unsigned long)(hr)); sqd3d_destroy(g); return nullptr; } while (0)
+#define FAIL(msg, hr) do { snprintf(err, errLen, "%s (0x%08lx)", msg, (unsigned long)(hr)); return false; } while (0)
 #define CHECK(expr, msg) do { HRESULT hr_ = (expr); if (FAILED(hr_)) FAIL(msg, hr_); } while (0)
 
-SQD3D *sqd3d_create(char *err, int errLen) {
-    SQD3D *g = new SQD3D();
-    char debug[8] = {};
-    if (GetEnvironmentVariableA("SQ_D3D12_DEBUG", debug, sizeof debug) && debug[0] == '1') {
-        ComPtr<ID3D12Debug> d;
-        if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&d)))) d->EnableDebugLayer();
-    }
-    ComPtr<IDXGIFactory6> factory;
-    CHECK(CreateDXGIFactory1(IID_PPV_ARGS(&factory)), "DXGI factory");
-    ComPtr<IDXGIAdapter1> adapter;
-    for (UINT i = 0; factory->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&adapter)) != DXGI_ERROR_NOT_FOUND; i++) {
-        DXGI_ADAPTER_DESC1 d;
-        adapter->GetDesc1(&d);
-        if (!(d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) &&
-            SUCCEEDED(D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g->dev)))) {
-            WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, g->name, sizeof g->name, nullptr, nullptr);
-            break;
-        }
-    }
-    if (!g->dev) FAIL("no D3D12 hardware adapter", 0);
+/// The device must run every kernel: typed UAV stores and loads on RGBA16F (NVIDIA and AMD do; some old or virtual
+/// adapters do not), RGBA16F sampling and render targets. A device that cannot is skipped for the next adapter (WARP).
+static bool deviceCapable(ID3D12Device *dev, char *err, int errLen) {
+    D3D12_FEATURE_DATA_FORMAT_SUPPORT fs = {DXGI_FORMAT_R16G16B16A16_FLOAT};
+    if (FAILED(dev->CheckFeatureSupport(D3D12_FEATURE_FORMAT_SUPPORT, &fs, sizeof fs))) FAIL("format support query", 0);
+    const UINT need1 = D3D12_FORMAT_SUPPORT1_TEXTURE2D | D3D12_FORMAT_SUPPORT1_SHADER_SAMPLE | D3D12_FORMAT_SUPPORT1_RENDER_TARGET;
+    const UINT need2 = D3D12_FORMAT_SUPPORT2_UAV_TYPED_STORE | D3D12_FORMAT_SUPPORT2_UAV_TYPED_LOAD;
+    if ((fs.Support1 & need1) != need1) FAIL("RGBA16F texture format unsupported", fs.Support1);
+    if ((fs.Support2 & need2) != need2) FAIL("RGBA16F typed UAV access unsupported", fs.Support2);
+    return true;
+}
 
+/// Everything after the device: queue, allocators, root signature, heaps, constant ring. false with `err` set.
+static bool sqd3d_init(SQD3D *g, char *err, int errLen) {
+    if (!deviceCapable(g->dev.Get(), err, errLen)) return false;
     D3D12_COMMAND_QUEUE_DESC qd = {};
     qd.Type = D3D12_COMMAND_LIST_TYPE_DIRECT;
     CHECK(g->dev->CreateCommandQueue(&qd, IID_PPV_ARGS(&g->queue)), "queue");
@@ -340,7 +334,7 @@ SQD3D *sqd3d_create(char *err, int errLen) {
     D3D12_RANGE none = {0, 0};
     CHECK(g->ring->Map(0, &none, (void **)&g->ringMap), "constant ring map");
     memset(g->ringMap, 0, 256);  // offset 0 stays zero: the address of a constant slot nobody set
-    return g;
+    return true;
 }
 
 void sqd3d_destroy(SQD3D *g) {
@@ -349,6 +343,64 @@ void sqd3d_destroy(SQD3D *g) {
     if (g->fence) for (auto &s : g->slots) retire(g, s);
     if (g->event) CloseHandle(g->event);
     delete g;
+}
+
+SQD3D *sqd3d_create(char *err, int errLen) {
+    char debug[8] = {};
+    if (GetEnvironmentVariableA("SQ_D3D12_DEBUG", debug, sizeof debug) && debug[0] == '1') {
+        ComPtr<ID3D12Debug> d;
+        if (SUCCEEDED(D3D12GetDebugInterface(IID_PPV_ARGS(&d)))) d->EnableDebugLayer();
+    }
+    ComPtr<IDXGIFactory1> factory;
+    HRESULT fhr = CreateDXGIFactory1(IID_PPV_ARGS(&factory));
+    if (FAILED(fhr)) { snprintf(err, errLen, "DXGI factory (0x%08lx)", (unsigned long)fhr); return nullptr; }
+    ComPtr<IDXGIFactory6> factory6;
+    factory.As(&factory6);             // missing before Windows 10 1803: adapters then come in the factory's own order
+    // Candidates: hardware adapters best first (hybrid laptops list the discrete GPU first), then WARP (the Microsoft
+    // software rasterizer), so a machine whose driver lacks D3D12, or whose GPU cannot run the kernels, still starts.
+    // SQ_FORCE_WARP=1 takes only WARP. Every adapter is tried through the whole setup, not only device creation.
+    char force[8] = {};
+    const bool forceWarp = GetEnvironmentVariableA("SQ_FORCE_WARP", force, sizeof force) && force[0] == '1';
+    std::vector<ComPtr<IDXGIAdapter1>> hardware, software;
+    for (UINT i = 0;; i++) {
+        ComPtr<IDXGIAdapter1> a;
+        HRESULT hr = factory6 ? factory6->EnumAdapterByGpuPreference(i, DXGI_GPU_PREFERENCE_HIGH_PERFORMANCE, IID_PPV_ARGS(&a))
+                              : factory->EnumAdapters1(i, &a);
+        if (hr == DXGI_ERROR_NOT_FOUND || FAILED(hr)) break;
+        DXGI_ADAPTER_DESC1 d;
+        if (FAILED(a->GetDesc1(&d))) continue;
+        ((d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) ? software : hardware).push_back(a);
+    }
+    std::vector<ComPtr<IDXGIAdapter1>> candidates;
+    if (!forceWarp) candidates = hardware;
+    candidates.insert(candidates.end(), software.begin(), software.end());
+    char last[256] = "no D3D12 adapter (hardware or WARP)";
+    for (auto &adapter : candidates) {
+        DXGI_ADAPTER_DESC1 d;
+        adapter->GetDesc1(&d);
+        char gpuName[96] = {};
+        WideCharToMultiByte(CP_UTF8, 0, d.Description, -1, gpuName, sizeof gpuName, nullptr, nullptr);
+        SQD3D *g = new SQD3D();
+        HRESULT hr = D3D12CreateDevice(adapter.Get(), D3D_FEATURE_LEVEL_11_0, IID_PPV_ARGS(&g->dev));
+        if (FAILED(hr)) {
+            snprintf(last, sizeof last, "%s: D3D12 device (0x%08lx)", gpuName, (unsigned long)hr);
+            sqd3d_destroy(g); continue;
+        }
+        char why[200] = {};
+        if (!sqd3d_init(g, why, sizeof why)) {
+            snprintf(last, sizeof last, "%s: %s", gpuName, why);
+            sqd3d_destroy(g); continue;
+        }
+        const bool software = (d.Flags & DXGI_ADAPTER_FLAG_SOFTWARE) != 0;
+        LARGE_INTEGER umd = {};
+        const bool haveDriver = SUCCEEDED(adapter->CheckInterfaceSupport(__uuidof(IDXGIDevice), &umd));
+        snprintf(g->name, sizeof g->name, "%s%s [driver %u.%u.%u.%u, vendor 0x%04x, FL 11_0+]", gpuName, software ? " (software)" : "",
+                 haveDriver ? (unsigned)HIWORD(umd.HighPart) : 0u, haveDriver ? (unsigned)LOWORD(umd.HighPart) : 0u,
+                 haveDriver ? (unsigned)HIWORD(umd.LowPart) : 0u, haveDriver ? (unsigned)LOWORD(umd.LowPart) : 0u, (unsigned)d.VendorId);
+        return g;
+    }
+    snprintf(err, errLen, "%s", last);
+    return nullptr;
 }
 
 const char *sqd3d_name(const SQD3D *g) { return g->name; }

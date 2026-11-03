@@ -5,7 +5,6 @@ import SQAppShell
 import SQCore
 import SQDrawShell
 import SQEditorSession
-import SQEditorUI
 import SQInspectorUI
 import UserNotifications
 

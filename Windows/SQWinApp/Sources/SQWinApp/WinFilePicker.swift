@@ -16,9 +16,33 @@ final class WinFilePicker: ShellFilePicker {
 
     init(owner: HWND) { self.owner = owner }
 
+    /// A project is one `.sqproj` file here. A Mac package (a `.sqproj` folder) opens by its `project.json` inside, which
+    /// resolves to the package; a Premiere file comes in through File > Import.
     func chooseProject() async -> URL? {
-        run(save: false, title: "Open Project", filter: [("Projects", "*.\(ProjectFile.fileExtension);*.ssproj;*.prproj"), ("All files", "*.*")],
-            name: "", multiple: false).first
+        guard let chosen = run(save: false, title: "Open Project",
+                               filter: [("Sequence Studio project", "*.\(ProjectFile.fileExtension);project.json"), ("All files", "*.*")],
+                               name: "", multiple: false).first else { return nil }
+        let url = ProjectOpenRouting.projectFolder(chosen: chosen) {
+            FileManager.default.fileExists(atPath: $0.appendingPathComponent("project.json").path)
+        } ?? chosen
+        return Self.convertedToFile(url)
+    }
+
+    /// A Mac package (a `.sqproj` folder) becomes one `.sqproj` file at the same path; the folder stays beside it, renamed
+    /// without the extension (nothing is deleted). Any failure leaves the package as it was and it opens as before.
+    static func convertedToFile(_ url: URL) -> URL {
+        let fm = FileManager.default
+        var isDir: ObjCBool = false
+        let json = url.appendingPathComponent("project.json")
+        guard url.pathExtension.lowercased() == ProjectFile.fileExtension, fm.fileExists(atPath: url.path, isDirectory: &isDir),
+              isDir.boolValue, let data = fm.contents(atPath: json.path) else { return url }
+        let aside = url.deletingPathExtension().deletingLastPathComponent()
+            .appendingPathComponent(url.deletingPathExtension().lastPathComponent + " (Mac package)")
+        do {
+            try fm.moveItem(at: url, to: aside)
+            do { try data.write(to: url) } catch { try? fm.moveItem(at: aside, to: url); return url }
+        } catch { return url }
+        return url
     }
 
     func chooseSaveLocation(suggestedName: String, prompt: String) async -> URL? {

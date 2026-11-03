@@ -106,8 +106,23 @@ public enum MacKeys {
         }
         let text: [InputEvent] = typed.map { .keyDown(.character($0), modifiers: []) }
         if composing { return text }
+        // Option+Space commits a non-breaking space; the shortcut (Quick Apply) comes before text input.
+        if key == .space, modifiers.contains(.option) { return [.keyDown(.space, modifiers: modifiers)] }
         if typed.unicodeScalars.contains(where: { !$0.isASCII }) { return text }
         if let key { return [.keyDown(key, modifiers: modifiers)] }
         return text
+    }
+
+    /// The text the system layout made of a key press that travels as a key (see `events`): what a text field types for it,
+    /// with Shift, Option and the layout applied (capitals, @, German z and y). nil when the press is a shortcut chord, an
+    /// IME composition, or text that `events` already sends as characters.
+    public static func typedText(key: InputKey?, modifiers: InputModifiers, committed: String, composing: Bool) -> String? {
+        guard !composing, key != nil, !modifiers.contains(.command), !modifiers.contains(.control) else { return nil }
+        if key == .space, modifiers.contains(.option) { return nil }
+        let typed = committed.filter { c in
+            !c.unicodeScalars.contains { $0.value < 0x20 || $0.value == 0x7F || (0xF700...0xF8FF).contains($0.value) }
+        }
+        guard !typed.isEmpty, typed.unicodeScalars.allSatisfy(\.isASCII) else { return nil }
+        return typed
     }
 }

@@ -56,7 +56,10 @@ public final class FFmpegDemuxer: Demuxing, @unchecked Sendable {
         let chroma = pix.contains("444") ? "4:4:4" : pix.contains("422") ? "4:2:2" : "4:2:0"
         return VideoTrackInfo(width: Int(raw.width), height: Int(raw.height), codec: formatDescription.codec,
                               bitDepth: Int(raw.bitDepth), chroma: chroma, nominalFrameDuration: frameDuration,
-                              isVariableFrameRate: durations.count > 1, rotation: rotation)
+                              isVariableFrameRate: durations.count > 1,
+                              colorPrimaries: FFmpegColorTags.primaries(Int(raw.colorPrimaries)),
+                              transfer: FFmpegColorTags.transfer(Int(raw.colorTransfer)),
+                              matrix: FFmpegColorTags.matrix(Int(raw.colorMatrix)), rotation: rotation)
     }
 
     public func samples(for range: ClosedRange<Int>) async throws -> [DemuxedSample] {
@@ -90,6 +93,20 @@ public final class FFmpegDemuxer: Demuxing, @unchecked Sendable {
     }
 
     var packetCount: Int { sizes.count }
+
+    /// The first `prefix` bytes of `count` samples spread evenly over the file, first and last included: an integrity
+    /// probe (a proxy whose writer was interrupted or overwritten holds frames that are not frames). nil on a read error.
+    public func sampleHeads(count: Int, prefix: Int) -> [[UInt8]]? {
+        let n = packetCount
+        guard n > 0 else { return nil }
+        let picks = Set((0..<max(1, count)).map { count > 1 ? $0 * (n - 1) / (count - 1) : 0 })
+        var heads: [[UInt8]] = []
+        for i in picks.sorted() {
+            guard let s = try? sample(ordinal: i) else { return nil }
+            heads.append(Array(s.data.prefix(prefix)))
+        }
+        return heads
+    }
 
     static func string<T>(_ tuple: T) -> String {
         withUnsafeBytes(of: tuple) { b in String(decoding: b.prefix { $0 != 0 }, as: UTF8.self) }

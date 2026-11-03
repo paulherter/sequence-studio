@@ -94,7 +94,7 @@ public enum DrawCursorGlyph {
                    arrow(tipX: -10, dir: -1), arrow(tipX: 10, dir: 1)]
             out += cursor == .slip ? [[p(0, -5), p(0, 5)]] : [[p(-7, -6), p(-7, 6)], [p(7, -6), p(7, 6)]]
         case .razor:
-            // Lucide "scissors" (the Mac razor cursor's `SQIcon.toolBlade`): two rings and two blades, 20 pt in the box.
+            // Scissors (the Mac razor cursor drew `SQIcon.toolBlade`; the cursor keeps its own hand-built outline): two rings and two blades, 20 pt in the box.
             func ring(_ cx: CGFloat, _ cy: CGFloat) -> [CGPoint] {
                 (0...12).map { i in
                     let a = CGFloat(i) / 12 * 2 * .pi
@@ -107,7 +107,7 @@ public enum DrawCursorGlyph {
             out = [[p(0, 0), p(0, 13), p(3.2, 10), p(5.6, 15), p(7.6, 14), p(5.2, 9.2), p(9.4, 9.2), p(0, 0)],
                    [p(10, 1), p(10, 9)], [p(6, 5), p(14, 5)]]
         case .zoomIn:
-            // A magnifier with a plus, the lens centered on the hot spot (Lucide "zoom-in").
+            // A magnifier with a plus, the lens centered on the hot spot (hand-built, the Mac zoom cursor).
             let lens = (0...16).map { i in
                 let a = CGFloat(i) / 16 * 2 * .pi
                 return p(6 * cos(a), 6 * sin(a))

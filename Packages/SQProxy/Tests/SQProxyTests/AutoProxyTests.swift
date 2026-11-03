@@ -47,6 +47,15 @@ private let weak = MachineProfile(memoryBytes: 8 << 30, cores: 8, isAppleSilicon
         #expect(AutoProxyRule.decide(seek: longGOP, video: hd, mode: .auto, machine: strong) == .skip(.lightSource))
     }
 
+    /// ProRes seeks fast, but a software decode of every frame (PC: no ProRes engine) is what loads the cores in playback.
+    @Test func softwareDecodedProResFrom1080pGetsAProxy() {
+        let hd = video(1920, 1080)
+        #expect(AutoProxyRule.decide(seek: prores, video: hd, mode: .auto, machine: strong, softwareDecode: true) == .needsProxy(.proxyHalf))
+        #expect(AutoProxyRule.decide(seek: prores, video: hd, mode: .auto, machine: strong, softwareDecode: false) == .skip(.intraOnlyCodec))
+        #expect(AutoProxyRule.decide(seek: prores, video: video(1280, 720), mode: .auto, machine: strong, softwareDecode: true) == .skip(.intraOnlyCodec))
+        #expect(AutoProxyRule.decide(seek: prores, video: hd, mode: .off, machine: strong, softwareDecode: true) == .skip(.disabled))
+    }
+
     /// No hardware decoder for the source on this Mac (e.g. H.264 / HEVC on an Intel Mac without that engine): a 4K
     /// software H.264 frame costs ~28 ms on one core (M1 Max, decode-hw bench), so from 1080p on a long GOP gets a proxy
     /// on every Mac; below 1080p and short GOPs stay as before.

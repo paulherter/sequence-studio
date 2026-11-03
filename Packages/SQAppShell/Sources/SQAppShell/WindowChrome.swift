@@ -111,7 +111,7 @@ public enum StatusBarDraw {
 
     public static func draw(_ c: inout Canvas, _ s: StatusBarContent, in bar: CGRect, theme t: DrawTheme) {
         c.fill(bar, t.titlebar)
-        c.fill(CGRect(x: bar.minX, y: bar.minY, width: bar.width, height: 1), t.separator)
+        c.fill(CGRect(x: bar.minX, y: bar.minY, width: bar.width, height: 1), t.hair)
         let fs = fontSize
         let f = layout(s, in: bar, width: { [c] in c.size(of: $0, fontSize: fs).width },
                        chipWidth: { [c] in c.size(of: $0, fontSize: chipSize).width })
@@ -238,7 +238,7 @@ public final class TitleRowHost {
         if let r = frames[.edited] { c.draw(Self.editedText(edited), in: r, fontSize: Self.editedSize, t.label3) }
         if let r = frames[.workspace] {
             if pressed == .workspace || hovered == .workspace {
-                c.fill(roundedRect: r, radius: CGFloat(DrawTheme.Radius.control), pressed == .workspace ? t.fillPressed : t.fillHover)
+                c.fill(roundedRect: r, radius: CGFloat(DrawTheme.Radius.small), pressed == .workspace ? t.current : t.hover)
             }
             let text = CGRect(x: r.minX + Self.sm, y: r.minY, width: r.width - 2 * Self.sm - 12, height: r.height)
             c.draw(workspaceName, in: text, fontSize: Self.editedSize, t.label2)
@@ -248,7 +248,7 @@ public final class TitleRowHost {
             var fill = t.accentFill
             if pressed == .export { fill = fill.lifted(-0.1) } else if hovered == .export { fill = fill.lifted(0.06) }
             c.fill(roundedRect: r, radius: CGFloat(DrawTheme.Radius.control), fill)
-            c.draw(SQL10n.string("Export"), in: r, fontSize: Self.editedSize, .white, align: .center, face: c.medium)
+            c.draw(SQL10n.string("Export"), in: r, fontSize: Self.editedSize, .white, align: .center, face: c.semibold)
         }
     }
 

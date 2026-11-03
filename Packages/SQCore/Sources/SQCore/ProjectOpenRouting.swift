@@ -16,6 +16,20 @@ public enum ProjectOpenRouting {
         return .unsupported
     }
 
+    /// The project a folder chosen in a folder chooser stands for: the folder itself or its nearest ancestor that is a
+    /// project (by extension), so a user who navigated into a `.sqproj` still opens it. A folder holding `project.json`
+    /// counts too. `nil` when the choice is no project. `hasProjectJSON` is injected to keep this free of file access.
+    public static func projectFolder(chosen: URL, hasProjectJSON: (URL) -> Bool) -> URL? {
+        var url = chosen.standardizedFileURL
+        while true {
+            if ProjectFile.isProjectURL(url) || url.pathExtension.lowercased() == premiereExtension { return url }
+            let parent = url.deletingLastPathComponent()
+            if parent.path == url.path || url.pathComponents.count <= 1 { break }
+            url = parent
+        }
+        return hasProjectJSON(chosen) ? chosen : nil
+    }
+
     /// Plain-language dialog text for a failed open. `nil` when the error is not a project-file error.
     public static func message(for error: Error, fileName: String) -> (title: String, detail: String)? {
         let title = "Could not open “\(fileName)”"

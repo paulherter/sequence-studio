@@ -13,7 +13,7 @@ extension ProjectFile {
     /// report. Reads only; the file is never written (the caller opens the result as unsaved). A file that is not a project
     /// at all, or from a newer build, throws as `read` does.
     public static func readSalvaging(from url: URL) throws -> (project: Project, report: ProjectSalvageReport) {
-        let file = url.appendingPathComponent(fileName)
+        let file = documentFile(url)
         guard FileManager.default.fileExists(atPath: file.path) else { throw ProjectFileError.missing }
         guard let data = try? Data(contentsOf: file) else { throw ProjectFileError.corrupt }
         return try salvage(data)
@@ -24,7 +24,7 @@ extension ProjectFile {
     /// has no file.
     @discardableResult
     public static func backUpDamaged(package: URL, fileManager fm: FileManager = .default) throws -> URL? {
-        let file = package.appendingPathComponent(fileName)
+        let file = documentFile(package, fileManager: fm)
         guard fm.fileExists(atPath: file.path) else { return nil }
         let dir = package.deletingLastPathComponent(), base = package.lastPathComponent
         var n = 1

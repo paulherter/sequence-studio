@@ -32,7 +32,7 @@ import SQUIKit
         for c in menuCommands + EditorMenus.windowPanels.map(EditorCommand.focusPanel) where CommandRouting.route(for: c) != nil {
             let name = String(String(describing: c).prefix { $0 != "(" })
             let found = EditorLookCommands.handles(c) || lines.contains { ($0.contains("case") || $0.contains("==")) && Self.mentions($0, ".\(name)") }
-            #expect(found, "\(c.title) (.\(name)) is routed but no `case .\(name)` or `== .\(name)` exists in App/Sources")
+            #expect(found, "\(c.title) (.\(name)) is routed but no `case .\(name)` or `== .\(name)` exists in the shared UI sources")
         }
     }
 
@@ -96,8 +96,11 @@ import SQUIKit
     private static func appSourceLines() throws -> [String] {
         var url = URL(fileURLWithPath: #filePath)
         while url.lastPathComponent != "Packages", url.pathComponents.count > 1 { url.deleteLastPathComponent() }
-        let dir = url.deletingLastPathComponent().appendingPathComponent("App/Sources")
-        let files = try FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil).filter { $0.pathExtension == "swift" }
+        let root = url.deletingLastPathComponent()
+        // The shared UI handles commands in the app target and in the shell packages every platform runs.
+        let dirs = ["App/Sources", "Packages/SQAppShell/Sources", "Packages/SQDrawShell/Sources", "Packages/SQDrawTimeline/Sources"].map { root.appendingPathComponent($0) }
+        let files = dirs.flatMap { (FileManager.default.enumerator(at: $0, includingPropertiesForKeys: nil)?.allObjects as? [URL] ?? []) }
+            .filter { $0.pathExtension == "swift" }
         #expect(!files.isEmpty)
         return try files.flatMap { try String(contentsOf: $0, encoding: .utf8).components(separatedBy: "\n") }
     }

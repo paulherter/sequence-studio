@@ -109,7 +109,7 @@ import SQUIKit
         c.clip(to: tile)
         drawSample(&c, look, in: tile)
         c.restoreGState()
-        c.stroke(roundedRect: tile, radius: radius, width: current ? 2 : 1, current ? t.accent : t.separator)
+        c.stroke(roundedRect: tile, radius: radius, width: current ? 2 : 1, current ? t.label : t.separator)
         c.draw(SQL10n.string(look.title), in: CGRect(x: r.minX - 4, y: r.maxY - 15, width: r.width + 8, height: 14),
                fontSize: CGFloat(DrawTheme.TypeSize.caption), current ? t.label : t.label2, align: .center)
     }

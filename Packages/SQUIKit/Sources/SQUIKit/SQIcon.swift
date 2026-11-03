@@ -1,4 +1,4 @@
-// The one icon registry of the app (DECISIONS 2026-10-10). Lucide glyphs (ISC) plus own drawings, see docs/THIRD_PARTY.md.
+// The one icon registry of the app (DECISIONS 2026-10-10). Phosphor glyphs (MIT) plus own drawings, see docs/THIRD_PARTY.md.
 // Cases are semantic names. Nothing else in the code base may load icon files or use SF Symbols.
 
 public enum SQIcon: String, CaseIterable, Sendable {
@@ -28,15 +28,16 @@ public enum SQIcon: String, CaseIterable, Sendable {
     case calendarClock, menu, user, gauge, captions, tag, bookmark, bookmarkFilled
     case checkCircle, checkCircleFilled, equal, plusCircle, minusCircle, addRectangle, warning, clock
     case uploadCircle, stopCircle, settings, findFolder, power, powerOn, powerOff, unknown
+    case info, chats, layout, deviceMobile, monitor
     case driveOffline, package, diamond, curve, toolHand, pointerHand, toolSelect, markClip
     case openInSource, timelineSelection, viewfinder, keyboard, eyedropper, tv, cloud, check
     case share, home, book, snap, toolSlip, toolSlide, toolRipple, toolRoll
     case toolRateStretch, keyframe, pageEdit, pageColor, markIn, markOut, markInOut
 
-    /// Closed shapes are filled as well as stroked (play, pause, stop, heart, star, folder, bookmark).
+    /// Uses Phosphor's Fill weight instead of Regular (play, pause, stop, heart, star, folder, bookmark, close and check circle).
     public var isFilled: Bool {
         switch self {
-        case .play, .pause, .stop, .heart, .folderFilled, .starFilled, .bookmarkFilled: true
+        case .play, .pause, .stop, .heart, .folderFilled, .starFilled, .bookmarkFilled, .closeCircleFilled, .checkCircleFilled: true
         default: false
         }
     }

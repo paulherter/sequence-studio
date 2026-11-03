@@ -13,31 +13,33 @@ public enum TimelineMarkerColors {
 struct TimelineSkin {
     let theme: DrawTheme
 
-    var accentTint: DrawColor { theme.accent.alpha(theme.palette.isDark ? 0.22 : 0.16) }
-    var fill2: DrawColor { theme.inkFill(0.06) }
-    var clipShade: DrawColor { DrawColor.black.alpha(0.22) }
-    var snapLine: DrawColor { DrawColor(hex: 0xFFD60A) }
+    var accentTint: DrawColor { theme.accent.alpha(Float(theme.palette.isDark ? SQTokens.Alpha.accentTintDark : SQTokens.Alpha.accentTintLight)) }
+    var fill2: DrawColor { theme.inkFill(SQTokens.Alpha.fill2) }
+    var clipShade: DrawColor { DrawColor.black.alpha(Float(SQTokens.Alpha.clipShade)) }
+    var snapLine: DrawColor { DrawColor(hex: SQTokens.Hex.yellow) }
     var selectionOutline: DrawColor { .white }
-    static let selectionOutlineWidth: CGFloat = 1.5
-    var clipEdge: DrawColor { DrawColor.white.alpha(0.22) }
+    /// Clip bodies sit this far inside the lane top and bottom (artifact: ~2 pt air above and below a clip). Drawing only; hit tests use the lane.
+    static let clipInset: CGFloat = 2
+    static let selectionOutlineWidth: CGFloat = CGFloat(SQTokens.Timeline.selectionOutlineWidth)
+    var clipEdge: DrawColor { DrawColor.white.alpha(Float(SQTokens.Alpha.clipEdge)) }
     /// `Theme.OnPicture.clipBadgeFill` / `clipBadgeEdge`: the rubber bands and their keys.
-    var badgeFill: DrawColor { DrawColor.white.alpha(0.95) }
-    var badgeEdge: DrawColor { DrawColor.black.alpha(0.6) }
-    var thumbRule: DrawColor { DrawColor.black.alpha(0.35) }
-    var thumbWell: DrawColor { DrawColor(hex: 0x2A2A2A) }
-    var inOutBand: DrawColor { DrawColor.white.alpha(0.13) }
-    var inOutBandEdge: DrawColor { DrawColor.white.alpha(0.38) }
-    var cacheStrip: DrawColor { theme.accent.alpha(0.6) }
-    var transitionIssue: DrawColor { red.alpha(0.55) }
-    var hudFill: DrawColor { DrawColor.black.alpha(0.55) }
-    var offlineClip: DrawColor { DrawColor(hex: 0x5A1F1C) }
-    var offlineText: DrawColor { DrawColor(hex: 0xFF8A80) }
-    var green: DrawColor { DrawColor(hex: 0x30D158) }
+    var badgeFill: DrawColor { DrawColor.white.alpha(Float(SQTokens.Alpha.badgeFill)) }
+    var badgeEdge: DrawColor { DrawColor.black.alpha(Float(SQTokens.Alpha.badgeEdge)) }
+    var thumbRule: DrawColor { DrawColor.black.alpha(Float(SQTokens.Alpha.thumbRule)) }
+    var thumbWell: DrawColor { DrawColor(hex: SQTokens.Hex.thumbWell) }
+    var inOutBand: DrawColor { DrawColor.white.alpha(Float(SQTokens.Alpha.inOutBand)) }
+    var inOutBandEdge: DrawColor { DrawColor.white.alpha(Float(SQTokens.Alpha.inOutBandEdge)) }
+    var cacheStrip: DrawColor { theme.accent.alpha(Float(SQTokens.Alpha.cacheStrip)) }
+    var transitionIssue: DrawColor { red.alpha(Float(SQTokens.Alpha.transitionIssue)) }
+    var hudFill: DrawColor { DrawColor.black.alpha(Float(SQTokens.Alpha.viewerHUD)) }
+    var offlineClip: DrawColor { theme.overlay }                 // artifact --clip-off (#2A2A2D / #DCDCDF)
+    var offlineText: DrawColor { theme.label2 }
+    var green: DrawColor { DrawColor(hex: SQTokens.Hex.green) }
     var warning: DrawColor { Self.color(theme.palette.warning) }
     var red: DrawColor { Self.color(theme.palette.red) }
-    var headTop: DrawColor { DrawColor(hex: 0xFFFFFF) }
-    var headBottom: DrawColor { DrawColor(hex: 0xC3C9D9) }
-    var headOutline: DrawColor { theme.palette.isDark ? .clear : DrawColor(hex: 0x19191C, alpha: 0.75) }
+    var headTop: DrawColor { DrawColor(hex: SQTokens.Hex.headTop) }
+    var headBottom: DrawColor { DrawColor(hex: SQTokens.Hex.headBottom) }
+    var headOutline: DrawColor { theme.palette.isDark ? .clear : DrawColor(hex: SQTokens.Hex.playheadLight, alpha: Float(SQTokens.Alpha.headOutlineLight)) }
 
     static func color(_ c: PaletteColor) -> DrawColor {
         DrawColor(Float(c.r) / 255, Float(c.g) / 255, Float(c.b) / 255, Float(c.a))
@@ -55,7 +57,7 @@ struct TimelineSkin {
 
     // MARK: Playhead head (`Theme.PlayheadSkin`, pip-head.svg in its 780 x 776 box, flattened once)
 
-    static let headSize = CGSize(width: 12, height: 12)
+    static let headSize = CGSize(width: SQTokens.Timeline.headSize, height: SQTokens.Timeline.headSize)
     /// The head outline in head-local points (0...12), bezier corners flattened to 6 steps each.
     static let headOutlinePoints: [CGPoint] = {
         var out: [CGPoint] = []
@@ -90,21 +92,12 @@ struct TimelineSkin {
     /// shortcut: the gradient is one polygon fill per 1 pt band; upgrade with a gradient quad kind in the canvas.
     func drawHead(_ cv: inout Canvas, centerX c: CGFloat, top: CGFloat = 0) {
         let pts = Self.headOutlinePoints.map { CGPoint(x: c - Self.headSize.width / 2 + $0.x, y: top + $0.y) }
-        let bands = Int(Self.headSize.height)
-        for i in 0..<bands {
-            let t = Float(i) / Float(max(bands - 1, 1))
-            let col = DrawColor(headTop.r + (headBottom.r - headTop.r) * t, headTop.g + (headBottom.g - headTop.g) * t,
-                                headTop.b + (headBottom.b - headTop.b) * t, 1)
-            cv.saveGState()
-            cv.clip(to: CGRect(x: c - 8, y: top + CGFloat(i), width: 16, height: 1))
-            cv.fill(polygon: pts, col)
-            cv.restoreGState()
-        }
+        cv.fill(polygon: pts, theme.playhead)                  // artifact .phead: flat playhead color
         if headOutline.a > 0 { cv.stroke(polygon: pts, width: 1, headOutline) }
     }
 
     /// `Theme.PlayheadSkin.lineFrame`: the 2 pt line centered on `x`.
     static func lineFrame(centerX x: CGFloat, y: CGFloat = 0, height: CGFloat) -> CGRect {
-        CGRect(x: x.rounded() - 1, y: y, width: 2, height: height)
+        CGRect(x: x.rounded() - 0.5, y: y, width: 1, height: height)
     }
 }

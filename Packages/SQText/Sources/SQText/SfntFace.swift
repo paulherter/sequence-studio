@@ -22,6 +22,9 @@ final class SfntFace: @unchecked Sendable {
     /// Tabular-figure glyphs of the digits (`tnum`; nil without them), read on first use.
     private(set) lazy var tabularDigits: TabularFigures? = TabularFigures(
         bytes, tables: tableOffsets, digits: (0x30...0x39).map { glyph(for: Unicode.Scalar($0)!) })
+    /// COLR/CPAL color layers and the emoji-sequence GSUB features (nil without them), read on first use.
+    private(set) lazy var colorGlyphs: ColorGlyphs? = ColorGlyphs(bytes, tables: tableOffsets)
+    private(set) lazy var substitution: GlyphSubstitution? = GlyphSubstitution(bytes, tables: tableOffsets)
     private let data: Data
     private let numberOfHMetrics: Int
     private let hmtx: Int

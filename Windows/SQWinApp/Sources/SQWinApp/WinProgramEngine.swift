@@ -1,5 +1,6 @@
 import Foundation
 import SQCore
+import SQDrawKit
 import SQAppShell
 import SQEditorSession
 import SQFrame
@@ -10,6 +11,29 @@ import SQPlayback
 import SQProxy
 import SQRender
 import SQText
+import Synchronization
+
+/// The pictures the monitor wants right now, readable from the decoding threads: a paused or scrubbing playhead moves on
+/// faster than a long-GOP decode runs, so a queued decode asks (once the decoder is free) whether anything in its range is
+/// still wanted and is dropped when not. Playback never drops: its ranges run ahead of the playhead on purpose.
+final class WinWantGate: Sendable {
+    private struct State { var indices: [UUID: Set<Int>] = [:]; var playing = false }
+    private let state = Mutex(State())
+    func set(_ keys: [(media: UUID, index: Int)], playing: Bool) {
+        state.withLock { s in
+            s.playing = playing
+            s.indices = [:]
+            for k in keys { s.indices[k.media, default: []].insert(k.index) }
+        }
+    }
+    func isStale(media: UUID, range: ClosedRange<Int>) -> Bool {
+        state.withLock { s in
+            guard !s.playing else { return false }
+            guard let wanted = s.indices[media] else { return true }
+            return !wanted.contains { range.contains($0) }
+        }
+    }
+}
 
 /// One picture ready for the D3D12 shim: packed NV12 (luma, then interleaved chroma, stride = width), or with `rgba` the
 /// composited Program picture as RGBA8 display code values (stride = width * 4). A composite stays on the GPU
@@ -19,6 +43,8 @@ struct NV12Picture: Sendable {
     var width: Int, height: Int
     var fullRange: Bool
     var rgba = false
+    /// `bytes` are 8-bit RGBA with straight alpha (footage with an alpha channel: QuickTime Animation, ProRes 4444), stride = width * 4.
+    var straightRGBA = false
     var texture: GPUPicture?
     /// 8, or 10 for P010 bytes (16-bit little-endian samples, 10 bits MSB-aligned, stride = 2 x width).
     var bitDepth = 8
@@ -86,6 +112,7 @@ final class WinProgramEngine: ProgramEngine {
         let moved = Set(paths.compactMap { id, p in mediaPaths[id].map { $0 == p ? nil : id } ?? nil })
         mediaPaths = paths
         mediaInfos.set(Dictionary(refs.map { ($0.id, $0.info) }, uniquingKeysWith: { a, _ in a }))
+        mediaInfos.setPaths(Dictionary(refs.map { ($0.id, $0.path) }, uniquingKeysWith: { a, _ in a }))
         colorResolver.invalidate()
         if !moved.isEmpty {
             if lastError?.hasPrefix("open ") == true { lastError = nil }
@@ -131,10 +158,32 @@ final class WinProgramEngine: ProgramEngine {
             warmSince = 0
             let seqs = sequences
             warming = true
-            let keys = timeline.videoLayers(at: position, sequences: { seqs[$0] }).compactMap { key(for: $0) }
+            let layers = timeline.videoLayers(at: position, sequences: { seqs[$0] })
+            let keys = layers.compactMap { key(for: $0) }
             warming = false
+            // The grades of these layers are assembled (LUT files read, first-use setup) off the main thread now, so the
+            // first play frame finds them served instead of stalling the window for 0.2 s.
+            // The clips of the next 12 s too: a cut during play must not stall on its first-use grade either.
+            var ahead = layers
+            let fd = timeline.frameDuration
+            var seenClips = Set(layers.map(\.clip))
+            for half in 1...24 {
+                let t = (position + fd * Int64((Double(half) * 0.5 * Double(fd.timescale) / Double(fd.value)).rounded())).snapped(to: fd)
+                for l in timeline.videoLayers(at: t, sequences: { seqs[$0] }) where l.generator == nil && seenClips.insert(l.clip).inserted {
+                    ahead.append(l)
+                }
+            }
+            let resolver = colorResolver, warmLayers = ahead
+            DispatchQueue.global(qos: .userInitiated).async {
+                for l in warmLayers where l.generator == nil { _ = resolver.pipelineBlocking(for: l.color, media: l.media, owner: l.clip) }
+            }
             var seen = Set<Key>()
             warmQueue = keys.filter { seen.insert($0).inserted }
+            preopenProxies(seconds: 8)
+        }
+        if warmQueue.isEmpty, warmSince == 0, now - warmLast >= 300_000_000 {
+            warmLast = now
+            preopenProxies(seconds: 8)   // later clips: their files open (and proxies) a few times a second until all are open
         }
         guard !warmQueue.isEmpty, now - warmLast >= 80_000_000 else { return }
         warmLast = now
@@ -172,10 +221,12 @@ final class WinProgramEngine: ProgramEngine {
 
     private var sources: [UUID: WinMediaSource] = [:]
     /// Decoded pictures by (media, presentation index); a small window around the playhead.
-    private var cache: [Key: NV12Picture] = [:]
+    private var cache: [Key: NV12Picture] = [:] { didSet { cacheGeneration &+= 1 } }
+    /// Changes with the frame cache (the ruler's cache strip polls `cachedSpans` only when it moved).
+    private(set) var cacheGeneration = 0
     /// Preferences > Frame Cache: the Program monitor's share of `MemoryBudget.frameCacheBytes` (the cache is trimmed to
     /// the window around the playhead when it holds more).
-    var frameCacheBytes = Int.max
+    var frameCacheBytes = 1 << 30
     /// `proxy`: the picture comes from the media's proxy file (`proxySources`), same index as the original's.
     /// `divisor`: the picture is box-reduced by it against the original's size (playback quality and, while playing or
     /// scrubbing, `PlaybackLayerDetail`: a 4K clip drawn at half size decodes to a half-size picture).
@@ -184,6 +235,8 @@ final class WinProgramEngine: ProgramEngine {
     /// (not tried again until the media changes).
     private var opening: Set<UUID> = []
     private var openFailed: [UUID: String] = [:]
+    /// PNG stills by media, decoded with their transparency at open (the video decoder path is NV12: no alpha).
+    private var stillImages: [UUID: RGBAImage] = [:]
     /// Window frames since the last look ahead at the clips coming up (`prefetch`).
     private var prefetchCountdown = 0
     private var prefetchKeys: [Key] = []
@@ -209,6 +262,15 @@ final class WinProgramEngine: ProgramEngine {
         didSet { if usesProxies != oldValue { shown = nil; refresh() } }
     }
     private var inFlight: Set<Key> = []
+    /// Pictures whose decode failed, with the time of the failure: the frame draws without that layer (a stuck picture
+    /// froze the whole monitor while the clock ran) and the decode is not asked again for `failedRetry`.
+    private var failedKeys: [Key: UInt64] = [:]
+    private static let failedRetry: UInt64 = 3_000_000_000
+    private func hasFailed(_ k: Key) -> Bool {
+        guard let t = failedKeys[k] else { return false }
+        if DispatchTime.now().uptimeNanoseconds - t > Self.failedRetry { failedKeys[k] = nil; return false }
+        return true
+    }
     /// The frame to show: its position and the decoded pictures it needs (bottom to top); `shown` is the one on screen.
     private struct Wanted: Equatable { let position: Time; let keys: [Key] }
     private var wanted: Wanted?
@@ -229,7 +291,7 @@ final class WinProgramEngine: ProgramEngine {
     var framesInFlightMax: Int { gpu?.inFlightMax ?? 0 }
 
     private var playStart: (host: UInt64, position: Time)?
-    private var lastShownFrame: Int64?
+    private(set) var lastShownFrame: Int64?
 
     /// View > Transparency Grid: the composite starts transparent and WinCompositor's Present pass lays it over the
     /// checkerboard (monitor only; `makeFrameSource` exports never see it).
@@ -282,8 +344,21 @@ final class WinProgramEngine: ProgramEngine {
         proxyLookups = [:]
         playDivisors = [:]
         composeSum = 0; composeCount = 0
+        // The clock and the sound start when the picture at the playhead is on screen (`releaseClock`): a cold 4K file
+        // needs 0.2 to 1 s for its first frame, and a clock that ran meanwhile left the decoder chasing a playhead it
+        // never caught (black monitor with sound, until a click moved the playhead to a warm spot).
+        clockHeldSince = DispatchTime.now().uptimeNanoseconds
+        audio?.setRate(r)
+    }
+
+    /// Nanoseconds when a started play began waiting for its first picture; nil once the clock runs.
+    private var clockHeldSince: UInt64?
+    private static let clockHoldLimit: UInt64 = 2_000_000_000
+
+    private func releaseClock() {
+        clockHeldSince = nil
+        playStart = (DispatchTime.now().uptimeNanoseconds, position)
         if let audio, audioError == nil {
-            audio.setRate(r)
             audio.seek(to: position)
             audio.start()   // every rate: |rate| != 1 keeps the pitch (ShuttleStretch in the WASAPI sink)
         }
@@ -293,6 +368,7 @@ final class WinProgramEngine: ProgramEngine {
         guard !rate.isPaused else { return }
         rate = .zero
         playStart = nil
+        clockHeldSince = nil
         audio?.stop()
         if usesProxies { WinProxies.shared.setBusy(false) }
         onPositionChange?(position)
@@ -305,6 +381,10 @@ final class WinProgramEngine: ProgramEngine {
     func scrub(to t: Time) { move(to: t) }
     func endScrub() {
         scrubbing = false
+        // Preview pictures (software decoders without the loop filter) leave the cache; the exact ones decode again.
+        for src in sources.values { src.setPreview(false) }
+        for all in lanes.values { for l in all { l.source.setPreview(false) } }
+        if !previewKeys.isEmpty { cache = cache.filter { !previewKeys.contains($0.key) }; previewKeys = []; shown = nil }
         refresh()
     }
 
@@ -319,7 +399,7 @@ final class WinProgramEngine: ProgramEngine {
     }
 
     func mediaChanged(_ ids: Set<UUID>) {
-        for id in ids { sources[id] = nil; proxySources[id] = nil; openFailed[id] = nil; proxyLookups[id] = nil; lanes[id] = nil; intraFiles[id] = nil }
+        for id in ids { sources[id] = nil; stillImages[id] = nil; proxySources[id] = nil; openFailed[id] = nil; proxyLookups[id] = nil; lanes[id] = nil; intraFiles[id] = nil }
         cache = cache.filter { !ids.contains($0.key.media) }
         audio?.mediaChanged(ids)
         refresh()
@@ -329,6 +409,12 @@ final class WinProgramEngine: ProgramEngine {
 
     /// Called once per window frame: advances the playhead while playing and keeps decoding.
     func tick() {
+        if let held = clockHeldSince {
+            let waited = DispatchTime.now().uptimeNanoseconds - held
+            if let w = wanted, shown == w || waited > Self.clockHoldLimit { releaseClock() }
+            else if wanted == nil, waited > Self.clockHoldLimit { releaseClock() }
+            else { refresh(); return }     // nothing moves while the first picture decodes
+        }
         if let start = playStart {
             let elapsed = Double(DispatchTime.now().uptimeNanoseconds - start.host) / 1e9
             let fd = timeline.frameDuration
@@ -339,7 +425,10 @@ final class WinProgramEngine: ProgramEngine {
             if t >= end && speed > 0 { t = end > fd ? end - fd : .zero; move(to: t); pause(); return }
             if t <= .zero && speed < 0 { move(to: .zero); pause(); return }
             move(to: t)
-        } else if rate.isPaused, !scrubbing {
+        } else if scrubbing {
+            if composePending, !movedSinceTick { compose() }
+            movedSinceTick = false
+        } else if rate.isPaused {
             warmStep()
         }
     }
@@ -349,6 +438,7 @@ final class WinProgramEngine: ProgramEngine {
         let snapped = max(.zero, t).snapped(to: fd)
         guard snapped != position || picture == nil else { refresh(); return }
         position = snapped
+        movedSinceTick = true
         WinPlayStats.shared.time(.position) { onPositionChange?(snapped) }
         refresh()
     }
@@ -357,27 +447,56 @@ final class WinProgramEngine: ProgramEngine {
     /// frames ahead while playing).
     private func refresh() {
         let planStart = DispatchTime.now().uptimeNanoseconds
+        func ms(_ t: UInt64) -> Double { Double(DispatchTime.now().uptimeNanoseconds - t) / 1e6 }
         let seqs = sequences
         let requests = WinPlayStats.shared.time(.videoLayers) { timeline.videoLayers(at: position, sequences: { seqs[$0] }) }
         let keys = requests.compactMap { key(for: $0) }
         let want = Wanted(position: position, keys: keys)
         wanted = want
         wantedRequests = requests
+        wantGate.set(keys.map { ($0.media, $0.index) }, playing: !rate.isPaused)
         let ahead = rate.isPaused ? 0 : 8
         refreshCount += 1
+        if !rate.isPaused, refreshCount % 20 == 0 { preopenProxies(seconds: 4) }
         var claimed: [UUID: Set<Int>] = [:]
         // Lowest index first: of two layers of one file, the earlier one keeps the lane that is reading toward it.
+        let t1 = DispatchTime.now().uptimeNanoseconds
         for k in Set(keys).sorted(by: { $0.index < $1.index }) { request(k, ahead: ahead, claimed: &claimed) }
+        let dReq = ms(t1), t2 = DispatchTime.now().uptimeNanoseconds
         if !rate.isPaused { prefetch(&claimed) } else { prefetchKeys = [] }
+        let dPre = ms(t2), t3 = DispatchTime.now().uptimeNanoseconds
         dropIdleLanes()
-        // Keep the cache to a window around the pictures of this frame (and the clips coming up).
-        if cache.count > 48 || cache.values.reduce(0, { $0 + $1.bytes.count }) > frameCacheBytes {
+        let dIdle = ms(t3), t4 = DispatchTime.now().uptimeNanoseconds
+        // The cache keeps what it holds up to the Preferences budget (the frames behind the playhead stay: the ruler's cache strip
+        // and a step back use them); over it, the pictures farthest from this frame (and the clips coming up) go first, down to
+        // three quarters of the budget so the trim does not run again at once.
+        var total = 0
+        for p in cache.values { total += p.bytes.count }
+        if total > frameCacheBytes {
             let keep = keys + prefetchKeys
-            cache = cache.filter { c in
-                keep.contains { $0.media == c.key.media && c.key.index >= $0.index - 4 && c.key.index <= $0.index + 24 }
+            func distance(_ k: Key) -> Int {
+                var d = Int.max / 2
+                for w in keep where w.media == k.media { d = min(d, abs(w.index - k.index)) }
+                return d
             }
+            // Each picture's distance once (not inside the sort's comparator: 60-75 ms with a full cache).
+            let ranked = cache.keys.map { (key: $0, distance: distance($0)) }.sorted { $0.distance > $1.distance }
+            var kept = cache
+            var doomed: [NV12Picture] = []
+            for r in ranked {
+                guard total > frameCacheBytes / 4 * 3, let p = kept.removeValue(forKey: r.key) else { break }
+                total -= p.bytes.count
+                doomed.append(p)
+            }
+            cache = kept
+            nonisolated(unsafe) let graveyard = doomed   // freeing a few hundred MB of pictures is not for the window's thread either
+            DispatchQueue.global(qos: .utility).async { _ = graveyard.count }
         }
-        if !rate.isPaused { WinPlayStats.shared.add(.plan, Double(DispatchTime.now().uptimeNanoseconds - planStart) / 1e6) }
+        if !rate.isPaused {
+            let all = ms(planStart)
+            WinPlayStats.shared.add(.plan, all)
+            if all > 15 { NSLog("slow plan %.0f ms: request %.0f, prefetch %.0f, idle %.0f, trim %.0f", all, dReq, dPre, dIdle, ms(t4)) }
+        }
         compose()
     }
 
@@ -387,11 +506,11 @@ final class WinProgramEngine: ProgramEngine {
         guard let src = lane(for: k, ahead: ahead, claimed: &claimed, prefetching: prefetching) else { return }
         let last = min(src.frameCount - 1, k.index + ahead)
         let missing = (k.index...max(k.index, last)).map { Key(media: k.media, index: $0, proxy: k.proxy, divisor: k.divisor) }
-            .filter { cache[$0] == nil && !inFlight.contains($0) }
+            .filter { cache[$0] == nil && !inFlight.contains($0) && !hasFailed($0) }
         if let first = missing.first { decode(src, k, first.index...missing.last!.index) }
     }
 
-    /// While playing, every 10 refreshes: opens the files of the clips 0.5, 1 and 1.5 s ahead and decodes their first
+    /// While playing, every 10 refreshes: opens the files of the clips 0.5 to 3.5 s ahead and decodes their first
     /// frames there, so a cut does not wait for an open and a cold decoder. A picture a playing lane reads toward is
     /// left to it; a later cut in a file on screen warms a lane of its own.
     private func prefetch(_ claimed: inout [UUID: Set<Int>]) {
@@ -402,7 +521,7 @@ final class WinProgramEngine: ProgramEngine {
         let speed = Double(rate.num) / Double(rate.den)
         let seqs = sequences
         var keys: [Key] = []
-        for seconds in [0.5, 1.0, 1.5] {
+        for seconds in [0.5, 1.0, 1.5, 2.5, 3.5] {
             let frames = Int64((seconds * speed * Double(fd.timescale) / Double(fd.value)).rounded())
             let t = position + fd * frames
             guard t >= .zero else { continue }
@@ -423,7 +542,8 @@ final class WinProgramEngine: ProgramEngine {
 
     /// Draws the wanted frame once all its pictures are decoded (and no file it needs is still opening).
     private func compose() {
-        guard let want = wanted, shown != want || !shownExact, want.keys.allSatisfy({ picture(for: $0) != nil }),
+        composePending = false
+        guard let want = wanted, shown != want || !shownExact, want.keys.allSatisfy({ picture(for: $0, standIn: true) != nil || hasFailed($0) }),
               opening.isEmpty || !wantedRequests.contains(where: { opening.contains($0.media) }) else { return }
         let captions = captionLayers()
         if want.keys.isEmpty && !showsTransparencyGrid && captions.isEmpty && !wantedRequests.contains(where: { $0.generator != nil }) {
@@ -438,6 +558,9 @@ final class WinProgramEngine: ProgramEngine {
             return
         }
         c.clipDurations = WinCompositor.clipDurations(of: timeline, sequences: sequences)
+        c.asyncCaptions = !rate.isPaused || scrubbing   // a scrub jumps: the last raster stands in, the exact one draws when the drag ends
+        c.frameStep = timeline.frameDuration
+        if c.asyncCaptions, refreshCount % 4 == 0 { prepareCaptions(c) }
         do {
             let resolver = colorResolver, bypass = colorBypass
             let graded: (LayerRequest) -> ColorPipeline? = { l in
@@ -452,8 +575,8 @@ final class WinProgramEngine: ProgramEngine {
             let p = try c.render(wantedRequests, format: timeline.format, transparent: showsTransparencyGrid, captions: captions,
                                  grade: bypass == nil || split ? graded : ungraded,
                                  splitGrade: split ? ungraded : nil) { [self] l in
-                guard let k = key(for: l), let pic = picture(for: k) else { return nil }
-                return WinCompositor.Source(media: k.media, index: k.index, picture: pic, info: sources[k.media]!.info, proxy: k.proxy)
+                guard let k = key(for: l), let pic = picture(for: k, standIn: true) else { return nil }
+                return WinCompositor.Source(media: k.media, index: k.index, picture: pic, info: sources[k.media]!.info, proxy: k.proxy, still: stillImages[k.media])
             }
             if !rate.isPaused {
                 composeSum += c.lastMilliseconds; composeCount += 1
@@ -468,9 +591,56 @@ final class WinProgramEngine: ProgramEngine {
 
     /// The decoded picture for `k`, or the same frame of the same file at another size (play start after a paused
     /// full-detail frame, a divisor change): the frame is right, only its detail differs until the exact one arrives.
-    private func picture(for k: Key) -> NV12Picture? {
+    /// While playing (`standIn`), a frame still decoding shows the nearest decoded one of the same file (at most
+    /// `standInReach` frames away) instead of nothing: the monitor keeps moving when the decoder is behind the clock, and
+    /// the exact picture replaces it on arrival (`shownExact`).
+    static let standInReach = 90
+    private func picture(for k: Key, standIn: Bool = false) -> NV12Picture? {
         if let p = cache[k] { return p }
-        return cache.first { $0.key.media == k.media && $0.key.index == k.index && $0.key.proxy == k.proxy }?.value
+        if let p = cache.first(where: { $0.key.media == k.media && $0.key.index == k.index && $0.key.proxy == k.proxy })?.value { return p }
+        guard standIn, !rate.isPaused || scrubbing else { return nil }
+        let near = cache.filter { $0.key.media == k.media && $0.key.proxy == k.proxy && abs($0.key.index - k.index) <= Self.standInReach }
+        // Playing: a frame the playhead has already passed, never one ahead of it (old frames from before a click would show
+        // the picture jumping forward and back); scrubbing takes the nearest either way.
+        if !scrubbing {
+            let forward = rate.num >= 0
+            let passed = near.filter { forward ? $0.key.index <= k.index : $0.key.index >= k.index }
+            if let p = passed.min(by: { abs($0.key.index - k.index) < abs($1.key.index - k.index) })?.value { return p }
+        }
+        return near.min { abs($0.key.index - k.index) < abs($1.key.index - k.index) }?.value
+    }
+
+    /// While playing: draws the captions 0.5 s ahead of the playhead on the compositor's lane, so a cut to the next
+    /// caption finds its first rasters ready.
+    private func prepareCaptions(_ c: WinCompositor) {
+        let fd = timeline.frameDuration
+        prepareTitles(c, step: fd)
+        guard showsCaptions, !timeline.captionTracks.isEmpty else { return }
+        let ahead = position + fd * Int64(max(1, Int((0.5 * Double(fd.timescale) / Double(fd.value)).rounded())))
+        let slots = timeline.captionSlots(at: ahead)
+        guard !slots.isEmpty else { return }
+        for l in CaptionLayerPlan.layers(timeline, slots: slots, at: ahead, library: CaptionLookRegistry.shared.library,
+                                         forward: rate.num >= 0, units: { TextGenerator.portableUnits(ref: $0) }) {
+            c.captionLane.prepare(ref: l.ref, localTime: l.localTime, duration: l.duration, step: fd, count: 4,
+                                  canvas: timeline.format.layoutFormat)
+        }
+    }
+
+    /// The text clips (titles, date stamps) 0.5 s and 1 s ahead render on the caption lane's worker, so a title that enters
+    /// finds its raster done instead of drawing it (up to ~100 ms) inside the frame.
+    private func prepareTitles(_ c: WinCompositor, step fd: Time) {
+        let seqs = sequences
+        let per = Int64(max(1, Int((0.5 * Double(fd.timescale) / Double(fd.value)).rounded())))
+        for n in Int64(1)...2 {
+            let t = position + fd * (per * n)
+            for l in timeline.videoLayers(at: t, sequences: { seqs[$0] }) {
+                guard let g = l.generator else { continue }
+                guard let ref = g.kind == GeneratorRef.dateStamp ? DateStampText.textRef(for: g) : g else { continue }
+                let dur = l.clipDuration ?? c.clipDurations[l.clip] ?? l.localTime
+                c.captionLane.prepare(ref: ref, localTime: l.localTime, duration: dur, step: fd, count: 4,
+                                      canvas: timeline.format.layoutFormat)
+            }
+        }
     }
 
     /// The caption layers at the playhead (`CaptionLayerPlan`, the Mac `RenderLoop.captionNodes`).
@@ -524,8 +694,14 @@ final class WinProgramEngine: ProgramEngine {
         return try await WinTimelineFrameSource.make(input)
     }
 
+    /// How many frames the shown picture is off the wanted one (largest over the layers); the scrub test's measure of a stand-in.
+    private(set) var shownLag = 0
+
     private func display(_ p: NV12Picture?, _ want: Wanted) {
         shown = want
+        shownLag = want.keys.map { k in
+            cache[k] != nil ? 0 : (cache.keys.filter { $0.media == k.media && $0.proxy == k.proxy }.map { abs($0.index - k.index) }.min() ?? 0)
+        }.max() ?? 0
         shownExact = want.keys.allSatisfy { cache[$0] != nil }
         picture = p
         readable = nil
@@ -539,60 +715,143 @@ final class WinProgramEngine: ProgramEngine {
         }
     }
 
+    private let wantGate = WinWantGate()
+
     private func decode(_ src: WinMediaSource, _ key: Key, _ range: ClosedRange<Int>) {
         let media = key.media, proxy = key.proxy, divisor = key.divisor
         let keys = range.map { Key(media: media, index: $0, proxy: proxy, divisor: divisor) }
         inFlight.formUnion(keys)
         let scale = quality
+        let name = mediaPaths[media].map { URL(fileURLWithPath: $0).lastPathComponent } ?? "\(media)"
         // A proxy is already 1/2 or 1/4: the divisor reduces only what is left.
         let reduce = max(1, divisor / (proxy ? proxySources[media]?.divisor ?? 1 : 1))
+        let gate = wantGate
+        // Scrubbing a clip only software can decode: the decoder skips its loop filter (`FFmpegVideoDecoder.setPreview`).
+        let preview = scrubbing && src.canPreview
+        if scrubbing { src.setPreview(preview) }
         // Each picture goes to the main actor as soon as it is ready (the first frame does not wait for the batch).
         Task.detached(priority: .userInitiated) {
             var failure: String?
             do {
-                try await src.streamPictures(range, divisor: reduce) { i, p in
-                    Task { @MainActor in self.decoded(Key(media: media, index: i, proxy: proxy, divisor: divisor), p, scale: scale) }
+                try await src.streamPictures(range, divisor: reduce, isStale: { gate.isStale(media: media, range: range) }) { i, p in
+                    Task { @MainActor in WinPlayStats.shared.time(.arrive) { self.decoded(Key(media: media, index: i, proxy: proxy, divisor: divisor), p, scale: scale, preview: preview) } }
                 }
             } catch {
-                failure = "\(error)"
+                failure = "decode \(name) \(range): \(error)"
             }
             let err = failure
             // Enqueued after the delivered pictures' tasks, so it sees them cached.
-            Task { @MainActor in self.finished(keys, err) }
+            Task { @MainActor in WinPlayStats.shared.time(.finish) { self.finished(keys, err) } }
         }
     }
 
-    private func decoded(_ key: Key, _ p: NV12Picture, scale: DecodeScale) {
+    /// Keys whose cached picture came from a decoder in preview mode (scrubbing a heavy clip); dropped when the scrub ends.
+    private var previewKeys: Set<Key> = []
+    /// A scrub step has a picture it did not compose yet / the playhead moved since the last `tick`.
+    private var composePending = false, movedSinceTick = false
+
+    /// Sources larger than this (1080p plus a margin) scrub in preview mode (`mediaKey`, `setPreview`).
+    static let previewPixels = 2_400_000
+    private func decoded(_ key: Key, _ p: NV12Picture, scale: DecodeScale, preview: Bool = false) {
         inFlight.remove(key)
+        if preview { guard scrubbing else { return }; previewKeys.insert(key) }
         guard scale == quality else { return }   // decoded for the quality before a change (the cache was dropped)
+        // A long-GOP decode delivers every picture from the keyframe on; composing (and uploading a 4K stand-in) for each
+        // one stalled the main thread many times per window frame. Compose only when this picture is wanted or is nearer
+        // to a wanted one than anything cached.
+        let useful = wanted?.keys.contains { w in
+            guard w.media == key.media, w.proxy == key.proxy else { return false }
+            if w == key { return true }
+            let d = abs(key.index - w.index)
+            return !cache.keys.contains { $0.media == w.media && $0.proxy == w.proxy && abs($0.index - w.index) <= d }
+        } ?? true
         cache[key] = p
-        compose()
+        guard useful else { return }
+        // Scrubbing: the playhead moves every window frame and composes then; an arrival only marks the picture (tick draws it
+        // when the playhead stood still), so one window frame never uploads and composes a 4K picture twice.
+        if scrubbing { composePending = true } else { compose() }
+    }
+
+    private func dropProxy(_ media: UUID) {
+        guard let path = mediaPaths[media], let p = proxySources[media] else { return }
+        rejectedProxies.insert(p.url)
+        proxySources[media] = nil
+        if let look = proxyLookups[media]?.look { WinProxies.shared.discardCorrupt(look, source: path) }
+        proxyLookups[media] = nil
+        cache = cache.filter { !($0.key.media == media && $0.key.proxy) }
+        shown = nil
     }
 
     /// A decode ended: keys it did not deliver are free to ask for again.
     private func finished(_ keys: [Key], _ error: String?) {
         let left = keys.filter { inFlight.contains($0) }
         inFlight.subtract(left)
-        if let error { lastError = error }
-        if !left.isEmpty { refresh() }
+        if let error {
+            lastError = error
+            let now = DispatchTime.now().uptimeNanoseconds
+            // A proxy that cannot decode is dropped for the original; any other picture is skipped for a while.
+            for media in Set(left.filter(\.proxy).map(\.media)) { dropProxy(media) }
+            for k in left where cache[k] == nil && !k.proxy { failedKeys[k] = now }
+            compose()
+        }
+        // A scrub drops most of its queued decodes as stale (nothing delivered): refreshing for each one planned and composed
+        // the frame again, a 4K upload per dropped request. Refresh only when a picture the monitor still wants is missing.
+        if !left.isEmpty, error != nil || !rate.isPaused || wanted?.keys.contains(where: { left.contains($0) }) != false { refresh() }
     }
 
     /// The decoded picture a media layer shows, as (media, presentation index); nil for generators and missing files.
+    /// Timeline spans whose pictures are all decoded (the ruler's cache strip): the frames around the playhead the cache
+    /// window covers, a gap or a clip with a missing picture ends a span. Generated layers (titles, mattes) need no picture.
+    var cachedSpans: [TimeRange] {
+        let fd = timeline.frameDuration
+        let here = position.frameIndex(frameDuration: fd)
+        let seqs = sequences
+        // One lookup set for the whole scan, and a coarser scan while playing (the frames are on the main thread's budget).
+        struct ID: Hashable { let media: UUID; let index: Int }   // a proxy's picture counts: it plays through the same gap
+        var ids = Set<ID>()
+        for k in cache.keys { ids.insert(ID(media: k.media, index: k.index)) }
+        let playing = !rate.isPaused
+        let stride: Int64 = playing ? 4 : 4
+        let first = max(0, here - (playing ? 240 : 450)), last = here + (playing ? 120 : 450)
+        var spans: [TimeRange] = []
+        var open: Int64?
+        func close(at f: Int64) { if let a = open { spans.append(TimeRange(start: fd * a, end: fd * f)); open = nil } }
+        var f = first
+        while f <= last {
+            let layers = timeline.videoLayers(at: fd * f, sequences: { seqs[$0] })
+            let ready = !layers.isEmpty && layers.allSatisfy { l in
+                guard l.generator == nil else { return true }
+                guard let k = mediaKey(for: l, remember: false) else { return false }
+                return stillImages[l.media] != nil || ids.contains(ID(media: k.media, index: k.index))
+            }
+            if ready { if open == nil { open = f } } else { close(at: f) }
+            f += stride
+        }
+        close(at: last + 1)
+        return spans
+    }
+
     private func key(for l: LayerRequest) -> Key? {
         guard l.generator == nil else { return nil }
         return WinPlayStats.shared.time(.key) { mediaKey(for: l) }
     }
 
-    private func mediaKey(for l: LayerRequest) -> Key? {
+    private func mediaKey(for l: LayerRequest, remember: Bool = true) -> Key? {
         guard l.generator == nil, let src = source(l.media) else { return nil }
         let index = src.frameIndex(at: l.sourceTime)
         var divisor = NV12Reduce.divisor(quality)
         if proxyContext != .paused {
             let d = min(playDivisors[l.media] ?? .max, max(divisor, PlaybackLayerDetail.divisor(for: l)))
-            playDivisors[l.media] = d
+            if remember { playDivisors[l.media] = d }
             divisor = d
         }
-        return Key(media: l.media, index: index, proxy: proxySource(l.media, original: src) != nil, divisor: divisor)
+        // Scrub preview: a picture beyond 1080p is read at a quarter of each side (smaller download and upload per window
+        // frame); the paused frame after the scrub is the normal, exact one.
+        if scrubbing, src.info.width * src.info.height > Self.previewPixels { divisor = max(divisor, 4) }
+        let proxy = proxySource(l.media, original: src) != nil
+        // A ready proxy that is still opening: wait for it (refresh runs when it is open) instead of decoding the 4K original.
+        if !proxy, proxyOpening.contains(l.media), proxyContext != .paused { return nil }
+        return Key(media: l.media, index: index, proxy: proxy, divisor: divisor)
     }
 
     // MARK: Decoder lanes
@@ -674,7 +933,12 @@ final class WinProgramEngine: ProgramEngine {
     private func dropIdleLanes() {
         guard refreshCount % 30 == 0 else { return }
         for (m, all) in lanes where all.count > 1 {
+            let stale = all.dropFirst().filter { refreshCount - $0.used >= 90 }
+            guard !stale.isEmpty else { continue }
             lanes[m] = [all[0]] + all.dropFirst().filter { refreshCount - $0.used < 90 }
+            // Closing a decoder (FFmpeg context, D3D11 frames) takes 15-30 ms: not on the window's thread.
+            nonisolated(unsafe) let graveyard = stale
+            DispatchQueue.global(qos: .utility).async { _ = graveyard.count }
         }
     }
 
@@ -690,13 +954,64 @@ final class WinProgramEngine: ProgramEngine {
         }
         guard let look, !rejectedProxies.contains(look.url) else { return nil }
         if let p = proxySources[media], p.url == look.url { return p.source }
-        guard let p = WinPlayStats.shared.time(.proxyOpen, { try? WinMediaSource(path: look.url.path, media: media) }),
-              Self.sameFrames(proxy: p.demuxer.index, original: original.demuxer.index) else {
-            rejectedProxies.insert(look.url)
-            return nil
+        openProxy(media, look: look, path: path, original: original)
+        return nil
+    }
+
+    private var proxyOpening: Set<UUID> = []
+
+    /// Opens the proxy off the main thread (the open reads the index and starts a decoder: ~0.3 s, which stalled the
+    /// first frames of a play); until it is open the picture reads the original, `refresh` runs when it is done.
+    private func openProxy(_ media: UUID, look: ProxyLookup, path: String, original: WinMediaSource) {
+        guard !proxyOpening.contains(media) else { return }
+        proxyOpening.insert(media)
+        let originalIndex = original.demuxer.index
+        let playing = !rate.isPaused
+        Task.detached(priority: .userInitiated) {
+            let openedAt = DispatchTime.now().uptimeNanoseconds
+            let p = try? WinMediaSource(path: look.url.path, media: media)
+            let ms = Double(DispatchTime.now().uptimeNanoseconds - openedAt) / 1e6
+            WinPlayStats.shared.add(.proxyOpen, ms)
+            StartupLog.note("proxy open \(look.url.lastPathComponent) \(Int(ms)) ms, playing \(playing)")
+            let ok = p.map { Self.sameFrames(proxy: $0.demuxer.index, original: originalIndex) } ?? false
+            let intact = ok && p.map(Self.proxyIsIntact) == true
+            await MainActor.run {
+                self.proxyOpening.remove(media)
+                guard self.mediaPaths[media] == path else { return }
+                guard let p, intact else {
+                    self.rejectedProxies.insert(look.url)
+                    if ok { WinProxies.shared.discardCorrupt(look, source: path) }
+                    self.refresh()
+                    return
+                }
+                self.proxySources[media] = (look.url, p, look.scaleDivisor)
+                self.shown = nil
+                self.refresh()
+            }
         }
-        proxySources[media] = (look.url, p, look.scaleDivisor)
-        return p
+    }
+
+    /// Opens the proxies of the media the playhead reaches in the next `seconds`, so a play or a cut finds them open.
+    private func preopenProxies(seconds: Int) {
+        guard usesProxies else { return }
+        let seqs = sequences
+        let wasWarming = warming
+        warming = true
+        defer { warming = wasWarming }
+        var seen = Set<UUID>()
+        for s in 0...seconds {
+            let t = position + Time(Int64(s), 1)
+            for l in timeline.videoLayers(at: t, sequences: { seqs[$0] }) where l.generator == nil && seen.insert(l.media).inserted {
+                if let src = source(l.media) { _ = proxySource(l.media, original: src) }
+            }
+        }
+    }
+
+    /// Every sampled frame of the proxy starts like a ProRes frame (size, then "icpf"): a proxy written by two processes at
+    /// once or cut short holds stretches of other bytes, which the decoder rejects frame after frame.
+    nonisolated static func proxyIsIntact(_ p: WinMediaSource) -> Bool {
+        guard let heads = p.demuxer.sampleHeads(count: 24, prefix: 8) else { return false }
+        return heads.allSatisfy { $0.count == 8 && $0[4] == 0x69 && $0[5] == 0x63 && $0[6] == 0x70 && $0[7] == 0x66 }
     }
 
     /// The proxy holds the original's frames: the same count over the same span (the proxy starts at zero, an original
@@ -715,9 +1030,17 @@ final class WinProgramEngine: ProgramEngine {
         opening.insert(media)
         Task.detached(priority: .userInitiated) {
             let result = Result { try WinMediaSource(path: path, media: media) }
-            await MainActor.run { self.opened(media, path, result) }
+            let still = Self.stillImage(path)
+            await MainActor.run { if let still { self.stillImages[media] = still }; self.opened(media, path, result) }
         }
         return nil
+    }
+
+    /// A PNG file's straight RGBA (nil for other files and PNGs `PortablePNG` cannot read: those stay on the decoder path).
+    nonisolated private static func stillImage(_ path: String) -> RGBAImage? {
+        guard path.lowercased().hasSuffix(".png"), let data = try? Data(contentsOf: URL(fileURLWithPath: path)),
+              let png = PortablePNG.decode(data) else { return nil }
+        return RGBAImage(width: png.width, height: png.height, pixels: png.rgba)
     }
 
     private func opened(_ media: UUID, _ path: String, _ result: Result<WinMediaSource, any Error>) {
@@ -735,6 +1058,8 @@ final class WinProgramEngine: ProgramEngine {
     }
 
     /// Playing and the frame at the playhead is not on screen yet (its pictures are still decoding).
+    /// The monitor shows the exact pictures of the wanted frame (not a nearby stand-in); for the scrub test.
+    var isShowingExactFrame: Bool { shown == wanted && shownExact }
     var isWaitingForFrame: Bool { !rate.isPaused && wanted != nil && shown != wanted }
 
     /// Blocks until the picture at `position` is decoded (headless checks).
@@ -743,6 +1068,7 @@ final class WinProgramEngine: ProgramEngine {
         while Date() < end {
             if let w = wanted, shown == w, shownExact, opening.isEmpty { return true }
             if wanted == nil { return false }
+            if scrubbing { tick() }   // a scrub composes in the window frame; headless there is none
             RunLoop.main.run(until: Date().addingTimeInterval(0.005))
         }
         return false
@@ -753,6 +1079,10 @@ final class WinProgramEngine: ProgramEngine {
 final class MediaInfoTable: @unchecked Sendable {
     private let lock = NSLock()
     private var infos: [UUID: MediaInfo?] = [:]
+    private var paths: [UUID: String] = [:]
     func set(_ t: [UUID: MediaInfo?]) { lock.lock(); infos = t; lock.unlock() }
+    /// Media id -> file path (the camera LUT embedded in a clip is read from the file).
+    func setPaths(_ t: [UUID: String]) { lock.lock(); paths = t; lock.unlock() }
+    func path(_ id: UUID) -> String? { lock.lock(); defer { lock.unlock() }; return paths[id] }
     func info(_ id: UUID) -> MediaInfo? { lock.lock(); defer { lock.unlock() }; return infos[id] ?? nil }
 }

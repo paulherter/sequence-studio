@@ -22,7 +22,7 @@ extension ShellHost {
         let form = ShellForm([
             // `SQSegmented` "Safe Zone" row, segments sized to their titles (52 fits "Shorts" in 11 pt).
             .segmented(id: "platform", label: "Safe Zone", options: platforms.map(\.title), selected: platforms.firstIndex(of: saved) ?? 0,
-                       segmentWidth: 52),
+                       segmentWidth: 0),
             .chart(note: Self.cutCheckChart(report).note, title: "Shot length", bars: Self.cutCheckChart(report).bars),
         ])
         let d = ShellDialog("Check Cuts", informative: "Findings are marked on the timeline. Undo removes them.")

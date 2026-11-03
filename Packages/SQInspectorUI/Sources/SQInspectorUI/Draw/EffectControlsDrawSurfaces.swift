@@ -94,7 +94,7 @@ extension EffectControlsDrawPanel {
             if i == channel { c.stroke(ellipseIn: d.insetBy(dx: -2.5, dy: -2.5), width: 1, t.label) }
         }
         let r = plot(rect)
-        c.fill(roundedRect: r, radius: 4, t.field)
+        c.fill(roundedRect: r, radius: CGFloat(DrawTheme.Radius.small), t.field)
         for i in 1..<4 {
             let f = CGFloat(i) / 4
             c.strokeLine(from: CGPoint(x: r.minX + f * r.width, y: r.minY), to: CGPoint(x: r.minX + f * r.width, y: r.maxY), width: 0.5, t.fieldEdge)
@@ -213,7 +213,7 @@ extension EffectControlsDrawPanel {
 
     func draw(_ c: inout Canvas, in rect: CGRect, theme t: DrawTheme, panel: EffectControlsDrawPanel) {
         let g = geometry(rect), plot = g.plot
-        c.fill(roundedRect: plot, radius: 6, t.field)
+        c.fill(roundedRect: plot, radius: CGFloat(DrawTheme.Radius.control), t.field)
         c.saveGState()
         c.clip(to: plot)
         for hz in EQCurveGeometry.gridHz {

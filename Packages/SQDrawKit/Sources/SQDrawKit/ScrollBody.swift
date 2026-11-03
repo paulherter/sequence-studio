@@ -33,13 +33,14 @@ public final class HostScroll: @unchecked Sendable {
 /// - Lifting the fingers past an end springs back with a critically damped spring.
 /// - A fling keeps going: the Mac delivers the momentum as events (used as they come); where the host sends none the body
 ///   decelerates by 0.998 per millisecond (UIScrollView `.normal`). A fling that reaches an end bounces off it.
-/// - A mouse wheel (not `precise`) scrolls at once and never bounces.
+/// - A mouse wheel (not `precise`) eases to its target (`easeTime` constant, a few frames) and never bounces; a notch
+///   during the ease moves the target on, so fast spinning stays smooth.
 /// Positions are in points along the scroll axis, `offset` 0 ... `maxOffset`. A content that fits (`maxOffset` 0) does not
 /// bounce, as in NSScrollView. Physics only (Double); no media time.
 /// The `offset` getter advances the body to the clock, so a panel just reads it each frame.
 /// Formulas are the published ones (UIScrollView rubber band and deceleration rate); no code borrowed.
 public final class ScrollBody: @unchecked Sendable {
-    enum Mode { case idle, tracking, momentum, glide, spring }
+    enum Mode { case idle, tracking, momentum, glide, spring, ease }
 
     /// UIScrollView's rubber band constant.
     public static let rubberCoefficient = 0.55
@@ -51,6 +52,8 @@ public final class ScrollBody: @unchecked Sendable {
     public static let edgeImpact = 0.5
     /// A fling below this speed (pt/s) at lift-off does not glide.
     public static let minFlingSpeed = 120.0
+    /// Time constant (s) of the mouse wheel's ease: ~95 % of a notch is done after three times this.
+    public static let easeTime = 0.06
     /// Finger speed is taken over this window before the last message.
     static let velocityWindow = 0.1
     /// A lift-off this long after the last message has no speed.
@@ -64,6 +67,8 @@ public final class ScrollBody: @unchecked Sendable {
     // glide: p(t) = p0 + v0 (1 - e^(-k dt)) / k
     private var glideP0 = 0.0, glideV0 = 0.0, glideT0 = 0.0
     // spring: excess x(t) = (x0 + (v0 + w x0) t) e^(-w t) around `edge`
+    // ease: p(t) = target + (p0 - target) e^(-dt / easeTime)
+    private var easeP0 = 0.0, easeTarget = 0.0, easeT0 = 0.0
     private var springEdge = 0.0, springX0 = 0.0, springV0 = 0.0, springT0 = 0.0
 
     /// Scrollable length (content minus viewport). Default: unbounded until the panel says.
@@ -97,7 +102,7 @@ public final class ScrollBody: @unchecked Sendable {
     func needsFrames(now: Double) -> Bool { isMoving || scrollerDragging || now - lastActive < ScrollerBar.visibleFor + ScrollerBar.fade }
     func touch(_ now: Double) { lastActive = now; HostScroll.shared.register(self) }
 
-    var isMoving: Bool { mode == .glide || mode == .spring }
+    var isMoving: Bool { mode == .glide || mode == .spring || mode == .ease }
     public var isAnimating: Bool { isMoving }
 
     /// The current position without moving the clock.
@@ -128,7 +133,16 @@ public final class ScrollBody: @unchecked Sendable {
         if delta != 0 { touch(now) }
         let top = max(maxOffset, 0)
         if !g.precise {
-            if delta != 0 { stop(); pos = min(max(pos + delta, 0), top) }
+            if delta != 0 {
+                let from = mode == .ease ? easeTarget : min(max(pos, 0), top)
+                easeP0 = min(max(pos, 0), top); easeT0 = now
+                easeTarget = min(max(from + delta, 0), top)
+                samples.removeAll()
+                if abs(easeTarget - easeP0) < 0.25 { pos = easeTarget; mode = .idle } else {
+                    mode = .ease
+                    HostScroll.shared.register(self)
+                }
+            }
             return
         }
         if g.momentumPhase != .none { momentum(delta, g.momentumPhase, now: now, top: top); return }
@@ -252,6 +266,10 @@ public final class ScrollBody: @unchecked Sendable {
             } else if abs(v) < 2 {
                 pos = p; mode = .idle
             } else { pos = p }
+        case .ease:
+            let dt = max(now - easeT0, 0)
+            let p = easeTarget + (easeP0 - easeTarget) * exp(-dt / Self.easeTime)
+            if abs(easeTarget - p) < 0.25 { pos = easeTarget; mode = .idle } else { pos = p }
         case .spring:
             let w = Self.springOmega, t = max(now - springT0, 0)
             let e = exp(-w * t)

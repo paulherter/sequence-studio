@@ -157,9 +157,9 @@ public final class InspectorHost {
         }
         let next = shell.onCommand
         shell.onCommand = { [weak self, weak shell] c in
-            // Delete with Effect Controls focused removes the selected keys, effect or mask, never the timeline clip.
-            if c == .delete || c == .rippleDelete, let self, shell?.focus == .effectControls,
-               !model.selection.isEmpty || model.selectedSection.map(model.canDeleteSection) == true {
+            // Delete with Effect Controls focused is Controls' own: it removes the selected keys, effect or mask, and does
+            // nothing when the selection is a built-in section (Transform). It never falls through to the timeline clip.
+            if c == .delete || c == .rippleDelete, let self, shell?.focus == .effectControls {
                 model.deleteSelectionOrEffect()
                 return true
             }

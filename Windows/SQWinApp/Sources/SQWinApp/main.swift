@@ -20,7 +20,7 @@ import WinSDK
 //   --ui-shot <file.png> [--size WxH] [--frame N] headless: the editor through D3D12 and the software renderer, diff
 //   --edit-test                                  headless: select, move, razor, delete, undo, redo through the input path
 //   --export-test <dir>                          headless: H.264 and a half-size PNG sequence of the sequence, timed
-//   --play-test S [--play-from T] [--play-after W] window: plays S seconds (from T s, W s after launch, default 0.5),
+//   --play-test S [--play-from T] [--play-rest R] [--play-after W] window: plays S seconds (from T s, W s after launch, default 0.5),
 //                                                prints shown/dropped frames, audio
 //                                                stats and per-stage timings (WinPlayStats)
 //   --seconds S, --shot <file.png>               window: close after S seconds, screenshot after the first second
@@ -37,7 +37,9 @@ func value(_ flag: String) -> String? { args.firstIndex(of: flag).flatMap { $0 +
 // thread otherwise made it MTA, and the folder dialog then blocked it in a non-pumping wait ("Not responding").
 let dialogTestMTA = value("--dialog-test") == "mta"
 if dialogTestMTA { _ = CoInitializeEx(nil, DWORD(COINIT_MULTITHREADED.rawValue)) } else { _ = sq_com_init_ui_thread() }
-func fail(_ m: String) -> Never { print("error: \(m)"); exit(1) }
+StartupLog.begin()
+FFmpegVideoDecoder.onFallback = { StartupLog.note("decoder fallback: \($0)") }
+func fail(_ m: String) -> Never { StartupLog.fail(m) }
 /// User + kernel CPU seconds of this process (all threads), for the play and export tests' CPU use.
 func processCPUSeconds() -> Double {
     var created = FILETIME(), exited = FILETIME(), kernel = FILETIME(), user = FILETIME()
@@ -55,7 +57,8 @@ if let i = args.firstIndex(of: "--make-sample") {
         let size = (try FileManager.default.attributesOfItem(atPath: media)[.size] as? NSNumber)?.int64Value ?? 0
         let project = SampleProject.make(mediaPath: media, fileSize: size, width: info.width, height: info.height,
                                          frameDuration: info.nominalFrameDuration, frames: Int64(d.index.count),
-                                         title: args.contains("--title") ? try SampleTitle.ref() : nil,
+                                         title: args.contains("--title") || args.contains("--title-shadow") || args.contains("--title-emoji") ? try SampleTitle.ref(emoji: args.contains("--title-emoji")) : nil,
+                                         titleShadow: args.contains("--title-shadow"),
                                          layers: value("--layers").flatMap { Int($0) } ?? 0)
         try ProjectFile.write(project, to: URL(fileURLWithPath: out))
         print("sample project: \(out) (\(info.width)x\(info.height), \(d.index.count) frames)")
@@ -97,6 +100,7 @@ if let openedURL {
     do { project = try ProjectFile.read(from: openedURL) } catch { fail("open \(openedURL.path): \(error)") }
 } else { project = EditorSession.makeUntitled() }
 let app: AppController
+StartupLog.step("create engine (D3D12 device, audio, project)")
 do { app = try AppController(project: project, fileURL: openedURL, audio: !headless) } catch { fail("\(error)") }
 // The window's drags read the keys held now (Alt mid-drag); the headless input tests keep the keys of the press.
 if !headless { app.timelinePanel.liveModifiers = { keyModifiers() } }
@@ -503,12 +507,16 @@ if args.contains("--edit-test") {
 let seconds = value("--seconds").flatMap(Double.init) ?? 0
 let playTest = value("--play-test").flatMap(Double.init)
 /// Play test rate (shuttle, e.g. 2, 4, -2); default 1 (Play).
+var scrubLaps: [String] = [], scrubLapsPrev: [String] = []; var scrubSpikes = 0
+var scrubStarted: Date?; var scrubFrames = 0, scrubSlow = 0, scrubWaited = 0, scrubExact = 0, scrubNear = 0, scrubLagSum = 0; var scrubLast = Date()
 let playRate = value("--play-rate").flatMap(Int32.init) ?? 1
 let shotPath = value("--shot")
 let window: AppWindow
 let renderer: UIRenderer
+StartupLog.step("create window and swap chain")
 do {
-    window = try AppWindow(title: "Sequence Studio - \(app.session.displayName)", width: 1440, height: 900)
+    let winSize = (value("--window-size") ?? "1440x900").split(separator: "x").compactMap { Int($0) }
+    window = try AppWindow(title: "Sequence Studio - \(app.session.displayName)", width: winSize.first ?? 1440, height: winSize.count > 1 ? winSize[1] : 900)
     app.wirePreferences(dpiScale: window.scale)
     let (w, h) = window.clientSize
     renderer = try UIRenderer(hwnd: UnsafeMutableRawPointer(window.hwnd), width: w, height: h, device: app.engine.gpu)
@@ -516,20 +524,28 @@ do {
 let floatingHost = WinFloatingHost(app: app, main: window, loadState: !args.dropFirst().contains { $0.hasPrefix("--") })
 let filePicker = WinFilePicker(owner: window.hwnd)
 app.shell.files = filePicker
+app.shell.appIconImage = AppWindow.appIconImage()
 app.editAPI?.sync()        // the real window only: headless runs exit before this and never bind the port
 app.configureTimelinePanel()
 app.session.startAutosaveTimer()
 if openedURL == nil { app.shell.presentStartAtLaunch(); app.shell.spawn { await app.shell.offerRecovery() } }
 else { app.shell.offerRelinkIfNeeded() }      // media beside a copied project links quietly (a Mac project on Windows)
 var shownTitle = ""
+StartupLog.note("renderer adapter: \(renderer.adapter); engine GPU: \(app.engine.gpu?.name ?? "none (\(app.engine.lastError ?? "?"))")")
+StartupLog.step("running")
 print("adapter: \(renderer.adapter), scale \(window.scale), audio: \(app.engine.audioUnavailable ? "off (\(app.engine.audioError ?? "disabled"))" : app.engine.audioDevice ?? "?")")
 
 let start = Date()
 var frames = 0
 var shotDone = false
 var playStarted: Date?
+var playSought = false
+var playSecond = 0
+var playSecondShown = (0, 0)
+var playRestUntil = 0.0
 var playCPU = 0.0
 var slowFrames = 0
+var pacing: [Double] = [], lastPacedFrame: Int64?, lastPacedAt = Date()
 var lastFrameAt = Date()
 var dialogTestDone = false
 let chromeTest = value("--chrome-test").map { WinChromeTest(app: app, hwnd: window.hwnd, folder: $0) }
@@ -539,7 +555,9 @@ let magicUITest = value("--magic-ui-test").flatMap { folder in openedURL.map { u
 } }
 let shellTest = value("--shell-test").map { WinShellTest(app: app, window: window, folder: $0) }
 shellTest?.floating = floatingHost
+sq_fine_timer()
 while !window.closed {
+    renderer.waitForDisplay()
     let (events, gestures, resized) = window.pump()
     if window.closed { break }
     if let s = resized { renderer.resize(s.0, s.1) }
@@ -547,7 +565,7 @@ while !window.closed {
     for (i, e) in events.enumerated() {
         let repeating = window.repeatedEvents.contains(i)
         if let g = gestures[i] { HostGesture.shared.with(g) { app.handle(e) } }
-        else { HostKeyRepeat.shared.with(repeating) { app.handle(e) } }
+        else { HostTypedText.shared.with(window.typedEvents[i]) { HostKeyRepeat.shared.with(repeating) { app.handle(e) } } }
     }
     floatingHost.pump { e, g in
         if let g { HostGesture.shared.with(g) { app.handle(e) } } else { app.handle(e) }
@@ -555,30 +573,66 @@ while !window.closed {
     for urls in window.takeDrops() { app.shell.importMixed(urls) }
     for k in window.takeKeyUps() { app.timelineKeyUp(k) }
     if window.takeFocusLost() { app.releaseHeldKeys() }
-    if window.takeAltTaps() > 0, app.shell.dialog == nil { app.shell.menuBar.altTapped() }
-    let playing = playStarted != nil, stats = WinPlayStats.shared
+    _ = window.takeAltTaps()   // a lone Alt does nothing here: Alt is the timeline zoom modifier, no Alt menu focus
+    let playing = playStarted != nil || scrubStarted != nil, stats = WinPlayStats.shared
     var stageStart = DispatchTime.now().uptimeNanoseconds
     func lap(_ s: WinPlayStats.Stage) {
         let now = DispatchTime.now().uptimeNanoseconds
         if playing { stats.add(s, Double(now - stageStart) / 1e6) }
+        if scrubStarted != nil { scrubLaps.append("\(s) \(String(format: "%.0f", Double(now - stageStart) / 1e6))") }
         stageStart = now
     }
-    RunLoop.main.run(until: Date())        // decode results and session work queued on the main actor
+    // decode results and session work queued on the main actor. `run(until: Date())` blocked ~14 ms per call (a wait, not
+    // work: the loop ran at 64 fps whatever the display), this one returns at once and the loop follows the display.
+    _ = RunLoop.main.run(mode: .default, before: .distantPast)
     lap(.runloop)
     app.engine.tick()
     lap(.tick)
     let t = Date().timeIntervalSince(start)
     if let p = playTest, playStarted == nil, t > (value("--play-after").flatMap(Double.init) ?? 0.5) {
-        if let from = value("--play-from").flatMap(Double.init) {   // seconds into the sequence
+        if let from = value("--play-from").flatMap(Double.init), !playSought {   // seconds into the sequence
             let fd = tl.frameDuration
             app.session.seek(to: fd * Int64((from * Double(fd.timescale) / Double(fd.value)).rounded()))
+            playSought = true
+            // --play-rest R: rest R s on the spot first (the warm-up a person gives the playhead before pressing play)
+            playRestUntil = t + (value("--play-rest").flatMap(Double.init) ?? 0)
         }
-        app.apply(playRate == 1 ? .playPause : .shuttle(.setRate(PlaybackRate(playRate))))
-        playStarted = Date()
-        playCPU = processCPUSeconds()
-        slowFrames = 0; frames = 0
-        print(String(format: "play test: playing \(p) s (at %.3f s)", Double(DispatchTime.now().uptimeNanoseconds % 1_000_000_000_000) / 1e9))
-        if let m = value("--play-marker") { _ = FileManager.default.createFile(atPath: m, contents: Data()) }   // GPU load sampling
+        if t >= playRestUntil {
+            app.apply(playRate == 1 ? .playPause : .shuttle(.setRate(PlaybackRate(playRate))))
+            playStarted = Date()
+            playCPU = processCPUSeconds()
+            slowFrames = 0; frames = 0
+            print(String(format: "play test: playing \(p) s (at %.3f s)", Double(DispatchTime.now().uptimeNanoseconds % 1_000_000_000_000) / 1e9))
+            if let m = value("--play-marker") { _ = FileManager.default.createFile(atPath: m, contents: Data()) }   // GPU load sampling
+        }
+    }
+    // --scrub-test S: after the warm-up the playhead sweeps back and forth over timeline seconds 2...20 (6 s per sweep),
+    // one jump per window frame, like dragging the ruler; prints how many window frames were slow and waited for a picture.
+    if let sc = value("--scrub-test").flatMap(Double.init), t > 3 {
+        if scrubStarted == nil { scrubStarted = Date(); app.session.beginScrub(); WinPlayStats.shared.reset(); scrubFrames = 0; scrubSlow = 0; scrubWaited = 0; scrubExact = 0; scrubNear = 0; scrubLagSum = 0; scrubLast = Date() }
+        let el = Date().timeIntervalSince(scrubStarted!)
+        let ph = (el / 6).truncatingRemainder(dividingBy: 2); let tri = ph < 1 ? ph : 2 - ph
+        let fd = tl.frameDuration
+        let secs = 2 + tri * 18
+        app.session.scrub(to: fd * Int64((secs * Double(fd.timescale) / Double(fd.value)).rounded()))
+        scrubFrames += 1
+        if app.engine.isWaitingForFrame { scrubWaited += 1 }
+        if app.engine.isShowingExactFrame { scrubExact += 1 }
+        if app.engine.shownLag <= 3 { scrubNear += 1 }
+        scrubLagSum += app.engine.shownLag
+        lap(.compose)
+        if Date().timeIntervalSince(scrubLast) > 1.5 / 60 {
+            scrubSlow += 1
+            if scrubSpikes < 25, Date().timeIntervalSince(scrubLast) > 0.03 { scrubSpikes += 1; print("scrub test: slow frame \(Int(Date().timeIntervalSince(scrubLast) * 1000)) ms, previous laps: \(scrubLapsPrev.joined(separator: ", ")), this: \(scrubLaps.joined(separator: ", "))") }
+        }
+        scrubLapsPrev = scrubLaps; scrubLaps = []
+        scrubLast = Date()
+        if el >= sc {
+            print("scrub test: \(sc) s, \(scrubFrames) window frames, \(scrubSlow) slow, \(scrubWaited) waited for a picture, \(scrubExact) showed the exact frame, \(scrubNear) within 3 frames, mean lag \(scrubLagSum / max(1, scrubFrames)) frames")
+            for line in WinPlayStats.shared.report() { print("scrub test: \(line)") }
+            app.session.endScrub()
+            window.close()
+        }
     }
     if args.contains("--dialog-test"), !dialogTestDone, t > 0.5 { dialogTestDone = true; runDialogTest(window.hwnd) }
     if let c = chromeTest, t > 1.0 { c.tick(t); if c.done { window.close() } }
@@ -596,6 +650,7 @@ while !window.closed {
     if let t = app.captions.templateImage { renderer.setImage(t.0, t.1, generation: t.2) }
     if let t = app.effects.tileImage { renderer.setImage(t.0, t.1, generation: t.2) }
     if let t = app.shell.exportPreviewImage { renderer.setImage(t.0, t.1, generation: t.2) }     // the Export sheet's picture
+    if let t = app.shell.aboutIconImage { renderer.setImage(t.0, t.1, generation: t.2) }         // the About card's real icon
     if app.shell.windowTitle != shownTitle { shownTitle = app.shell.windowTitle; window.setTitle(shownTitle) }
     var shot = false
     if let path = shotPath, !shotDone, t > (value("--shot-after").flatMap(Double.init) ?? 1.0) { shot = true; shotDone = true; _ = path }
@@ -615,6 +670,7 @@ while !window.closed {
         if let t = app.captions.templateImage { r.setImage(t.0, t.1, generation: t.2) }
         if let t = app.effects.tileImage { r.setImage(t.0, t.1, generation: t.2) }
         if let t = app.shell.exportPreviewImage { r.setImage(t.0, t.1, generation: t.2) }
+        if let t = app.shell.aboutIconImage { r.setImage(t.0, t.1, generation: t.2) }
     }
     if let img = presented, let path = chromeShot ?? shotPath {
         do { try PNGWriter.write(img, to: URL(fileURLWithPath: path)); print("screenshot: \(path) \(img.width)x\(img.height)") }
@@ -622,7 +678,24 @@ while !window.closed {
     }
     if chromeShot != nil { shellTest?.screenshotTaken() }     // readback + PNG: not the app's frame time
     let now = Date()
-    if playStarted != nil, now.timeIntervalSince(lastFrameAt) > 1.5 / 60 { slowFrames += 1 }
+    if let ps = playStarted, playTest != nil {
+        let sec = Int(now.timeIntervalSince(ps))
+        if sec > playSecond { playSecond = sec; let e = app.engine
+            print("play test: second \(sec): shown \(e.shownFrames - playSecondShown.0), dropped \(e.skippedFrames - playSecondShown.1)")
+            playSecondShown = (e.shownFrames, e.skippedFrames) }
+    }
+    if playStarted != nil, playTest != nil, let f = app.engine.lastShownFrame, f != lastPacedFrame {   // pacing: gaps between new pictures
+        if lastPacedFrame != nil { pacing.append(now.timeIntervalSince(lastPacedAt) * 1000) }
+        lastPacedFrame = f; lastPacedAt = now
+    }
+    if let ps = playStarted, now.timeIntervalSince(lastFrameAt) > 1.5 / 60 {
+        slowFrames += 1
+        let gap = now.timeIntervalSince(lastFrameAt)
+        if playTest != nil, gap > 0.035 {   // which frames of the play test stall: when, how long, where the playhead is
+            print(String(format: "play test: slow window frame at %.2f s: %.0f ms, playhead frame %d", now.timeIntervalSince(ps), gap * 1000,
+                         app.session.playhead.frameIndex(frameDuration: tl.frameDuration) ?? -1))
+        }
+    }
     lastFrameAt = now
     frames += 1
     if let p = playTest, let ps = playStarted, now.timeIntervalSince(ps) >= p {
@@ -634,6 +707,13 @@ while !window.closed {
         if !e.rate.isPaused { app.apply(.playPause) }
         let cpu = processCPUSeconds() - playCPU
         if let m = value("--play-marker") { try? FileManager.default.removeItem(atPath: m) }
+        if pacing.count > 10 {   // ms between new pictures: even = smooth (30 fps ideal 33.3, the spread is the judder)
+            let mean = pacing.reduce(0, +) / Double(pacing.count)
+            let sd = (pacing.reduce(0) { $0 + ($1 - mean) * ($1 - mean) } / Double(pacing.count)).squareRoot()
+            let sorted = pacing.sorted()
+            print(String(format: "play test: pacing: %d pictures, gap mean %.1f ms, sd %.1f ms, p5 %.1f, p95 %.1f, max %.1f", pacing.count, mean, sd,
+                         sorted[sorted.count / 20], sorted[sorted.count * 19 / 20], sorted.last ?? 0))
+        }
         print(String(format: "play test: %.2f s, %d window frames, %d slow window frames, CPU %.2f s (%.0f %% of one core)",
                      played, frames, slowFrames, cpu, cpu / played * 100))
         print("play test: \(shown) sequence frames shown, \(dropped) dropped, playhead "

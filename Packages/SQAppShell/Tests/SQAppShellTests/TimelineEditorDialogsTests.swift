@@ -72,7 +72,7 @@ import Testing
             Issue.record("unexpected rows"); return
         }
         #expect(label.isEmpty && anchorLabel.isEmpty && value == "Shot")
-        #expect(form.controlWidths == ["name": 400, "anchor": 400])
+        #expect(form.controlWidths.isEmpty)   // controls fill the row (art.html)
     }
 
     /// The Mac `ColorMatteDialog`: XS card, informative line, Add puts the named matte on the timeline at the playhead.

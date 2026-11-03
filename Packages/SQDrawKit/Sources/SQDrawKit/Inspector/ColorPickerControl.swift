@@ -219,18 +219,17 @@ public struct ColorPickerControl: Sendable {
         let c = v.rgb
         return DrawColor(Float(c.r), Float(c.g), Float(c.b), Float(v.a))
     }
-    private static let checkerDark = DrawColor(0.30, 0.30, 0.30), checkerLight = DrawColor(0.45, 0.45, 0.45)
 
     /// The transparency checkerboard (`Theme.Palette.checker`), cells kept inside the capsule when `round`.
     static func checker(_ c: inout Canvas, in r: CGRect, cell: CGFloat, round: Bool) {
-        c.fill(roundedRect: r, radius: round ? r.height / 2 : 0, checkerDark)
+        c.fill(roundedRect: r, radius: round ? r.height / 2 : 0, DrawTheme.checkerDark)
         c.saveGState(); c.clip(to: r)
         let rad = r.height / 2
         for y in 0..<Int((r.height / cell).rounded(.up)) {
             for x in 0..<Int((r.width / cell).rounded(.up)) where (x + y) % 2 == 1 {
                 let q = CGRect(x: r.minX + CGFloat(x) * cell, y: r.minY + CGFloat(y) * cell, width: cell, height: cell)
                 if round, !Self.inside(q, r, radius: rad) { continue }
-                c.fill(q, checkerLight)
+                c.fill(q, DrawTheme.checkerLight)
             }
         }
         c.restoreGState()

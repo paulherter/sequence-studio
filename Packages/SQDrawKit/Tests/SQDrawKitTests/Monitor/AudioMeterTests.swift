@@ -35,7 +35,7 @@ import Testing
         let m = AudioMeter()
         #expect(m.hit(CGPoint(x: 20, y: 10), height: 300) == .resetClip)
         #expect(m.hit(CGPoint(x: 10, y: 290), height: 300) == .channel(0))
-        #expect(m.hit(CGPoint(x: 18, y: 290), height: 300) == .channel(1))
+        #expect(m.hit(CGPoint(x: 21, y: 290), height: 300) == .channel(1))
         #expect(m.hit(CGPoint(x: 10, y: 150), height: 300) == .none)
     }
 

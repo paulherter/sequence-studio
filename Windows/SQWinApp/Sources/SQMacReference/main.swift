@@ -66,7 +66,8 @@ do {
     let size = (try FileManager.default.attributesOfItem(atPath: mediaURL.path)[.size] as? NSNumber)?.int64Value ?? 0
     let project = SampleProject.make(mediaPath: mediaURL.path, fileSize: size, width: Int(dims.width),
                                      height: Int(dims.height), frameDuration: fd, frames: Int64(e.count),
-                                     title: ProcessInfo.processInfo.environment["SQ_SAMPLE_TITLE"] == "1" ? try SampleTitle.ref() : nil)
+                                     title: ["1", "2", "3"].contains(ProcessInfo.processInfo.environment["SQ_SAMPLE_TITLE"]) ? try SampleTitle.ref(emoji: ProcessInfo.processInfo.environment["SQ_SAMPLE_TITLE"] == "3") : nil,
+                                     titleShadow: ProcessInfo.processInfo.environment["SQ_SAMPLE_TITLE"] == "2")
     let timeline = project.timelines[0]
     let media = project.media[0].id
     let provider = DecoderFrameProvider(resolver: StaticMediaResolver(demuxers: [media: demuxer]))

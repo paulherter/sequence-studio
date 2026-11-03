@@ -5,21 +5,19 @@ import SQDrawKit
 import SQAnalysis
 import SQCore
 import SQEditorSession
-import SQEditorUI
 import SQInspectorUI
-import SQMonitorUI
 import SQPlayback
 
-/// The Mask tool's Magic mode on the Mac shared UI (SQAppShell `AppMagicMasks`): the AppKit UI's `MagicMaskTool` (Vision /
+/// The Mask tool's Magic mode on the Mac shared UI (SQAppShell `AppMagicMasks`): SQAppShell's `MagicMaskTool` (Vision /
 /// Core ML segmentation, `MagicMatteStore`) picks the clicked object of the parked frame and stores its matte; the Program
-/// engine shows it. The tool talks to an AppKit `TransformOverlayView` that is never shown: the shared overlay draws the
-/// masks from Effect Controls.
+/// engine shows it. The shared overlay draws the masks from Effect Controls.
 /// The hover highlight rides the Mask Tint picture (`hover`, `maskTint`). Tracking and corrections: MacMagicMasks+Track.swift.
 /// The hover preview over an unselected clip is `hover(_:target:)` with that clip (`MagicMaskTool.previewMatte`).
-/// shortcut: no pick tint or click dots on the shared overlay; upgrade by drawing `magicPick` as an image slot.
+/// shortcut: no pick tint or click dots on the shared overlay; upgrade by drawing the stored pick matte as an image slot.
 @MainActor
 final class MacMagicMasks: AppMagicMasks {
-    private let overlay = TransformOverlayView(frame: .zero)
+    /// The Mask tool is Magic (the host sets it with `update`; a Magic click implies it).
+    private var toolIsMagic = false
     let tool: MagicMaskTool
     private var target: Clip.ID?
     let model: EffectControlsModel
@@ -60,7 +58,8 @@ final class MacMagicMasks: AppMagicMasks {
         // Every line goes through here and is noted, so a run's silent end clears only its own "Tracking…" line.
         var noteWrote: () -> Void = {}
         let status: (String) -> Void = { s in noteWrote(); rawStatus(s) }
-        tool = MagicMaskTool(model: model, overlay: overlay)
+        tool = MagicMaskTool(model: model)
+        tool.isMagicOn = { [weak self] in self?.toolIsMagic ?? false }
         tool.targetClip = { [weak self] in self?.target }
         tool.mediaURL = { [weak session] id in session?.project.media(id).map { URL(fileURLWithPath: $0.path) } }
         tool.isPlaying = { [weak session] in session?.isPlaying ?? false }
@@ -107,7 +106,7 @@ final class MacMagicMasks: AppMagicMasks {
                 stopUnusedSubjectModelLoad()
             }
         }
-        overlay.maskTool = magicOn ? .magic : nil
+        toolIsMagic = magicOn
         tool.refresh()
     }
 
@@ -140,7 +139,7 @@ final class MacMagicMasks: AppMagicMasks {
 
     func click(_ p: Vec2, target: Clip.ID?, subtract: Bool, newMask: Bool) {
         self.target = target
-        overlay.maskTool = .magic
+        toolIsMagic = true
         let tool = tool
         Task { @MainActor in await tool.click(p, subtract: subtract, newMask: newMask) }
     }
