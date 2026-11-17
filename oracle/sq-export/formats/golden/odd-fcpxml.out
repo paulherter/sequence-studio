@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.8">
+    <resources>
+        <format id="r1" frameDuration="1/25s" width="1920" height="1080"/>
+        <asset id="r2" name="Tëst &lt;x&gt;.mov" start="0s" duration="6/5s" hasVideo="1" hasAudio="1" format="r1" src="file:///Volumes/My%20Disk/T%E4%B8%ADst%20%231%20%5Ba%5D%2520;b&apos;c%22d%3Fe%7Cf%5Cg%5Eh%60i%7Bj%7Dk.mov"/>
+        <asset id="r3" name="B &amp; C.mov" start="0s" duration="2/5s" hasVideo="1" hasAudio="0" format="r1" src="file:///Volumes/Shoot/B%20&amp;%20C.mov"/>
+        <asset id="r4" name="Offline" start="0s" duration="6/5s" hasVideo="1" hasAudio="0" format="r1"/>
+    </resources>
+    <library>
+        <event name="Sequence Studio">
+            <project name="Odd / name ">
+                <sequence format="r1" duration="5s" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
+                    <spine>
+                        <gap name="Gap" offset="0s" start="0s" duration="3s">
+                            <video ref="r3" lane="1" offset="0s" name="B &amp; C.mov" start="0s" duration="2/5s"/>
+                        </gap>
+                        <video ref="r4" offset="3s" name="A001.mov" start="1/5s" duration="1s"/>
+                        <asset-clip ref="r2" offset="4s" name="  Tëst  " start="1/5s" duration="1s"/>
+                    </spine>
+                </sequence>
+            </project>
+        </event>
+    </library>
+</fcpxml>

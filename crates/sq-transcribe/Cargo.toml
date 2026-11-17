@@ -1,0 +1,35 @@
+[package]
+name = "sq-transcribe"
+description = "Transcription service seam, transcript model, captions and subtitle readers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+build = "build.rs"
+
+[dependencies]
+sq-os.workspace = true
+sq-core-time.workspace = true
+sq-core-model.workspace = true
+sq-core-audio.workspace = true
+sq-media.workspace = true
+sq-onnx.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[build-dependencies]
+cc.workspace = true
+
+# Same lints as the workspace, except unsafe code: it is denied here and allowed only in the `ffi` module of `whisper_runtime`.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

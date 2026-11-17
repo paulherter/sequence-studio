@@ -1,0 +1,42 @@
+# Licenses compatible with GPL-3.0-or-later only.
+[graph]
+all-features = true
+
+[licenses]
+allow = [
+    "MIT", "Apache-2.0", "Apache-2.0 WITH LLVM-exception", "BSD-2-Clause", "BSD-3-Clause",
+    "ISC", "Zlib", "Unicode-3.0", "Unicode-DFS-2016", "CC0-1.0", "0BSD", "MPL-2.0",
+    "BSL-1.0", "LGPL-3.0-or-later", "LGPL-2.1-or-later", "GPL-3.0-or-later", "GPL-3.0-only", "Unlicense",
+    "IJG", "CDLA-Permissive-2.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+allow-wildcard-paths = true # workspace path dependencies carry no version
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+# The Gyroflow engine (GPL-3.0) and the forks it needs, pinned by Cargo.lock; licenses in docs/THIRD_PARTY.md.
+allow-git = [
+    "https://github.com/gyroflow/gyroflow.git",
+    "https://github.com/gyroflow/rs-sync.git",
+    "https://github.com/AdrianEddy/telemetry-parser.git",
+    "https://github.com/app-dirs-rs/app_dirs2.git",
+    "https://github.com/rust-cv/cv.git",
+    "https://github.com/Rust-GPU/rust-gpu",
+]
+
+
+# The Gyroflow engine crates carry no license field in their manifests; the Gyroflow repository is GPL-3.0 (docs/THIRD_PARTY.md).
+[[licenses.clarify]]
+crate = "gyroflow-core"
+expression = "GPL-3.0-or-later"
+license-files = [{ path = "../../LICENSE", hash = 0 }]
+
+[[licenses.clarify]]
+crate = "stabilize_spirv"
+expression = "GPL-3.0-or-later"
+license-files = [{ path = "../../../../LICENSE", hash = 0 }]

@@ -1,0 +1,39 @@
+{
+  "version": "0.1.2",
+  "date": "2026-11-12",
+  "tests": [
+    { "icon": "maximize", "name": "Floating panel windows", "what": "Drag a panel tab out of the window", "try": "panel:project" },
+    { "icon": "pencil", "name": "Create tool shapes", "what": "Drag in the monitor, or Sequence › New Shape", "try": "tool:draw" }
+  ],
+  "changes": [
+    {
+      "icon": "sparkles",
+      "title": "New",
+      "items": [
+        "Panels can float in their own window.",
+        "Create tool: shapes and strokes straight in the monitor.",
+        "Import LUTs fills the LUT library on the Color page.",
+        "Stabilize and Find Scene Changes work on every system."
+      ]
+    },
+    {
+      "icon": "arrowUpRight",
+      "title": "Improved",
+      "items": [
+        "Library previews show waveforms, transparency and rotation.",
+        "Fonts from packs work in text right away.",
+        "Motion presets mark built-ins you changed.",
+        "Scaled 8-bit exports look cleaner (linear-light scaling)."
+      ]
+    },
+    {
+      "icon": "check",
+      "title": "Fixed",
+      "items": [
+        "Clicking a Graphic's text in the monitor picks the text layer.",
+        "Pasted images in an unsaved project are kept safe.",
+        "The app could hang when closing during a background task."
+      ]
+    }
+  ]
+}

@@ -1,0 +1,19 @@
+[package]
+name = "sq-setup-engine"
+description = "What the Windows installer and the Linux first-run flow do: versions, jobs, error codes, the install plan, the payload and the engine that runs a plan"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+miniz_oxide.workspace = true
+sq-core-time.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+sq-platform-win.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[lints]
+workspace = true

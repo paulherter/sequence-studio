@@ -1,0 +1,235 @@
+{
+  "children" : [
+    {
+      "global_start_time" : {
+        "OTIO_SCHEMA" : "RationalTime.1",
+        "rate" : 29.970029970029969,
+        "value" : 0
+      },
+      "metadata" : {
+
+      },
+      "name" : "One",
+      "OTIO_SCHEMA" : "Timeline.1",
+      "tracks" : {
+        "children" : [
+          {
+            "children" : [
+              {
+                "effects" : [
+
+                ],
+                "markers" : [
+
+                ],
+                "metadata" : {
+
+                },
+                "name" : "",
+                "OTIO_SCHEMA" : "Gap.1",
+                "source_range" : {
+                  "duration" : {
+                    "OTIO_SCHEMA" : "RationalTime.1",
+                    "rate" : 29.970029970029969,
+                    "value" : 1799
+                  },
+                  "OTIO_SCHEMA" : "TimeRange.1",
+                  "start_time" : {
+                    "OTIO_SCHEMA" : "RationalTime.1",
+                    "rate" : 29.970029970029969,
+                    "value" : 0
+                  }
+                }
+              },
+              {
+                "effects" : [
+
+                ],
+                "enabled" : true,
+                "markers" : [
+
+                ],
+                "media_reference" : {
+                  "available_range" : null,
+                  "metadata" : {
+
+                  },
+                  "name" : "A001.mov",
+                  "OTIO_SCHEMA" : "ExternalReference.1",
+                  "target_url" : "file:///Volumes/Shoot/A001.mov"
+                },
+                "metadata" : {
+
+                },
+                "name" : "A001.mov",
+                "OTIO_SCHEMA" : "Clip.2",
+                "source_range" : {
+                  "duration" : {
+                    "OTIO_SCHEMA" : "RationalTime.1",
+                    "rate" : 29.970029970029969,
+                    "value" : 30
+                  },
+                  "OTIO_SCHEMA" : "TimeRange.1",
+                  "start_time" : {
+                    "OTIO_SCHEMA" : "RationalTime.1",
+                    "rate" : 29.970029970029969,
+                    "value" : 3
+                  }
+                }
+              }
+            ],
+            "effects" : [
+
+            ],
+            "enabled" : true,
+            "kind" : "Video",
+            "markers" : [
+
+            ],
+            "metadata" : {
+
+            },
+            "name" : "",
+            "OTIO_SCHEMA" : "Track.1",
+            "source_range" : null
+          }
+        ],
+        "effects" : [
+
+        ],
+        "enabled" : true,
+        "markers" : [
+
+        ],
+        "metadata" : {
+
+        },
+        "name" : "tracks",
+        "OTIO_SCHEMA" : "Stack.1",
+        "source_range" : null
+      }
+    },
+    {
+      "global_start_time" : {
+        "OTIO_SCHEMA" : "RationalTime.1",
+        "rate" : 25,
+        "value" : 90000
+      },
+      "metadata" : {
+
+      },
+      "name" : "Two",
+      "OTIO_SCHEMA" : "Timeline.1",
+      "tracks" : {
+        "children" : [
+          {
+            "children" : [
+              {
+                "effects" : [
+
+                ],
+                "markers" : [
+
+                ],
+                "metadata" : {
+
+                },
+                "name" : "",
+                "OTIO_SCHEMA" : "Gap.1",
+                "source_range" : {
+                  "duration" : {
+                    "OTIO_SCHEMA" : "RationalTime.1",
+                    "rate" : 25,
+                    "value" : 3
+                  },
+                  "OTIO_SCHEMA" : "TimeRange.1",
+                  "start_time" : {
+                    "OTIO_SCHEMA" : "RationalTime.1",
+                    "rate" : 25,
+                    "value" : 0
+                  }
+                }
+              },
+              {
+                "effects" : [
+                  {
+                    "effect_name" : "LinearTimeWarp",
+                    "metadata" : {
+
+                    },
+                    "name" : "",
+                    "OTIO_SCHEMA" : "LinearTimeWarp.1",
+                    "time_scalar" : 2.3333333333333335
+                  }
+                ],
+                "enabled" : true,
+                "markers" : [
+
+                ],
+                "media_reference" : {
+                  "available_range" : null,
+                  "metadata" : {
+
+                  },
+                  "name" : "B & C.mov",
+                  "OTIO_SCHEMA" : "ExternalReference.1",
+                  "target_url" : "file:///Volumes/Shoot/B%20&%20C.mov"
+                },
+                "metadata" : {
+
+                },
+                "name" : "B & C.mov",
+                "OTIO_SCHEMA" : "Clip.2",
+                "source_range" : {
+                  "duration" : {
+                    "OTIO_SCHEMA" : "RationalTime.1",
+                    "rate" : 25,
+                    "value" : 3
+                  },
+                  "OTIO_SCHEMA" : "TimeRange.1",
+                  "start_time" : {
+                    "OTIO_SCHEMA" : "RationalTime.1",
+                    "rate" : 25,
+                    "value" : 1
+                  }
+                }
+              }
+            ],
+            "effects" : [
+
+            ],
+            "enabled" : true,
+            "kind" : "Video",
+            "markers" : [
+
+            ],
+            "metadata" : {
+
+            },
+            "name" : "",
+            "OTIO_SCHEMA" : "Track.1",
+            "source_range" : null
+          }
+        ],
+        "effects" : [
+
+        ],
+        "enabled" : true,
+        "markers" : [
+
+        ],
+        "metadata" : {
+
+        },
+        "name" : "tracks",
+        "OTIO_SCHEMA" : "Stack.1",
+        "source_range" : null
+      }
+    }
+  ],
+  "metadata" : {
+
+  },
+  "name" : "Sequences",
+  "OTIO_SCHEMA" : "SerializableCollection.1"
+}

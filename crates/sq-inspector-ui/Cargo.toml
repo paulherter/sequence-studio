@@ -1,0 +1,34 @@
+[package]
+name = "sq-inspector-ui"
+description = "Inspector panels of the draw UI: Effect Controls model and drawing, keyframe lanes and graphs, color, text, captions, graphics, audio and masks."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-time.workspace = true
+sq-core-model.workspace = true
+sq-core-effects.workspace = true
+sq-core-masks.workspace = true
+sq-core-audio.workspace = true
+sq-audiofx.workspace = true
+sq-core-edit.workspace = true
+sq-core-graphics.workspace = true
+sq-core-color.workspace = true
+sq-core-project.workspace = true
+sq-os.workspace = true
+sq-uikit.workspace = true
+sq-draw.workspace = true
+sq-editor-session.workspace = true
+sq-text.workspace = true
+sq-analysis.workspace = true
+sq-library.workspace = true
+sq-render.workspace = true
+sq-transcribe.workspace = true
+serde_json.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[lints]
+workspace = true

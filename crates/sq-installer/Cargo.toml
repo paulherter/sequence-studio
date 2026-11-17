@@ -1,0 +1,40 @@
+[package]
+name = "sq-installer"
+description = "The Sequence Studio setup program: the Windows installer and uninstaller and the Linux first-run window, drawn with the app's own toolkit"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+name = "sq_installer"
+
+[[bin]]
+name = "sq-installer"
+path = "src/main.rs"
+
+[dependencies]
+sq-setup-engine = { path = "../sq-setup-engine" }
+sq-draw.workspace = true
+sq-draw-shell.workspace = true
+sq-uikit.workspace = true
+sq-os.workspace = true
+sq-platform.workspace = true
+winit.workspace = true
+softbuffer.workspace = true
+arboard.workspace = true
+rfd.workspace = true
+sq-core-time.workspace = true
+png.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[target.'cfg(windows)'.dependencies]
+sq-platform-win.workspace = true
+
+# Not gated on `cfg(windows)`: that is the build host, and the setup is cross-built from Linux and the Mac.
+[build-dependencies]
+winresource.workspace = true
+
+[lints]
+workspace = true

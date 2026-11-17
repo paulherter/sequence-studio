@@ -1,0 +1,42 @@
+[package]
+name = "sq-video-hw"
+description = "macOS direct VideoToolbox decode and IOSurface-to-wgpu import behind sq-media's VideoDecoding (stub elsewhere)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-time.workspace = true
+sq-core-model.workspace = true
+sq-frame.workspace = true
+sq-media.workspace = true
+sq-gpu.workspace = true
+wgpu.workspace = true
+pollster.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-metal.workspace = true
+objc2-core-foundation.workspace = true
+objc2-io-surface.workspace = true
+objc2-core-video.workspace = true
+objc2-video-toolbox.workspace = true
+objc2-core-media.workspace = true
+
+[target.'cfg(target_os = "macos")'.dev-dependencies]
+sq-media-ffmpeg.workspace = true
+
+# Same lints as the workspace, except unsafe code: it is denied here and allowed only in the macOS `ffi` module.
+[lints.rust]
+unsafe_code = "deny"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

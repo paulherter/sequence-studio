@@ -14,10 +14,10 @@ On branch keyframes-pre-easing the redesign is reverted (DECISIONS 2026-10-03); 
 |---|---|---|
 | How a value moves between two keys | **Ease** (noun and verb: "ease the selection") | Interpolation, Velocity curve, Temporal |
 | The shape of that move | **Curve** | Bezier, Graph curve, Motion path |
-| Constant speed | **Steady** | Linear |
-| Slow at both keys | **Smooth** | Easy Ease, Ease in-out, Continuous Bezier |
-| Slow arriving at the right key | **Smooth In** | Ease In |
-| Slow leaving the left key | **Smooth Out** | Ease Out |
+| Constant speed | **Linear** | Linear (Steady until 2026-11-13) |
+| Slow at both keys | **Ease In & Out** | Easy Ease, Ease in-out, Continuous Bezier |
+| Slow arriving at the right key | **Ease In** | Ease In |
+| Slow leaving the left key | **Ease Out** | Ease Out |
 | Passes the end value and settles | **Overshoot** | Back out, Anticipate (that is the reverse, next row) |
 | Pulls back before it starts | **Wind-Up** | Back in, Anticipate |
 | Bouncy settle, computed live | **Spring** | Elastic, Bounce |
@@ -38,7 +38,7 @@ Naming rules: title case as in every menu ("Smooth In", "Soft Landing"; changed 
 an empty preset name saves as "Custom curve".
 
 One list, one order, everywhere a curve is named (keyframe right-click, transition Easing, chips, tooltips; code: SQCore
-`EaseName`, `EasingCurve.displayName`; DECISIONS 2026-10-06): **Steady, Smooth, Smooth In, Smooth Out, Hold**, then the
+`EaseName`, `EasingCurve.displayName`; DECISIONS 2026-10-06): **Linear, Ease In & Out, Ease In, Ease Out, Hold** (renamed 2026-11-13, redesign #35), then the
 extra presets **Fast Start, Fast End, Gentle, Smooth In 100%, Smooth Out 100%, Soft Landing**, then **Custom** ("Custom…"
 opens the curve editor). Never "Ease in 33%" and the like: those are stored names only.
 

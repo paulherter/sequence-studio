@@ -1,8 +1,7 @@
 # Local edit API
 
 Lets local tools and AI agents read the open project and edit it. Off by default: Settings > Advanced > Edit API
-(`sq.api.enabled`). Code: `Packages/SQEditAPI` (pure logic + server), `App/Sources/EditAPIController.swift` (wiring),
-`Tools/sqmcp` (MCP stdio shim).
+(`sq.api.enabled`). Code: `crates/sq-edit-api` (logic and server).
 
 ## Security
 - Binds 127.0.0.1 only (`acceptLocalOnly`, non-loopback peers dropped). Port `sq.api.port`, default 19790.

@@ -3,6 +3,13 @@
 Sequence Studio will be GPL-3.0. Code from GPL-3.0, MIT, BSD and Apache-2.0 projects may be reused
 after reading and checking it. Every reuse gets a line below: what, from where (commit/file), license.
 
+## Rust tree: what ships in a release (2026-11-09)
+- Every Rust crate in the binary, with version and license: [THIRD_PARTY-CRATES.md](THIRD_PARTY-CRATES.md), generated from `cargo metadata` by `scripts/gen-third-party-crates.py` (regenerate after any dependency change; exits non-zero on a license that is not GPL-3.0-or-later compatible).
+- **FFmpeg** (shared libraries, not compiled in): an LGPL build only. The Windows build used is BtbN `ffmpeg-master-latest-win64-lgpl-shared` (configured `--enable-version3`, no `--enable-gpl`, no `--enable-nonfree`: LGPL-3.0-or-later); the Mac bundle takes the folder in `SQ_FFMPEG` (Homebrew's build is GPL and is refused). `cargo xtask package` and `build-installer.ps1` read libavcodec's configure line and stop on `--enable-gpl` / `--enable-nonfree`. Shipped with every package: `Licenses/FFMPEG-LICENSE.txt` (the build's license text) and `Licenses/FFMPEG-NOTICE.txt` (dynamic linking, how to replace the libraries, where the source is) from `packaging/licenses/`.
+- **ONNX Runtime 1.24.4** (MIT, `ORT-LICENSE-MIT.txt`), loaded at run time; **EdgeTAM and OPUS-MT models** (see the sections below), downloaded or bundled as files, never in the repo; **fonts** (OFL, listed below); **whisper.cpp** (MIT) on Windows.
+- Terms of the project itself: GPL-3.0-or-later (`LICENSE`) with the section 7 additional terms (`LICENSE-ADDITIONAL-TERMS.md`). Both files are copied into the Mac bundle's `Contents/Resources` and next to `SequenceStudio.exe` (also in the installer).
+- The tables below are the Swift-era list; entries for packages under `Packages/` describe the Swift tree, which is frozen.
+
 ## References
 | Project | License | Language | Use |
 |---|---|---|---|
@@ -45,7 +52,10 @@ Built from source by `scripts/build-gyro.sh` (Rust crate `Vendor/sqgyro`, every 
 | app_dirs2, rust-cv (`cv`), fc-blackbox (forks pinned by Cargo.lock) | Cargo.lock | MIT / MIT OR Apache-2.0 (license files read) | Support code of gyroflow_core. |
 | [GyroflowToolbox](https://github.com/latenitefilms/GyroflowToolbox) | read only | MIT | Reference for a C-ABI shim around gyroflow_core in a macOS host. |
 | [FFmpeg](https://ffmpeg.org) (Windows build only, `Packages/SQMediaFFmpeg`) | BtbN `ffmpeg-master-latest-win64-lgpl-shared` on the build PC (`SQ_FFMPEG`; not in the repo) | LGPL-2.1-or-later shared build (no GPL or nonfree parts; GPL-3 compatible); dynamically linked, DLLs ship next to the exe | Windows demux, decode (D3D11VA), audio decode/resample, H.264/HEVC encode (AMF / NVENC / Quick Sync / Media Foundation, OpenH264 if present), AAC, MP4 mux. Own C++ shim `CSQFFmpeg` (GPL-3.0-or-later). |
-| [ONNX Runtime](https://github.com/microsoft/onnxruntime) (Windows build only, `Packages/SQOnnx`) | 1.24.4, `onnxruntime.dll` + `onnxruntime_providers_shared.dll` from the Microsoft.ML.OnnxRuntime.DirectML nuget (not in the repo; `scripts/win-onnx-setup.sh`); the C API header is vendored in `Packages/SQOnnx/Sources/CSQOnnx/include/ort` | MIT (LICENSE read; copy in `Packages/SQOnnx/ORT-LICENSE-MIT.txt`) | EdgeTAM Magic Mask on Windows, loaded at run time with LoadLibrary. The DirectML execution provider uses `DirectML.dll` from the Windows system folder (a system component, not shipped). |
+| [FFmpeg](https://ffmpeg.org) (Mac release, `scripts/build-ffmpeg-lgpl-mac.sh`) | commit ceb466cbcd (same as the Windows BtbN build), built to `SQ_FFMPEG`; not in the repo | LGPL-3.0-or-later shared build (`--enable-version3`, no GPL or nonfree); dynamically linked into `Contents/Frameworks` | Mac demux/decode (VideoToolbox), H.264/HEVC/ProRes encode (VideoToolbox), AAC (AudioToolbox). Linked codec libs: dav1d (BSD-2-Clause), Opus (BSD-3-Clause), LAME libmp3lame (LGPL-2.0-or-later), libvpx (BSD-3-Clause), SVT-AV1 (BSD-2-Clause-Patent). Not used: x264, x265, fdk-aac. |
+| [FFmpeg](https://ffmpeg.org) (Linux AppImage, `crates/xtask/src/package_linux.rs`) | BtbN `ffmpeg-n9.0.2-48-gd4070a14ce-linux64-lgpl-shared-9.0` (release autobuild-2026-11-10-12-39, sha256 6c212a1b914c84dc1e201fddeb9dea7304ef0748884722d4bb13311416c36ebb), fetched by `scripts/linux-deps.sh` into `SQ_DEPS` (`SQ_FFMPEG`); not in the repo | LGPL-3.0-or-later shared build (`--enable-version3`, no GPL or nonfree; checked with `ffmpeg -L` and the configure line); the 5 libs the app links go to `usr/lib`, replaceable | Linux demux/decode, encode through the system. The build also links libopenh264 (BSD-2-Clause), libkvazaar (BSD-3-Clause; the software HEVC encoder), libopencore-amr (Apache-2.0), dav1d, libvpx, SVT-AV1, Opus, LAME (LGPL-2.1), libvorbis, libaom, libwebp, libjxl and more (static inside the libs; none GPL; x264/x265/xvid are disabled). Source: github.com/FFmpeg-Builds/FFmpeg-Builds. |
+| [appimagetool](https://github.com/AppImage/appimagetool) 1.9.1 (Linux AppImage, `crates/xtask/src/package_linux.rs`) | release asset `appimagetool-x86_64.AppImage`, sha256 ed4ce84f0d9caff66f50bcca6ff6f35aae54ce8135408b3fa33abfc3cb384eb0, fetched by `scripts/linux-deps.sh` into `SQ_DEPS` (`SQ_APPIMAGETOOL`); not in the repo | MIT (LICENSE file; dependencies keep their own); it embeds the AppImage type2 runtime (MIT), which is part of every AppImage it writes | Build tool only: packs the AppDir into `SequenceStudio-<version>-x86_64.AppImage`. |
+| [ONNX Runtime](https://github.com/microsoft/onnxruntime) (`crates/sq-onnx`, Rust app on Mac and Windows; the Swift package `Packages/SQOnnx` is Windows only) | 1.24.4, pinned and sha256-checked, downloaded into a cache folder only: macOS `libonnxruntime.dylib` (arm64) from the GitHub release `onnxruntime-osx-arm64-1.24.4.tgz` by `cargo xtask package` (cache `~/Library/Caches/SequenceStudio/onnxruntime`, ad-hoc signed into `Contents/Frameworks`); Linux `libonnxruntime.so` (x86_64, `onnxruntime-linux-x64-1.24.4.tgz`, cache `~/.cache/SequenceStudio/onnxruntime`, next to the exe in the AppImage; sha256 pinned in `crates/xtask/src/onnxruntime.rs`); Windows `onnxruntime.dll` + `onnxruntime_providers_shared.dll` from the Microsoft.ML.OnnxRuntime.DirectML nuget by `packaging/windows/build-installer.ps1` (next to the exe; `scripts/win-onnx-setup.sh` for the dev box). Not in the repo; the C API header is vendored in `crates/sq-onnx/vendor/ort` | MIT (LICENSE read; copy in `crates/sq-onnx/vendor/ORT-LICENSE-MIT.txt`, shipped as `ORT-LICENSE-MIT.txt` in the package) | EdgeTAM Magic Mask and the Stabilizer's ML parts, loaded at run time (LoadLibrary / dlopen). The DirectML execution provider uses `DirectML.dll` from the Windows system folder (a system component, not shipped); on the Mac the macOS build's Core ML provider (compiled in, opt-in via `SQ_ONNX_PROVIDER=coreml`, falls back to the CPU). The Windows package is the DirectML build (same version 1.24.4, same sha256 pin in `packaging/windows/build-installer.ps1`); the provider is picked in `crates/sq-onnx` (`SQ_ONNX_PROVIDER=cpu|directml|coreml|auto`). |
 
 ## Lens profiles (Gyroflow)
 With the feature `bundle-lens-profiles`, `gyroflow_core`'s `build.rs` (rev 5fa0309a, line 10) downloads
@@ -76,7 +86,7 @@ its own (checked at the commit above). The models are not in this repository; no
 tracker (`Packages/SQAnalysis/Sources/SQAnalysis/EdgeTAM.swift`) is written against the converted parts' inputs and
 outputs.
 
-EdgeTAM on Windows: the same five parts are exported to FP32 ONNX files by `Tools/SubjectMaskSpike/python/export_onnx.py` (same Apache-2.0 statement of changes as above, plus: exported with torch.onnx, inputs and outputs carry the Core ML parts' names). The files stay out of the repo; `scripts/win-onnx-setup.sh` makes and pushes them.
+EdgeTAM on Windows: the installer (`packaging/windows/build-installer.ps1`) bundles the five parts in `<install folder>\SubjectMask`, sha256-pinned in the script, with the Apache-2.0 text as `Licenses\APACHE-2.0.txt` and this file in `Licenses\`. The same five parts are exported to FP32 ONNX files by `Tools/SubjectMaskSpike/python/export_onnx.py` (same Apache-2.0 statement of changes as above, plus: exported with torch.onnx, inputs and outputs carry the Core ML parts' names). The files stay out of the repo; `scripts/win-onnx-setup.sh` makes and pushes them.
 
 ## GPL source offer
 Sequence Studio is GPL-3.0-or-later. Every binary release (DMG) must link the exact source tag it was built
@@ -85,11 +95,13 @@ who received the binary. The Rust dependencies are fully reproducible from `Vend
 gyroflow rev `5fa0309a`, with the one exception of the lens-profile download above. Anyone may rebuild with
 `scripts/build-gyro.sh`.
 
-## Phosphor icons (SQUIKit/Resources/Icons)
+## Phosphor icons (SQUIKit/Resources/Icons; Rust app: crates/sq-uikit/resources/Icons, embedded with include_str)
 
 - Phosphor Icons (Regular and Fill weights), MIT licence, https://github.com/phosphor-icons/core. Only the SVGs in use are
   bundled (`ph-<name>[-fill].svg`, 256 grid, filled outlines), loaded solely by `SQIcon` (SQUIKit), rendered as template
-  images. Lucide (ISC) was used before 2026-11 and is no longer bundled.
+  images. The Discord and GitHub logos are the brand marks below, not Phosphor. Lucide (ISC) was used before 2026-11 and is no longer bundled.
+- Brand marks (`brand-github.svg`, `brand-discord.svg`, 24 grid): the GitHub Invertocat and the Discord Clyde mark from simple-icons (https://github.com/simple-icons/simple-icons, CC0-1.0). The marks are trademarks of GitHub Inc. and Discord Inc.; they appear only as links to those services (About, Start window, Help menu).
+- Also Phosphor (Regular, MIT): `magnet`, the Fast Cut card on the Start window's Learn page (`ph-magnet.svg`).
 - Our own drawings (`sq-<case>.svg`, own work, 24 grid, stroke 1.5 = Phosphor's 16/256): the cases marked `own` in the design
   kit's icon-map.json (tool and mark glyphs, text overline/direction, distribute, power, page icons and more).
 - `scripts/gen-icons.mjs` regenerates the files and `SQIcon+Resources.swift` from the kit's icon-map.json.
@@ -116,6 +128,42 @@ gyroflow rev `5fa0309a`, with the one exception of the lens-profile download abo
 - Models: OpenAI Whisper weights in whisper.cpp's ggml format, `ggml-small-q5_1.bin` (MIT, OpenAI), downloaded on first use from
   huggingface.co/ggerganov/whisper.cpp into `%LOCALAPPDATA%\SequenceStudio\Whisper`. Never in the repo.
 
+## Speech without whisper.dll, Reframe and Anonymize detectors on Windows/Linux (sq-transcribe, sq-analysis)
+
+- Whisper ONNX exports `onnx-community/whisper-tiny|base|small_timestamped` on huggingface.co (OpenAI Whisper weights, Apache-2.0 on the Hub card;
+  decoder returns cross-attentions for word timing; same file names plus `generation_config.json`; folder `onnx-aligned-<size>`; pinned in
+  `onnx_whisper_pins.rs` `PINS`). Earlier pin, still used when it is already on disk (`LEGACY_PINS`): `Xenova/whisper-tiny|base|small` on huggingface.co (OpenAI Whisper weights, Apache-2.0 on the Hub card, MIT upstream):
+  int8 `encoder_model_quantized.onnx`, `decoder_model_merged_quantized.onnx`, `tokenizer.json`, `config.json`. Downloaded on first use by
+  `sq-transcribe` into `<Whisper folder>\onnx-<size>`, pinned by commit, size and SHA-256 (`crates/sq-transcribe/src/onnx_whisper_pins.rs`).
+  Mel features, the BPE tokenizer and the decoding loop are our own code. Never in the repo.
+- YuNet face detector `face_detection_yunet_2023mar.onnx` (MIT, Shiqi Yu, github.com/opencv/opencv_zoo, commit f12e127, 232 589 bytes) and
+  YOLOX-Tiny `yolox_tiny.onnx` (Apache-2.0, Megvii, github.com/Megvii-BaseDetection/YOLOX release 0.1.1rc0, 20 219 662 bytes, person class only).
+  Downloaded on first use by `sq-analysis::person_detector` into `%LOCALAPPDATA%\SequenceStudio\People`, pinned by size and SHA-256. Decoding,
+  NMS and the spectral-residual saliency (Hou and Zhang 2007, a published algorithm) are our own code.
+
+## Caption translation (sq-translate)
+
+- OPUS-MT translation models by the Language Technology Research Group at the University of Helsinki (Helsinki-NLP, github.com/Helsinki-NLP/Opus-MT),
+  licensed CC-BY-4.0 (attribution required: shown in the About window and here), in the ONNX exports `Xenova/opus-mt-*` on
+  huggingface.co (int8 quantized `encoder_model_quantized.onnx` and `decoder_model_merged_quantized.onnx`, `source.spm`, `vocab.json`,
+  `config.json`). Twelve directions: English to and from German, French, Spanish, Italian, Dutch, Portuguese (`en-ROMANCE` /
+  `ROMANCE-en`). Downloaded on first use by `sq-translate` into `%LOCALAPPDATA%\SequenceStudio\Translation` (Mac:
+  `~/Library/Application Support/SequenceStudio/Translation`), pinned by repo commit, size and SHA-256 (`crates/sq-translate/src/pins.rs`).
+  Never in the repo. They run on the ONNX Runtime the app ships (see above). The SentencePiece reader and the Marian decoding are our own code (no library).
+
+## Text to speech (sq-platform-tts)
+- Mac: Apple's `AVSpeechSynthesizer` through the `objc2-avf-audio` and `objc2-foundation` bindings (MIT OR Apache-2.0 OR Zlib, already in the lock through cpal).
+- Stabilizer Vision fallback (Mac): Apple's Vision framework through `objc2-vision` 0.3.2 (MIT OR Apache-2.0 OR Zlib, same objc2 family) in `sq-platform-vision`; the homography matrix (`simd_float3x3`, not in the generated bindings) is read with a short assembly call to `objc_msgSend`.
+- Windows: the WinRT `SpeechSynthesizer` through the `windows` crate (MIT OR Apache-2.0).
+- Linux: the `espeak-ng` program (GPL-3.0-or-later). It is started as a separate process, not linked and not shipped; without it the voice list is empty.
+
 ## Slang (shader language and compiler)
 
-- Slang (github.com/shader-slang/slang, Apache-2.0, GPL-3.0 compatible), release 2026.20. Used as a build tool only: `scripts/slang-compile.sh` and the shader scripts compile `Packages/SQGPU/Shaders/*.slang` to MSL and HLSL. The compiler is not in the repo and not linked; only the generated shader code and our own `.slang` sources ship.
+- Slang (github.com/shader-slang/slang, Apache-2.0, GPL-3.0 compatible), release 2026.20. Used as a build tool only: `scripts/slang-compile.sh` and the shader scripts compile `Packages/SQGPU/Shaders/*.slang` to MSL, DXIL and SPIR-V (Vulkan on Linux; the .spv files are checked in). The compiler is not in the repo and not linked; only the generated shader code and our own `.slang` sources ship.
+| ttf-parser 0.25 (https://github.com/harfbuzz/ttf-parser) | MIT OR Apache-2.0 | Cargo dependency of sq-text, no code copied | Reads CFF (.otf) glyph outlines for installed fonts. |
+| jpeg-encoder 0.7 (https://github.com/vstroebel/jpeg-encoder) | (MIT OR Apache-2.0) AND IJG (the IJG license is BSD-style and GPL-3.0 compatible) | Cargo dependency of sq-app-hosts, no code copied | JPEG writer of Export Frame (quality 95). |
+| gyroflow-core 1.6.3 (https://github.com/gyroflow/gyroflow, rev 5fa0309a) | GPL-3.0 | Cargo git dependency of sq-gyroflow (same revision as Vendor/sqgyro), no code copied; `file.rs` follows the logic of Vendor/sqgyro | Gyro data, lens profiles, smoothing and the warp of the Gyroflow stabilizer. |
+| gif 0.13 (https://github.com/image-rs/image-gif) | MIT OR Apache-2.0 | Cargo dependency of sq-media-ffmpeg, no code copied | GIF frame decoder of the animated-image strip (with color_quant, weezl). |
+| exr 1.74 (https://github.com/johannesvollmer/exrs) | BSD-3-Clause | Cargo dependency of sq-app-hosts, no code copied | OpenEXR writer (half float, linear) of Export Frame. |
+| tiff 0.11 (https://github.com/image-rs/image-tiff) | MIT | Cargo dependency of sq-app-hosts (already in Cargo.lock through `image`), no code copied | 16-bit TIFF writer of Export Frame. |
+- Mac emoji sequences: CoreText through `objc2-core-text` 0.3.2 (MIT OR Apache-2.0 OR Zlib, the objc2 family already in the lock) in `sq-platform-mac` (installed into `sq-text` by injection), macOS only.

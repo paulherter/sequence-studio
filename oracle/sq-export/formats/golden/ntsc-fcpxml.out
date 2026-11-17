@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.8">
+    <resources>
+        <format id="r1" frameDuration="1001/30000s" width="1920" height="1080"/>
+        <asset id="r2" name="A001.mov" start="0s" duration="1001/6s" hasVideo="1" hasAudio="1" format="r1" src="file:///Volumes/Shoot/A001.mov"/>
+        <asset id="r3" name="B &amp; C.mov" start="0s" duration="3003/100s" hasVideo="1" hasAudio="1" format="r1" src="file:///Volumes/Shoot/B%20&amp;%20C.mov"/>
+    </resources>
+    <library>
+        <event name="Sequence Studio">
+            <project name="DF 29.97">
+                <sequence format="r1" duration="49049/750s" tcStart="8999991/2500s" tcFormat="DF" audioLayout="stereo" audioRate="48k">
+                    <spine>
+                        <gap name="Gap" offset="8999991/2500s" start="0s" duration="3003/50s"/>
+                        <video ref="r2" offset="9150141/2500s" name="A001.mov" start="1001/300s" duration="1001/1000s">
+                            <timeMap>
+                                <timept time="0s" value="13013/3000s" interp="linear"/>
+                                <timept time="1001/1000s" value="1001/300s" interp="linear"/>
+                            </timeMap>
+                            <audio ref="r2" lane="-1" offset="1001/300s" name="A001.mov" start="0s" duration="1001/500s">
+                                <audio-channel-source srcCh="2" outCh="L, R" active="1"/>
+                            </audio>
+                            <marker start="11011/3000s" duration="1001/30000s" value="Inside" note="c,1"/>
+                        </video>
+                        <video ref="r3" offset="18305287/5000s" name="B &amp; C.mov" start="1001/1500s" duration="1001/2000s">
+                            <timeMap>
+                                <timept time="0s" value="1001/1250s" interp="linear"/>
+                                <timept time="1001/2000s" value="1001/1250s" interp="linear"/>
+                            </timeMap>
+                            <marker start="1001/1500s" duration="1001/30000s" value="Hit"/>
+                        </video>
+                        <video ref="r2" offset="36615579/10000s" name="A001.mov" start="0s" duration="3003/1000s">
+                            <timeMap>
+                                <timept time="0s" value="0s" interp="linear"/>
+                                <timept time="3003/1000s" value="1001/1000s" interp="linear"/>
+                            </timeMap>
+                            <audio ref="r3" lane="-1" offset="11011/6000s" name="B &amp; C.mov" start="0s" duration="1001/500s">
+                                <audio-channel-source srcCh="1" outCh="L, R" active="1"/>
+                                <audio-channel-source srcCh="3" outCh="L, R" active="1"/>
+                            </audio>
+                            <marker start="1001/6000s" duration="1001/2500s" value="Soft"/>
+                        </video>
+                        <video ref="r3" offset="6868862/1875s" name="B &amp; C.mov" start="0s" duration="1001/1500s">
+                            <timeMap>
+                                <timept time="0s" value="1001/1000s" interp="linear"/>
+                                <timept time="1001/1500s" value="0s" interp="linear"/>
+                            </timeMap>
+                        </video>
+                        <gap name="Gap" offset="9160151/2500s" start="0s" duration="1001/750s"/>
+                    </spine>
+                </sequence>
+            </project>
+        </event>
+    </library>
+</fcpxml>

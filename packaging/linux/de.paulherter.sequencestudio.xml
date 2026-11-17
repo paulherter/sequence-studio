@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mime-info xmlns="http://www.freedesktop.org/standards/shared-mime-info">
+  <mime-type type="application/x-sequence-studio-project">
+    <comment>Sequence Studio Project</comment>
+    <glob pattern="*.sqproj"/>
+    <icon name="sequence-studio"/>
+  </mime-type>
+  <mime-type type="application/x-sequence-studio-pack">
+    <comment>Sequence Studio Preset Pack</comment>
+    <glob pattern="*.sqpack"/>
+    <icon name="sequence-studio"/>
+  </mime-type>
+</mime-info>

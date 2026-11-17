@@ -1,0 +1,51 @@
+[package]
+name = "sq-editor-session"
+description = "The editing session: project with undo history, active sequence, playhead, selection and the services around them"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-time.workspace = true
+sq-text.workspace = true
+sq-core-model.workspace = true
+sq-core-effects.workspace = true
+sq-core-project.workspace = true
+sq-core-edit.workspace = true
+sq-core-masks.workspace = true
+sq-core-audio.workspace = true
+sq-core-color.workspace = true
+sq-core-file.workspace = true
+sq-core-graphics.workspace = true
+sq-media.workspace = true
+sq-media-ffmpeg.workspace = true
+sq-playback.workspace = true
+sq-export.workspace = true
+sq-library.workspace = true
+sq-proxy.workspace = true
+sq-transcribe.workspace = true
+sq-analysis.workspace = true
+sq-audiofx.workspace = true
+sq-runtime.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sq-uikit.workspace = true
+sq-os.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+# Workspace lints repeated (a crate cannot extend them) plus the async-safety lints of sq-runtime: the session's async
+# flows must never hold a root borrow across an await.
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+await_holding_refcell_ref = "deny"
+await_holding_lock = "deny"

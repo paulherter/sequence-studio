@@ -1,0 +1,28 @@
+TITLE: DF 29.97
+FCM: DROP FRAME
+
+001  AX       V     C        00:00:04;10 00:00:03;10 01:01:00;02 01:01:01;02
+M2   AX       -029.97003           00:00:04;10
+* FROM CLIP NAME: A001.mov
+* SOURCE FILE: /Volumes/Shoot/A001.mov
+002  AX       V     C        00:00:00;24 00:00:00;24 01:01:01;02 01:01:01;17
+M2   AX       000.0                00:00:00;24
+* FROM CLIP NAME: B & C.mov
+* SOURCE FILE: /Volumes/Shoot/B & C.mov
+003  AX       V     C        00:00:00;00 00:00:01;00 01:01:01;17 01:01:04;17
+M2   AX       009.99001            00:00:00;00
+* FROM CLIP NAME: A001.mov
+* SOURCE FILE: /Volumes/Shoot/A001.mov
+004  AX       V     C        00:00:01;00 00:00:00;00 01:01:03;12 01:01:04;02
+M2   AX       -044.955045          00:00:01;00
+* FROM CLIP NAME: B & C.mov
+* SOURCE FILE: /Volumes/Shoot/B & C.mov
+005  AX       A     C        00:00:00;00 00:00:02;00 01:01:00;02 01:01:02;02
+* FROM CLIP NAME: A001.mov
+* SOURCE FILE: /Volumes/Shoot/A001.mov
+006  AX       A     C        00:00:00;00 00:00:02;00 01:01:03;12 01:01:05;12
+* FROM CLIP NAME: B & C.mov
+* SOURCE FILE: /Volumes/Shoot/B & C.mov
+* LOC: 01:01:00;21 CYAN Inside
+* LOC: 01:01:01;02 RED Hit
+* LOC: 01:01:01;22 YELLOW Soft

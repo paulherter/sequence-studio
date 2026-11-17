@@ -1,0 +1,36 @@
+//! Own audio DSP: effects, loudness, pitch, noise reduction.
+
+pub mod audio_spectrum;
+pub mod channel_monitor;
+pub mod clip_audio_fxchain;
+pub mod creator_fx;
+pub mod creator_stages;
+pub mod de_click;
+pub mod de_reverb;
+pub mod denoise_stage;
+pub mod enhance_speech;
+pub mod gain;
+pub mod gate_core;
+pub mod graphic_eqstage;
+pub mod limiter;
+pub mod lookahead_limiter;
+pub mod loudness;
+pub mod monitor_gain;
+pub mod multiband;
+pub mod multiband_meters;
+pub mod noise_floor;
+pub mod notch_stage;
+pub mod offline_audio_fx;
+pub mod parametric_eq;
+pub mod parametric_eqresponse;
+pub mod pitch_shift;
+pub mod presets;
+pub mod realtime_audio_fx;
+pub mod repair_stages;
+pub mod rnnoise_denoiser;
+pub mod role_chain;
+pub mod silence_detector;
+pub mod space_and_gate_stages;
+pub mod spectrum_display;
+pub mod surround_fold_down;
+pub mod track_preset;

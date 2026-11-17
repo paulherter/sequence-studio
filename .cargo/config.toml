@@ -1,0 +1,8 @@
+[alias]
+xtask = "run --quiet --package xtask --"
+
+# Test threads get 2 MB on Windows; the drawn UI needs the same 8 MB the app's main thread gets (build.rs of sequence-studio).
+[env]
+RUST_MIN_STACK = { value = "8388608", force = false }
+# Test and cargo runs never open Mail, a browser, Discord or the file manager (crates/sq-app-hosts/src/project_services.rs).
+SQ_NO_EXTERNAL_OPEN = { value = "1", force = false }

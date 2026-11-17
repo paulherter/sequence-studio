@@ -1,0 +1,28 @@
+== all
+0:00 Start
+0:04 Short
+0:12 Out
+1:15 Second line
+1:06:40 Long
+2:14:50 Late
+-- warnings
+Chapter "Start" is shorter than 10 s.
+Chapter "Short" is shorter than 10 s.
+== range
+0:00 Intro
+0:15 Second line
+1:05:40 Long
+-- warnings
+No marker at the start: an "Intro" chapter was added at 0:00.
+== none
+0:00 Intro
+-- warnings
+No marker at the start: an "Intro" chapter was added at 0:00.
+YouTube needs at least 3 chapters; there are 1.
+== short
+0:00 A
+0:05 B
+0:30 C
+-- warnings
+Chapter "A" is shorter than 10 s.
+Chapter "C" is shorter than 10 s.

@@ -1,0 +1,11 @@
+[Desktop Entry]
+Type=Application
+Name=Sequence Studio
+GenericName=Video Editor
+Comment=Video editor for the timeline, color, masks and titles
+Exec=sequence-studio %F
+Icon=sequence-studio
+Terminal=false
+Categories=AudioVideo;Video;AudioVideoEditing;
+MimeType=application/x-sequence-studio-project;application/x-sequence-studio-pack;
+StartupWMClass=sequence-studio

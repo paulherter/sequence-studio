@@ -1,0 +1,43 @@
+[package]
+name = "sq-draw-monitor"
+description = "The Program and Source monitors on the shared draw UI: panel, model, overlays, scopes and meters"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-time.workspace = true
+sq-core-model.workspace = true
+sq-core-edit.workspace = true
+sq-core-effects.workspace = true
+sq-core-masks.workspace = true
+sq-core-graphics.workspace = true
+sq-draw.workspace = true
+sq-uikit.workspace = true
+sq-media.workspace = true
+sq-audiofx.workspace = true
+sq-playback.workspace = true
+sq-render.workspace = true
+sq-editor-session.workspace = true
+sq-app-shell.workspace = true
+sq-os.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[dev-dependencies]
+serde_json.workspace = true
+
+# Workspace lints repeated (a crate cannot extend them) plus the async-safety lints of sq-runtime.
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+await_holding_refcell_ref = "deny"
+await_holding_lock = "deny"

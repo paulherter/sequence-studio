@@ -1,0 +1,646 @@
+# sq-core-time oracle: text-tables.tsv. Columns are TAB separated. `# ` lines are comments. Strings = quoted, scalars outside 0x20-0x7E, `\` and `"` as \u{hex}.
+# Recorded with Locale.current = en_US (process started with -AppleLocale en_US -AppleLanguages (en)).
+# LCG for the sampled pairs: see ops.tsv header. seed = 20261105, pool order as in swift-dump/main.swift.
+# standard_compare <a> <b> -> A B  : A = `a.localizedStandardCompare(b)` (Finder-style, what Bin/MediaGrouping use), B = `a.compare(b, options: [.numeric, .caseInsensitive, .widthInsensitive, .forcedOrdering], range: nil, locale: Locale(identifier: "en_US"))` (cross-check); values -1/0/1.
+# ci_contains <haystack> <needle> -> A B : A = `haystack.localizedCaseInsensitiveContains(needle)`, B = `haystack.range(of: needle, options: [.caseInsensitive], range: nil, locale: Locale(identifier: "en_US")) != nil`; 0/1.
+# graphemes <string> -> C S U16 U8 : C = `s.count` (Characters/extended grapheme clusters), S = `s.unicodeScalars.count`, U16 = `s.utf16.count`, U8 = `s.utf8.count`.
+standard_compare	"-5"	"\u{4e09}"	->	-1	-1
+standard_compare	"_a"	"file 10"	->	-1	-1
+standard_compare	"ss"	"ss"	->	0	0
+standard_compare	"~a"	"[1]"	->	1	1
+standard_compare	"-10"	"A_B"	->	-1	-1
+standard_compare	"z"	"z"	->	0	0
+standard_compare	"Stra\u{df}e"	"a-b-c"	->	1	1
+standard_compare	"e"	"\u{c4}pfel"	->	1	1
+standard_compare	"clip 2 take 9"	""	->	1	1
+standard_compare	"I"	"\u{f1}"	->	-1	-1
+standard_compare	"Unicode"	"\u{130}"	->	1	1
+standard_compare	"\u{65e5}\u{672c}"	"12345678901234567891"	->	1	1
+standard_compare	"\u{fb01}"	"  leading"	->	1	1
+standard_compare	"a.b"	"a-b"	->	1	1
+standard_compare	"o"	"o"	->	0	0
+standard_compare	"clip 2 take 9"	"I"	->	-1	-1
+standard_compare	"ss"	" "	->	1	1
+standard_compare	"B"	"IMG_01.mov"	->	-1	-1
+standard_compare	"Zebra"	"\u{d6}"	->	1	1
+standard_compare	"file01"	"a b"	->	1	1
+standard_compare	"_a"	"o"	->	-1	-1
+standard_compare	"clip 2 take 10"	"_a"	->	1	1
+standard_compare	"-10"	"\u{65e5}\u{672c}"	->	-1	-1
+standard_compare	"IMG_01.mov"	"clip 10 take 1"	->	1	1
+standard_compare	"\u{2162}"	"fi"	->	1	1
+standard_compare	"(1)"	"a-b"	->	-1	-1
+standard_compare	"r\u{e9}sum\u{e9}"	"3"	->	1	1
+standard_compare	"emoji\u{1f600}"	"  leading"	->	1	1
+standard_compare	"a.b"	"a"	->	1	1
+standard_compare	"comma,x"	"comma,x"	->	0	0
+standard_compare	"  leading"	"\u{1c4}"	->	-1	-1
+standard_compare	"track 1"	"e"	->	1	1
+standard_compare	"ABC"	"trailing "	->	-1	-1
+standard_compare	""	"abc123"	->	-1	-1
+standard_compare	"track 1"	"track 1"	->	0	0
+standard_compare	" "	"Z"	->	-1	-1
+standard_compare	"\u{1c6}"	"E"	->	-1	-1
+standard_compare	"a-b"	"a-b"	->	0	0
+standard_compare	"tab\u{9}here"	"_a"	->	1	1
+standard_compare	"clip 10 take 1"	"\u{e9}"	->	-1	-1
+standard_compare	"2"	"emoji\u{1f600}"	->	-1	-1
+standard_compare	"5"	"[1]"	->	1	1
+standard_compare	"file10"	"file 10"	->	1	1
+standard_compare	"a_b"	"1.9"	->	1	1
+standard_compare	"fi"	"r\u{e9}sum\u{e9}"	->	-1	-1
+standard_compare	"\u{fb01}"	"O"	->	-1	-1
+standard_compare	"r\u{e9}sume"	"\u{c4}pfel"	->	1	1
+standard_compare	"\u{65e5}\u{672c}"	"\u{65e5}\u{672c}"	->	0	0
+standard_compare	"ss"	"Abc"	->	1	1
+standard_compare	"Strasse"	"2"	->	1	1
+standard_compare	"Strasse"	"v1.10.0"	->	-1	-1
+standard_compare	"v1.2.3"	"tab\u{9}here"	->	1	1
+standard_compare	"v1.2.3"	"abc"	->	1	1
+standard_compare	"\u{df}"	"3"	->	1	1
+standard_compare	"a-b"	"a-b"	->	0	0
+standard_compare	"\u{f1}"	"x10y1"	->	-1	-1
+standard_compare	"fi"	"10"	->	1	1
+standard_compare	"oe"	"oe"	->	0	0
+standard_compare	"ss"	"\u{e4}"	->	1	1
+standard_compare	"file10"	"File2.TXT"	->	1	1
+standard_compare	"clip 2 take 10"	"clip 2 take 10"	->	0	0
+standard_compare	"a_b"	"emoji\u{1f600}2"	->	-1	-1
+standard_compare	"A"	"Track 12"	->	-1	-1
+standard_compare	"Track 1"	"z"	->	-1	-1
+standard_compare	"A"	"B"	->	-1	-1
+standard_compare	"123abc"	"-5"	->	1	1
+standard_compare	"emoji\u{1f600}2"	"\u{f1}"	->	-1	-1
+standard_compare	"a_b"	"#1"	->	1	1
+standard_compare	"3"	"1.10"	->	1	1
+standard_compare	"10"	"\u{30cb}\u{30db}\u{30f3}"	->	-1	-1
+standard_compare	"IMG_0010.mov"	"file001"	->	1	1
+standard_compare	"abc123"	"\u{2162}"	->	-1	-1
+standard_compare	"00"	"9"	->	-1	-1
+standard_compare	"a.b"	"file01"	->	-1	-1
+standard_compare	"trailing "	"file10.txt"	->	1	1
+standard_compare	"file2"	"file2"	->	0	0
+standard_compare	"a-b"	"\u{fb01}"	->	-1	-1
+standard_compare	"oe"	"oe"	->	0	0
+standard_compare	"emoji\u{1f600}"	"1.5"	->	1	1
+standard_compare	"x2y9"	"1.10"	->	1	1
+standard_compare	"abc123"	"emoji"	->	-1	-1
+standard_compare	"File10"	"v1.9.9"	->	-1	-1
+standard_compare	"ABC"	"file 10"	->	-1	-1
+standard_compare	"z01"	"1.9"	->	1	1
+standard_compare	"i"	"i"	->	0	0
+standard_compare	"0"	"x10y1"	->	-1	-1
+standard_compare	"12345678901234567891"	"Unicode"	->	-1	-1
+standard_compare	"oe"	"oe"	->	0	0
+standard_compare	"dot.x"	"clip 10 take 1"	->	1	1
+standard_compare	"emoji"	"#1"	->	1	1
+standard_compare	"IMG_0010.mov"	"file1.txt"	->	1	1
+standard_compare	"  leading"	"Z"	->	-1	-1
+standard_compare	"\u{1c6}"	"Stra\u{df}e"	->	-1	-1
+standard_compare	"\u{fb01}"	"IMG_01.mov"	->	-1	-1
+standard_compare	"emoji\u{1f600}"	"file01"	->	-1	-1
+standard_compare	"IMG_0010.mov"	"0"	->	1	1
+standard_compare	"1.9"	"tab\u{9}here"	->	-1	-1
+standard_compare	"_a"	"dot.x"	->	-1	-1
+standard_compare	"e"	"e"	->	0	0
+standard_compare	"Stra\u{df}e"	"Stra\u{df}e"	->	0	0
+standard_compare	"Z"	"file01"	->	1	1
+standard_compare	"z"	"dot.x"	->	1	1
+standard_compare	"tab\u{9}here"	"tab\u{9}here"	->	0	0
+standard_compare	"\u{dc}n\u{ef}c\u{f6}d\u{e9}"	"Z"	->	-1	-1
+standard_compare	"\u{fb01}"	"\u{e4}"	->	1	1
+standard_compare	"B"	"B"	->	0	0
+standard_compare	"file 10"	"file1"	->	-1	-1
+standard_compare	"i"	"\u{1c5}"	->	1	1
+standard_compare	"\u{130}"	"Z001"	->	-1	-1
+standard_compare	"clip 2 take 9"	"v1.2.3"	->	-1	-1
+standard_compare	"abc"	"a"	->	1	1
+standard_compare	"00"	"e"	->	-1	-1
+standard_compare	"r\u{e9}sum\u{e9}"	"2"	->	1	1
+standard_compare	"B"	"#1"	->	1	1
+standard_compare	"\u{1c6}"	"Unicode"	->	-1	-1
+standard_compare	"  leading"	"\u{ff21}"	->	-1	-1
+standard_compare	"i"	"r\u{e9}sum\u{e9}"	->	-1	-1
+standard_compare	"a-b"	"resume"	->	-1	-1
+standard_compare	"002"	"resume"	->	-1	-1
+standard_compare	"o"	"emoji"	->	1	1
+standard_compare	"~a"	"-5"	->	1	1
+standard_compare	"  leading"	"fi"	->	-1	-1
+standard_compare	"\u{2162}"	"[1]"	->	1	1
+standard_compare	"2"	"a-b"	->	-1	-1
+standard_compare	"\u{e4}"	"3"	->	1	1
+standard_compare	"\u{dc}n\u{ef}c\u{f6}d\u{e9}"	"a.b"	->	1	1
+standard_compare	"00"	"00"	->	0	0
+standard_compare	"a"	"\u{ff21}"	->	-1	-1
+standard_compare	"IMG_01.mov"	"r\u{e9}sume"	->	-1	-1
+standard_compare	"\u{fb01}"	"\u{fb01}"	->	0	0
+standard_compare	"\u{d6}"	"clip 2 take 10"	->	1	1
+standard_compare	"1.10"	"a-b-c"	->	-1	-1
+standard_compare	"\u{b2}"	"resume"	->	-1	-1
+standard_compare	"x2y9"	"file10"	->	1	1
+standard_compare	"Zebra"	"x2y10"	->	1	1
+standard_compare	"Resume"	"\u{b2}"	->	1	1
+standard_compare	"  leading"	"File2.TXT"	->	-1	-1
+standard_compare	"Stra\u{df}e"	"Stra\u{df}e"	->	0	0
+standard_compare	"clip 2 take 10"	"Z001"	->	-1	-1
+standard_compare	"1.10"	"5"	->	-1	-1
+standard_compare	"i"	"2"	->	1	1
+standard_compare	"File2.TXT"	"File2.TXT"	->	0	0
+standard_compare	"z1"	"z1"	->	0	0
+standard_compare	"\u{c4}pfel"	"a-b-c"	->	1	1
+standard_compare	"z01"	"#1"	->	1	1
+standard_compare	"clip 10 take 1"	"  leading"	->	1	1
+standard_compare	"E"	"02"	->	1	1
+standard_compare	"emoji"	"002"	->	1	1
+standard_compare	"file001"	"file 10"	->	1	1
+standard_compare	"E"	"\u{131}"	->	-1	-1
+standard_compare	"[1]"	"v1.10.0"	->	-1	-1
+standard_compare	"fi"	"\u{2162}"	->	-1	-1
+standard_compare	"file1.txt"	"9"	->	1	1
+standard_compare	"e"	"IMG_01.mov"	->	-1	-1
+standard_compare	"B"	"B"	->	0	0
+standard_compare	"a.b"	"\u{663}"	->	1	1
+standard_compare	"Stra\u{df}e"	"\u{1c6}"	->	1	1
+standard_compare	"x2y10"	"\u{b2}"	->	1	1
+standard_compare	"new\u{a}line"	"new\u{a}line"	->	0	0
+standard_compare	"ss"	""	->	1	1
+standard_compare	"clip 2 take 9"	"I"	->	-1	-1
+standard_compare	"clip 2 take 10"	"+5"	->	1	1
+standard_compare	"9"	"002"	->	1	1
+standard_compare	"Unicode"	"O"	->	1	1
+standard_compare	"\u{d6}"	"1.9"	->	1	1
+standard_compare	"IMG_0010.mov"	"[1]"	->	1	1
+standard_compare	"a_b"	"x2y9"	->	-1	-1
+standard_compare	"Zebra"	"file2"	->	1	1
+standard_compare	"fi"	"fi"	->	0	0
+standard_compare	"B"	"\u{663}"	->	1	1
+standard_compare	"trailing "	"file10.txt"	->	1	1
+standard_compare	""	"Strasse"	->	-1	-1
+standard_compare	"tab\u{9}here"	"emoji\u{1f600}"	->	1	1
+standard_compare	"002"	"\u{1c6}"	->	-1	-1
+standard_compare	"a"	"a"	->	0	0
+standard_compare	"\u{2162}"	"2"	->	1	1
+standard_compare	"z01"	"E"	->	1	1
+standard_compare	"\u{1c4}"	"\u{1c4}"	->	0	0
+standard_compare	"File2.TXT"	"9"	->	1	1
+standard_compare	"r\u{e9}sume"	"apfel"	->	1	1
+standard_compare	"apfel"	"tab\u{9}here"	->	-1	-1
+standard_compare	"File10"	"\u{df}"	->	-1	-1
+standard_compare	"new\u{a}line"	"\u{130}"	->	1	1
+standard_compare	"\u{f1}"	"ss"	->	-1	-1
+standard_compare	"file1"	"v1.10.0"	->	-1	-1
+standard_compare	"Z"	"~a"	->	1	1
+standard_compare	"clip 2 take 9"	"emoji\u{1f600}"	->	-1	-1
+standard_compare	"e"	"[1]"	->	1	1
+standard_compare	"n"	"file001"	->	1	1
+standard_compare	"o"	"zebra"	->	-1	-1
+standard_compare	"\u{131}"	"a_b"	->	1	1
+standard_compare	"10"	" "	->	1	1
+standard_compare	""	"e\u{301}"	->	-1	-1
+standard_compare	"file1"	"IMG_1.mov"	->	-1	-1
+standard_compare	"A"	"#1"	->	1	1
+standard_compare	"Track 12"	"Track 12"	->	0	0
+standard_compare	"clip 2 take 10"	"clip 2 take 10"	->	0	0
+standard_compare	"clip 2 take 10"	"\u{fb01}"	->	-1	-1
+standard_compare	"clip 10 take 1"	"emoji"	->	-1	-1
+standard_compare	"Stra\u{df}e"	"#1"	->	1	1
+standard_compare	"Track 12"	"12345678901234567891"	->	1	1
+standard_compare	"00"	"00"	->	0	0
+standard_compare	"apfel"	"dot.x"	->	-1	-1
+standard_compare	"z1"	"\u{fb01}"	->	1	1
+standard_compare	"file001"	"Stra\u{df}e"	->	-1	-1
+standard_compare	"Z001"	"2"	->	1	1
+standard_compare	"comma,x"	"zebra"	->	-1	-1
+standard_compare	"resume"	"Abc"	->	1	1
+standard_compare	"-5"	"-5"	->	0	0
+standard_compare	"\u{663}"	""	->	1	1
+standard_compare	"Strasse"	"Strasse"	->	0	0
+standard_compare	"z01"	"z1"	->	1	1
+standard_compare	"file1"	"x2y9"	->	-1	-1
+standard_compare	"File10"	"file001"	->	1	1
+standard_compare	"\u{e4}"	"E"	->	-1	-1
+standard_compare	"emoji\u{1f600}2"	"5"	->	1	1
+standard_compare	"\u{663}"	"file 10"	->	-1	-1
+standard_compare	"_a"	"\u{1c6}"	->	-1	-1
+standard_compare	"file10"	"file01"	->	1	1
+standard_compare	"File2.TXT"	"Strasse"	->	-1	-1
+standard_compare	"Track 12"	"resume"	->	1	1
+standard_compare	"\u{130}"	"+5"	->	1	1
+standard_compare	"2"	"2"	->	0	0
+standard_compare	"[1]"	"12345678901234567890"	->	-1	-1
+standard_compare	"a-b"	"00"	->	1	1
+standard_compare	"\u{306b}\u{307b}\u{3093}"	"2"	->	1	1
+standard_compare	"O"	"123abc"	->	1	1
+standard_compare	"clip 2 take 10"	"o"	->	-1	-1
+standard_compare	"\u{131}"	"1.9"	->	1	1
+standard_compare	"\u{c4}pfel"	"3"	->	1	1
+standard_compare	"9"	"\u{663}"	->	1	1
+standard_compare	"v1.2.3"	"Z"	->	-1	-1
+standard_compare	"z01"	"emoji"	->	1	1
+standard_compare	"file 10"	"File2.TXT"	->	-1	-1
+standard_compare	"\u{e9}"	"\u{e9}"	->	0	0
+standard_compare	"i"	"track 1"	->	-1	-1
+standard_compare	"file1.txt"	"[1]"	->	1	1
+standard_compare	"\u{65e5}\u{672c}"	"\u{65e5}\u{672c}"	->	0	0
+standard_compare	"zebra"	"1.5"	->	1	1
+standard_compare	"trailing "	"a"	->	1	1
+standard_compare	"emoji\u{1f600}"	"clip 2 take 10"	->	1	1
+standard_compare	"A"	"e\u{301}"	->	-1	-1
+standard_compare	"~a"	"\u{dc}n\u{ef}c\u{f6}d\u{e9}"	->	-1	-1
+standard_compare	"Strasse"	"\u{d6}"	->	1	1
+standard_compare	"\u{d6}"	"1.9"	->	1	1
+standard_compare	"Track 1"	"\u{1c5}"	->	1	1
+standard_compare	"\u{df}"	"r\u{e9}sum\u{e9}"	->	1	1
+standard_compare	"file1"	"file001"	->	-1	-1
+standard_compare	"trailing "	"12345678901234567891"	->	1	1
+standard_compare	"Track 12"	"clip 2 take 9"	->	1	1
+standard_compare	"\u{ff21}"	"  leading"	->	1	1
+standard_compare	"\u{b2}"	"\u{d6}"	->	-1	-1
+standard_compare	"v1.2.3"	"v1.2.3"	->	0	0
+standard_compare	"a b"	"\u{131}"	->	-1	-1
+standard_compare	"File10"	"tab\u{9}here"	->	-1	-1
+standard_compare	"file001"	"trailing "	->	-1	-1
+standard_compare	"tab\u{9}here"	"abc123"	->	1	1
+standard_compare	"IMG_01.mov"	"apfel"	->	1	1
+standard_compare	"resume"	"file1"	->	1	1
+standard_compare	"\u{c4}pfel"	"5"	->	1	1
+standard_compare	"-5"	"z"	->	-1	-1
+standard_compare	"Abc"	"trailing "	->	-1	-1
+standard_compare	"2"	"\u{c4}pfel"	->	-1	-1
+standard_compare	""	"Abc"	->	-1	-1
+standard_compare	"a.b"	"z01"	->	-1	-1
+standard_compare	"trailing "	"\u{65e5}\u{672c}"	->	-1	-1
+standard_compare	"Resume"	"0"	->	1	1
+standard_compare	"Resume"	"emoji\u{1f600}2"	->	1	1
+standard_compare	"\u{ff21}"	"I"	->	-1	-1
+standard_compare	"[1]"	"[1]"	->	0	0
+standard_compare	"\u{131}"	"0"	->	1	1
+standard_compare	"IMG_1.mov"	"ABC"	->	1	1
+standard_compare	"A_B"	"A_B"	->	0	0
+standard_compare	"file1"	"r\u{e9}sume"	->	-1	-1
+standard_compare	"+5"	"9"	->	-1	-1
+standard_compare	"-10"	"Stra\u{df}e"	->	-1	-1
+standard_compare	"a-b"	"-5"	->	1	1
+standard_compare	"\u{ff41}"	"\u{ff41}"	->	0	0
+standard_compare	"002"	"file10.txt"	->	-1	-1
+standard_compare	"a"	"x2y9"	->	-1	-1
+standard_compare	"r\u{e9}sum\u{e9}"	""	->	1	1
+standard_compare	"~a"	"O"	->	-1	-1
+standard_compare	"file1"	"a-b-c"	->	1	1
+standard_compare	"file1"	"v1.2.3"	->	-1	-1
+standard_compare	"\u{1c4}"	"00"	->	1	1
+standard_compare	"\u{663}"	"File2.TXT"	->	-1	-1
+standard_compare	"9"	"9"	->	0	0
+standard_compare	"A"	"Unicode"	->	-1	-1
+standard_compare	"\u{fb01}"	"\u{fb01}"	->	0	0
+standard_compare	"file10"	"Abc"	->	1	1
+standard_compare	"x2y10"	"\u{d6}"	->	1	1
+standard_compare	"z01"	"i"	->	1	1
+standard_compare	"12345678901234567891"	"12345678901234567891"	->	0	0
+standard_compare	"emoji"	""	->	1	1
+standard_compare	"02"	"\u{1c5}"	->	-1	-1
+standard_compare	"+5"	"x2y9"	->	-1	-1
+standard_compare	"(1)"	"\u{30cb}\u{30db}\u{30f3}"	->	-1	-1
+standard_compare	"A"	"a b"	->	-1	-1
+standard_compare	"12345678901234567890"	"\u{f6}"	->	-1	-1
+standard_compare	"1.5"	"\u{2162}"	->	-1	-1
+ci_contains	"IMG_0001.MOV"	"\u{304b}\u{305f}\u{304b}\u{306a}"	->	0	0
+ci_contains	"na\u{ef}ve"	"ss"	->	0	0
+ci_contains	"\u{fb01}lm"	"\u{e9}cole"	->	0	0
+ci_contains	"\u{c5}land"	"mov"	->	0	0
+ci_contains	"\u{e9}cole"	"STRASSE"	->	0	0
+ci_contains	""	"\u{30ab}\u{30bf}\u{30ab}\u{30ca}"	->	0	0
+ci_contains	"\u{65e5}\u{672c}\u{8a9e}\u{306e}\u{30af}\u{30ea}\u{30c3}\u{30d7}"	"RESUME"	->	0	0
+ci_contains	"\u{65e5}\u{672c}\u{8a9e}\u{306e}\u{30af}\u{30ea}\u{30c3}\u{30d7}"	"r\u{e9}sum\u{e9}"	->	0	0
+ci_contains	"resume r\u{e9}sum\u{e9} RESUME"	"-"	->	0	0
+ci_contains	"\u{c5}land"	"oeuvre"	->	0	0
+ci_contains	"fi ligature \u{fb01}"	"ecole"	->	0	0
+ci_contains	"\u{1c5}"	"ecole "	->	0	0
+ci_contains	"\u{130}stanbul"	"\u{30ab}\u{30bf}\u{30ab}\u{30ca}"	->	0	0
+ci_contains	"\u{1c5}"	"caf\u{e9}"	->	0	0
+ci_contains	"oeuvre"	"\u{30ab}\u{30bf}\u{30ab}\u{30ca}"	->	0	0
+ci_contains	"IMG_0001.MOV"	"ANGSTROM"	->	0	0
+ci_contains	"\u{1c5}"	"ecole"	->	0	0
+ci_contains	"A B C"	"o-ton"	->	0	0
+ci_contains	"A B C"	"unicode"	->	0	0
+ci_contains	"emoji \u{1f600} clip"	"\u{df}"	->	0	0
+ci_contains	"resume r\u{e9}sum\u{e9} RESUME"	"ecole"	->	0	0
+ci_contains	"emoji \u{1f600} clip"	"resume"	->	0	0
+ci_contains	"\u{130}stanbul"	"naive"	->	0	0
+ci_contains	"\u{141}\u{f3}d\u{17a}"	"istanbul"	->	0	0
+ci_contains	""	"\u{30ab}\u{30bf}\u{30ab}\u{30ca}"	->	0	0
+ci_contains	"film"	"\u{304b}\u{305f}\u{304b}\u{306a}"	->	0	0
+ci_contains	"fi ligature \u{fb01}"	"o-ton"	->	0	0
+ci_contains	"\u{e9}cole"	"RESUME"	->	0	0
+ci_contains	"na\u{ef}ve"	"naive"	->	0	0
+ci_contains	"STRASSE"	"olen"	->	0	0
+ci_contains	"a"	"resume"	->	0	0
+ci_contains	"na\u{ef}ve"	"aa"	->	0	0
+ci_contains	"\u{141}\u{f3}d\u{17a}"	"naive"	->	0	0
+ci_contains	"Interview Caf\u{e9} 01.mov"	"unicode"	->	0	0
+ci_contains	"\u{d8}len"	"oeuvre"	->	0	0
+ci_contains	"\u{dc}n\u{ef}c\u{f6}d\u{e9} Test"	"caf\u{e9}"	->	0	0
+ci_contains	"\u{d8}len"	"o-ton"	->	0	0
+ci_contains	"\u{ff26}\u{ff55}\u{ff4c}\u{ff4c}\u{ff57}\u{ff49}\u{ff44}\u{ff54}\u{ff48}"	"lodz"	->	0	0
+ci_contains	"Zo\u{eb}"	"CAFE"	->	0	0
+ci_contains	"IMG_0001.MOV"	"\u{30ab}\u{30bf}\u{30ab}\u{30ca}"	->	0	0
+ci_contains	"IMG_0001.MOV"	"fi"	->	0	0
+ci_contains	"\u{130}stanbul"	"_"	->	0	0
+ci_contains	"resume r\u{e9}sum\u{e9} RESUME"	"zoe"	->	0	0
+ci_contains	"Stra\u{df}e der Pariser Kommune"	"naive"	->	0	0
+ci_contains	"na\u{ef}ve"	"fullwidth"	->	0	0
+ci_contains	"zoe"	""	->	0	0
+ci_contains	"olen"	"unicode"	->	0	0
+ci_contains	"lodz"	""	->	0	0
+ci_contains	"\u{65e5}\u{672c}\u{8a9e}\u{306e}\u{30af}\u{30ea}\u{30c3}\u{30d7}"	"fi"	->	0	0
+ci_contains	"ISTANBUL"	"a"	->	1	1
+ci_contains	"\u{65e5}\u{672c}\u{8a9e}\u{306e}\u{30af}\u{30ea}\u{30c3}\u{30d7}"	"\u{130}"	->	0	0
+ci_contains	"na\u{ef}ve"	"\u{e9}cole"	->	0	0
+ci_contains	"\u{fb01}lm"	"-"	->	0	0
+ci_contains	"\u{c5}land"	"aaaa"	->	0	0
+ci_contains	"ISTANBUL"	"ZO\u{cb}"	->	0	0
+ci_contains	"angstrom"	"a"	->	1	1
+ci_contains	"\u{141}\u{f3}d\u{17a}"	"a"	->	0	0
+ci_contains	"\u{1c5}"	" "	->	0	0
+ci_contains	"\u{3072}\u{3089}\u{304c}\u{306a} \u{30ab}\u{30bf}\u{30ab}\u{30ca}"	"fullwidth"	->	0	0
+ci_contains	"olen"	"ZO\u{cb}"	->	0	0
+ci_contains	"aaa"	"\u{e9}cole"	->	0	0
+ci_contains	"\u{c5}ngstr\u{f6}m"	"ecole"	->	0	0
+ci_contains	"tab\u{9}x"	"fi"	->	0	0
+ci_contains	"\u{ff26}\u{ff55}\u{ff4c}\u{ff4c}\u{ff57}\u{ff49}\u{ff44}\u{ff54}\u{ff48}"	"aa"	->	0	0
+ci_contains	"tab\u{9}x"	"\u{ff26}\u{ff35}\u{ff2c}\u{ff2c}"	->	0	0
+ci_contains	"\u{c5}land"	"istanbul"	->	0	0
+ci_contains	"\u{1f44d}\u{1f3fd}"	"\u{130}"	->	0	0
+ci_contains	"olen"	".mov"	->	0	0
+ci_contains	"film"	"aaaa"	->	0	0
+ci_contains	"\u{c5}ngstr\u{f6}m"	"ANGSTROM"	->	0	0
+ci_contains	"fullwidth"	"\u{30ab}\u{30bf}\u{30ab}\u{30ca}"	->	0	0
+ci_contains	"\u{dc}n\u{ef}c\u{f6}d\u{e9} Test"	"ss"	->	0	0
+ci_contains	"resume r\u{e9}sum\u{e9} RESUME"	"ecole "	->	0	0
+ci_contains	"tab\u{9}x"	"_"	->	0	0
+ci_contains	"\u{65e5}\u{672c}\u{8a9e}\u{306e}\u{30af}\u{30ea}\u{30c3}\u{30d7}"	"fi"	->	0	0
+ci_contains	"ECOLE"	"\u{65e5}\u{672c}"	->	0	0
+ci_contains	"IMG_0001.MOV"	"ecole"	->	0	0
+ci_contains	"\u{fb01}lm"	"resume"	->	0	0
+ci_contains	"A B C"	"e\u{301}"	->	0	0
+ci_contains	"A B C"	"fullwidth"	->	0	0
+ci_contains	"\u{fb01}lm"	"\u{142}\u{f3}d\u{17a}"	->	0	0
+ci_contains	"na\u{ef}ve"	""	->	0	0
+ci_contains	"film"	"e\u{301}"	->	0	0
+ci_contains	"fullwidth"	"olen"	->	0	0
+ci_contains	"ECOLE"	"a"	->	0	0
+ci_contains	"fi ligature \u{fb01}"	"a"	->	1	1
+ci_contains	"x_y-z"	"r\u{e9}sum\u{e9}"	->	0	0
+ci_contains	"lodz"	"fullwidth"	->	0	0
+ci_contains	"aaa"	"unicode"	->	0	0
+ci_contains	"emoji \u{1f600} clip"	"caf\u{e9}"	->	0	0
+ci_contains	"a"	"ZO\u{cb}"	->	0	0
+ci_contains	"a"	"caf\u{e9}"	->	0	0
+ci_contains	"fi ligature \u{fb01}"	"resume"	->	0	0
+ci_contains	"fullwidth"	"e\u{301}"	->	0	0
+ci_contains	"tab\u{9}x"	"\u{fb01}"	->	0	0
+ci_contains	"fi ligature \u{fb01}"	"CAFE"	->	0	0
+ci_contains	"film"	"oeuvre"	->	0	0
+ci_contains	"tab\u{9}x"	"r\u{e9}sum\u{e9}"	->	0	0
+ci_contains	"e\u{301}cole"	"\u{dc}N\u{cf}"	->	0	0
+ci_contains	"\u{c5}land"	"mov"	->	0	0
+ci_contains	"\u{141}\u{f3}d\u{17a}"	"\u{fb01}"	->	0	0
+ci_contains	"angstrom"	"resume"	->	0	0
+ci_contains	"\u{ff26}\u{ff55}\u{ff4c}\u{ff4c}\u{ff57}\u{ff49}\u{ff44}\u{ff54}\u{ff48}"	"STRASSE"	->	0	0
+ci_contains	"A B C"	"i\u{307}"	->	0	0
+ci_contains	"\u{152}uvre"	"i\u{307}"	->	0	0
+ci_contains	"IMG_0001.MOV"	"aa"	->	0	0
+ci_contains	"\u{ff26}\u{ff55}\u{ff4c}\u{ff4c}\u{ff57}\u{ff49}\u{ff44}\u{ff54}\u{ff48}"	"i\u{307}"	->	0	0
+ci_contains	"\u{3072}\u{3089}\u{304c}\u{306a} \u{30ab}\u{30bf}\u{30ab}\u{30ca}"	"caf\u{e9}"	->	0	0
+ci_contains	"\u{130}stanbul"	"\u{e9}cole"	->	0	0
+ci_contains	"Interview Caf\u{e9} 01.mov"	"\u{dc}N\u{cf}"	->	0	0
+ci_contains	"angstrom"	"resume"	->	0	0
+ci_contains	"\u{152}uvre"	"-"	->	0	0
+ci_contains	"fullwidth"	"_"	->	0	0
+ci_contains	"\u{dc}n\u{ef}c\u{f6}d\u{e9} Test"	"ecole"	->	0	0
+ci_contains	"olen"	"resume"	->	0	0
+ci_contains	"\u{1f44d}\u{1f3fd}"	"\u{e9}cole"	->	0	0
+ci_contains	"IMG_0001.MOV"	""	->	0	0
+ci_contains	"zoe"	"-"	->	0	0
+ci_contains	"Zo\u{eb}"	"cafe"	->	0	0
+ci_contains	"\u{e9}cole"	"\u{df}"	->	0	0
+ci_contains	"IMG_0001.MOV"	"aaaa"	->	0	0
+ci_contains	"\u{152}uvre"	"\u{65e5}\u{672c}"	->	0	0
+ci_contains	"IMG_0001.MOV"	"\u{df}"	->	0	0
+ci_contains	"ISTANBUL"	"aaaa"	->	0	0
+ci_contains	"angstrom"	""	->	0	0
+ci_contains	"ISTANBUL"	"ZO\u{cb}"	->	0	0
+ci_contains	"\u{ff26}\u{ff55}\u{ff4c}\u{ff4c}\u{ff57}\u{ff49}\u{ff44}\u{ff54}\u{ff48}"	"\u{fb01}"	->	0	0
+ci_contains	"e\u{301}cole"	"-"	->	0	0
+ci_contains	"\u{141}\u{f3}d\u{17a}"	"oeuvre"	->	0	0
+ci_contains	"a"	"o-ton"	->	0	0
+ci_contains	"Interview Caf\u{e9} 01.mov"	"fullwidth"	->	0	0
+ci_contains	"angstrom"	"\u{142}\u{f3}d\u{17a}"	->	0	0
+ci_contains	"\u{c5}land"	"STRASSE"	->	0	0
+ci_contains	"A B C"	"CAFE"	->	0	0
+ci_contains	"olen"	"r\u{e9}sum\u{e9}"	->	0	0
+ci_contains	"Stra\u{df}e der Pariser Kommune"	"\u{fb01}"	->	0	0
+ci_contains	"\u{65e5}\u{672c}\u{8a9e}\u{306e}\u{30af}\u{30ea}\u{30c3}\u{30d7}"	"ANGSTROM"	->	0	0
+ci_contains	"fi ligature \u{fb01}"	"olen"	->	0	0
+ci_contains	"\u{65e5}\u{672c}\u{8a9e}\u{306e}\u{30af}\u{30ea}\u{30c3}\u{30d7}"	"oeuvre"	->	0	0
+ci_contains	"aaa"	"cafe"	->	0	0
+ci_contains	"x_y-z"	"\u{dc}N\u{cf}"	->	0	0
+ci_contains	"Stra\u{df}e der Pariser Kommune"	"naive"	->	0	0
+ci_contains	"\u{c5}land"	"\u{130}"	->	0	0
+ci_contains	"emoji \u{1f600} clip"	"cafe"	->	0	0
+ci_contains	"emoji \u{1f600} clip"	"cafe"	->	0	0
+ci_contains	"fullwidth"	"zoe"	->	0	0
+ci_contains	"aland"	"unicode"	->	0	0
+ci_contains	"emoji \u{1f600} clip"	"\u{fb01}"	->	0	0
+ci_contains	"\u{1f44d}\u{1f3fd}"	"resume"	->	0	0
+ci_contains	"Zo\u{eb}"	"stra\u{df}e"	->	0	0
+ci_contains	"angstrom"	"istanbul"	->	0	0
+ci_contains	"\u{dc}n\u{ef}c\u{f6}d\u{e9} Test"	"\u{dc}N\u{cf}"	->	1	1
+ci_contains	"\u{e9}cole"	"\u{1f600}"	->	0	0
+ci_contains	"\u{c5}ngstr\u{f6}m"	"\u{1f44d}"	->	0	0
+ci_contains	"angstrom"	"r\u{e9}sum\u{e9}"	->	0	0
+ci_contains	""	"olen"	->	0	0
+ci_contains	"\u{3072}\u{3089}\u{304c}\u{306a} \u{30ab}\u{30bf}\u{30ab}\u{30ca}"	"\u{fb01}"	->	0	0
+ci_contains	"ISTANBUL"	"naive"	->	0	0
+ci_contains	""	"aa"	->	0	0
+ci_contains	"aland"	" "	->	0	0
+ci_contains	"aland"	"\u{1f600}"	->	0	0
+ci_contains	"olen"	"zoe"	->	0	0
+ci_contains	"aaa"	"\u{304b}\u{305f}\u{304b}\u{306a}"	->	0	0
+ci_contains	"fullwidth"	"istanbul"	->	0	0
+ci_contains	"O-Ton Teil 2"	""	->	0	0
+ci_contains	"aland"	"RESUME"	->	0	0
+ci_contains	"tab\u{9}x"	"aland"	->	0	0
+ci_contains	"resume r\u{e9}sum\u{e9} RESUME"	"istanbul"	->	0	0
+ci_contains	"na\u{ef}ve"	"ecole"	->	0	0
+ci_contains	"e\u{301}cole"	"mov"	->	0	0
+ci_contains	"Zo\u{eb}"	"mov"	->	0	0
+ci_contains	"e\u{301}cole"	"ZO\u{cb}"	->	0	0
+ci_contains	"fullwidth"	"img"	->	0	0
+ci_contains	"\u{ff26}\u{ff55}\u{ff4c}\u{ff4c}\u{ff57}\u{ff49}\u{ff44}\u{ff54}\u{ff48}"	""	->	0	0
+ci_contains	"\u{130}stanbul"	"caf\u{e9}"	->	0	0
+ci_contains	"ISTANBUL"	"e\u{301}"	->	0	0
+ci_contains	"\u{ff26}\u{ff55}\u{ff4c}\u{ff4c}\u{ff57}\u{ff49}\u{ff44}\u{ff54}\u{ff48}"	"zoe"	->	0	0
+ci_contains	"a"	".mov"	->	0	0
+ci_contains	"e\u{301}cole"	"\u{e9}cole"	->	1	1
+ci_contains	"\u{d8}len"	"\u{1f44d}"	->	0	0
+ci_contains	"Interview Caf\u{e9} 01.mov"	""	->	0	0
+ci_contains	""	".mov"	->	0	0
+ci_contains	"A B C"	"CAFE"	->	0	0
+ci_contains	""	"aaaa"	->	0	0
+ci_contains	"film"	" "	->	0	0
+ci_contains	"fullwidth"	"img"	->	0	0
+ci_contains	"aaa"	"o-ton"	->	0	0
+ci_contains	"e\u{301}cole"	"-"	->	0	0
+ci_contains	"\u{1f44d}\u{1f3fd}"	"\u{1f44d}"	->	0	0
+ci_contains	"Interview Caf\u{e9} 01.mov"	"\u{142}\u{f3}d\u{17a}"	->	0	0
+ci_contains	"film"	" "	->	0	0
+ci_contains	"\u{130}stanbul"	"\u{304b}\u{305f}\u{304b}\u{306a}"	->	0	0
+ci_contains	"aaa"	"\u{65e5}\u{672c}"	->	0	0
+ci_contains	"\u{3072}\u{3089}\u{304c}\u{306a} \u{30ab}\u{30bf}\u{30ab}\u{30ca}"	"\u{1f44d}"	->	0	0
+ci_contains	"film"	"oeuvre"	->	0	0
+ci_contains	"A B C"	"istanbul"	->	0	0
+ci_contains	"\u{1c5}"	"fi"	->	0	0
+ci_contains	"na\u{ef}ve"	"stra\u{df}e"	->	0	0
+ci_contains	"NAIVE"	"cafe"	->	0	0
+ci_contains	"\u{1c5}"	"\u{1f44d}"	->	0	0
+graphemes	"file1"	->	5	5	5	5
+graphemes	"file2"	->	5	5	5	5
+graphemes	"file10"	->	6	6	6	6
+graphemes	"File10"	->	6	6	6	6
+graphemes	"file 10"	->	7	7	7	7
+graphemes	"file01"	->	6	6	6	6
+graphemes	"file001"	->	7	7	7	7
+graphemes	"file1.txt"	->	9	9	9	9
+graphemes	"file10.txt"	->	10	10	10	10
+graphemes	"File2.TXT"	->	9	9	9	9
+graphemes	"\u{c4}pfel"	->	5	5	5	6
+graphemes	"Apfel"	->	5	5	5	5
+graphemes	"apfel"	->	5	5	5	5
+graphemes	"Zebra"	->	5	5	5	5
+graphemes	"zebra"	->	5	5	5	5
+graphemes	"r\u{e9}sum\u{e9}"	->	6	6	6	8
+graphemes	"resume"	->	6	6	6	6
+graphemes	"Resume"	->	6	6	6	6
+graphemes	"r\u{e9}sume"	->	6	6	6	7
+graphemes	"10"	->	2	2	2	2
+graphemes	"9"	->	1	1	1	1
+graphemes	"2"	->	1	1	1	1
+graphemes	"02"	->	2	2	2	2
+graphemes	"002"	->	3	3	3	3
+graphemes	"0"	->	1	1	1	1
+graphemes	"00"	->	2	2	2	2
+graphemes	"a"	->	1	1	1	1
+graphemes	"B"	->	1	1	1	1
+graphemes	"\u{e4}"	->	1	1	1	2
+graphemes	"z"	->	1	1	1	1
+graphemes	"\u{df}"	->	1	1	1	2
+graphemes	"ss"	->	2	2	2	2
+graphemes	"Stra\u{df}e"	->	6	6	6	7
+graphemes	"Strasse"	->	7	7	7	7
+graphemes	"\u{65e5}\u{672c}"	->	2	2	2	6
+graphemes	"\u{306b}\u{307b}\u{3093}"	->	3	3	3	9
+graphemes	"\u{30cb}\u{30db}\u{30f3}"	->	3	3	3	9
+graphemes	"IMG_0001.mov"	->	12	12	12	12
+graphemes	"IMG_0010.mov"	->	12	12	12	12
+graphemes	"IMG_1.mov"	->	9	9	9	9
+graphemes	"\u{1f468}\u{200d}\u{1f469}\u{200d}\u{1f467}\u{200d}\u{1f466}"	->	1	7	11	25
+graphemes	"\u{1f44d}\u{1f3fd}"	->	1	2	4	8
+graphemes	"\u{1f1e9}\u{1f1ea}"	->	1	2	4	8
+graphemes	"\u{1f1e9}\u{1f1ea}\u{1f1ef}\u{1f1f5}"	->	2	4	8	16
+graphemes	"\u{1f1e9}\u{1f1ea}\u{1f1ef}\u{1f1f5}\u{1f1eb}"	->	3	5	10	20
+graphemes	"e\u{301}\u{302}"	->	1	3	3	5
+graphemes	"a\u{200d}b"	->	2	3	3	5
+graphemes	"\u{d}\u{a}"	->	1	2	2	2
+graphemes	"\u{a}\u{d}"	->	2	2	2	2
+graphemes	"\u{1100}\u{1161}\u{11a8}"	->	1	3	3	9
+graphemes	"\u{ac01}"	->	1	1	1	3
+graphemes	"\u{e01}\u{e47}"	->	1	2	2	6
+graphemes	"\u{928}\u{93f}"	->	1	2	2	6
+graphemes	"\u{915}\u{94d}\u{937}\u{93f}"	->	1	4	4	12
+graphemes	"\u{1f3f3}\u{fe0f}\u{200d}\u{1f308}"	->	1	4	6	14
+graphemes	"\u{2764}\u{fe0f}"	->	1	2	2	6
+graphemes	"\u{2764}"	->	1	1	1	3
+graphemes	"1\u{fe0f}\u{20e3}"	->	1	3	3	7
+graphemes	"\u{0}"	->	1	1	1	1
+graphemes	"\u{7f}"	->	1	1	1	1
+graphemes	"\u{200b}"	->	1	1	1	3
+graphemes	"\u{feff}x"	->	2	2	2	4
+graphemes	"ab\u{308}c"	->	3	4	4	5
+graphemes	"\u{1f468}\u{200d}\u{1f4bb}"	->	1	3	5	11
+graphemes	"\u{1d4b3}"	->	1	1	2	4
+graphemes	"\u{20000}"	->	1	1	2	4
+graphemes	"\u{e4}"	->	1	1	1	2
+graphemes	"a\u{308}"	->	1	2	2	3
+graphemes	"\u{e9}\u{e9} \u{3042}\u{308}e\u{d}"	->	6	7	7	12
+graphemes	"\u{308}"	->	1	1	1	2
+graphemes	"1\u{1161}1\u{308}\u{94d}\u{e9}a"	->	5	7	7	13
+graphemes	" \u{d}"	->	2	2	2	2
+graphemes	"\u{11a8}\u{e47}\u{301}\u{937}\u{1f1ef}\u{1f1e9}\u{11a8}\u{3099}"	->	4	8	10	25
+graphemes	"\u{1100}\u{1161}\u{937}\u{fe0f}\u{1f1ea}\u{1f44d}\u{e01}\u{e01}"	->	6	8	10	26
+graphemes	"\u{1f3fd}\u{301}\u{fe0f}"	->	1	3	4	9
+graphemes	"\u{e47}\u{11a8}"	->	2	2	2	6
+graphemes	"\u{df}\u{df}\u{1f3fd}\u{1100}\u{65e5}\u{e9}\u{65e5}\u{11a8}"	->	7	8	9	22
+graphemes	"\u{11a8}\u{1f44d}\u{1f1e9}"	->	3	3	5	11
+graphemes	"\u{1161}\u{308}\u{11a8}Z\u{df}\u{1f1ef}\u{fe0f}"	->	5	7	8	18
+graphemes	"\u{1161}\u{3099}e\u{1f1e9}"	->	3	4	5	11
+graphemes	""	->	0	0	0	0
+graphemes	""	->	0	0	0	0
+graphemes	"\u{3099}\u{d}\u{1f600}"	->	3	3	4	8
+graphemes	"\u{94d}\u{3042}\u{200b}"	->	3	3	3	9
+graphemes	"\u{1f3fd}"	->	1	1	2	4
+graphemes	"\u{94d}\u{1f1ef}\u{1161}\u{915}\u{1f600}\u{e9}\u{1f1ea}"	->	7	7	10	23
+graphemes	"\u{1161}\u{1f44d}\u{308}"	->	2	3	4	9
+graphemes	"\u{3099}\u{301}"	->	1	2	2	5
+graphemes	"\u{65e5}"	->	1	1	1	3
+graphemes	"\u{1100}\u{3099}"	->	1	2	2	6
+graphemes	"\u{a}e\u{308}\u{200d}1\u{df}"	->	4	6	6	10
+graphemes	"\u{a}\u{1f1ef}\u{915}\u{11a8}\u{1100}\u{200b}\u{1f3fd}e"	->	8	8	10	22
+graphemes	"\u{1f1ef} \u{fe0f}\u{1f1e9}\u{1161}\u{d}\u{11a8}"	->	6	7	9	19
+graphemes	"Za\u{301}\u{308}\u{fe0f}\u{1f1ea}\u{308}"	->	3	7	8	15
+graphemes	""	->	0	0	0	0
+graphemes	"a\u{937}"	->	2	2	2	4
+graphemes	"\u{fe0f}e"	->	2	2	2	4
+graphemes	"\u{200b}\u{1f44d}\u{1f600}\u{200b}\u{937}\u{1f44d}\u{200d}Z"	->	7	8	11	25
+graphemes	"\u{e9}\u{65e5}\u{94d}\u{1f44d}e\u{d}a"	->	6	7	8	15
+graphemes	""	->	0	0	0	0
+graphemes	"\u{11a8}\u{915}\u{1f1e9}\u{301}\u{1f1ef}\u{1f3fd}\u{11a8}\u{e01}"	->	6	8	11	26
+graphemes	"\u{1f1ea}\u{200b}\u{e9}"	->	3	3	4	9
+graphemes	"\u{200d}\u{1f600}\u{308}a"	->	3	4	5	10
+graphemes	"\u{200b}\u{308}\u{94d}a\u{e01}\u{e01}\u{e01}\u{a}"	->	7	8	8	19
+graphemes	"\u{fe0f}\u{e9}\u{11a8}\u{1100}"	->	4	4	4	11
+graphemes	"\u{fe0f}\u{301}\u{a}\u{1100}\u{1f44d}\u{a}\u{1f600}Z"	->	7	8	10	19
+graphemes	""	->	0	0	0	0
+graphemes	"\u{1f1ef}\u{915}\u{e9}\u{915}Z "	->	6	6	7	14
+graphemes	"\u{a}\u{fe0f}\u{200d}\u{df}\u{e01}"	->	4	5	5	12
+graphemes	"\u{94d}"	->	1	1	1	3
+graphemes	"\u{1100}\u{308}\u{1100}\u{d}"	->	3	4	4	9
+graphemes	""	->	0	0	0	0
+graphemes	"e\u{3099}\u{a}\u{3042}"	->	3	4	4	8
+graphemes	"\u{1100}\u{df}\u{3042}"	->	3	3	3	8
+graphemes	"\u{1f3fd}"	->	1	1	2	4
+graphemes	"a\u{937}"	->	2	2	2	4
+graphemes	"\u{d}\u{937}"	->	2	2	2	4
+graphemes	"a"	->	1	1	1	1
+graphemes	"\u{1161}\u{301}\u{915}\u{df}\u{1f600}Z"	->	5	6	7	15
+graphemes	""	->	0	0	0	0
+graphemes	"\u{1161}\u{fe0f}\u{1f1ea}\u{e47}\u{1f1e9}"	->	3	5	7	17
+graphemes	"\u{200b}Z"	->	2	2	2	4
+graphemes	"Z1\u{e9}\u{e01}\u{65e5}\u{200d}\u{937}"	->	6	7	7	16
+graphemes	"\u{fe0f}\u{e9}\u{e9}\u{df}\u{937}\u{1f1ef}\u{e9}"	->	7	7	8	18
+graphemes	"\u{e47}a\u{308}\u{308}"	->	2	4	4	8
+graphemes	" \u{1161}\u{a}"	->	3	3	3	5
+graphemes	""	->	0	0	0	0
+graphemes	"\u{200d}\u{e47}\u{200b}\u{308}"	->	3	4	4	11
+graphemes	"\u{3042}"	->	1	1	1	3
+graphemes	"\u{200b}\u{e9}\u{3042}\u{200d}a\u{3099}\u{1f1e9}\u{937}"	->	6	8	9	22
+graphemes	"\u{1100}"	->	1	1	1	3
+graphemes	"\u{937}\u{1f1e9}\u{3042}e\u{1f44d}\u{11a8}"	->	6	6	8	18
+graphemes	"\u{937}\u{1f1e9}"	->	2	2	3	7
+graphemes	""	->	0	0	0	0
+graphemes	"\u{d}Z\u{1f1ea}\u{11a8}"	->	4	4	5	9
+graphemes	"\u{94d}\u{a}\u{1f1ef}\u{11a8}\u{200d}11\u{1f1ea}"	->	7	8	10	20
+graphemes	"\u{1f1e9}\u{200d}"	->	1	2	3	7
+graphemes	"\u{3099}\u{1f3fd}\u{308}e"	->	2	4	5	10
+graphemes	"\u{65e5}\u{1f1e9}a1\u{1f3fd}"	->	4	5	7	13
+graphemes	"\u{308}\u{1f44d}\u{a}\u{94d}\u{200b}\u{df}\u{937}\u{d}"	->	8	8	9	19

@@ -1,0 +1,33 @@
+[package]
+name = "sq-platform-vision"
+description = "Apple Vision image registration for the Stabilizer (Mac only; other systems report no match): homographic and translational alignment of two gray frames"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-analysis.workspace = true
+sq-core-masks.workspace = true
+sq-core-time.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation = { workspace = true, features = ["NSDictionary", "NSArray", "NSError", "NSValue", "NSGeometry"] }
+objc2-core-foundation.workspace = true
+objc2-core-video.workspace = true
+objc2-vision.workspace = true
+
+# Workspace lints repeated: this crate is on the unsafe allow-list (Objective-C calls).
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

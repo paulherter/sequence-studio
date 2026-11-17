@@ -1,0 +1,31 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.13">
+    <resources>
+        <format id="r1" frameDuration="1/25s" width="1920" height="1080" colorSpace="1-1-1 (Rec. 709)"/>
+        <asset id="r2" name="A001.mov" start="0s" duration="50/25s" hasVideo="1" hasAudio="0" format="r1">
+            <media-rep kind="original-media" src="file:///Volumes/Shoot/A001.mov"/>
+        </asset>
+        <effect id="r3" name="Basic Title" uid=".../Titles.localized/Bumper:Opener.localized/Basic Title.localized/Basic Title.moti"/>
+    </resources>
+    <library>
+        <event name="Sequence Studio">
+            <project name="Titles">
+                <sequence format="r1" duration="75/25s" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
+                    <spine>
+                        <video ref="r2" offset="0s" name="A001.mov" start="0s" duration="50/25s">
+                            <title ref="r3" lane="1" offset="10/25s" name="Lower &amp; Third" start="0s" duration="20/25s">
+                                <text><text-style ref="ts1">Over</text-style></text>
+                                <text-style-def id="ts1"><text-style font="Helvetica Neue" fontSize="36.50" fontColor="1 0.5 0.333333 1" italic="1" alignment="left"/></text-style-def>
+                            </title>
+                        </video>
+                        <title ref="r3" offset="50/25s" name="Lower &amp; Third" start="0s" duration="25/25s">
+                            <text><text-style ref="ts2">Hello&#10;World &lt;3 &amp; &quot;q&quot;CRLF</text-style></text>
+                            <text-style-def id="ts2"><text-style font="Helvetica Neue" fontSize="72" fontColor="1 0.5 0.333333 1" bold="1" alignment="center"/></text-style-def>
+                        </title>
+                    </spine>
+                </sequence>
+            </project>
+        </event>
+    </library>
+</fcpxml>

@@ -1,0 +1,38 @@
+# Source and docs: LF everywhere (Windows checkouts included).
+* text=auto eol=lf
+*.rs text eol=lf
+*.toml text eol=lf
+*.md text eol=lf
+*.tsv text eol=lf
+*.json text eol=lf
+*.swift text eol=lf
+*.slang text eol=lf
+*.py text eol=lf
+*.sh text eol=lf
+*.ps1 text eol=lf
+*.yml text eol=lf
+Cargo.lock text eol=lf
+# Media and goldens are binary: never touched by line-ending conversion.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.icns binary
+*.ico binary
+*.mov binary
+*.mp4 binary
+*.m4a binary
+*.wav binary
+*.aif binary
+*.aiff binary
+*.mkv binary
+*.exr binary
+*.ttf binary
+*.otf binary
+*.onnx binary
+*.bin binary
+*.golden binary
+*.sqproj binary
+*.prproj binary
+oracle/**/golden/** binary
+oracle/**/inputs/** binary

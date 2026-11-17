@@ -1,0 +1,205 @@
+{
+  "global_start_time" : {
+    "OTIO_SCHEMA" : "RationalTime.1",
+    "rate" : 25,
+    "value" : 0
+  },
+  "metadata" : {
+
+  },
+  "name" : "Numbers",
+  "OTIO_SCHEMA" : "Timeline.1",
+  "tracks" : {
+    "children" : [
+
+    ],
+    "effects" : [
+
+    ],
+    "enabled" : true,
+    "markers" : [
+      {
+        "color" : "GREEN",
+        "comment" : "",
+        "marked_range" : {
+          "duration" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 0
+          },
+          "OTIO_SCHEMA" : "TimeRange.1",
+          "start_time" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : -7.1428571428571432
+          }
+        },
+        "metadata" : {
+
+        },
+        "name" : "negative",
+        "OTIO_SCHEMA" : "Marker.2"
+      },
+      {
+        "color" : "GREEN",
+        "comment" : "",
+        "marked_range" : {
+          "duration" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 0
+          },
+          "OTIO_SCHEMA" : "TimeRange.1",
+          "start_time" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 2.5000000000000001e-11
+          }
+        },
+        "metadata" : {
+
+        },
+        "name" : "e-14",
+        "OTIO_SCHEMA" : "Marker.2"
+      },
+      {
+        "color" : "GREEN",
+        "comment" : "",
+        "marked_range" : {
+          "duration" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 0
+          },
+          "OTIO_SCHEMA" : "TimeRange.1",
+          "start_time" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 2.5000000000000002e-06
+          }
+        },
+        "metadata" : {
+
+        },
+        "name" : "tiny",
+        "OTIO_SCHEMA" : "Marker.2"
+      },
+      {
+        "color" : "GREEN",
+        "comment" : "",
+        "marked_range" : {
+          "duration" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 3086419.7250000001
+          },
+          "OTIO_SCHEMA" : "TimeRange.1",
+          "start_time" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 0.17499999999999999
+          }
+        },
+        "metadata" : {
+
+        },
+        "name" : "ms",
+        "OTIO_SCHEMA" : "Marker.2"
+      },
+      {
+        "color" : "GREEN",
+        "comment" : "",
+        "marked_range" : {
+          "duration" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 0
+          },
+          "OTIO_SCHEMA" : "TimeRange.1",
+          "start_time" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 8.3333333333333339
+          }
+        },
+        "metadata" : {
+
+        },
+        "name" : "third",
+        "OTIO_SCHEMA" : "Marker.2"
+      },
+      {
+        "color" : "GREEN",
+        "comment" : "",
+        "marked_range" : {
+          "duration" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 3.125
+          },
+          "OTIO_SCHEMA" : "TimeRange.1",
+          "start_time" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 100
+          }
+        },
+        "metadata" : {
+
+        },
+        "name" : "four",
+        "OTIO_SCHEMA" : "Marker.2"
+      },
+      {
+        "color" : "GREEN",
+        "comment" : "",
+        "marked_range" : {
+          "duration" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 0
+          },
+          "OTIO_SCHEMA" : "TimeRange.1",
+          "start_time" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 25000000000000000
+          }
+        },
+        "metadata" : {
+
+        },
+        "name" : "huge15",
+        "OTIO_SCHEMA" : "Marker.2"
+      },
+      {
+        "color" : "GREEN",
+        "comment" : "",
+        "marked_range" : {
+          "duration" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 0
+          },
+          "OTIO_SCHEMA" : "TimeRange.1",
+          "start_time" : {
+            "OTIO_SCHEMA" : "RationalTime.1",
+            "rate" : 25,
+            "value" : 2.5e+18
+          }
+        },
+        "metadata" : {
+
+        },
+        "name" : "huge17",
+        "OTIO_SCHEMA" : "Marker.2"
+      }
+    ],
+    "metadata" : {
+
+    },
+    "name" : "tracks",
+    "OTIO_SCHEMA" : "Stack.1",
+    "source_range" : null
+  }
+}

@@ -1,0 +1,38 @@
+Sequence Studio, Linux AppImage
+
+Bundled: the app, FFmpeg shared libraries (LGPL build, no GPL or nonfree parts), ONNX Runtime (MIT), the EdgeTAM models
+(Apache-2.0), fonts, SPIR-V shaders (inside the executable), desktop file, icon and the MIME type for .sqproj / .sqpack.
+
+From the system (not bundled): glibc, the Vulkan loader and a Vulkan driver, Wayland or X11 libraries, ALSA/PulseAudio/PipeWire.
+Needs a glibc at least as new as the build machine's (see the file name notes in the release).
+
+espeak-ng is a run-time dependency and runs as a separate process: install it with the distribution's package manager
+(pacman -S espeak-ng, apt install espeak-ng, dnf install espeak-ng) for Voiceover from Text.
+
+Start errors: if the program or a bundled library cannot start at all, AppRun writes `Error SQS-304` into the app log
+(~/.local/share/Sequence Studio/Logs/sq.log) and shows it in a system dialog (zenity, kdialog, xmessage or notify-send)
+or on stderr. Every other start error (graphics, settings, fonts) is shown by the app in its own error window.
+scripts/test-apprun.sh checks this with a fake AppDir; scripts/test-start-failure.sh runs the app in a private headless
+weston and checks the error window, the codes and the log for injected faults (SQ_FAULT_INJECT=gpu|ffmpeg|panic|...).
+
+Menu integration: the AppImage does not install itself. On the first start the app asks whether to add itself to your
+apps ("Add Sequence Studio to your apps"). Yes moves the AppImage to ~/Applications/SequenceStudio.AppImage (a rename on
+the same file system, else a copy that can be canceled; the original is only removed after the copy is complete) and
+writes sequence-studio.desktop (Exec at that file, X-AppImage-Version=<version>), the MIME file and the icon into
+~/.local/share (applications, mime/packages, icons/hicolor); "Not Now" is remembered. Settings > General > App menu
+shows the state and offers Add... or Remove...; Remove deletes exactly those three files and can move the app file to
+the Trash (the XDG trash, ~/.local/share/Trash). A newer AppImage than the integrated one offers an update (the old file
+goes to the Trash); an older one just runs. Errors show SQI-301 (menu files not writable), SQI-302 (move failed) or
+SQI-399. Scripted: `./SequenceStudio-*.AppImage --desktop-entry add|remove|status`.
+An entry whose app file is gone, or an entry from before the version key, is pointed at the running AppImage on the next
+start.
+
+Building it (cargo xtask package on Linux, run on the build PC, never on the Mac):
+  scripts/linux-deps.sh          fetches the LGPL FFmpeg (BtbN n9.0) and appimagetool 1.9.1, each pinned by sha256, into
+                                 $SQ_DEPS (default ~/.cache/sequence-studio/deps) and prints the two exports below
+  export SQ_FFMPEG=$SQ_DEPS/ffmpeg-linux                          (a GPL or nonfree build is refused)
+  export SQ_APPIMAGETOOL=$SQ_DEPS/appimagetool-x86_64.AppImage    (else appimagetool on PATH)
+  With SQ_DEPS set and both names present in it, the two exports can be left out.
+  Also needed: patchelf. ONNX Runtime is fetched by xtask (sha256 pinned); SQ_ONNXRUNTIME, SQ_SUBJECT_MASK_MODELS and
+  SQ_BUILD_CACHE override its places. The result is target/package/SequenceStudio-<version>-<yyyyMMdd-HHmm>-x86_64.AppImage; xtask first
+  runs the unpacked app headless (--ui-shot) as a smoke test unless --no-smoke is given.

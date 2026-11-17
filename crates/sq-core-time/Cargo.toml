@@ -1,0 +1,21 @@
+[package]
+name = "sq-core-time"
+description = "Rational time, keyframe tracks, ids, timestamps and text helpers: the bottom layer of the Sequence Studio core"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+uuid.workspace = true
+getrandom = "0.3"
+unicode-segmentation.workspace = true
+sq-prproj-reader.workspace = true
+serde_json.workspace = true
+chrono.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[lints]
+workspace = true

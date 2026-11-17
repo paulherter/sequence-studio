@@ -1,0 +1,29 @@
+[package]
+name = "sq-render"
+description = "Render graph and compositor: layer requests to GPU passes, color pipeline, effects, scopes; CPU references as test oracle."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-time.workspace = true
+sq-core-model.workspace = true
+sq-core-color.workspace = true
+sq-core-effects.workspace = true
+sq-core-masks.workspace = true
+sq-core-graphics.workspace = true
+sq-frame.workspace = true
+sq-text.workspace = true
+sq-gpu.workspace = true
+wgpu.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[dev-dependencies]
+png.workspace = true
+
+[lints]
+workspace = true

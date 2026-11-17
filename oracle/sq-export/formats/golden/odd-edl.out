@@ -1,0 +1,11 @@
+TITLE: Odd / name  
+FCM: NON-DROP FRAME
+
+001  AX       V     C        00:00:00:05 00:00:01:05 00:00:03:00 00:00:04:00
+* FROM CLIP NAME: A001.mov
+002  AX       V     C        00:00:00:05 00:00:01:05 00:00:04:00 00:00:05:00
+* FROM CLIP NAME: Tëst
+* SOURCE FILE: /Volumes/My Disk/T中st #1 [a]%20;b'c"d?e|f\g^h`i{j}k.mov
+003  AX       A     C        00:00:00:05 00:00:01:05 00:00:04:00 00:00:05:00
+* FROM CLIP NAME: Tëst <x>.mov
+* SOURCE FILE: /Volumes/My Disk/T中st #1 [a]%20;b'c"d?e|f\g^h`i{j}k.mov

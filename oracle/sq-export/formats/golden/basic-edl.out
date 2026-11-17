@@ -1,0 +1,18 @@
+TITLE: Cut & "Co"
+FCM: NON-DROP FRAME
+
+001  AX       V     C        00:00:10:00 00:00:15:00 00:00:00:00 00:00:05:00
+* FROM CLIP NAME: A001.mov
+* SOURCE FILE: /Volumes/Shoot/A001.mov
+002  AX       V     C        00:00:00:00 00:00:04:00 00:00:05:00 00:00:07:00
+M2   AX       050.0                00:00:00:00
+* FROM CLIP NAME: Fast & Loud
+* SOURCE FILE: /Volumes/Shoot/B & C.mov
+003  AX       A     C        00:00:10:00 00:00:15:00 00:00:00:00 00:00:05:00
+* FROM CLIP NAME: A001.mov
+* SOURCE FILE: /Volumes/Shoot/A001.mov
+004  AX       A2    C        00:00:00:00 00:00:01:00 00:00:00:00 00:00:01:00
+* FROM CLIP NAME: B & C.mov
+* SOURCE FILE: /Volumes/Shoot/B & C.mov
+* LOC: 00:00:01:00 GREEN Beat
+* LOC: 00:00:02:00 RED Range <x>

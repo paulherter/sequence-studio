@@ -1,0 +1,39 @@
+[package]
+name = "sq-platform-mac"
+description = "macOS-only window services of the app: the menu bar, the window surface color space"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+muda.workspace = true
+sq-draw-shell.workspace = true
+sq-uikit.workspace = true
+sq-playback.workspace = true
+sq-fault-text.workspace = true
+sq-os.workspace = true
+libc.workspace = true
+wgpu.workspace = true
+objc2-core-graphics = { workspace = true, features = ["CGFont"] }
+objc2-core-text.workspace = true
+objc2-core-foundation = { workspace = true, features = ["CFArray", "CFAttributedString", "CFString", "CFCGTypes"] }
+sq-text.workspace = true
+objc2.workspace = true
+block2.workspace = true
+
+# Workspace lints repeated: this crate is on the unsafe allow-list (signal handler).
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+[dependencies]
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }

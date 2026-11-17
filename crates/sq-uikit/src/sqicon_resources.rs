@@ -1,0 +1,293 @@
+// Swift: SQIcon+Resources.swift
+//! Icon resource names. Generated in Swift by scripts/gen-icons.mjs from the design kit's icon-map.json; Phosphor (MIT)
+//! glyphs plus own drawings (sq-*.svg), see docs/THIRD_PARTY.md.
+
+use crate::sqicon::SQIcon;
+use crate::sqicon_svg_table::ICON_SVGS;
+
+impl SQIcon {
+    /// File name (without .svg) in Resources/Icons.
+    pub fn resource(self) -> &'static str {
+        match self {
+            SQIcon::TextBold => "ph-text-b",
+            SQIcon::TextItalic => "ph-text-italic",
+            SQIcon::TextUnderline => "ph-text-underline",
+            SQIcon::TextStrikethrough => "ph-text-strikethrough",
+            SQIcon::TextOverline => "sq-textOverline",
+            SQIcon::TextCaseUpper => "ph-text-aa",
+            SQIcon::TextTop => "ph-align-top-simple",
+            SQIcon::TextMiddle => "ph-align-center-vertical-simple",
+            SQIcon::TextBottom => "ph-align-bottom-simple",
+            SQIcon::TextLTR => "sq-textLTR",
+            SQIcon::TextRTL => "sq-textRTL",
+            SQIcon::ShadowAngle => "ph-angle",
+            SQIcon::ChevronRight => "ph-caret-right",
+            SQIcon::ChevronDown => "ph-caret-down",
+            SQIcon::ChevronUp => "ph-caret-up",
+            SQIcon::ChevronLeft => "ph-caret-left",
+            SQIcon::GoToStart => "ph-skip-back",
+            SQIcon::GoToEnd => "ph-skip-forward",
+            SQIcon::ArrowDownToLine => "ph-arrow-line-down",
+            SQIcon::ArrowUpToLine => "ph-arrow-line-up",
+            SQIcon::ArrowUpFromLine => "sq-arrowUpFromLine",
+            SQIcon::ArrowRightToLine => "ph-arrow-line-right",
+            SQIcon::ArrowLeftToLine => "ph-arrow-line-left",
+            SQIcon::StepBack => "ph-caret-line-left",
+            SQIcon::StepForward => "ph-caret-line-right",
+            SQIcon::Play => "ph-play-fill",
+            SQIcon::Pause => "ph-pause-fill",
+            SQIcon::Stop => "ph-stop-fill",
+            SQIcon::PlayCircle => "ph-play-circle",
+            SQIcon::PlayRectangle => "ph-monitor-play",
+            SQIcon::Marker => "ph-map-pin",
+            SQIcon::MarkerOff => "sq-markerOff",
+            SQIcon::InsertEdit => "ph-arrow-square-down-right",
+            SQIcon::OverwriteEdit => "sq-overwriteEdit",
+            SQIcon::Camera => "ph-camera",
+            SQIcon::Heart => "ph-heart-fill",
+            SQIcon::Discord => "brand-discord",
+            SQIcon::Github => "brand-github",
+            SQIcon::Mail => "ph-envelope-simple",
+            SQIcon::Code => "ph-code",
+            SQIcon::Close => "ph-x",
+            SQIcon::CloseCircle => "ph-x-circle",
+            SQIcon::CloseCircleFilled => "ph-x-circle-fill",
+            SQIcon::Trash => "ph-trash",
+            SQIcon::Folder => "ph-folder-simple",
+            SQIcon::FolderFilled => "ph-folder-simple-fill",
+            SQIcon::FolderAdd => "ph-folder-simple-plus",
+            SQIcon::FolderRemove => "ph-folder-simple-minus",
+            SQIcon::Eye => "ph-eye",
+            SQIcon::EyeOff => "ph-eye-slash",
+            SQIcon::TrackLock => "ph-lock-simple",
+            SQIcon::TrackUnlock => "ph-lock-simple-open",
+            SQIcon::TrackSyncLock => "ph-lock-key",
+            SQIcon::Link => "ph-link-simple",
+            SQIcon::Unlink => "ph-link-simple-break",
+            SQIcon::Plus => "ph-plus",
+            SQIcon::Minus => "ph-minus",
+            SQIcon::Ellipsis => "ph-dots-three",
+            SQIcon::Search => "ph-magnifying-glass",
+            SQIcon::ZoomIn => "ph-magnifying-glass-plus",
+            SQIcon::ZoomOut => "ph-magnifying-glass-minus",
+            SQIcon::ZoomSparkle => "sq-zoomSparkle",
+            SQIcon::Star => "ph-star",
+            SQIcon::StarFilled => "ph-star-fill",
+            SQIcon::StarOff => "sq-starOff",
+            SQIcon::Grid => "ph-squares-four",
+            SQIcon::List => "ph-list",
+            SQIcon::Grid3 => "ph-grid-nine",
+            SQIcon::Reset => "ph-arrow-counter-clockwise",
+            SQIcon::RotateCW => "ph-arrow-clockwise",
+            SQIcon::Refresh => "ph-arrows-clockwise",
+            SQIcon::Copy => "ph-copy",
+            SQIcon::Paste => "ph-clipboard",
+            SQIcon::PasteInsert => "ph-file-arrow-down",
+            SQIcon::File => "ph-file",
+            SQIcon::Download => "ph-download-simple",
+            SQIcon::Upload => "ph-upload-simple",
+            SQIcon::ToolBlade => "ph-scissors",
+            SQIcon::BladeBadge => "sq-bladeBadge",
+            SQIcon::Paintbrush => "ph-paint-brush",
+            SQIcon::Pencil => "ph-pencil-simple",
+            SQIcon::Pen => "ph-pen-nib",
+            SQIcon::Draw => "ph-pencil-simple-line",
+            SQIcon::ToolMask => "ph-magic-wand",
+            SQIcon::Sparkles => "ph-sparkle",
+            SQIcon::Text => "ph-text-t",
+            SQIcon::TextAlignLeft => "ph-text-align-left",
+            SQIcon::TextAlignCenter => "ph-text-align-center",
+            SQIcon::TextAlignRight => "ph-text-align-right",
+            SQIcon::AlignLeft => "ph-align-left",
+            SQIcon::AlignCenterH => "ph-align-center-vertical",
+            SQIcon::AlignRight => "ph-align-right",
+            SQIcon::AlignTop => "ph-align-top",
+            SQIcon::AlignCenterV => "ph-align-center-horizontal",
+            SQIcon::AlignBottom => "ph-align-bottom",
+            SQIcon::DistributeH => "sq-distributeH",
+            SQIcon::DistributeV => "sq-distributeV",
+            SQIcon::ShapeRectangle => "ph-rectangle",
+            SQIcon::ShapeEllipse => "ph-circle",
+            SQIcon::ShapeLine => "ph-line-segment",
+            SQIcon::ArrowRight => "ph-arrow-right",
+            SQIcon::ArrowUpRight => "ph-arrow-up-right",
+            SQIcon::ArrowDownRight => "ph-arrow-down-right",
+            SQIcon::MoveHorizontal => "ph-arrows-horizontal",
+            SQIcon::MoveVertical => "ph-arrows-vertical",
+            SQIcon::Move => "ph-arrows-out-cardinal",
+            SQIcon::Maximize => "ph-arrows-out-simple",
+            SQIcon::Minimize => "ph-arrows-in-simple",
+            SQIcon::FlipHorizontal => "ph-flip-horizontal",
+            SQIcon::PushRight => "ph-arrow-square-left",
+            SQIcon::SlideOut => "ph-sign-out",
+            SQIcon::OpenExternal => "ph-arrow-square-out",
+            SQIcon::Merge => "ph-arrows-merge",
+            SQIcon::Swap => "ph-arrows-left-right",
+            SQIcon::Flask => "ph-flask",
+            SQIcon::Film => "ph-film-strip",
+            SQIcon::Sequence => "ph-film-slate",
+            SQIcon::Stack => "ph-stack",
+            SQIcon::Generator => "ph-stack-simple",
+            SQIcon::Group => "ph-selection-all",
+            SQIcon::Ungroup => "ph-selection-slash",
+            SQIcon::Bundle => "ph-archive",
+            SQIcon::Unbundle => "ph-cube",
+            SQIcon::Duplicate => "ph-copy-simple",
+            SQIcon::Waveform => "ph-waveform",
+            SQIcon::WaveformLines => "ph-equalizer",
+            SQIcon::Activity => "ph-pulse",
+            SQIcon::Microphone => "ph-microphone",
+            SQIcon::Voice => "ph-microphone-stage",
+            SQIcon::Volume => "ph-speaker-high",
+            SQIcon::VolumeLow => "ph-speaker-low",
+            SQIcon::VolumeOff => "ph-speaker-x",
+            SQIcon::Image => "ph-image",
+            SQIcon::ImageRemove => "sq-imageRemove",
+            SQIcon::SlidersVertical => "ph-faders",
+            SQIcon::SlidersHorizontal => "ph-sliders-horizontal",
+            SQIcon::ChartBars => "ph-chart-bar",
+            SQIcon::ChartLine => "ph-chart-line",
+            SQIcon::ZapOff => "ph-lightning-slash",
+            SQIcon::Zap => "ph-lightning",
+            SQIcon::Magnet => "ph-magnet",
+            SQIcon::FoldVertical => "ph-arrows-in-line-vertical",
+            SQIcon::UnfoldVertical => "ph-arrows-out-line-vertical",
+            SQIcon::Loop => "ph-repeat",
+            SQIcon::Landmark => "ph-bank",
+            SQIcon::Drama => "ph-mask-happy",
+            SQIcon::CircleDotted => "sq-circleDotted",
+            SQIcon::Wind => "ph-wind",
+            SQIcon::Triangle => "ph-triangle",
+            SQIcon::SunRays => "ph-sun",
+            SQIcon::CircleDashed => "ph-circle-dashed",
+            SQIcon::Contrast => "ph-circle-half",
+            SQIcon::Palette => "ph-palette",
+            SQIcon::SunDim => "ph-sun-dim",
+            SQIcon::SunMedium => "ph-sun-horizon",
+            SQIcon::Lightbulb => "ph-lightbulb",
+            SQIcon::Droplet => "ph-drop",
+            SQIcon::Aperture => "ph-aperture",
+            SQIcon::CircleDot => "ph-radio-button",
+            SQIcon::Tornado => "ph-tornado",
+            SQIcon::Waves => "ph-waves",
+            SQIcon::Checkerboard => "ph-checkerboard",
+            SQIcon::Grain => "ph-dots-six",
+            SQIcon::Moon => "ph-moon",
+            SQIcon::SquareDashed => "ph-rectangle-dashed",
+            SQIcon::PanelBottom => "ph-square-half-bottom",
+            SQIcon::Flower => "ph-flower",
+            SQIcon::Columns3 => "ph-columns",
+            SQIcon::Columns2 => "ph-square-split-horizontal",
+            SQIcon::Hexagon => "ph-hexagon",
+            SQIcon::Crop => "ph-crop",
+            SQIcon::RoundedSquare => "ph-square",
+            SQIcon::Scan => "ph-scan",
+            SQIcon::Vibrate => "ph-vibrate",
+            SQIcon::Radio => "ph-radio",
+            SQIcon::Timer => "ph-timer",
+            SQIcon::CalendarClock => "sq-calendarClock",
+            SQIcon::Menu => "ph-list",
+            SQIcon::User => "ph-user",
+            SQIcon::Gauge => "ph-gauge",
+            SQIcon::Captions => "ph-subtitles",
+            SQIcon::Tag => "ph-tag",
+            SQIcon::Bookmark => "ph-bookmark-simple",
+            SQIcon::BookmarkFilled => "ph-bookmark-simple-fill",
+            SQIcon::CheckCircle => "ph-check-circle",
+            SQIcon::CheckCircleFilled => "ph-check-circle-fill",
+            SQIcon::Equal => "ph-equals",
+            SQIcon::PlusCircle => "ph-plus-circle",
+            SQIcon::MinusCircle => "ph-minus-circle",
+            SQIcon::AddRectangle => "ph-plus-square",
+            SQIcon::Warning => "ph-warning",
+            SQIcon::Clock => "ph-clock",
+            SQIcon::UploadCircle => "ph-arrow-circle-up",
+            SQIcon::StopCircle => "ph-stop-circle",
+            SQIcon::Settings => "ph-gear-six",
+            SQIcon::FindFolder => "sq-findFolder",
+            SQIcon::Power => "ph-power",
+            SQIcon::PowerOn => "sq-powerOn",
+            SQIcon::PowerOff => "sq-powerOff",
+            SQIcon::Unknown => "ph-question",
+            SQIcon::DriveOffline => "ph-plugs",
+            SQIcon::Package => "ph-package",
+            SQIcon::Diamond => "ph-diamond",
+            SQIcon::Curve => "ph-bezier-curve",
+            SQIcon::ToolHand => "ph-hand",
+            SQIcon::PointerHand => "ph-hand-pointing",
+            SQIcon::ToolSelect => "ph-cursor",
+            SQIcon::MarkClip => "ph-cursor-click",
+            SQIcon::OpenInSource => "ph-monitor-arrow-up",
+            SQIcon::TimelineSelection => "ph-rows",
+            SQIcon::Viewfinder => "ph-frame-corners",
+            SQIcon::Keyboard => "ph-keyboard",
+            SQIcon::Eyedropper => "ph-eyedropper",
+            SQIcon::Tv => "ph-television",
+            SQIcon::Cloud => "ph-cloud",
+            SQIcon::Check => "ph-check",
+            SQIcon::Share => "ph-share-fat",
+            SQIcon::Home => "ph-house",
+            SQIcon::Book => "ph-book-open",
+            SQIcon::Snap => "ph-magnet",
+            SQIcon::ToolSlip => "sq-toolSlip",
+            SQIcon::ToolSlide => "sq-toolSlide",
+            SQIcon::ToolRipple => "ph-arrows-horizontal",
+            SQIcon::ToolRoll => "sq-toolRoll",
+            SQIcon::ToolRateStretch => "sq-toolRateStretch",
+            SQIcon::Keyframe => "sq-keyframe",
+            SQIcon::PageEdit => "sq-pageEdit",
+            SQIcon::PageColor => "sq-pageColor",
+            SQIcon::MarkIn => "sq-markIn",
+            SQIcon::MarkOut => "sq-markOut",
+            SQIcon::MarkInOut => "sq-markInOut",
+            SQIcon::Info => "ph-info",
+            SQIcon::Chats => "ph-chats",
+            SQIcon::Layout => "ph-layout",
+            SQIcon::DeviceMobile => "ph-device-mobile",
+            SQIcon::Monitor => "ph-monitor",
+        }
+    }
+}
+
+impl SQIcon {
+    /// The icon's SVG text (embedded from `resources/Icons`), `None` when the file is missing.
+    pub fn svg_source(self) -> Option<&'static str> {
+        let name = self.resource();
+        ICON_SVGS.iter().find(|(n, _)| *n == name).map(|(_, s)| *s)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn every_mapped_name_resolves_to_an_svg() {
+        for icon in SQIcon::ALL {
+            let svg =
+                icon.svg_source().unwrap_or_else(|| panic!("{} has no svg {}", icon.raw_value(), icon.resource()));
+            assert!(svg.contains("<svg"), "{}", icon.resource());
+        }
+    }
+
+    #[test]
+    fn phosphor_and_28_custom_icons_are_embedded() {
+        let custom = ICON_SVGS.iter().filter(|(n, _)| n.starts_with("sq-")).count();
+        assert_eq!(custom, 28);
+        assert!(ICON_SVGS.iter().filter(|(n, _)| n.starts_with("ph-")).count() >= 200);
+    }
+}
+
+#[cfg(test)]
+mod brand_tests {
+    use super::*;
+
+    #[test]
+    fn github_and_discord_are_the_brand_marks() {
+        assert_eq!(SQIcon::Github.resource(), "brand-github");
+        assert_eq!(SQIcon::Discord.resource(), "brand-discord");
+        for i in [SQIcon::Github, SQIcon::Discord] {
+            assert!(i.svg_source().is_some_and(|s| s.contains("viewBox=\"0 0 24 24\"") && s.contains("<path")));
+        }
+    }
+}

@@ -1,0 +1,38 @@
+[package]
+name = "sq-platform-tts"
+description = "Text to speech for Voiceover from Text: one engine trait, a job that renders on a worker, and the Mac (AVSpeechSynthesizer), Windows (WinRT SpeechSynthesizer) and Linux (espeak-ng) backends"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-time.workspace = true
+sq-core-audio.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+block2.workspace = true
+objc2-avf-audio.workspace = true
+objc2-foundation.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.62", features = ["Foundation", "Foundation_Collections", "Media_Core", "Media_SpeechSynthesis", "Storage_Streams"] }
+
+# Workspace lints repeated: this crate is on the unsafe allow-list (Objective-C and WinRT calls).
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+[[test]]
+name = "system_voice"
+harness = false

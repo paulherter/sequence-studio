@@ -1,0 +1,4 @@
+Dissolves are written starting at the cut
+Transition "push" written as a dissolve
+Fade at a clip edge is not exported
+Audio fade at a clip edge is not exported

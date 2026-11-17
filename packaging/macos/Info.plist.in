@@ -1,0 +1,81 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Template for `cargo xtask package`: @VERSION@ and @BUILD@ are filled in. Same identifiers as the Swift app. -->
+<plist version="1.0">
+<dict>
+	<key>CFBundleDevelopmentRegion</key><string>en</string>
+	<key>CFBundleExecutable</key><string>Sequence Studio</string>
+	<key>CFBundleIconFile</key><string>AppIcon</string>
+	<key>CFBundleIdentifier</key><string>de.paulherter.SequenceStudio</string>
+	<key>CFBundleInfoDictionaryVersion</key><string>6.0</string>
+	<key>CFBundleName</key><string>Sequence Studio</string>
+	<key>CFBundleDisplayName</key><string>Sequence Studio</string>
+	<key>CFBundlePackageType</key><string>APPL</string>
+	<key>CFBundleShortVersionString</key><string>@VERSION@</string>
+	<key>CFBundleVersion</key><string>@BUILD@</string>
+	<key>LSMinimumSystemVersion</key><string>26.0</string>
+	<key>NSHighResolutionCapable</key><true/>
+	<key>NSMicrophoneUsageDescription</key>
+	<string>Sequence Studio records your voice-over from the microphone onto the timeline. Nothing is recorded until you start a voice-over.</string>
+	<key>NSDesktopFolderUsageDescription</key>
+	<string>Sequence Studio opens projects and imports media from your Desktop folder when you choose them.</string>
+	<key>NSDocumentsFolderUsageDescription</key>
+	<string>Sequence Studio opens projects and imports media from your Documents folder when you choose them.</string>
+	<key>NSDownloadsFolderUsageDescription</key>
+	<string>Sequence Studio opens projects and imports media from your Downloads folder when you choose them.</string>
+	<key>NSRemovableVolumesUsageDescription</key>
+	<string>Sequence Studio opens projects and imports media from external drives when you choose them.</string>
+	<key>NSNetworkVolumesUsageDescription</key>
+	<string>Sequence Studio opens projects and imports media from network volumes when you choose them.</string>
+	<key>CFBundleDocumentTypes</key>
+	<array>
+		<dict>
+			<key>CFBundleTypeName</key><string>Sequence Studio Project</string>
+			<key>CFBundleTypeRole</key><string>Editor</string>
+			<key>LSHandlerRank</key><string>Owner</string>
+			<key>LSTypeIsPackage</key><true/>
+			<key>LSItemContentTypes</key><array><string>de.paulherter.sequencestudio.project</string></array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key><string>Sequence Studio Project (legacy)</string>
+			<key>CFBundleTypeRole</key><string>Editor</string>
+			<key>LSHandlerRank</key><string>Alternate</string>
+			<key>LSTypeIsPackage</key><true/>
+			<key>LSItemContentTypes</key><array><string>de.paulherter.sequencestudio.project-legacy</string></array>
+		</dict>
+		<dict>
+			<key>CFBundleTypeName</key><string>Sequence Studio Preset Pack</string>
+			<key>CFBundleTypeRole</key><string>Viewer</string>
+			<key>LSHandlerRank</key><string>Owner</string>
+			<key>LSItemContentTypes</key><array><string>de.paulherter.sequencestudio.pack</string></array>
+		</dict>
+	</array>
+	<key>UTExportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key><string>de.paulherter.sequencestudio.pack</string>
+			<key>UTTypeDescription</key><string>Sequence Studio Preset Pack</string>
+			<key>UTTypeConformsTo</key><array><string>public.data</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict><key>public.filename-extension</key><array><string>sqpack</string></array></dict>
+		</dict>
+		<dict>
+			<key>UTTypeIdentifier</key><string>de.paulherter.sequencestudio.project</string>
+			<key>UTTypeDescription</key><string>Sequence Studio Project</string>
+			<key>UTTypeConformsTo</key><array><string>com.apple.package</string><string>public.composite-content</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict><key>public.filename-extension</key><array><string>sqproj</string></array></dict>
+		</dict>
+	</array>
+	<key>UTImportedTypeDeclarations</key>
+	<array>
+		<dict>
+			<key>UTTypeIdentifier</key><string>de.paulherter.sequencestudio.project-legacy</string>
+			<key>UTTypeDescription</key><string>Sequence Studio Project (legacy)</string>
+			<key>UTTypeConformsTo</key><array><string>com.apple.package</string><string>public.composite-content</string></array>
+			<key>UTTypeTagSpecification</key>
+			<dict><key>public.filename-extension</key><array><string>ssproj</string></array></dict>
+		</dict>
+	</array>
+</dict>
+</plist>

@@ -1,0 +1,45 @@
+#!/bin/sh
+# Entry point of the AppImage: the app finds its libraries (rpath), fonts, shaders and models beside itself.
+#
+# When the program cannot even start (its file is missing, a bundled library is gone), no window of the app can open.
+# This script then does what the app would: it writes the error into the app log (the same sq.log the app writes) and
+# shows the code in a system dialog when one exists (zenity, kdialog, xmessage, notify-send), else on stderr.
+# SQS-304 is the code of this case; the other start errors come from the app itself (docs/rust/START-ERRORS.md).
+HERE="$(dirname "$(readlink -f "$0")")"
+BIN="$HERE/usr/bin/sequence-studio"
+LOGDIR="${XDG_DATA_HOME:-$HOME/.local/share}/Sequence Studio/Logs"
+
+fail() {
+    stamp=$(date +%s)
+    text="Error SQS-304: Sequence Studio can't start from this AppImage. $1 Nothing was changed."
+    mkdir -p "$LOGDIR" 2>/dev/null || LOGDIR="${TMPDIR:-/tmp}/Sequence Studio Logs"
+    mkdir -p "$LOGDIR" 2>/dev/null
+    printf '%s ERROR start failed SQS-304: %s\n' "$stamp" "$1" >> "$LOGDIR/sq.log" 2>/dev/null
+    echo "Sequence Studio: $text (log: $LOGDIR/sq.log)" >&2
+    # A test run (SQ_NO_EXTERNAL_OPEN) never raises a dialog on the desktop.
+    if [ -n "$DISPLAY$WAYLAND_DISPLAY" ] && [ -z "$SQ_NO_EXTERNAL_OPEN" ]; then
+        msg="$text
+
+Log: $LOGDIR/sq.log"
+        if command -v zenity >/dev/null 2>&1; then
+            zenity --error --title="Sequence Studio" --no-markup --text="$msg" 2>/dev/null
+        elif command -v kdialog >/dev/null 2>&1; then
+            kdialog --title "Sequence Studio" --error "$msg" 2>/dev/null
+        elif command -v xmessage >/dev/null 2>&1; then
+            xmessage -center "$msg" 2>/dev/null
+        elif command -v notify-send >/dev/null 2>&1; then
+            notify-send -u critical "Sequence Studio" "$msg" 2>/dev/null
+        fi
+    fi
+    exit 1
+}
+
+[ -x "$BIN" ] || fail "The program file is missing or not executable ($BIN)."
+if command -v ldd >/dev/null 2>&1; then
+    found=$(ldd "$BIN" 2>&1)
+    status=$?
+    missing=$(printf '%s\n' "$found" | sed -n 's/^[[:space:]]*\([^ ]*\) => not found.*/\1/p' | tr '\n' ' ')
+    [ -z "$missing" ] || fail "A library is missing: $missing"
+    [ "$status" -eq 0 ] || fail "The program can't be loaded on this computer: $found"
+fi
+exec "$BIN" "$@"

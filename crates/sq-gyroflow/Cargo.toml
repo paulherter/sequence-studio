@@ -1,0 +1,20 @@
+[package]
+name = "sq-gyroflow"
+description = "Gyroflow stabilization: gyro data and lens profile through gyroflow-core, smoothing, per-plane warp, the analysis cache."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-masks.workspace = true
+sq-render.workspace = true
+# Gyroflow itself (GPL-3.0, docs/THIRD_PARTY.md), pinned like Vendor/sqgyro (the Swift app's libsqgyro). OpenCL is left out.
+gyroflow-core = { git = "https://github.com/gyroflow/gyroflow.git", rev = "5fa0309a", default-features = false, features = ["bundle-lens-profiles"] }
+parking_lot = "0.12"
+nalgebra = "0.34"
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[lints]
+workspace = true

@@ -1,0 +1,65 @@
+[package]
+name = "sequence-studio"
+description = "The Sequence Studio application: a window around the headless App, drawn with the wgpu renderer"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-time.workspace = true
+sq-os.workspace = true
+sq-draw.workspace = true
+sq-gpu.workspace = true
+sq-audiofx.workspace = true
+sq-playback.workspace = true
+sq-lottie.workspace = true
+sq-audio-out.workspace = true
+sq-media.workspace = true
+sq-core-edit.workspace = true
+sq-core-model.workspace = true
+sq-media-ffmpeg.workspace = true
+sq-export.workspace = true
+sq-proxy.workspace = true
+sq-frame.workspace = true
+accesskit.workspace = true
+accesskit_winit.workspace = true
+sq-runtime.workspace = true
+sq-editor-session.workspace = true
+sq-app-shell.workspace = true
+sq-app-hosts = { path = "../sq-app-hosts" }
+sq-draw-shell.workspace = true
+sq-core-project.workspace = true
+sq-core-file.workspace = true
+sq-uikit.workspace = true
+sq-text.workspace = true
+sq-render.workspace = true
+sq-core-color.workspace = true
+serde_json.workspace = true
+wgpu.workspace = true
+pollster.workspace = true
+winit.workspace = true
+arboard.workspace = true
+rfd.workspace = true
+softbuffer.workspace = true
+ctrlc.workspace = true
+
+sq-platform.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+sq-platform-mac.workspace = true
+
+[target.'cfg(unix)'.dependencies]
+sq-installer = { path = "../sq-installer" }
+
+[target.'cfg(windows)'.dependencies]
+sq-platform-win.workspace = true
+
+# Not gated on `cfg(windows)`: that is the build host, and the exe is cross-built from Linux and the Mac.
+[build-dependencies]
+winresource.workspace = true
+
+[lints]
+workspace = true

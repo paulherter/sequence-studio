@@ -1,0 +1,45 @@
+[package]
+name = "sq-media-ffmpeg"
+description = "FFmpeg demux, decode and encode behind sq-media's traits (C++ shim built with cc)."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+build = "build.rs"
+# The key lets the build script hand the DLL names to sequence-studio (DEP_CSQFFMPEG_DLLS).
+links = "csqffmpeg"
+
+[dependencies]
+sq-core-time.workspace = true
+sq-core-model.workspace = true
+sq-frame.workspace = true
+sq-media.workspace = true
+sq-audiofx.workspace = true
+sq-core-audio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+gif.workspace = true
+png.workspace = true
+image-webp.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[dev-dependencies]
+# Test fixtures: a lossless WebP encoder to build animated files by hand.
+image-webp.workspace = true
+
+[build-dependencies]
+cc.workspace = true
+
+# Same lints as the workspace, except unsafe code: it is denied here and allowed only in the `shim` module (FFI).
+[lints.rust]
+unsafe_code = "deny"
+unexpected_cfgs = { level = "warn", check-cfg = ['cfg(sq_ffmpeg)'] }
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

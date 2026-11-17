@@ -1,0 +1,35 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE fcpxml>
+<fcpxml version="1.10">
+    <resources>
+        <format id="r1" frameDuration="1/25s" width="1920" height="1080" colorSpace="1-1-1 (Rec. 709)"/>
+        <asset id="r2" name="A001.mov" start="0s" duration="375/25s" hasVideo="1" hasAudio="1" format="r1">
+            <media-rep kind="original-media" src="file:///Volumes/Shoot/A001.mov"/>
+        </asset>
+        <asset id="r3" name="B &amp; C.mov" start="0s" duration="100/25s" hasVideo="1" hasAudio="1" format="r1">
+            <media-rep kind="original-media" src="file:///Volumes/Shoot/B%20&amp;%20C.mov"/>
+        </asset>
+    </resources>
+    <library>
+        <event name="Sequence Studio">
+            <project name="Cut &amp; &quot;Co&quot;">
+                <sequence format="r1" duration="175/25s" tcStart="0s" tcFormat="NDF" audioLayout="stereo" audioRate="48k">
+                    <spine>
+                        <asset-clip ref="r2" offset="0s" name="A001.mov" start="250/25s" duration="125/25s">
+                            <audio ref="r3" lane="-2" offset="250/25s" name="B &amp; C.mov" start="0s" duration="25/25s"/>
+                            <video ref="r3" lane="1" offset="260/25s" name="B &amp; C.mov" start="25/25s" duration="25/25s"/>
+                            <marker start="275/25s" duration="1/25s" value="Beat" note="drum"/>
+                            <marker start="300/25s" duration="20/25s" value="Range &lt;x&gt;" note="two"/>
+                        </asset-clip>
+                        <video ref="r3" offset="125/25s" name="Fast &amp; Loud" start="0s" duration="50/25s">
+                            <timeMap>
+                                <timept time="0s" value="0s" interp="linear"/>
+                                <timept time="50/25s" value="100/25s" interp="linear"/>
+                            </timeMap>
+                        </video>
+                    </spine>
+                </sequence>
+            </project>
+        </event>
+    </library>
+</fcpxml>

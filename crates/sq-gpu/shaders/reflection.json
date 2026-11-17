@@ -1,0 +1,126 @@
+{
+  "fixed_layout_entries": 35,
+  "modules": {
+    "Blur": {
+      "gaussianBlur1D": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [32, 512], "out_read": false}
+    },
+    "ColorChain": {
+      "colorChain": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [3104, 3072], "out_read": false}
+    },
+    "ColorChainInPlace": {
+      "colorChainInPlace": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [3104, 3072], "out_read": true}
+    },
+    "DeflickerGains": {
+      "deflickerGains": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [32, 0], "out_read": false}
+    },
+    "DisplayGamma": {
+      "displayGamma": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [0, 0], "out_read": false}
+    },
+    "DrawQuads": {
+      "quadVertex": {"stage": "vertex", "workgroup": [1, 1, 1], "cbuffers": [32, 0], "out_read": false},
+      "quadFragment": {"stage": "fragment", "workgroup": [1, 1, 1], "cbuffers": [32, 0], "out_read": false},
+      "quadClear": {"stage": "fragment", "workgroup": [1, 1, 1], "cbuffers": [32, 0], "out_read": false}
+    },
+    "DropShadow": {
+      "shadowExtract": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [48, 0], "out_read": false},
+      "shadowComposite": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [48, 0], "out_read": false}
+    },
+    "FilmLook": {
+      "filmLook": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [112, 0], "out_read": false}
+    },
+    "Filters": {
+      "filterSharpen": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterDirectionalBlur": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterSmearComb": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterMirror": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterNoise": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterMosaicRows": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterMosaicBlocks": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterMosaicApply": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterUnsharp": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterGlowBright": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterGlowAdd": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterStylePixel": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterStyleWarp": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterLens": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterGlitch": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterRGBSplit": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterRadialBlur": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterOutlineSeed": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterOutlineJump": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterOutlineApply": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterLongShadowStep": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false},
+      "filterLongShadowApply": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [96, 0], "out_read": false}
+    },
+    "GyroWarp": {
+      "gyroWarp": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [48, 0], "out_read": false}
+    },
+    "Layer": {
+      "compositeVertex": {"stage": "vertex", "workgroup": [1, 1, 1], "cbuffers": [368, 0], "out_read": false},
+      "compositeFragment": {"stage": "fragment", "workgroup": [1, 1, 1], "cbuffers": [368, 0], "out_read": false},
+      "compositeFragmentBlend": {"stage": "fragment", "workgroup": [1, 1, 1], "cbuffers": [368, 0], "out_read": false}
+    },
+    "LayerLook": {
+      "compositeVertex": {"stage": "vertex", "workgroup": [1, 1, 1], "cbuffers": [368, 112], "out_read": false},
+      "compositeFragmentLook": {"stage": "fragment", "workgroup": [1, 1, 1], "cbuffers": [368, 112], "out_read": false}
+    },
+    "LayerTransition": {
+      "compositeVertex": {"stage": "vertex", "workgroup": [1, 1, 1], "cbuffers": [368, 128], "out_read": false},
+      "compositeFragmentTransition": {"stage": "fragment", "workgroup": [1, 1, 1], "cbuffers": [368, 128], "out_read": false}
+    },
+    "MaskScope": {
+      "maskScopeMix": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [368, 0], "out_read": false}
+    },
+    "OpticalFlow": {
+      "ofLuma": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [48, 0], "out_read": false},
+      "ofDown": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [48, 0], "out_read": false},
+      "ofGrad": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [48, 0], "out_read": false},
+      "ofUp": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [48, 0], "out_read": false},
+      "ofLK": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [48, 0], "out_read": false},
+      "ofMedian": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [48, 0], "out_read": false},
+      "ofConfidence": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [48, 0], "out_read": false},
+      "ofInterpolate": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [48, 0], "out_read": false}
+    },
+    "Pointwise": {
+      "premultipliedLinearToEncoded709": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [16, 0], "out_read": false},
+      "straightToPremultiplied": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [16, 0], "out_read": false},
+      "blendFrames": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [16, 0], "out_read": false},
+      "antiFlickerVertical": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [16, 0], "out_read": false}
+    },
+    "Present": {
+      "presentVertex": {"stage": "vertex", "workgroup": [1, 1, 1], "cbuffers": [80, 0], "out_read": false},
+      "presentFragment": {"stage": "fragment", "workgroup": [1, 1, 1], "cbuffers": [80, 0], "out_read": false}
+    },
+    "Scopes": {
+      "scopeClear": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [80, 0], "out_read": false},
+      "scopeAccumulate": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [80, 0], "out_read": false},
+      "scopeFindMax": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [80, 0], "out_read": false},
+      "scopeResolve": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [80, 0], "out_read": false}
+    },
+    "SourceConvert": {
+      "convertToRGB": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [368, 16], "out_read": false},
+      "convertToRGBScaled": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [368, 16], "out_read": false}
+    },
+    "SpatialDenoise": {
+      "spatialDenoise": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [32, 0], "out_read": false}
+    },
+    "TemporalDenoise": {
+      "temporalDenoise": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [368, 48], "out_read": false}
+    },
+    "TemporalStats": {
+      "temporalStats": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [368, 16], "out_read": false}
+    },
+    "TemporalTrails": {
+      "temporalTrails": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [368, 48], "out_read": false}
+    },
+    "TransitionCover": {
+      "transitionCoverMin": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [16, 0], "out_read": false}
+    },
+    "TransitionMix": {
+      "transitionMix": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [128, 0], "out_read": false}
+    },
+    "TransitionPreBlur": {
+      "transitionPreBlur": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [48, 16], "out_read": false}
+    }
+  }
+}

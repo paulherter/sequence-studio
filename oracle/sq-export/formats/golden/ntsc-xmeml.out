@@ -1,0 +1,113 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="4">
+  <sequence id="sequence-1">
+    <name>DF 29.97</name>
+    <duration>1960</duration>
+    <rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>
+    <timecode>
+      <rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>
+      <string>01:00:00;00</string><frame>107892</frame><displayformat>DF</displayformat>
+    </timecode>
+    <marker><name>Hit</name><comment></comment><in>1830</in><out>-1</out></marker>
+    <marker><name>Soft</name><comment></comment><in>1850</in><out>1862</out></marker>
+    <media>
+      <video>
+        <format><samplecharacteristics>
+          <rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>
+          <width>1920</width><height>1080</height><pixelaspectratio>square</pixelaspectratio>
+        </samplecharacteristics></format>
+        <track>
+          <clipitem id="clipitem-1">
+            <name>A001.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>30</duration>
+            <rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>
+            <start>1800</start><end>1830</end>
+            <in>100</in><out>130</out>
+            <file id="file-1">
+              <name>A001.mov</name>
+              <pathurl>file:///Volumes/Shoot/A001.mov</pathurl>
+              <rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>
+              <duration>5000</duration>
+              <media>
+                <video/>
+              </media>
+            </file>
+            <filter><effect><name>Time Remap</name><effectid>timeremap</effectid><effectcategory>motion</effectcategory><effecttype>motion</effecttype><mediatype>video</mediatype>
+              <parameter><parameterid>speed</parameterid><name>speed</name><value>-100</value></parameter>
+            </effect></filter>
+            <marker><name>Inside</name><comment>c,1</comment><in>110</in><out>-1</out></marker>
+          </clipitem>
+          <clipitem id="clipitem-2">
+            <name>B &amp; C.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>15</duration>
+            <rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>
+            <start>1830</start><end>1845</end>
+            <in>24</in><out>39</out>
+            <file id="file-2">
+              <name>B &amp; C.mov</name>
+              <pathurl>file:///Volumes/Shoot/B%20&amp;%20C.mov</pathurl>
+              <rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>
+              <duration>900</duration>
+              <media>
+                <video/>
+              </media>
+            </file>
+          </clipitem>
+          <clipitem id="clipitem-3">
+            <name>A001.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>90</duration>
+            <rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>
+            <start>1845</start><end>1935</end>
+            <in>0</in><out>30</out>
+            <file id="file-1"/>
+            <filter><effect><name>Time Remap</name><effectid>timeremap</effectid><effectcategory>motion</effectcategory><effecttype>motion</effecttype><mediatype>video</mediatype>
+              <parameter><parameterid>speed</parameterid><name>speed</name><value>33.3333</value></parameter>
+            </effect></filter>
+          </clipitem>
+          <clipitem id="clipitem-4">
+            <name>B &amp; C.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>20</duration>
+            <rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>
+            <start>1900</start><end>1920</end>
+            <in>0</in><out>30</out>
+            <file id="file-2"/>
+            <filter><effect><name>Time Remap</name><effectid>timeremap</effectid><effectcategory>motion</effectcategory><effecttype>motion</effecttype><mediatype>video</mediatype>
+              <parameter><parameterid>speed</parameterid><name>speed</name><value>-150</value></parameter>
+            </effect></filter>
+          </clipitem>
+        </track>
+      </video>
+      <audio>
+        <numOutputChannels>2</numOutputChannels>
+        <format><samplecharacteristics><depth>16</depth><samplerate>48000</samplerate></samplecharacteristics></format>
+        <track>
+          <clipitem id="clipitem-5">
+            <name>A001.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>60</duration>
+            <rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>
+            <start>1800</start><end>1860</end>
+            <in>0</in><out>60</out>
+            <file id="file-1"/>
+            <sourcetrack><mediatype>audio</mediatype><trackindex>2</trackindex></sourcetrack>
+          </clipitem>
+          <clipitem id="clipitem-6">
+            <name>B &amp; C.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>60</duration>
+            <rate><timebase>30</timebase><ntsc>TRUE</ntsc></rate>
+            <start>1900</start><end>1960</end>
+            <in>0</in><out>60</out>
+            <file id="file-2"/>
+            <sourcetrack><mediatype>audio</mediatype><trackindex>1</trackindex></sourcetrack>
+          </clipitem>
+        </track>
+      </audio>
+    </media>
+  </sequence>
+</xmeml>

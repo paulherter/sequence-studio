@@ -1,0 +1,25 @@
+[package]
+name = "sq-library"
+description = "Media library: scanning, thumbnails, previews, file watching seams."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-time.workspace = true
+sq-os.workspace = true
+sq-core-model.workspace = true
+sq-media.workspace = true
+sq-core-effects.workspace = true
+sq-core-edit.workspace = true
+sq-core-project.workspace = true
+sq-render.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+notify.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[lints]
+workspace = true

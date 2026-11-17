@@ -1,0 +1,29 @@
+FFmpeg in Sequence Studio
+=========================
+
+Sequence Studio uses the FFmpeg libraries (libavcodec, libavformat, libavutil, libavfilter,
+libavdevice, libswresample, libswscale) to read and write media files.
+
+License. The FFmpeg libraries shipped with this application are an LGPL build: configured
+without --enable-gpl and without --enable-nonfree (the release scripts refuse to package a build that
+says otherwise). The build is "version3", so it is licensed under the GNU Lesser General Public
+License, version 3 or later. The license text of the build is in FFMPEG-LICENSE.txt next to this file.
+LGPL-3.0 builds on GPL-3.0; the GPL-3.0 text is in the LICENSE file of this application.
+
+Dynamic linking. The libraries are separate shared files (macOS: Contents/Frameworks/libav*.dylib and
+libsw*.dylib; Windows: av*.dll and sw*.dll next to SequenceStudio.exe). They are not compiled into the
+application. You may replace them with your own build of the same FFmpeg major versions (same library
+file names) to run Sequence Studio with a modified FFmpeg. The shared files are also what make
+the application relinkable as the LGPL asks.
+
+Source code. The corresponding FFmpeg source is available from https://ffmpeg.org/download.html
+(release tarballs and the git repository https://git.ffmpeg.org/ffmpeg.git). The exact version and
+configuration of the bundled build are printed by `ffmpeg -version` of the same build and are stored in
+the libraries themselves (libavcodec's configuration string). If you cannot get the source this way,
+write to the project (see README.md) and the source of the bundled build will be provided.
+
+Trademarks and patents. FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
+Some codecs are covered by patents in some countries; this notice does not grant any patent license.
+
+Other libraries and their licenses are listed in THIRD_PARTY.md and THIRD_PARTY-CRATES.md.
+The additional terms of Sequence Studio (GPL-3.0 section 7) are in LICENSE-ADDITIONAL-TERMS.md.

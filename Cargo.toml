@@ -1,0 +1,155 @@
+[workspace]
+resolver = "3"
+members = ["crates/*", "workspace-hack"]
+
+[workspace.package]
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.99"
+license = "GPL-3.0-or-later"
+publish = false
+
+[workspace.dependencies]
+miniz_oxide = { version = "0.8", features = ["simd"] } # raw deflate of the installer payload (MIT/Zlib/Apache-2.0)
+chrono = { version = "0.4", default-features = false, features = ["clock", "std"] } # local time zone of EXIF dates (MIT/Apache-2.0)
+winresource = { version = "0.1", default-features = false } # build script of sequence-studio: exe icon on Windows (MIT)
+ttf-parser = { version = "0.25.1", default-features = false, features = ["std"] }
+# Pin every external dependency here, crates use `dep.workspace = true`.
+# Internal crates are added as: sq-foo = { path = "crates/sq-foo" }
+sq-prproj-reader = { path = "crates/sq-prproj-reader" }
+sq-core-time = { path = "crates/sq-core-time" }
+sq-core-model = { path = "crates/sq-core-model" }
+sq-core-effects = { path = "crates/sq-core-effects" }
+sq-core-project = { path = "crates/sq-core-project" }
+sq-premiere-import = { path = "crates/sq-premiere-import" }
+sq-edit-api = { path = "crates/sq-edit-api" }
+sq-text = { path = "crates/sq-text" }
+sq-audiofx = { path = "crates/sq-audiofx" }
+sq-onnx = { path = "crates/sq-onnx" }
+sq-translate = { path = "crates/sq-translate" }
+sq-frame = { path = "crates/sq-frame" }
+sq-export = { path = "crates/sq-export" }
+sq-playback = { path = "crates/sq-playback" }
+sq-audio-out = { path = "crates/sq-audio-out" }
+sq-media-ffmpeg = { path = "crates/sq-media-ffmpeg" }
+sq-render = { path = "crates/sq-render" }
+sq-gpu = { path = "crates/sq-gpu" }
+sq-uikit = { path = "crates/sq-uikit" }
+sq-draw = { path = "crates/sq-draw" }
+sq-lottie = { path = "crates/sq-lottie" }
+sq-transcribe = { path = "crates/sq-transcribe" }
+sq-proxy = { path = "crates/sq-proxy" }
+sq-library = { path = "crates/sq-library" }
+sq-analysis = { path = "crates/sq-analysis" }
+sq-media = { path = "crates/sq-media" }
+sq-video-hw = { path = "crates/sq-video-hw" }
+sq-core-graphics = { path = "crates/sq-core-graphics" }
+sq-core-edit = { path = "crates/sq-core-edit" }
+sq-core-masks = { path = "crates/sq-core-masks" }
+sq-gyroflow = { path = "crates/sq-gyroflow" }
+sq-core-audio = { path = "crates/sq-core-audio" }
+sq-core-color = { path = "crates/sq-core-color" }
+sq-core-file = { path = "crates/sq-core-file" }
+sq-runtime = { path = "crates/sq-runtime" }
+sq-editor-session = { path = "crates/sq-editor-session" }
+sq-fault-text = { path = "crates/sq-fault-text" }
+sq-platform-mac = { path = "crates/sq-platform-mac" }
+sq-platform-win = { path = "crates/sq-platform-win" }
+sq-platform = { path = "crates/sq-platform" }
+sq-os = { path = "crates/sq-os" }
+sq-trash = { path = "crates/sq-trash" }
+sq-platform-tts = { path = "crates/sq-platform-tts" }
+sq-platform-vision = { path = "crates/sq-platform-vision" }
+sq-app-shell = { path = "crates/sq-app-shell" }
+sq-draw-shell = { path = "crates/sq-draw-shell" }
+sq-timeline-ui = { path = "crates/sq-timeline-ui" }
+# Licenses: serde, serde_json, uuid, unicode-segmentation are MIT OR Apache-2.0 (GPL-3.0-or-later compatible).
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = { version = "1", features = ["float_roundtrip"] }
+notify = { version = "8", default-features = false, features = ["macos_fsevent"] } # event-based folder watching, FSEvents / inotify / ReadDirectoryChangesW (CC0-1.0)
+# PNG decoding of preset thumbnails; MIT OR Apache-2.0.
+png = "0.18"
+# GIF decoding (animated import strip); MIT OR Apache-2.0.
+gif = "0.13"
+# Animated WebP decoding (animated import strip); MIT OR Apache-2.0.
+image-webp = { version = "0.2", default-features = false }
+# Export Frame writers (docs/THIRD_PARTY.md): JPEG (MIT/Apache-2.0 and IJG), OpenEXR (BSD-3-Clause), 16-bit TIFF (MIT).
+jpeg-encoder = { version = "0.7", default-features = false, features = ["std"] }
+exr = { version = "1.74", default-features = false }
+tiff = { version = "0.11", default-features = false }
+uuid = { version = "1.29.0", default-features = false, features = ["std", "serde"] }
+unicode-segmentation = "1.13.3"
+# NFKC for the SentencePiece tokenizer (sq-translate); (MIT OR Apache-2.0) AND Unicode-3.0.
+unicode-normalization = "0.1.25"
+# cc builds vendored C sources (sq-onnx, sq-audiofx RNNoise); MIT OR Apache-2.0.
+cc = "1"
+# GPU: wgpu is pinned exactly (rerun the sq-gpu pass goldens on Mac and PC before any bump); MIT OR Apache-2.0.
+wgpu = "=30.0.1"
+# Blocks on wgpu futures (adapter/device request, tests); MIT OR Apache-2.0.
+pollster = "1.0.1"
+# Accessibility tree types for the draw UI (sq-draw `A11y`); Apache-2.0 OR MIT.
+accesskit = "0.25"
+# Screen-reader adapter for winit windows (P4); Apache-2.0, pairs with accesskit 0.25 and winit 0.30.
+accesskit_winit = "0.34"
+# cpal (Apache-2.0): audio output stream for sq-audio-out (gate G6, spikes/g6-audio).
+cpal = "0.18"
+# macOS bindings for sq-video-hw (direct VideoToolbox decode, IOSurface to Metal): objc2 family, MIT OR Apache-2.0 OR Zlib.
+objc2 = "0.6"
+# Blocks for the UserNotifications completion handlers (already in the lock through objc2-app-kit); MIT.
+block2 = "0.6"
+# AVSpeechSynthesizer for the Mac voice-over voices (sq-platform-tts); already in the lock through cpal; MIT OR Apache-2.0 OR Zlib.
+objc2-avf-audio = "0.3.2"
+objc2-foundation = "0.3.2"
+objc2-metal = { version = "0.3.2", features = ["std", "MTLTexture", "MTLResource", "MTLDevice", "MTLPixelFormat", "MTLTypes", "objc2-io-surface"] }
+objc2-core-graphics = { version = "0.3.2", default-features = false, features = ["std", "CGColorSpace"] }
+objc2-core-foundation = { version = "0.3.2", features = ["CFBase", "CFDictionary"] }
+# CoreText shaping of emoji sequences (sq-platform-mac); MIT OR Apache-2.0 OR Zlib.
+objc2-core-text = { version = "0.3.2", default-features = false, features = ["std", "CTFont", "CTLine", "CTRun", "CTStringAttributes", "objc2-core-graphics"] }
+objc2-io-surface = { version = "0.3.2", features = ["IOSurfaceRef", "IOSurfaceTypes", "objc2"] }
+objc2-core-video = { version = "0.3.2", features = ["CVBase", "CVBuffer", "CVImageBuffer", "CVPixelBuffer", "CVReturn", "CVMetalTexture", "CVMetalTextureCache", "objc2", "objc2-metal", "objc2-io-surface"] }
+objc2-video-toolbox = { version = "0.3.2", features = ["VTDecompressionSession", "VTDecompressionProperties", "VTErrors", "VTSession", "objc2-core-video", "objc2-core-media"] }
+objc2-core-media = { version = "0.3.2", features = ["CMBase", "CMBlockBuffer", "CMFormatDescription", "CMSampleBuffer", "CMTime", "CMFormatDescriptionBridge", "objc2-core-video"] }
+# Apple Vision for the Stabilizer's registration fallback (sq-platform-vision, Mac only); MIT OR Apache-2.0 OR Zlib.
+objc2-vision = { version = "0.3.2", default-features = false, features = ["std", "VNRequest", "VNRequestHandler", "VNImageRegistrationRequest", "VNObservation", "VNTargetedImageRequest", "VNTypes", "VNUtils", "objc2-core-video", "objc2-core-foundation"] }
+
+# Window and event loop (gate G4, spikes/g4-window): winit is pinned exactly; Apache-2.0.
+winit = "=0.30.13"
+# System clipboard text; MIT OR Apache-2.0.
+arboard = "3"
+# Native file dialogs; MIT.
+rfd = "0.17"
+# CPU blit of the start-failure window, so it opens when the GPU is what failed (x11/wayland loaded at run time); MIT OR Apache-2.0.
+softbuffer = { version = "0.4.8", default-features = false, features = ["x11", "x11-dlopen", "wayland", "wayland-dlopen"] }
+ctrlc = { version = "3", features = ["termination"] }
+# macOS menu bar; MIT OR Apache-2.0.
+muda = "0.21"
+# C library calls of the macOS fault handler; MIT OR Apache-2.0.
+libc = "0.2"
+# Win32 calls of the Windows window chrome; MIT OR Apache-2.0.
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_IO", "Win32_Security", "Win32_System_SystemInformation", "Win32_Globalization", "Win32_System_Ioctl", "Win32_System_Com", "Win32_System_Power"] }
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+
+[profile.dev]
+debug = "line-tables-only"
+# Separate debug info files: smaller link step on macOS, ignored elsewhere.
+split-debuginfo = "unpacked"
+
+[profile.dev.package."*"]
+debug = 0
+
+[profile.release]
+opt-level = 3
+
+[profile.release.package."*"]
+debug = 0
+

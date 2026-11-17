@@ -1,0 +1,88 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="4">
+  <sequence id="sequence-1">
+    <name>Odd / name </name>
+    <duration>125</duration>
+    <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+    <timecode>
+      <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+      <string>00:00:00:00</string><frame>0</frame><displayformat>NDF</displayformat>
+    </timecode>
+    <media>
+      <video>
+        <format><samplecharacteristics>
+          <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+          <width>1920</width><height>1080</height><pixelaspectratio>square</pixelaspectratio>
+        </samplecharacteristics></format>
+        <track>
+          <clipitem id="clipitem-1">
+            <name>A001.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>25</duration>
+            <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+            <start>75</start><end>100</end>
+            <in>5</in><out>30</out>
+            <file id="file-1">
+              <name>A001.mov</name>
+              <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+              <media>
+                <video/>
+              </media>
+            </file>
+          </clipitem>
+          <clipitem id="clipitem-2">
+            <name>  Tëst  </name>
+            <enabled>TRUE</enabled>
+            <duration>25</duration>
+            <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+            <start>100</start><end>125</end>
+            <in>5</in><out>30</out>
+            <file id="file-2">
+              <name>Tëst &lt;x&gt;.mov</name>
+              <pathurl>file:///Volumes/My%20Disk/T%E4%B8%ADst%20%231%20%5Ba%5D%2520;b&apos;c%22d%3Fe%7Cf%5Cg%5Eh%60i%7Bj%7Dk.mov</pathurl>
+              <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+              <media>
+                <video/>
+              </media>
+            </file>
+          </clipitem>
+        </track>
+        <track>
+          <clipitem id="clipitem-3">
+            <name>B &amp; C.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>10</duration>
+            <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+            <start>0</start><end>10</end>
+            <in>0</in><out>10</out>
+            <file id="file-3">
+              <name>B &amp; C.mov</name>
+              <pathurl>file:///Volumes/Shoot/B%20&amp;%20C.mov</pathurl>
+              <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+              <media>
+                <video/>
+              </media>
+            </file>
+          </clipitem>
+        </track>
+      </video>
+      <audio>
+        <numOutputChannels>2</numOutputChannels>
+        <format><samplecharacteristics><depth>16</depth><samplerate>48000</samplerate></samplecharacteristics></format>
+        <track>
+          <clipitem id="clipitem-4">
+            <name>Tëst &lt;x&gt;.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>25</duration>
+            <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+            <start>100</start><end>125</end>
+            <in>5</in><out>30</out>
+            <file id="file-2"/>
+            <sourcetrack><mediatype>audio</mediatype><trackindex>1</trackindex></sourcetrack>
+          </clipitem>
+        </track>
+      </audio>
+    </media>
+  </sequence>
+</xmeml>

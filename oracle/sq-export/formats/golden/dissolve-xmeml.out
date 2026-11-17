@@ -1,0 +1,120 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE xmeml>
+<xmeml version="4">
+  <sequence id="sequence-1">
+    <name>Dissolves</name>
+    <duration>125</duration>
+    <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+    <timecode>
+      <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+      <string>00:00:00:00</string><frame>0</frame><displayformat>NDF</displayformat>
+    </timecode>
+    <media>
+      <video>
+        <format><samplecharacteristics>
+          <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+          <width>1920</width><height>1080</height><pixelaspectratio>square</pixelaspectratio>
+        </samplecharacteristics></format>
+        <track>
+          <clipitem id="clipitem-1">
+            <name>A001.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>50</duration>
+            <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+            <start>0</start><end>50</end>
+            <in>0</in><out>50</out>
+            <file id="file-1">
+              <name>A001.mov</name>
+              <pathurl>file:///Volumes/Shoot/A001.mov</pathurl>
+              <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+              <media>
+                <video/>
+              </media>
+            </file>
+          </clipitem>
+          <transitionitem>
+            <start>45</start><end>55</end>
+            <alignment>center</alignment>
+            <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+            <effect><name>Cross Dissolve</name><effectid>Cross Dissolve</effectid><effectcategory>Dissolve</effectcategory><effecttype>transition</effecttype><mediatype>video</mediatype></effect>
+          </transitionitem>
+          <clipitem id="clipitem-2">
+            <name>A001.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>50</duration>
+            <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+            <start>50</start><end>100</end>
+            <in>100</in><out>150</out>
+            <file id="file-1"/>
+          </clipitem>
+          <transitionitem>
+            <start>95</start><end>100</end>
+            <alignment>end</alignment>
+            <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+            <effect><name>Cross Dissolve</name><effectid>Cross Dissolve</effectid><effectcategory>Dissolve</effectcategory><effecttype>transition</effecttype><mediatype>video</mediatype></effect>
+          </transitionitem>
+          <clipitem id="clipitem-3">
+            <name>B &amp; C.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>25</duration>
+            <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+            <start>100</start><end>125</end>
+            <in>0</in><out>25</out>
+            <file id="file-2">
+              <name>B &amp; C.mov</name>
+              <pathurl>file:///Volumes/Shoot/B%20&amp;%20C.mov</pathurl>
+              <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+              <media>
+                <video/>
+              </media>
+            </file>
+          </clipitem>
+          <transitionitem>
+            <start>117</start><end>125</end>
+            <alignment>end-black</alignment>
+            <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+            <effect><name>Dip to Black</name><effectid>Dip to Black</effectid><effectcategory>Dissolve</effectcategory><effecttype>transition</effecttype><mediatype>video</mediatype></effect>
+          </transitionitem>
+        </track>
+      </video>
+      <audio>
+        <numOutputChannels>2</numOutputChannels>
+        <format><samplecharacteristics><depth>16</depth><samplerate>48000</samplerate></samplecharacteristics></format>
+        <track>
+          <transitionitem>
+            <start>0</start><end>6</end>
+            <alignment>start-black</alignment>
+            <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+            <effect><name>Cross Fade (+3dB)</name><effectid>Cross Fade (+3dB)</effectid><effectcategory>Crossfade</effectcategory><effecttype>transition</effecttype><mediatype>audio</mediatype></effect>
+          </transitionitem>
+          <clipitem id="clipitem-4">
+            <name>A001.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>50</duration>
+            <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+            <start>0</start><end>50</end>
+            <in>0</in><out>50</out>
+            <file id="file-1"/>
+            <sourcetrack><mediatype>audio</mediatype><trackindex>1</trackindex></sourcetrack>
+          </clipitem>
+          <transitionitem>
+            <start>46</start><end>56</end>
+            <alignment>center</alignment>
+            <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+            <effect><name>Cross Fade (0dB)</name><effectid>Cross Fade (0dB)</effectid><effectcategory>Crossfade</effectcategory><effecttype>transition</effecttype><mediatype>audio</mediatype></effect>
+          </transitionitem>
+          <clipitem id="clipitem-5">
+            <name>B &amp; C.mov</name>
+            <enabled>TRUE</enabled>
+            <duration>50</duration>
+            <rate><timebase>25</timebase><ntsc>FALSE</ntsc></rate>
+            <start>50</start><end>100</end>
+            <in>0</in><out>50</out>
+            <file id="file-2"/>
+            <sourcetrack><mediatype>audio</mediatype><trackindex>1</trackindex></sourcetrack>
+          </clipitem>
+        </track>
+      </audio>
+    </media>
+  </sequence>
+</xmeml>

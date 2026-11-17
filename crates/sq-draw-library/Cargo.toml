@@ -1,0 +1,41 @@
+[package]
+name = "sq-draw-library"
+description = "The Library and Effects panels on the shared draw UI: panel models, catalog, folders, tiles and the two panel hosts"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-time.workspace = true
+sq-core-model.workspace = true
+sq-core-effects.workspace = true
+sq-core-audio.workspace = true
+sq-draw.workspace = true
+sq-uikit.workspace = true
+sq-os.workspace = true
+sq-text.workspace = true
+sq-library.workspace = true
+sq-editor-session.workspace = true
+sq-app-shell.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[dev-dependencies]
+sq-core-project.workspace = true
+
+# Workspace lints repeated (a crate cannot extend them) plus the async-safety lints of sq-runtime.
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+await_holding_refcell_ref = "deny"
+await_holding_lock = "deny"

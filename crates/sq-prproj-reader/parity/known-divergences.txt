@@ -1,0 +1,10 @@
+# Fixtures where Rust and Swift differ on purpose or by platform; run.sh reports them as "known" and does not fail on them.
+# xml-attr-nfc-nfd-dup.xml, xml-id-nfc-nfd.xml, xml-tag-nfc-nfd-close.xml: Swift String ==/Dictionary use Unicode canonical
+#   equivalence (e-acute == e + combining acute); Rust compares bytes. Needs a normalization table (no std support).
+# deep-200000.gz: Swift crashes (stack overflow, SIGSEGV) on 200000 nested elements; Rust parses it iteratively.
+# zip-longname.mogrt: the Rust crate rejects entry names over 1024 bytes (speed-measurement change); the Swift original does not.
+xml-attr-nfc-nfd-dup.xml
+xml-id-nfc-nfd.xml
+xml-tag-nfc-nfd-close.xml
+deep-200000.gz
+zip-longname.mogrt

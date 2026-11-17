@@ -1,0 +1,922 @@
+{
+  "formatVersion" : 23,
+  "project" : {
+    "activeTimeline" : "41414BC0-A3D1-49B1-A5AF-FB153F9DBCD8",
+    "id" : "DCF7AE8F-C5E1-471D-BE60-7E25A3D10397",
+    "media" : [
+      {
+        "duration" : {
+          "timescale" : 1,
+          "value" : 2
+        },
+        "fingerprint" : {
+          "size" : 1
+        },
+        "id" : "6385A1A4-214A-45D3-BD7C-A473BACFE37F",
+        "name" : "v1.mp4",
+        "path" : "\/media\/v1.mp4"
+      },
+      {
+        "duration" : {
+          "timescale" : 1,
+          "value" : 2
+        },
+        "fingerprint" : {
+          "size" : 1
+        },
+        "id" : "C6807867-F655-47B8-92C0-FA368609A100",
+        "name" : "v2.mp4",
+        "path" : "\/media\/v2.mp4"
+      },
+      {
+        "duration" : {
+          "timescale" : 1,
+          "value" : 2
+        },
+        "fingerprint" : {
+          "size" : 1
+        },
+        "id" : "06E178DA-FB0F-4972-B756-28FDEB76C9F8",
+        "name" : "a1.wav",
+        "path" : "\/media\/a1.wav"
+      }
+    ],
+    "name" : "OldSwift",
+    "rootBin" : {
+      "children" : [
+        {
+          "sequence" : {
+            "_0" : "41414BC0-A3D1-49B1-A5AF-FB153F9DBCD8"
+          }
+        },
+        {
+          "media" : {
+            "_0" : "6385A1A4-214A-45D3-BD7C-A473BACFE37F"
+          }
+        },
+        {
+          "media" : {
+            "_0" : "C6807867-F655-47B8-92C0-FA368609A100"
+          }
+        },
+        {
+          "media" : {
+            "_0" : "06E178DA-FB0F-4972-B756-28FDEB76C9F8"
+          }
+        }
+      ],
+      "id" : "DCF7AE8F-C5E1-471D-BE60-7E25A3D10397",
+      "name" : "Root"
+    },
+    "sourceMarks" : {
+
+    },
+    "timelines" : [
+      {
+        "captionTracks" : [
+
+        ],
+        "format" : {
+          "audioSampleRate" : 48000,
+          "frameDuration" : {
+            "timescale" : 30,
+            "value" : 1
+          },
+          "height" : 1080,
+          "width" : 1920
+        },
+        "formatLocked" : true,
+        "id" : "41414BC0-A3D1-49B1-A5AF-FB153F9DBCD8",
+        "markers" : [
+          {
+            "color" : "red",
+            "comment" : "old swift",
+            "duration" : {
+              "timescale" : 1,
+              "value" : 0
+            },
+            "id" : "D46D927C-8FA5-4B82-90A1-B5257033388B",
+            "name" : "Beat",
+            "time" : {
+              "timescale" : 1,
+              "value" : 1
+            }
+          }
+        ],
+        "name" : "Main",
+        "tracks" : [
+          {
+            "clips" : [
+              {
+                "animation" : {
+                  "anchor" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : {
+                      "x" : 0,
+                      "y" : 0
+                    }
+                  },
+                  "opacity" : {
+                    "track" : {
+                      "keys" : [
+                        {
+                          "id" : "C51B0D6C-253F-4AAD-BF86-8C1D0C65089B",
+                          "inHandle" : {
+                            "dx" : 0.3333333333333333,
+                            "dy" : 0.3333333333333333
+                          },
+                          "inTangent" : {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          "interpolation" : "linear",
+                          "outHandle" : {
+                            "dx" : 0.3333333333333333,
+                            "dy" : 0.3333333333333333
+                          },
+                          "outTangent" : {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          "time" : {
+                            "timescale" : 1,
+                            "value" : 0
+                          },
+                          "value" : 0.25
+                        },
+                        {
+                          "id" : "B483E4C0-2CF8-436C-A42C-C4243B733B8B",
+                          "inHandle" : {
+                            "dx" : 0.3333333333333333,
+                            "dy" : 0.3333333333333333
+                          },
+                          "inTangent" : {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          "interpolation" : "linear",
+                          "outHandle" : {
+                            "dx" : 0.3333333333333333,
+                            "dy" : 0.3333333333333333
+                          },
+                          "outTangent" : {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          "time" : {
+                            "timescale" : 1,
+                            "value" : 1
+                          },
+                          "value" : 0.75
+                        }
+                      ]
+                    },
+                    "value" : 1
+                  },
+                  "position" : {
+                    "track" : {
+                      "keys" : [
+                        {
+                          "id" : "FEC2C6B7-A57D-497F-9BB7-9F80886DD5B9",
+                          "inHandle" : {
+                            "dx" : 0.3333333333333333,
+                            "dy" : 0.3333333333333333
+                          },
+                          "inTangent" : {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          "interpolation" : "linear",
+                          "outHandle" : {
+                            "dx" : 0.3333333333333333,
+                            "dy" : 0.3333333333333333
+                          },
+                          "outTangent" : {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          "time" : {
+                            "timescale" : 1,
+                            "value" : 0
+                          },
+                          "value" : {
+                            "x" : 0,
+                            "y" : 0
+                          }
+                        },
+                        {
+                          "id" : "21E544DF-9EAA-4673-B104-735E00B46F1C",
+                          "inHandle" : {
+                            "dx" : 0.3333333333333333,
+                            "dy" : 0.3333333333333333
+                          },
+                          "inTangent" : {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          "interpolation" : "linear",
+                          "outHandle" : {
+                            "dx" : 0.3333333333333333,
+                            "dy" : 0.3333333333333333
+                          },
+                          "outTangent" : {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          "time" : {
+                            "timescale" : 1,
+                            "value" : 1
+                          },
+                          "value" : {
+                            "x" : 100,
+                            "y" : 50
+                          }
+                        }
+                      ]
+                    },
+                    "value" : {
+                      "x" : 10,
+                      "y" : 20
+                    }
+                  },
+                  "rotation" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : 0
+                  },
+                  "scale" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : {
+                      "x" : 1,
+                      "y" : 1
+                    }
+                  },
+                  "volume" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : 1
+                  }
+                },
+                "audioGainDB" : 0,
+                "color" : {
+                  "effects" : [
+                    {
+                      "basic" : {
+                        "blacks" : 0,
+                        "contrast" : 0,
+                        "exposure" : 0,
+                        "highlights" : 0,
+                        "saturation" : 100,
+                        "shadows" : 0,
+                        "temperature" : 0,
+                        "tint" : 0,
+                        "vibrance" : 0,
+                        "whites" : 0
+                      },
+                      "creative" : {
+                        "fadedFilm" : 0,
+                        "highlightTint" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "intensity" : 100,
+                        "saturation" : 100,
+                        "shadowTint" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "tintBalance" : 0,
+                        "vibrance" : 0
+                      },
+                      "curves" : {
+                        "blue" : [
+                          {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          {
+                            "x" : 1,
+                            "y" : 1
+                          }
+                        ],
+                        "green" : [
+                          {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          {
+                            "x" : 1,
+                            "y" : 1
+                          }
+                        ],
+                        "master" : [
+                          {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          {
+                            "x" : 1,
+                            "y" : 1
+                          }
+                        ],
+                        "red" : [
+                          {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          {
+                            "x" : 1,
+                            "y" : 1
+                          }
+                        ]
+                      },
+                      "id" : 1,
+                      "inputLUT" : {
+                        "kind" : "automatic"
+                      },
+                      "inputLUTIntensity" : 100,
+                      "vignette" : {
+                        "amount" : 0,
+                        "feather" : 50,
+                        "midpoint" : 50,
+                        "roundness" : 0
+                      },
+                      "wheels" : {
+                        "highlights" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "highlightsLuma" : 0,
+                        "midtones" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "midtonesLuma" : 0,
+                        "saturation" : 100,
+                        "shadows" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "shadowsLuma" : 0
+                      }
+                    }
+                  ],
+                  "useEmbeddedLUT" : true
+                },
+                "effects" : [
+                  {
+                    "enabled" : true,
+                    "id" : "A91F5398-53A5-47B5-899E-BEED444F0FC7",
+                    "kind" : "dropShadow",
+                    "parameters" : {
+                      "shadowBlue" : {
+                        "track" : {
+                          "keys" : [
+
+                          ]
+                        },
+                        "value" : 90
+                      },
+                      "shadowDirection" : {
+                        "track" : {
+                          "keys" : [
+
+                          ]
+                        },
+                        "value" : 135
+                      },
+                      "shadowDistance" : {
+                        "track" : {
+                          "keys" : [
+
+                          ]
+                        },
+                        "value" : 12
+                      },
+                      "shadowGreen" : {
+                        "track" : {
+                          "keys" : [
+
+                          ]
+                        },
+                        "value" : 40
+                      },
+                      "shadowOnly" : {
+                        "track" : {
+                          "keys" : [
+
+                          ]
+                        },
+                        "value" : 0
+                      },
+                      "shadowOpacity" : {
+                        "track" : {
+                          "keys" : [
+
+                          ]
+                        },
+                        "value" : 60
+                      },
+                      "shadowRed" : {
+                        "track" : {
+                          "keys" : [
+
+                          ]
+                        },
+                        "value" : 200
+                      },
+                      "shadowSoftness" : {
+                        "track" : {
+                          "keys" : [
+
+                          ]
+                        },
+                        "value" : 30
+                      },
+                      "shadowSpread" : {
+                        "track" : {
+                          "keys" : [
+
+                          ]
+                        },
+                        "value" : 0
+                      }
+                    }
+                  }
+                ],
+                "id" : "5A3473AD-E08B-42F8-B0D7-7C76AF13A278",
+                "isStill" : false,
+                "keepsPitch" : true,
+                "kind" : "video",
+                "media" : "6385A1A4-214A-45D3-BD7C-A473BACFE37F",
+                "mediaDuration" : {
+                  "timescale" : 1,
+                  "value" : 2
+                },
+                "name" : "v1",
+                "reversed" : false,
+                "source" : {
+                  "duration" : {
+                    "timescale" : 1,
+                    "value" : 2
+                  },
+                  "start" : {
+                    "timescale" : 1,
+                    "value" : 0
+                  }
+                },
+                "speed" : {
+                  "den" : 1,
+                  "num" : 1
+                },
+                "start" : {
+                  "timescale" : 1,
+                  "value" : 0
+                },
+                "timeInterpolation" : "frameSampling"
+              },
+              {
+                "animation" : {
+                  "anchor" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : {
+                      "x" : 0,
+                      "y" : 0
+                    }
+                  },
+                  "opacity" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : 1
+                  },
+                  "position" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : {
+                      "x" : 0,
+                      "y" : 0
+                    }
+                  },
+                  "rotation" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : 0
+                  },
+                  "scale" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : {
+                      "x" : 1,
+                      "y" : 1
+                    }
+                  },
+                  "volume" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : 1
+                  }
+                },
+                "audioGainDB" : 0,
+                "color" : {
+                  "effects" : [
+                    {
+                      "basic" : {
+                        "blacks" : 0,
+                        "contrast" : 0,
+                        "exposure" : 0,
+                        "highlights" : 0,
+                        "saturation" : 100,
+                        "shadows" : 0,
+                        "temperature" : 0,
+                        "tint" : 0,
+                        "vibrance" : 0,
+                        "whites" : 0
+                      },
+                      "creative" : {
+                        "fadedFilm" : 0,
+                        "highlightTint" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "intensity" : 100,
+                        "saturation" : 100,
+                        "shadowTint" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "tintBalance" : 0,
+                        "vibrance" : 0
+                      },
+                      "curves" : {
+                        "blue" : [
+                          {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          {
+                            "x" : 1,
+                            "y" : 1
+                          }
+                        ],
+                        "green" : [
+                          {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          {
+                            "x" : 1,
+                            "y" : 1
+                          }
+                        ],
+                        "master" : [
+                          {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          {
+                            "x" : 1,
+                            "y" : 1
+                          }
+                        ],
+                        "red" : [
+                          {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          {
+                            "x" : 1,
+                            "y" : 1
+                          }
+                        ]
+                      },
+                      "id" : 1,
+                      "inputLUT" : {
+                        "kind" : "automatic"
+                      },
+                      "inputLUTIntensity" : 100,
+                      "vignette" : {
+                        "amount" : 0,
+                        "feather" : 50,
+                        "midpoint" : 50,
+                        "roundness" : 0
+                      },
+                      "wheels" : {
+                        "highlights" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "highlightsLuma" : 0,
+                        "midtones" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "midtonesLuma" : 0,
+                        "saturation" : 100,
+                        "shadows" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "shadowsLuma" : 0
+                      }
+                    }
+                  ],
+                  "useEmbeddedLUT" : true
+                },
+                "effects" : [
+
+                ],
+                "id" : "FF848AB5-592B-4ECF-9133-5E95FECE940A",
+                "isStill" : false,
+                "keepsPitch" : true,
+                "kind" : "video",
+                "media" : "C6807867-F655-47B8-92C0-FA368609A100",
+                "mediaDuration" : {
+                  "timescale" : 1,
+                  "value" : 2
+                },
+                "name" : "v2",
+                "reversed" : false,
+                "source" : {
+                  "duration" : {
+                    "timescale" : 1,
+                    "value" : 2
+                  },
+                  "start" : {
+                    "timescale" : 1,
+                    "value" : 0
+                  }
+                },
+                "speed" : {
+                  "den" : 1,
+                  "num" : 1
+                },
+                "start" : {
+                  "timescale" : 1,
+                  "value" : 2
+                },
+                "timeInterpolation" : "frameSampling"
+              }
+            ],
+            "height" : 48,
+            "id" : "46B425FE-598D-4FB9-9E97-B6E92EF85545",
+            "isLocked" : false,
+            "isMuted" : false,
+            "isSolo" : false,
+            "isTargeted" : false,
+            "isVisible" : true,
+            "kind" : "video",
+            "name" : "",
+            "syncLock" : true
+          },
+          {
+            "clips" : [
+              {
+                "animation" : {
+                  "anchor" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : {
+                      "x" : 0,
+                      "y" : 0
+                    }
+                  },
+                  "opacity" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : 1
+                  },
+                  "position" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : {
+                      "x" : 0,
+                      "y" : 0
+                    }
+                  },
+                  "rotation" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : 0
+                  },
+                  "scale" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : {
+                      "x" : 1,
+                      "y" : 1
+                    }
+                  },
+                  "volume" : {
+                    "track" : {
+                      "keys" : [
+
+                      ]
+                    },
+                    "value" : 1
+                  }
+                },
+                "audioGainDB" : 0,
+                "color" : {
+                  "effects" : [
+                    {
+                      "basic" : {
+                        "blacks" : 0,
+                        "contrast" : 0,
+                        "exposure" : 0,
+                        "highlights" : 0,
+                        "saturation" : 100,
+                        "shadows" : 0,
+                        "temperature" : 0,
+                        "tint" : 0,
+                        "vibrance" : 0,
+                        "whites" : 0
+                      },
+                      "creative" : {
+                        "fadedFilm" : 0,
+                        "highlightTint" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "intensity" : 100,
+                        "saturation" : 100,
+                        "shadowTint" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "tintBalance" : 0,
+                        "vibrance" : 0
+                      },
+                      "curves" : {
+                        "blue" : [
+                          {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          {
+                            "x" : 1,
+                            "y" : 1
+                          }
+                        ],
+                        "green" : [
+                          {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          {
+                            "x" : 1,
+                            "y" : 1
+                          }
+                        ],
+                        "master" : [
+                          {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          {
+                            "x" : 1,
+                            "y" : 1
+                          }
+                        ],
+                        "red" : [
+                          {
+                            "x" : 0,
+                            "y" : 0
+                          },
+                          {
+                            "x" : 1,
+                            "y" : 1
+                          }
+                        ]
+                      },
+                      "id" : 1,
+                      "inputLUT" : {
+                        "kind" : "automatic"
+                      },
+                      "inputLUTIntensity" : 100,
+                      "vignette" : {
+                        "amount" : 0,
+                        "feather" : 50,
+                        "midpoint" : 50,
+                        "roundness" : 0
+                      },
+                      "wheels" : {
+                        "highlights" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "highlightsLuma" : 0,
+                        "midtones" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "midtonesLuma" : 0,
+                        "saturation" : 100,
+                        "shadows" : {
+                          "amount" : 0,
+                          "hue" : 0
+                        },
+                        "shadowsLuma" : 0
+                      }
+                    }
+                  ],
+                  "useEmbeddedLUT" : true
+                },
+                "effects" : [
+
+                ],
+                "id" : "5A2542B2-A0FA-4B02-AE0E-731B5F8E216F",
+                "isStill" : false,
+                "keepsPitch" : true,
+                "kind" : "audio",
+                "media" : "06E178DA-FB0F-4972-B756-28FDEB76C9F8",
+                "mediaDuration" : {
+                  "timescale" : 1,
+                  "value" : 2
+                },
+                "name" : "a1",
+                "reversed" : false,
+                "source" : {
+                  "duration" : {
+                    "timescale" : 1,
+                    "value" : 2
+                  },
+                  "start" : {
+                    "timescale" : 1,
+                    "value" : 0
+                  }
+                },
+                "speed" : {
+                  "den" : 1,
+                  "num" : 1
+                },
+                "start" : {
+                  "timescale" : 1,
+                  "value" : 0
+                },
+                "timeInterpolation" : "frameSampling"
+              }
+            ],
+            "height" : 48,
+            "id" : "8859A431-6D28-4BCA-A591-A1DEC56B9CB0",
+            "isLocked" : false,
+            "isMuted" : false,
+            "isSolo" : false,
+            "isTargeted" : false,
+            "isVisible" : true,
+            "kind" : "audio",
+            "name" : "",
+            "syncLock" : true
+          }
+        ]
+      }
+    ]
+  }
+}

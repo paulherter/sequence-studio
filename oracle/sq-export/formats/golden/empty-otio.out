@@ -1,0 +1,30 @@
+{
+  "global_start_time" : {
+    "OTIO_SCHEMA" : "RationalTime.1",
+    "rate" : 25,
+    "value" : 0
+  },
+  "metadata" : {
+
+  },
+  "name" : "Empty",
+  "OTIO_SCHEMA" : "Timeline.1",
+  "tracks" : {
+    "children" : [
+
+    ],
+    "effects" : [
+
+    ],
+    "enabled" : true,
+    "markers" : [
+
+    ],
+    "metadata" : {
+
+    },
+    "name" : "tracks",
+    "OTIO_SCHEMA" : "Stack.1",
+    "source_range" : null
+  }
+}

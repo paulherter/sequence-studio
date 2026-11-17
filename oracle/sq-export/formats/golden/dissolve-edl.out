@@ -1,0 +1,27 @@
+TITLE: Dissolves
+FCM: NON-DROP FRAME
+
+001  AX       V     C        00:00:00:00 00:00:02:00 00:00:00:00 00:00:02:00
+* FROM CLIP NAME: A001.mov
+* SOURCE FILE: /Volumes/Shoot/A001.mov
+002  AX       V     C        00:00:02:00 00:00:02:00 00:00:02:00 00:00:02:00
+* FROM CLIP NAME: A001.mov
+* SOURCE FILE: /Volumes/Shoot/A001.mov
+002  AX       V     D    010 00:00:04:00 00:00:06:00 00:00:02:00 00:00:04:00
+* TO CLIP NAME: A001.mov
+* SOURCE FILE: /Volumes/Shoot/A001.mov
+003  AX       V     C        00:00:06:00 00:00:06:00 00:00:04:00 00:00:04:00
+* FROM CLIP NAME: A001.mov
+* SOURCE FILE: /Volumes/Shoot/A001.mov
+003  AX       V     D    005 00:00:00:00 00:00:01:00 00:00:04:00 00:00:05:00
+* TO CLIP NAME: B & C.mov
+* SOURCE FILE: /Volumes/Shoot/B & C.mov
+004  AX       A     C        00:00:00:00 00:00:02:00 00:00:00:00 00:00:02:00
+* FROM CLIP NAME: A001.mov
+* SOURCE FILE: /Volumes/Shoot/A001.mov
+005  AX       A     C        00:00:02:00 00:00:02:00 00:00:02:00 00:00:02:00
+* FROM CLIP NAME: A001.mov
+* SOURCE FILE: /Volumes/Shoot/A001.mov
+005  AX       A     D    010 00:00:00:00 00:00:02:00 00:00:02:00 00:00:04:00
+* TO CLIP NAME: B & C.mov
+* SOURCE FILE: /Volumes/Shoot/B & C.mov

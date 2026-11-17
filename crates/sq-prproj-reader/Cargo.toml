@@ -1,0 +1,21 @@
+[package]
+name = "sq-prproj-reader"
+description = "Container reading layer of the Premiere project importer (ZIP, gzip, inflate, fast XML) ported from SQPremiereImport"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "dump"
+path = "src/bin/dump.rs"
+
+[dependencies]
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[lints]
+workspace = true

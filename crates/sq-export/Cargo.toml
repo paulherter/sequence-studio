@@ -1,0 +1,30 @@
+[package]
+name = "sq-export"
+description = "Export: settings, presets, queue, loudness, stems, interchange formats, encode pipeline."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-time.workspace = true
+sq-core-model.workspace = true
+sq-core-audio.workspace = true
+sq-core-edit.workspace = true
+sq-core-effects.workspace = true
+sq-text.workspace = true
+sq-frame.workspace = true
+sq-media.workspace = true
+sq-audiofx.workspace = true
+sq-render.workspace = true
+sq-gpu.workspace = true
+sq-playback.workspace = true
+sq-premiere-import.workspace = true
+sq-media-ffmpeg.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[lints]
+workspace = true

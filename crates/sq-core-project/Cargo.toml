@@ -1,0 +1,24 @@
+[package]
+name = "sq-core-project"
+description = "Recovery, templates, relink, keymaps, command tables and render cache planning of the Sequence Studio project model."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-time.workspace = true
+sq-os.workspace = true
+sq-core-model.workspace = true
+sq-core-file.workspace = true
+sq-core-edit.workspace = true
+sq-core-audio.workspace = true
+sq-core-graphics.workspace = true
+sq-prproj-reader.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[lints]
+workspace = true

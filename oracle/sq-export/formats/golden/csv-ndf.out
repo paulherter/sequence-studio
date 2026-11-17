@@ -1,0 +1,8 @@
+Scope,Name,Color,In,Out,Duration,Comment
+Sequence,'@at,purple,01:00:00:05,01:00:00:05,00:00:00:00,'-minus
+"Clip: Clip, ""one""",'=SUM(A1),red,01:00:01:10,01:00:01:10,00:00:00:00,"line
+break"
+"Clip: Clip, ""one""",'+plus,green,01:00:01:20,01:00:02:00,00:00:00:05,crlf
+break
+Sequence,Same time,green,01:00:03:10,01:00:03:10,00:00:00:00,"say ""hi"", ok"
+Sequence,'	Tab,white,01:00:03:10,01:00:03:22,00:00:00:12,"'CR"

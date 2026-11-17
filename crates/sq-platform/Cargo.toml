@@ -1,0 +1,37 @@
+[package]
+name = "sq-platform"
+description = "The one platform facade of the app: free space, crash reports, export progress on the Dock / taskbar, sleep lock. Portable; the backends are sq-platform-mac and sq-platform-win"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-fault-text.workspace = true
+sq-os.workspace = true
+sq-setup-engine = { path = "../sq-setup-engine" }
+sq-trash.workspace = true
+winit.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+sq-platform-mac.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+sq-platform-win.workspace = true
+
+# Workspace lints repeated: this crate is on the unsafe allow-list (statvfs).
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

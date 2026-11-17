@@ -1,0 +1,42 @@
+# The only files a package may hold (Windows stage folder, Linux AppDir, Mac .app). A package step that finds anything else
+# fails the build. One entry per line: a file extension without the dot (case-insensitive), or =Name for the file with
+# exactly that name. [common] counts for every platform, a platform section adds to it, [fonts] is what the Fonts folder
+# copy lets through (nothing else is copied from it).
+# Read by crates/xtask/src/stage.rs (Mac, Linux) and packaging/windows/build-installer.ps1 (Windows).
+# json is not on it: the packages carry no json, and a stray one (a sync tool's .sync-state.json) must stop the build.
+
+[common]
+onnx
+txt
+md
+ttf
+otf
+ttc
+=LICENSE
+
+[fonts]
+ttf
+otf
+ttc
+txt
+
+[windows]
+exe
+dll
+ico
+
+[linux]
+so
+desktop
+xml
+png
+=AppRun
+=sequence-studio
+=.DirIcon
+
+[macos]
+dylib
+plist
+icns
+=PkgInfo
+=Sequence Studio

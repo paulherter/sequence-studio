@@ -1,0 +1,29 @@
+[package]
+name = "sq-draw"
+description = "Draw UI foundation: DrawList, Canvas, theme, glyph atlas, input, Panel trait, software and wgpu renderers."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-time.workspace = true
+sq-core-model.workspace = true
+sq-core-effects.workspace = true
+sq-core-masks.workspace = true
+sq-core-edit.workspace = true
+sq-gpu.workspace = true
+sq-text.workspace = true
+sq-os.workspace = true
+sq-uikit.workspace = true
+wgpu.workspace = true
+accesskit.workspace = true
+winit.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[dev-dependencies]
+pollster.workspace = true
+
+[lints]
+workspace = true

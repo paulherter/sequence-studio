@@ -1,0 +1,80 @@
+[package]
+name = "sq-app-hosts"
+description = "The panel hosts of the app: each owns a drawn panel and routes its event enum into the session and App::dispatch"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+# The panel crates depend on sq-app-shell (for `AppHost`), so the hosts that own them cannot live in it.
+[dependencies]
+sq-analysis.workspace = true
+sq-os.workspace = true
+sq-setup-engine = { path = "../sq-setup-engine" }
+sq-premiere-import.workspace = true
+sq-translate.workspace = true
+sq-transcribe.workspace = true
+sq-core-effects.workspace = true
+sq-core-masks.workspace = true
+sq-draw.workspace = true
+sq-uikit.workspace = true
+sq-editor-session.workspace = true
+accesskit.workspace = true
+sq-app-shell.workspace = true
+sq-draw-shell.workspace = true
+sq-draw-library = { path = "../sq-draw-library" }
+sq-draw-monitor = { path = "../sq-draw-monitor" }
+sq-draw-timeline = { path = "../sq-draw-timeline" }
+sq-timeline-ui.workspace = true
+sq-inspector-ui = { path = "../sq-inspector-ui" }
+sq-core-model.workspace = true
+sq-core-audio.workspace = true
+sq-core-color.workspace = true
+sq-core-time.workspace = true
+sq-core-edit.workspace = true
+sq-core-graphics.workspace = true
+sq-core-project.workspace = true
+sq-library.workspace = true
+sq-text.workspace = true
+sq-audiofx.workspace = true
+sq-playback.workspace = true
+sq-gyroflow.workspace = true
+sq-runtime.workspace = true
+sq-edit-api.workspace = true
+getrandom = "0.3"
+sq-media.workspace = true
+sq-media-ffmpeg.workspace = true
+sq-export.workspace = true
+sq-render.workspace = true
+sq-audio-out.workspace = true
+sq-platform.workspace = true
+sq-platform-tts.workspace = true
+sq-platform-vision.workspace = true
+serde_json.workspace = true
+png.workspace = true
+arboard.workspace = true
+jpeg-encoder.workspace = true
+exr.workspace = true
+tiff.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+# Windows opens files and links through the shell (`sq_platform_win::open`), not through a child `cmd`.
+[target.'cfg(windows)'.dependencies]
+sq-platform-win.workspace = true
+
+[dev-dependencies]
+zune-jpeg = "0.5" # decodes the JPEG the Export Frame test writes (MIT/Apache-2.0/Zlib)
+
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"
+await_holding_refcell_ref = "deny"
+await_holding_lock = "deny"

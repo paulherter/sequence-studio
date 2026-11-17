@@ -1,0 +1,278 @@
+{
+  "global_start_time" : {
+    "OTIO_SCHEMA" : "RationalTime.1",
+    "rate" : 25,
+    "value" : 0
+  },
+  "metadata" : {
+
+  },
+  "name" : "Odd / name\u0001 ",
+  "OTIO_SCHEMA" : "Timeline.1",
+  "tracks" : {
+    "children" : [
+      {
+        "children" : [
+          {
+            "effects" : [
+
+            ],
+            "markers" : [
+
+            ],
+            "metadata" : {
+
+            },
+            "name" : "",
+            "OTIO_SCHEMA" : "Gap.1",
+            "source_range" : {
+              "duration" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 75
+              },
+              "OTIO_SCHEMA" : "TimeRange.1",
+              "start_time" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 0
+              }
+            }
+          },
+          {
+            "effects" : [
+
+            ],
+            "enabled" : true,
+            "markers" : [
+
+            ],
+            "media_reference" : {
+              "available_range" : null,
+              "metadata" : {
+
+              },
+              "name" : "A001.mov",
+              "OTIO_SCHEMA" : "MissingReference.1"
+            },
+            "metadata" : {
+
+            },
+            "name" : "A001.mov",
+            "OTIO_SCHEMA" : "Clip.2",
+            "source_range" : {
+              "duration" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 25
+              },
+              "OTIO_SCHEMA" : "TimeRange.1",
+              "start_time" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 5
+              }
+            }
+          },
+          {
+            "effects" : [
+
+            ],
+            "enabled" : true,
+            "markers" : [
+
+            ],
+            "media_reference" : {
+              "available_range" : null,
+              "metadata" : {
+
+              },
+              "name" : "Tëst <x>.mov",
+              "OTIO_SCHEMA" : "ExternalReference.1",
+              "target_url" : "file:///Volumes/My%20Disk/T%E4%B8%ADst%20%231%20%5Ba%5D%2520;b'c%22d%3Fe%7Cf%5Cg%5Eh%60i%7Bj%7Dk.mov"
+            },
+            "metadata" : {
+
+            },
+            "name" : "  Tëst  ",
+            "OTIO_SCHEMA" : "Clip.2",
+            "source_range" : {
+              "duration" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 25
+              },
+              "OTIO_SCHEMA" : "TimeRange.1",
+              "start_time" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 5
+              }
+            }
+          }
+        ],
+        "effects" : [
+
+        ],
+        "enabled" : true,
+        "kind" : "Video",
+        "markers" : [
+
+        ],
+        "metadata" : {
+
+        },
+        "name" : "",
+        "OTIO_SCHEMA" : "Track.1",
+        "source_range" : null
+      },
+      {
+        "children" : [
+          {
+            "effects" : [
+
+            ],
+            "enabled" : true,
+            "markers" : [
+
+            ],
+            "media_reference" : {
+              "available_range" : null,
+              "metadata" : {
+
+              },
+              "name" : "B & C.mov",
+              "OTIO_SCHEMA" : "ExternalReference.1",
+              "target_url" : "file:///Volumes/Shoot/B%20&%20C.mov"
+            },
+            "metadata" : {
+
+            },
+            "name" : "B & C.mov",
+            "OTIO_SCHEMA" : "Clip.2",
+            "source_range" : {
+              "duration" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 10
+              },
+              "OTIO_SCHEMA" : "TimeRange.1",
+              "start_time" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 0
+              }
+            }
+          }
+        ],
+        "effects" : [
+
+        ],
+        "enabled" : true,
+        "kind" : "Video",
+        "markers" : [
+
+        ],
+        "metadata" : {
+
+        },
+        "name" : "Over \"2\"",
+        "OTIO_SCHEMA" : "Track.1",
+        "source_range" : null
+      },
+      {
+        "children" : [
+          {
+            "effects" : [
+
+            ],
+            "markers" : [
+
+            ],
+            "metadata" : {
+
+            },
+            "name" : "",
+            "OTIO_SCHEMA" : "Gap.1",
+            "source_range" : {
+              "duration" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 100
+              },
+              "OTIO_SCHEMA" : "TimeRange.1",
+              "start_time" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 0
+              }
+            }
+          },
+          {
+            "effects" : [
+
+            ],
+            "enabled" : true,
+            "markers" : [
+
+            ],
+            "media_reference" : {
+              "available_range" : null,
+              "metadata" : {
+
+              },
+              "name" : "Tëst <x>.mov",
+              "OTIO_SCHEMA" : "ExternalReference.1",
+              "target_url" : "file:///Volumes/My%20Disk/T%E4%B8%ADst%20%231%20%5Ba%5D%2520;b'c%22d%3Fe%7Cf%5Cg%5Eh%60i%7Bj%7Dk.mov"
+            },
+            "metadata" : {
+
+            },
+            "name" : "Tëst <x>.mov",
+            "OTIO_SCHEMA" : "Clip.2",
+            "source_range" : {
+              "duration" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 25
+              },
+              "OTIO_SCHEMA" : "TimeRange.1",
+              "start_time" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 5
+              }
+            }
+          }
+        ],
+        "effects" : [
+
+        ],
+        "enabled" : true,
+        "kind" : "Audio",
+        "markers" : [
+
+        ],
+        "metadata" : {
+
+        },
+        "name" : "",
+        "OTIO_SCHEMA" : "Track.1",
+        "source_range" : null
+      }
+    ],
+    "effects" : [
+
+    ],
+    "enabled" : true,
+    "markers" : [
+
+    ],
+    "metadata" : {
+
+    },
+    "name" : "tracks",
+    "OTIO_SCHEMA" : "Stack.1",
+    "source_range" : null
+  }
+}

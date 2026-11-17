@@ -1,0 +1,30 @@
+[package]
+name = "sq-trash"
+description = "Moves a file to the system Trash (Mac NSFileManager, Windows Recycle Bin, Linux freedesktop Trash spec) and tells Finder alias files from regular files"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+chrono.workspace = true
+
+[target.'cfg(target_os = "macos")'.dependencies]
+objc2.workspace = true
+objc2-foundation = { workspace = true, features = ["NSFileManager", "NSURL", "NSString", "NSError", "NSPathUtilities"] }
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+# Workspace lints repeated: this crate is on the unsafe allow-list (xattr, Shell API).
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"

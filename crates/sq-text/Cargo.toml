@@ -1,0 +1,24 @@
+[package]
+name = "sq-text"
+description = "Own text engine: font parsing, shaping-free layout, glyph raster, text effects."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-time.workspace = true
+sq-os.workspace = true
+sq-core-model.workspace = true
+sq-core-audio.workspace = true
+sq-core-effects.workspace = true
+sq-core-graphics.workspace = true
+png.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+ttf-parser.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[lints]
+workspace = true

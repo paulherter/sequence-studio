@@ -1,0 +1,38 @@
+[package]
+name = "sq-playback"
+description = "Playback engine: render thread, frame cache, audio feeder, scrub, shuttle."
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+sq-core-time.workspace = true
+sq-core-model.workspace = true
+sq-core-audio.workspace = true
+sq-core-edit.workspace = true
+sq-core-effects.workspace = true
+sq-frame.workspace = true
+sq-media.workspace = true
+sq-audiofx.workspace = true
+sq-render.workspace = true
+sq-gpu.workspace = true
+sq-audio-out.workspace = true
+sq-core-project.workspace = true
+sq-core-color.workspace = true
+sq-media-ffmpeg.workspace = true
+sq-video-hw.workspace = true
+sq-text.workspace = true
+sq-lottie.workspace = true
+sq-core-graphics.workspace = true
+sq-core-masks.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+workspace-hack = { version = "0.1", path = "../../workspace-hack" }
+
+[lints]
+workspace = true
+
+[dev-dependencies]
+png.workspace = true

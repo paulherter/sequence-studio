@@ -1,0 +1,13 @@
+crate	layer	depends	wave	model	notes
+sq-prproj-reader	0	-	0	sonnet	container reader ported (pilot)
+sq-core-time	1	-	1	sonnet	time, keyframes basics, ids, text helpers (1.6k)
+sq-core-model	1	sq-core-time	1	sonnet	project model + serde, moved type parts (about 12k)
+sq-core-file	1	sq-core-model	1	sonnet	.sqproj versions v19-v94, salvage (2.0k)
+sq-core-color	1	sq-core-model	1	sonnet	color logic (4.0k)
+sq-core-audio	1	sq-core-model	1	sonnet	audio, ducking, captions (3.9k)
+sq-core-masks	1	sq-core-model	1	sonnet	masks, magic, stabilizer (5.7k)
+sq-core-effects	1	sq-core-color,sq-core-audio,sq-core-masks	1	sonnet	effects, transitions (6.2k)
+sq-core-graphics	1	sq-core-effects	1	sonnet	graphics, titles, variants (3.9k)
+sq-core-edit	1	sq-core-effects	1	sonnet	edit operations, history, playback model (8.2k)
+sq-core-project	1	sq-core-file,sq-core-edit,sq-core-graphics	1	sonnet	recovery, relink, templates, keymaps (4.1k)
+sq-os	0	-	0	sonnet	the one Platform enum (Mac, Windows, Linux) and its properties

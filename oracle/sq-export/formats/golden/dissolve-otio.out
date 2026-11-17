@@ -1,0 +1,299 @@
+{
+  "global_start_time" : {
+    "OTIO_SCHEMA" : "RationalTime.1",
+    "rate" : 25,
+    "value" : 0
+  },
+  "metadata" : {
+
+  },
+  "name" : "Dissolves",
+  "OTIO_SCHEMA" : "Timeline.1",
+  "tracks" : {
+    "children" : [
+      {
+        "children" : [
+          {
+            "effects" : [
+
+            ],
+            "enabled" : true,
+            "markers" : [
+
+            ],
+            "media_reference" : {
+              "available_range" : null,
+              "metadata" : {
+
+              },
+              "name" : "A001.mov",
+              "OTIO_SCHEMA" : "ExternalReference.1",
+              "target_url" : "file:///Volumes/Shoot/A001.mov"
+            },
+            "metadata" : {
+
+            },
+            "name" : "A001.mov",
+            "OTIO_SCHEMA" : "Clip.2",
+            "source_range" : {
+              "duration" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 50
+              },
+              "OTIO_SCHEMA" : "TimeRange.1",
+              "start_time" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 0
+              }
+            }
+          },
+          {
+            "in_offset" : {
+              "OTIO_SCHEMA" : "RationalTime.1",
+              "rate" : 25,
+              "value" : 5
+            },
+            "metadata" : {
+
+            },
+            "name" : "Dissolve",
+            "OTIO_SCHEMA" : "Transition.1",
+            "out_offset" : {
+              "OTIO_SCHEMA" : "RationalTime.1",
+              "rate" : 25,
+              "value" : 5
+            },
+            "transition_type" : "SMPTE_Dissolve"
+          },
+          {
+            "effects" : [
+
+            ],
+            "enabled" : true,
+            "markers" : [
+
+            ],
+            "media_reference" : {
+              "available_range" : null,
+              "metadata" : {
+
+              },
+              "name" : "A001.mov",
+              "OTIO_SCHEMA" : "ExternalReference.1",
+              "target_url" : "file:///Volumes/Shoot/A001.mov"
+            },
+            "metadata" : {
+
+            },
+            "name" : "A001.mov",
+            "OTIO_SCHEMA" : "Clip.2",
+            "source_range" : {
+              "duration" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 50
+              },
+              "OTIO_SCHEMA" : "TimeRange.1",
+              "start_time" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 100
+              }
+            }
+          },
+          {
+            "in_offset" : {
+              "OTIO_SCHEMA" : "RationalTime.1",
+              "rate" : 25,
+              "value" : 5
+            },
+            "metadata" : {
+
+            },
+            "name" : "Push",
+            "OTIO_SCHEMA" : "Transition.1",
+            "out_offset" : {
+              "OTIO_SCHEMA" : "RationalTime.1",
+              "rate" : 25,
+              "value" : 0
+            },
+            "transition_type" : "Custom_Transition"
+          },
+          {
+            "effects" : [
+
+            ],
+            "enabled" : true,
+            "markers" : [
+
+            ],
+            "media_reference" : {
+              "available_range" : null,
+              "metadata" : {
+
+              },
+              "name" : "B & C.mov",
+              "OTIO_SCHEMA" : "ExternalReference.1",
+              "target_url" : "file:///Volumes/Shoot/B%20&%20C.mov"
+            },
+            "metadata" : {
+
+            },
+            "name" : "B & C.mov",
+            "OTIO_SCHEMA" : "Clip.2",
+            "source_range" : {
+              "duration" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 25
+              },
+              "OTIO_SCHEMA" : "TimeRange.1",
+              "start_time" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 0
+              }
+            }
+          }
+        ],
+        "effects" : [
+
+        ],
+        "enabled" : true,
+        "kind" : "Video",
+        "markers" : [
+
+        ],
+        "metadata" : {
+
+        },
+        "name" : "",
+        "OTIO_SCHEMA" : "Track.1",
+        "source_range" : null
+      },
+      {
+        "children" : [
+          {
+            "effects" : [
+
+            ],
+            "enabled" : true,
+            "markers" : [
+
+            ],
+            "media_reference" : {
+              "available_range" : null,
+              "metadata" : {
+
+              },
+              "name" : "A001.mov",
+              "OTIO_SCHEMA" : "ExternalReference.1",
+              "target_url" : "file:///Volumes/Shoot/A001.mov"
+            },
+            "metadata" : {
+
+            },
+            "name" : "A001.mov",
+            "OTIO_SCHEMA" : "Clip.2",
+            "source_range" : {
+              "duration" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 50
+              },
+              "OTIO_SCHEMA" : "TimeRange.1",
+              "start_time" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 0
+              }
+            }
+          },
+          {
+            "in_offset" : {
+              "OTIO_SCHEMA" : "RationalTime.1",
+              "rate" : 25,
+              "value" : 4
+            },
+            "metadata" : {
+
+            },
+            "name" : "Steady Crossfade",
+            "OTIO_SCHEMA" : "Transition.1",
+            "out_offset" : {
+              "OTIO_SCHEMA" : "RationalTime.1",
+              "rate" : 25,
+              "value" : 6
+            },
+            "transition_type" : "SMPTE_Dissolve"
+          },
+          {
+            "effects" : [
+
+            ],
+            "enabled" : true,
+            "markers" : [
+
+            ],
+            "media_reference" : {
+              "available_range" : null,
+              "metadata" : {
+
+              },
+              "name" : "B & C.mov",
+              "OTIO_SCHEMA" : "ExternalReference.1",
+              "target_url" : "file:///Volumes/Shoot/B%20&%20C.mov"
+            },
+            "metadata" : {
+
+            },
+            "name" : "B & C.mov",
+            "OTIO_SCHEMA" : "Clip.2",
+            "source_range" : {
+              "duration" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 50
+              },
+              "OTIO_SCHEMA" : "TimeRange.1",
+              "start_time" : {
+                "OTIO_SCHEMA" : "RationalTime.1",
+                "rate" : 25,
+                "value" : 0
+              }
+            }
+          }
+        ],
+        "effects" : [
+
+        ],
+        "enabled" : true,
+        "kind" : "Audio",
+        "markers" : [
+
+        ],
+        "metadata" : {
+
+        },
+        "name" : "",
+        "OTIO_SCHEMA" : "Track.1",
+        "source_range" : null
+      }
+    ],
+    "effects" : [
+
+    ],
+    "enabled" : true,
+    "markers" : [
+
+    ],
+    "metadata" : {
+
+    },
+    "name" : "tracks",
+    "OTIO_SCHEMA" : "Stack.1",
+    "source_range" : null
+  }
+}

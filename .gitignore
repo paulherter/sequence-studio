@@ -27,3 +27,7 @@ docs/research/ui-ref-images/
 
 # Website sources are not part of this repo
 website/
+
+# Rust
+target/
+dlgshots/
