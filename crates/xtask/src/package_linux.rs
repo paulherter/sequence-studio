@@ -65,6 +65,60 @@ fn check_lgpl(libs: &[PathBuf]) -> Result<(), String> {
     Ok(())
 }
 
+/// The newest system symbol versions a bundled ELF file may need: what Ubuntu 22.04 (glibc 2.35, GCC 12 libstdc++) provides.
+/// The release is built in an Ubuntu 22.04 container (`scripts/package-linux-compat.sh`); this check fails the package
+/// when a binary still asks for more (issue #22: built on glibc 2.43, GLIBC_2.43 not found on Mint 22.3).
+const BASELINE: [(&str, &[u32]); 3] = [("GLIBC_", &[2, 35]), ("GLIBCXX_", &[3, 4, 30]), ("CXXABI_", &[1, 3, 13])];
+
+/// Version needs above the baseline in `objdump -T` output: one `"GLIBC_2.43 symbol"` entry per undefined symbol.
+fn versions_too_new(objdump: &str) -> Vec<String> {
+    let mut bad = Vec::new();
+    for line in objdump.lines().filter(|l| l.contains("*UND*")) {
+        let mut words = line.split_whitespace().rev();
+        let (Some(symbol), Some(ver)) = (words.next(), words.next()) else { continue };
+        let ver = ver.trim_matches(|c| c == '(' || c == ')');
+        for (prefix, max) in BASELINE {
+            let Some(rest) = ver.strip_prefix(prefix) else { continue };
+            let nums: Vec<u32> = rest.split('.').map_while(|n| n.parse().ok()).collect();
+            if nums.as_slice() > max {
+                bad.push(format!("{ver} {symbol}"));
+            }
+        }
+    }
+    bad
+}
+
+/// Every ELF file under `usr/` of the AppDir (the executable, `usr/lib/*`, `usr/bin/*.so`) against `BASELINE`.
+fn check_glibc_baseline(app_dir: &Path) -> Result<(), String> {
+    let mut problems = Vec::new();
+    let mut dirs = vec![app_dir.join("usr")];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).map_err(|e| format!("{}: {e}", dir.display()))?.flatten() {
+            let path = entry.path();
+            let Ok(kind) = entry.file_type() else { continue };
+            if kind.is_dir() {
+                dirs.push(path);
+            } else if kind.is_file() && std::fs::read(&path).is_ok_and(|b| b.starts_with(b"\x7fELF")) {
+                let text = run(Command::new("objdump").arg("-T").arg(&path))?;
+                for v in versions_too_new(&text) {
+                    problems.push(format!("{} needs {v}", path.strip_prefix(app_dir).unwrap_or(&path).display()));
+                }
+            }
+        }
+    }
+    if problems.is_empty() {
+        return Ok(());
+    }
+    problems.sort();
+    problems.dedup();
+    let shown = problems.len().min(20);
+    Err(format!(
+        "{} system version need(s) above the Ubuntu 22.04 baseline (GLIBC 2.35, GLIBCXX 3.4.30, CXXABI 1.3.13); build with scripts/package-linux-compat.sh:\n  {}",
+        problems.len(),
+        problems[..shown].join("\n  ")
+    ))
+}
+
 fn copy_to(from: &Path, to: &Path) -> Result<(), String> {
     std::fs::copy(from, to).map(|_| ()).map_err(|e| format!("{}: {e}", from.display()))
 }
@@ -146,18 +200,9 @@ pub fn run_package(root: &Path, args: &[String]) -> Result<(), String> {
     // Licenses, notes, desktop integration.
     let licenses = bin.join("Licenses");
     std::fs::create_dir_all(&licenses).map_err(|e| e.to_string())?;
-    for f in [
-        "packaging/licenses/FFMPEG-LICENSE.txt",
-        "packaging/licenses/FFMPEG-NOTICE.txt",
-        "packaging/licenses/APACHE-2.0.txt",
-        "crates/sq-onnx/vendor/ORT-LICENSE-MIT.txt",
-        "packaging/linux/NOTES.txt",
-        "docs/THIRD_PARTY.md",
-        "docs/THIRD_PARTY-CRATES.md",
-        "LICENSE",
-        "LICENSE-ADDITIONAL-TERMS.md",
-        "SUPPORTERS.md",
-    ] {
+    // The shared list every package ships (macOS and Windows use it too), plus what only the Linux package carries.
+    let linux_only = ["packaging/linux/NOTES.txt", "LICENSE", "LICENSE-ADDITIONAL-TERMS.md", "SUPPORTERS.md"];
+    for f in crate::notices::LICENSE_FILES.iter().chain(linux_only.iter()) {
         copy_to(&root.join(f), &licenses.join(Path::new(f).file_name().ok_or("license name")?))?;
     }
     let desktop = std::fs::read_to_string(pk.join("sequence-studio.desktop")).map_err(|e| e.to_string())?;
@@ -185,6 +230,7 @@ pub fn run_package(root: &Path, args: &[String]) -> Result<(), String> {
         println!("smoke ok: {} ({len} bytes)", shot.display());
     }
 
+    check_glibc_baseline(&app_dir)?;
     crate::stage::check(&app_dir, &["common", "linux"])?;
 
     let stamp = run(Command::new("date").arg("+%Y%m%d-%H%M"))?.trim().to_string();
@@ -214,6 +260,24 @@ mod tests {
         assert_eq!(dep_from(None, os(dir.to_str().expect("utf8")), "missing"), None);
         assert_eq!(dep_from(None, None, "ffmpeg-linux"), None);
         let _ = std::fs::remove_dir_all(dir);
+    }
+
+    #[test]
+    fn versions_above_the_ubuntu_2204_baseline_are_listed() {
+        let dump = "\
+0000000000000000      DF *UND*\t0000000000000000 (GLIBC_2.2.5) memcpy
+0000000000000000      DF *UND*\t0000000000000000 (GLIBC_2.35)  pthread_cond_clockwait
+0000000000000000      DF *UND*\t0000000000000000 (GLIBC_2.43)  fmod
+0000000000000000      DF *UND*\t0000000000000000 GLIBC_2.38    strlcpy
+0000000000000000      DO *UND*\t0000000000000000 (GLIBCXX_3.4.30) _ZTVN10__cxxabiv117__class_type_infoE
+0000000000000000      DF *UND*\t0000000000000000 (GLIBCXX_3.4.32) _ZNSt6thread6_StateD2Ev
+0000000000000000      DO *UND*\t0000000000000000 (CXXABI_1.3.15) __cxa_foo
+0000000000000000 g    DF .text\t0000000000000010 (GLIBC_2.99) defined_here_is_fine";
+        assert_eq!(
+            versions_too_new(dump),
+            ["GLIBC_2.43 fmod", "GLIBC_2.38 strlcpy", "GLIBCXX_3.4.32 _ZNSt6thread6_StateD2Ev", "CXXABI_1.3.15 __cxa_foo"]
+        );
+        assert!(versions_too_new("0 DF *UND*\t0 (GLIBC_2.3.4) a\n0 DF *UND*\t0 (GLIBC_2.9) b").is_empty());
     }
 
     #[test]

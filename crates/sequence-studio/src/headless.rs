@@ -707,9 +707,16 @@ fn spread(v: &mut [f64]) -> String {
 /// shown against expected and dropped (the engine's counters), the gaps between distinct monitor pictures, the UI frame
 /// cost and the engine's per-stage times. The software renderer is not timed: only the app's own work is.
 /// Numbers and how to run it on every system: docs/rust/PERF-NOTES.md, "Many layers (perf-layers)".
-fn play_bench(width: u32, height: u32, project: Option<&Path>, fonts: &Path) -> String {
-    let secs =
-        std::env::var("SQ_BENCH_SECS").ok().and_then(|v| v.parse::<f64>().ok()).filter(|s| *s >= 1.0).unwrap_or(4.0);
+fn play_bench(
+    width: u32,
+    height: u32,
+    project: Option<&Path>,
+    fonts: &Path,
+    bench: &crate::bench_report::BenchOpts,
+) -> String {
+    let secs = bench.secs_ms.map(|ms| ms as f64 / 1000.0).unwrap_or_else(|| {
+        std::env::var("SQ_BENCH_SECS").ok().and_then(|v| v.parse::<f64>().ok()).filter(|s| *s >= 1.0).unwrap_or(4.0)
+    });
     let (w, h) = (i64::from(width), i64::from(height));
     let opened = Instant::now();
     let (app, picture) = build(width, height, 2.0, project, fonts);
@@ -735,6 +742,24 @@ fn play_bench(width: u32, height: u32, project: Option<&Path>, fonts: &Path) -> 
         })
         .unwrap_or((30.0, 0.0));
 
+    // `--bench-from`: start Play at that position; wait (at most 20 s) until its picture is on screen so the run starts there.
+    if bench.from_ms > 0 {
+        let target = Time::new(bench.from_ms, 1000);
+        app.with(|a| a.session_mut().seek(target));
+        let end = Instant::now() + Duration::from_secs(20);
+        let near = |p: Time| (p.value() as f64 / p.timescale().max(1) as f64 - bench.from_ms as f64 / 1000.0).abs() < 1.0;
+        while Instant::now() < end {
+            app.turn();
+            app.with(|a| a.frame(w, h));
+            std::thread::sleep(Duration::from_millis(5));
+            if app.with(|a| crate::playback::bench_shown(a.session().engine())).flatten().is_some_and(near) {
+                break;
+            }
+        }
+        wait_for_picture(&app, &picture, &mut slots, w, h);
+    }
+    let underruns_before = crate::playback::AUDIO_UNDERRUNS.load(std::sync::atomic::Ordering::Relaxed);
+    let (mut drift_sum, mut drift_max, mut drift_n, mut real_audio) = (0.0_f64, 0.0_f64, 0u32, false);
     let (mut frames, mut seen, mut ui_ms) = (0u32, 0u32, 0.0);
     let (mut last, mut gaps, mut to_first) = (picture.generation(), Vec::new(), None);
     // The frame position on screen before Play, so only a new position counts as a frame.
@@ -779,6 +804,15 @@ fn play_bench(width: u32, height: u32, project: Option<&Path>, fonts: &Path) -> 
         {
             position = Some(at_position);
             let at = Instant::now();
+            if let Some((clock, device)) = app.with(|a| crate::playback::bench_clock(a.session().engine())).flatten() {
+                real_audio = device;
+                let late_ms = (clock.value() as f64 / clock.timescale().max(1) as f64
+                    - at_position.value() as f64 / at_position.timescale().max(1) as f64)
+                    * 1e3;
+                drift_sum += late_ms;
+                drift_max = drift_max.max(late_ms.abs());
+                drift_n += 1;
+            }
             if to_first.is_none() {
                 to_first = Some(at.duration_since(began).as_secs_f64() * 1e3);
             } else {
@@ -796,7 +830,7 @@ fn play_bench(width: u32, height: u32, project: Option<&Path>, fonts: &Path) -> 
     // Read before anything else touches the engine: a Play at the end of the sequence starts over and resets the counters.
     let engine = app.with(|a| crate::playback::bench_numbers(a.session().engine())).flatten();
     let expected = if length > 0.0 { played.min(length) } else { played } * fps;
-    gaps.sort_by(f64::total_cmp);
+    let gap_stats = crate::bench_report::GapStats::of(&mut gaps, 1e3 / fps.max(1.0));
     let (over50, over100) = (gaps.iter().filter(|g| **g > 50.0).count(), gaps.iter().filter(|g| **g > 100.0).count());
     // Late frames are what the viewer sees: positions that never showed (dropped) plus positions that showed a stand-in.
     let (shown, dropped, stale, max_lag) =
@@ -871,6 +905,41 @@ fn play_bench(width: u32, height: u32, project: Option<&Path>, fonts: &Path) -> 
         at(1.0),
         to_first.unwrap_or(f64::NAN)
     );
+    if let Some(json_path) = &bench.json {
+        let gpu = crate::surface::shared_gpu().map(|(_, g)| g.info().name.clone()).unwrap_or_default();
+        let report = crate::bench_report::BenchReport {
+            tags: bench.tags.clone(),
+            project: project.map_or("none".into(), |p| p.display().to_string()),
+            size: (width, height),
+            from_s: bench.from_ms as f64 / 1000.0,
+            played_s: played,
+            length_s: length,
+            fps,
+            audio: if real_audio { "device" } else { "null" }.into(),
+            first_picture_ms: first_picture,
+            play_first_ms: to_first.unwrap_or(f64::NAN),
+            shown,
+            expected,
+            dropped,
+            standins: stale,
+            max_lag,
+            gaps: Some(gap_stats),
+            underruns: crate::playback::AUDIO_UNDERRUNS
+                .load(std::sync::atomic::Ordering::Relaxed)
+                .saturating_sub(underruns_before),
+            drift_max_abs_ms: drift_max,
+            drift_mean_ms: if drift_n > 0 { drift_sum / f64::from(drift_n) } else { f64::NAN },
+            ui_frames_per_s: f64::from(frames) / played,
+            ui_avg_ms: ui_ms / f64::from(frames.max(1)),
+            rss_mb: (rss_first, rss_max, rss_last),
+            gpu_busy,
+            machine: crate::bench_report::Machine::here(&gpu),
+        };
+        let text = serde_json::to_string_pretty(&report.to_json()).unwrap_or_default();
+        if let Err(e) = std::fs::write(json_path, text) {
+            eprintln!("{}: {e}", json_path.display());
+        }
+    }
     out
 }
 
@@ -1042,8 +1111,8 @@ fn run_mode(mode: &Mode, project: Option<&Path>, fonts: &Path) -> Result<(), Str
         Mode::UsePass { out, width, height, pitch, states, known } => {
             crate::use_pass::run(out, (*width, *height), *pitch, states, known.as_deref(), project, fonts)
         }
-        Mode::PlayBench { out, width, height } => {
-            let text = play_bench(*width, *height, project, fonts);
+        Mode::PlayBench { out, width, height, bench } => {
+            let text = play_bench(*width, *height, project, fonts, bench);
             std::fs::write(out, text).map_err(|e| format!("{}: {e}", out.display()))
         }
         Mode::PlayStart { out } => {
@@ -1055,6 +1124,12 @@ fn run_mode(mode: &Mode, project: Option<&Path>, fonts: &Path) -> Result<(), Str
             let text = crate::play_bench::run(project.ok_or("--engine-bench needs a clip")?)?;
             print!("{text}");
             std::fs::write(out, text).map_err(|e| format!("{}: {e}", out.display()))
+        }
+        Mode::BenchProject { out, media } => {
+            let written = crate::bench_project::write_all(out, media)?;
+            let text: String = written.iter().map(|p| format!("{}\n", p.display())).collect();
+            print!("{text}");
+            Ok(())
         }
         Mode::PerfProject { out, media } => {
             let written = crate::perf_project::write_all(out, media)?;

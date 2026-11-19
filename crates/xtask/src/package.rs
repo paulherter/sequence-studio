@@ -322,12 +322,7 @@ pub fn run_package(args: &[String]) -> Result<(), String> {
     // (scripts/gen-third-party-crates.py) and checked in.
     let licenses = resources.join("Licenses");
     std::fs::create_dir_all(&licenses).map_err(|e| e.to_string())?;
-    for f in [
-        "packaging/licenses/FFMPEG-LICENSE.txt",
-        "packaging/licenses/FFMPEG-NOTICE.txt",
-        "docs/THIRD_PARTY.md",
-        "docs/THIRD_PARTY-CRATES.md",
-    ] {
+    for f in crate::notices::LICENSE_FILES {
         let name = Path::new(f).file_name().ok_or("license name")?;
         std::fs::copy(root.join(f), licenses.join(name)).map_err(|e| format!("{f}: {e}"))?;
     }

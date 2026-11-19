@@ -6,6 +6,8 @@
 
 mod a11y;
 mod applog;
+mod bench_project;
+mod bench_report;
 #[cfg(test)]
 mod break_ui;
 // Windows decides drag, resize and double-click in its frame messages and the Mac keeps its lights; the logic is shared.

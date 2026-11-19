@@ -4,7 +4,10 @@ Bundled: the app, FFmpeg shared libraries (LGPL build, no GPL or nonfree parts),
 (Apache-2.0), fonts, SPIR-V shaders (inside the executable), desktop file, icon and the MIME type for .sqproj / .sqpack.
 
 From the system (not bundled): glibc, the Vulkan loader and a Vulkan driver, Wayland or X11 libraries, ALSA/PulseAudio/PipeWire.
-Needs a glibc at least as new as the build machine's (see the file name notes in the release).
+Needs glibc 2.35 or newer (Ubuntu 22.04 and every newer distribution). The release is built in an Ubuntu 22.04 container
+(scripts/package-linux-compat.sh, packaging/linux/Containerfile), and `cargo xtask package` fails when any bundled ELF file
+needs a GLIBC above 2.35, a GLIBCXX above 3.4.30 or a CXXABI above 1.3.13 (the Ubuntu 22.04 libstdc++). Never build the
+release directly on a rolling distribution such as Arch/CachyOS.
 
 espeak-ng is a run-time dependency and runs as a separate process: install it with the distribution's package manager
 (pacman -S espeak-ng, apt install espeak-ng, dnf install espeak-ng) for Voiceover from Text.
@@ -27,7 +30,8 @@ SQI-399. Scripted: `./SequenceStudio-*.AppImage --desktop-entry add|remove|statu
 An entry whose app file is gone, or an entry from before the version key, is pointed at the running AppImage on the next
 start.
 
-Building it (cargo xtask package on Linux, run on the build PC, never on the Mac):
+Building it (release: scripts/package-linux-compat.sh runs the steps below in the Ubuntu 22.04 container; `cargo xtask package`
+directly on Linux is for tests only and is checked against the same baseline):
   scripts/linux-deps.sh          fetches the LGPL FFmpeg (BtbN n9.0) and appimagetool 1.9.1, each pinned by sha256, into
                                  $SQ_DEPS (default ~/.cache/sequence-studio/deps) and prints the two exports below
   export SQ_FFMPEG=$SQ_DEPS/ffmpeg-linux                          (a GPL or nonfree build is refused)

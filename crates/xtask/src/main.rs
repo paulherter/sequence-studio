@@ -4,6 +4,7 @@
 mod driver;
 mod hooks;
 mod json;
+mod notices;
 mod onnxruntime;
 mod package;
 mod package_linux;
@@ -28,9 +29,10 @@ fn main() -> ExitCode {
         },
         Some("driver") => driver::run(rest(1)),
         Some("shaders") => shaders::run(rest(1)),
+        Some("notices") => notices::run(rest(1)),
         Some("package") => package::run_package(rest(1)),
         _ => {
-            Err("usage: cargo xtask <check [crate] | gate <crate> | hook <name> | driver <cmd> | shaders [--spirv] | package [--sign] [--notarize] [--dmg]>"
+            Err("usage: cargo xtask <check [crate] | gate <crate> | hook <name> | driver <cmd> | shaders [--spirv] | notices [--check] | package [--sign] [--notarize] [--dmg]>"
                 .into())
         }
     };
@@ -93,6 +95,11 @@ fn check(krate: Option<&str>) -> Result<(), String> {
     // The workspace-hack crate must match the dependency graph (fix: `cargo hakari generate && cargo hakari manage-deps`).
     if krate.is_none() && has(&["hakari", "--version"]) {
         step("hakari verify", cargo(&["hakari", "verify"]))?;
+    }
+    // The notices file must match Cargo.lock (fix: `cargo xtask notices`).
+    if krate.is_none() {
+        notices::run(&["--check".to_string()])?;
+        println!("== notices ok");
     }
     run("clippy", with(&["clippy", "--all-targets"], &["--", "-D", "warnings"]))?;
     if has(&["nextest", "--version"]) {

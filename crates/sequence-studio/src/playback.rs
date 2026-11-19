@@ -44,6 +44,8 @@ pub struct SessionEngine {
     feeder: FeederHandle,
     /// Keeps the output stream open; `None` when no device could be opened (the host clock drives playback then).
     _audio: Option<AudioOut>,
+    /// The master clock (the output's when a device is open): the play benchmark reads the A/V drift from it.
+    clock: Arc<dyn PlaybackClock>,
     /// What the meter panel reads (`None` without an output) and the thread measuring into it.
     meter: Option<Arc<sq_playback::audio::AudioMeterStore>>,
     _meter_thread: Option<sq_playback::audio::MeterThread>,
@@ -78,6 +80,15 @@ pub struct SessionEngine {
 pub(crate) fn bench_numbers(engine: &dyn ProgramEngine) -> Option<(sq_playback::engine::handle::Status, Vec<String>)> {
     let e = engine.as_any().downcast_ref::<SessionEngine>()?;
     Some((e.handle.status(), e.handle.query(|e| e.stats().report()).unwrap_or_default()))
+}
+
+/// Audio underruns of the output since the process started (the play benchmark reads the difference over a run).
+pub(crate) static AUDIO_UNDERRUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// For the play benchmark: the master clock's position now and whether a real output device drives it.
+pub(crate) fn bench_clock(engine: &dyn ProgramEngine) -> Option<(Time, bool)> {
+    let e = engine.as_any().downcast_ref::<SessionEngine>()?;
+    Some((e.clock.now(), e._audio.is_some()))
 }
 
 /// The playhead position of the newest composite the engine of a session put on screen (the play benchmark's frame clock).
@@ -201,6 +212,9 @@ pub fn engine(
             .name("sq-audio-events".into())
             .spawn(move || {
                 while let Ok(event) = event_rx.recv() {
+                    if let OutputEvent::Underrun(n) = &event {
+                        AUDIO_UNDERRUNS.fetch_add(u64::from(*n), std::sync::atomic::Ordering::Relaxed);
+                    }
                     if let Some(line) = audio_event_line(&event) {
                         report_audio(&line, &notify);
                     }
@@ -216,6 +230,7 @@ pub fn engine(
     // mixer, so the output stayed silent and the meter flat (found on the Windows PC, 2026-11-09).
     switching.use_audio(audio.is_some());
     let clock: Arc<dyn PlaybackClock> = switching;
+    let bench_clock = Arc::clone(&clock);
 
     let fields_media = Arc::clone(&media);
     let opener: Arc<dyn MediaOpener> =
@@ -258,6 +273,7 @@ pub fn engine(
         picture,
         feeder: feeder_handle,
         _audio: audio,
+        clock: bench_clock,
         meter,
         _meter_thread: meter_thread,
         monitor,

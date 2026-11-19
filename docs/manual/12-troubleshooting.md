@@ -20,7 +20,7 @@ The installer installs for your user only and does not need administrator rights
 ## The AppImage does not start on Linux
 
 1. Make the file executable (`chmod +x`).
-2. Check that your system has a Vulkan graphics driver and a recent glibc. An AppImage built on a newer system does not run on an older one.
+2. Check that your system has a Vulkan graphics driver and glibc 2.35 or newer (Ubuntu 22.04 or a newer distribution). Older distributions cannot run the AppImage.
 3. Start it from a terminal to read the error. If the program or one of its bundled libraries cannot start, a dialog (when your desktop has `zenity`, `kdialog`, `xmessage` or `notify-send`) and the log name the error `SQS-304`.
 
 For **Voiceover from Text**, install the `espeak-ng` package.

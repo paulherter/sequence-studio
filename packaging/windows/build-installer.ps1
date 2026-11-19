@@ -132,7 +132,7 @@ try {
     }
     $lic = Join-Path $stage 'Licenses'
     New-Item -ItemType Directory -Force $lic | Out-Null
-    foreach ($f in 'packaging\licenses\FFMPEG-LICENSE.txt', 'packaging\licenses\FFMPEG-NOTICE.txt', 'packaging\licenses\APACHE-2.0.txt', 'docs\THIRD_PARTY.md', 'docs\THIRD_PARTY-CRATES.md') { Copy-Item $f $lic }
+    foreach ($f in 'packaging\licenses\FFMPEG-LICENSE.txt', 'packaging\licenses\FFMPEG-NOTICE.txt', 'packaging\licenses\APACHE-2.0.txt', 'packaging\licenses\THIRD-PARTY-NOTICES.txt', 'packaging\licenses\WHISPER-CPP-MIT.txt', 'crates\sq-onnx\vendor\ORT-LICENSE-MIT.txt', 'docs\THIRD_PARTY.md', 'docs\THIRD_PARTY-CRATES.md') { Copy-Item $f $lic }
     Copy-Item 'packaging\windows\SequenceStudio.ico' $stage                                # the exe carries it too (build.rs)
     foreach ($f in 'vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll') { Copy-Item "$env:SystemRoot\System32\$f" $stage -ErrorAction SilentlyContinue }  # app-local VC++ runtime
 

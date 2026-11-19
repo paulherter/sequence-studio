@@ -292,6 +292,8 @@ pub enum Mode {
         out: PathBuf,
         width: u32,
         height: u32,
+        /// `--bench-from`, `--bench-secs`, `--bench-json`, `--bench-tag`.
+        bench: crate::bench_report::BenchOpts,
     },
     /// First Play after the open and after a switch to a second sequence, through the real session and engine without a
     /// window: time from Play to the first new picture, with the engine's phase notes on stderr (`play_start`).
@@ -323,6 +325,12 @@ pub enum Mode {
     /// Writes the fixed many-layers test project and its five copies without one heavy element each, over the media
     /// that `scripts/perf-media.sh` made in `media` (`perf_project`).
     PerfProject {
+        out: PathBuf,
+        media: PathBuf,
+    },
+    /// Writes the benchmark case projects P1 and P2 into the folder `out` over `bench-main.mp4` and `bench-overlay.mp4` in
+    /// `media` (`bench_project`).
+    BenchProject {
         out: PathBuf,
         media: PathBuf,
     },
@@ -371,6 +379,11 @@ pub struct ExportArgs {
 
 const DEFAULT_SIZE: (u32, u32) = (1440, 900);
 
+/// Seconds as written on the command line ("12.5") to milliseconds; `None` when negative or not a number.
+fn parse_ms(text: &str) -> Option<i64> {
+    text.parse::<f64>().ok().filter(|s| s.is_finite() && *s >= 0.0).map(|s| (s * 1000.0).round() as i64)
+}
+
 /// Parses the arguments after the program name.
 pub fn parse(args: &[String]) -> Result<Cli, String> {
     let mut project = None;
@@ -382,6 +395,7 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
     let mut eval_click = (0.5_f64, 0.5_f64);
     let mut eval_disk: Option<String> = None;
     let mut media_folder: Option<PathBuf> = None;
+    let mut bench = crate::bench_report::BenchOpts::default();
     let mut export = ExportArgs::default();
     let mut list_presets = false;
     let mut desktop_entry = None;
@@ -395,7 +409,7 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
         let mut value = |what: &str| it.next().ok_or_else(|| format!("{arg} needs {what}"));
         match arg.as_str() {
             "--ui-shot" | "--a11y-dump" | "--soak" | "--play-bench" | "--play-start" | "--engine-bench"
-            | "--present-check" | "--mask-eval" | "--perf-project" | "--start-error-shot" | "--use-pass" => {
+            | "--present-check" | "--mask-eval" | "--perf-project" | "--bench-project" | "--start-error-shot" | "--use-pass" => {
                 mode = Some((arg.as_str(), PathBuf::from(value("an output path")?)))
             }
             "--pitch" => pitch = value("a number")?.parse::<u32>().ok().filter(|p| *p >= 2).ok_or("bad --pitch")?,
@@ -410,6 +424,16 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
                 eval_click = (x.parse().map_err(|_| bad())?, y.parse().map_err(|_| bad())?);
             }
             "--eval-disk" => eval_disk = Some(value("x,y,vx,vy,r")?.clone()),
+            "--bench-from" => bench.from_ms = parse_ms(value("seconds")?).ok_or("bad --bench-from")?,
+            "--bench-secs" => {
+                bench.secs_ms = Some(parse_ms(value("seconds")?).filter(|ms| *ms >= 1000).ok_or("bad --bench-secs")?)
+            }
+            "--bench-json" => bench.json = Some(PathBuf::from(value("a file")?)),
+            "--bench-tag" => {
+                let text = value("key=value")?;
+                let (k, v) = text.split_once('=').ok_or("--bench-tag needs key=value")?;
+                bench.tags.push((k.to_string(), v.to_string()));
+            }
             "--media" => media_folder = Some(PathBuf::from(value("a folder")?)),
             "--size" => {
                 size = parse_size(value("WxH")?)?;
@@ -506,11 +530,14 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
         Some(("--ui-shot", out)) => Mode::UiShot { out, width: size.0, height: size.1, scale, playhead_ms, pose },
         Some(("--use-pass", out)) => Mode::UsePass { out, width: size.0, height: size.1, pitch, states, known },
         Some(("--soak", out)) => Mode::Soak { out, width: size.0, height: size.1 },
-        Some(("--play-bench", out)) => Mode::PlayBench { out, width: size.0, height: size.1 },
+        Some(("--play-bench", out)) => Mode::PlayBench { out, width: size.0, height: size.1, bench },
         Some(("--play-start", out)) => Mode::PlayStart { out },
         Some(("--engine-bench", out)) => Mode::EngineBench { out },
         Some(("--present-check", out)) => Mode::PresentCheck { out },
         Some(("--start-error-shot", out)) => Mode::StartErrorShot { out, scale, light },
+        Some(("--bench-project", out)) => {
+            Mode::BenchProject { out, media: media_folder.ok_or("--bench-project needs --media <folder>")? }
+        }
         Some(("--perf-project", out)) => {
             Mode::PerfProject { out, media: media_folder.ok_or("--perf-project needs --media <folder>")? }
         }
@@ -622,6 +649,19 @@ mod tests {
         let c = parse(&args(&["--perf-project", "out/perf-layers.sqproj", "--media", "m"])).expect("parses");
         assert_eq!(c.mode, Mode::PerfProject { out: "out/perf-layers.sqproj".into(), media: "m".into() });
         assert!(parse(&args(&["--perf-project", "out.sqproj"])).is_err());
+    }
+
+    #[test]
+    fn the_play_bench_options_parse() {
+        let c = parse(&args(&[
+            "p.sqproj", "--play-bench", "o.txt", "--bench-from", "2.5", "--bench-secs", "30", "--bench-json", "o.json",
+            "--bench-tag", "case=P1",
+        ]))
+        .expect("parses");
+        let Mode::PlayBench { bench, .. } = c.mode else { panic!("mode") };
+        assert_eq!((bench.from_ms, bench.secs_ms), (2500, Some(30_000)));
+        assert_eq!(bench.tags, vec![("case".to_string(), "P1".to_string())]);
+        assert!(parse(&args(&["--play-bench", "o.txt", "--bench-secs", "0.1"])).is_err());
     }
 
     #[test]
