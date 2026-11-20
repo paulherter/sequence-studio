@@ -125,8 +125,8 @@ impl KeyframeSnap {
 pub struct EffectControlsSplit;
 
 impl EffectControlsSplit {
-    pub const DEFAULT_WIDTH: f64 = 392.0;
-    pub const MIN_LABEL_WIDTH: f64 = 352.0;
+    pub const DEFAULT_WIDTH: f64 = 326.0;
+    pub const MIN_LABEL_WIDTH: f64 = 326.0;
     pub const MIN_LANES_WIDTH: f64 = 160.0;
     pub const DEFAULTS_KEY: &'static str = "effectControls.labelWidth";
 
@@ -240,12 +240,12 @@ mod tests {
 
     #[test]
     fn split_width_is_clamped_and_loaded() {
-        assert_eq!(EffectControlsSplit::clamp(300.0, 800.0), 352.0);
+        assert_eq!(EffectControlsSplit::clamp(300.0, 800.0), 326.0);
         assert_eq!(EffectControlsSplit::clamp(700.0, 800.0), 640.0);
         assert_eq!(EffectControlsSplit::clamp(400.0, 300.0), 300.0);
-        assert_eq!(EffectControlsSplit::width_from_stored(0.0), 392.0);
+        assert_eq!(EffectControlsSplit::width_from_stored(0.0), 326.0);
         assert_eq!(EffectControlsSplit::width_from_stored(500.0), 500.0);
-        assert_eq!(EffectControlsSplit::width_from_stored(f64::INFINITY), 392.0);
+        assert_eq!(EffectControlsSplit::width_from_stored(f64::INFINITY), 326.0);
     }
 
     #[test]

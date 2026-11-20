@@ -280,7 +280,7 @@ mod restore_tests {
     /// A fresh machine has no `Templates` folder: the root still knows where templates go and the first save makes it.
     #[test]
     fn a_fresh_support_folder_takes_the_first_saved_template() {
-        let support = crate::test_rig::unique_dir("sq-app-hosts-template-folder");
+        let support = crate::test_rig::test_dir("sq-app-hosts-template-folder");
         let mut root =
             standard_root(&support, Arc::new(sq_runtime::FakeClock::new()), DrawTheme::default()).expect("root");
         let folder = root.shell.shell().template_folder.take().expect("the app wires the template folder");
@@ -297,7 +297,7 @@ mod restore_tests {
 
     #[test]
     fn the_watched_library_folders_come_back_at_the_next_start() {
-        let root = crate::test_rig::unique_dir("sq-app-hosts-restore-folders");
+        let root = crate::test_rig::test_dir("sq-app-hosts-restore-folders");
         let watched = root.join("Footage");
         std::fs::create_dir_all(&watched).expect("dir");
         let defaults = FileDefaults::shared(&root);

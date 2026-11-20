@@ -36,10 +36,15 @@ pub(crate) fn build_in(
     project: Option<&Path>,
     fonts: &Path,
 ) -> (Headless, MonitorPicture) {
-    build_on(support, width, height, scale, project, fonts, sq_editor_session::WorkspacePage::Edit, false)
+    build_on(support, width, height, scale, project, fonts, sq_editor_session::WorkspacePage::Edit, false, None)
 }
 
-#[allow(clippy::too_many_arguments)] // shortcut: test-only builder, a settings struct when a ninth argument comes
+/// Whether a shot runs in the light Appearance: the `--theme` flag when given, else `SQ_SHOT_THEME=light`.
+pub(crate) fn shot_light(flag: Option<bool>, env: Option<&str>) -> bool {
+    flag.unwrap_or(env == Some("light"))
+}
+
+#[allow(clippy::too_many_arguments)] // shortcut: test-only builder, a settings struct when a tenth argument comes
 pub(crate) fn build_on(
     support: &Path,
     width: u32,
@@ -49,6 +54,7 @@ pub(crate) fn build_on(
     fonts: &Path,
     page: sq_editor_session::WorkspacePage,
     tour: bool,
+    light: Option<bool>,
 ) -> (Headless, MonitorPicture) {
     let atlas = GlyphAtlas::ui(fonts);
     if atlas.is_none() {
@@ -75,8 +81,8 @@ pub(crate) fn build_on(
     if let Some(folder) = std::env::var_os("SQ_SHOT_LIBRARY") {
         sq_app_hosts::watch_library_folder(support, Path::new(&folder));
     }
-    // shortcut: SQ_SHOT_THEME=light is a shot-only switch (not a CLI flag); the app reads its Appearance from Preferences.
-    if std::env::var("SQ_SHOT_THEME").as_deref() == Ok("light") {
+    // `--theme light|dark` picks the Appearance; `SQ_SHOT_THEME=light` stays as the fallback (scripts, the pixel-parity run).
+    if shot_light(light, std::env::var("SQ_SHOT_THEME").ok().as_deref()) {
         let light = sq_uikit::appearance_palette::AppearanceSettings::new(
             sq_uikit::appearance_palette::AppearanceMode::Light,
             0,
@@ -531,8 +537,13 @@ fn shoot(
     let (w, h) = ((width as f32 * scale) as usize, (height as f32 * scale) as usize);
     // A support folder of its own: a leftover autosave of an earlier run would put the "Recover" dialog over the shot.
     let support = std::env::temp_dir().join(format!("sequence-studio-shot-{}", std::process::id()));
+    // Shot setup (website shots): `SQ_SHOT_RECENTS` names a recents.json that the shot's own support folder starts with.
+    if let Some(recents) = std::env::var_os("SQ_SHOT_RECENTS") {
+        std::fs::create_dir_all(&support).map_err(|e| e.to_string())?;
+        std::fs::copy(&recents, support.join("recents.json")).map_err(|e| format!("SQ_SHOT_RECENTS: {e}"))?;
+    }
     let page = if pose.color_page { WorkspacePage::Color } else { WorkspacePage::Edit };
-    let (app, picture) = build_on(&support, w as u32, h as u32, scale, project, fonts, page, pose.tour);
+    let (app, picture) = build_on(&support, w as u32, h as u32, scale, project, fonts, page, pose.tour, pose.theme_light);
     if let Some(which) = &pose.select {
         app.with(|a| select_clip(a.session_mut(), which));
     }
@@ -719,7 +730,18 @@ fn play_bench(
     });
     let (w, h) = (i64::from(width), i64::from(height));
     let opened = Instant::now();
-    let (app, picture) = build(width, height, 2.0, project, fonts);
+    // The quality goes through Preferences' own file and the app's start path (`apply_monitor_settings`), like a user's choice.
+    let support = std::env::temp_dir().join("sequence-studio-bench");
+    sq_app_hosts::store_start_quality(
+        &support,
+        match bench.quality {
+            crate::bench_report::BenchQuality::Auto => None,
+            crate::bench_report::BenchQuality::Full => Some(sq_editor_session::MonitorQuality::Full),
+            crate::bench_report::BenchQuality::Half => Some(sq_editor_session::MonitorQuality::Half),
+            crate::bench_report::BenchQuality::Quarter => Some(sq_editor_session::MonitorQuality::Quarter),
+        },
+    );
+    let (app, picture) = build_in(&support, width, height, 2.0, project, fonts);
     let mut slots = ImageSlots::default();
     let first_by = opened + Duration::from_secs(30);
     // The generation also moves for a cleared monitor: wait for a picture with pixels.
@@ -766,6 +788,15 @@ fn play_bench(
     let mut position = app.with(|a| crate::playback::bench_shown(a.session().engine())).flatten();
     let mut long_gaps = Vec::new(); // (timeline second, gap in ms) of gaps over 50 ms
     let mut slow_ui = Vec::new(); // (seconds since Play, ms) of UI frames over 25 ms
+    let engine_quality = |app: &Headless| {
+        app.with(|a| match a.session().engine().quality() {
+            sq_media::video_decoding::DecodeScale::Full => "full",
+            sq_media::video_decoding::DecodeScale::Half => "half",
+            sq_media::video_decoding::DecodeScale::Quarter => "quarter",
+        })
+        .unwrap_or("full")
+    };
+    let mut quality = crate::bench_report::QualityTrace::new(bench.quality.name(), engine_quality(&app));
     app.with(|a| a.session_mut().play_pause());
     let began = Instant::now();
     let (mut next_ui, mut changed) = (began, began);
@@ -799,6 +830,11 @@ fn play_bench(
             }
         }
         let now = app.with(|a| crate::playback::bench_shown(a.session().engine())).flatten();
+        quality.observe(
+            engine_quality(&app),
+            began.elapsed().as_secs_f64(),
+            position.map_or(f64::NAN, |p| p.value() as f64 / p.timescale().max(1) as f64),
+        );
         if let Some(at_position) = now
             && Some(at_position) != position
         {
@@ -855,6 +891,7 @@ fn play_bench(
         project.map_or("none".into(), |p| p.display().to_string()),
         to_first.unwrap_or(f64::NAN)
     );
+    out += &quality.line();
     if let Some((status, stages)) = &engine {
         out += &format!(
             "play {played:.1} s at 1x: {shown} frames shown of {expected:.0} expected ({fps:.0} fps), {dropped} dropped, {stale} with a stand-in, final lag {}\n",
@@ -934,6 +971,7 @@ fn play_bench(
             rss_mb: (rss_first, rss_max, rss_last),
             gpu_busy,
             machine: crate::bench_report::Machine::here(&gpu),
+            quality,
         };
         let text = serde_json::to_string_pretty(&report.to_json()).unwrap_or_default();
         if let Err(e) = std::fs::write(json_path, text) {
@@ -1204,6 +1242,14 @@ fn run_mode(mode: &Mode, project: Option<&Path>, fonts: &Path) -> Result<(), Str
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn a_shot_theme_flag_wins_over_the_env_fallback() {
+        assert!(shot_light(Some(true), None));
+        assert!(!shot_light(Some(false), Some("light")));
+        assert!(shot_light(None, Some("light")));
+        assert!(!shot_light(None, None));
+    }
+
     use super::*;
     use accesskit::{Node, NodeId, Role};
 

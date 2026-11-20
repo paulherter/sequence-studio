@@ -92,6 +92,11 @@ impl Chrome {
     }
 
     /// The title row's clickable frames and the bottom edge of the row, in window points.
+    /// Locks Export while the project opens (r8 loading state).
+    pub fn set_export_locked(&mut self, locked: bool) {
+        self.title.export_locked = locked;
+    }
+
     pub fn title_drag(&self) -> (Vec<CGRect>, f64) {
         (self.title.controls(), self.top.max_y())
     }
@@ -251,3 +256,13 @@ fn saved_time(s: &EditorSession) -> Option<SystemTime> {
 
 #[cfg(test)]
 mod tests;
+
+/// What the component catalogue renderer (`catalogue_shots.rs`) draws; test builds only.
+#[cfg(test)]
+pub(crate) mod test_access {
+    pub use super::status_bar::{StatusBarContent, draw as status_bar_draw};
+    pub use super::title_row::{Mouse, TitleRow};
+    pub mod status_bar {
+        pub use super::status_bar_draw as draw;
+    }
+}

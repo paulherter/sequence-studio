@@ -225,9 +225,9 @@ impl ShellDock {
     /// Height of a tab strip.
     pub const STRIP_HEIGHT: f64 = metrics::PANEL_HEADER as f64;
     /// Height of one tab.
-    pub const TAB_HEIGHT: f64 = 22.0;
+    pub const TAB_HEIGHT: f64 = sq_draw::theme::tab::HEIGHT;
     /// Padding left and right of a tab title.
-    pub const TAB_PADDING: f64 = sq_uikit::redesign_tokens::spacing::MD as f64;
+    pub const TAB_PADDING: f64 = sq_draw::theme::tab::PADDING;
     const TAB_FONT: f64 = 11.0;
     const DRAG_SLOP: f64 = 4.0;
 
@@ -601,7 +601,8 @@ impl ShellDock {
                 let h = if bare { 0.0 } else { Self::STRIP_HEIGHT.min(r.height) };
                 let strip = CGRect::new(r.min_x(), r.min_y(), r.width, h);
                 let mut tabs = Vec::new();
-                let mut x = r.min_x() + spacing::SM as f64 - 2.0;
+                // r8 `.hdr` padding-left 6; the title then sits `.tab` padding (8) inside its frame.
+                let mut x = r.min_x() + sq_draw::theme::tab::HEADER_INSET;
                 let shows_more = !bare && self.shows_more(*selected);
                 let more = if shows_more { Self::MORE_WIDTH } else { 0.0 };
                 let limit =
@@ -631,7 +632,8 @@ impl ShellDock {
             }
             LayoutNode::Split { axis, children, fractions } => {
                 let total = if *axis == SplitAxis::Horizontal { r.width } else { r.height };
-                let length = (total - Self::GAP * (children.len() as f64 - 1.0)).max(0.0);
+                let gap = Self::GAP;
+                let length = (total - gap * (children.len() as f64 - 1.0)).max(0.0);
                 let mins = LayoutMetrics::child_minimums(*axis, children);
                 let f = LayoutMetrics::clamped_fractions(fractions, length, &mins);
                 let mut lengths: Vec<f64> = Vec::new();
@@ -658,9 +660,9 @@ impl ShellDock {
                     pos += l;
                     if i < children.len() - 1 {
                         let g = if *axis == SplitAxis::Horizontal {
-                            CGRect::new(pos, r.min_y(), Self::GAP, r.height)
+                            CGRect::new(pos, r.min_y(), gap, r.height)
                         } else {
-                            CGRect::new(r.min_x(), pos, r.width, Self::GAP)
+                            CGRect::new(r.min_x(), pos, r.width, gap)
                         };
                         self.dividers.push(Divider {
                             path: path.to_vec(),
@@ -670,7 +672,7 @@ impl ShellDock {
                             lengths: lengths.clone(),
                             mins: mins.clone(),
                         });
-                        pos += Self::GAP;
+                        pos += gap;
                     }
                 }
             }
@@ -1157,7 +1159,6 @@ impl ShellDock {
     /// `TabStrip`). Call before the panels draw into `content_frame`.
     pub fn draw(&self, c: &mut Canvas, t: &DrawTheme) {
         c.fill(self.frame, t.panel_ground());
-        let corner = t.panel_radius();
         let medium = c.medium();
         for g in &self.groups {
             if g.is_floating {
@@ -1168,11 +1169,10 @@ impl ShellDock {
                 }
                 continue;
             }
-            c.fill_rounded(g.frame, corner, t.panel());
+            Self::draw_panel_frame(c, g, t);
             if g.strip.height <= 0.0 {
                 continue;
             }
-            c.fill(CGRect::new(g.strip.min_x(), g.strip.max_y() - 1.0, g.strip.width, 1.0), t.separator());
             for (i, p) in g.panels.iter().enumerate() {
                 if g.tabs[i].width <= 0.0 {
                     continue;
@@ -1185,14 +1185,11 @@ impl ShellDock {
                     &EditorCommand::localized_panel_title(*p),
                     r,
                     Self::TAB_FONT,
-                    if on || hover { t.label() } else { t.label3() },
-                    TextAlign::Center,
-                    0.0,
-                    medium,
+                    if on || hover { t.label() } else { t.label2() },
+                    TextAlign::Left,
+                    Self::TAB_PADDING,
+                    if on { medium } else { 0 },
                 );
-                // The selected tab's underline: 2 px gray (text-3), in the focused panel too.
-                // Always gray: blue is only the focus frame of the panel (drawn in `draw_focus_frame`).
-                c.stone_tab_underline(CGRect::new(r.min_x(), g.strip.min_y(), r.width, g.strip.height), on, t);
             }
             if let Some(m) = g.more_rect() {
                 let hover = self.drag_tab.is_none() && self.pointer.is_some_and(|q| m.contains(q));
@@ -1211,18 +1208,31 @@ impl ShellDock {
         }
     }
 
-    /// The focus frame of the panel that took the last press or key focus: `FOCUS_FRAME` (1.5 pt) accent, inside the card,
-    /// faded with [`Self::focus_amount`]. Call after the panels draw (the cards paint over anything drawn before).
+    /// One docked panel's frame: a square card on the seam ground, and, when it has a strip, the header bar's full-width
+    /// `border-row` line under it (r8:501).  Every panel (Tools, Timeline, Meter too) is its own card.
+    fn draw_panel_frame(c: &mut Canvas, g: &Group, t: &DrawTheme) {
+        c.fill(g.frame, t.panel());
+        if g.strip.height > 0.0 {
+            c.fill(
+                CGRect::new(g.strip.min_x(), g.strip.max_y() - 1.0, g.strip.width, 1.0),
+                t.token(sq_uikit::redesign_tokens::color::ROW_LINE),
+            );
+        }
+    }
+
+    /// The focus edge of the panel that took the last press or key focus (r8:534-541): a 1 px square outline on the
+    /// panel's own edge, in the seam (1 px of seam stays between neighbours), faded with [`Self::focus_amount`].
+    /// The colour is `DrawTheme::focus_edge` (grey at 55 % in a background window). Call after the panels draw.
     pub fn draw_focus_frame(&self, c: &mut Canvas, t: &DrawTheme) {
         if !self.draws_focus_frame {
             return;
         }
-        let w = f64::from(sq_uikit::redesign_tokens::size::FOCUS_FRAME);
+        let edge = t.focus_edge();
         for g in self.groups.iter().filter(|g| !g.is_floating) {
             let a = self.focus_amount(g.selected);
             if a > 0.0 {
-                let r = g.frame.inset_by(w / 2.0, w / 2.0);
-                c.stroke_rounded(r, 0.0, w, t.accent().with_alpha(a as f32));
+                // The 1 px outline sits just outside the panel box: its centre line is half a point out.
+                c.stroke_rounded(g.frame.inset_by(-0.5, -0.5), 0.0, 1.0, edge.with_alpha(edge.a * a as f32));
             }
         }
     }
@@ -1359,6 +1369,62 @@ mod tests {
         );
         let meter = group_with(&d, PanelID::AudioMeter);
         assert!(meter.frame.width >= PanelID::AudioMeter.min_size().0);
+    }
+
+    /// The r8 look never merges panels. Tools, Timeline and Meter are three docked panels again, each with
+    /// its own frame, its own seam, and its own focus edge.
+    #[test]
+    fn tools_timeline_and_meter_each_have_their_own_frame() {
+        let mut d = ShellDock { frame: CGRect::new(0.0, 44.0, 1440.0, 856.0), ..dock() };
+        d.relayout();
+        let (tools, tl, meter) =
+            (group_with(&d, PanelID::Tools), group_with(&d, PanelID::Timeline), group_with(&d, PanelID::AudioMeter));
+        assert_eq!(tools.panels, [PanelID::Tools]);
+        assert_eq!(meter.panels, [PanelID::AudioMeter]);
+        assert_eq!(tl.frame.min_x() - tools.frame.max_x(), ShellDock::GAP, "a seam between Tools and Timeline");
+        assert_eq!(meter.frame.min_x() - tl.frame.max_x(), ShellDock::GAP, "a seam between Timeline and Meter");
+        // The seams are dividers (draggable), and Tools and Meter keep a header of their own.
+        assert!(d.dividers().iter().filter(|v| v.frame.width == ShellDock::GAP).count() >= 2);
+        assert_eq!(tools.strip.height, ShellDock::STRIP_HEIGHT);
+        assert_eq!(meter.strip.height, ShellDock::STRIP_HEIGHT);
+    }
+
+    /// Tools can be docked at another edge of another panel and floated into a window of its own.
+    #[test]
+    fn tools_can_move_to_another_dock_zone_and_float() {
+        let mut d = dock();
+        let tools = group_with(&d, PanelID::Tools);
+        let tl = d.card_frame(PanelID::Timeline).expect("timeline card");
+        d.handle(&down(tools.strip.mid_x(), tools.strip.mid_y(), InputModifiers::NONE), 1.0);
+        let to = CGPoint::new(tl.max_x() - 10.0, tl.mid_y());
+        d.handle(&drag(to.x, to.y), 1.0);
+        assert_eq!(
+            d.drop_target().and_then(|t| t.action),
+            Some(DropAction::Dock(PanelID::Tools, PanelID::Timeline, DropZone::Right))
+        );
+        d.handle(&up(to.x, to.y), 1.0);
+        let moved = d.card_frame(PanelID::Tools).expect("tools card");
+        assert!(moved.min_x() > d.card_frame(PanelID::Timeline).expect("timeline card").min_x());
+
+        let mut d = dock();
+        d.can_float_windows = true;
+        d.floating.main_screen_frame = Some(CGRect::new(0.0, 0.0, 1600.0, 1000.0));
+        d.floating.screens = vec![CGRect::new(0.0, 0.0, 1600.0, 1000.0)];
+        let tools = group_with(&d, PanelID::Tools);
+        d.handle(&down(tools.strip.mid_x(), tools.strip.mid_y(), InputModifiers::NONE), 1.0);
+        d.handle(&drag(800.0, 0.5), 1.0);
+        d.handle(&up(800.0, 0.5), 1.0);
+        assert!(d.floating.is_floating(PanelID::Tools));
+    }
+
+    /// The tab title starts `.hdr` padding (6) plus `.tab` padding (8) inside the panel.
+    #[test]
+    fn a_tab_title_starts_14_inside_the_panel() {
+        let mut d = ShellDock { frame: CGRect::new(0.0, 44.0, 1440.0, 856.0), ..dock() };
+        d.relayout();
+        let g = d.groups().iter().find(|g| g.panels.len() > 1 || g.tabs.iter().any(|t| t.width > 0.0)).unwrap();
+        let t = g.tabs.iter().find(|t| t.width > 0.0).unwrap();
+        assert_eq!(t.x - g.frame.x + ShellDock::TAB_PADDING, 14.0);
     }
 
     #[test]

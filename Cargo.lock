@@ -4539,7 +4539,7 @@ checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "sequence-studio"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "accesskit",
  "accesskit_winit",
@@ -4875,7 +4875,7 @@ source = "git+https://github.com/Rust-GPU/rust-gpu?rev=854e9ba#854e9ba7da26d52ca
 
 [[package]]
 name = "sq-analysis"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cc",
  "serde",
@@ -4893,7 +4893,7 @@ dependencies = [
 
 [[package]]
 name = "sq-app-hosts"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "accesskit",
  "arboard",
@@ -4950,7 +4950,7 @@ dependencies = [
 
 [[package]]
 name = "sq-app-shell"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "accesskit",
  "sq-audiofx",
@@ -4966,7 +4966,7 @@ dependencies = [
 
 [[package]]
 name = "sq-audio-out"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cpal",
  "sq-core-edit",
@@ -4976,7 +4976,7 @@ dependencies = [
 
 [[package]]
 name = "sq-audiofx"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cc",
  "serde",
@@ -4989,7 +4989,7 @@ dependencies = [
 
 [[package]]
 name = "sq-core-audio"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5000,7 +5000,7 @@ dependencies = [
 
 [[package]]
 name = "sq-core-color"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde_json",
  "sq-core-model",
@@ -5010,7 +5010,7 @@ dependencies = [
 
 [[package]]
 name = "sq-core-edit"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5026,7 +5026,7 @@ dependencies = [
 
 [[package]]
 name = "sq-core-effects"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5040,7 +5040,7 @@ dependencies = [
 
 [[package]]
 name = "sq-core-file"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5053,7 +5053,7 @@ dependencies = [
 
 [[package]]
 name = "sq-core-graphics"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5066,7 +5066,7 @@ dependencies = [
 
 [[package]]
 name = "sq-core-masks"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "sq-core-model",
  "sq-core-time",
@@ -5075,7 +5075,7 @@ dependencies = [
 
 [[package]]
 name = "sq-core-model"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5085,7 +5085,7 @@ dependencies = [
 
 [[package]]
 name = "sq-core-project"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5102,7 +5102,7 @@ dependencies = [
 
 [[package]]
 name = "sq-core-time"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "getrandom 0.3.4",
@@ -5116,7 +5116,7 @@ dependencies = [
 
 [[package]]
 name = "sq-draw"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "accesskit",
  "pollster 1.0.1",
@@ -5136,7 +5136,7 @@ dependencies = [
 
 [[package]]
 name = "sq-draw-library"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5157,7 +5157,7 @@ dependencies = [
 
 [[package]]
 name = "sq-draw-monitor"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde_json",
  "sq-app-shell",
@@ -5180,7 +5180,7 @@ dependencies = [
 
 [[package]]
 name = "sq-draw-shell"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "serde_json",
@@ -5209,7 +5209,7 @@ dependencies = [
 
 [[package]]
 name = "sq-draw-timeline"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde_json",
  "sq-app-shell",
@@ -5234,7 +5234,7 @@ dependencies = [
 
 [[package]]
 name = "sq-edit-api"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5246,7 +5246,7 @@ dependencies = [
 
 [[package]]
 name = "sq-editor-session"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5278,7 +5278,7 @@ dependencies = [
 
 [[package]]
 name = "sq-export"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5301,14 +5301,14 @@ dependencies = [
 
 [[package]]
 name = "sq-fault-text"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "workspace-hack",
 ]
 
 [[package]]
 name = "sq-frame"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5320,7 +5320,7 @@ dependencies = [
 
 [[package]]
 name = "sq-gpu"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "pollster 1.0.1",
  "serde_json",
@@ -5332,7 +5332,7 @@ dependencies = [
 
 [[package]]
 name = "sq-gyroflow"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "gyroflow-core",
  "nalgebra 0.34.2",
@@ -5344,7 +5344,7 @@ dependencies = [
 
 [[package]]
 name = "sq-inspector-ui"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde_json",
  "sq-analysis",
@@ -5371,7 +5371,7 @@ dependencies = [
 
 [[package]]
 name = "sq-installer"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "arboard",
  "png",
@@ -5392,7 +5392,7 @@ dependencies = [
 
 [[package]]
 name = "sq-library"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "notify",
  "serde",
@@ -5410,7 +5410,7 @@ dependencies = [
 
 [[package]]
 name = "sq-lottie"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "jpeg-encoder",
  "png",
@@ -5429,7 +5429,7 @@ dependencies = [
 
 [[package]]
 name = "sq-media"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "serde",
@@ -5448,7 +5448,7 @@ dependencies = [
 
 [[package]]
 name = "sq-media-ffmpeg"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cc",
  "gif",
@@ -5467,7 +5467,7 @@ dependencies = [
 
 [[package]]
 name = "sq-onnx"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cc",
  "serde",
@@ -5477,14 +5477,14 @@ dependencies = [
 
 [[package]]
 name = "sq-os"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "workspace-hack",
 ]
 
 [[package]]
 name = "sq-platform"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "libc",
  "sq-fault-text",
@@ -5499,7 +5499,7 @@ dependencies = [
 
 [[package]]
 name = "sq-platform-mac"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "block2 0.6.2",
  "libc",
@@ -5520,7 +5520,7 @@ dependencies = [
 
 [[package]]
 name = "sq-platform-tts"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "block2 0.6.2",
  "objc2 0.6.5",
@@ -5534,7 +5534,7 @@ dependencies = [
 
 [[package]]
 name = "sq-platform-vision"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "objc2 0.6.5",
  "objc2-core-foundation",
@@ -5549,7 +5549,7 @@ dependencies = [
 
 [[package]]
 name = "sq-platform-win"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "sq-fault-text",
  "sq-library",
@@ -5562,7 +5562,7 @@ dependencies = [
 
 [[package]]
 name = "sq-playback"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "png",
  "serde",
@@ -5591,7 +5591,7 @@ dependencies = [
 
 [[package]]
 name = "sq-premiere-import"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5610,7 +5610,7 @@ dependencies = [
 
 [[package]]
 name = "sq-proxy"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5625,14 +5625,14 @@ dependencies = [
 
 [[package]]
 name = "sq-prproj-reader"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "workspace-hack",
 ]
 
 [[package]]
 name = "sq-render"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "png",
  "serde",
@@ -5652,14 +5652,14 @@ dependencies = [
 
 [[package]]
 name = "sq-runtime"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "workspace-hack",
 ]
 
 [[package]]
 name = "sq-setup-engine"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "miniz_oxide 0.8.9",
  "sq-core-time",
@@ -5669,7 +5669,7 @@ dependencies = [
 
 [[package]]
 name = "sq-text"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "png",
  "serde",
@@ -5686,7 +5686,7 @@ dependencies = [
 
 [[package]]
 name = "sq-timeline-ui"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde_json",
  "sq-core-audio",
@@ -5707,7 +5707,7 @@ dependencies = [
 
 [[package]]
 name = "sq-transcribe"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "cc",
  "serde",
@@ -5723,7 +5723,7 @@ dependencies = [
 
 [[package]]
 name = "sq-translate"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde_json",
  "sq-core-time",
@@ -5735,7 +5735,7 @@ dependencies = [
 
 [[package]]
 name = "sq-trash"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "chrono",
  "libc",
@@ -5747,7 +5747,7 @@ dependencies = [
 
 [[package]]
 name = "sq-uikit"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "serde",
  "serde_json",
@@ -5766,7 +5766,7 @@ dependencies = [
 
 [[package]]
 name = "sq-video-hw"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "objc2 0.6.5",
  "objc2-core-foundation",
@@ -7404,7 +7404,7 @@ checksum = "e450f9b2ed1dff33c94c12589a87338689467b9c4f5d8a5710bd09a847d2c8a7"
 
 [[package]]
 name = "xtask"
-version = "0.2.0"
+version = "0.2.1"
 dependencies = [
  "workspace-hack",
 ]

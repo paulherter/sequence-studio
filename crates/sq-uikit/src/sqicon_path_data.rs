@@ -570,6 +570,25 @@ mod tests {
         assert_eq!(ops("M1 2 X3 4"), vec![Op::Move(1.0, 2.0)]);
     }
 
+    /// Every bundled Lucide file: 24 grid, line width 2, only supported elements, all of them stroked (a few dots also carry fill="currentColor").
+    #[test]
+    fn bundled_lucide_files_parse_as_strokes() {
+        const SUPPORTED: [&str; 8] = ["svg", "path", "circle", "ellipse", "rect", "line", "polyline", "polygon"];
+        let mut n = 0;
+        for (name, svg) in crate::sqicon_svg_table::ICON_SVGS.iter().filter(|(n, _)| n.starts_with("lucide-")) {
+            n += 1;
+            let d = SQIconSVG::document(svg);
+            assert_eq!((d.grid, d.line_width), (24.0, 2.0), "{name}");
+            for (tag, _) in SQIconSVG::elements(svg) {
+                assert!(SUPPORTED.contains(&tag.as_str()), "{name}: unsupported element <{tag}>");
+            }
+            let shapes = SQIconSVG::shapes(svg, Rec::default);
+            assert!(!shapes.is_empty(), "{name}: no shapes");
+            assert!(shapes.iter().all(|(_, s)| s.stroke), "{name}: not stroked");
+        }
+        assert!(n > 100);
+    }
+
     #[test]
     fn svg_document_and_elements() {
         let svg = r#"<?xml version="1.0"?><svg viewBox="0 0 256 256" fill='none' stroke="currentColor" stroke-width="16">

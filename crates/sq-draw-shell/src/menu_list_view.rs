@@ -3,6 +3,7 @@
 //! is the same line for line, the drawing goes to the `Canvas` (points, y down) instead of AppKit. Dumb: the controller
 //! (`MenuController`) owns the navigation state.
 
+use sq_draw::middle_fit::TruncatedLabel;
 use sq_draw::{Canvas, Color, DrawTheme, TextAlign, TextMeasure};
 use sq_uikit::appearance_palette::PaletteColor;
 use sq_uikit::controls_grid::{CGPoint, CGRect, CGSize};
@@ -52,6 +53,9 @@ pub struct MenuListView {
     pub max_height: Option<f64>,
     /// How far the list is scrolled.
     pub scroll_offset: f64,
+    /// Widest the list may be (the window less its margins); a longer row is cut Finder-style and its full title becomes the
+    /// row's tooltip ([`Self::title_tip`]).
+    pub max_width: Option<f64>,
     /// Top-left corner in window points (set by the controller when it places the level).
     pub origin: CGPoint,
 }
@@ -79,6 +83,7 @@ impl MenuListView {
             symbol_width: 0.0,
             icon_width: SQMenuLayout::ICON_COLUMN,
             max_height: None,
+            max_width: None,
             scroll_offset: 0.0,
             origin: CGPoint::ZERO,
         }
@@ -170,6 +175,9 @@ impl MenuListView {
                 .width
                 .max((SQMenuLayout::INSET * 2.0 + SQMenuLayout::ROW_PAD * 2.0 + SQMenuLayout::CAPTION_WIDTH).ceil());
         }
+        if let Some(cap) = self.max_width {
+            self.width = self.width.min(cap.max(SQMenuLayout::INSET * 2.0 + SQMenuLayout::ROW_PAD * 2.0));
+        }
         let mut y = SQMenuLayout::INSET;
         if self.filter.is_empty() {
             self.filter_frame = None;
@@ -181,7 +189,8 @@ impl MenuListView {
                 SQMenuLayout::ROW_HEIGHT,
             ));
             y += SQMenuLayout::ROW_HEIGHT + SQMenuLayout::SEPARATOR_HEIGHT;
-            self.width = self.width.max((m.width(&self.filter, MenuFont::TITLE, 0) + 40.0).ceil());
+            let wanted = (m.width(&self.filter, MenuFont::TITLE, 0) + 40.0).ceil();
+            self.width = self.width.max(self.max_width.map_or(wanted, |cap| wanted.min(cap)));
             if let Some(f) = self.filter_frame.as_mut() {
                 f.width = self.width - 2.0 * SQMenuLayout::INSET;
             }
@@ -192,6 +201,30 @@ impl MenuListView {
             y += h;
         }
         self.set_scroll(self.scroll_offset);
+    }
+
+    /// The title of `item` as it fits its row: whole, or cut Finder-style (start and extension stay) with the full title
+    /// as the label's tooltip. `width_of` measures a text at the given font size. Layout ([`Self::title_tip`]) and drawing share it.
+    fn fitted_title(&self, item: &SQMenuItem, width_of: impl Fn(&str, f64) -> f64) -> TruncatedLabel {
+        let trailing = if item.submenu.is_some() {
+            MenuFont::ARROW
+        } else {
+            width_of(&Self::shown_shortcut(&item.shortcut), MenuFont::SHORTCUT)
+        };
+        let room = self.width
+            - 2.0 * SQMenuLayout::INSET
+            - SQMenuLayout::ROW_PAD_LEFT
+            - self.icon_width
+            - self.symbol_width
+            - SQMenuLayout::ROW_PAD_RIGHT
+            - if trailing > 0.0 { SQMenuLayout::SHORTCUT_GAP + trailing } else { 0.0 };
+        sq_draw::middle_fit::truncate_name(&item.title, |t| width_of(t, MenuFont::TITLE) <= room)
+    }
+
+    /// The tooltip of row `i`: its full title when the row had to cut it, else `None`.
+    pub fn title_tip(&self, i: usize, m: &TextMeasure) -> Option<String> {
+        let item = self.items.get(i).filter(|it| it.kind == SQMenuItemKind::Action)?;
+        self.fitted_title(item, |t, size| m.width(t, size, 0)).full
     }
 
     /// Row under `p` (window points).
@@ -233,7 +266,7 @@ impl MenuListView {
         // The panel's shadow (`SQMenuPanel.hasShadow`).
         c.shadow(
             bounds,
-            SQMenuLayout::CORNER_RADIUS,
+            f64::from(radius::MENU),
             if t.palette.is_dark() { Self::SHADOW_BLUR } else { Self::SHADOW_BLUR_LIGHT },
             if t.palette.is_dark() { Self::SHADOW_DY } else { Self::SHADOW_DY_LIGHT },
             Color::new(
@@ -245,8 +278,8 @@ impl MenuListView {
             true,
         );
         let bg = bounds.inset_by(0.25, 0.25);
-        c.fill_rounded(bg, SQMenuLayout::CORNER_RADIUS, t.overlay());
-        c.stroke_rounded(bounds.inset_by(0.5, 0.5), SQMenuLayout::CORNER_RADIUS - 0.5, 1.0, t.menu_edge());
+        c.fill_rounded(bg, f64::from(radius::MENU), t.token(sq_uikit::redesign_tokens::color::MENU));
+        c.stroke_rounded(bounds.inset_by(0.5, 0.5), f64::from(radius::MENU) - 0.5, 1.0, t.menu_edge());
 
         c.save_gstate();
         c.clip_to(bounds);
@@ -333,8 +366,9 @@ impl MenuListView {
 
     fn draw_row(&self, c: &mut Canvas, item: &SQMenuItem, r: CGRect, active: bool, t: &DrawTheme) {
         let metrics = SQMenuTextMetrics::default();
-        if active {
-            c.fill_rounded(r, SQMenuLayout::ROW_RADIUS, t.menu_row_hover());
+        // A disabled row never lights up: hovering it promises nothing.
+        if active && item.is_enabled {
+            c.fill_rounded(r, f64::from(radius::SMALL), t.menu_row_hover());
         }
         let text = if !item.is_enabled {
             t.label4()
@@ -343,7 +377,7 @@ impl MenuListView {
         } else {
             t.label()
         };
-        let sub = if !item.is_enabled { t.label4() } else { t.label2() };
+        let sub = if !item.is_enabled { t.label4() } else { t.label2_on_raised() };
 
         let check_box =
             CGRect::new(r.min_x() + SQMenuLayout::ROW_PAD_LEFT, r.min_y(), SQMenuLayout::CHECK_COLUMN, r.height);
@@ -394,10 +428,11 @@ impl MenuListView {
         } else {
             CGRect::new(tx, r.min_y(), r.max_x() - tx, r.height)
         };
-        c.draw_text_in(&item.title, title_box, MenuFont::TITLE, text, TextAlign::Left, 0.0, 0);
+        let title = self.fitted_title(item, |t, size| c.size_of(t, size, 0).width);
+        c.draw_text_in(&title.shown, title_box, MenuFont::TITLE, text, TextAlign::Left, 0.0, 0);
         if item.is_experimental && sq_draw::experimental::prefs().shows_mark() {
             // The trailing mark: the flask right after the title (no width of its own to reserve).
-            let w = c.size_of(&item.title, MenuFont::TITLE, 0).width.ceil();
+            let w = c.size_of(&title.shown, MenuFont::TITLE, 0).width.ceil();
             let o = CGPoint::new(tx + w + 6.0, r.min_y() + (r.height.min(SQMenuLayout::ROW_HEIGHT) - 11.0) / 2.0);
             c.experimental_badge(o, sq_draw::experimental::ExperimentalMark::Icon, t);
         }

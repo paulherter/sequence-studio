@@ -30,7 +30,7 @@ use sq_timeline_ui::{
     TransitionDropTarget, TransitionHit, TransitionLayerDropTarget, ZoomAnimation, ZoomFitToggle,
     ZoomMode as ZoomAnimationMode,
 };
-use sq_uikit::controls_grid::{CGPoint, CGSize};
+use sq_uikit::controls_grid::{CGPoint, CGRect, CGSize};
 use sq_uikit::design_tokens::sq_tokens::spacing;
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
@@ -226,6 +226,12 @@ pub struct TimelinePanel {
     /// Track row under the pointer (reveals Lock and Sync Lock like the Mac header's hover).
     pub(crate) hover_track: Option<Id>,
     pub(crate) hover_point: Option<CGPoint>,
+    /// The project is still opening: the lanes show skeleton clips (r8:1121).
+    pub loading: bool,
+    /// Where the empty state's Import button was drawn last frame (panel points); `None` while the lanes hold clips.
+    pub(crate) empty_import: std::cell::Cell<Option<CGRect>>,
+    /// Names the last draw had to cut, with their panel rect: the pointer over one offers the full name as its tip.
+    pub(crate) cut_tips: RefCell<Vec<(CGRect, String)>>,
     /// A Slip drag's two-up is showing in the Program monitor.
     pub(crate) slip_two_up_shown: bool,
     /// The running media drag over the panel (host driven).
@@ -377,6 +383,9 @@ impl TimelinePanel {
             scrub_snap_time: None,
             hover_track: None,
             hover_point: None,
+            loading: false,
+            empty_import: std::cell::Cell::new(None),
+            cut_tips: RefCell::new(Vec::new()),
             slip_two_up_shown: false,
             drop_preview: DropPreview::new(),
             effect_drop_target: None,

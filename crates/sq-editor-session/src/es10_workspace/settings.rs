@@ -9,6 +9,7 @@ use sq_uikit::appearance_palette::UiDefaults;
 
 use super::defaults::DefaultsExt;
 use super::storage::{StorageLocations, env_var};
+use super::update::ReleaseChannel;
 use crate::MonitorQuality;
 use crate::es08_media::MediaPolicyDefaults;
 
@@ -50,6 +51,8 @@ pub struct AppSettings {
     // Swift: AppSettings.swift:15
     /// Ask the update address (`UpdateCheck::feed_url`) for a newer version at launch. Inert while that address is empty.
     pub check_for_updates: bool,
+    /// Which stream the update check follows; new installs start on the channel they were built for.
+    pub update_channel: ReleaseChannel,
     // Swift: AppSettings.swift:17
     /// The first-run welcome sheet was shown (or skipped); it never appears again.
     pub onboarding_seen: bool,
@@ -78,7 +81,7 @@ pub struct AppSettings {
     // Swift: AppSettings.swift:33
     /// Sequence > Selection Follows Playhead (`sq.selectionFollowsPlayhead`), off by default.
     pub selection_follows_playhead: bool,
-    /// Preview quality Auto: the monitors start at the size `MemoryBudget::auto_preview_quality` picks for this
+    /// Preview quality Auto: the monitors start at the size `memory_budget::auto_start_scale` picks for this
     /// machine and drop lower under memory pressure. Off = start at `default_quality` and stay there.
     // Swift: AppSettings.swift:36
     pub preview_quality_auto: bool,
@@ -167,6 +170,7 @@ impl AppSettingsKey {
     pub const ENCODER_SPEED: &'static str = "sq.export.encoderSpeed";
     // Swift: AppSettings.swift:167
     pub const CHECK_FOR_UPDATES: &'static str = "sq.updates.check";
+    pub const UPDATE_CHANNEL: &'static str = "sq.updates.channel";
     // Swift: AppSettings.swift:168
     pub const ONBOARDING_SEEN: &'static str = "sq.onboarding.seen";
     // Swift: AppSettings.swift:169
@@ -267,6 +271,7 @@ impl AppSettings {
             autosave_interval,
             offer_recovery,
             check_for_updates: true,
+            update_channel: ReleaseChannel::build(),
             onboarding_seen: false,
             default_quality,
             preroll_seconds: 3,
@@ -362,6 +367,9 @@ impl AppSettings {
         if let Some(v) = d.flag(K::CHECK_FOR_UPDATES) {
             s.check_for_updates = v;
         }
+        if let Some(v) = d.string(K::UPDATE_CHANNEL) {
+            s.update_channel = ReleaseChannel::from_raw(Some(&v));
+        }
         s.onboarding_seen = d.bool_value(K::ONBOARDING_SEEN);
         if let Some(v) = d.flag(K::REFRESH_GROWING) {
             s.refresh_growing_files = v;
@@ -451,6 +459,7 @@ impl AppSettings {
         d.set_integer(K::RENDER_CACHE_CAP, self.render_cache_cap_gb);
         d.set_string(K::ENCODER_SPEED, encoder_speed_raw(self.export_encoder_speed));
         d.set_flag(K::CHECK_FOR_UPDATES, self.check_for_updates);
+        d.set_string(K::UPDATE_CHANNEL, self.update_channel.raw());
         d.set_flag(K::ONBOARDING_SEEN, self.onboarding_seen);
         d.set_flag(K::REFRESH_GROWING, self.refresh_growing_files);
         d.set_flag(K::PROXIES_FOR_EXPORT, self.use_proxies_for_export);

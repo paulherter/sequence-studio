@@ -444,7 +444,7 @@ impl ColorGradeDraw {
         let prs = self.pressed == Some(k);
         let h = f64::MAX;
         match k {
-            Control::StartEmpty => InspectorDraw::button(c, &tr("Start empty"), f, hov, prs, true, true, h, t),
+            Control::StartEmpty => InspectorDraw::button(c, &tr("Start empty"), f, hov, prs, true, false, h, t),
             Control::StartFromSimple => {
                 InspectorDraw::button(c, &tr("Start from Simple grade"), f, hov, prs, true, false, h, t)
             }
@@ -487,7 +487,7 @@ impl ColorGradeDraw {
             Control::ListBlend(id) => {
                 let b = model.graph().and_then(|g| g.blend(id)).unwrap_or(StepBlend::Series);
                 let editable = model.graph().is_none_or(|g| g.allows_list_edit());
-                InspectorDraw::popup(
+                super::color_grade_draw::flat_popup(
                     c,
                     &tr(&Self::blend_title(b)),
                     f,

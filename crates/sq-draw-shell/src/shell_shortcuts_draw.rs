@@ -157,7 +157,18 @@ impl ShellShortcutsEditor {
             "Super" => "Sup",
             _ => label,
         };
-        (glyph.to_string(), fit(glyph).unwrap_or(M::F_CAP_MIN))
+        if let Some(size) = fit(glyph) {
+            return (glyph.to_string(), size);
+        }
+        // Still too wide: the leading letters with an ellipsis, down to one letter; a cap never loses its label.
+        let chars: Vec<char> = glyph.chars().collect();
+        for n in (1..chars.len()).rev() {
+            let cut = format!("{}\u{2026}", chars[..n].iter().collect::<String>());
+            if let Some(size) = fit(&cut) {
+                return (cut, size);
+            }
+        }
+        (chars.iter().take(1).collect(), M::F_CAP_MIN)
     }
 
     /// The command name a keycap prints under its label and its size: the whole name (down to 7 pt), else its leading
@@ -292,7 +303,7 @@ impl ShellShortcutsEditor {
             let title = rect(p.x0 + 2.0, y, p.width, 16.0);
             let link = s.link.then(|| {
                 let tw = Self::text_width(m, &s.title, M::F_SMALL);
-                rect(p.x0 + 2.0 + tw + 8.0, y, 70.0, 16.0)
+                rect(p.x0 + 2.0 + tw + 8.0, y, Self::text_width(m, &format!("· show all {}", self.rows.len()), M::F_SMALL) + 4.0, 16.0)
             });
             let card_y = y + 24.0;
             let mut rows = Vec::new();
@@ -521,6 +532,7 @@ impl ShellShortcutsEditor {
         self.menu.bounds = self.frame;
         if self.menu.is_open() {
             let _ = self.menu.handle(e, scale, m);
+            ui.hover.offer_tip(self.menu.tip_at(e, scale, m).as_deref());
             return;
         }
         let pt = |x: f32, y: f32| CGPoint::new(f64::from(x) / k, f64::from(y) / k);
@@ -668,13 +680,12 @@ impl ShellShortcutsEditor {
 
     // MARK: Drawing
 
-    /// Colors of the areas (kit `CATC`: the same in both appearances).
-    fn color(g: KeyGroup) -> Color {
-        // Order of `KeyGroup::ALL`: transport, marking, tools, editing, clipboard, view, file, audio, keyframes, other.
-        const TABLE: [u32; 10] =
-            [0x2F6FB0, 0xA8741C, 0x7350C0, 0x1E8449, 0x6E6E75, 0x2F8F9D, 0x4F78A3, 0x3F7A4A, 0xBC4F78, 0x55555A];
+    /// The strip color of an area: ten neutral steps from the text color to the faintest text color (the legend and the
+    /// key strips share it). The hue is gone on purpose (r8 uses neutrals plus the one accent); the step order is the
+    /// order of `KeyGroup::ALL`.
+    fn color(g: KeyGroup, t: &DrawTheme) -> Color {
         let i = KeyGroup::ALL.iter().position(|x| *x == g).unwrap_or(9);
-        Color::hex(TABLE[i], 1.0)
+        t.label().mix(t.label4(), i as f32 / 9.0)
     }
 
     fn touch(&self, h: Hit) -> Touch {
@@ -785,10 +796,10 @@ impl ShellShortcutsEditor {
             c.stone_button(r, kind, touch, t);
             let group = cap.key.and_then(|k| model.group(k));
             if let Some(g) = group {
-                c.fill_rounded(rect(r.min_x() + 1.5, r.max_y() - 3.0, r.width - 3.0, 3.0), 1.5, Self::color(g));
+                c.fill_rounded(rect(r.min_x() + 1.5, r.max_y() - 3.0, r.width - 3.0, 3.0), 1.5, Self::color(g, t));
             }
             let label_color = if layer_on {
-                Color::WHITE
+                t.token(sq_uikit::redesign_tokens::color::ON_ACCENT)
             } else if is_mod {
                 t.label3()
             } else {
@@ -831,7 +842,7 @@ impl ShellShortcutsEditor {
 
     fn draw_legend(&self, c: &mut Canvas, t: &DrawTheme, p: &Parts, m: &TextMeasure) {
         for (g, x, y) in Self::legend_layout(m, p.x0, p.width, p.legend_top) {
-            c.fill_rounded(rect(x, y + 5.5, 10.0, 3.0), 1.0, Self::color(g));
+            c.fill_rounded(rect(x, y + 5.5, 10.0, 3.0), 1.0, Self::color(g, t));
             c.draw_text_in(
                 &SQL10n::string(g.title()),
                 rect(x + 15.0, y, 400.0, M::LEGEND_ROW),
@@ -902,7 +913,7 @@ impl ShellShortcutsEditor {
             if let Some(r) = l.link {
                 let hot = self.hover == Some(Hit::ShowAll);
                 c.draw_text_in(
-                    "· show all",
+                    &format!("· show all {}", self.rows.len()),
                     r,
                     M::F_SMALL,
                     if hot { t.label2() } else { t.label4() },
@@ -1026,9 +1037,8 @@ impl ShellShortcutsEditor {
                     if on { t.current() } else { t.hover() },
                 );
             }
-            let tile = rect(r.min_x() + 6.0, (r.mid_y() - 9.0).round(), 18.0, 18.0);
-            c.fill_rounded(tile, 5.0, crate::shell_form::ShellForm::tile_color(page.title()));
-            c.draw_icon(page.icon(), CGPoint::new(tile.min_x() + 3.5, tile.min_y() + 3.5), 11.0, Color::WHITE, None);
+            // r8 `.nav`: a 16 pt line icon in the text color, no tile.
+            c.draw_icon(page.icon(), CGPoint::new(r.min_x() + 7.0, (r.mid_y() - 8.0).round()), 16.0, t.label(), None);
             c.draw_text_in(
                 &SQL10n::string(page.title()),
                 rect(r.min_x() + 32.0, r.min_y(), r.width - 42.0, r.height),
@@ -1065,7 +1075,7 @@ impl ShellShortcutsEditor {
             0.0,
             c.medium(),
         );
-        let r = c.stone_button(p.done, ButtonKind::Accent, self.touch(Hit::Done), t);
-        c.draw_text_in("Done", r, dm::BUTTON_FONT, Color::WHITE, TextAlign::Center, 0.0, c.medium());
+        let r = c.stone_button(p.done, ButtonKind::Primary, self.touch(Hit::Done), t);
+        c.draw_text_in("Done", r, dm::BUTTON_FONT, t.primary_button_text(), TextAlign::Center, 0.0, c.medium());
     }
 }

@@ -74,9 +74,16 @@ impl ZoomScrollBarControl {
         // the knobs a faint neutral body shows the span (the maintainer: no big blue bar).
         crate::stone_controls::zoom_bar_stone(c, bounds, inset, xl, xh, t);
         let k = crate::stone_controls::ZOOM_BAR_HEIGHT;
-        let active = self.hovered == Some(Part::Body) || self.gesture.is_panning();
+        // Rest, hover and press are three levels of the theme's ink (white on dark, near-black on light), so each differs in both themes.
+        let level = if self.gesture.is_panning() {
+            0.26
+        } else if self.hovered == Some(Part::Body) {
+            0.15
+        } else {
+            0.07
+        };
         let body = CGRect::new(xl + k / 2.0, mid_y - k / 2.0, (xh - xl - k).max(0.0), k);
-        c.fill(body, Color::WHITE.with_alpha(if active { 0.14 } else { 0.07 }));
+        c.fill(body, t.label().with_alpha(level));
     }
 }
 
@@ -107,6 +114,31 @@ mod tests {
         z.draw(&mut hot, b, (0.2, 0.8), &t, None);
         let alpha = |c: &Canvas| c.list.quads().last().map(|q| q.color.a);
         assert!(alpha(&hot) > alpha(&rest));
+    }
+
+    #[test]
+    fn rest_hover_and_press_differ_in_both_themes() {
+        for dark in [true, false] {
+            let mode = if dark {
+                sq_uikit::appearance_palette::AppearanceMode::Dark
+            } else {
+                sq_uikit::appearance_palette::AppearanceMode::Light
+            };
+            let t = DrawTheme::new(&sq_uikit::appearance_palette::AppearanceSettings::new(mode, 0, 50), 1.0);
+            let b = CGRect::new(0.0, 0.0, 100.0, 18.0);
+            let body = |z: &ZoomScrollBarControl| {
+                let mut c = Canvas::with_size(100.0, 18.0, None, 1.0);
+                z.draw(&mut c, b, (0.2, 0.8), &t, None);
+                c.list.quads().last().map(|q| q.color)
+            };
+            let rest = ZoomScrollBarControl::new();
+            let mut hot = ZoomScrollBarControl::new();
+            hot.hover(Some(CGPoint { x: 50.0, y: 9.0 }), b, (0.2, 0.8));
+            let mut down = ZoomScrollBarControl::new();
+            down.mouse_down(CGPoint { x: 50.0, y: 9.0 }, 1, b, (0.2, 0.8));
+            let (r, h, d) = (body(&rest), body(&hot), body(&down));
+            assert!(r != h && h != d && r != d, "dark {dark}: {r:?} {h:?} {d:?}");
+        }
     }
 
     #[test]

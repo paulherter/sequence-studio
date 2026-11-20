@@ -38,6 +38,7 @@ use sq_render::program::{Inputs, LayerSource, ProgramCompositor, ProgramError, R
 use std::collections::{HashMap, HashSet};
 use std::ops::RangeInclusive;
 use std::sync::Arc;
+use super::clock_hold::{ClockHold, FIRST_PICTURE_LIMIT, HoldStep, ahead_indices};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
 use std::time::{Duration, Instant};
 
@@ -46,8 +47,6 @@ use std::time::{Duration, Instant};
 const GPU_WAIT_PLAYING: Duration = Duration::from_millis(8);
 /// A decode that failed is not asked again for this long.
 const FAILED_RETRY: Duration = Duration::from_secs(3);
-/// A started play waits this long for its first picture before the clock runs anyway.
-const CLOCK_HOLD_LIMIT: Duration = Duration::from_secs(2);
 /// While playing, a stand-in reaches this many frames.
 pub const STAND_IN_REACH: i64 = 90;
 /// Sources larger than this (1080p plus a margin) scrub in preview mode.
@@ -204,7 +203,8 @@ pub struct ProgramEngine {
     /// This engine in the process-wide count of playing engines (the automatic proxy holds back while any plays).
     activity: PlayMark,
     moved_since_tick: bool,
-    clock_held_since: Option<Instant>,
+    /// After Play: the clock waits for the first picture and the pre-roll (`clock_hold.rs`).
+    clock_hold: ClockHold,
     /// Diagnostics: when `play` was called, until the first decode and the first picture after it are logged.
     play_logged: Option<(Instant, bool)>,
     /// The clock start laid out on the display while the picture at the playhead is up (`awaiting_display_start`), and the
@@ -212,6 +212,8 @@ pub struct ProgramEngine {
     play_start: Option<(PlayStart, i64)>,
     shown_frames: u64,
     skipped_frames: u64,
+    /// Counts every start of a measured run: Play, a seek while playing, a loop wrap (`Status::run`).
+    run_serial: u64,
     last_shown_frame: Option<i64>,
     late: LateFrames,
     played_span: Option<(i64, i64)>,
@@ -303,11 +305,12 @@ impl ProgramEngine {
             compose_retry: false,
             activity: PlayMark::new(PlayActivity::shared()),
             moved_since_tick: false,
-            clock_held_since: None,
+            clock_hold: ClockHold::Running,
             play_logged: None,
             play_start: None,
             shown_frames: 0,
             skipped_frames: 0,
+            run_serial: 0,
             last_shown_frame: None,
             late: LateFrames::default(),
             played_span: None,
@@ -442,6 +445,8 @@ impl ProgramEngine {
         let waiting = self.waiting_frames();
         s.skipped_frames = self.skipped_frames + waiting;
         s.late_frames = self.late.late();
+        s.run = self.run_serial;
+        s.clock_running = !self.clock_hold.is_held();
         s.max_lag = self.late.max_lag().max(if waiting > 0 { i64::try_from(waiting).unwrap_or(i64::MAX) } else { 0 });
         if s.first_late != self.late.first() {
             s.first_late = self.late.first().to_vec();
@@ -495,7 +500,7 @@ impl ProgramEngine {
             return 0;
         }
         let here = self.position.frame_index(self.timeline.frame_duration());
-        (here - last).unsigned_abs().saturating_sub(1)
+        skipped_in_run(Some(last), here, self.state.rate().is_forward())
     }
     pub fn cache_len(&self) -> usize {
         self.cache.len()
@@ -652,6 +657,7 @@ impl ProgramEngine {
         // From the frame on screen: frames that never showed before the first new one count as dropped.
         self.shown_frames = 0;
         self.skipped_frames = 0;
+        self.run_serial += 1;
         let here = self.position.frame_index(self.timeline.frame_duration());
         self.last_shown_frame = Some(here);
         self.late.start(here);
@@ -663,7 +669,7 @@ impl ProgramEngine {
         // The clock and the sound start when the picture at the playhead is on screen (`release_clock`): a cold 4K file
         // needs 0.2 to 1 s for its first frame, and a clock that ran meanwhile left the decoder chasing a playhead it never
         // caught.
-        self.clock_held_since = Some(Instant::now());
+        self.clock_hold = ClockHold::Held { since: Instant::now() };
         self.play_logged = Some((Instant::now(), false));
         sq_core_time::milestones::note("play: requested, clock held for the start picture");
     }
@@ -701,8 +707,28 @@ impl ProgramEngine {
         }
     }
 
+    /// The next `PREROLL_FRAMES` frames of every visible video layer, in play direction and inside the clip, are cached (or
+    /// failed); true when no layer needs a picture.
+    fn frames_ahead_ready(&self) -> bool {
+        let forward = self.state.rate().is_forward();
+        self.wanted_requests.iter().filter(|l| l.generator.is_none()).all(|l| {
+            // A layer whose file is not open yet has nothing cached ahead.
+            let Some(k) = self.peek_key(l) else { return false };
+            let Some(src) = self.sources.get(&l.media) else { return false };
+            let count = if k.proxy { self.proxy_sources.get(&k.media) } else { Some(src) }
+                .map_or(src.frame_count() as i64, |s| s.frame_count() as i64);
+            let start = l.source_start.map(|t| src.frame_index(t));
+            let end = l.source_end.map(|t| src.frame_index(t));
+            ahead_indices(k.index, forward, count, start, end).into_iter().all(|i| {
+                let key = Key { index: i, ..k };
+                self.cache.contains_key(&key) || self.has_failed(&key)
+            })
+        })
+    }
+
     fn release_clock(&mut self) {
-        let held = self.clock_held_since.take().map(|h| h.elapsed());
+        let held = self.clock_hold.waited();
+        self.clock_hold = ClockHold::Running;
         // Starting the master clock starts the audio at the playhead (every rate: |rate| != 1 keeps the pitch).
         let started = Instant::now();
         self.deps.clock.start(self.position, self.state.rate());
@@ -718,7 +744,7 @@ impl ProgramEngine {
             return;
         }
         self.transition(Event::Pause);
-        self.clock_held_since = None;
+        self.clock_hold = ClockHold::Running;
         self.play_start = None;
         self.deps.clock.stop();
         self.notify_position();
@@ -727,7 +753,10 @@ impl ProgramEngine {
 
     fn seek(&mut self, t: Time) {
         self.played_through.clear();
-        if !self.state.rate().is_paused() && self.clock_held_since.is_none() {
+        // A jump is not a dropped run: the next picture starts the count again.
+        self.last_shown_frame = None;
+        self.run_serial += 1;
+        if !self.state.rate().is_paused() && !self.clock_hold.is_held() {
             // Playing: the master clock follows the jump (flushes the audio to the new place).
             self.deps.clock.seek(t.max(Time::ZERO).snapped(self.timeline.frame_duration()));
         }
@@ -779,13 +808,15 @@ impl ProgramEngine {
 
     /// Once per loop: advances the playhead from the master clock while playing and keeps decoding.
     pub(crate) fn tick(&mut self) {
-        if let Some(held) = self.clock_held_since {
-            let waited = held.elapsed();
-            let release = match &self.wanted {
-                Some(w) => self.shown.as_ref() == Some(w) || waited > CLOCK_HOLD_LIMIT,
-                None => waited > CLOCK_HOLD_LIMIT,
+        if let Some(waited) = self.clock_hold.waited() {
+            let first_picture = match &self.wanted {
+                Some(w) => self.shown.as_ref() == Some(w),
+                None => false,
             };
-            if release && (waited > CLOCK_HOLD_LIMIT || !self.awaiting_display_start()) {
+            let step = ClockHold::step(waited, first_picture, first_picture && self.frames_ahead_ready());
+            let release = step == HoldStep::Release;
+            let waited_out = waited > FIRST_PICTURE_LIMIT;
+            if release && (waited_out || !self.awaiting_display_start()) {
                 self.play_start = None;
                 self.release_clock();
             } else if release {
@@ -808,6 +839,8 @@ impl ProgramEngine {
             if let Some(to) = region.and_then(|r| loop_wrap(now, r, rate)) {
                 self.deps.clock.seek(to);
                 now = to;
+                self.last_shown_frame = None; // the wrap is a jump, not dropped frames
+                self.run_serial += 1;
             }
             // The frame the clock is inside of (floor, as the Swift host clock).
             let t = fd * now.frame_index(fd);
@@ -1996,11 +2029,7 @@ impl ProgramEngine {
         }
         if !self.state.rate().is_paused() {
             let frame = self.position.frame_index(self.timeline.frame_duration());
-            if let Some(last) = self.last_shown_frame
-                && (frame - last).abs() > 1
-            {
-                self.skipped_frames += (frame - last).unsigned_abs() - 1;
-            }
+            self.skipped_frames += skipped_in_run(self.last_shown_frame, frame, self.state.rate().is_forward());
             if Some(frame) != self.last_shown_frame {
                 self.shown_frames += 1; // not again when the exact picture replaces a stand-in
             }
@@ -2050,4 +2079,12 @@ impl Status {
     pub fn is_playing(&self) -> bool {
         self.rate.is_some_and(|r| !r.is_paused())
     }
+}
+
+/// Frame positions that went by unseen between two shown frames of a normal run in the play direction; a jump against the
+/// direction or no earlier frame counts nothing.
+pub(super) fn skipped_in_run(last: Option<i64>, frame: i64, forward: bool) -> u64 {
+    let Some(last) = last else { return 0 };
+    let step = if forward { frame - last } else { last - frame };
+    u64::try_from(step - 1).unwrap_or(0)
 }

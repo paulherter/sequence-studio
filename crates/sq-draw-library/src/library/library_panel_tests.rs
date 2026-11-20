@@ -170,7 +170,7 @@ fn sidebar_rows_follow_the_mode() {
 
 #[test]
 fn empty_texts_and_tile_layout() {
-    assert_eq!(LibraryLabels::empty_text(false, false, false, false, "").0, "No library folders");
+    assert_eq!(LibraryLabels::empty_text(false, false, false, false, "").0, "No Media Yet");
     assert_eq!(LibraryLabels::empty_text(true, false, false, true, "").0, "Folder is offline");
     assert_eq!(LibraryLabels::empty_text(false, false, false, true, " x ").0, "No results");
     assert_eq!(LibraryTileGeometry::thumb_width(0.4), 96.0);
@@ -183,13 +183,15 @@ fn empty_texts_and_tile_layout() {
 #[test]
 fn empty_panel_offers_add_folder() {
     let mut env = Env::new();
+    assert!(env.panel.offers_add_folder()); // opens on Media (All)
+    env.panel.model.set_selection(LibrarySection::Favorites);
+    env.panel.refresh();
     assert!(!env.panel.offers_add_folder()); // Favorites says how to add favorites
     env.panel.model.set_selection(LibrarySection::All);
     env.panel.refresh();
-    assert!(env.panel.offers_add_folder());
     let b = env.panel.add_folder_button_rect();
     env.panel.mouse_down(CGPoint::new(b.mid_x(), b.mid_y()), InputModifiers::NONE, 0.0);
-    assert_eq!(env.requests(), vec![LibraryRequest::AddFolder]);
+    assert_eq!(env.requests(), vec![LibraryRequest::ImportMedia]);
 }
 
 /// The empty state's text wraps above the "Add Folder..." button at every pane size, in English and German (measured with
@@ -495,9 +497,9 @@ fn dragging_the_sidebar_edge_resizes_and_stores_it() {
     env.panel.mouse_down(edge, InputModifiers::NONE, 0.0);
     env.panel.mouse_dragged(CGPoint::new(edge.x + 40.0, 200.0));
     env.panel.mouse_up(CGPoint::new(edge.x + 40.0, 200.0));
-    assert!(env.panel.sidebar_w() == 176.0 && env.panel.sidebar_rect().width == 176.0);
-    assert_eq!(env.defaults.string(LibraryDrawPanel::SIDEBAR_WIDTH_KEY).as_deref(), Some("176"));
-    env.panel.mouse_down(CGPoint::new(176.0, 200.0), InputModifiers::NONE, 0.0);
+    assert!(env.panel.sidebar_w() == 163.0 && env.panel.sidebar_rect().width == 163.0);
+    assert_eq!(env.defaults.string(LibraryDrawPanel::SIDEBAR_WIDTH_KEY).as_deref(), Some("163"));
+    env.panel.mouse_down(CGPoint::new(163.0, 200.0), InputModifiers::NONE, 0.0);
     env.panel.mouse_dragged(CGPoint::new(5.0, 200.0));
     env.panel.mouse_up(CGPoint::new(5.0, 200.0));
     assert_eq!(env.panel.sidebar_w(), 96.0);
@@ -590,7 +592,7 @@ fn the_active_preset_chip_is_a_raised_stone_chip() {
         .iter()
         .filter(|q| {
             q.stroke == 0.0
-                && q.radius == 4.0
+                && q.radius == sq_uikit::redesign_tokens::radius::CONTROL
                 && q.color.a == 1.0
                 && (q.rect.x, q.rect.y, q.rect.w, q.rect.h) == (r.x as f32, r.y as f32, r.width as f32, r.height as f32)
         })
@@ -795,8 +797,8 @@ fn presets_mode_follows_the_kit_layout() {
     let p = &mut env.panel;
     assert_eq!(p.sidebar_rect().width, 0.0, "no folder sidebar in Presets mode");
     let (media, presets) = p.mode_rects();
-    assert_eq!(media.min_y(), p.star_rect().min_y(), "switch, star and search share one row");
-    assert_eq!(p.search_field_rect().min_y(), media.min_y());
+    assert_eq!(media.mid_y(), p.star_rect().mid_y(), "switch, star and search share one row");
+    assert_eq!(p.search_field_rect().mid_y(), media.mid_y());
     assert!(p.slider_rect().is_none(), "no tile slider in Presets mode");
     assert!(presets.max_x() < p.star_rect().min_x());
     // Two flat columns whatever the slider says.
@@ -937,3 +939,39 @@ fn pictures_keep_their_aspect_in_tiles_rows_and_the_viewer_at_every_viewer_heigh
 
 #[path = "library_preview_tests.rs"]
 mod preview;
+
+#[test]
+fn r8_sidebar_tree_is_112_wide_with_its_split_at_122() {
+    let mut env = Env::new();
+    let p = &mut env.panel;
+    p.size = CGSize::new(500.0, 400.0);
+    p.model.set_selection(LibrarySection::All);
+    p.refresh();
+    assert_eq!(p.sidebar_w(), 123.0);
+    let row = p.sidebar_row_rect(0);
+    assert_eq!((row.min_x(), row.width), (6.0, 112.0));
+    assert_eq!(p.content_x() - 1.0, 122.0);
+}
+
+#[test]
+fn r8_media_row_has_24_high_segments_and_import_at_the_right() {
+    let mut env = Env::new();
+    env.panel.size = CGSize::new(500.0, 400.0);
+    env.panel.model.set_selection(LibrarySection::All);
+    env.panel.refresh();
+    let (media, presets) = env.panel.mode_rects();
+    assert_eq!((media.height, presets.height), (24.0, 24.0));
+    let b = env.panel.import_rect().expect("Import… in Media mode");
+    assert_eq!(b.max_x(), 500.0 - 12.0);
+    assert!(b.min_x() > presets.max_x());
+    env.panel.mouse_down(CGPoint::new(b.mid_x(), b.mid_y()), InputModifiers::NONE, 0.0);
+    assert_eq!(env.requests(), vec![LibraryRequest::ImportMedia]);
+}
+
+#[test]
+fn media_list_keeps_kind_size_created_columns_at_the_default_width() {
+    let env = Env::new();
+    assert_eq!(env.panel.list_col_widths().len(), 3);
+    assert!(env.panel.shows_list_columns(env.panel.list_rect().width));
+    assert!(!env.panel.shows_list_columns(299.0));
+}

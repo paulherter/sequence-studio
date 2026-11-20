@@ -6,7 +6,7 @@
 
 Cut, grade, caption and export short-form video, with one engine and one interface on all three systems.
 
-[Download](https://github.com/paulherter/sequence-studio/releases/latest) &middot; [Website](https://getsequencestudio.com) &middot; [Discord](https://discord.gg/q6KPQc8WCA) &middot; [Roadmap](ROADMAP.md) &middot; [Report a bug](https://github.com/paulherter/sequence-studio/issues/new/choose)
+[Download](https://github.com/paulherter/sequence-studio/releases/latest) &middot; [Website](https://getsequencestudio.com) &middot; [Docs](https://getsequencestudio.com/wiki/) &middot; [Discord](https://discord.gg/q6KPQc8WCA) &middot; [Roadmap](ROADMAP.md) &middot; [Report a bug](https://github.com/paulherter/sequence-studio/issues/new/choose)
 
 [![Latest release](https://img.shields.io/github/v/release/paulherter/sequence-studio?label=release)](https://github.com/paulherter/sequence-studio/releases/latest)
 [![License: GPL-3.0-or-later](https://img.shields.io/badge/license-GPL--3.0--or--later-blue.svg)](LICENSE)
@@ -33,7 +33,7 @@ On Linux, one command installs the AppImage for your user and adds a menu entry.
 curl -fsSL https://raw.githubusercontent.com/paulherter/sequence-studio/main/scripts/install.sh | sh
 ```
 
-All files are on the [latest release](https://github.com/paulherter/sequence-studio/releases/latest). Step by step: [Getting started](docs/manual/01-getting-started.md).
+All files are on the [latest release](https://github.com/paulherter/sequence-studio/releases/latest). Step by step: [Getting started](docs/wiki/getting-started.md).
 
 ## Why Sequence Studio
 

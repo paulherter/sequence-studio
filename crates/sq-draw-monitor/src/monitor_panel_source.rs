@@ -9,7 +9,6 @@ use sq_core_time::{Time, TimeRange};
 use sq_draw::canvas::Canvas;
 use sq_draw::monitor::monitor_footer::MonitorScrubMath;
 use sq_draw::monitor::monitor_modes::MonitorMode;
-use sq_draw::theme::spacing;
 use sq_draw::{Color, TextAlign};
 use sq_uikit::controls_grid::{CGPoint, CGRect};
 
@@ -34,35 +33,33 @@ impl MonitorPanel {
                 0,
             );
         }
-        // The dock's tab strip (`ShellDock.layout` / `draw`): medium labels with 10 pt padding, 2 pt apart, a 2 pt line under
-        // the selected tab (accent while the monitor has focus).
-        let pad = 10.0;
-        let height = 22.0;
-        let start = self.header_rect.min_x() + spacing::SM as f64 - 2.0;
+        // The dock's tab look (`ShellDock::place` / `draw`, r8): left-aligned medium labels, 8 pt padding, 2 pt apart, no
+        // underline; the current tab in text-primary, the others in text-secondary.
+        let pad = sq_draw::theme::tab::PADDING;
+        let height = sq_draw::theme::tab::HEIGHT;
+        let start = self.header_rect.min_x() + sq_draw::theme::tab::HEADER_INSET;
         let mut cursor = start;
         let y = (self.header_rect.min_y() + (self.header_rect.height - 1.0 - height) / 2.0).round();
         let medium = c.medium();
         for (i, label) in self.tabs.clone().iter().enumerate() {
+            let on = i == self.selected_tab;
             let w = c.size_of(label, font_size, medium).width.ceil() + 2.0 * pad;
             let r = CGRect::new(cursor, y, w, height);
             self.tab_rects.push(r);
+            // Like the dock: a hovered tab reads as the current one.
+            let hover = !on && self.last_pointer.is_some_and(|q| r.contains(q));
             c.draw_text_in(
                 label,
                 r,
                 font_size,
-                if i == self.selected_tab { t.label() } else { t.label3() },
-                TextAlign::Center,
-                0.0,
-                medium,
+                if on || hover { t.label() } else { t.label2() },
+                TextAlign::Left,
+                pad,
+                if on { medium } else { 0 },
             );
-            if i == self.selected_tab {
-                let u =
-                    CGRect::new(r.min_x() + pad, self.header_rect.max_y() - 2.0, (r.width - 2.0 * pad).max(0.0), 2.0);
-                c.fill_rounded(u, 1.0, if self.is_focused { t.accent() } else { t.label3() });
-            }
-            cursor += w + 2.0;
+            cursor += w + sq_draw::theme::tab::GAP;
         }
-        cursor - 2.0 - x
+        cursor - sq_draw::theme::tab::GAP - x
     }
 
     /// The tab under `p` (window points), if any.

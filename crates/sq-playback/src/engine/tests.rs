@@ -488,3 +488,30 @@ fn proxy_use_off_keeps_the_original_for_every_state() {
     assert_eq!(proxy_flags(&rig), vec![false]);
     assert_eq!(proxy.opens.load(std::sync::atomic::Ordering::SeqCst), 0, "no proxy was opened");
 }
+
+#[test]
+fn a_seek_while_playing_is_not_counted_as_dropped_frames() {
+    let rig = Rig::new(|_| {});
+    rig.opener.add("a.mov", 250, Duration::ZERO);
+    rig.media(&[(a(), "a.mov")]);
+    rig.handle.set_timeline(timeline(vec![vec![clip(10, a(), 0, 0, 8)]]), HashMap::new());
+    rig.handle.seek(Time::ZERO);
+    rig.wait("first frame", |e| e.is_frame_settled() || e.shown_frames() == 0 && e.cache_len() > 0);
+    rig.handle.play(PlaybackRate::FORWARD);
+    rig.wait("some frames", |e| e.shown_frames() >= 3);
+    rig.handle.seek(Time::new(150, 25));
+    rig.wait("past the jump", |e| e.position() > Time::new(150, 25));
+    let s = rig.handle.status();
+    assert!(s.skipped_frames < 40, "a jump of 150 frames counted as dropped: {s:?}");
+}
+
+#[test]
+fn only_the_play_direction_counts_skipped_frames() {
+    use super::core::skipped_in_run;
+    assert_eq!(skipped_in_run(Some(10), 11, true), 0);
+    assert_eq!(skipped_in_run(Some(10), 14, true), 3);
+    assert_eq!(skipped_in_run(Some(10), 2, true), 0, "a loop wrap");
+    assert_eq!(skipped_in_run(Some(10), 6, false), 3);
+    assert_eq!(skipped_in_run(Some(10), 90, false), 0);
+    assert_eq!(skipped_in_run(None, 90, true), 0);
+}

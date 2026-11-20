@@ -655,7 +655,7 @@ impl<C> GraphicsFormDraw<C> {
                             hov(Part::Popup),
                             false,
                             enabled(ctx),
-                            false,
+                            true,
                             ControlsGrid::CONTROL_HEIGHT,
                             None,
                             &t,

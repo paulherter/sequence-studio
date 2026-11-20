@@ -97,8 +97,8 @@ fn press(c: &Case) -> Option<String> {
     let after = fingerprint(&mut root, &mut rig);
     let changed = before != after;
     if c.label.starts_with("CONTROL") {
-        std::fs::write("/tmp/ctl_before.txt", &before[before.len().saturating_sub(300)..]).ok();
-        std::fs::write("/tmp/ctl_after.txt", &after[after.len().saturating_sub(300)..]).ok();
+        std::fs::write(std::env::temp_dir().join("ctl_before.txt"), &before[before.len().saturating_sub(300)..]).ok();
+        std::fs::write(std::env::temp_dir().join("ctl_after.txt"), &after[after.len().saturating_sub(300)..]).ok();
     }
     let _ = std::fs::remove_dir_all(&dir);
     Some(format!(

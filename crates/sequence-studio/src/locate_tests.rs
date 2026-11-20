@@ -1,4 +1,4 @@
-//! The Project panel's footer "Locate…" through the real app root and the window's own pointer translation: the press
+//! The Project panel's footer "Fix…" through the real app root and the window's own pointer translation: the press
 //! opens the Reconnect Media dialog, its default button asks for the folder, and the pick relinks the missing clip
 //! (Windows acceptance item 3).
 
@@ -95,9 +95,9 @@ fn run(scale: f32) {
     h.with(|a| a.set_needs_redraw());
     h.turn();
     let runs = text_log::finish();
-    let locate = runs.iter().find(|r| r.asked == "Locate…" && r.drawn.is_some()).unwrap_or_else(|| {
+    let locate = runs.iter().find(|r| r.asked == "Fix…" && r.drawn.is_some()).unwrap_or_else(|| {
         panic!(
-            "the footer draws Locate…: {} runs, {:?}",
+            "the footer draws Fix…: {} runs, {:?}",
             runs.len(),
             runs.iter().map(|r| r.asked.as_str()).collect::<Vec<_>>()
         )

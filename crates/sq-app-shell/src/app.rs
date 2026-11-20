@@ -201,6 +201,11 @@ impl App {
 
     /// Puts the app in the named parity-shot state (see [`AppHost::shot_pose`]).
     pub fn shot_pose(&mut self, name: &str) -> bool {
+        // The theme is the app's, not a host's: the window as the background window (grey focus ring and blue button).
+        if name == "window-inactive" {
+            self.set_window_inactive(true);
+            return true;
+        }
         let mut cx = HostCx {
             session: &mut self.session,
             ui: &mut self.ui,
@@ -320,7 +325,7 @@ impl App {
     /// A new appearance or display scale (`theme.scale` is the display's); the interface size of Preferences comes on top.
     pub fn set_theme(&mut self, theme: DrawTheme) {
         self.device_scale = theme.scale;
-        self.theme = DrawTheme { scale: self.device_scale * self.ui_scale, ..theme };
+        self.theme = DrawTheme { scale: self.device_scale * self.ui_scale, window_inactive: self.theme.window_inactive, ..theme };
         self.atlas.iter().for_each(|a| a.set_point_scale(self.theme.scale));
         for slot in &mut self.hosts {
             slot.host.theme_changed(&self.theme);
@@ -533,8 +538,21 @@ impl App {
         self.dispatch();
     }
 
+    /// The window is (not) the key window: the theme carries it to every host (grey focus ring, grey blue button).
+    fn set_window_inactive(&mut self, inactive: bool) {
+        if self.theme.window_inactive == inactive {
+            return;
+        }
+        self.theme.window_inactive = inactive;
+        for slot in &mut self.hosts {
+            slot.host.theme_changed(&self.theme);
+        }
+        self.dirty = true;
+    }
+
     /// The window lost the keyboard: held keys are released.
     pub fn focus_lost(&mut self) {
+        self.set_window_inactive(true);
         let mut cx = HostCx {
             session: &mut self.session,
             ui: &mut self.ui,
@@ -552,6 +570,7 @@ impl App {
 
     /// The window got the keyboard back: hosts re-check what changed on disk while another app had the focus.
     pub fn focus_gained(&mut self) {
+        self.set_window_inactive(false);
         let mut cx = HostCx {
             session: &mut self.session,
             ui: &mut self.ui,

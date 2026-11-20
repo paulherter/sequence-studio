@@ -115,6 +115,10 @@ pub struct Status {
     /// Of the shown frame positions, those whose last picture still had a layer drawn from a stand-in when the next one
     /// came, and the most frames the stalest layer was behind (since the last `play`).
     pub late_frames: u64,
+    /// Changes at every start of a measured run (Play, a seek while playing, a loop wrap).
+    pub run: u64,
+    /// False while Play waits for its first picture (the pre-roll); true once the clock runs.
+    pub clock_running: bool,
     pub max_lag: i64,
     /// The first late frame positions (frame indexes, up to eight).
     pub first_late: Vec<i64>,
@@ -147,6 +151,8 @@ impl Default for Shared {
                 shown_frames: 0,
                 skipped_frames: 0,
                 late_frames: 0,
+                run: 0,
+                clock_running: true,
                 max_lag: 0,
                 first_late: Vec::new(),
                 played_span: None,

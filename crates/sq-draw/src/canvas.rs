@@ -389,6 +389,12 @@ impl<'a> Canvas<'a> {
         crate::middle_fit::fit_middle(text, |t| self.size_of(t, size, face).width <= max_width)
     }
 
+    /// A name cut to `max_width` Finder-style (start and extension stay) with the full text as its tooltip when cut
+    /// ([`crate::middle_fit::truncate_name`]). Draw `.shown`, offer `.tip()` through `Hover::offer_truncated`.
+    pub fn truncated_name(&self, name: &str, size: f64, face: usize, max_width: f64) -> crate::middle_fit::TruncatedLabel {
+        crate::middle_fit::truncate_name(name, |t| self.size_of(t, size, face).width <= max_width)
+    }
+
     /// `prefix` (kept whole) and `path` cut to `max_width`: whole folders leave the middle, the start and the file name
     /// stay (`to ~/Movies/…/Sequence 01.mp4`; [`crate::middle_fit::fit_path`]). Unchanged when it fits.
     pub fn ellipsized_path(&self, prefix: &str, path: &str, size: f64, face: usize, max_width: f64) -> String {
@@ -549,7 +555,7 @@ mod tests {
         let (width, hair) = (2.0, 0.1);
         c.stroke_rounded(CGRect::new(10.0, 10.0, 20.0, 20.0), f64::from(theme::radius::SMALL), width, Color::WHITE);
         let q = c.list.quads()[0];
-        assert_eq!((q.rect, q.stroke, q.radius), (Rect::new(9.0, 9.0, 22.0, 22.0), 2.0, 5.0));
+        assert_eq!((q.rect, q.stroke, q.radius), (Rect::new(9.0, 9.0, 22.0, 22.0), 2.0, 7.0));
         c.stroke_rounded(CGRect::new(10.0, 10.0, 20.0, 20.0), f64::from(theme::radius::NONE), hair, Color::WHITE);
         assert_eq!(c.list.quads()[1].stroke, 0.5);
     }

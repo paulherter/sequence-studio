@@ -6,7 +6,7 @@ Sequence Studio is GPL-3.0-or-later alpha software. Open an issue before larger 
 
 - Work in your crate. Read that crate's `README.md`, and `docs/rust/PORTING.md` if you port Swift code. Do not read the whole repo.
 - Edit logic: write the test first.
-- A change that users can see updates the matching chapter in `docs/manual/` in the same change, if that folder exists in your checkout.
+- A change that users can see updates the matching chapter in `docs/wiki/` in the same change, if that folder exists in your checkout.
 
 ## Rules
 

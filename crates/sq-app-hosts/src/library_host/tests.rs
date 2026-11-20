@@ -99,7 +99,7 @@ pub(super) fn panel(root: &std::path::Path) -> LibraryDrawPanel {
 
 #[test]
 fn the_host_draws_and_takes_clicks_inside_its_frame_through_the_app() {
-    let root = crate::test_rig::unique_dir("sq-app-hosts-lib");
+    let root = crate::test_rig::test_dir("sq-app-hosts-lib");
     std::fs::create_dir_all(&root).expect("root");
     let h = Headless::new(session(), AppDeps::headless(Arc::new(FakeClock::new())), 800, 600);
     h.with(|a: &mut App| {
@@ -118,7 +118,7 @@ fn a_saved_transition_preset_shows_its_still_in_the_preset_grid() {
     use sq_core_effects::transition::TransitionPresetExt;
     use sq_core_model::effect_defaults::TransitionPreset;
     use sq_draw_library::library::library_panel_model::LibrarySection;
-    let root = crate::test_rig::unique_dir("sq-app-hosts-lib-still");
+    let root = crate::test_rig::test_dir("sq-app-hosts-lib-still");
     std::fs::create_dir_all(&root).expect("root");
     let mut host = LibraryHost::new(panel(&root), Box::new(|| ApplyMode::Absolute));
     host.share_atlas(crate::SharedAtlas::default());
@@ -168,7 +168,7 @@ fn a_built_in_graphic_shows_its_still_in_the_preset_grid() {
             Vec::new()
         }
     }
-    let root = crate::test_rig::unique_dir("sq-app-hosts-lib-graphic");
+    let root = crate::test_rig::test_dir("sq-app-hosts-lib-graphic");
     std::fs::create_dir_all(&root).expect("root");
     let mut host = LibraryHost::new(panel(&root), Box::new(|| ApplyMode::Absolute));
     host.share_atlas(crate::SharedAtlas::default());
@@ -194,7 +194,7 @@ fn a_video_file_shows_its_poster_frame_in_the_grid() {
             vec![Some(Thumbnail { width: 64, height: 36, rgba: Arc::new(rgba) })]
         }
     }
-    let root = crate::test_rig::unique_dir("sq-app-hosts-lib-poster");
+    let root = crate::test_rig::test_dir("sq-app-hosts-lib-poster");
     let media = root.join("media");
     std::fs::create_dir_all(&media).expect("media");
     std::fs::write(media.join("clip.mp4"), b"x").expect("file");
@@ -217,7 +217,7 @@ fn a_preset_is_a_list_item_and_a_click_selects_it() {
     use sq_core_effects::transition::TransitionPresetExt;
     use sq_core_model::effect_defaults::TransitionPreset;
     use sq_draw_library::library::library_panel_model::LibrarySection;
-    let root = crate::test_rig::unique_dir("sq-app-hosts-lib-a11y");
+    let root = crate::test_rig::test_dir("sq-app-hosts-lib-a11y");
     std::fs::create_dir_all(&root).expect("root");
     let mut host = LibraryHost::new(panel(&root), Box::new(|| ApplyMode::Absolute));
     let payload = TransitionPreset::new(sq_core_model::TransitionKind::CrossDissolve, sq_core_time::Time::seconds(1))
@@ -252,7 +252,7 @@ fn a_preset_is_a_list_item_and_a_click_selects_it() {
 
 #[test]
 fn a_display_scale_change_reaches_the_library_hit_test_before_the_next_draw() {
-    let root = crate::test_rig::unique_dir("sq-app-hosts-lib-scale");
+    let root = crate::test_rig::test_dir("sq-app-hosts-lib-scale");
     std::fs::create_dir_all(&root).expect("root");
     let h = Headless::new(session(), AppDeps::headless(Arc::new(FakeClock::new())), 800, 600);
     h.with(|a: &mut App| {
@@ -274,7 +274,7 @@ fn a_display_scale_change_reaches_the_library_hit_test_before_the_next_draw() {
 #[test]
 fn a_tile_drag_reports_window_points_not_panel_local_ones() {
     use sq_draw_library::library::library_panel_model::LibrarySection;
-    let root = crate::test_rig::unique_dir("sq-app-hosts-lib-drag");
+    let root = crate::test_rig::test_dir("sq-app-hosts-lib-drag");
     std::fs::create_dir_all(&root).expect("root");
     let mut host = LibraryHost::new(panel(&root), Box::new(|| ApplyMode::Absolute));
     let item = preset(PresetKind::Effect);
@@ -373,14 +373,28 @@ fn viewer_red(host: &mut LibraryHost, rig: &mut crate::test_rig::Rig, atlas: &mu
 
 #[test]
 fn a_playing_video_preview_shows_a_new_picture_as_the_sound_moves_on() {
+    playing_preview_moves(false);
+}
+
+/// With a full library the posters had used up the shared atlas, the viewer found no cell and kept its still.
+#[test]
+fn a_playing_video_preview_moves_although_posters_filled_the_atlas() {
+    playing_preview_moves(true);
+}
+
+fn playing_preview_moves(fill_atlas: bool) {
     use sq_app_shell::ATLAS_SIZE;
     use sq_draw_library::library::library_panel_model::LibrarySection;
-    let root = crate::test_rig::unique_dir("sq-app-hosts-lib-live");
+    let root = crate::test_rig::test_dir("sq-app-hosts-lib-live");
     let media = root.join("media");
     std::fs::create_dir_all(&media).expect("media");
     std::fs::write(media.join("clip.mp4"), b"x").expect("file");
     let mut host = LibraryHost::new(panel(&root), Box::new(|| ApplyMode::Absolute));
-    host.share_atlas(crate::SharedAtlas::default());
+    let shared = crate::SharedAtlas::default();
+    host.share_atlas(crate::SharedAtlas::clone(&shared));
+    if fill_atlas {
+        while shared.borrow_mut().place(100, 60).is_some() {}
+    }
     host.set_preview_pictures(Arc::new(|_| Some(Box::new(Numbered) as Box<dyn crate::preview_video::PictureSource>)));
     let sound = Rc::default();
     let model = &mut host.panel_host().panel.model;
@@ -415,7 +429,7 @@ fn host_with_a_video_and_a_playing_sequence(
     tag: &str,
 ) -> (LibraryHost, crate::test_rig::Rig, Rc<RefCell<sq_library::library_preview_player_portable::SoundState>>) {
     use sq_draw_library::library::library_panel_model::LibrarySection;
-    let root = crate::test_rig::unique_dir(tag);
+    let root = crate::test_rig::test_dir(tag);
     let media = root.join("media");
     std::fs::create_dir_all(&media).expect("media");
     std::fs::write(media.join("clip.mp4"), b"x").expect("file");

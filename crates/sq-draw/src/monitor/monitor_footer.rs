@@ -325,6 +325,8 @@ pub struct MonitorFooter {
     pub hovered: Option<MonitorAction>,
     /// The button being pressed.
     pub pressed: Option<MonitorAction>,
+    /// The pointer is over the position bar (its hairline turns `text-secondary`).
+    scrub_hover: bool,
     gesture: MonitorScrubGesture,
     timecode_edit: Option<TextEditState>,
     timecode_press: Option<TimecodePress>,
@@ -632,20 +634,20 @@ impl MonitorFooter {
         }
     }
 
-    /// MonitorScrubBar.draw: 2 pt bar at y 7, In to Out as a 6 pt tinted band at y 5, 3 x 12 accent grips, yellow
-    /// marker triangles above the track, playhead 2 x 14 at y 1.
+    /// MonitorScrubBar.draw: 1 px hairline at y 8, In to Out as a 6 pt tinted band at y 5, 3 x 12 accent grips, yellow
+    /// marker triangles above the track, position mark 2 x 10 at y 1.
     pub fn draw_scrub_bar(&self, c: &mut Canvas, s: &MonitorFooterState, t: &DrawTheme) {
         let m = self.scrub_math(s);
         c.save_gstate();
         c.translate_by(self.scrub_rect.min_x(), self.scrub_rect.min_y());
-        // The kit's `Scrub`: a 4 pt sunken stone well (inset 3D), centered on the 16 pt strip.
-        let track = CGRect::new(m.inset, 6.0, (self.scrub_rect.width - 2.0 * m.inset).max(0.0), 4.0);
-        c.stone_track(track, t);
+        // r8: a 1 px `border-hairline` line (text-secondary on hover) instead of the sunken well.
+        let track = CGRect::new(m.inset, 5.5, (self.scrub_rect.width - 2.0 * m.inset).max(0.0), 1.0);
+        c.fill(track, if self.scrub_hover { t.label2() } else { t.hair() });
         if s.has_range() {
             let a = m.x_for(s.mark_in.unwrap_or(Time::ZERO));
             let b = m.x_for(s.mark_out.unwrap_or(s.duration));
             if b > a {
-                let band = CGRect::new(a, 7.0, b - a, 2.0); // a thin range line inside the well, not a band
+                let band = CGRect::new(a, 5.0, b - a, 2.0); // a thin range line over the hairline, not a band
                 c.fill_rounded(band, band.height / 2.0, t.accent());
             }
         }
@@ -671,7 +673,8 @@ impl MonitorFooter {
         }
         let x = m.x_for(s.current_time);
         if s.duration > Time::ZERO {
-            c.fill_rounded(CGRect::new(x - 1.0, 1.0, 2.0, 14.0), 1.0, t.playhead());
+            // r8: the position mark is 2 x 10 at y 1 in text-primary.
+            c.fill(CGRect::new(x - 1.0, 1.0, 2.0, 10.0), t.label());
         }
         c.restore_gstate();
     }
@@ -762,6 +765,7 @@ impl MonitorFooter {
     /// The pointer moved.
     pub fn mouse_moved(&mut self, p: CGPoint) {
         self.hovered = self.button_at(p);
+        self.scrub_hover = self.scrub_rect.contains(p);
     }
 
     // Timecode field (the Mac `MonitorPanelView.timecodeField`)
@@ -1010,24 +1014,25 @@ mod tests {
         let img = SoftwareRenderer::render(&c.list, 224, 66, crate::draw_list::Color::BLACK, &Sources::default());
         let px = |x: usize, y: usize| img.pixels[(y * 224 + x) * 4..(y * 224 + x) * 4 + 3].to_vec();
         assert!(px(192, 8 + 8)[0] > 200);
-        assert_ne!(px(100, 8 + 7), vec![0, 0, 0]);
+        assert_ne!(px(100, 8 + 5), vec![0, 0, 0]);
         assert_eq!(px(5, 8 + 8), vec![0, 0, 0]);
     }
 
-    /// The kit's `Scrub`: a 4 pt sunken stone well (rows 6...9 of the strip), not a bright 2 pt line.
+    /// r8: the position bar is a 1 px hairline centred on the 2 x 10 position mark (y 1..11, centre 6; no sunken well).
     #[test]
-    fn the_scrub_track_is_a_four_point_stone_well() {
+    fn the_scrub_track_is_a_one_pixel_hairline() {
         let s = state(None, None, 90);
         let f = footer(&s, 224.0);
         let t = DrawTheme::default();
-        let mut c = Canvas::with_size(224.0, MonitorFooter::HEIGHT as f32, None, 1.0);
+        let mut c = Canvas::with_size(224.0, MonitorFooter::HEIGHT as f32, None, 2.0);
         f.draw_scrub_bar(&mut c, &s, &t);
-        let img = SoftwareRenderer::render(&c.list, 224, 66, crate::draw_list::Color::BLACK, &Sources::default());
-        let px = |x: usize, y: usize| img.pixels[(y * 224 + x) * 4..(y * 224 + x) * 4 + 3].to_vec();
-        for row in [6, 7, 8, 9] {
-            assert_ne!(px(100, 8 + row), vec![0, 0, 0], "row {row} is inside the well");
-        }
-        assert_eq!(px(100, 8 + 4), vec![0, 0, 0], "above the well");
+        let img = SoftwareRenderer::render(&c.list, 448, 132, crate::draw_list::Color::BLACK, &Sources::default());
+        let px = |x: usize, y: usize| img.pixels[(y * 448 + x) * 4..(y * 448 + x) * 4 + 3].to_vec();
+        // 2x: the 1 pt line at y 5.5 is device rows 27 and 28, centred on the mark's y 6 (device 28).
+        assert_ne!(px(200, 27), vec![0, 0, 0], "the hairline, upper row");
+        assert_ne!(px(200, 28), vec![0, 0, 0], "the hairline, lower row");
+        assert_eq!(px(200, 26), vec![0, 0, 0], "above the hairline");
+        assert_eq!(px(200, 29), vec![0, 0, 0], "below the hairline");
     }
 
     /// The Mac `TimecodeField`: a drag past 3 pt scrubs 1 frame per 2 pt from the time at the press; a click opens the
@@ -1128,7 +1133,7 @@ mod tests {
             .list
             .quads()
             .iter()
-            .any(|q| (q.rect.x, q.rect.w) == (r.x as f32, r.width as f32) && q.radius == 4.0 && q.color == hover);
+            .any(|q| (q.rect.x, q.rect.w) == (r.x as f32, r.width as f32) && q.radius == 6.0 && q.color == hover);
         assert!(hit, "the hovered button paints the stone quiet hover fill");
         crate::motion::set_reduce_motion(false);
     }

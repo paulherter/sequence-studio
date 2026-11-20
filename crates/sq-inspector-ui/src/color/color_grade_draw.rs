@@ -11,6 +11,7 @@
 //! push [`DrawMenuCommand`]s that the host runs with `run_menu_command` after the menu closes.
 
 use super::color_grade_controller::ColorGradeController;
+use super::color_grade_target::ColorTargetState;
 use super::color_graph_menus::MenuSink;
 use super::color_inspector_model::{
     ColorInspectorModel, ColorLUTSlot, ColorPanelKey, ColorParam, ColorWheelSlot, HueCurveKind, LUTChoice,
@@ -28,7 +29,7 @@ use sq_core_color::{BoardZone, ColorSectionKindExt};
 use sq_core_model::{ColorSectionKind, CurvePoint, HSLMaskMode, LogMode, RGBCurves, TargetSpace};
 use sq_core_time::Id;
 use sq_draw::inspector::scrub_field_control::Event as ScrubEvent;
-use sq_draw::inspector::{CheckState, ClickCounter, Direction, InspectorDraw, InspectorTokens, ScrubFieldControl};
+use sq_draw::inspector::{CheckState, ClickCounter, InspectorDraw, InspectorTokens, ScrubFieldControl};
 use sq_draw::stone::{ButtonKind, Touch};
 use sq_draw::theme::{spacing, type_size};
 use sq_draw::ui_cx::DrawCursor;
@@ -36,7 +37,6 @@ use sq_draw::{Canvas, Color, DrawTheme, InputKey, InputModifiers, PolygonSpanCac
 use sq_editor_session::{ColorClipboard, EditorSession};
 use sq_uikit::controls_grid::{CGPoint, CGRect, CGSize};
 use sq_uikit::localization::SQL10n;
-use sq_uikit::redesign_tokens::color as tk;
 use sq_uikit::sqicon::SQIcon;
 use sq_uikit::sqmenu_model::SQMenuItem;
 use std::cell::RefCell;
@@ -228,6 +228,54 @@ impl Row {
     }
 }
 
+/// The r8 flat drop-down (`.dd`): no well, the title in text-secondary (text-primary for `primary`, and on hover) and a 12 pt
+/// chevron right behind it; hover and open get the quiet fill. A title that does not fit is cut Finder-style and comes
+/// back whole as the return value (the tooltip).
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn flat_popup(
+    c: &mut Canvas,
+    title: &str,
+    rect: CGRect,
+    hovering: bool,
+    open: bool,
+    enabled: bool,
+    primary: bool,
+    max_height: f64,
+    font_size: Option<f64>,
+    t: &DrawTheme,
+) -> Option<String> {
+    let h = max_height.min(rect.height);
+    let boxed = CGRect::new(rect.min_x(), rect.min_y() + ((rect.height - h) / 2.0).round(), rect.width, h);
+    let a = if enabled { 1.0 } else { InspectorTokens::DISABLED_ALPHA };
+    c.stone_button(boxed, ButtonKind::Quiet, Touch { hovering, pressed: open, disabled: !enabled, focused: false }, t);
+    let size = font_size.unwrap_or(f64::from(type_size::BODY));
+    let ink = if primary || hovering || open { t.label() } else { t.label2() };
+    let chevron = 12.0;
+    let pad = f64::from(spacing::MD);
+    let text_max = (boxed.width - 2.0 * pad - chevron - 2.0).max(0.0);
+    let cut = c.truncated_name(title, size, 0, text_max);
+    let text = cut.shown.clone();
+    let tw = c.size_of(&text, size, 0).width;
+    c.draw_text_in(
+        &text,
+        CGRect::new(boxed.min_x() + pad, boxed.min_y(), text_max, boxed.height),
+        size,
+        ink.with_alpha(ink.a * a),
+        TextAlign::Left,
+        0.0,
+        0,
+    );
+    let cx = boxed.min_x() + pad + tw + 2.0;
+    c.draw_icon(
+        SQIcon::ChevronDown,
+        CGPoint::new(cx, boxed.mid_y() - chevron / 2.0),
+        chevron,
+        ink.with_alpha(ink.a * a),
+        None,
+    );
+    cut.full
+}
+
 /// The Mac `ColorGrid` of the Simple page, in points: the panel inset, the label column (inset + chevron slot), the control
 /// column (label 96 + gap), the value column (the 48 wide number + gap), the rows and the section header.
 pub struct Mac;
@@ -248,8 +296,11 @@ impl Mac {
     pub const HUE_CURVE_TOP: f64 = 7.0;
     pub const HUE_CURVE_BOTTOM: f64 = 8.5;
     pub const SLIDER: f64 = 20.0;
+    /// The narrowest slider track (a 240 pt panel would leave 44 pt) and the narrowest label column the slider may squeeze.
+    pub const MIN_TRACK: f64 = 56.0;
+    pub const MIN_LABEL: f64 = 62.0;
     /// The section header (`Color/GroupHeader`): a 26 high band on the group fill with a hairline at its foot, no gap above.
-    pub const SECTION: f64 = 26.0;
+    pub const SECTION: f64 = sq_uikit::controls_grid::ControlsGrid::HEADER_HEIGHT;
     pub const SECTION_GAP: f64 = 0.0;
     /// The Source LUT / Look LUT rows of the Simple grade (the frame's 24 high rows).
     pub const LUT_ROW: f64 = 24.0;
@@ -349,6 +400,8 @@ pub struct ColorGradeDraw {
     /// The clip name and the "Applies to ..." line for the file row; None leaves the row out. The host sets it.
     pub file_row: Option<(String, String)>,
     pub(crate) scroll_y: f64,
+    /// Popup titles the last draw cut, with their whole text (the tooltip of a long LUT name).
+    cut_names: RefCell<Vec<(Control, String)>>,
     /// Menus the panel asked for, oldest first.
     pub menus: Vec<GradeMenuRequest>,
     pub file_requests: Vec<GradeFileRequest>,
@@ -397,6 +450,7 @@ impl Default for ColorGradeDraw {
             wheel_spans: RefCell::new(PolygonSpanCache::new(16)),
             file_row: None,
             scroll_y: 0.0,
+            cut_names: RefCell::default(),
             menus: Vec::new(),
             file_requests: Vec::new(),
             menu_sink: MenuSink::new(),
@@ -527,7 +581,11 @@ impl ColorGradeDraw {
         }
         // Simple rows: 24 high, the slider 20 in the middle; a popup row is 28 with the 22 high popup; the Source / Look LUT rows are 24 with the popup and its star.
         let cap = f64::from(sq_draw::theme::metrics::CAPSULE);
-        let slider = box_rect(Mac::CONTROL_X, mx1 - Mac::CONTROL_X - Mac::VALUE_TRAILING, Mac::SLIDER, Mac::ROW);
+        // A narrow panel (240 pt) moves the slider left so the track keeps `MIN_TRACK`; the labels get what is left of the 110.
+        let slider_x = (mx1 - Mac::VALUE_TRAILING - Mac::VALUE_COLUMN - Mac::MIN_TRACK)
+            .min(Mac::CONTROL_X)
+            .max(Mac::LABEL_X + Mac::MIN_LABEL);
+        let slider = box_rect(slider_x, mx1 - slider_x - Mac::VALUE_TRAILING, Mac::SLIDER, Mac::ROW);
         // A narrow panel lets the popup grow toward its star (up to 96 wide) so "Automatic" is not cut to "Autom…".
         let star_gap = mx1 - Mac::ICON - 6.0 - Mac::CONTROL_X;
         let popup_w = (self.size.width - Mac::POPUP_TRAILING - Mac::CONTROL_X).max(star_gap.min(96.0));
@@ -764,6 +822,10 @@ impl ColorGradeDraw {
     /// right.
     fn wheels_row(&self, wheels: &[Wheel], masters: bool, dim: bool, add: &mut dyn FnMut(Row)) {
         let zone = matches!(wheels.first(), Some(Wheel::Zone(..)));
+        if !zone && masters {
+            self.wheel_blocks_row(wheels, dim, add);
+            return;
+        }
         let side = if zone { 76.0 } else { Mac::WHEEL };
         let cell_w = side - 10.0;
         let cell_h = side + f64::from(spacing::LG);
@@ -789,6 +851,30 @@ impl ColorGradeDraw {
         let controls = controls.into_iter().map(|(k, r)| (k, offset_by(&r, 0.0, lift / 2.0))).collect();
         add(Row::plain(None, cell_h + lift + 2.0 * top + if zone { 0.0 } else { 1.0 }, controls).dimmed(dim));
     }
+
+    /// The r8 wheel block (`.col-wheels`: 84 pt disc, title above, master slider under it): the discs share the panel width
+    /// minus the inset and 4 pt gaps, so in a 240 pt panel they shrink from 84 to what fits instead of the old 46.
+    fn wheel_blocks_row(&self, wheels: &[Wheel], dim: bool, add: &mut dyn FnMut(Row)) {
+        let gap = f64::from(spacing::XS);
+        let top = f64::from(spacing::MD);
+        let n = wheels.len().max(1) as f64;
+        let avail = (self.size.width - 2.0 * Mac::INSET).max(0.0);
+        let cell_w = ((avail - gap * (n - 1.0)) / n).max(0.0);
+        let d = cell_w.min(Self::WHEEL_BLOCK).floor();
+        let y = top + Self::WHEEL_TITLE_LEAD;
+        let mut controls: Vec<(Control, CGRect)> = Vec::new();
+        for (i, w) in wheels.iter().enumerate() {
+            let x = Mac::INSET + i as f64 * (cell_w + gap) + ((cell_w - d) / 2.0).floor();
+            controls.push((Control::Wheel(*w), CGRect::new(x, y, d, d)));
+            controls.push((Control::Master(*w), CGRect::new(x, y + d + 6.0, d, 14.0)));
+        }
+        add(Row::plain(None, y + d + 6.0 + 14.0 + f64::from(spacing::SM), controls).dimmed(dim));
+    }
+
+    /// The wheel's disc size in the Simple wheel block (design draft `wheel(size=84)`).
+    pub(crate) const WHEEL_BLOCK: f64 = 84.0;
+    /// Title top to disc top in that block: the 16 pt title band and 6 pt of air.
+    pub(crate) const WHEEL_TITLE_LEAD: f64 = 22.0;
 
     pub fn content_height(&self, model: &ColorInspectorModel, steps_shown: bool) -> f64 {
         self.rows(model, steps_shown).last().map_or(0.0, |r| r.y + r.height)
@@ -1052,12 +1138,22 @@ impl ColorGradeDraw {
         let fs = f64::from(type_size::BODY);
         let size = self.size;
         c.fill(CGRect::new(0.0, 0.0, size.width, size.height), t.panel());
-        let Some(model) = host.model() else { return };
+        let Some(model) = host.model() else {
+            // No clip to grade: say what is missing instead of an empty panel (the controller's resolution message).
+            let (title, hint) = host
+                .empty_state()
+                .cloned()
+                .unwrap_or_else(|| ColorTargetState::empty_state(ColorTargetState::NOTHING_NOTICE));
+            let area = CGRect::new(Mac::INSET, 0.0, (size.width - 2.0 * Mac::INSET).max(0.0), size.height);
+            c.draw_empty_state(&tr(&title), &tr(&hint), area, 0.0, t);
+            return;
+        };
         let steps_shown = host.steps_shown();
         self.clamp_scroll(model, steps_shown);
         c.save_gstate();
         c.clip_to(CGRect::new(0.0, 0.0, size.width, size.height));
         c.translate_by(0.0, -self.scroll_y);
+        self.cut_names.borrow_mut().clear();
         let rs = self.rows(model, steps_shown);
         for r in rs.iter().filter(|r| r.y + r.height >= self.scroll_y && r.y <= self.scroll_y + size.height) {
             let a: f32 = if r.dim { InspectorTokens::DISABLED_ALPHA } else { 1.0 };
@@ -1078,14 +1174,15 @@ impl ColorGradeDraw {
                 RowStyle::Section => {
                     // The Mac header: a 4 pt gap, then 25 pt with the chevron, the bold title and the summary at the right.
                     let band = CGRect::new(0.0, r.y + Mac::SECTION_GAP, size.width, Mac::SECTION);
-                    c.fill(band, t.token(tk::GROUP));
-                    c.fill(CGRect::new(0.0, band.max_y() - 1.0, size.width, 1.0), t.token(tk::LINE));
-                    InspectorDraw::chevron(
-                        c,
-                        CGRect::new(Mac::CHEVRON_X + 1.5, band.min_y() - 1.0, Mac::CHEVRON_GLYPH, band.height),
-                        if r.open { Direction::Down } else { Direction::Right },
+                    // The inspector's group header (`.grp`): the panel fill, a border-group line at the foot, a 9 pt chevron.
+                    c.fill(band, t.panel());
+                    c.fill(CGRect::new(0.0, band.max_y() - 1.0, size.width, 1.0), t.separator());
+                    c.draw_icon(
+                        if r.open { SQIcon::ChevronDown } else { SQIcon::ChevronRight },
+                        CGPoint::new(Mac::CHEVRON_X, band.mid_y() - 4.5),
+                        9.0,
                         t.label3(),
-                        5.0,
+                        None,
                     );
                     // The title keeps its room; the summary gets what is left between the title and the head controls and
                     // is cut with an ellipsis, so nothing on the head ever overlaps another label (narrow panels).
@@ -1179,9 +1276,13 @@ impl ColorGradeDraw {
                 RowStyle::Plain => {
                     if r.label.is_some() {
                         let lx = r.label_x.unwrap_or(Mac::LABEL_X);
+                        // The label ends before the row's first control (the slider moves left in a narrow panel).
+                        let stop = r.controls.iter().map(|k| k.1.min_x()).fold(Mac::CONTROL_X, f64::min);
+                        let room = (stop - lx - Mac::INSET / 2.0).max(0.0);
+                        let text = c.ellipsized(&tr(label), fs, 0, room);
                         c.draw_text_in(
-                            &tr(label),
-                            CGRect::new(lx, r.y, Mac::CONTROL_X - lx - Mac::INSET / 2.0, r.height),
+                            &text,
+                            CGRect::new(lx, r.y, room, r.height),
                             fs,
                             t.label2().with_alpha(a),
                             TextAlign::Left,
@@ -1227,7 +1328,10 @@ impl ColorGradeDraw {
             Control::Section(..) => {}
             Control::Lut(e, slot) => {
                 let title = model.lut_choice(e, slot).map_or("None".to_string(), |c| c.name);
-                InspectorDraw::popup(c, &tr(&title), f, hov, false, enabled, false, f64::MAX, None, t);
+                let name = tr(&title);
+                if let Some(full) = flat_popup(c, &name, f, hov, false, enabled, true, f64::MAX, None, t) {
+                    self.cut_names.borrow_mut().push((k, full));
+                }
             }
             Control::LutStar(e, slot) => {
                 let c0 = model.lut_choice(e, slot);
@@ -1294,12 +1398,19 @@ impl ColorGradeDraw {
                 self.put_field(s, fd);
             }
             Control::Wheel(w) => {
-                let active = self.wheel_drag.is_some_and(|d| d.wheel == w && !d.master) || hov;
+                let active = enabled && (self.wheel_drag.is_some_and(|d| d.wheel == w && !d.master) || hov);
                 self.draw_wheel(c, t, model, w, f, active);
+                if !enabled {
+                    // Disabled (no Step selected / section off): the disc sinks into the panel ground, the title dims.
+                    c.fill_ellipse(f, t.panel_ground().with_alpha(1.0 - InspectorTokens::DISABLED_ALPHA));
+                }
             }
             Control::Master(w) => {
-                let active = self.wheel_drag.is_some_and(|d| d.wheel == w && d.master) || hov;
+                let active = enabled && (self.wheel_drag.is_some_and(|d| d.wheel == w && d.master) || hov);
                 self.draw_master(c, t, model, w, f, active);
+                if !enabled {
+                    c.fill(f.inset_by(-2.0, -2.0), t.panel_ground().with_alpha(1.0 - InspectorTokens::DISABLED_ALPHA));
+                }
             }
             Control::Channel(curve, i) => {
                 let colors = [t.label().with_alpha(0.9), t.red(), t.green(), t.channel_blue()];
@@ -1311,22 +1422,11 @@ impl ColorGradeDraw {
             }
             Control::Curve(curve) => self.draw_curve(c, t, model, curve, f),
             Control::HueKind(e) => {
-                InspectorDraw::popup(
-                    c,
-                    &tr(self.hue_kind(e).title()),
-                    f,
-                    hov,
-                    false,
-                    enabled,
-                    false,
-                    f64::MAX,
-                    None,
-                    t,
-                );
+                flat_popup(c, &tr(self.hue_kind(e).title()), f, hov, false, enabled, false, f64::MAX, None, t);
             }
             Control::MaskMode(e) => {
                 let title = super::color_range_model::mask_mode_title(model.range_mask_mode(e));
-                InspectorDraw::popup(c, &tr(title), f, hov, false, enabled, false, f64::MAX, None, t);
+                flat_popup(c, &tr(title), f, hov, false, enabled, false, f64::MAX, None, t);
             }
             Control::Invert(e) => {
                 let on = model.color_range(e).is_some_and(|r| r.invert);
@@ -1352,18 +1452,7 @@ impl ColorGradeDraw {
             }
             Control::InputSection => {}
             Control::Input(r) => {
-                InspectorDraw::popup(
-                    c,
-                    &tr(&self.input_title(model, r)),
-                    f,
-                    hov,
-                    false,
-                    enabled,
-                    false,
-                    f64::MAX,
-                    None,
-                    t,
-                );
+                flat_popup(c, &tr(&self.input_title(model, r)), f, hov, false, enabled, false, f64::MAX, None, t);
             }
             Control::Conform => {
                 InspectorDraw::checkbox(
@@ -1397,7 +1486,7 @@ impl ColorGradeDraw {
             // The kit (`#wheels` in color.html): 10 pt padding, the 11 pt title, 8 pt of air, then the 96 pt disc.
             Wheel::Step(..) => 26.0,
             Wheel::Zone(..) => 33.0, // 16 title band + the disc centered in the rest of the 76 pt cell
-            _ => 29.0,
+            Wheel::Slot(..) => Self::WHEEL_TITLE_LEAD,
         }
     }
 
@@ -2219,7 +2308,14 @@ impl ColorGradeDraw {
                 tr("White balance picker: click a neutral gray or white area in the Program monitor")
             })),
             Control::HueKind(e) | Control::Curve(Curve::Hue(e)) => Some(tr(self.hue_kind(e).explanation())),
-            Control::Lut(e, s) => m.lut_mismatch(e, s),
+            Control::Lut(e, s) => {
+                let whole =
+                    self.cut_names.borrow().iter().find(|(k, _)| *k == Control::Lut(e, s)).map(|(_, n)| n.clone());
+                match (whole, m.lut_mismatch(e, s)) {
+                    (Some(n), Some(w)) => Some(format!("{n}\n{w}")),
+                    (n, w) => n.or(w),
+                }
+            }
             Control::LutStar(e, s) => Some(Self::lut_star_tip(m, e, s)),
             k => self.pro_help(host, k).or_else(|| self.input_help(k).map(tr)),
         }

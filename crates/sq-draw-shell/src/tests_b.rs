@@ -653,6 +653,7 @@ mod start {
                 let (s, w, size) = match e {
                     Element::Txt(s, r, size, ..) | Element::TxtC(s, r, size, ..) => (s, r.width, *size),
                     Element::Button(s, _, r, _) => (s, r.width - 18.0, m::F_LAB),
+                    Element::Section(s, r) if !s.is_empty() => (s, r.width - 32.0, m::F_LAB),
                     _ => continue,
                 };
                 let shown = c.ellipsized(s, size, 0, w);
@@ -698,7 +699,7 @@ mod start {
             | Element::Glyph(_, r, ..)
             | Element::IconSq(_, r, _)
             | Element::Tag(_, r, _)
-            | Element::Tile(r)
+            | Element::Section(_, r)
             | Element::Card(_, r)
             | Element::ListHeader(r)
             | Element::ListRow(_, r)
@@ -756,7 +757,7 @@ mod start {
                             && r.max_y() <= outer.max_y() + 0.5
                     };
                     let tiles: Vec<CGRect> =
-                        els.iter().filter_map(|e| if let Element::Tile(r) = e { Some(*r) } else { None }).collect();
+                        els.iter().filter_map(|e| if let Element::Section(_, r) = e { Some(*r) } else { None }).collect();
                     for e in &els {
                         let Some(r) = bounds_of(e) else { continue };
                         checked += 1;
@@ -764,7 +765,7 @@ mod start {
                             r.min_x() >= content.min_x() - 0.5 && r.max_x() <= content.max_x() + 0.5,
                             "{at}: {e:?} leaves the pane"
                         );
-                        if !matches!(e, Element::Tile(_)) {
+                        if !matches!(e, Element::Section(..)) {
                             for t in &tiles {
                                 if t.contains(CGPoint::new(r.mid_x(), r.mid_y())) {
                                     assert!(inside(r, *t), "{at}: {e:?} runs out of its card {t:?}");
@@ -960,7 +961,8 @@ mod start {
         let rig = rig(vec![entry("A", 0.0)]);
         screen(&rig, |s, _| {
             let (rail, pane, status) = (s.rail_rect(), s.pane_rect(), s.status_bar());
-            assert_eq!((rail.width, status.height, s.top_bar().height), (256.0, 24.0, 40.0));
+            assert_eq!((rail.width, status.height, s.top_bar().height), (254.0, 24.0, 40.0));
+            assert_eq!(pane.min_x() - rail.max_x(), 2.0, "a 2 pt seam between rail and pane");
             assert_eq!((pane.min_x(), pane.min_y() - rail.min_y(), rail.max_y() - pane.max_y()), (256.0, 2.0, 2.0));
             assert_eq!(s.frame.max_x() - pane.max_x(), 2.0);
             let new = s.rail_spots().into_iter().find(|x| x.1 == StartHit::NewProject).unwrap().0;
@@ -1144,7 +1146,7 @@ mod start {
         screen(&rig, |s, env| {
             s.set_tab(StartTab::Home);
             let els = s.pane_layout(env).0;
-            assert!(els.iter().any(|e| matches!(e, Element::Lane(r) if r.width == s.content_rect().width - 48.0 - 32.0 && r.height == 186.0)));
+            assert!(els.iter().any(|e| matches!(e, Element::Lane(r) if r.width == s.content_rect().width - 48.0 && r.height == 186.0)));
             let quick: Vec<CGRect> =
                 els.iter().filter_map(|e| if let Element::Quick(_, r) = e { Some(*r) } else { None }).collect();
             assert_eq!(quick.len(), 4);

@@ -10,7 +10,7 @@ use std::sync::Arc;
 
 /// The real app root over a fresh support folder, 1280 x 800 like the test windows.
 fn window() -> Headless {
-    let dir = crate::test_rig::unique_dir("sq-real-window");
+    let dir = crate::test_rig::test_dir("sq-real-window");
     std::fs::create_dir_all(&dir).expect("dir");
     let clock = Arc::new(FakeClock::new());
     let h = Headless::new(demo_session(Scenario::Plain), AppDeps::headless(Arc::clone(&clock) as _), 1280, 800);
@@ -393,7 +393,7 @@ impl sq_export::core::traits::FrameSource for OneFrame {
 /// The real root with File > Export on, over a queue whose encoder finishes at once.
 fn window_with_export() -> (Headless, Arc<sq_export::core::queue::ExportQueue>, Arc<FakeClock>) {
     use sq_export::core::queue::{ExportQueue, ExportSources};
-    let dir = crate::test_rig::unique_dir("sq-real-window-export");
+    let dir = crate::test_rig::test_dir("sq-real-window-export");
     std::fs::create_dir_all(&dir).expect("dir");
     let clock = Arc::new(FakeClock::new());
     let h = Headless::new(demo_session(Scenario::Plain), AppDeps::headless(Arc::clone(&clock) as _), 1280, 800);
@@ -506,7 +506,7 @@ fn the_export_finished_card_owns_the_keys_until_this_key_closes_it(closing_key: 
 
 /// The real app root at `scale` device pixels per point in a `w` x `h` point window.
 fn scaled_window(scale: f32, w: i64, h: i64) -> Headless {
-    let dir = crate::test_rig::unique_dir("sq-real-window-scaled");
+    let dir = crate::test_rig::test_dir("sq-real-window-scaled");
     std::fs::create_dir_all(&dir).expect("dir");
     let clock = Arc::new(FakeClock::new());
     let mut deps = AppDeps::headless(Arc::clone(&clock) as _);

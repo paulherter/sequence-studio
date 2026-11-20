@@ -14,6 +14,7 @@
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
+use crate::channel::Channel;
 use crate::package::{run, workspace_version};
 
 /// A build tool: the path in `var`, else `name` inside the folder `SQ_DEPS` names (`scripts/linux-deps.sh` fills it), when
@@ -30,8 +31,8 @@ fn dep_from(var: Option<std::ffi::OsString>, deps: Option<std::ffi::OsString>, n
 }
 
 /// The file name of a build: unique per build (version and minute), like the Mac DMG and the Windows installer.
-fn image_name(version: &str, stamp: &str) -> String {
-    format!("SequenceStudio-{version}-{stamp}-x86_64.AppImage")
+fn image_name(channel: Channel, version: &str, stamp: &str) -> String {
+    format!("{}-{version}-{stamp}-x86_64.AppImage", channel.file_prefix())
 }
 
 /// Libraries of `lib` the executable needs, found with `ldd`, followed through their own dependencies.
@@ -123,17 +124,19 @@ fn copy_to(from: &Path, to: &Path) -> Result<(), String> {
     std::fs::copy(from, to).map(|_| ()).map_err(|e| format!("{}: {e}", from.display()))
 }
 
-pub fn run_package(root: &Path, args: &[String]) -> Result<(), String> {
+pub fn run_package(root: &Path, args: &[String], channel: Channel, date: &str) -> Result<(), String> {
     let no_smoke = args.iter().any(|a| a == "--no-smoke");
     if let Some(bad) = args.iter().find(|a| *a != "--no-smoke") {
         return Err(format!("unknown option {bad}; usage: cargo xtask package [--no-smoke]"));
     }
     let ffmpeg = dep("SQ_FFMPEG", "ffmpeg-linux")
         .ok_or("SQ_FFMPEG must name an LGPL FFmpeg shared build (scripts/linux-deps.sh fetches one into $SQ_DEPS)")?;
-    let version = workspace_version(root);
+    let version = channel.version(&workspace_version(root), date);
     let pk = root.join("packaging/linux");
 
-    crate::step("release build", crate::cargo(&["build", "--release", "-p", "sequence-studio"]))?;
+    let mut build = crate::cargo(&["build", "--release", "-p", "sequence-studio"]);
+    build.env("SQ_CHANNEL", channel.id()).env("SQ_BUILD_VERSION", &version);
+    crate::step("release build", build)?;
     let target = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| root.join("target"));
     let release = target.join("release/sequence-studio");
     if !release.exists() {
@@ -205,18 +208,27 @@ pub fn run_package(root: &Path, args: &[String]) -> Result<(), String> {
     for f in crate::notices::LICENSE_FILES.iter().chain(linux_only.iter()) {
         copy_to(&root.join(f), &licenses.join(Path::new(f).file_name().ok_or("license name")?))?;
     }
-    let desktop = std::fs::read_to_string(pk.join("sequence-studio.desktop")).map_err(|e| e.to_string())?;
-    std::fs::write(app_dir.join("sequence-studio.desktop"), &desktop).map_err(|e| e.to_string())?;
-    copy_to(&pk.join("sequence-studio.desktop"), &app_dir.join("usr/share/applications/sequence-studio.desktop"))?;
+    // The desktop entry and icon carry the channel id; the Nightly entry gets its own name and window class.
+    let id = channel.linux_id();
+    let mut desktop = std::fs::read_to_string(pk.join("sequence-studio.desktop")).map_err(|e| e.to_string())?;
+    if channel != Channel::Stable {
+        desktop = desktop
+            .replace("Name=Sequence Studio", &format!("Name={}", channel.display_name()))
+            .replace("Icon=sequence-studio", &format!("Icon={id}"))
+            .replace("StartupWMClass=sequence-studio", &format!("StartupWMClass={id}"));
+    }
+    std::fs::write(app_dir.join(format!("{id}.desktop")), &desktop).map_err(|e| e.to_string())?;
+    std::fs::write(app_dir.join(format!("usr/share/applications/{id}.desktop")), &desktop).map_err(|e| e.to_string())?;
     copy_to(
         &pk.join("de.paulherter.sequencestudio.xml"),
         &app_dir.join("usr/share/mime/packages/de.paulherter.sequencestudio.xml"),
     )?;
-    copy_to(&pk.join("sequence-studio.png"), &app_dir.join("sequence-studio.png"))?;
-    copy_to(&pk.join("sequence-studio.png"), &app_dir.join(".DirIcon"))?;
+    let icon = pk.join(channel.linux_icon());
+    copy_to(&icon, &app_dir.join(format!("{id}.png")))?;
+    copy_to(&icon, &app_dir.join(".DirIcon"))?;
     let icons = app_dir.join("usr/share/icons/hicolor/256x256/apps");
     std::fs::create_dir_all(&icons).map_err(|e| e.to_string())?;
-    copy_to(&pk.join("sequence-studio.png"), &icons.join("sequence-studio.png"))?;
+    copy_to(&icon, &icons.join(format!("{id}.png")))?;
     copy_to(&pk.join("AppRun"), &app_dir.join("AppRun"))?;
 
     if !no_smoke {
@@ -234,7 +246,7 @@ pub fn run_package(root: &Path, args: &[String]) -> Result<(), String> {
     crate::stage::check(&app_dir, &["common", "linux"])?;
 
     let stamp = run(Command::new("date").arg("+%Y%m%d-%H%M"))?.trim().to_string();
-    let image = out.join(image_name(&version, &stamp));
+    let image = out.join(image_name(channel, &version, &stamp));
     let tool = dep("SQ_APPIMAGETOOL", "appimagetool-x86_64.AppImage").unwrap_or_else(|| PathBuf::from("appimagetool"));
     // The tool is itself an AppImage: run it without FUSE.
     run(Command::new(tool).env("APPIMAGE_EXTRACT_AND_RUN", "1").env("ARCH", "x86_64").arg(&app_dir).arg(&image))?;
@@ -282,7 +294,11 @@ mod tests {
 
     #[test]
     fn the_image_name_carries_version_and_build_minute() {
-        assert_eq!(image_name("0.1.2", "20261112-2202"), "SequenceStudio-0.1.2-20261112-2202-x86_64.AppImage");
+        assert_eq!(image_name(Channel::Stable, "0.1.2", "20261112-2202"), "SequenceStudio-0.1.2-20261112-2202-x86_64.AppImage");
+        assert_eq!(
+            image_name(Channel::Nightly, "0.1.2-nightly.20261112", "20261112-2202"),
+            "SequenceStudioNightly-0.1.2-nightly.20261112-20261112-2202-x86_64.AppImage"
+        );
     }
 
     #[test]

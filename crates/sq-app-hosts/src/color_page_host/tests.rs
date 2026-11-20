@@ -497,7 +497,7 @@ fn add_step_without_a_graph_menu_beeps_instead_of_doing_nothing() {
 fn imported_luts_land_in_the_library_and_the_model_lists_them_and_stars_stick() {
     use sq_core_time::{Time, Timestamp};
     use sq_inspector_ui::color::color_inspector_model::ColorInspectorEvent as E;
-    let dir = crate::test_rig::unique_dir("sq-app-hosts-lut-library");
+    let dir = crate::test_rig::test_dir("sq-app-hosts-lut-library");
     let src = dir.join("Warm.cube");
     std::fs::create_dir_all(&dir).expect("dir");
     // A valid 2 x 2 x 2 table: the import refuses a .cube whose rows do not match its size.

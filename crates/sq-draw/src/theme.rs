@@ -20,6 +20,9 @@ pub struct DrawTheme {
     pub palette: AppearancePalette,
     /// Device pixels per point.
     pub scale: f32,
+    /// The window is not the key window (r8 "background window"): grey focus ring and focus edge, the blue button turns
+    /// raised. Set by the app on focus loss and gain.
+    pub window_inactive: bool,
 }
 
 /// The playhead head: pentagon points, fill and (light theme only) outline.
@@ -59,6 +62,18 @@ pub use sq_uikit::design_tokens::sq_tokens::height;
 pub use sq_uikit::design_tokens::sq_tokens::radius;
 /// `Theme.Spacing` in points.
 pub use sq_uikit::design_tokens::sq_tokens::spacing;
+/// The tab row of a panel header, shared by the dock and the monitor tabs (r8 `.hdr` and `.tab`).
+pub mod tab {
+    use sq_uikit::redesign_tokens::spacing;
+    /// Header padding left of the first tab (`.hdr` padding-left 6).
+    pub const HEADER_INSET: f64 = spacing::SM as f64;
+    /// Padding left and right of a tab title (`.tab` padding 0 s-2).
+    pub const PADDING: f64 = spacing::MD as f64;
+    /// Gap between two tabs.
+    pub const GAP: f64 = spacing::XXS as f64;
+    /// Height of one tab.
+    pub const HEIGHT: f64 = 22.0;
+}
 /// Type sizes in points (ladder 10 / 11 / 12 / 13 / 15 / 18; clip name is caption).
 pub use sq_uikit::design_tokens::sq_tokens::type_size;
 
@@ -78,7 +93,7 @@ impl DrawTheme {
 
     /// The theme of `settings` at `scale` device pixels per point.
     pub fn new(settings: &AppearanceSettings, scale: f32) -> DrawTheme {
-        DrawTheme { palette: AppearancePalette::resolve(settings), scale }
+        DrawTheme { palette: AppearancePalette::resolve(settings), scale, window_inactive: false }
     }
 
     /// Points to whole pixels.
@@ -86,7 +101,7 @@ impl DrawTheme {
         (pt * self.scale).round()
     }
 
-    fn dark(&self) -> bool {
+    pub(crate) fn dark(&self) -> bool {
         self.palette.is_dark()
     }
     fn ink(&self, dark: f64, light: f64) -> Color {
@@ -109,6 +124,58 @@ impl DrawTheme {
     /// The corner radius of a panel card in points: square (`radius/panel` is 0).
     pub fn panel_radius(&self) -> f64 {
         f64::from(sq_uikit::redesign_tokens::radius::PANEL)
+    }
+
+    /// Editor content area (`color/content`): the lane in dark, white in light.
+    pub fn content_surface(&self) -> Color {
+        self.token(sq_uikit::tokens::color::surface::CONTENT)
+    }
+    /// Edge of the focused panel (`color/focus_edge`); `text-secondary` at 55 % in a background window.
+    pub fn focus_edge(&self) -> Color {
+        if self.window_inactive {
+            return self.token(tk::TEXT2).with_alpha(0.55);
+        }
+        self.token(sq_uikit::tokens::color::focus::EDGE)
+    }
+    /// The 1 px keyboard focus ring (`focus-ring`): the accent, `text-secondary` in a background window.
+    pub fn focus_ring(&self) -> Color {
+        self.token(if self.window_inactive { tk::TEXT2 } else { tk::ACCENT })
+    }
+    /// The 2.5 px halo outside the focus ring (`focus-ring-quiet`: accent at 16 % dark / 12 % light, text-secondary at 22 %
+    /// in a background window). `ACCENT_ZONE` holds the accent alpha values.
+    pub fn focus_ring_quiet(&self) -> Color {
+        if self.window_inactive {
+            return self.token(tk::TEXT2).with_alpha(0.22);
+        }
+        self.token(tk::ACCENT_ZONE)
+    }
+    /// The label color on a button of the accent kind: white, `text-primary` while the button is grey (background window).
+    pub fn accent_button_text(&self) -> Color {
+        self.token(if self.window_inactive { tk::TEXT } else { tk::ON_ACCENT })
+    }
+    /// The ink on a `ButtonKind::Primary` button (r8 `--on-primary`): the dark well on the light fill, white on the dark one.
+    pub fn primary_button_text(&self) -> Color {
+        if self.palette.is_dark() { self.well() } else { Color::WHITE }
+    }
+    /// Control heights 20 / 24 / 28 (`size/control_compact`, `size/control_regular`, `size/control_large`).
+    pub fn control_height_compact(&self) -> f64 {
+        f64::from(sq_uikit::tokens::size::CONTROL_COMPACT)
+    }
+    pub fn control_height_regular(&self) -> f64 {
+        f64::from(sq_uikit::tokens::size::CONTROL_REGULAR)
+    }
+    pub fn control_height_large(&self) -> f64 {
+        f64::from(sq_uikit::tokens::size::CONTROL_LARGE)
+    }
+    /// Icon sizes 12 / 20 / 32 next to the 14 and 16 that exist (`size/icon_small`, `icon_large`, `icon_hero`).
+    pub fn icon_size_small(&self) -> f64 {
+        f64::from(sq_uikit::tokens::size::ICON_SMALL)
+    }
+    pub fn icon_size_large(&self) -> f64 {
+        f64::from(sq_uikit::tokens::size::ICON_LARGE)
+    }
+    pub fn icon_size_hero(&self) -> f64 {
+        f64::from(sq_uikit::tokens::size::ICON_HERO)
     }
 
     // Surfaces and text
@@ -151,6 +218,10 @@ impl DrawTheme {
     /// Secondary text.
     pub fn label2(&self) -> Color {
         color(self.palette.label2)
+    }
+    /// Secondary text on the selection and menu surfaces, lifted to 4.5:1 where `label2` falls short.
+    pub fn label2_on_raised(&self) -> Color {
+        color(self.palette.label2_on_raised)
     }
     /// Tertiary text.
     pub fn label3(&self) -> Color {
@@ -424,7 +495,7 @@ mod tests {
         assert_eq!(metrics::TRACK_HEADER, 190.0);
         assert_eq!(metrics::PANE_DIVIDER, t::metrics::PANE_DIVIDER);
         assert_eq!((spacing::XXS, spacing::SNUG, spacing::XXL), (2.0, 6.0, 32.0));
-        assert_eq!((radius::PANEL, radius::MENU, radius::CARD), (4.0, 10.0, 12.0));
+        assert_eq!((radius::PANEL, radius::MENU, radius::CARD), (6.0, 12.0, 12.0));
         assert_eq!((height::COMPACT, height::LARGE, height::PANEL_LIST), (22.0, 28.0, 24.0));
         assert_eq!((type_size::CAPTION, type_size::BODY, type_size::DISPLAY), (10.0, 11.0, 18.0));
         assert_eq!(type_size::CLIP_NAME, type_size::CAPTION);
@@ -452,9 +523,9 @@ mod tests {
         assert_eq!(th.fill_hover(), th.token(tk::HOVER));
         assert_eq!(th.separator(), th.token(tk::LINE));
         assert_eq!(th.ruler_line(), th.token(tk::LINE3));
-        assert_eq!(th.monitor_backdrop(), Color::hex(0x0E0E0F, 1.0));
-        assert_eq!(th.viewer(), Color::hex(0x0E0E0F, 1.0));
-        assert_eq!(th.yellow(), Color::hex(0xFFD60A, 1.0));
+        assert_eq!(th.monitor_backdrop(), Color::hex(0x000000, 1.0));
+        assert_eq!(th.viewer(), Color::hex(0x000000, 1.0));
+        assert_eq!(th.yellow(), Color::hex(0xFFFFFF, 1.0));
         assert!(th.fill().a > 0.0);
         assert_eq!(th.viewer_hud().a, t::alpha::VIEWER_HUD as f32);
         assert_eq!(th.guide().a, t::alpha::GUIDE as f32);
@@ -479,7 +550,7 @@ mod tests {
     #[test]
     fn light_theme_uses_light_surfaces_and_on_viewer_keeps_dark_labels() {
         let light = DrawTheme::new(&AppearanceSettings::new(AppearanceMode::Light, 0, 50), 2.0);
-        assert_eq!(light.well(), Color::hex(0xFFFFFF, 1.0));
+        assert_eq!(light.well(), Color::hex(0xFBFBFC, 1.0));
         assert_eq!(light.px(5.4), 11.0);
         let dark = DrawTheme::default();
         assert_eq!(light.on_viewer().label(), dark.label());
@@ -596,7 +667,8 @@ mod tests {
             let new_light = ALL_COLORS.iter().find(|(n, _)| *n == new).unwrap_or_else(|| panic!("no token {new}")).1;
             let what = format!("{old} -> {new}");
             let got = old_color(&dark, old).unwrap_or_else(|| panic!("no accessor for {old}"));
-            assert_close(got, hex(cells[4]), &format!("{what} Dark"));
+            let want = hex(cells[4]);
+            assert_close(got, want, &format!("{what} Dark"));
             let got = old_color(&light, old).unwrap();
             assert_close(got, new_light.rgba(false), &format!("{what} Light"));
             rows += 1;

@@ -33,6 +33,8 @@ typedef struct {
     int64_t pos;                  // byte offset in the file
     int32_t size;
     int32_t key;
+    int32_t discard;              // AV_PKT_FLAG_DISCARD: the container's edit list does not present this sample (kept for decoding)
+    int32_t reserved;
 } SQFFPacket;
 typedef struct {
     int width, height;

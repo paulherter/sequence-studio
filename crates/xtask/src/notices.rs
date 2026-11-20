@@ -171,7 +171,7 @@ fn read(root: &Path, rel: &str) -> Result<String, String> {
     std::fs::read(root.join(rel)).map(|b| String::from_utf8_lossy(&b).into_owned()).map_err(|e| format!("{rel}: {e}"))
 }
 
-/// What ships but is not a crate: FFmpeg, ONNX Runtime, EdgeTAM, Phosphor icons, vendored C code and every font family.
+/// What ships but is not a crate: FFmpeg, ONNX Runtime, EdgeTAM, Lucide icons, vendored C code and every font family.
 pub fn extra_entries(root: &Path) -> Result<Vec<Entry>, String> {
     let e = |name: &str, version: &str, license: &str, copyright: &str, files: &[&str]| -> Result<Entry, String> {
         let texts = files.iter().map(|f| read(root, f)).collect::<Result<Vec<_>, _>>()?;
@@ -188,7 +188,7 @@ pub fn extra_entries(root: &Path) -> Result<Vec<Entry>, String> {
         e("EdgeTAM models (subject masks)", "", "Apache-2.0", "Meta Platforms, Inc. and affiliates", &[
             "packaging/licenses/APACHE-2.0.txt",
         ])?,
-        e("Phosphor Icons", "2.1", "MIT", "2020 Phosphor Icons", &["packaging/licenses/PHOSPHOR-MIT.txt"])?,
+        e("Lucide icons", "1.65.0", "ISC", "Lucide Contributors; portions Cole Bemis (Feather, MIT)", &["packaging/licenses/LUCIDE-ISC.txt"])?,
         e("RNNoise (vendored C code)", "0.1.1", "BSD-3-Clause", "Mozilla, Jean-Marc Valin, Xiph.Org Foundation, Mark Borgerding", &[
             "crates/sq-audiofx/vendor/rnnoise/COPYING",
         ])?,

@@ -4,7 +4,7 @@
 //! 8 GB laptop on any machine (`SQ_RAM_GB=8`).
 //!
 //! Frame cache: ONE budget for both monitors together (Program 3/4, Source 1/4). 8 GB and smaller: 1/6 of RAM; larger: 1/4,
-//! at most 8 GB. Auto preview quality is half on low-memory machines, full elsewhere.
+//! at most 8 GB. Auto preview quality starts at half on weak machines (`auto_start_scale`), full elsewhere.
 
 use sq_core_project::work_limits::MachineResources;
 use sq_media::video_decoding::DecodeScale;
@@ -107,10 +107,19 @@ impl MemoryBudget {
         if self.is_low_memory() { 1 } else { 2 }
     }
 
-    /// Viewer decode size when the preview quality setting is Auto.
-    pub fn auto_preview_quality(&self) -> DecodeScale {
-        if self.is_low_memory() { DecodeScale::Half } else { DecodeScale::Full }
-    }
+}
+
+/// The one place that decides where preview quality Auto starts: half on a weak machine (`is_weak_for_decode`: Intel, 8 GB
+/// or less, or 4 cores or fewer), full on every other. The measured step-down (`AutoQualityGovernor`) lowers it from there.
+pub fn auto_start_scale(machine: &MachineResources) -> DecodeScale {
+    if machine.is_weak_for_decode() { DecodeScale::Half } else { DecodeScale::Full }
+}
+
+/// `auto_start_scale` for this machine (lowered by `SQ_RAM_GB` / `SQ_CORES` read through `environment`).
+pub fn auto_start_scale_here(environment: impl Fn(&str) -> Option<String>, physical_memory: u64) -> DecodeScale {
+    let cores = std::thread::available_parallelism().map_or(8, |n| n.get() as i64);
+    let is_intel = cfg!(all(target_os = "macos", target_arch = "x86_64"));
+    auto_start_scale(&MachineResources::current(environment, physical_memory, cores, is_intel))
 }
 
 #[cfg(test)]
@@ -169,12 +178,20 @@ mod tests {
     }
 
     #[test]
-    fn idle_decoders_and_preview_quality() {
+    fn idle_decoders() {
         assert_eq!(MemoryBudget::new(8 * GB).idle_decoders(), 1);
         assert_eq!(MemoryBudget::new(4 * GB).idle_decoders(), 1);
         assert_eq!(MemoryBudget::new(16 * GB).idle_decoders(), 2);
-        assert_eq!(MemoryBudget::new(8 * GB).auto_preview_quality(), DecodeScale::Half);
-        assert_eq!(MemoryBudget::new(16 * GB).auto_preview_quality(), DecodeScale::Full);
+    }
+
+    #[test]
+    fn auto_starts_at_half_only_on_weak_machines() {
+        let scale = |gb: u64, cores: i64, intel: bool| auto_start_scale(&MachineResources::new(gb * GB, cores, intel));
+        assert_eq!(scale(8, 8, false), DecodeScale::Half, "8 GB");
+        assert_eq!(scale(16, 4, false), DecodeScale::Half, "4 cores");
+        assert_eq!(scale(16, 8, true), DecodeScale::Half, "Intel");
+        assert_eq!(scale(16, 8, false), DecodeScale::Full);
+        assert_eq!(scale(64, 12, false), DecodeScale::Full);
     }
 
     #[test]

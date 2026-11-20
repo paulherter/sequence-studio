@@ -78,6 +78,8 @@ pub struct ExportQueuePopover {
     hover_row: Option<usize>,
     hover_clear: bool,
     hover_stop: bool,
+    /// Full texts of the cut names and error lines drawn last (window points): the tooltip under the pointer.
+    cut_tips: Vec<(CGRect, String)>,
     /// Poses (`--pose dlg-queue`): the jobs given stay, the host's refresh leaves them alone.
     pub pinned: bool,
     /// "Show in Explorer" / "Reveal in Finder".
@@ -133,6 +135,7 @@ impl ExportQueuePopover {
             hover_row: None,
             hover_clear: false,
             hover_stop: false,
+            cut_tips: Vec::new(),
             pinned: false,
             reveal_title: "Show in Explorer".to_string(),
             can_reveal: true,
@@ -229,7 +232,8 @@ impl ExportQueuePopover {
         match e {
             Entry::Section(_) => Self::SECTION_HEIGHT,
             Entry::Job(i) => {
-                if self.jobs[i].state == ExportJobState::Running {
+                // A failed row keeps a bar (red, where the job stopped) so the failure reads like the running rows.
+                if matches!(self.jobs[i].state, ExportJobState::Running | ExportJobState::Failed(_)) {
                     Self::BAR_ROW_HEIGHT
                 } else {
                     Self::ROW_HEIGHT
@@ -362,11 +366,11 @@ impl ExportQueuePopover {
     }
 
     /// The accent bar (`.prog b`) on the well track.
-    fn draw_bar(c: &mut Canvas, bar: CGRect, value: f64, t: &DrawTheme) {
+    fn draw_bar(c: &mut Canvas, bar: CGRect, value: f64, fill: Color, t: &DrawTheme) {
         c.fill_rounded(bar, 2.0, t.well());
         if value > 0.0 {
             let w = (bar.width * value.clamp(0.0, 1.0)).max(4.0);
-            c.fill_rounded(CGRect::new(bar.min_x(), bar.min_y(), w, bar.height), 2.0, t.accent());
+            c.fill_rounded(CGRect::new(bar.min_x(), bar.min_y(), w, bar.height), 2.0, fill);
         }
     }
 
@@ -385,6 +389,16 @@ impl ExportQueuePopover {
         c.stroke_rounded(self.frame, 10.0, 1.0, t.separator());
         let head = CGRect::new(self.frame.min_x(), self.frame.min_y(), self.frame.width, Self::HEADER_HEIGHT);
         c.draw_text_in(&SQL10n::string("Export Queue"), head, body, t.label(), TextAlign::Left, Self::PAD, semibold);
+        let count = self.jobs.len() + self.background.len();
+        if count > 0 {
+            let text = if count == 1 {
+                SQL10n::string("1 job")
+            } else {
+                SQL10n::format("%@ jobs", &[&count.to_string()])
+            };
+            let area = CGRect::new(head.min_x(), head.min_y(), head.width - 12.0 - 16.0 - 8.0, head.height);
+            c.draw_text_in(&text, area, caption, t.label3(), TextAlign::Right, 0.0, 0);
+        }
         c.draw_icon(
             SQIcon::Ellipsis,
             CGPoint::new(head.max_x() - 12.0 - 16.0, head.mid_y() - 8.0),
@@ -394,6 +408,7 @@ impl ExportQueuePopover {
         );
         c.fill(CGRect::new(head.min_x(), head.max_y() - 1.0, head.width, 1.0), t.separator());
         let list = self.list_rect();
+        self.cut_tips.clear();
         c.save_gstate();
         c.clip_to(list);
         if self.jobs.is_empty() {
@@ -409,7 +424,7 @@ impl ExportQueuePopover {
                 continue;
             }
             let _ = i;
-            let (title, line, bar, icon, line_color, act) = match entry {
+            let (title, line, bar, icon, line_color, act, why) = match entry {
                 Entry::Section(name) => {
                     let label = CGRect::new(r.min_x(), r.min_y() + 10.0, r.width, 14.0);
                     c.draw_text_in(
@@ -432,11 +447,12 @@ impl ExportQueuePopover {
                         ExportJobState::Running => format!("{} %", (j.progress.clamp(0.0, 1.0) * 100.0).round()),
                         _ => Self::state_text(&j.state),
                     };
-                    let bar = (j.state == ExportJobState::Running).then_some(j.progress);
-                    let line_color =
-                        if matches!(j.state, ExportJobState::Failed(_)) { t.err_text() } else { t.label3() };
+                    let failed = matches!(j.state, ExportJobState::Failed(_));
+                    let bar = (j.state == ExportJobState::Running || failed).then_some(j.progress);
+                    let line_color = if failed { t.err_text() } else { t.label3() };
                     let act = self.action(&j).is_some();
-                    (j.name.clone(), line, bar, Self::state_icon(&j.state, t), line_color, act)
+                    let why = failed.then(|| line.clone());
+                    (j.name.clone(), line, bar, Self::state_icon(&j.state, t), line_color, act, why)
                 }
                 Entry::Background(i) => {
                     let b = &self.background[i];
@@ -446,7 +462,7 @@ impl ExportQueuePopover {
                         Some(p) => format!("{} %", (p.clamp(0.0, 1.0) * 100.0).round()),
                         None => SQL10n::string("Waiting"),
                     };
-                    (b.title.clone(), line, b.progress.filter(|p| *p > 0.0), (icon, t.label3()), t.label3(), true)
+                    (b.title.clone(), line, b.progress.filter(|p| *p > 0.0), (icon, t.label3()), t.label3(), true, None)
                 }
             };
             let text_x = r.min_x() + Self::PAD + Self::ICON + 10.0;
@@ -458,9 +474,15 @@ impl ExportQueuePopover {
                 icon.1,
                 None,
             );
+            // Names are cut in the middle (Finder-style), so "Cut v1" and "Cut v12" stay apart; the full name is the tip.
+            let cut = c.truncated_name(&title, body, 0, text_w);
+            let title_rect = CGRect::new(text_x, r.min_y() + 8.0, text_w, 18.0);
+            if let Some(tip) = cut.tip() {
+                self.cut_tips.push((title_rect, tip.to_string()));
+            }
             c.draw_text_in(
-                &title,
-                CGRect::new(text_x, r.min_y() + 8.0, text_w, 18.0),
+                &cut.shown,
+                title_rect,
                 body,
                 t.label(),
                 TextAlign::Left,
@@ -469,11 +491,18 @@ impl ExportQueuePopover {
             );
             let line_y = if bar.is_some() { r.min_y() + 38.0 } else { r.min_y() + 26.0 };
             if let Some(p) = bar {
-                Self::draw_bar(c, CGRect::new(text_x, r.min_y() + 30.0, text_w, 4.0), p, t);
+                let fill = if why.is_some() { t.red() } else { t.accent() };
+                Self::draw_bar(c, CGRect::new(text_x, r.min_y() + 30.0, text_w, 4.0), p, fill, t);
+            }
+            let line_rect = CGRect::new(text_x, line_y, text_w, 16.0);
+            // The error reads whole in the tip when the line is cut.
+            let shown = c.ellipsized(&line, caption, 0, text_w);
+            if let Some(full) = why.filter(|_| shown != line) {
+                self.cut_tips.push((line_rect, full));
             }
             c.draw_text_in(
-                &line,
-                CGRect::new(text_x, line_y, text_w, 16.0),
+                &shown,
+                line_rect,
                 caption,
                 line_color,
                 TextAlign::Left,
@@ -543,6 +572,11 @@ impl ExportQueuePopover {
                     && Self::action_rect(r).contains(p)
                 {
                     ui.hover.offer_tip(Some(&SQL10n::string(&tip)));
+                }
+                if list.contains(p)
+                    && let Some((_, full)) = self.cut_tips.iter().find(|(r, _)| r.contains(p))
+                {
+                    ui.hover.offer_tip(Some(full));
                 }
                 true
             }
@@ -797,5 +831,24 @@ mod tests {
             - ExportQueuePopover::BAR_ROW_HEIGHT;
         press(&mut p, x, (bg_row + ExportQueuePopover::BAR_ROW_HEIGHT / 2.0) as f32);
         assert_eq!(p.take_events(), [QueuePopoverEvent::CancelBackground("proxy-1".into())]);
+    }
+
+    #[test]
+    fn a_failed_row_has_a_bar_and_names_stay_distinct() {
+        let failed = ExportJobState::Failed("disk full".into());
+        let mut p = make();
+        let row = QueueJob { id: Id::from_u128(7), name: "Interview final export for the festival screening in the main hall v12".into(), state: failed, progress: 0.3 };
+        p.update(&[row], None);
+        assert_eq!(p.entry_height(Entry::Job(0)), ExportQueuePopover::BAR_ROW_HEIGHT);
+        let t = DrawTheme::default();
+        let mut c = Canvas::with_size(1000.0, 700.0, None, 1.0);
+        p.layout(WINDOW);
+        p.draw(&mut c, &t, 0.0);
+        // Without a font atlas nothing measures wide, so only the drawing path is run here.
+        let (v1, v12) = ("Interview final export for the festival v1", "Interview final export for the festival v12");
+        let fits = |t: &str| t.chars().count() <= 24;
+        let (a, b) = (sq_draw::middle_fit::truncate_name(v1, fits), sq_draw::middle_fit::truncate_name(v12, fits));
+        assert_ne!(a.shown, b.shown);
+        assert_eq!(b.tip(), Some(v12));
     }
 }

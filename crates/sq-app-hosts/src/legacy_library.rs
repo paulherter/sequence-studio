@@ -105,7 +105,7 @@ mod tests {
 
     #[test]
     fn the_folders_of_the_old_app_are_imported_once_and_the_old_file_stays() {
-        let dir = crate::test_rig::unique_dir("sq-legacy-folders");
+        let dir = crate::test_rig::test_dir("sq-legacy-folders");
         std::fs::create_dir_all(&dir).unwrap();
         let json = r#"[{"displayName":"Footage","id":"9B70C735-2617-42DB-B082-C4EBDE259F51","url":"file:\/\/\/Users\/me\/Footage\/"}]"#;
         let plist = fake_plist(&dir, json);
@@ -125,7 +125,7 @@ mod tests {
 
     #[test]
     fn no_old_file_or_no_key_imports_nothing() {
-        let dir = crate::test_rig::unique_dir("sq-legacy-none");
+        let dir = crate::test_rig::test_dir("sq-legacy-none");
         std::fs::create_dir_all(&dir).unwrap();
         let mut view = FileView(FileDefaults::shared(&dir));
         assert!(import_swift_folders(&mut view, &dir.join("missing.plist")).is_empty());

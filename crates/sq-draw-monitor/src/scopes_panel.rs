@@ -511,7 +511,7 @@ impl ScopesPanel {
                     self.source.label(),
                     CGRect::new(head_right - head_w, s.popup.min_y(), head_w, s.popup.height),
                     10.0,
-                    t.label3(),
+                    t.label2(),
                     TextAlign::Right,
                     0.0,
                     0,
@@ -535,7 +535,7 @@ impl ScopesPanel {
                 );
                 c.fill(
                     CGRect::new(s.popup.max_x() - lw - 6.0 - 14.0, s.popup.mid_y().round() - 1.0, 14.0, 2.0),
-                    t.label3(),
+                    t.label2(),
                 );
             } else {
                 if let Some(b) = self.settings_button(i) {
@@ -570,7 +570,7 @@ impl ScopesPanel {
                     &e.hint,
                     CGRect::new(s.box_.min_x(), s.box_.mid_y() + 2.0, s.box_.width, 16.0),
                     11.0,
-                    t.label3(),
+                    t.label2(),
                     TextAlign::Center,
                     0.0,
                     0,

@@ -17,11 +17,14 @@ pub struct Entry {
 /// Presentation-ordered frame table of one video track.
 #[derive(Clone, Debug)]
 pub struct SampleIndex {
-    /// Sorted by pts; pts 0 = first presented frame (edit-list / start offset removed). Samples the edit list does not
-    /// present have zero duration (pts = the cut point); they stay in the table because later frames may reference them.
+    /// Sorted by pts; pts 0 = first presented frame (edit-list / start offset removed). Only presented frames: samples the
+    /// edit list hides are not frames (no number, no lookup target); they live in `hidden_ordinal` and the sync list, so a
+    /// decode still runs through them.
     entries: Vec<Entry>,
-    /// decodeOrdinal -> presentation index.
+    /// decodeOrdinal -> presentation index (a hidden sample: the index of the first presented frame after it).
     presentation_index_of_ordinal: Vec<usize>,
+    /// decodeOrdinal -> the sample is hidden (sent to the decoder, never a frame of the clip).
+    hidden_ordinal: Vec<bool>,
     /// Decode ordinals of sync samples, ascending.
     sync_ordinals: Vec<i64>,
 }
@@ -30,6 +33,14 @@ impl SampleIndex {
     /// `raw` may come in any order; pts and dts are shifted so the smallest pts becomes 0.
     /// `decode_ordinal`s must be the contiguous range 0..count.
     pub fn new(raw: Vec<Entry>) -> SampleIndex {
+        SampleIndex::with_hidden(raw, Vec::new())
+    }
+
+    /// Like `new`, plus the samples an edit list hides (before the start, after the end or cut out of the middle). They
+    /// take part in decoding but are not frames: the decode ordinals of `raw` and `hidden` together are the contiguous
+    /// range 0..count, and only `hidden`'s `decode_ordinal` and `is_sync` are used.
+    pub fn with_hidden(raw: Vec<Entry>, hidden: Vec<Entry>) -> SampleIndex {
+        let total = raw.len() + hidden.len();
         let origin = raw.iter().map(|e| e.pts).min().unwrap_or(Time::ZERO);
         let mut e: Vec<Entry> = raw
             .into_iter()
@@ -39,25 +50,29 @@ impl SampleIndex {
                 x
             })
             .collect();
-        // Equal pts: zero-duration entries (samples an edit list cuts out, kept for decoding) sort first, so
-        // `frame_at` picks the frame that is actually shown there.
-        e.sort_by(|a, b| {
-            a.pts
-                .cmp(&b.pts)
-                .then_with(|| (b.duration == Time::ZERO).cmp(&(a.duration == Time::ZERO)))
-                .then_with(|| a.decode_ordinal.cmp(&b.decode_ordinal))
-        });
-        let mut inv = vec![0usize; e.len()];
+        e.sort_by(|a, b| a.pts.cmp(&b.pts).then_with(|| a.decode_ordinal.cmp(&b.decode_ordinal)));
+        let mut inv = vec![0usize; total];
+        let mut hidden_ordinal = vec![false; total];
         for (i, x) in e.iter().enumerate() {
             if let Ok(o) = usize::try_from(x.decode_ordinal)
-                && o < e.len()
+                && o < total
             {
                 inv[o] = i;
             }
         }
-        let mut sync_ordinals: Vec<i64> = e.iter().filter(|x| x.is_sync).map(|x| x.decode_ordinal).collect();
+        for h in &hidden {
+            if let Ok(o) = usize::try_from(h.decode_ordinal)
+                && o < total
+            {
+                let at = e.partition_point(|x| x.pts < h.pts - origin);
+                inv[o] = at.min(e.len().saturating_sub(1));
+                hidden_ordinal[o] = true;
+            }
+        }
+        let mut sync_ordinals: Vec<i64> =
+            e.iter().chain(hidden.iter()).filter(|x| x.is_sync).map(|x| x.decode_ordinal).collect();
         sync_ordinals.sort();
-        SampleIndex { entries: e, presentation_index_of_ordinal: inv, sync_ordinals }
+        SampleIndex { entries: e, presentation_index_of_ordinal: inv, hidden_ordinal, sync_ordinals }
     }
 
     /// The frames, sorted by pts.
@@ -135,10 +150,14 @@ impl SampleIndex {
     pub fn gop(&self, index: usize) -> RangeInclusive<usize> {
         let s = self.sync_decode_ordinal(index);
         let lo = self.sync_ordinals.partition_point(|&x| x <= s);
-        let end = if lo < self.sync_ordinals.len() { self.sync_ordinals[lo] } else { self.entries.len() as i64 };
+        let end = if lo < self.sync_ordinals.len() { self.sync_ordinals[lo] } else { self.hidden_ordinal.len() as i64 };
         let (mut mn, mut mx) = (usize::MAX, usize::MIN);
         for o in s..(s + 1).max(end) {
-            if let Some(&p) = usize::try_from(o).ok().and_then(|o| self.presentation_index_of_ordinal.get(o)) {
+            let Ok(u) = usize::try_from(o) else { continue };
+            if self.hidden_ordinal.get(u).copied().unwrap_or(false) {
+                continue;
+            }
+            if let Some(&p) = self.presentation_index_of_ordinal.get(u) {
                 mn = mn.min(p);
                 mx = mx.max(p);
             }
@@ -275,6 +294,39 @@ mod tests {
         assert_eq!(idx.previous_sync(6), 0);
         assert_eq!(idx.previous_sync(7), 6);
         assert_eq!(idx.previous_sync(11), 6);
+    }
+
+    fn entry(pts: i64, ordinal: i64, sync: bool) -> Entry {
+        Entry {
+            pts: Time::new(pts, 30),
+            dts: Time::new(ordinal, 30),
+            duration: Time::new(1, 30),
+            is_sync: sync,
+            decode_ordinal: ordinal,
+        }
+    }
+
+    /// Hidden samples (an edit list's cut) are no frames: numbering starts at the first presented one, a lookup never lands
+    /// on them, and a decode still starts at a hidden sync sample.
+    #[test]
+    fn hidden_samples_are_not_frames_but_still_decode_through() {
+        // Decode order: 0 hidden key at -3, 1 shown at 0, 2 shown at 1, 3 hidden mid-stream at 1.5(x), 4 shown key at 4, 5 shown at 5.
+        let shown = vec![entry(0, 1, false), entry(1, 2, false), entry(4, 4, true), entry(5, 5, false)];
+        let hidden = vec![entry(-3, 0, true), entry(2, 3, false)];
+        let idx = SampleIndex::with_hidden(shown, hidden);
+        assert_eq!(idx.count(), 4);
+        assert_eq!(idx.entries().iter().map(|e| e.decode_ordinal).collect::<Vec<_>>(), vec![1, 2, 4, 5]);
+        // Time 2/30 .. 4/30 is the hole the hidden sample left: frame 1 (pts 1) is shown until its duration ends, then
+        // the lookup stays on the last frame whose pts is <= t, never on a hidden entry.
+        for t in 0..6 {
+            let i = idx.frame_at(Time::new(t, 30)).expect("a frame");
+            assert!(idx.entries()[i].duration > Time::ZERO);
+        }
+        assert_eq!(idx.frame_at(Time::new(2, 30)), Some(1));
+        assert_eq!(idx.sync_decode_ordinal(0), 0); // frame 0 decodes from the hidden key frame
+        assert_eq!(idx.sync_decode_ordinal(2), 4);
+        assert_eq!(idx.gop(0), 0..=1);
+        assert_eq!(idx.reference_start_ordinal(0), 0);
     }
 
     #[test]

@@ -811,7 +811,7 @@ impl TranscriptTabDraw {
             self.hover == Some(Control::Language),
             self.language_open,
             enabled_top,
-            false,
+            true,
             fh,
             None,
             &t,

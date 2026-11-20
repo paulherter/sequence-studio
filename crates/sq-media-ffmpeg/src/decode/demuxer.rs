@@ -23,14 +23,8 @@ impl Shared {
     fn sample(&self, ordinal: usize) -> Result<DemuxedSample, MediaError> {
         let data = self.demux.read(ordinal).map_err(|e| media_error(&e, ""))?;
         let p = self.demux.packets().get(ordinal).ok_or(MediaError::Truncated)?;
-        let (tb, o) = (self.table.time_base, self.table.origin_ticks);
-        Ok(DemuxedSample {
-            data,
-            pts: tb.time(p.pts - o),
-            dts: tb.time(p.dts - o),
-            duration: tb.time(p.duration.max(0)),
-            is_sync: p.key != 0,
-        })
+        let (pts, dts, duration) = self.table.sample_times(ordinal).ok_or(MediaError::Truncated)?;
+        Ok(DemuxedSample { data, pts, dts, duration, is_sync: p.key != 0 })
     }
 }
 
@@ -126,7 +120,13 @@ impl FFmpegDemuxer {
         let packets: Vec<_> = demux
             .packets()
             .iter()
-            .map(|p| PacketTiming { pts: p.pts, dts: p.dts, duration: p.duration, is_key: p.key != 0 })
+            .map(|p| PacketTiming {
+                pts: p.pts,
+                dts: p.dts,
+                duration: p.duration,
+                is_key: p.key != 0,
+                hidden: p.discard != 0,
+            })
             .collect();
         let format = DemuxedFormat::new(&raw.codec, i64::from(raw.width), i64::from(raw.height), demux.extradata());
         let table = FrameTable::new(&packets, time_base);

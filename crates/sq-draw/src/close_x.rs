@@ -1,11 +1,11 @@
 //! The one close X of every dialog, sheet, popover and notice (kit `Form/IconButton/Close`: a 22 pt button with a 14 pt
-//! Phosphor X in `text3`; the notice's `Close` is 20 pt with an 11 pt X). The X is a hairline of about 8 pt; the
+//! Lucide X in `text3`; the notice's `Close` is 20 pt with an 11 pt X). The X is a hairline of about 8 pt; the
 //! pointer target stays at least 24 pt so the small glyph is still easy to hit.
 
 use crate::stone::{hover_level, press_level};
 use crate::{Canvas, DrawTheme};
 use sq_uikit::controls_grid::{CGPoint, CGRect};
-use sq_uikit::redesign_tokens::radius;
+use sq_uikit::tokens::radius;
 use sq_uikit::sqicon::SQIcon;
 
 /// The kit's icon button: the box that lights up on hover.
@@ -23,6 +23,8 @@ pub const MIN_HIT: f64 = 24.0;
 pub struct CloseXState {
     pub hovered: bool,
     pub pressed: bool,
+    /// Keyboard focus: the focus ring around the button box.
+    pub focused: bool,
 }
 
 /// Where the X sits inside its pointer `frame`.
@@ -60,10 +62,8 @@ impl Canvas<'_> {
         let pl = press_level(self, frame, state.pressed);
         let fill = t.fill_hover();
         let over = hl.max(pl);
-        if over > 0.0 {
-            self.fill_rounded(g.button, f64::from(radius::CONTROL), fill.with_alpha(fill.a * over));
-        }
         let ink = t.label3().mix(t.label2(), hl).mix(t.label3(), pl);
+        self.stone_ghost_button(g.button, f64::from(radius::CONTROL), fill.with_alpha(fill.a * over), state.focused, t);
         self.draw_icon(SQIcon::Close, CGPoint::new(g.glyph.x, g.glyph.y), glyph, ink, None);
     }
 }

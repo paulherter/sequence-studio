@@ -178,9 +178,55 @@ pub(crate) fn button(
     InspectorDraw::button(c, title, r, hovering, pressed, enabled, false, InspectorTokens::CAPSULE as f64, t);
 }
 
+/// The inspector group header (r8 `.grp`: `border-group` line under it, chevron 9 in `text-tertiary`, semibold title) for
+/// the panels that fold their own sections (Text, Captions). `summary` is the quiet text at the right end.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn group_header(
+    c: &mut Canvas,
+    f: CGRect,
+    width: f64,
+    title: &str,
+    open: bool,
+    hovered: bool,
+    summary: &str,
+    top_line: bool,
+    t: &DrawTheme,
+) {
+    use sq_uikit::controls_grid::ControlsGrid;
+    use sq_uikit::localization::SQL10n;
+    use sq_uikit::sqicon::SQIcon;
+    let fs = f64::from(sq_draw::theme::type_size::BODY);
+    if top_line {
+        c.fill(CGRect::new(0.0, f.min_y(), width, 1.0), t.separator());
+    }
+    let toggle = CGRect::new(ControlsGrid::HEADER_TOGGLE_X, f.min_y(), 12.0, f.height);
+    let icon = if open { SQIcon::ChevronDown } else { SQIcon::ChevronRight };
+    let ink = if hovered { t.label2() } else { t.label3() };
+    c.draw_icon(icon, CGPoint::new((toggle.mid_x() - 4.5).round(), (f.mid_y() - 4.5).round()), 9.0, ink, None);
+    let sx = ControlsGrid::HEADER_LABEL_X + 90.0;
+    let sw = (width - ControlsGrid::TRAILING - sx).max(0.0);
+    let bold = c.semibold();
+    let title = SQL10n::string(title);
+    let room = if summary.is_empty() { width - ControlsGrid::HEADER_LABEL_X } else { 90.0 };
+    let cut = sq_draw::middle_fit::truncate_name(&title, |n| c.size_of(n, fs, bold).width <= room);
+    c.draw_text_in(
+        &cut.shown,
+        CGRect::new(ControlsGrid::HEADER_LABEL_X, f.min_y(), room.max(0.0), f.height),
+        fs,
+        t.label(),
+        sq_draw::TextAlign::Left,
+        0.0,
+        bold,
+    );
+    if !summary.is_empty() {
+        c.draw_text_in(summary, CGRect::new(sx, f.min_y(), sw, f.height), fs, t.label3(), sq_draw::TextAlign::Right, 0.0, 0);
+    }
+    c.fill(CGRect::new(0.0, f.max_y() - 1.0, width, 1.0), t.separator());
+}
+
 /// `InspectorDraw.popup` with the Swift defaults (`plain: false`, capsule height, body font).
 pub(crate) fn popup(c: &mut Canvas, title: &str, r: CGRect, hovering: bool, open: bool, enabled: bool, t: &DrawTheme) {
-    InspectorDraw::popup(c, title, r, hovering, open, enabled, false, InspectorTokens::CAPSULE as f64, None, t);
+    InspectorDraw::popup(c, title, r, hovering, open, enabled, true, InspectorTokens::CAPSULE as f64, None, t);
 }
 
 /// The mask modes in menu order (`MaskMode.allCases`; the core crate has no list yet).

@@ -12,8 +12,10 @@ use winit::window::{CursorIcon, ResizeDirection};
 
 /// The title bar's height in points (the menu titles and the title row share it); the window buttons are as tall.
 pub const HEIGHT: f64 = sq_uikit::redesign_tokens::size::TOP_BAR as f64;
-/// Export's right edge sits this far from the window edge: the three buttons and 8 pt of air (spec §14).
-pub const EXPORT_MARGIN: f64 = 146.0;
+/// Air between the last control of the bar (Export, the start screen's search) and the Minimize button, in points.
+pub const BUTTONS_AIR: f64 = 8.0;
+/// Export's right edge sits this far from the window edge: the three buttons and the air (spec §14).
+pub const EXPORT_MARGIN: f64 = BUTTONS_WIDTH + BUTTONS_AIR;
 /// Windows 11 caption buttons are 46 points wide.
 const BUTTON_WIDTH: f64 = 46.0;
 /// The three buttons together.
@@ -22,6 +24,10 @@ pub const BUTTONS_WIDTH: f64 = 3.0 * BUTTON_WIDTH;
 const RESIZE_BAND: f64 = 6.0;
 /// Room kept free for dragging between the menu titles and the buttons (points).
 const DRAG_ROOM: f64 = 48.0;
+
+/// The start bar's right inset so its search field ends `BUTTONS_AIR` before the buttons, like Export: the field already keeps
+/// `START_BAR_EDGE` of its own.
+pub const START_BAR_INSET: f64 = BUTTONS_WIDTH + BUTTONS_AIR - sq_draw_shell::START_BAR_EDGE;
 
 /// Export's right edge from the window edge. Windows and Linux draw their own buttons there (146 pt, spec §14); the Mac's
 /// lights float at the left, so its app bar keeps 10 pt.
@@ -389,6 +395,16 @@ mod tests {
         assert_eq!(s.hit(CGPoint::new(2.0, 300.0)), WindowHit::Left);
         assert_eq!(s.hit(CGPoint::new(500.0, 2.0)), WindowHit::Top);
         assert_eq!(s.hit(CGPoint::new(999.0, 599.0)), WindowHit::BottomRight);
+    }
+
+    /// Export and the start screen's search end the same distance before the Minimize button.
+    #[test]
+    fn export_and_the_start_search_keep_the_same_air_before_the_buttons() {
+        let width = 1000.0;
+        let export_gap = (width - export_margin(sq_os::Platform::Linux)) - (width - BUTTONS_WIDTH);
+        let search_right = width - START_BAR_INSET - sq_draw_shell::START_BAR_EDGE;
+        assert_eq!(width - BUTTONS_WIDTH - search_right, BUTTONS_AIR);
+        assert_eq!(-export_gap, BUTTONS_AIR);
     }
 
     /// Bug 40: a double click zooms (maximizes) the window only on the caption. Every title-bar control must hit as the

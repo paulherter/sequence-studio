@@ -12,6 +12,8 @@ pub struct Packet {
     pub pos: i64,
     pub size: i32,
     pub key: i32,
+    pub discard: i32,
+    pub reserved: i32,
 }
 
 #[repr(C)]

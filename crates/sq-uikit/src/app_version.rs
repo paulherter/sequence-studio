@@ -70,10 +70,10 @@ mod tests {
 
     #[test]
     fn about_line_leaves_out_an_empty_build() {
-        assert_eq!(AppVersion::FALLBACK_NUMBER, "0.2.0");
+        assert_eq!(AppVersion::FALLBACK_NUMBER, "0.2.1");
         assert!(AppVersion::build().is_empty());
         assert_eq!(AppVersion::about_line(), format!("Version {}", AppVersion::display()));
         assert!(!AppVersion::about_line().contains('?'));
-        assert_eq!(AppVersion::full_name(), "Sequence Studio 0.2.0 Alpha");
+        assert_eq!(AppVersion::full_name(), "Sequence Studio 0.2.1 Alpha");
     }
 }

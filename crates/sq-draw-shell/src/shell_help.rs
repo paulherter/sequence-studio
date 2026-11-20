@@ -69,7 +69,8 @@ impl ShellHost {
         } else {
             let Some(ask) = h.with(|r| r.shell_parts().files.fetch(&feed)) else { return };
             let data = ask.await;
-            UpdateCheck::check(&AppVersion::display(), &feed, |_| async move { data }).await
+            UpdateCheck::check(&sq_editor_session::ReleaseChannel::local_version(), &feed, |_| async move { data })
+                .await
         };
         let mut d = ShellDialog::new("Check for Updates", "");
         match outcome {
@@ -77,10 +78,12 @@ impl ShellHost {
                 d.informative_text = "Update checking is not set up in this build. New versions come as a download from the person who sent you this one.".into();
             }
             UpdateOutcome::UpToDate => {
+                d.slot = Some(crate::shell_dialog::SlotIcon::Ok);
                 d.informative_text =
                     SQL10n::format("Sequence Studio %@ is the newest version.", &[&AppVersion::display()]);
             }
             UpdateOutcome::Failed => {
+                d.header_icon = Some(crate::shell_dialog::Tone::Error);
                 d.informative_text =
                     "The update information could not be read. Check your connection and try again later.".into();
             }

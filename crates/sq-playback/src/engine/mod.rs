@@ -5,6 +5,7 @@
 pub mod activity;
 pub mod caption_plan;
 pub mod caption_preview;
+mod clock_hold;
 pub mod core;
 pub mod display_pacing;
 mod first_visible;

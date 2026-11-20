@@ -19,7 +19,6 @@ use sq_draw::theme::type_size;
 use sq_draw::{Canvas, DrawTheme, InputKey, InputModifiers, InspectorTokens, TextAlign, TextFieldControl, UiCx};
 use sq_uikit::controls_grid::{CGPoint, CGRect, CGSize};
 use sq_uikit::ease_curve_source::EaseCurveSource;
-use sq_uikit::sqmenu_model::SQMenuLayout;
 
 use super::inline_speed_graph_draw::{InlineSpeedGraphDraw, RowPaint};
 use super::{button, text_at, text_in};
@@ -735,9 +734,19 @@ impl EasingPopoverDraw {
     pub fn draw(&mut self, source: &dyn EaseCurveSource, c: &mut Canvas, t: &DrawTheme, cx: &mut UiCx) {
         self.refresh(source);
         let bounds = CGRect::new(0.0, 0.0, Self::SIZE.width, Self::SIZE.height);
-        let radius = SQMenuLayout::CORNER_RADIUS;
-        c.shadow(bounds, radius, 10.0, 4.0, Color::new(0.0, 0.0, 0.0, 0.25), false);
-        c.fill_rounded(bounds, radius, t.overlay());
+        // The shared menu/popover surface (menu_list_view.rs draw): radius MENU, float shadow, overlay fill, menu edge.
+        // shortcut: shadow numbers copied from MenuListView::SHADOW_*, upgrade when the surface moves to sq-draw.
+        let radius = f64::from(sq_draw::theme::radius::MENU);
+        let dark = t.palette.is_dark();
+        c.shadow(
+            bounds,
+            radius,
+            if dark { 36.0 } else { 28.0 },
+            if dark { 14.0 } else { 10.0 },
+            Color::new(0.0, 0.0, 0.0, if dark { 0.6 } else { 0.18 }),
+            true,
+        );
+        c.fill_rounded(bounds.inset_by(0.25, 0.25), radius, t.overlay());
         // The editor's content fill under the rounded top corners (the popover window clips its content on the Mac).
         let e = Self::EDITOR_FRAME;
         c.fill_rounded(e, radius, t.content());
@@ -746,7 +755,7 @@ impl EasingPopoverDraw {
         c.clip_to(e);
         self.editor.draw(c, t);
         c.restore_gstate();
-        c.stroke_rounded(bounds.inset_by(0.25, 0.25), radius, 0.5, t.ink_fill(0.14));
+        c.stroke_rounded(bounds.inset_by(0.5, 0.5), radius - 0.5, 1.0, t.menu_edge());
         let enabled = source.ease_reading() != EaseReading::Empty;
         let current = Self::common(source);
         c.save_gstate();

@@ -473,7 +473,7 @@ impl ShellHost {
             .collect();
         self.emit(ShellEvent::ExportsFinished { done: done.clone(), failed: failed.clone() });
         if !failed.is_empty() {
-            self.present_message("Export failed", &failed.join("\n"), None);
+            self.present_message("Export failed", &failed.join("\n"), Some(crate::shell_dialog::Tone::Error));
             return;
         }
         let Some(url) = done.first().cloned() else {
@@ -508,6 +508,7 @@ impl ShellHost {
             let remind = SupportReminder::may_show(true, last.map(Timestamp::from_unix_seconds), now, off);
             let paths: Vec<String> = done.iter().map(|p| p.to_string_lossy().into_owned()).collect();
             let mut d = ShellDialog::new("Export finished", &paths.join("\n"));
+            d.slot = Some(crate::shell_dialog::SlotIcon::Ok);
             let can_reveal = shell.can_reveal_file;
             d.add_button("OK", SQDialogRole::Default, false);
             // The kit's left slot: the side actions are quiet buttons on the left, OK alone on the right.

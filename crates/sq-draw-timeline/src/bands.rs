@@ -635,17 +635,22 @@ pub fn draw_transition_layers(cv: &mut Canvas, theme: &DrawTheme, cx: &LayerDraw
                     CGPoint { x: boxed.max_x(), y: boxed.max_y() - 2.0 },
                 ],
                 1.0,
-                if selected { theme.on_clip() } else { theme.label2() },
+                // Draft `.tl-ramp`: the clip's own white at 75 %, full while selected.
+                if selected { theme.on_clip() } else { theme.on_clip().with_alpha(0.75) },
             );
             if selected {
-                cv.fill(
-                    CGRect::new(boxed.min_x() + 1.0, boxed.min_y() + 3.0, 2.0, boxed.height - 6.0),
-                    theme.on_clip(),
-                );
-                cv.fill(
-                    CGRect::new(boxed.max_x() - 3.0, boxed.min_y() + 3.0, 2.0, boxed.height - 6.0),
-                    theme.on_clip(),
-                );
+                // Draft `.tl-hdl`: a 6 pt square on each end with the clip ring around it.
+                let mid = boxed.min_y() + boxed.height / 2.0;
+                for x in [boxed.min_x() + 3.0, boxed.max_x() - 3.0] {
+                    let h = CGRect::new(x - 3.0, mid - 3.0, 6.0, 6.0);
+                    cv.fill(h, theme.on_clip());
+                    cv.stroke_rounded(
+                        h.inset_by(-0.5, -0.5),
+                        f64::from(sq_uikit::tokens::radius::PANEL),
+                        1.0,
+                        theme.token(sq_uikit::tokens::color::content::CLIP_RING),
+                    );
+                }
             }
             draw_cut_marker(cv, theme, cx, boxed.min_y(), boxed.height, selected);
         }
@@ -654,7 +659,9 @@ pub fn draw_transition_layers(cv: &mut Canvas, theme: &DrawTheme, cx: &LayerDraw
 
 /// The center marker: a line through the row with a small downward triangle on top.
 pub fn draw_cut_marker(cv: &mut Canvas, theme: &DrawTheme, x: f64, y: f64, height: f64, selected: bool) {
-    let color = if selected { theme.accent() } else { theme.label() };
+    // Draft `.tl-cut`: the clip's white, selected or not (the end handles carry the selection).
+    let _ = selected;
+    let color = theme.on_clip();
     cv.fill(CGRect::new(x - 1.0, y, 2.0, height), color);
     cv.fill_polygon(&[CGPoint { x: x - 5.0, y }, CGPoint { x: x + 5.0, y }, CGPoint { x, y: y + 6.0 }], color);
 }
@@ -993,7 +1000,7 @@ mod tests {
         };
         let plain = count(&BTreeSet::new());
         let selected = count(&BTreeSet::from([id]));
-        assert!(plain > 0 && selected == plain + 2);
+        assert!(plain > 0 && selected >= plain + 2, "two end handles (fill + ring each) on top of the plain layer");
         // A track that holds no layer is skipped.
         let mut c = Canvas::with_size(800.0, 400.0, None, 1.0);
         draw_transition_layers(

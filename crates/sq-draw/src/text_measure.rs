@@ -51,6 +51,12 @@ impl<'a> TextMeasure<'a> {
         wrap_lines(s, width, |t| self.width(t, size, 0))
     }
 
+    /// A name cut to `width` Finder-style (start and extension stay) with the full text as its tooltip when cut; the
+    /// layout-time twin of `Canvas::truncated_name` (same widths, so both agree on what is cut).
+    pub fn truncated_name(&self, name: &str, width: f64, size: f64, face: usize) -> crate::middle_fit::TruncatedLabel {
+        crate::middle_fit::truncate_name(name, |t| self.width(t, size, face) <= width)
+    }
+
     /// One line of a path with its middle folders cut by an ellipsis ("~/Movies/…/Projects"); any other text loses
     /// its middle characters. See [`crate::middle_fit::fit_path`].
     pub fn truncated_middle(&self, s: &str, width: f64, size: f64) -> String {

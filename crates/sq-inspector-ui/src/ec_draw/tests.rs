@@ -1198,7 +1198,7 @@ fn hairlines(c: &Canvas, t: &DrawTheme) -> Vec<(f32, f32, f32)> {
     c.list
         .quads()
         .iter()
-        .filter(|q| q.rect.h <= 1.01 && (q.color == t.row_line() || q.color == t.separator()))
+        .filter(|q| q.rect.h <= 1.01 && (q.color == t.row_line() || q.color == t.separator() || q.color == t.hair2()))
         .map(|q| (q.rect.x, q.rect.y, q.rect.w))
         .collect()
 }
@@ -1626,4 +1626,67 @@ fn the_section_twirls_after_the_keys_go_one_by_one_through_the_key_menu_route() 
     v.mouse_down(&mut cx, at, 1, InputModifiers::NONE);
     v.mouse_up(&mut cx, at);
     assert!(v.model.collapsed_sections().contains(&sec), "closed after the second delete");
+}
+
+// MARK: r8 WP7
+
+#[test]
+fn blend_popup_keeps_a_minimum_width_in_a_narrow_panel() {
+    let m = panel_model();
+    let p = panel_of(&m, 200.0, 800.0);
+    assert!(p.blend_frame(24.0).width >= EffectControlsDrawPanel::BLEND_MIN_WIDTH);
+}
+
+#[test]
+fn reset_shows_on_a_changed_row_or_under_the_pointer_only() {
+    let m = panel_model();
+    let mut p = panel_of(&m, 420.0, 800.0);
+    assert!(!p.reset_shown(None, false, false));
+    assert!(p.reset_shown(None, true, false));
+    assert!(p.reset_shown(None, false, true));
+    p.pointer_in_row = true;
+    assert!(p.reset_shown(None, false, false));
+}
+
+#[test]
+fn empty_state_uses_the_r8_wording() {
+    assert_eq!(EffectControlsDrawPanel::EMPTY_TITLE, "No Clip Selected");
+    assert!(EffectControlsDrawPanel::EMPTY_HINT.contains("keyframe its controls"));
+}
+
+#[test]
+fn cut_name_tooltip_only_over_the_text() {
+    let m = panel_model();
+    let mut p = panel_of(&m, 420.0, 800.0);
+    let row = p.rows().iter().find(|r| matches!(r.kind, EffectRowKind::Section(_))).cloned().expect("section");
+    let EffectRowKind::Section(sec) = row.kind.clone() else { return };
+    let top = p.row_top(&row);
+    p.cut_titles.insert(sec, ("A very long name".to_string(), CGRect::new(28.0, 0.0, 60.0, row.height)));
+    let over = |x: f64| p.help(&m, CGPoint::new(x, top + row.height / 2.0));
+    assert_eq!(over(40.0).as_deref(), Some("A very long name"));
+    assert_eq!(over(200.0), None);
+}
+
+/// The clip sections ("Keep intro and outro when trimmed") use the effect rows' label rule: a label too long for the
+/// column is drawn on two lines inside the row, a short one on one line.
+#[test]
+fn the_shared_label_draw_wraps_a_long_clip_section_label_to_two_lines() {
+    let root =
+        std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Packages/SQText/Sources/SQText/Resources/Fonts");
+    let atlas = sq_draw::GlyphAtlas::inter(&root).expect("bundled Inter loads");
+    let fs = f64::from(sq_draw::theme::type_size::BODY);
+    let span = |text: &str| {
+        let mut c = sq_draw::Canvas::with_size(300.0, 60.0, Some(&atlas), 1.0);
+        let f = sq_uikit::controls_grid::CGRect::new(10.0, 0.0, 120.0, 24.0);
+        EffectControlsDrawPanel::draw_label_lines(&mut c, text, f, 24.0, fs, sq_draw::Color::WHITE);
+        let q = c.list.quads();
+        let top = q.iter().map(|x| x.rect.y).fold(f32::MAX, f32::min);
+        let bottom = q.iter().map(|x| x.rect.max_y()).fold(0.0, f32::max);
+        (q.len(), bottom - top, bottom)
+    };
+    let (n1, one, _) = span("Layer");
+    let (n2, two, bottom) = span("Keep intro and outro when trimmed");
+    assert!(n1 > 0 && n2 > 0);
+    assert!(two > one + 6.0, "two lines are taller than one: {one} vs {two}");
+    assert!(bottom <= 24.0, "both lines stay inside the row: {bottom}");
 }

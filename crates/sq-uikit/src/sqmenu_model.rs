@@ -102,10 +102,10 @@ impl SQMenuItem {
     const DESTRUCTIVE_TITLES: [&'static str; 6] =
         ["Delete", "Ripple Delete", "Delete Track", "Remove Folder", "Close Panel", "Clear Used Media"];
 
-    /// Red rows (artifact `RED`): the listed titles and every title that starts with Delete, Remove, Discard or Move to Trash.
+    /// Red rows (artifact `RED`): the listed titles and every title that starts with Delete, Discard or Move to Trash ("Remove In and Out" only clears marks, so it is no red row).
     fn is_destructive_title(title: &str) -> bool {
         Self::DESTRUCTIVE_TITLES.contains(&title)
-            || ["Delete", "Remove", "Ripple Delete", "Discard", "Move to Trash"].iter().any(|p| title.starts_with(p))
+            || ["Delete", "Ripple Delete", "Discard", "Move to Trash"].iter().any(|p| title.starts_with(p))
     }
 
     // Keep in step with `sq_draw::experimental::Feature`: the rows that open an experimental feature.
@@ -896,6 +896,7 @@ mod tests {
         assert!(!SQMenuItem::new("Gyroflow").is_experimental && !SQMenuItem::new("Alpha").is_experimental);
         assert!(SQMenuItem::new("Delete").is_destructive);
         assert!(!SQMenuItem::new("Alpha").is_destructive);
-        assert!(SQMenuItem::new("Remove In and Out").is_destructive && SQMenuItem::new("Delete Masks").is_destructive);
+        assert!(!SQMenuItem::new("Remove In and Out").is_destructive && SQMenuItem::new("Delete Masks").is_destructive);
+        assert!(SQMenuItem::new("Remove Folder").is_destructive);
     }
 }

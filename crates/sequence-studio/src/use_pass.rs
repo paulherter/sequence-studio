@@ -65,6 +65,12 @@ const STATES: &[StateSpec] = &[
     StateSpec { name: "start-new", poses: &["start-new"], ..StateSpec::NONE },
     StateSpec { name: "new-project", poses: &["new-project"], ..StateSpec::NONE },
     StateSpec { name: "editor", project: true, select: true, focus: Some("timeline"), ..StateSpec::NONE },
+    // The editor states of r8 (WP15): loading, an empty sequence, offline media (the sample project's media is missing) and
+    // the window in the background.
+    StateSpec { name: "state-loading", project: true, select: true, poses: &["state-loading"], ..StateSpec::NONE },
+    StateSpec { name: "state-empty", project: true, poses: &["state-empty"], ..StateSpec::NONE },
+    StateSpec { name: "state-offline", project: true, select: true, poses: &["state-offline"], ..StateSpec::NONE },
+    StateSpec { name: "window-inactive", project: true, select: true, poses: &["window-inactive"], ..StateSpec::NONE },
     StateSpec { name: "editor-effects", project: true, select: true, poses: &["effects"], ..StateSpec::NONE },
     StateSpec { name: "controls-max", project: true, select: true, poses: &["max-ec"], ..StateSpec::NONE },
     StateSpec { name: "captions", project: true, select: true, poses: &["captions-list"], ..StateSpec::NONE },
@@ -262,7 +268,7 @@ fn open(ctx: &Ctx, spec: &StateSpec) -> Result<Open, String> {
     std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     let project = if spec.project { Some(ctx.project.as_deref().ok_or("no sample project")?) } else { None };
     let page = if spec.color_page { WorkspacePage::Color } else { WorkspacePage::Edit };
-    let (app, _picture) = build_on(&dir, ctx.size.0, ctx.size.1, 1.0, project, ctx.fonts, page, false);
+    let (app, _picture) = build_on(&dir, ctx.size.0, ctx.size.1, 1.0, project, ctx.fonts, page, false, None);
     let open = Open { app, dir };
     let app = &open.app;
     if spec.select {
@@ -986,6 +992,8 @@ mod tests {
     }
 
     fn assert_no_hover_behind_the_sheet(name: &str) {
+        // The sheet's open fade runs on the wall clock: a baseline taken mid-fade differs in the scrim's alpha alone.
+        sq_draw::motion::set_snap(true);
         let dir = std::env::temp_dir().join(format!("sq-use-pass-hover-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let project = sample_project(&dir.join("work")).expect("a sample project");

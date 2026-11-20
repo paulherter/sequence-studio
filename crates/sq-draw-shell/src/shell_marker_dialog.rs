@@ -102,8 +102,7 @@ impl ShellHost {
         d.add_button("OK", SQDialogRole::Default, false);
         d.add_button("Cancel", SQDialogRole::Cancel, false);
         d.add_button("Delete Marker", SQDialogRole::Destructive, true);
-        // art.html 18: red text, no fill
-        d.ghost_buttons.insert(2);
+        // r8 17-dialoge: a destructive button is raised with red text (drawn by the dialog from its role).
         Some(d)
     }
 

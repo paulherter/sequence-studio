@@ -98,6 +98,8 @@ pub struct GraphicsLayerListDraw {
     pub theme: DrawTheme,
     pub size: CGSize,
     rows: Vec<LayerListRow>,
+    /// The full name of each row whose name was cut at the last draw (the tooltip), by row index.
+    cut_names: std::collections::BTreeMap<usize, String>,
     collapsed: BTreeSet<Id>,
     scroll_y: f64,
     anchor: Option<usize>,
@@ -126,6 +128,7 @@ impl Default for GraphicsLayerListDraw {
             theme: DrawTheme::default(),
             size: CGSize { width: 300.0, height: 200.0 },
             rows: Vec::new(),
+            cut_names: std::collections::BTreeMap::new(),
             collapsed: BTreeSet::new(),
             scroll_y: 0.0,
             anchor: None,
@@ -363,6 +366,7 @@ impl GraphicsLayerListDraw {
         let d = ed.document(s).unwrap_or(&empty);
         let sel = ed.selected_layers(s);
         let local: Option<Time> = ed.playhead_in_clip(s).then(|| ed.local_time(s));
+        let mut cuts = std::collections::BTreeMap::new();
         c.save_gstate();
         c.clip_to(CGRect::new(
             0.0,
@@ -423,7 +427,12 @@ impl GraphicsLayerListDraw {
                 let show_kind = kind.is_some() && right - nx - kind_w > 60.0;
                 let name_right = if show_kind { right - kind_w - f64::from(spacing::SM) } else { right };
                 let rect = CGRect::new(nx, f.min_y(), (name_right - nx).max(0.0), f.height);
-                c.draw_text_in(&r.name, rect, fs, name_color, TextAlign::Left, 0.0, 0);
+                // A long name is cut in the middle (both ends stay readable); the tooltip carries the whole name.
+                let cut = sq_draw::middle_fit::truncate_name(&r.name, |n| c.size_of(n, fs, 0).width <= rect.width);
+                if let Some(full) = cut.full.clone() {
+                    cuts.insert(i, full);
+                }
+                c.draw_text_in(&cut.shown, rect, fs, name_color, TextAlign::Left, 0.0, 0);
                 if let (Some(k), true) = (kind, show_kind) {
                     let kr = CGRect::new(right - kind_w, f.min_y(), kind_w, f.height);
                     c.draw_text_in(&k, kr, f64::from(type_size::CAPTION), t.label3(), TextAlign::Right, 0.0, 0);
@@ -439,6 +448,9 @@ impl GraphicsLayerListDraw {
             };
             c.draw_icon(eye_icon, CGPoint::new(eye.mid_x() - 5.5, (eye.mid_y() - 5.5).round()), 11.0, eye_tint, None);
             let lock_icon = if r.is_locked { SQIcon::TrackLock } else { SQIcon::TrackUnlock };
+            if r.is_locked {
+                c.stone_toggle_pill(lock.inset_by(0.0, 2.0), hov == Some(Hover::Lock(i)), false, &t);
+            }
             let lock_tint = if hov == Some(Hover::Lock(i)) || r.is_locked { t.label() } else { t.label3() };
             c.draw_icon(
                 lock_icon,
@@ -451,6 +463,7 @@ impl GraphicsLayerListDraw {
                 self.draw_strip(c, self.strip_frame(i), &times, range, clip.duration(), local);
             }
         }
+        self.cut_names = cuts;
         if self.rows.is_empty() && ed.document(s).is_some() {
             let r = CGRect::new(
                 0.0,
@@ -1002,7 +1015,7 @@ impl GraphicsLayerListDraw {
         if self.lock_frame(i).contains(p) {
             return Some(SQL10n::string(if r.is_locked { "Unlock" } else { "Lock" }));
         }
-        None
+        self.cut_names.get(&i).cloned()
     }
 }
 
@@ -1152,5 +1165,16 @@ mod tests {
         assert_eq!(d.help(CGPoint::new(f.mid_x(), f.mid_y())).as_deref(), Some("+ Text"));
         let eye = d.eye_frame(0);
         assert_eq!(d.help(CGPoint::new(eye.mid_x(), eye.mid_y())).as_deref(), Some("Hide"));
+    }
+
+    #[test]
+    fn the_tooltip_of_a_cut_layer_name_is_its_whole_name() {
+        // No glyph atlas in unit tests (the width is 0, nothing is cut): draw records cuts, help reads them.
+        let (_s, _ed, mut d, _cx) = setup();
+        d.cut_names.insert(1, "A very long layer name".to_string());
+        let f = d.row_frame(1);
+        assert_eq!(d.help(CGPoint::new(f.min_x() + 80.0, f.mid_y())).as_deref(), Some("A very long layer name"));
+        let short = d.row_frame(0);
+        assert_eq!(d.help(CGPoint::new(short.min_x() + 80.0, short.mid_y())), None);
     }
 }

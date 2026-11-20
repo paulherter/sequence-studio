@@ -37,15 +37,54 @@ impl Rig {
     }
 }
 
-/// A fresh, unique folder name under the temp dir for one test: process id, a counter and the clock, so a reused pid or
-/// a leftover of an earlier run (Windows keeps them) never hands a test old presets or prefs. Not created; tests that need
-/// it create it. Tests never use the user's real support, caches or presets folders.
+/// A fresh, unique folder name for one test: process id, a counter and the clock, so a reused pid or a leftover of an
+/// earlier run (Windows keeps them) never hands a test old presets or prefs. Not created; tests that need it create it.
+/// Tests never use the user's real support, caches or presets folders. The root is `SQ_TEST_TMP` (set by
+/// `scripts/sq-heavy`, removed after the job) or the system temp dir. Nothing deletes this path: prefer [`test_dir`].
 pub(crate) fn unique_dir(tag: &str) -> std::path::PathBuf {
     use std::sync::atomic::{AtomicU64, Ordering};
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_nanos());
     let n = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("{tag}-{}-{nanos}-{n}", std::process::id()))
+    let root = std::env::var_os("SQ_TEST_TMP").map_or_else(std::env::temp_dir, std::path::PathBuf::from);
+    root.join(format!("{tag}-{}-{nanos}-{n}", std::process::id()))
+}
+
+/// A [`unique_dir`] that deletes itself (with everything in it) when the test drops it.
+pub(crate) struct TestDir(std::path::PathBuf);
+
+/// Like [`unique_dir`], but the folder is removed when the returned guard drops; keep it alive for the whole test.
+pub(crate) fn test_dir(tag: &str) -> TestDir {
+    TestDir(unique_dir(tag))
+}
+
+impl std::ops::Deref for TestDir {
+    type Target = std::path::Path;
+    fn deref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl AsRef<std::path::Path> for TestDir {
+    fn as_ref(&self) -> &std::path::Path {
+        &self.0
+    }
+}
+
+impl Drop for TestDir {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.0);
+    }
+}
+
+#[test]
+fn test_dir_is_removed_on_drop() {
+    let guard = test_dir("sq-test-dir-guard");
+    let path = guard.to_path_buf();
+    std::fs::create_dir_all(path.join("inner")).expect("create");
+    assert!(path.exists());
+    drop(guard);
+    assert!(!path.exists(), "the guard removes the folder");
 }
 
 /// Guard: no test file of this crate may resolve the user's real support, caches or presets folders; they build their

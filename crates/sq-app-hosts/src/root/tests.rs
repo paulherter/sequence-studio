@@ -980,7 +980,9 @@ fn status_lines_show_in_the_bar_and_the_shot_draws_both_rows() {
     let px = |x: usize, y: usize| image.pixels.get((y * 1000 + x) * 4..(y * 1000 + x) * 4 + 3).map(<[u8]>::to_vec);
     // Title row at y 0..40 (the menu titles share it), Export button at its right end, status bar at the bottom.
     assert_ne!(px(950, 20), px(500, 20), "the accent Export button sits in the title row");
-    assert_eq!(px(500, 790), px(500, 20), "both rows use the title bar color");
+    let seam = DrawTheme::default().panel_ground();
+    let seam_px = [seam.r, seam.g, seam.b].map(|v| (v * 255.0).round() as u8).to_vec();
+    assert_eq!(px(500, 790), Some(seam_px), "the status bar uses the seam ground (r8:369)");
     assert_ne!(px(500, 790), px(500, 400), "the status bar differs from the dock");
 }
 
@@ -1632,7 +1634,7 @@ fn the_name_typed_for_save_as_new_style_is_saved_by_the_captions_host() {
     use sq_draw::InputKey;
     use sq_inspector_ui::captions::style_tab_draw::Control;
     use sq_inspector_ui::text::panel_draw::{Tab, TextPanelDraw};
-    let support = crate::test_rig::unique_dir("sq-capstyle");
+    let support = crate::test_rig::test_dir("sq-capstyle");
     let url = sq_editor_session::LookStore::default_url(&support.join("fresh-home/Looks"));
     let looks = Arc::new(sq_editor_session::LookStore::new(Some(url.clone()), None, None, None));
     let defaults = crate::persist::FileDefaults::shared(&support);
@@ -2151,7 +2153,7 @@ fn saved_settings_reach_the_running_app() {
 fn the_edit_api_run_state_reaches_the_shell_without_a_page_change() {
     // Swift `api.onState` -> `shell.editAPI?.stateChanged`: a server that starts after the switch tells Preferences.
     use sq_uikit::appearance_palette::UiDefaults;
-    let dir = crate::test_rig::unique_dir("sq-app-hosts-api-state");
+    let dir = crate::test_rig::test_dir("sq-app-hosts-api-state");
     std::fs::create_dir_all(&dir).expect("dir");
     let (tx, _rx) = sq_runtime::channel::unbounded();
     let mut r = root().with_prefs(&dir).with_edit_api(tx, &dir);
@@ -2473,7 +2475,7 @@ fn escape_cancels_the_sampling_and_the_display_scale_maps_pixels_to_the_frame() 
 #[test]
 fn default_quality_and_the_rolls_reach_the_monitors_and_a_hand_pick_is_remembered() {
     use sq_editor_session::{AppSettings, MonitorQuality};
-    let dir = crate::test_rig::unique_dir("sq-app-hosts-quality");
+    let dir = crate::test_rig::test_dir("sq-app-hosts-quality");
     let mut r = root().with_prefs(&dir).with_source(source_host());
     let mut s = session();
     let changed = AppSettings {
@@ -2495,6 +2497,36 @@ fn default_quality_and_the_rolls_reach_the_monitors_and_a_hand_pick_is_remembere
     // Auto in Preferences puts the monitor on Auto.
     r.apply_settings_changed(&AppSettings { preview_quality_auto: true, ..AppSettings::standard() }, &mut s);
     assert_eq!(r.monitor.panel.model.quality(), MonitorQuality::Auto);
+}
+
+#[test]
+fn a_sequences_own_preview_quality_replaces_the_app_quality_and_is_not_remembered() {
+    use sq_core_model::SequencePreviewQuality;
+    use sq_editor_session::{AppSettings, MonitorQuality};
+    let dir = crate::test_rig::test_dir("sq-app-hosts-seq-quality");
+    let mut r = root().with_prefs(&dir).with_source(source_host());
+    let mut rig = crate::test_rig::Rig::new(edit_session());
+    let app = AppSettings { preview_quality_auto: false, default_quality: MonitorQuality::Half, ..AppSettings::standard() };
+    app.save(&mut *r.persist.as_ref().expect("prefs").defaults().borrow_mut());
+    r.apply_settings_changed(&app, &mut rig.session);
+    let mut settings = rig.session.active_timeline().expect("timeline").settings();
+    settings.preview_quality = Some(SequencePreviewQuality::Quarter);
+    assert!(rig.session.apply_sequence_settings(&settings));
+    r.pump_quality(&rig.session);
+    assert_eq!(r.monitor.panel.model.quality(), MonitorQuality::Quarter, "the sequence value wins");
+    r.remember_quality(MonitorQuality::Quarter);
+    let stored = AppSettings::load(&*r.persist.as_ref().expect("prefs").defaults().borrow());
+    assert_eq!(stored.default_quality, MonitorQuality::Half, "the app default is untouched");
+    // A Preferences change while the override is active does not drop it.
+    let changed = AppSettings { default_quality: MonitorQuality::Full, ..app.clone() };
+    changed.save(&mut *r.persist.as_ref().expect("prefs").defaults().borrow_mut());
+    r.apply_settings_changed(&changed, &mut rig.session);
+    assert_eq!(r.monitor.panel.model.quality(), MonitorQuality::Quarter, "the sequence value keeps winning");
+    app.save(&mut *r.persist.as_ref().expect("prefs").defaults().borrow_mut());
+    settings.preview_quality = None;
+    assert!(rig.session.apply_sequence_settings(&settings));
+    r.pump_quality(&rig.session);
+    assert_eq!(r.monitor.panel.model.quality(), MonitorQuality::Half, "back to the app setting");
 }
 
 /// Typing `text` into a Color Simple field (`None` = Sharpen) through the real root (timeline first, then the panels):
@@ -2653,15 +2685,19 @@ fn the_focus_frame_follows_a_maximized_panel() {
     h.with(|a| a.add_host(Box::new(r)));
     let (_, list) = h.turn();
     let list = list.expect("a frame");
-    let frames: Vec<_> = list.quads().iter().filter(|q| q.stroke == 1.5 && q.rect.w > 100.0).collect();
+    // The 1 px edge sits just outside the panel box (r8:537); other 1 px strokes are not within a point of the panel.
+    let near = |q: &&sq_draw::draw_list::DrawQuad| {
+        (f64::from(q.rect.x) - panel.x).abs() < 1.5 && (f64::from(q.rect.w) - panel.width).abs() < 3.0
+    };
+    let frames: Vec<_> = list.quads().iter().filter(|q| q.stroke == 1.0 && q.rect.w > 100.0).filter(near).collect();
     assert_eq!(frames.len(), 1, "one focus frame, not one per dock");
     let q = frames[0];
     assert!(
-        (f64::from(q.rect.x) - panel.x).abs() < 1.0
-            && (f64::from(q.rect.y) - panel.y).abs() < 1.0
-            && (f64::from(q.rect.w) - panel.width).abs() < 1.0
-            && (f64::from(q.rect.h) - panel.height).abs() < 1.0,
-        "frame {:?} against panel {panel:?}",
+        (f64::from(q.rect.x) - (panel.x - 1.0)).abs() < 0.5
+            && (f64::from(q.rect.y) - (panel.y - 1.0)).abs() < 0.5
+            && (f64::from(q.rect.w) - (panel.width + 2.0)).abs() < 0.5
+            && (f64::from(q.rect.h) - (panel.height + 2.0)).abs() < 0.5,
+        "frame {:?} against panel {panel:?} (outset by the 1 px edge)",
         q.rect
     );
 }

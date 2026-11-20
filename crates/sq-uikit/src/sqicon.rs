@@ -1,5 +1,5 @@
 // Swift: SQIcon.swift
-//! The one icon registry of the app (DECISIONS 2026-10-10). Phosphor glyphs (MIT) plus own drawings, see docs/THIRD_PARTY.md.
+//! The one icon registry of the app (DECISIONS 2026-10-10). Lucide icons (ISC, unchanged files) plus the two brand marks, see docs/THIRD_PARTY.md.
 //! Cases are semantic names. Nothing else in the code base may load icon files or use SF Symbols.
 
 /// Semantic icon names; the raw value is the Swift case name (the icon file and path-table key).
@@ -168,6 +168,7 @@ pub enum SQIcon {
     Waves,
     Checkerboard,
     Grain,
+    GripHorizontal,
     Moon,
     SquareDashed,
     PanelBottom,
@@ -191,6 +192,7 @@ pub enum SQIcon {
     BookmarkFilled,
     CheckCircle,
     CheckCircleFilled,
+    AlertCircle,
     Equal,
     PlusCircle,
     MinusCircle,
@@ -241,11 +243,13 @@ pub enum SQIcon {
     MarkIn,
     MarkOut,
     MarkInOut,
+    Import,
+    LoaderCircle,
 }
 
 impl SQIcon {
     /// Every icon, in declaration order (`CaseIterable.allCases`).
-    pub const ALL: [SQIcon; 236] = [
+    pub const ALL: [SQIcon; 240] = [
         SQIcon::TextBold,
         SQIcon::TextItalic,
         SQIcon::TextUnderline,
@@ -409,6 +413,7 @@ impl SQIcon {
         SQIcon::Waves,
         SQIcon::Checkerboard,
         SQIcon::Grain,
+        SQIcon::GripHorizontal,
         SQIcon::Moon,
         SQIcon::SquareDashed,
         SQIcon::PanelBottom,
@@ -432,6 +437,7 @@ impl SQIcon {
         SQIcon::BookmarkFilled,
         SQIcon::CheckCircle,
         SQIcon::CheckCircleFilled,
+        SQIcon::AlertCircle,
         SQIcon::Equal,
         SQIcon::PlusCircle,
         SQIcon::MinusCircle,
@@ -482,6 +488,8 @@ impl SQIcon {
         SQIcon::MarkIn,
         SQIcon::MarkOut,
         SQIcon::MarkInOut,
+        SQIcon::Import,
+        SQIcon::LoaderCircle,
     ];
 
     /// The Swift `String` raw value (the case name).
@@ -650,6 +658,7 @@ impl SQIcon {
             SQIcon::Waves => "waves",
             SQIcon::Checkerboard => "checkerboard",
             SQIcon::Grain => "grain",
+            SQIcon::GripHorizontal => "gripHorizontal",
             SQIcon::Moon => "moon",
             SQIcon::SquareDashed => "squareDashed",
             SQIcon::PanelBottom => "panelBottom",
@@ -673,6 +682,7 @@ impl SQIcon {
             SQIcon::BookmarkFilled => "bookmarkFilled",
             SQIcon::CheckCircle => "checkCircle",
             SQIcon::CheckCircleFilled => "checkCircleFilled",
+            SQIcon::AlertCircle => "alertCircle",
             SQIcon::Equal => "equal",
             SQIcon::PlusCircle => "plusCircle",
             SQIcon::MinusCircle => "minusCircle",
@@ -723,6 +733,8 @@ impl SQIcon {
             SQIcon::MarkIn => "markIn",
             SQIcon::MarkOut => "markOut",
             SQIcon::MarkInOut => "markInOut",
+            SQIcon::Import => "import",
+            SQIcon::LoaderCircle => "loaderCircle",
         }
     }
 
@@ -731,7 +743,7 @@ impl SQIcon {
         SQIcon::ALL.into_iter().find(|i| i.raw_value() == raw)
     }
 
-    /// Uses Phosphor's Fill weight instead of Regular (play, pause, stop, heart, star, folder, bookmark, close and check circle).
+    /// Drawn solid: the closed shapes of the (stroked) Lucide outline are filled as well (play, pause, stop, heart, star, folder, bookmark).
     pub fn is_filled(self) -> bool {
         matches!(
             self,
@@ -742,8 +754,6 @@ impl SQIcon {
                 | SQIcon::FolderFilled
                 | SQIcon::StarFilled
                 | SQIcon::BookmarkFilled
-                | SQIcon::CloseCircleFilled
-                | SQIcon::CheckCircleFilled
         )
     }
 }
@@ -773,11 +783,9 @@ mod tests {
                 "pause",
                 "stop",
                 "heart",
-                "closeCircleFilled",
                 "folderFilled",
                 "starFilled",
-                "bookmarkFilled",
-                "checkCircleFilled"
+                "bookmarkFilled"
             ]
         );
     }

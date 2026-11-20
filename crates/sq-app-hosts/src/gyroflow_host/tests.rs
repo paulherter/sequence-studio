@@ -80,7 +80,7 @@ fn analyze_runs_the_engine_the_row_shows_the_failure_and_the_revision_moves() {
 /// Analysed. Skips without ffmpeg.
 #[test]
 fn analyze_of_a_clip_with_a_gcsv_sidecar_becomes_ready() {
-    let dir = crate::test_rig::unique_dir("sq-gyroflow-real");
+    let dir = crate::test_rig::test_dir("sq-gyroflow-real");
     assert!(std::fs::create_dir_all(&dir).is_ok());
     let clip_file = dir.join("shaky.mp4");
     let made = std::process::Command::new("ffmpeg")

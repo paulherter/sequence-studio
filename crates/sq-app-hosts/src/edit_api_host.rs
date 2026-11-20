@@ -255,7 +255,7 @@ mod tests {
 
     #[test]
     fn the_discovery_file_names_port_token_and_pid() {
-        let dir = crate::test_rig::unique_dir("sq-edit-api-disc");
+        let dir = crate::test_rig::test_dir("sq-edit-api-disc");
         let path = dir.join("edit-api.json");
         write_discovery(&path, 19790, "abc").expect("write");
         write_discovery(&path, 19791, "def").expect("rewrite replaces");
@@ -267,7 +267,7 @@ mod tests {
 
     #[test]
     fn sync_follows_the_stored_switch_and_a_busy_port_says_so() {
-        let dir = crate::test_rig::unique_dir("sq-edit-api-sync");
+        let dir = crate::test_rig::test_dir("sq-edit-api-sync");
         let (tx, _rx) = sq_runtime::channel::unbounded();
         let mut c = EditApiController::new(tx, &dir);
         let mut d = FileDefaults::default();
@@ -342,7 +342,7 @@ mod tests {
 
     #[test]
     fn every_launch_has_its_own_key_and_the_server_refuses_without_it() {
-        let dir = crate::test_rig::unique_dir("sq-edit-api-key");
+        let dir = crate::test_rig::test_dir("sq-edit-api-key");
         let app = app_with_one_clip();
         let sender = app.with(|a| a.sender()).expect("app");
         let mut c = EditApiController::new(sender, &dir);
@@ -377,7 +377,7 @@ mod tests {
 
     #[test]
     fn an_agent_edit_is_one_agent_undo_step() {
-        let dir = crate::test_rig::unique_dir("sq-edit-api-undo");
+        let dir = crate::test_rig::test_dir("sq-edit-api-undo");
         let app = app_with_one_clip();
         let sender = app.with(|a| a.sender()).expect("app");
         let mut c = EditApiController::new(sender, &dir);

@@ -155,10 +155,7 @@ impl LibraryLabels {
             return pair("No favorites yet", "Right-click an item and choose Toggle Favorite to find it here.");
         }
         if !has_folders {
-            return pair(
-                "No library folders",
-                "Add a folder of footage, music or sound effects to see its files here.",
-            );
+            return pair("No Media Yet", "Import video, audio and images to use them in this project.");
         }
         pair("Nothing in this folder", "Files you add to the folder appear here.")
     }

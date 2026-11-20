@@ -63,16 +63,18 @@ impl TimelinePanel {
     }
 
     /// The Mac `TrackHeaderView` button tips.
-    pub(crate) fn header_tip_at(&self, p: CGPoint) -> Option<&'static str> {
-        let (_, toggle) = self.header_hit(p)?;
-        Some(match toggle {
+    pub(crate) fn header_tip_at(&self, p: CGPoint) -> Option<String> {
+        let Some((_, toggle)) = self.header_hit(p) else {
+            return self.cut_tips.borrow().iter().find(|(r, _)| r.has(p)).map(|(_, full)| full.clone());
+        };
+        Some(String::from(match toggle {
             TrackToggle::Target => "Target Track",
             TrackToggle::Visible => "Show or Hide Track",
             TrackToggle::Mute => "Mute Track",
             TrackToggle::Solo => "Solo Track",
             TrackToggle::Lock => "Lock Track",
             TrackToggle::SyncLock => "Sync Lock",
-        })
+        }))
     }
 
     pub(crate) fn draw_headers(&self, cv: &mut Canvas, rows: &[TrackRow]) {
@@ -125,8 +127,8 @@ impl TimelinePanel {
         height: f64,
         is_split_row: bool,
     ) {
-        let skin = self.skin();
         cv.fill(CGRect::new(0.0, 0.0, width, height), self.theme.panel());
+        // No row hover fill: only the buttons inside the header answer the pointer.
         if is_split_row {
             cv.fill(CGRect::new(0.0, height - 2.0, width, 2.0), self.theme.panel_ground());
         } else {
@@ -137,7 +139,18 @@ impl TimelinePanel {
         self.draw_patch(cv, track.id, height);
         let chip = self.target_chip_rect(height);
         let rad = f64::from(radius::SMALL);
-        cv.fill_rounded(chip, rad, if track.is_targeted { self.theme.current() } else { self.theme.raised() });
+        let chip_hot = self.hover_point.is_some_and(|h| {
+            self.hover_track == Some(track.id)
+                && chip.has(CGPoint {
+                    x: h.x - TimelineGeometry::TOOL_COLUMN_WIDTH,
+                    y: h.y - self.rows().iter().find(|r| r.track == track.id).map_or(0.0, |r| r.y),
+                })
+        });
+        if track.is_targeted {
+            cv.fill_rounded(chip, rad, self.theme.current());
+        } else if chip_hot {
+            cv.fill_rounded(chip, rad, self.theme.well());
+        }
         if track.is_targeted {
             cv.stroke_rounded(chip.inset(0.5, 0.5), rad, 1.0, self.theme.label2());
         }
@@ -177,17 +190,26 @@ impl TimelinePanel {
                     r,
                     rad,
                     if is_on {
-                        self.theme.fill_pressed()
+                        self.theme.label()
                     } else if hot {
                         self.theme.fill_hover()
                     } else {
                         self.theme.fill()
                     },
                 );
+            } else if is_on {
+                cv.fill_rounded(r, rad, self.theme.label());
             } else {
                 cv.fill_rounded_if(r, rad, self.theme.fill_hover(), hot);
             }
-            let color = if hot && !is_on && tint == label2 { self.theme.label() } else { tint };
+            // `ms.on`: a `text-primary` fill with a `surface-group` glyph (r8:508).
+            let color = if is_on && filled {
+                self.theme.token(sq_uikit::redesign_tokens::color::GROUP)
+            } else if hot && tint == label2 {
+                self.theme.label()
+            } else {
+                tint
+            };
             if let Some(letter) = letter {
                 cv.draw_text_in(letter, r, 10.0, color, TextAlign::Center, 0.0, 0);
             } else if let Some(icon) = icon {
@@ -207,39 +229,16 @@ impl TimelinePanel {
                 sl.eye,
                 Some(if track.is_visible { SQIcon::Eye } else { SQIcon::EyeOff }),
                 None,
-                false,
-                false,
-                if track.is_visible { label2 } else { skin.warning() },
+                // A hidden track is the neutral `ms.on` look (r8:508), not a warning.
+                !track.is_visible,
+                !track.is_visible,
+                label2,
             );
         } else {
-            button(
-                cv,
-                sl.mute,
-                None,
-                Some("M"),
-                true,
-                track.is_muted,
-                if track.is_muted { self.theme.accent() } else { label2 },
-            );
-            button(
-                cv,
-                sl.solo,
-                None,
-                Some("S"),
-                true,
-                track.is_solo,
-                if track.is_solo { self.theme.yellow() } else { label2 },
-            );
+            button(cv, sl.mute, None, Some("M"), true, track.is_muted, label2);
+            button(cv, sl.solo, None, Some("S"), true, track.is_solo, label2);
         }
-        button(
-            cv,
-            Some(sl.lock),
-            Some(Self::lock_icon(track.is_locked)),
-            None,
-            false,
-            false,
-            if track.is_locked { self.theme.accent() } else { label2 },
-        );
+        button(cv, Some(sl.lock), Some(Self::lock_icon(track.is_locked)), None, false, track.is_locked, label2);
         let name = TrackHeaderLayout::display_name(&track.name, label, track.kind);
         let name_x = chip.max_x() + TrackHeaderLayout::NAME_GAP;
         let w = sl.name_right - name_x;
@@ -247,6 +246,14 @@ impl TimelinePanel {
             return;
         }
         let h = 14.0;
+        let size = f64::from(sq_uikit::redesign_tokens::type_size::BODY);
+        let medium = cv.medium();
+        let cut = sq_draw::middle_fit::truncate_name(&name, |t| cv.size_of(t, size, medium).width <= w);
+        if let Some(full) = cut.full {
+            let at = CGRect::new(TimelineGeometry::TOOL_COLUMN_WIDTH + name_x, row_y, w, height);
+            self.cut_tips.borrow_mut().push((at, full));
+        }
+        let name = cut.shown;
         cv.draw_text(
             &name,
             CGPoint { x: name_x, y: ((height - h) / 2.0).round() },

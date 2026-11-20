@@ -330,7 +330,7 @@ impl ErrorView {
         let red = t.err_text();
         c.fill_rounded(tile, TILE_RADIUS, red.with_alpha(TILE_ALPHA));
         let corner = CGPoint::new(tile.mid_x() - TILE_ICON / 2.0, tile.mid_y() - TILE_ICON / 2.0);
-        c.draw_icon(SQIcon::CloseCircle, corner, TILE_ICON, red, None);
+        c.draw_icon(SQIcon::AlertCircle, corner, TILE_ICON, red, None);
         let x = page + SLOT + f64::from(rt::spacing::GUTTER);
         let width = WINDOW_W - page - x;
         let semibold = c.semibold();
@@ -443,7 +443,7 @@ impl ErrorView {
             part == ErrorPart::Primary || (part == ErrorPart::Close && self.screen.primary == ErrorPrimary::None);
         let kind = match part {
             ErrorPart::CopyDetails | ErrorPart::OpenLog => ButtonKind::Quiet,
-            _ if is_primary => ButtonKind::Accent,
+            _ if is_primary => ButtonKind::Primary,
             _ => ButtonKind::Raised,
         };
         let touch = Touch {
@@ -457,7 +457,7 @@ impl ErrorView {
         let medium = c.medium();
         let live = if touch.hovering { t.token(rt::color::TEXT) } else { t.token(rt::color::TEXT2) };
         let ink = match kind {
-            ButtonKind::Accent => t.token(rt::color::ON_ACCENT),
+            ButtonKind::Primary => t.primary_button_text(),
             ButtonKind::Quiet => live,
             _ => t.token(rt::color::TEXT),
         };

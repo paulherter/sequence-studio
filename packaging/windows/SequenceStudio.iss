@@ -2,6 +2,18 @@
 ; (`cargo xtask package` on Windows), which stages the release build and passes /DAppVersion=<x.y> /DStageDir=<folder> /DOutDir=<folder>.
 ; No administrator rights: the app goes to %LOCALAPPDATA%\Programs\Sequence Studio, the file association and the
 ; uninstall entry to HKCU. Nothing is installed as a service and no firewall rule is added.
+#ifndef AppName
+  #define AppName "Sequence Studio"
+#endif
+#ifndef FilePrefix
+  #define FilePrefix "SequenceStudio"
+#endif
+#ifndef Aumid
+  #define Aumid "SequenceStudio.App"
+#endif
+#ifndef AppGuid
+  #define AppGuid "6C1E2A57-3B0D-4F52-9A0E-5E51A7C0D2B4"
+#endif
 #ifndef AppVersion
   #define AppVersion "0.1"
 #endif
@@ -16,26 +28,26 @@
 #endif
 
 [Setup]
-AppId={{6C1E2A57-3B0D-4F52-9A0E-5E51A7C0D2B4}
-AppName=Sequence Studio
+AppId={{{#AppGuid}}
+AppName={#AppName}
 AppVersion={#AppVersion}
 AppPublisher=Paul Herter
 AppPublisherURL=https://getsequencestudio.com
 AppSupportURL=https://github.com/paulherter/sequence-studio/issues
 AppUpdatesURL=https://github.com/paulherter/sequence-studio/releases
-DefaultDirName={autopf}\Sequence Studio
-DefaultGroupName=Sequence Studio
+DefaultDirName={autopf}\{#AppName}
+DefaultGroupName={#AppName}
 DisableProgramGroupPage=yes
 PrivilegesRequired=lowest
 ArchitecturesAllowed=x64compatible
 ArchitecturesInstallIn64BitMode=x64compatible
 LicenseFile={#StageDir}\LICENSE
 OutputDir={#OutDir}
-OutputBaseFilename=SequenceStudio-Setup-{#AppVersion}-{#Stamp}
+OutputBaseFilename={#FilePrefix}-Setup-{#AppVersion}-{#Stamp}
 Compression=lzma2/normal
 SolidCompression=yes
 WizardStyle=modern
-UninstallDisplayName=Sequence Studio
+UninstallDisplayName={#AppName}
 SetupIconFile={#StageDir}\SequenceStudio.ico
 UninstallDisplayIcon={app}\SequenceStudio.exe
 CloseApplications=yes
@@ -60,11 +72,11 @@ Source: "{#StageDir}\ORT-LICENSE-MIT.txt"; DestDir: "{app}\Licenses"; Flags: ign
 Source: "{#StageDir}\Licenses\*"; DestDir: "{app}\Licenses"; Flags: ignoreversion
 
 [Icons]
-Name: "{autoprograms}\Sequence Studio"; Filename: "{app}\SequenceStudio.exe"; WorkingDir: "{app}"; IconFilename: "{app}\SequenceStudio.ico"; AppUserModelID: "SequenceStudio.App"
-Name: "{autodesktop}\Sequence Studio"; Filename: "{app}\SequenceStudio.exe"; WorkingDir: "{app}"; IconFilename: "{app}\SequenceStudio.ico"; Tasks: desktopicon
+Name: "{autoprograms}\{#AppName}"; Filename: "{app}\SequenceStudio.exe"; WorkingDir: "{app}"; IconFilename: "{app}\SequenceStudio.ico"; AppUserModelID: "{#Aumid}"
+Name: "{autodesktop}\{#AppName}"; Filename: "{app}\SequenceStudio.exe"; WorkingDir: "{app}"; IconFilename: "{app}\SequenceStudio.ico"; Tasks: desktopicon
 
 [Registry]
-Root: HKCU; Subkey: "Software\Classes\AppUserModelId\SequenceStudio.App"; ValueType: string; ValueName: "DisplayName"; ValueData: "Sequence Studio"; Flags: uninsdeletekey
+Root: HKCU; Subkey: "Software\Classes\AppUserModelId\{#Aumid}"; ValueType: string; ValueName: "DisplayName"; ValueData: "{#AppName}"; Flags: uninsdeletekey
 Root: HKCU; Subkey: "Software\Classes\.sqproj"; ValueType: string; ValueData: "SequenceStudio.Project"; Flags: uninsdeletevalue uninsdeletekeyifempty; Tasks: assoc
 Root: HKCU; Subkey: "Software\Classes\SequenceStudio.Project"; ValueType: string; ValueData: "Sequence Studio project"; Flags: uninsdeletekey; Tasks: assoc
 Root: HKCU; Subkey: "Software\Classes\SequenceStudio.Project\DefaultIcon"; ValueType: string; ValueData: "{app}\SequenceStudio.ico"; Tasks: assoc

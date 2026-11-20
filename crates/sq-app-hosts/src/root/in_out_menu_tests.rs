@@ -85,14 +85,10 @@ fn remove_in_and_out_from(place: &str, at: impl FnOnce(&mut AppRoot, &crate::tes
 #[test]
 fn remove_in_and_out_from_the_ruler_menu() {
     remove_in_and_out_from("ruler", |root, rig| {
-        // The ruler sits right above the topmost track row.
+        // The ruler is the top RULER (24 pt, r8) strip of the Timeline panel, under the 30 pt tab header; its middle is clear of the caption lanes.
         let p = &root.timeline.inner().panel;
-        let top = rig
-            .session
-            .active_timeline()
-            .map(|t| t.tracks.iter().filter_map(|k| p.pixel_row_of(k.id)).map(|r| r.0).fold(f32::MAX, f32::min))
-            .expect("timeline");
-        (p.pixel_x(Time::seconds(1)), top - 6.0)
+        let r = root.dock.content_frame(PanelID::Timeline).expect("timeline");
+        (p.pixel_x(Time::seconds(1)), (r.min_y() + PanelID::HEADER_HEIGHT + sq_timeline_ui::TimelineGeometry::RULER_HEIGHT / 2.0) as f32)
     });
 }
 

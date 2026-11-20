@@ -201,7 +201,7 @@ impl sq_app_shell::PanelFileChooser for SubtitleFiles {
 fn the_captions_menu_imports_and_exports_a_subtitle_file() {
     let mut host = TextHost::new();
     let mut rig = rig();
-    let dir = crate::test_rig::unique_dir("sq-app-hosts-srt");
+    let dir = crate::test_rig::test_dir("sq-app-hosts-srt");
     std::fs::create_dir_all(&dir).expect("dir");
     let (input, output) = (dir.join("in.srt"), dir.join("out.srt"));
     std::fs::write(

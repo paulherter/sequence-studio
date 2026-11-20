@@ -539,8 +539,14 @@ mod m {
     pub const ROW_HEIGHT: f64 = 28.0;
     pub const CHECK_ROW_HEIGHT: f64 = 24.0;
     pub const LABEL_WIDTH: f64 = 104.0;
-    /// The label column grows to its longest label up to this (the Mac form's labels never truncate).
-    pub const LABEL_MAX: f64 = 160.0;
+    /// The label column grows to its longest label up to this (r8 `--frm-label-w`); a longer one (German) is cut with an
+    /// ellipsis and offers its full text as a tooltip instead of widening the column for every row. 144 holds
+    /// "Bildwiederholfrequenz" (the widest single German form word) whole; the controls keep 623 - 40 - 144 - 16 = 423 pt.
+    pub const LABEL_MAX: f64 = 144.0;
+    /// The aspect pill never grows past this; a longer ratio is cut and offered as a tooltip.
+    pub const ASPECT_PILL_MAX: f64 = 72.0;
+    /// `.frm-chip` `max-width`: the path chip beside Choose.
+    pub const PATH_CHIP_MAX: f64 = 240.0;
     /// Settings pages (`SQFormRow`): `Theme.Modal.labelColumnL`, help lines at most `SQFormRow.helpMaxWidth`, 4 below.
     pub const SETTINGS_LABEL_WIDTH: f64 = 154.0;
     pub const HELP_MAX_WIDTH: f64 = 440.0;
@@ -720,6 +726,8 @@ pub struct ShellForm {
     box_editor: Option<TextEditState>,
     box_scroll: f64,
     focused_scrub: Option<String>,
+    /// The keyboard is on the swap button of the focused `.size` row (Tab stop after its fields).
+    swap_focused: bool,
     /// `.buttons` rows (by id) whose detail sits on a `fill` chip.
     pub chips: BTreeMap<String, Chip>,
     /// Help lines under a row's control by row id.
@@ -775,6 +783,10 @@ pub struct ShellForm {
     pub viewport_height: f64,
     sidebar_focused: bool,
     sidebar_hovered: Option<usize>,
+    /// How far the page list is scrolled up (a short window), and the part of the column its rows show in.
+    sidebar_scroll: f64,
+    sidebar_clip: CGRect,
+    sidebar_max_scroll: f64,
     /// R4e: ids whose value differs from the default (a blue dot after the title and a reset arrow), set by the owner.
     changed: BTreeSet<String>,
     reset_frames: Vec<(String, CGRect)>,
@@ -868,6 +880,7 @@ impl ShellForm {
             box_editor: None,
             box_scroll: 0.0,
             focused_scrub: None,
+            swap_focused: false,
             chips: BTreeMap::new(),
             helps: BTreeMap::new(),
             check_labels: BTreeMap::new(),
@@ -908,6 +921,9 @@ impl ShellForm {
             viewport_height: 0.0,
             sidebar_focused: false,
             sidebar_hovered: None,
+            sidebar_scroll: 0.0,
+            sidebar_clip: CGRect::default(),
+            sidebar_max_scroll: 0.0,
             changed: BTreeSet::new(),
             reset_frames: Vec::new(),
             sidebar_counts: Vec::new(),
@@ -1435,15 +1451,24 @@ impl ShellForm {
         } else {
             CGRect::default()
         };
+        // The page list scrolls when the window is too short for it (the column ends at the viewport height).
+        let list_top = origin.y + self.sidebar_shift + m::SIDEBAR_TOP + search_h;
+        let list_h = sidebar.items.len() as f64 * (m::SIDEBAR_ROW + m::SIDEBAR_GAP);
+        let room = if self.sidebar_shift > 0.0 && self.viewport_height > 0.0 {
+            (self.viewport_height - m::SIDEBAR_TOP - search_h - m::SIDEBAR_INSET).max(m::SIDEBAR_ROW)
+        } else {
+            list_h.max(1.0)
+        };
+        self.sidebar_max_scroll = (list_h - room).max(0.0);
+        self.sidebar_scroll = self.sidebar_scroll.clamp(0.0, self.sidebar_max_scroll);
+        // 2 pt of air above and below keep the focus line whole.
+        self.sidebar_clip = CGRect::new(origin.x, list_top - 2.0, side, room + 4.0);
+        let scrolled = self.sidebar_scroll;
         self.sidebar_frames = (0..sidebar.items.len())
             .map(|i| {
                 CGRect::new(
                     origin.x + m::SIDEBAR_INSET,
-                    origin.y
-                        + self.sidebar_shift
-                        + m::SIDEBAR_TOP
-                        + search_h
-                        + i as f64 * (m::SIDEBAR_ROW + m::SIDEBAR_GAP),
+                    list_top - scrolled + i as f64 * (m::SIDEBAR_ROW + m::SIDEBAR_GAP),
                     side - 2.0 * m::SIDEBAR_INSET,
                     m::SIDEBAR_ROW,
                 )
@@ -1861,6 +1886,16 @@ impl ShellForm {
                             control.x = x0;
                         }
                         control.width = w.min(if label.is_empty() { inner + self.popup_bleed() } else { cw });
+                    }
+                    // r8 `.frm-popup` (flex: none): a labeled dialog pop-up is as wide as its widest option, never wider than its column.
+                    if !sidebar && !label.is_empty() && !self.control_widths.contains_key(id) {
+                        if let Row::Popup { options, .. } = &r {
+                            let widest = options
+                                .iter()
+                                .map(|o| tm.width(&SQL10n::string(o), type_size::BODY as f64, 0))
+                                .fold(0.0, f64::max);
+                            control.width = control.width.min((10.0 + widest + 8.0 + 7.0 + 7.0).ceil().max(m::MIN_BUTTON));
+                        }
                     }
                     // A settings page's `NSPopUpButton` frame bleeds 5 pt left of the control column.
                     if (sidebar || self.labeled_popup_bleed) && !label.is_empty() {
@@ -2684,6 +2719,20 @@ impl ShellForm {
     /// Tab / Shift-Tab: commits an open field and moves on. False at the ends (the dialog's buttons take it).
     pub fn move_focus(&mut self, forward: bool) -> bool {
         self.commit_editing_inner();
+        if let Some(f) = self.focused
+            && self.has_swap(f)
+        {
+            if self.swap_focused {
+                self.swap_focused = false;
+                if !forward {
+                    return true;
+                }
+            } else if forward {
+                self.swap_focused = true;
+                self.focus_visible = true;
+                return true;
+            }
+        }
         if self.sidebar.is_some() {
             // The page list is the stop before the first row.
             if self.sidebar_focused {
@@ -2720,7 +2769,51 @@ impl ShellForm {
             return false;
         }
         self.focus(order[next as usize]);
+        self.swap_focused = !forward && self.has_swap(order[next as usize]);
         true
+    }
+
+    /// Whether row `i` is a `.size` row with a swap button (a Tab stop of its own).
+    fn has_swap(&self, i: usize) -> bool {
+        matches!(&self.rows[i], Row::Size { width, .. } if !self.plain_size.contains(&width.id))
+    }
+
+    /// The full text of a cut label, chip or pill under `p` (the tooltip); nothing when it shows whole.
+    pub fn label_tip_at(&self, p: CGPoint, tm: &TextMeasure) -> Option<String> {
+        if let Some(sidebar) = &self.sidebar {
+            // A page title cut in the list reads whole in the tip.
+            let n = self.sidebar_frames.iter().position(|f| f.contains(p) && self.sidebar_clip.contains(p))?;
+            let full = SQL10n::string(&sidebar.items.get(n)?.0);
+            let room = self.sidebar_title_room(n, self.sidebar_frames[n]);
+            return (tm.width(&full, self.font(), 0) > room).then_some(full);
+        }
+        let i = (0..self.row_frames.len()).find(|&i| self.row_frames[i].contains(p))?;
+        let label_w = self.label_width - self.label_inset;
+        let column = CGRect::new(self.row_frames[i].min_x() + self.side_pad, self.row_frames[i].min_y(), label_w, self.row_frames[i].height);
+        let label = match &self.rows[i] {
+            Row::Field { label, .. }
+            | Row::Popup { label, .. }
+            | Row::Slider { label, .. }
+            | Row::Buttons { label, .. }
+            | Row::Number { label, .. }
+            | Row::Size { label, .. }
+            | Row::Segmented { label, .. }
+            | Row::ListBox { label, .. } => label,
+            _ => "",
+        };
+        if column.contains(p) && !label.is_empty() {
+            let full = SQL10n::string(label);
+            return (tm.width(&full, self.font(), 0) > label_w).then_some(full);
+        }
+        // The path chip shows the whole path one hover away.
+        if let Row::Buttons { id, detail, .. } = &self.rows[i]
+            && self.chips.contains_key(id)
+            && self.control_frames[i].contains(p)
+            && !detail.is_empty()
+        {
+            return Some(detail.clone());
+        }
+        None
     }
 
     /// A dialog opens with its first editable field focused and its text selected, so typing replaces it and Return
@@ -2759,6 +2852,7 @@ impl ShellForm {
     }
 
     fn focus(&mut self, i: usize) {
+        self.swap_focused = false;
         self.sidebar_focused = false;
         self.focused = Some(i);
         self.focus_visible = true;
@@ -2785,6 +2879,7 @@ impl ShellForm {
         self.commit_editing_inner();
         self.focused = None;
         self.focused_scrub = None;
+        self.swap_focused = false;
         self.sidebar_focused = false;
     }
 
@@ -2883,6 +2978,14 @@ impl ShellForm {
         }
         if k == InputKey::Character('\t') {
             return self.move_focus(!m.contains(InputModifiers::SHIFT));
+        }
+        if self.swap_focused
+            && matches!(k, InputKey::Space | InputKey::Enter)
+            && let Some(f) = self.focused
+            && let Row::Size { width, height, .. } = self.rows[f].clone()
+        {
+            self.swap_size(&width.id, &height.id);
+            return true;
         }
         if self.sidebar_focused
             && let Some(sidebar) = self.sidebar.clone()
@@ -3165,7 +3268,7 @@ impl ShellForm {
             }
             self.search_changed(&before);
         }
-        if let Some(n) = self.sidebar_frames.iter().position(|f| f.contains(p)) {
+        if let Some(n) = self.sidebar_frames.iter().position(|f| f.contains(p) && self.sidebar_clip.contains(p)) {
             self.focused = None;
             self.sidebar_focused = false;
             self.select_page(n);
@@ -3445,6 +3548,21 @@ impl ShellForm {
         }
     }
 
+    /// A wheel turn over the page list scrolls it (true when it took the turn: the page keeps still).
+    pub fn sidebar_wheel(&mut self, p: CGPoint, dy: f64) -> bool {
+        if self.sidebar.is_none() || self.sidebar_max_scroll <= 0.0 || p.x >= self.sidebar_rule.min_x() {
+            return false;
+        }
+        self.sidebar_scroll = (self.sidebar_scroll + dy).clamp(0.0, self.sidebar_max_scroll);
+        true
+    }
+
+    /// The room a page title has in its list row (the match counter takes some).
+    fn sidebar_title_room(&self, n: usize, r: CGRect) -> f64 {
+        let counted = self.sidebar_counts.get(n).is_some_and(|k| *k > 0);
+        (r.width - 42.0 - if counted { 22.0 } else { 0.0 }).max(0.0)
+    }
+
     /// The pointer moved over the form.
     pub fn hover_at(&mut self, p: CGPoint) {
         self.hovered = self.row_at(p);
@@ -3452,7 +3570,7 @@ impl ShellForm {
         for (id, s) in &mut self.scrubs {
             s.hovering = self.scrub_frames.get(id).is_some_and(|f| f.contains(p));
         }
-        self.sidebar_hovered = self.sidebar_frames.iter().position(|f| f.contains(p));
+        self.sidebar_hovered = self.sidebar_frames.iter().position(|f| f.contains(p) && self.sidebar_clip.contains(p));
     }
 
     fn drag_with(&mut self, p: CGPoint, tm: &TextMeasure) {
@@ -3495,6 +3613,7 @@ impl ShellForm {
         sc.decimals = f.decimals;
         sc.default_value = f.default_value;
         sc.true_minus = self.sidebar.is_none();
+        sc.well = true;
         self.values.insert(f.id.clone(), FormValue::Number(sc.value));
         self.scrubs.insert(f.id.clone(), sc);
     }
@@ -3618,13 +3737,19 @@ pub(crate) mod segment_draw {
     }
 }
 
-fn text(c: &mut Canvas, s: &str, r: CGRect, size: f64, color: Color, align: TextAlign) {
+pub(super) fn text(c: &mut Canvas, s: &str, r: CGRect, size: f64, color: Color, align: TextAlign) {
     c.draw_text_in(s, r, size, color, align, 0.0, 0);
 }
 
 /// A row title: the kit's Medium weight on a settings page (`sidebar`), the plain face in dialogs.
 fn title_text(c: &mut Canvas, s: &str, r: CGRect, size: f64, sidebar: bool, color: Color, align: TextAlign) {
     let face = if sidebar { c.medium() } else { 0 };
+    // A label wider than its column is cut with an ellipsis (the tooltip has the full text, `ShellForm::tip_at`).
+    if !s.contains('\n') && r.width > 0.0 && c.size_of(s, size, face).width > r.width {
+        let cut = c.ellipsized(s, size, face, r.width);
+        c.draw_text_in(&cut, r, size, color, align, 0.0, face);
+        return;
+    }
     // A title wrapped to a narrow column comes as lines joined by a newline.
     for (n, line) in s.split('\n').enumerate() {
         let line_rect = CGRect::new(r.min_x(), r.min_y() + n as f64 * m::CARD_TITLE_LINE, r.width, r.height);
@@ -3683,13 +3808,22 @@ impl ShellForm {
     }
 
     /// R4e: the picture cards of a choice row: a small drawing of each option, the chosen one ringed in the accent.
-    fn draw_choice_cards(c: &mut Canvas, area: CGRect, options: &[String], sel: i64, t: &DrawTheme, font: f64) {
+    fn draw_choice_cards(
+        c: &mut Canvas,
+        area: CGRect,
+        options: &[String],
+        sel: i64,
+        hover: Option<CGPoint>,
+        t: &DrawTheme,
+        font: f64,
+    ) {
         let n = options.len().max(1) as f64;
         let gap = 12.0;
         let w = ((area.width - gap * (n - 1.0)) / n).floor();
         for (k, title) in options.iter().enumerate() {
             let on = k as i64 == sel;
             let pic = CGRect::new(area.min_x() + k as f64 * (w + gap), area.min_y(), w, m::CHOICE_PICTURE);
+            let over = hover.is_some_and(|p| pic.inset_by(-4.0, -4.0).contains(p));
             let (dark, light) = (title != "Light", title != "Dark");
             let timeline = title == "Normal" || title == "Fast Cut";
             if timeline {
@@ -3714,7 +3848,9 @@ impl ShellForm {
             if on {
                 c.stroke_rounded(pic.inset_by(-1.0, -1.0), 7.0, 2.0, t.accent());
             } else {
-                c.stroke_rounded(pic.inset_by(-0.5, -0.5), 6.5, 1.0, t.token(sq_uikit::redesign_tokens::color::LINE2));
+                // Hover: the stronger line and the caption lifts, so a card reads as a button before the click.
+                let line = if over { sq_uikit::redesign_tokens::color::LINE3 } else { sq_uikit::redesign_tokens::color::LINE2 };
+                c.stroke_rounded(pic.inset_by(-0.5, -0.5), 6.5, 1.0, t.token(line));
             }
             Self::draw_radio(c, on, true, CGPoint::new(pic.min_x(), pic.max_y() + 9.0), t);
             let caption = SQL10n::string(title);
@@ -3723,7 +3859,7 @@ impl ShellForm {
                 &caption,
                 CGRect::new(pic.min_x() + 22.0, pic.max_y() + 8.0, (w - 22.0).max(0.0), 16.0),
                 font,
-                if on { t.label() } else { t.label2() },
+                if on || over { t.label() } else { t.label2() },
                 TextAlign::Left,
             );
             if let Some(note) =
@@ -3745,70 +3881,6 @@ impl ShellForm {
                 }
             }
         }
-    }
-
-    /// The Dark / Light picture of the kit (`Settings/Choice/Dark|Light`, 189.33 x 78 scaled to `r`): the window with two
-    /// panels around the viewer and one lane with two clips.
-    fn paint_theme_picture(c: &mut Canvas, r: CGRect, dark: bool) {
-        let (bg, panel, lane) = if dark { (0x0E0E10, 0x1F1F22, 0x2B2B2F) } else { (0xD9D9DD, 0xF4F4F6, 0xE6E6EA) };
-        let (sx, sy) = (r.width / 189.33, r.height / 78.0);
-        let part = |c: &mut Canvas, x: f64, y: f64, w: f64, h: f64, rgb: u32| {
-            c.fill_rounded(
-                CGRect::new(r.min_x() + x * sx, r.min_y() + y * sy, w * sx, h * sy),
-                2.0,
-                Color::hex(rgb, 1.0),
-            );
-        };
-        c.fill_rounded(r, 6.0, Color::hex(bg, 1.0));
-        part(c, 6.0, 6.0, 55.27, 33.16, panel);
-        part(c, 64.27, 6.0, 71.85, 33.16, 0x111111);
-        part(c, 139.12, 6.0, 44.21, 33.16, panel);
-        part(c, 6.0, 42.16, 177.33, 29.84, lane);
-        part(c, 27.28, 51.11, 53.2, 6.57, 0x3474B5);
-        part(c, 87.57, 51.11, 39.01, 6.57, 0x3474B5);
-    }
-
-    /// The Normal / Fast Cut picture of the kit: three clips on one lane; Normal leaves a dashed gap, Fast Cut closes it.
-    fn paint_edit_mode_picture(c: &mut Canvas, r: CGRect, fast: bool, t: &DrawTheme, font: f64) {
-        c.fill_rounded(r, 6.0, Color::hex(0x141416, 1.0));
-        let (sx, y, h) = (r.width / 290.0, r.min_y() + r.height * 0.38, r.height * 0.26);
-        let clip = |c: &mut Canvas, x: f64, w: f64, rgb: u32| {
-            c.fill_rounded(CGRect::new(r.min_x() + x * sx, y, w * sx, h), 2.0, Color::hex(rgb, 1.0));
-        };
-        clip(c, 23.2, 75.4, 0x3474B5);
-        let note = if fast {
-            clip(c, 104.4, 87.0, 0x3474B5);
-            clip(c, 197.2, 58.0, 0x2A5F96);
-            "Gap closes by itself"
-        } else {
-            // The gap: a dashed outline (3 on, 2 off).
-            let g = CGRect::new(r.min_x() + 104.4 * sx, y, 63.8 * sx, h);
-            let dash = Color::hex(0xFFFFFF, 0.3);
-            let mut x = g.min_x();
-            while x < g.max_x() {
-                let w = 3.0f64.min(g.max_x() - x);
-                c.fill(CGRect::new(x, g.min_y(), w, 1.0), dash);
-                c.fill(CGRect::new(x, g.max_y() - 1.0, w, 1.0), dash);
-                x += 5.0;
-            }
-            let mut yy = g.min_y();
-            while yy < g.max_y() {
-                let hh = 3.0f64.min(g.max_y() - yy);
-                c.fill(CGRect::new(g.min_x(), yy, 1.0, hh), dash);
-                c.fill(CGRect::new(g.max_x() - 1.0, yy, 1.0, hh), dash);
-                yy += 5.0;
-            }
-            clip(c, 174.0, 87.0, 0x3474B5);
-            "Delete leaves a gap"
-        };
-        text(
-            c,
-            note,
-            CGRect::new(r.min_x() + 10.0, r.min_y() + r.height * 0.77, r.width - 20.0, 14.0),
-            font - 1.0,
-            t.label3(),
-            TextAlign::Left,
-        );
     }
 
     fn draw_rows_inner(&mut self, c: &mut Canvas, t: &DrawTheme, cx: &mut UiCx) {
@@ -3871,7 +3943,8 @@ impl ShellForm {
                         y += self.help_line();
                     }
                 }
-                Self::draw_choice_cards(c, boxed, options, sel, t, font);
+                let hover = self.hovered_point.filter(|_| self.hovered == Some(i));
+                Self::draw_choice_cards(c, boxed, options, sel, hover, t, font);
                 continue;
             }
             // A card row without help centers its title on the row, like the control (the kit's Content row).
@@ -3954,7 +4027,13 @@ impl ShellForm {
                     let fsize = if sidebar { m::FONT } else { self.dialog_field_font_size };
                     if let Some(f) = self.fields.get_mut(&i) {
                         f.font_size = fsize;
-                        f.draw(c, boxed, t, focused, cx);
+                        f.hovering = hover && hp.is_some_and(|p| boxed.contains(p));
+                        let off = self.disabled.contains(fid);
+                        f.draw(c, boxed, t, focused && !off, cx);
+                        if off {
+                            // A field that takes no input: its surface and text step back.
+                            c.fill_rounded(boxed, radius::CONTROL as f64, t.panel().with_alpha(0.5));
+                        }
                     }
                     if let Some(icon) = self.field_icons.get(fid) {
                         c.draw_icon(
@@ -4461,6 +4540,7 @@ impl ShellForm {
                             t.label2(),
                             None,
                         );
+                        let rr = CGRect::new(rr.x, rr.y, rr.width.min(m::PATH_CHIP_MAX), rr.height);
                         let tx = rr.min_x() + 12.0 + 16.0 + 8.0 + self.label_inset;
                         let tw = (rr.max_x() - 12.0 - tx).max(0.0);
                         text(
@@ -4578,7 +4658,7 @@ impl ShellForm {
                         if strong { t.label() } else { t.label2() },
                         label_align,
                     );
-                    self.draw_scrub(c, w, focused, t, cx);
+                    self.draw_scrub(c, w, focused && !self.swap_focused, t, cx);
                     self.draw_scrub(c, hf, false, t, cx);
                     if self.plain_size.contains(&w.id) {
                         let a = self.scrub_frames.get(&w.id).copied().unwrap_or(boxed);
@@ -4612,7 +4692,7 @@ impl ShellForm {
                         c.stone_button(
                             sw.inset_by(0.0, 2.0),
                             ButtonKind::Quiet,
-                            Touch { hovering: sw_hot, ..Touch::default() },
+                            Touch { hovering: sw_hot, focused: ring && self.swap_focused, ..Touch::default() },
                             t,
                         );
                         c.draw_icon(
@@ -4637,6 +4717,8 @@ impl ShellForm {
                         c.fill_rounded(*f, radius::SMALL as f64 + 2.0, fill);
                         if on {
                             c.stroke_rounded(f.inset_by(1.0, 1.0), radius::SMALL as f64 + 1.0, 2.0, t.accent());
+                        } else if over {
+                            c.stroke_rounded(f.inset_by(0.5, 0.5), radius::SMALL as f64 + 1.5, 1.0, t.field_edge_hover());
                         }
                         let (pw, ph) = card.picture();
                         let pic = CGRect::new(
@@ -4686,8 +4768,8 @@ impl ShellForm {
                     if let Some(colors) = self.dot_rows.get(id) {
                         let chosen = self.index(id);
                         for (n, f) in DotRow::frames(boxed, options.len()).into_iter().enumerate() {
-                            let rgb = colors.get(n).copied().unwrap_or(0x808080);
-                            c.fill_rounded(f, DotRow::DOT / 2.0, Color::hex(rgb, 1.0));
+                            let dot = colors.get(n).map_or(t.label3(), |rgb| Color::hex(*rgb, 1.0));
+                            c.fill_rounded(f, DotRow::DOT / 2.0, dot);
                             if chosen == Some(n as i64) {
                                 c.stroke_rounded(f.inset_by(-3.0, -3.0), DotRow::DOT / 2.0 + 3.0, 1.5, t.label());
                             }
@@ -4844,10 +4926,11 @@ impl ShellForm {
             {
                 // The aspect as a small raised pill right of the fields (design `.ar`: 20 high, radius 3, semibold).
                 let x = boxed.max_x() + m::CONTROL_GAP + 4.0;
-                let w = (tm.width(&SQL10n::string(hint), 11.0, 0).ceil() + 12.0).max(44.0);
+                let w = (tm.width(&SQL10n::string(hint), 11.0, 0).ceil() + 12.0).clamp(44.0, m::ASPECT_PILL_MAX);
                 let pill = CGRect::new(x, boxed.mid_y() - 10.0, w, 20.0);
                 c.fill_rounded(pill, 3.0, t.raised());
-                text(c, &SQL10n::string(hint), pill, 11.0, t.label(), TextAlign::Center);
+                let shown = c.ellipsized_middle(&SQL10n::string(hint), 11.0, 0, w - 12.0);
+                text(c, &shown, pill, 11.0, t.label(), TextAlign::Center);
                 // The unit of the two size fields, after the pill (kit `Unit`).
                 let unit = CGRect::new(pill.max_x() + 10.0, pill.min_y(), 24.0, pill.height);
                 text(c, "px", unit, 11.0, t.label3(), TextAlign::Left);
@@ -5141,22 +5224,6 @@ impl ShellForm {
         }
     }
 
-    /// The color of a page's icon tile (`TILE` in the kit's prefs-body.html).
-    pub(crate) fn tile_color(title: &str) -> Color {
-        Color::hex(
-            match title {
-                "General" => 0x5A5A60,
-                "Playback" => 0x2F6FB0,
-                "Editing" => 0x7350C0,
-                "Audio" => 0x1E8449,
-                "Media" => 0xA8741C,
-                "Shortcuts" => 0x9C3F79,
-                _ => 0x4F78A3,
-            },
-            1.0,
-        )
-    }
-
     fn draw_sidebar(&self, c: &mut Canvas, sidebar: &Sidebar, t: &DrawTheme, ui: &mut UiCx) {
         // `Sidebar` of the Settings frame: the chrome color, rounded at the window's top-left corner only.
         let rule = self.sidebar_rule;
@@ -5192,6 +5259,8 @@ impl ShellForm {
             }
         }
         let sel = self.index(&sidebar.id).unwrap_or(0);
+        c.save_gstate();
+        c.clip_to(self.sidebar_clip);
         for (n, r) in self.sidebar_frames.iter().enumerate().filter(|(n, _)| *n < sidebar.items.len()) {
             let on = n as i64 == sel;
             c.stone_pill(*r, on, self.sidebar_hovered == Some(n), t);
@@ -5209,18 +5278,20 @@ impl ShellForm {
                     TextAlign::Right,
                 );
             }
-            let tile = CGRect::new(r.min_x() + 6.0, (r.mid_y() - 9.0).round(), 18.0, 18.0);
-            c.fill_rounded(tile, 5.0, Self::tile_color(title));
-            c.draw_icon(*icon, CGPoint::new(tile.min_x() + 3.5, tile.min_y() + 3.5), 11.0, Color::WHITE, None);
+            // r8 `.nav`: a 16 pt line icon in the text color, no tile (the icon column is 6 + 18 wide, the title follows).
+            c.draw_icon(*icon, CGPoint::new(r.min_x() + 7.0, (r.mid_y() - 8.0).round()), 16.0, t.label(), None);
+            let room = self.sidebar_title_room(n, *r);
+            let shown = c.truncated_name(&SQL10n::string(title), self.font(), 0, room).shown;
             text(
                 c,
-                &SQL10n::string(title),
-                CGRect::new(r.min_x() + 6.0 + 18.0 + 8.0, r.min_y(), (r.width - 42.0).max(0.0), r.height),
+                &shown,
+                CGRect::new(r.min_x() + 6.0 + 18.0 + 8.0, r.min_y(), room, r.height),
                 self.font(),
                 if on { t.label() } else { t.label2() },
                 TextAlign::Left,
             );
         }
+        c.restore_gstate();
         c.fill(self.sidebar_rule, t.hair());
     }
 }
@@ -5400,6 +5471,12 @@ impl DialogForm for ShellForm {
     fn mouse_moved(&mut self, p: CGPoint) {
         self.hover_at(p);
     }
+    fn tip_at(&self, p: CGPoint, tm: &TextMeasure) -> Option<String> {
+        self.label_tip_at(p, tm)
+    }
+    fn sidebar_wheel(&mut self, p: CGPoint, dy: f64) -> bool {
+        ShellForm::sidebar_wheel(self, p, dy)
+    }
     fn set_overlay_bounds(&mut self, window: CGRect) {
         self.overlay_bounds = window;
     }
@@ -5468,12 +5545,17 @@ mod tests {
         CGPoint::new(r.mid_x(), r.mid_y())
     }
 
-    /// The label column fits its longest label (no "Interface Langu..."), within 56...160 pt.
+    /// The label column fits its longest label (no "Interface Langu..."), within 56...144 pt.
     #[test]
     fn the_label_column_grows_to_its_longest_label() {
         assert_eq!(form(vec![Row::field("name", "Name", "")]).label_width(), 56.0);
-        assert_eq!(form(vec![Row::popup("l", "Interface Language", &["English"], 0)]).label_width(), 109.0); // 18 chars at the atlas-free 0.55 em, 11 pt
-        assert_eq!(form(vec![Row::field("x", &"W".repeat(40), "")]).label_width(), 160.0);
+        let w = form(vec![Row::popup("l", "Interface", &["English"], 0)]).label_width();
+        assert!((56.0..104.0).contains(&w), "{w}");
+        // A long label never widens the column past the cap; the widest German form word fits whole under it.
+        assert_eq!(form(vec![Row::field("x", &"W".repeat(40), "")]).label_width(), m::LABEL_MAX);
+        let w = form(vec![Row::field("x", "Bildwiederholfrequenz", "")]).label_width();
+        eprintln!("german label column {w}");
+        assert!(w < m::LABEL_MAX, "{w}");
     }
 
     /// The Mac `SQDialog.popupRow` (Save as Preset): an unlabeled popup row is the 22 pt popup, on a 26 pt line.

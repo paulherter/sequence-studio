@@ -13,7 +13,7 @@ use std::sync::Arc;
 const NONE: InputModifiers = InputModifiers::NONE;
 
 pub(super) fn new_root() -> (AppRoot, Rig) {
-    let dir = crate::test_rig::unique_dir("sq-menu-click-root");
+    let dir = crate::test_rig::test_dir("sq-menu-click-root");
     std::fs::create_dir_all(&dir).expect("dir");
     let mut root = crate::standard_root_with_source(
         &dir,

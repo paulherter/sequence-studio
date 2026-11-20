@@ -63,6 +63,7 @@ pub mod sqmenu_model;
 pub mod timecode;
 pub mod timecode_start_entry;
 pub mod timeline_signposts;
+pub mod tokens;
 pub mod tooltip;
 pub mod waveform_drawing;
 pub mod zoom_scroll_bar_gesture;

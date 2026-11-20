@@ -64,7 +64,7 @@ impl StartTab {
             StartTab::Recent => "Recent",
             StartTab::Templates => "Templates",
             StartTab::Learn => "Learn",
-            StartTab::WhatsNew => "What's new",
+            StartTab::WhatsNew => "What's New",
         }
     }
 
@@ -167,7 +167,8 @@ pub enum StartHit {
 #[derive(Clone, Debug)]
 pub(crate) enum Element {
     Heading(String, CGRect),
-    Tile(CGRect),
+    /// A section of the pane: a heading (may be empty) and the `border-row` line on the rect's top edge, inset 16.
+    Section(String, CGRect),
     Card(RecentEntry, CGRect),
     /// The list layout of Recent (`ListHeader`, `ProjectListRow`).
     ListHeader(CGRect),
@@ -213,7 +214,7 @@ impl Element {
         let o = |r: &CGRect| CGRect::new(r.x, r.y + dy, r.width, r.height);
         match self {
             Element::Heading(s, r) => Element::Heading(s.clone(), o(r)),
-            Element::Tile(r) => Element::Tile(o(r)),
+            Element::Section(s, r) => Element::Section(s.clone(), o(r)),
             Element::Card(e, r) => Element::Card(e.clone(), o(r)),
             Element::ListHeader(r) => Element::ListHeader(o(r)),
             Element::ListRow(e, r) => Element::ListRow(e.clone(), o(r)),
@@ -235,6 +236,10 @@ impl Element {
         }
     }
 }
+
+/// 11.5 pt matches the left ink of the same bar (the first menu title), so both ends measure alike (scripts/r8-inset-check.py).
+/// The in-bar search field's right edge sits this far from the bar's right end (a window caption's buttons shift the bar end, see `start_bar_right_inset`).
+pub const START_BAR_EDGE: f64 = 11.5;
 
 /// Start screen tokens (`StartScreenTokens`: Theme.Metrics.start*; spacing, radii and type are the shared ladders).
 pub(crate) mod m {
@@ -403,6 +408,8 @@ pub struct ShellStartScreen {
     tab: StartTab,
     sort: StartSort,
     list_layout: bool,
+    /// The grid/list toggle has the keyboard focus (Tab moves it there, Left/Right choose, Escape leaves).
+    pub(crate) toggle_focus: bool,
     reopen_last: bool,
     /// Paths of recents whose file is gone: grayed, "Locate…".
     pub missing: BTreeSet<String>,
@@ -439,6 +446,7 @@ impl ShellStartScreen {
             tab: s.tab.as_deref().and_then(StartTab::from_raw).unwrap_or(StartTab::Recent),
             sort: s.sort.as_deref().and_then(StartSort::from_raw).unwrap_or(StartSort::Opened),
             list_layout: s.list_layout,
+            toggle_focus: false,
             reopen_last: s.reopen_last,
             missing: BTreeSet::new(),
             infos: BTreeMap::new(),
@@ -611,15 +619,15 @@ impl ShellStartScreen {
 
     pub(crate) fn rail_rect(&self) -> CGRect {
         let b = self.body();
-        CGRect::new(b.min_x(), b.min_y(), m::RAIL, b.height)
+        CGRect::new(b.min_x(), b.min_y(), m::RAIL - m::SEAM, b.height)
     }
 
     pub(crate) fn pane_rect(&self) -> CGRect {
         let (b, r) = (self.body(), self.rail_rect());
         CGRect::new(
-            r.max_x(),
+            r.max_x() + m::SEAM,
             b.min_y() + m::SEAM,
-            (b.max_x() - r.max_x() - m::SEAM).max(0.0),
+            (b.max_x() - r.max_x() - 2.0 * m::SEAM).max(0.0),
             (b.height - 2.0 * m::SEAM).max(0.0),
         )
     }
@@ -641,14 +649,14 @@ impl ShellStartScreen {
         if w <= 0.0 && self.search.is_editing() {
             w = m::SEARCH_MIN; // Find in a window too narrow for the field shows it while it has the focus
         }
-        CGRect::new(bar.max_x() - 10.0 - w, (bar.mid_y() - m::CONTROL_SMALL / 2.0).round(), w, m::CONTROL_SMALL)
+        CGRect::new(bar.max_x() - START_BAR_EDGE - w, (bar.mid_y() - m::CONTROL_SMALL / 2.0).round(), w, m::CONTROL_SMALL)
     }
 
     /// The width the bar's search field gets and the room its menu titles keep (`None`: no limit) when the bar is
     /// `right` wide, the titles start at `origin_x` and would end at `natural_right`. The field shrinks first, below
     /// `SEARCH_MIN` it hides (width 0), then the titles fold into the overflow menu. A title is never cut.
     pub(crate) fn bar_split(right: f64, origin_x: f64, natural_right: f64) -> (f64, Option<f64>) {
-        let edge = right - 10.0;
+        let edge = right - START_BAR_EDGE;
         let room = edge - natural_right - m::SEARCH_GAP;
         if room >= m::SEARCH {
             return (m::SEARCH, None);
@@ -667,7 +675,7 @@ impl ShellStartScreen {
     /// The rail's buttons, tab rows and option rows (the design's rail: 16 in, 28 high rows, 30 apart).
     pub(crate) fn rail_spots(&self) -> Vec<(CGRect, StartHit)> {
         let rail = self.rail_rect();
-        let (x, w) = (rail.min_x() + 16.0, rail.width - 32.0);
+        let (x, w) = (rail.min_x() + 16.0, m::RAIL - 32.0);
         let mut out = vec![
             (CGRect::new(x, rail.min_y() + 12.0, w - 2.0, 28.0), StartHit::NewProject),
             (CGRect::new(x, rail.min_y() + 46.0, w - 2.0, 28.0), StartHit::OpenOther),
@@ -703,7 +711,7 @@ impl ShellStartScreen {
 
     pub(crate) fn support_card_rect(&self) -> CGRect {
         let rail = self.rail_rect();
-        CGRect::new(rail.min_x() + 16.0, rail.max_y() - 212.0, rail.width - 34.0, m::SUPPORT_CARD)
+        CGRect::new(rail.min_x() + 16.0, rail.max_y() - 212.0, m::RAIL - 34.0, m::SUPPORT_CARD)
     }
 
     /// The card Pip peeks over (`SQMascotPlace.startProjects`, the Mac `supportCard` background): in every view of the
@@ -835,14 +843,7 @@ impl ShellStartScreen {
         }
         // A card of the design: the group box and its title (12 semibold at 16, 14).
         let card = |out: &mut Vec<Element>, r: CGRect, title: &str| {
-            out.push(Element::Tile(r));
-            out.push(Element::Txt(
-                title.into(),
-                CGRect::new(r.min_x() + 16.0, r.min_y() + 13.0, r.width - 32.0, 16.0),
-                m::F_LAB,
-                Tone::Text,
-                true,
-            ));
+            out.push(Element::Section(title.into(), r));
         };
         match self.tab {
             StartTab::Recent => {
@@ -887,6 +888,8 @@ impl ShellStartScreen {
                 }
             }
             StartTab::Home => {
+                // Sections sit 16 left of the title edge, so their content starts on it (r8:512).
+                let (x0, w) = (x0 - 16.0, w + 32.0);
                 y += 4.0;
                 // With a project to continue the card grows to the Continue box (it stacks in a narrow window).
                 let box_h = if self.current(env).is_some() { Self::continue_height(w - 32.0) } else { 186.0 };
@@ -975,7 +978,7 @@ impl ShellStartScreen {
                     let body = "Open a project and save its sequence as a template. It shows up here.";
                     let lines = env.measure.lines(body, w - 32.0, m::F_CAP).len().max(1) as f64;
                     let button_y = 76.0 + 16.0 * lines + 10.0;
-                    out.push(Element::Tile(CGRect::new(x0, y, w, button_y + 22.0 + 26.0)));
+                    out.push(Element::Section(String::new(), CGRect::new(x0 - 16.0, y, w + 32.0, button_y + 22.0 + 26.0)));
                     let mx = x0 + w / 2.0;
                     out.push(Element::Glyph(
                         SQIcon::Layout,
@@ -1033,6 +1036,7 @@ impl ShellStartScreen {
                 y = (foot + 16.0).max(top + 560.0);
             }
             StartTab::WhatsNew => {
+                let (x0, w) = (x0 - 16.0, w + 32.0);
                 y += 4.0;
                 // Two columns of up to 389 pt when each keeps 320 pt, else the cards stack, each as wide as the pane.
                 let gap = 16.0;
@@ -1198,7 +1202,7 @@ impl ShellStartScreen {
         let buttons = if env.recents.is_empty() {
             vec![
                 Element::Button(
-                    "New project".into(),
+                    "New Project".into(),
                     StartHit::EmptyNew,
                     CGRect::new(mx - bw - m::S1, my + 24.0, bw, m::CONTROL),
                     true,
@@ -1359,6 +1363,7 @@ impl ShellStartScreen {
         match *e {
             InputEvent::MouseDown { x, y, modifiers } => {
                 let p = pt(x, y);
+                self.toggle_focus = false;
                 let h = self.hit_at(p, env);
                 crate::shell_log::info(&format!("start press at {:.0},{:.0} pt: {h:?}", p.x, p.y));
                 if h != Some(StartHit::Search) && self.search.is_editing() {
@@ -1389,6 +1394,21 @@ impl ShellStartScreen {
             }
             InputEvent::MouseMoved { x, y } => {
                 self.hover = self.hit_at(pt(x, y), env);
+                // A project tile or row: the full name and the path (the label may be cut).
+                let tip = match &self.hover {
+                    Some(StartHit::Card(path) | StartHit::CardMore(path)) => env
+                        .recents
+                        .iter()
+                        .find(|e| &e.path == path)
+                        .map(|e| format!("{} \u{b7} {}", e.name, ShellPlatformText::abbreviating_home(path))),
+                    Some(h @ (StartHit::NewProject
+                    | StartHit::OpenOther
+                    | StartHit::EmptyOpen
+                    | StartHit::ContinueOpen
+                    | StartHit::Search)) => crate::shell_start_draw::key_tip(h),
+                    _ => None,
+                };
+                ui.hover.offer_tip(tip.as_deref());
                 true
             }
             InputEvent::Scroll { x, y, dx, dy, .. } => {
@@ -1410,6 +1430,29 @@ impl ShellStartScreen {
         self.push(StartAction::Menu { items, point: at, anchor_top: None, pointer: None });
     }
 
+    /// The grid/list toggle by keyboard: Tab focuses it, Left (grid) and Right (list) choose, Escape leaves. True when handled.
+    pub(crate) fn key_toggle(&mut self, key: InputKey) -> bool {
+        match key {
+            InputKey::Character('\t') => {
+                self.toggle_focus = !self.toggle_focus;
+                true
+            }
+            InputKey::Left | InputKey::Right if self.toggle_focus => {
+                self.set_list_layout(key == InputKey::Right);
+                true
+            }
+            InputKey::Escape if self.toggle_focus => {
+                self.toggle_focus = false;
+                true
+            }
+            InputKey::Up | InputKey::Down => {
+                self.toggle_focus = false;
+                false
+            }
+            _ => false,
+        }
+    }
+
     fn key_down(&mut self, key: InputKey, m: InputModifiers, env: &StartEnv, ui: &mut UiCx) -> bool {
         if self.search.is_editing() {
             if key == InputKey::Escape {
@@ -1428,6 +1471,9 @@ impl ShellStartScreen {
                 self.query_changed();
                 return true;
             }
+        }
+        if self.tab == StartTab::Recent && !env.recents.is_empty() && self.key_toggle(key) {
+            return true;
         }
         match key {
             InputKey::Character('f' | 'F') if m == InputModifiers::COMMAND => {
@@ -1679,6 +1725,14 @@ impl ShellHost {
     /// A fixed set of recent projects and a tab, for the `--pose start-*` shots (`home`, `recent`, `empty`, `templates`, `learn`,
     /// `new`). `false` when the start screen is not up or the view is unknown.
     pub fn present_sample_start(&mut self, view: &str) -> bool {
+        // `real`: the Recent tab over the recents the app really loaded (shot setup for the website: demo projects in a support
+        // folder's recents.json, their posters read from the project files); nothing is replaced.
+        if view == "real" {
+            let Some(screen) = self.start.as_mut() else { return false };
+            screen.selected_path = None;
+            screen.set_tab(StartTab::Recent);
+            return true;
+        }
         let tab = match view {
             "home" | "empty" => StartTab::Home,
             "recent" => StartTab::Recent,

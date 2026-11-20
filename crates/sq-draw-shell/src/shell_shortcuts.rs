@@ -471,6 +471,7 @@ impl ShellHost {
         if self.shortcuts.is_some() {
             return;
         }
+        self.settings_card_instant = false;
         self.menu_bar.dismiss();
         let mut e = ShellShortcutsEditor::new(&*self.defaults, Platform::current());
         if self.preferences.edit_api.is_some() || self.flow_env.edit_api.is_some() {
@@ -535,7 +536,9 @@ impl ShellHost {
             self.hide_shortcuts();
         }
         if let Some((page, search)) = open {
-            self.hide_shortcuts();
+            // The editor stays drawn until the flow presents the Settings card, which then replaces it in the same frame
+            // (`ShellHost::present`): no frame shows neither.
+            self.settings_card_instant = true;
             self.start_flow(ShellFlow::ShowPreferencesAt(page, search));
         }
     }
@@ -921,6 +924,21 @@ mod tests {
     use sq_uikit::editor_command::EditorCommand;
 
     /// The keyboard picture names the logo key by platform: Super on Linux, Win on Windows, a symbol on the Mac.
+    #[test]
+    fn leaving_the_shortcuts_page_for_another_page_never_shows_neither_card() {
+        let rig = rig(Platform::Mac);
+        with_editor(&rig, |e| e.open_page = Some((crate::shell_preferences::Page::General, false)));
+        rig.cx(|h, cx| h.handle(cx, &sq_draw::InputEvent::MouseMoved { x: 0.0, y: 0.0 }, 1.0));
+        // Between the click and the card the editor still shows: no frame has neither.
+        assert!(rig.with(|r| r.shell.shortcuts.is_some() && r.shell.dialog().is_none()));
+        assert!(rig.with(|r| r.shell.settings_card_instant), "the card of the next page appears at once");
+        rig.run_flows();
+        rig.with(|r| {
+            assert!(r.shell.dialog().is_some_and(|d| d.message_text == "Settings"), "the Settings card is up");
+            assert!(r.shell.shortcuts.is_none(), "the editor went in the same step the card came");
+        });
+    }
+
     #[test]
     fn the_keyboard_picture_names_the_logo_key_by_platform() {
         let labels = |p| editor(p).caps().into_iter().map(|c| c.label).collect::<Vec<_>>();
@@ -1477,6 +1495,15 @@ mod tests {
 
     /// PRUEF-LIN-3 D3: every keycap label fits its cap (at the size `draw_keyboard` picks) on every platform and layout, also
     /// with a wide font (0.64 em per character, wider than the semibold caps measure) and a narrower 800 pt dialog.
+    #[test]
+    fn a_cap_too_narrow_for_its_word_keeps_a_cut_label() {
+        let wide = |t: &str, sz: f64| t.chars().count() as f64 * sz * 0.6;
+        for label in ["Ctrl", "Super", "Option", "Esc", "Alt"] {
+            let (text, _) = ShellShortcutsEditor::cap_label(label, 6.0, wide);
+            assert!(!text.is_empty(), "{label}");
+        }
+    }
+
     #[test]
     fn every_keycap_label_fits_its_cap() {
         use crate::shell_shortcuts_draw::M;

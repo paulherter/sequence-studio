@@ -109,6 +109,14 @@ impl EffectControlsDrawPanel {
             Target::Header(s) if model.has_user_default(s) && self.over_default_marker(p, s) => {
                 Some(SQL10n::string("Your Default"))
             }
+            // Only over the cut text, not the whole row.
+            Target::Header(s) => self
+                .cut_titles
+                .get(s)
+                .filter(|(_, r)| {
+                    self.row_at(p).is_some_and(|row| r.contains(CGPoint::new(p.x, p.y - self.row_top(row))))
+                })
+                .map(|(full, _)| full.clone()),
             Target::Ring(_) => Some(SQL10n::string("Toggle Animation")),
             Target::Previous(_) => Some(SQL10n::string("Go to Previous Keyframe")),
             Target::Key(_) => Some(SQL10n::string("Add or Remove Keyframe")),

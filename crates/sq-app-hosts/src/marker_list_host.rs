@@ -41,6 +41,8 @@ pub struct MarkerListHost {
     scroll: f64,
     search: TextFieldControl,
     hovered: Option<usize>,
+    /// The cells whose text was cut at the last draw with their full text (the tooltip).
+    cut_cells: Vec<(CGRect, String)>,
     /// The ••• button in the dock strip (set by the root; `None` hides it) and its hover.
     options: Option<CGRect>,
     options_hover: bool,
@@ -59,6 +61,12 @@ pub struct MarkerListHost {
 }
 
 impl MarkerListHost {
+    /// A cell text cut in the middle to the cell width (6 pt inset each side); `full` is set when it was cut.
+    fn cut(c: &Canvas, text: &str, cell: CGRect, size: f64) -> sq_draw::middle_fit::TruncatedLabel {
+        let room = (cell.width - 12.0).max(0.0);
+        sq_draw::middle_fit::truncate_name(text, |n| c.size_of(n, size, 0).width <= room)
+    }
+
     /// An empty list.
     pub fn new() -> MarkerListHost {
         let mut search = TextFieldControl::new("");
@@ -74,6 +82,7 @@ impl MarkerListHost {
             scroll: 0.0,
             search,
             hovered: None,
+            cut_cells: Vec::new(),
             options: None,
             options_hover: false,
             export_asked: Rc::new(Cell::new(false)),
@@ -399,6 +408,7 @@ impl AppHost for MarkerListHost {
         let widths = Self::column_widths(table.width);
         c.save_gstate();
         c.clip_to(list);
+        let mut cut_cells: Vec<(CGRect, String)> = Vec::new();
         for (i, e) in rows.iter().enumerate() {
             let rr = self.row_rect(i);
             if rr.max_y() < list.min_y() || rr.min_y() > list.max_y() {
@@ -429,7 +439,11 @@ impl AppHost for MarkerListHost {
                             self.rename.draw(c, cell.inset_by(2.0, 1.0), t, true, cx.ui);
                         } else {
                             let ink = if e.name.is_empty() { t.label2() } else { t.label() };
-                            c.draw_text_in(e.display_name(), cell, body, ink, TextAlign::Left, 6.0, 0);
+                            let cut = Self::cut(c, e.display_name(), cell, body);
+                            if let Some(full) = cut.full {
+                                cut_cells.push((cell, full));
+                            }
+                            c.draw_text_in(&cut.shown, cell, body, ink, TextAlign::Left, 6.0, 0);
                         }
                     }
                     3 => {
@@ -444,12 +458,17 @@ impl AppHost for MarkerListHost {
                         );
                     }
                     _ => {
-                        c.draw_text_in(&e.comment, cell, body, t.label2(), TextAlign::Left, 6.0, 0);
+                        let cut = Self::cut(c, &e.comment, cell, body);
+                        if let Some(full) = cut.full {
+                            cut_cells.push((cell, full));
+                        }
+                        c.draw_text_in(&cut.shown, cell, body, t.label2(), TextAlign::Left, 6.0, 0);
                     }
                 }
             }
         }
         c.restore_gstate();
+        self.cut_cells = cut_cells;
         let hint = CGRect::new(list.min_x(), list.max_y(), list.width, FOOTER_HEIGHT);
         for (i, line) in hint_lines(c, hint.width - 2.0 * PAD, caption).iter().enumerate() {
             let row = CGRect::new(hint.min_x(), hint.min_y() + i as f64 * HINT_LINE, hint.width, HINT_LINE);
@@ -466,6 +485,8 @@ impl AppHost for MarkerListHost {
                 self.hovered = if self.frame.contains(p) { self.row_at(p) } else { None };
                 self.options_hover = self.options.is_some_and(|r| r.contains(p));
                 self.search.hovering = self.field_rect().contains(p);
+                let tip = self.cut_cells.iter().find(|(r, _)| r.contains(p)).map(|(_, full)| full.as_str());
+                cx.ui.hover.offer_tip(tip);
                 false
             }
             InputEvent::MouseDown { x, y, modifiers } => {

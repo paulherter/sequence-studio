@@ -12,7 +12,7 @@ use sq_runtime::FakeClock;
 use std::sync::Arc;
 
 fn standard(session: EditorSession) -> (AppRoot, crate::test_rig::Rig) {
-    let dir = crate::test_rig::unique_dir("sq-real-path");
+    let dir = crate::test_rig::test_dir("sq-real-path");
     std::fs::create_dir_all(&dir).expect("dir");
     let mut root = crate::standard_root_with_source(
         &dir,

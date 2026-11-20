@@ -486,7 +486,7 @@ impl MultibandEditorDraw {
         if let Some(f) = self.frame_of(&Control::Close) {
             c.close_x(
                 f,
-                sq_draw::close_x::CloseXState { hovered: self.hover == Some(Control::Close), pressed: false },
+                sq_draw::close_x::CloseXState { hovered: self.hover == Some(Control::Close), pressed: false, focused: false },
                 &t,
             );
         }
@@ -519,7 +519,7 @@ impl MultibandEditorDraw {
                 self.hover == Some(Control::Preset),
                 false,
                 true,
-                false,
+                true,
                 f64::from(sq_draw::InspectorTokens::CAPSULE),
                 None,
                 &t,

@@ -1636,31 +1636,8 @@ impl TextBlockDraw {
     }
 
     fn draw_header(&self, c: &mut Canvas, f: CGRect, title: &str, open: bool, summary: &str, top_line: bool) {
-        let (t, fs) = (self.theme, f64::from(type_size::BODY));
-        if top_line {
-            c.fill(CGRect::new(0.0, f.min_y(), self.width, 1.0), t.separator());
-        }
-        let dir = if open { Direction::Down } else { Direction::Right };
-        InspectorDraw::chevron(
-            c,
-            CGRect::new(ControlsGrid::HEADER_TOGGLE_X, f.min_y(), 12.0, f.height),
-            dir,
-            t.label3(),
-            8.0,
-        );
-        c.draw_text_in(
-            &SQL10n::string(title),
-            CGRect::new(ControlsGrid::HEADER_LABEL_X, f.min_y(), 120.0, f.height),
-            fs,
-            t.label(),
-            TextAlign::Left,
-            0.0,
-            0,
-        );
-        let sx = ControlsGrid::HEADER_LABEL_X + 90.0;
-        let sw = (self.width - ControlsGrid::TRAILING - sx).max(0.0);
-        c.draw_text_in(summary, CGRect::new(sx, f.min_y(), sw, f.height), fs, t.label3(), TextAlign::Right, 0.0, 0);
-        c.fill(CGRect::new(0.0, f.max_y() - 1.0, self.width, 1.0), t.track_row_line());
+        // The shared inspector group header (r8 `.grp`), not a copy.
+        crate::ec_draw::group_header(c, f, self.width, title, open, false, summary, top_line, &self.theme);
     }
 
     fn draw_control(
@@ -1765,7 +1742,11 @@ impl TextBlockDraw {
                 let spec = Self::buttons(*g).swap_remove(*i);
                 let body = CGRect::new(f.x + 1.0, f.y, (f.width - 2.0).max(0.0), f.height);
                 let touch = Touch { hovering, pressed, disabled: !enabled, focused: false };
-                c.stone_chip(body, on, false, touch, &t);
+                if on {
+                    c.stone_toggle_pill(body, hovering, pressed, &t);
+                } else {
+                    c.stone_chip(body, false, false, touch, &t);
+                }
                 let base = if on { t.label() } else { t.label2() };
                 let ink = if enabled { base } else { base.with_alpha(base.a * InspectorTokens::DISABLED_ALPHA) };
                 if let Some(icon) = spec.icon {
@@ -1799,7 +1780,7 @@ impl TextBlockDraw {
             Control::Eyedropper(l) => {
                 let on = self.is_on(model, *l);
                 if on {
-                    c.stone_button(f, ButtonKind::Quiet, Touch { hovering, pressed, ..Touch::default() }, &t);
+                    c.stone_toggle_pill(f, hovering, pressed, &t);
                 }
                 let base = t.label2();
                 icon_at(
@@ -3120,7 +3101,7 @@ mod tests {
                     && q.radius == radius
             })
         };
-        assert!(at(4.0), "a field well of radius control");
-        assert!(!at(6.0), "no old capsule radius");
+        assert!(at(6.0), "a field well of radius control (r8: 6)");
+        assert!(!at(4.0), "no old r7 radius");
     }
 }

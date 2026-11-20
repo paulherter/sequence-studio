@@ -276,6 +276,18 @@ impl MeterPanel {
         );
     }
 
+    /// The tooltip at `p`: while the panel is too small for the volume strip, the card says where the volume went
+    /// (the right-click menu keeps its Listening Volume steps).
+    pub fn hint_at(&self, p: CGPoint) -> Option<&'static str> {
+        if !self.frame.contains(p) {
+            return None;
+        }
+        if self.strip_rect.height <= 0.0 {
+            return Some("Listening volume hidden: make the panel taller, or right-click for the volume steps");
+        }
+        self.dim_rect.contains(p).then_some("Dim Monitor")
+    }
+
     /// Slider position of a level: linear in dB between the floor (mute) and 0 dB, as the Mac SQSlider.
     pub fn slider_fraction(level_db: f64) -> f64 {
         (level_db.clamp(MonitorGain::MIN_DB, MonitorGain::MAX_DB) - MonitorGain::MIN_DB)
@@ -339,7 +351,8 @@ impl MeterPanel {
             SQIcon::VolumeLow,
             CGPoint::new(self.dim_rect.mid_x() - icon / 2.0, self.dim_rect.mid_y() - icon / 2.0),
             icon,
-            if s.dim { t.accent() } else { t.label2() },
+            // r8: dim is shown by the chip state and a brighter glyph, never by the accent.
+            if s.dim { t.label() } else { t.label2() },
             None,
         );
     }
@@ -471,7 +484,11 @@ impl AppHost for MeterPanel {
         self.draw_card(c, t);
     }
 
-    fn handle(&mut self, e: &InputEvent, _cx: &mut HostCx) -> bool {
+    fn handle(&mut self, e: &InputEvent, cx: &mut HostCx) -> bool {
+        if let InputEvent::MouseMoved { x, y } = e {
+            let k = self.scale as f64;
+            cx.ui.hover.offer_tip(self.hint_at(CGPoint::new(*x as f64 / k, *y as f64 / k)));
+        }
         let taken = self.handle_event(e);
         self.pump();
         taken

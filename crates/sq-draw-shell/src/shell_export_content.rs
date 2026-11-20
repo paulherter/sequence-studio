@@ -383,6 +383,7 @@ impl Inner {
                 for (ii, it) in r.items.iter().enumerate() {
                     if let Kind::Scrub(spec) = &it.kind {
                         let mut f = ScrubFieldControl::new(spec.value);
+                        f.well = true;
                         f.range = spec.min..=spec.max;
                         f.step = spec.step;
                         f.decimals = spec.decimals;

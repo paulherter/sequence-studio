@@ -125,7 +125,7 @@ pub struct IconGlyph {
     pub strokes: Vec<Vec<CGPoint>>,
 }
 
-static ICON_CACHE: Mutex<Option<HashMap<&'static str, Arc<IconGlyph>>>> = Mutex::new(None);
+static ICON_CACHE: Mutex<Option<HashMap<(&'static str, bool), Arc<IconGlyph>>>> = Mutex::new(None);
 
 impl IconOutline {
     /// The flattened glyph of `icon` (cached; empty when the file is missing).
@@ -133,7 +133,8 @@ impl IconOutline {
         let name = icon.resource();
         let mut guard = ICON_CACHE.lock().unwrap_or_else(|e| e.into_inner());
         let cache = guard.get_or_insert_with(HashMap::new);
-        if let Some(g) = cache.get(name) {
+        let key = (name, icon.is_filled()); // a solid icon shares its file with the outline one
+        if let Some(g) = cache.get(&key) {
             return Arc::clone(g);
         }
         let mut g = IconGlyph { grid: 24.0, line_width: 1.5, fills: Vec::new(), strokes: Vec::new() };
@@ -143,7 +144,7 @@ impl IconOutline {
             g.line_width = doc.line_width;
             for (outline, shape) in SQIconSVG::shapes(svg, IconOutline::default) {
                 let lines = outline.finish();
-                if shape.fill {
+                if shape.fill || icon.is_filled() {
                     g.fills.extend(lines.iter().cloned());
                 }
                 if shape.stroke {
@@ -152,7 +153,7 @@ impl IconOutline {
             }
         }
         let g = Arc::new(g);
-        cache.insert(name, Arc::clone(&g));
+        cache.insert(key, Arc::clone(&g));
         g
     }
 }
@@ -433,14 +434,36 @@ impl Canvas<'_> {
         }
     }
 
-    /// `icon` drawn at `origin` (square `size`, top-left): Phosphor glyphs as antialiased nonzero fills, own drawings as
-    /// strokes of the file's line width. No line is thinner than `SQIconWeight::MIN_LINE` points (a Regular glyph is widened
-    /// by stroking its outline with the missing width). `stroke` (grid units) overrides the line width of stroked drawings.
+    /// `icon` drawn at `origin` (square `size`, top-left): Lucide drawings as strokes of the file's line width (solid icons
+    /// are also filled). No line is thinner than `SQIconWeight::MIN_LINE` points. `stroke` (grid units) overrides the line width of stroked drawings.
     pub fn draw_icon(&mut self, icon: SQIcon, origin: CGPoint, size: f64, c: Color, stroke: Option<f64>) {
+        self.draw_icon_turned(icon, origin, size, c, stroke, 0.0);
+    }
+
+    /// [`draw_icon`](Self::draw_icon) turned `degrees` clockwise around the icon's center (the spinner).
+    pub fn draw_icon_turned(
+        &mut self,
+        icon: SQIcon,
+        origin: CGPoint,
+        size: f64,
+        c: Color,
+        stroke: Option<f64>,
+        degrees: f64,
+    ) {
         let g = IconOutline::glyph(icon);
         let k = size / g.grid;
+        let (sin, cos) = degrees.to_radians().sin_cos();
+        let half = g.grid / 2.0;
         let map = |line: &Vec<CGPoint>| -> Vec<CGPoint> {
-            line.iter().map(|p| CGPoint { x: origin.x + p.x * k, y: origin.y + p.y * k }).collect()
+            line.iter()
+                .map(|p| {
+                    let (dx, dy) = (p.x - half, p.y - half);
+                    CGPoint {
+                        x: origin.x + (half + dx * cos - dy * sin) * k,
+                        y: origin.y + (half + dx * sin + dy * cos) * k,
+                    }
+                })
+                .collect()
         };
         let thin = SQIconWeight::MIN_LINE / k;
         if !g.fills.is_empty() {
@@ -453,7 +476,15 @@ impl Canvas<'_> {
                 }
             }
         }
-        let width = stroke.unwrap_or_else(|| g.line_width.max(if icon.is_filled() { 0.0 } else { thin }));
+        // Stroked icons draw at the design's one on-screen line width (`size/icon_stroke`, 1.5 pt at every size), not at the
+        // file's grid width; solid icons keep the file's width.
+        let width = stroke.unwrap_or_else(|| {
+            if icon.is_filled() {
+                g.line_width
+            } else {
+                f64::from(sq_uikit::tokens::size::ICON_STROKE) / k
+            }
+        });
         for line in &g.strokes {
             self.stroke_polyline(&map(line), width * k, c);
         }
@@ -569,7 +600,16 @@ mod tests {
     }
 
     #[test]
-    fn icon_draws_fills_for_a_phosphor_glyph() {
+    fn a_solid_icon_fills_while_its_outline_twin_does_not() {
+        assert_eq!(SQIcon::Star.resource(), SQIcon::StarFilled.resource());
+        let (outline, solid) = (IconOutline::glyph(SQIcon::Star), IconOutline::glyph(SQIcon::StarFilled));
+        assert!(outline.fills.is_empty() && !solid.fills.is_empty());
+        // Either call order gives the same answer (the cache must not mix them up).
+        assert!(IconOutline::glyph(SQIcon::Star).fills.is_empty());
+    }
+
+    #[test]
+    fn icon_draws_strokes_for_a_lucide_glyph() {
         let mut c = Canvas::with_size(64.0, 64.0, None, 1.0);
         c.draw_icon(SQIcon::ChevronRight, CGPoint { x: 4.0, y: 4.0 }, 24.0, Color::WHITE, None);
         assert!(!c.list.quads().is_empty());

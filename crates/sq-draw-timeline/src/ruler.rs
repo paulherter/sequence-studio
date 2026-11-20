@@ -148,6 +148,7 @@ impl TimelinePanel {
                         &text,
                         CGPoint { x: label_x, y: ((h - line_height) / 2.0).round() },
                         fs,
+                        // No hover highlight on the ruler: the labels keep one color.
                         self.theme.label3(),
                         f64::INFINITY,
                         0,
@@ -217,8 +218,13 @@ impl TimelinePanel {
             TimelineGeometry::RULER_HEIGHT,
         ));
         let c = x.round();
-        cv.fill(TimelineSkin::line_frame(c, 0.0, TimelineGeometry::RULER_HEIGHT), self.theme.playhead());
-        self.skin().draw_head(cv, c, 0.0);
+        // Pressed (the ruler drag) = the head and line one step darker in dark, lighter in light: `fill` toward the ground.
+        let scrubbing = matches!(self.gesture, Some(crate::panel::Gesture::Scrub));
+        let ink = if scrubbing { self.theme.playhead().with_alpha(0.72) } else { self.theme.playhead() };
+        cv.fill(TimelineSkin::line_frame(c, 0.0, TimelineGeometry::RULER_HEIGHT), ink);
+        let mut head = self.theme.playhead_head(c, 0.0);
+        head.fill = ink;
+        head.draw(cv);
         cv.restore_gstate();
     }
 }

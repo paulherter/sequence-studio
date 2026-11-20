@@ -1,4 +1,4 @@
-//! docs/manual/11-shortcuts.md against the default key map (`CommandMap::sq_default`): every row of the manual's tables
+//! docs/wiki/shortcuts.md against the default key map (`CommandMap::sq_default`): every row of the manual's tables
 //! (Mac key, Windows key, command, panel) must be a binding of the map and the other way round.
 
 use crate::command_map::CommandMap;
@@ -7,7 +7,7 @@ use crate::key_binding_text::KeyBindingText;
 use std::collections::BTreeSet;
 
 fn manual() -> String {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/manual/11-shortcuts.md");
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/wiki/shortcuts.md");
     std::fs::read_to_string(path).expect("manual")
 }
 
@@ -27,7 +27,7 @@ fn manual_rows() -> BTreeSet<(String, String, String, String)> {
     let mut rows = BTreeSet::new();
     let mut scope = None;
     for line in manual().lines() {
-        if let Some(h) = line.strip_prefix("## ") {
+        if let Some(h) = line.strip_prefix("### ").or_else(|| line.strip_prefix("## ")) {
             scope = scope_of(h.trim());
             continue;
         }
@@ -126,7 +126,7 @@ fn manual_lists_the_menu_commands_without_a_key() {
     let mut rows = BTreeSet::new();
     let mut inside = false;
     for line in manual().lines() {
-        if let Some(h) = line.strip_prefix("## ") {
+        if let Some(h) = line.strip_prefix("### ").or_else(|| line.strip_prefix("## ")) {
             inside = h.trim() == "Commands without a key by default";
             continue;
         }

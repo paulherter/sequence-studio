@@ -126,9 +126,10 @@ impl TimelinePanel {
         tile: &ThumbnailTile,
         picture: Option<TimelinePicture>,
     ) {
-        let ClipFrame { body, drawn, radius, selected, .. } = *f;
+        let ClipFrame { body, drawn, radius, .. } = *f;
         let skin = self.skin();
-        let inset = if selected { 2.0 } else { 0.5 };
+        // Same inset selected or not: the selection ring is an overlay and must not shift the thumbnails.
+        let inset = 0.5;
         let top = if tile.below_name_strip { strip } else { inset };
         let mut r = CGRect::new(body.min_x() + tile.offset, body.min_y() + top, tile.width, body.height - top - inset);
         if r.min_x() < body.min_x() + inset {
@@ -437,5 +438,37 @@ mod tests {
     #[test]
     fn crop_of_an_empty_tile_is_the_whole_cell() {
         assert_eq!(pic().cropped_to_fill(&CGRect::new(0.0, 0.0, 0.0, 10.0)), [0.0, 0.0, 1.0, 1.0]);
+    }
+}
+
+#[cfg(test)]
+mod selected_layout_tests {
+    use super::*;
+    use sq_draw::DrawTheme;
+    use sq_timeline_ui::ThumbnailTile;
+
+    #[test]
+    fn a_thumbnail_tile_sits_in_the_same_rect_selected_or_not() {
+        let quads = |selected| {
+            let p = TimelinePanel::new(DrawTheme::default());
+            let rect = CGRect::new(10.0, 10.0, 300.0, 60.0);
+            let body = rect.inset(0.0, 2.0);
+            let f = ClipFrame {
+                rect,
+                body,
+                drawn: body,
+                radius: 4.0,
+                selected,
+                visible: CGRect::new(0.0, 0.0, 600.0, 120.0),
+            };
+            let tile =
+                ThumbnailTile { offset: 0.0, width: 80.0, anchor: ThumbnailAnchor::Head, below_name_strip: false };
+            let mut cv = Canvas::with_size(600.0, 120.0, None, 1.0);
+            p.draw_thumbnail_tile(&mut cv, &f, 14.0, &tile, None);
+            cv.list.quads().iter().map(|q| (q.rect, q.radius)).collect::<Vec<_>>()
+        };
+        let off = quads(false);
+        assert!(!off.is_empty());
+        assert_eq!(off, quads(true));
     }
 }

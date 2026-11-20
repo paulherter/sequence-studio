@@ -36,9 +36,9 @@ impl TimelineSkin<'_> {
     pub fn clip_shade(&self) -> Color {
         Color::BLACK.with_alpha(alpha::CLIP_SHADE as f32)
     }
-    /// The snap line.
+    /// The snap line: the accent (transient feedback, draft 03-timeline).
     pub fn snap_line(&self) -> Color {
-        self.theme.yellow()
+        self.theme.accent()
     }
     /// A selected clip's outline.
     pub fn selection_outline(&self) -> Color {
@@ -78,7 +78,7 @@ impl TimelineSkin<'_> {
     }
     /// A clip whose media is missing.
     pub fn offline_clip(&self) -> Color {
-        self.theme.overlay()
+        self.theme.token(sq_uikit::redesign_tokens::color::RAISED)
     }
     /// The text on an offline clip.
     pub fn offline_text(&self) -> Color {

@@ -18,6 +18,95 @@ use super::storage::env_var;
 // Swift: UpdateCheck.swift:12
 pub enum UpdateCheck {}
 
+/// Which stream of builds an install follows. The packager fixes the build's own channel (`SQ_CHANNEL` at compile time);
+/// the user's update choice (Settings > General > Updates) may differ and picks the feed of the update check.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum ReleaseChannel {
+    /// Released versions.
+    #[default]
+    Stable,
+    /// Daily builds: newest changes, may break projects.
+    Nightly,
+}
+
+impl ReleaseChannel {
+    /// Both channels, in the order Settings lists them.
+    pub const ALL: [ReleaseChannel; 2] = [Self::Stable, Self::Nightly];
+
+    /// The channel this build was packaged for: `SQ_CHANNEL=nightly` at compile time, anything else is Stable.
+    pub fn build() -> Self {
+        Self::from_raw(option_env!("SQ_CHANNEL"))
+    }
+
+    /// "nightly" (any case) is Nightly; a missing or unknown value is Stable.
+    pub fn from_raw(raw: Option<&str>) -> Self {
+        match raw.map(|r| r.trim().to_lowercase()).as_deref() {
+            Some("nightly") => Self::Nightly,
+            _ => Self::Stable,
+        }
+    }
+
+    /// The stored value.
+    pub fn raw(self) -> &'static str {
+        match self {
+            Self::Stable => "stable",
+            Self::Nightly => "nightly",
+        }
+    }
+
+    /// The name Settings shows.
+    pub fn title(self) -> &'static str {
+        match self {
+            Self::Stable => "Stable",
+            Self::Nightly => "Nightly",
+        }
+    }
+
+    /// Position in [`Self::ALL`].
+    pub fn index(self) -> usize {
+        Self::ALL.iter().position(|c| *c == self).unwrap_or(0)
+    }
+
+    /// The default update feed of this channel. Stable asks the latest GitHub release; Nightly asks the small document
+    /// the nightly job publishes next to it (our `{"version", "url", "notes"}` form).
+    pub fn default_feed_url(self) -> &'static str {
+        match self {
+            Self::Stable => UpdateCheck::DEFAULT_FEED_URL,
+            Self::Nightly => UpdateCheck::NIGHTLY_FEED_URL,
+        }
+    }
+
+    /// The warning before a switch to Nightly.
+    pub const NIGHTLY_WARNING_TITLE: &'static str = "Switch to Nightly?";
+    pub const NIGHTLY_WARNING: &'static str =
+        "Nightly builds can break projects. Back up your projects before you switch.";
+    pub const NIGHTLY_SWITCH_BUTTON: &'static str = "Switch to Nightly";
+
+    /// The version string the update check compares: the packager's full `SQ_BUILD_VERSION` ("0.2.0-nightly.20261119") on
+    /// a nightly build, else the display version.
+    pub fn local_version() -> String {
+        Self::local_version_of(
+            Self::build(),
+            option_env!("SQ_BUILD_VERSION"),
+            &sq_uikit::app_version::AppVersion::display(),
+        )
+    }
+
+    /// [`Self::local_version`] from its inputs (the build channel, the build string, the display version).
+    pub fn local_version_of(channel: Self, build_version: Option<&str>, display: &str) -> String {
+        match (channel, build_version.map(str::trim)) {
+            (Self::Nightly, Some(v)) if !v.is_empty() => v.to_string(),
+            _ => display.to_string(),
+        }
+    }
+
+    /// The About line of this build: "Version 0.2.0 Alpha", plus " Nightly" on a nightly build.
+    pub fn about_line() -> String {
+        let line = sq_uikit::app_version::AppVersion::about_line();
+        if Self::build() == Self::Nightly { format!("{line} Nightly") } else { line }
+    }
+}
+
 /// A published version.
 #[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
 pub struct UpdateRelease {
@@ -61,17 +150,30 @@ impl UpdateCheck {
     pub const DEFAULT_FEED_URL: &'static str =
         "https://api.github.com/repos/paulherter/sequence-studio/releases/latest";
 
+    /// The nightly document: same scheme as the stable feed, a release tagged `nightly` that is replaced every night.
+    pub const NIGHTLY_FEED_URL: &'static str =
+        "https://github.com/paulherter/sequence-studio/releases/download/nightly/nightly.json";
+
     /// The installer file ending of this system (.dmg, .exe or .AppImage).
     pub fn installer_suffix() -> &'static str {
         Platform::current().update_asset().suffix()
     }
 
-    /// The address in use: `SQ_UPDATE_URL`, else the `sq.updateFeedURL` default, else `DEFAULT_FEED_URL`. Empty = inert.
-    // Swift: UpdateCheck.swift:17
+    /// The address in use for the channel the user chose (the stored `update_channel`, else this build's channel).
     pub fn feed_url(d: &dyn UiDefaults) -> String {
+        let channel = d
+            .string(super::settings::AppSettingsKey::UPDATE_CHANNEL)
+            .map_or_else(ReleaseChannel::build, |r| ReleaseChannel::from_raw(Some(&r)));
+        Self::feed_url_for(channel, d)
+    }
+
+    /// The address of `channel`: `SQ_UPDATE_URL`, else the `sq.updateFeedURL` default (both replace either channel's
+    /// address), else the channel's own. Empty = inert.
+    // Swift: UpdateCheck.swift:17
+    pub fn feed_url_for(channel: ReleaseChannel, d: &dyn UiDefaults) -> String {
         env_var("SQ_UPDATE_URL")
             .or_else(|| d.string("sq.updateFeedURL"))
-            .unwrap_or_else(|| Self::DEFAULT_FEED_URL.to_string())
+            .unwrap_or_else(|| channel.default_feed_url().to_string())
     }
 
     /// A GitHub release as our release; the download is the installer asset when there is one.
@@ -96,9 +198,17 @@ impl UpdateCheck {
         (!Self::parts(&r.version).is_empty() && r.url.starts_with("https://")).then_some(r)
     }
 
-    /// Dotted numeric version parts; a leading "v" and a suffix after "-" or "+" are ignored. Empty when not numeric.
+    /// The date of a nightly version ("0.2.0-nightly.20261119" gives 20261119); `None` for any other version.
+    pub(crate) fn nightly_stamp(v: &str) -> Option<u64> {
+        let rest = v.split_once("-nightly.")?.1;
+        let digits: String = rest.chars().take_while(char::is_ascii_digit).collect();
+        digits.parse().ok()
+    }
+
+    /// Dotted numeric version parts; a leading "v", a suffix after "-" or "+" and a stage word after a space ("0.2.0 Alpha")
+    /// are ignored. Empty when not numeric.
     pub(crate) fn parts(v: &str) -> Vec<i64> {
-        let mut s = v.trim_matches(|c: char| c == ' ' || c == '\t');
+        let mut s = v.split_whitespace().next().unwrap_or("");
         if s.starts_with(['v', 'V']) {
             s = &s[1..];
         }
@@ -123,7 +233,12 @@ impl UpdateCheck {
                 return a > b;
             }
         }
-        false
+        // Same numbers: a nightly is older than the release of its number and a newer nightly beats an older one.
+        match (Self::nightly_stamp(remote), Self::nightly_stamp(local)) {
+            (Some(a), Some(b)) => a > b,
+            (None, Some(_)) => true,
+            _ => false,
+        }
     }
 
     // Swift: UpdateCheck.swift:82

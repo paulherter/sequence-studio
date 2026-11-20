@@ -40,7 +40,7 @@ use sq_draw::monitor::monitor_footer::{MonitorFooter, MonitorFooterEvent, Monito
 use sq_draw::monitor::monitor_guides::Axis;
 use sq_draw::monitor::monitor_modes::{MonitorMode, MonitorZoom};
 use sq_draw::stone::{ButtonKind, Touch};
-use sq_draw::theme::{DrawTheme, metrics, radius, spacing};
+use sq_draw::theme::{DrawTheme, metrics, spacing};
 use sq_draw::ui_cx::DrawCursor;
 use sq_draw::{Color, InputEvent, InputKey, InputModifiers, InspectorDraw, Rect, TextAlign, UiCx, scroll::GestureKind};
 use sq_editor_session::EditorSession;
@@ -254,10 +254,16 @@ pub struct MonitorPanel {
     pub empty_mascot: Option<EmptyMascotDraw>,
     /// The monitor has keyboard focus: its header line turns accent.
     pub is_focused: bool,
+    /// Where the last draw put the offline card (zero when none); its tooltip is the whole path.
+    offline_card_drawn: std::cell::Cell<CGRect>,
     /// Where the last draw put Pip (zero when none).
     pub(crate) empty_mascot_rect: CGRect,
     new_sequence_hover: bool,
     new_sequence_pressed: bool,
+    /// The offline card's Locate… button (r8:745): where the last draw put it, and its pointer state.
+    locate_rect: std::cell::Cell<CGRect>,
+    locate_hover: bool,
+    locate_pressed: bool,
     /// Caret offsets of the open timecode field as last drawn (the canvas measures glyphs only while drawing).
     timecode_carets: Vec<f64>,
     pub(crate) active_guide: Option<GuideAxisDrag>,
@@ -340,7 +346,11 @@ impl MonitorPanel {
             is_focused: false,
             empty_mascot_rect: CGRect::default(),
             new_sequence_hover: false,
+            offline_card_drawn: std::cell::Cell::new(CGRect::default()),
             new_sequence_pressed: false,
+            locate_rect: std::cell::Cell::new(CGRect::default()),
+            locate_hover: false,
+            locate_pressed: false,
             timecode_carets: Vec::new(),
             active_guide: None,
             draw_cx: UiCx::new(),
@@ -571,6 +581,7 @@ impl MonitorPanel {
         c.clip_to(self.slot);
         c.fill(self.slot, t.monitor_backdrop());
         self.new_sequence_rect = CGRect::default();
+        self.locate_rect.set(CGRect::default());
         self.empty_mascot_rect = CGRect::default();
         let slot = self.slot;
         let empty = self.empty_text();
@@ -589,12 +600,15 @@ impl MonitorPanel {
         } else {
             let r = self.canvas_rect;
             // Offline media: the Mac monitor shows its gray backdrop under the card, not a black frame.
-            if self.shows_checkerboard() {
+            if self.model.opening.is_some() {
+                c.fill(r, Color::BLACK);
+            } else if self.shows_checkerboard() {
                 self.draw_checkerboard(c, r);
             } else if self.model.offline_card_detail().is_none() {
                 c.fill(r, Color::BLACK);
             }
-            if self.has_picture {
+            // Loading: the picture stays black under the loader (r8:743), whatever the engine already shows.
+            if self.has_picture && self.model.opening.is_none() {
                 let px = c.px(r);
                 match self.picture_slot {
                     Some(slot) => c.list.image(px, slot, [0.0, 0.0, 1.0, 1.0], Color::WHITE),
@@ -608,7 +622,7 @@ impl MonitorPanel {
             self.layer_overlay.draw(c, r, &t);
             self.draw_text_tools(c);
             self.draw_picture_tools(c);
-            self.draw_offline_card(c);
+            self.draw_state_card(c);
             self.draw_badges(c);
         }
         c.restore_gstate();
@@ -841,45 +855,68 @@ impl MonitorPanel {
         Some(CGRect::new((self.slot.mid_x() - w / 2.0).round(), (self.slot.mid_y() - h / 2.0).round(), w, h))
     }
 
-    /// 6 + 15 (12 pt line) + 4 + 13 (10 pt line) + 6.
-    pub(crate) const OFFLINE_CARD_HEIGHT: f64 = 44.0;
+    /// 20 (icon) + 6 + 15 (title) + 6 + 14 (path line) + 4 + 24 (Locate button).
+    pub(crate) const OFFLINE_CARD_HEIGHT: f64 = 89.0;
     /// The narrowest the card gets beside a small picture.
     pub(crate) const OFFLINE_CARD_MIN_WIDTH: f64 = 120.0;
 
+    /// The loading, empty or offline state of the picture (r8:757-760): one of them at a time, loading first.
+    fn draw_state_card(&self, c: &mut Canvas) {
+        // The picture is black in both appearances: the card reads in the viewer's own (dark) colors (r8:638-639).
+        let t = self.theme.on_viewer();
+        if let Some(name) = &self.model.opening {
+            let text = sq_uikit::localization::SQL10n::format("Opening %@\u{2026}", &[name]);
+            sq_draw::empty_pane::draw_opening(c, &t, self.slot, &text);
+        } else if self.model.offline_card_detail().is_some() {
+            self.draw_offline_card(c);
+        } else if let Some(name) = &self.model.empty_sequence {
+            let text = sq_uikit::localization::SQL10n::format("%@ is empty", &[name]);
+            let body = sq_draw::theme::type_size::BODY as f64;
+            let r = CGRect::new(self.slot.min_x(), self.slot.mid_y() - 7.0, self.slot.width, 14.0);
+            let cut = c.ellipsized(&text, body, 0, (self.slot.width - 2.0 * spacing::LG as f64).max(0.0));
+            c.draw_text_in(&cut, r, body, t.label2(), TextAlign::Center, 0.0, 0);
+        }
+    }
+
+    /// r8 offline state: a 20 pt triangle-alert, **Media Offline** (body size, weight 500) and the file's path, middle
+    /// truncated, in a column centered on the slot (r8:629-637). The tooltip carries the whole text.
     fn draw_offline_card(&self, c: &mut Canvas) {
-        let t = self.theme;
+        let t = self.theme.on_viewer();
         let title = self.model.offline_card_title();
         let detail = self.model.offline_card_detail().unwrap_or_default();
-        let dw = c.size_of(&detail, 10.0, 0).width;
-        let semibold = c.semibold();
-        let Some(r) = self.offline_card_rect(c.size_of(&title, 12.0, semibold).width, dw) else { return };
-        c.fill_rounded(r, radius::CONTROL as f64, t.viewer_hud());
-        let side = spacing::LG as f64;
-        let inner = r.inset_by(side, 0.0);
+        let body = sq_draw::theme::type_size::BODY as f64;
+        let label = sq_draw::theme::type_size::CAPTION as f64;
+        let medium = c.medium();
+        let dw = c.size_of(&detail, label, 0).width;
+        let Some(r) = self.offline_card_rect(c.size_of(&title, body, medium).width, dw) else { return };
+        self.offline_card_drawn.set(r);
+        let icon = 20.0;
+        c.draw_icon(SQIcon::Warning, CGPoint::new(r.mid_x() - icon / 2.0, r.min_y()), icon, t.err_text(), None);
         c.draw_text_in(
             &title,
-            CGRect::new(inner.min_x(), r.min_y() + 6.0, inner.width, 15.0),
-            12.0,
-            Color::WHITE.with_alpha(0.92),
+            CGRect::new(r.min_x(), r.min_y() + icon + 6.0, r.width, 15.0),
+            body,
+            t.label(),
             TextAlign::Center,
             0.0,
-            semibold,
+            medium,
         );
-        c.save_gstate();
-        c.clip_to(inner);
-        // The file name gives way (cut at a word boundary with an ellipsis); " was moved or renamed" always stays.
-        let detail = self.model.offline_card_detail_fitted(inner.width, |t| c.size_of(t, 10.0, 0).width);
-        let dw = c.size_of(&detail, 10.0, 0).width;
+        let shown = self.model.offline_card_label(r.width, |s| c.size_of(s, label, 0).width <= r.width);
         c.draw_text_in(
-            &detail,
-            CGRect::new(inner.min_x(), r.min_y() + 25.0, inner.width, 13.0),
-            10.0,
-            Color::WHITE.with_alpha(0.6),
-            if dw > inner.width { TextAlign::Left } else { TextAlign::Center },
+            &shown.shown,
+            CGRect::new(r.min_x(), r.min_y() + icon + 6.0 + 15.0 + 6.0, r.width, 14.0),
+            label,
+            t.label2(),
+            TextAlign::Center,
             0.0,
             0,
         );
-        c.restore_gstate();
+        // r8:745: the Locate… button under the path runs the relink.
+        let title = "Locate\u{2026}";
+        let w = InspectorDraw::button_width(c, title);
+        let y = r.min_y() + icon + 6.0 + 15.0 + 6.0 + 14.0 + 4.0;
+        self.locate_rect.set(CGRect::new((r.mid_x() - w / 2.0).round(), y, w, 24.0));
+        InspectorDraw::button_kind(c, title, self.locate_rect.get(), self.locate_hover, self.locate_pressed, true, ButtonKind::OnViewer, 24.0, &self.theme);
     }
 
     /// MonitorPanelView.setDropHighlight / showDropZone: drop tint and focus ring over the card, and the Program half under
@@ -1030,6 +1067,10 @@ impl MonitorPanel {
             return false;
         }
         let right = mods.contains(InputModifiers::SECONDARY);
+        if !right && self.locate_rect.get().contains(p) {
+            self.locate_pressed = true;
+            return true;
+        }
         if !right && self.new_sequence_rect.contains(p) {
             self.new_sequence_pressed = true;
             return true;
@@ -1170,6 +1211,13 @@ impl MonitorPanel {
     }
 
     fn mouse_up_inner(&mut self, p: CGPoint, x: f32, y: f32, cx: &mut HostCx) -> bool {
+        if self.locate_pressed {
+            self.locate_pressed = false;
+            if self.locate_rect.get().contains(p) {
+                self.model.emit(MonitorEvent::LocateOffline);
+            }
+            return true;
+        }
         if self.new_sequence_pressed {
             self.new_sequence_pressed = false;
             if self.new_sequence_rect.contains(p) {
@@ -1223,6 +1271,12 @@ impl MonitorPanel {
     fn mouse_moved(&mut self, p: CGPoint, cx: &mut HostCx) {
         self.footer.mouse_moved(p);
         self.new_sequence_hover = self.new_sequence_rect.contains(p);
+        self.locate_hover = self.locate_rect.get().contains(p);
+        if self.offline_card_drawn.get().contains(p)
+            && let Some(full) = self.model.offline_card_detail()
+        {
+            cx.ui.hover.offer_tip(Some(&full));
+        }
         if let Some(a) = self.footer.hovered
             && let Some(title) = a.button_title(self.model.is_playing)
         {

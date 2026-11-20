@@ -227,7 +227,7 @@ impl LibraryPanelModel {
             thumbnails: HashMap::new(),
             failed_previews: HashSet::new(),
             entries_by_folder: HashMap::new(),
-            selection: LibrarySection::Favorites,
+            selection: LibrarySection::All,
             preview: LibraryPreviewPlayer::new(),
             preview_item: None,
             collapsed_groups: BTreeSet::new(),

@@ -160,7 +160,7 @@ impl TooltipState {
     }
 }
 
-/// Size, place and look of a tip (12 pt `label2` on `overlay`, padding 8 x 12, radius 8, a 0.5 ink edge, a trailing "(key)" as
+/// Size, place and look of a tip (12 pt `label2` on `surface-tooltip`, padding 8 x 12, radius 8, a 0.5 ink edge, a trailing "(key)" as
 /// a keycap chip).
 pub struct TooltipLayout;
 
@@ -237,20 +237,20 @@ impl TooltipLayout {
             height: (line * lines as f64).ceil() + Self::PADDING_Y * 2.0,
         };
         let bx = Self::frame(size, pointer, bounds);
-        c.fill_rounded(bx, Self::RADIUS, t.overlay());
+        c.fill_rounded(bx, Self::RADIUS, t.token(sq_uikit::redesign_tokens::color::TOOLTIP));
         let ink = t.palette.ink;
         let edge = Color::new((ink.r / 255.0) as f32, (ink.g / 255.0) as f32, (ink.b / 255.0) as f32, 0.14);
         c.stroke_rounded(bx.inset_by(0.25, 0.25), Self::RADIUS, 0.5, edge);
         let inner = bx.inset_by(Self::PADDING_X, Self::PADDING_Y);
         if wraps {
-            c.draw_wrapped(text, inner, fs, line, t.label2());
+            c.draw_wrapped(text, inner, fs, line, t.label2_on_raised());
             return;
         }
         c.draw_text_in(
             name,
             CGRect::new(inner.x, inner.y, name_w.ceil() + 1.0, inner.height),
             fs,
-            t.label2(),
+            t.label2_on_raised(),
             TextAlign::Left,
             0.0,
             0,
@@ -264,7 +264,7 @@ impl TooltipLayout {
         );
         c.fill_rounded(chip, Self::CHIP_RADIUS, t.ink_fill(0.06));
         c.stroke_rounded(chip.inset_by(0.25, 0.25), Self::CHIP_RADIUS, 0.5, t.ink_fill(0.10));
-        c.draw_text_in(key, chip, Self::CHIP_FONT, t.label2(), TextAlign::Center, 0.0, 0);
+        c.draw_text_in(key, chip, Self::CHIP_FONT, t.label2_on_raised(), TextAlign::Center, 0.0, 0);
     }
 }
 
@@ -288,6 +288,10 @@ impl Hover {
         if let Some(c) = c {
             self.cursor = Some(c);
         }
+    }
+    /// The tip of a possibly cut label: its full text when it is cut, nothing when it shows whole.
+    pub fn offer_truncated(&mut self, label: &crate::middle_fit::TruncatedLabel) {
+        self.offer_tip(label.tip());
     }
     /// Replaces the request outside a mouse event.
     pub fn replace(&mut self, c: Option<DrawCursor>) {
@@ -687,7 +691,7 @@ mod tests {
     }
 
     #[test]
-    fn drawn_tip_uses_the_overlay_token() {
+    fn drawn_tip_uses_the_tooltip_token() {
         let mut h = Hover::default();
         mv(&mut h, Some("Lock Track"), 100.0, 0.0);
         // The tip fades in: the first frame after its delay is transparent, a later one is the full token.
@@ -698,7 +702,7 @@ mod tests {
         crate::motion::begin_frame(1.5);
         let mut c = Canvas::with_size(400.0, 300.0, None, 2.0);
         h.draw_tooltip(&mut c, &DrawTheme::default(), 1.5);
-        assert_eq!(c.list.quads().first().map(|q| q.color), Some(DrawTheme::default().overlay()));
+        assert_eq!(c.list.quads().first().map(|q| q.color), Some(DrawTheme::default().token(sq_uikit::redesign_tokens::color::TOOLTIP)));
         assert!(!crate::motion::needs_frame());
     }
 

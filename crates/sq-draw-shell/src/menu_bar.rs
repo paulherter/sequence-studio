@@ -487,7 +487,7 @@ impl MenuBar {
         if self.shows_titles {
             let icon =
                 CGRect::new(self.origin.x + 12.0, self.origin.y + ((self.height - 18.0) / 2.0).round(), 18.0, 18.0);
-            crate::ShellAppIcon::draw(icon, c, false);
+            crate::ShellAppIcon::draw_ink_flush(icon, c);
         }
         let face = c.medium();
         for (i, menu) in self.menus.iter().enumerate() {

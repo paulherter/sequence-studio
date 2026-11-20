@@ -15,6 +15,7 @@ use sq_draw::{Canvas, InputModifiers, TextAlign};
 use sq_timeline_ui::TimelineGeometry;
 use sq_uikit::controls_grid::{CGPoint, CGRect};
 use sq_uikit::design_tokens::sq_tokens::radius;
+use sq_uikit::redesign_tokens::color;
 
 impl TimelinePanel {
     pub(crate) const PATCH_WIDTH: f64 = 16.0;
@@ -112,7 +113,7 @@ impl TimelinePanel {
         }]
     }
 
-    /// Connected: accent fill, the letter on it. Disconnected: hairline outline, gray letter. Drop target: accent ring.
+    /// Connected: light pill, the letter on it. Disconnected: hairline outline, gray letter. Drop target: accent ring.
     pub(crate) fn draw_patch(&self, cv: &mut Canvas, track: Id, height: f64) {
         if self.source_patch_streams.is_none() {
             return;
@@ -120,19 +121,22 @@ impl TimelinePanel {
         let r = Self::patch_rect(height).inset(0.5, 0.5);
         let rad = f64::from(radius::SMALL) + 1.0;
         if self.patch_drop_track == Some(track) {
-            cv.stroke_rounded(r, rad, 1.0, self.theme.accent());
+            // Draft `.tl-patch.drop`: a 1 pt accent ring and a 2.5 pt quiet halo outside the chip.
+            cv.stroke_rounded(r.inset(-2.25, -2.25), rad + 2.25, 2.5, self.theme.token(color::ACCENT_ZONE));
+            cv.stroke_rounded(r.inset(-0.5, -0.5), rad + 0.5, 1.0, self.theme.accent());
         }
         let Some((kind, connected)) = self.patch_chip(track) else { return };
         if connected {
-            cv.fill_rounded(r, rad, self.theme.accent_fill());
+            // Draft: connected = a light pill like M/S on, never the accent (r8: no blue for on).
+            cv.fill_rounded(r, rad, self.theme.token(color::TEXT));
         } else {
-            cv.stroke_rounded(r, rad, 1.0, self.theme.label3());
+            cv.stroke_rounded(r, rad, 1.0, self.theme.token(color::LINE2));
         }
         cv.draw_text_in(
             if kind == TrackKind::Video { "V" } else { "A" },
             r,
             10.0,
-            if connected { self.theme.on_clip() } else { self.theme.label3() },
+            if connected { self.theme.token(color::GROUP) } else { self.theme.label3() },
             TextAlign::Center,
             0.0,
             0,

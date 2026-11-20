@@ -445,7 +445,7 @@ impl EffectControlsDrawView {
                 c.fill_rounded(r, 2.0, t.label3().with_alpha(0.5));
             }
             // The divider: a 1 pt line from the clip line down (its 7 pt grab zone is invisible).
-            let line = if self.divider_active() { t.accent() } else { t.track_header_line() };
+            let line = if self.divider_active() { t.accent() } else { t.row_line() };
             c.fill(CGRect::new(lw, self.video_header_y(), 1.0, ControlsMetrics::HEADER), line);
             c.fill(CGRect::new(lw, top, 1.0, (self.size.height - top).max(0.0)), line);
         }

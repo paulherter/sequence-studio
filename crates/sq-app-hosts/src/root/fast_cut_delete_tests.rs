@@ -29,7 +29,7 @@ fn caption(id: u128, start: i64) -> CaptionItem {
 
 /// A Fast Cut sequence with two 10 s clips on V1 (A at 0, B at 10 s) and one caption on each, the root laid out.
 fn fast_cut_with_captions() -> (AppRoot, crate::test_rig::Rig) {
-    let dir = crate::test_rig::unique_dir("sq-fast-cut-delete");
+    let dir = crate::test_rig::test_dir("sq-fast-cut-delete");
     std::fs::create_dir_all(&dir).expect("dir");
     let mut root = crate::standard_root_with_source(
         &dir,

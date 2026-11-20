@@ -122,6 +122,10 @@ pub trait ProgramEngine {
     fn dropped_frames(&self) -> i64 {
         0
     }
+    /// Frame positions shown, skipped and late since the last play (the Auto quality governor reads them).
+    fn play_counts(&self) -> crate::PlayCounts {
+        crate::PlayCounts::default()
+    }
     fn shows_transparency_grid(&self) -> bool {
         false
     }

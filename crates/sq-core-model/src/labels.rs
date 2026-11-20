@@ -75,8 +75,8 @@ impl LabelColor {
     pub const SEQUENCE_DEFAULT: LabelColor = LabelColor::Forest;
     /// Label when a nested sequence has none.
     pub const NESTED_DEFAULT: LabelColor = LabelColor::Cerulean;
-    /// Label of a text clip.
-    pub const TEXT_DEFAULT: LabelColor = LabelColor::Purple;
+    /// Label of a text clip: Violet, whose rgb is the spec graphic clip band (`color/clip_graphic_band`, body #7A3FA0).
+    pub const TEXT_DEFAULT: LabelColor = LabelColor::Violet;
     /// Label of a generator or adjustment clip.
     pub const GENERATOR_DEFAULT: LabelColor = LabelColor::Tan;
     /// Label of a caption.
@@ -423,7 +423,7 @@ mod tests {
             c
         };
         let r = p.label_resolver();
-        assert_eq!((r.label(&generator("text")), LabelColor::TEXT_DEFAULT.rgb()), (LabelColor::Purple, 0x7350C0));
+        assert_eq!((r.label(&generator("text")), LabelColor::TEXT_DEFAULT.rgb()), (LabelColor::Violet, 0x9A50C8));
         assert_eq!((r.label(&generator("sq.other")), LabelColor::GENERATOR_DEFAULT.rgb()), (LabelColor::Tan, 0x55555A));
         assert_eq!(
             (LabelColor::VIDEO_DEFAULT.rgb(), LabelColor::AUDIO_DEFAULT.rgb(), LabelColor::CAPTION_DEFAULT.rgb()),
@@ -492,7 +492,7 @@ mod tests {
         let d = [
             LabelColor::VIDEO_DEFAULT,
             LabelColor::AUDIO_DEFAULT,
-            LabelColor::IMAGE_DEFAULT,
+            // IMAGE_DEFAULT and TEXT_DEFAULT are both the graphic purple on purpose (one graphic clip color).
             LabelColor::NESTED_DEFAULT,
             LabelColor::BIN_DEFAULT,
             LabelColor::TEXT_DEFAULT,

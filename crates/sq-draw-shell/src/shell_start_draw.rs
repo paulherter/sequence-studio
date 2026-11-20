@@ -27,13 +27,13 @@ struct Colors {
     seam: Color,
     chrome: Color,
     panel: Color,
+    content: Color,
     group: Color,
     lane: Color,
     raised: Color,
     line: Color,
     line2: Color,
     row_line: Color,
-    warning: Color,
     support: Color,
     badge: Color,
     badge_text: Color,
@@ -42,18 +42,17 @@ struct Colors {
 
 impl Colors {
     fn new(t: &DrawTheme) -> Colors {
-        let w = t.palette.warning;
         Colors {
             seam: t.token(tk::SEAM),
             chrome: t.token(tk::CHROME),
             panel: t.token(tk::PANEL),
+            content: t.token(sq_uikit::tokens::color::surface::CONTENT),
             group: t.token(tk::GROUP),
             lane: t.token(tk::LANE),
             raised: t.token(tk::RAISED),
             line: t.token(tk::LINE),
             line2: t.token(tk::LINE2),
             row_line: t.token(tk::ROW_LINE),
-            warning: Color::new((w.r / 255.0) as f32, (w.g / 255.0) as f32, (w.b / 255.0) as f32, 1.0),
             support: t.token(tk::SUPPORT),
             badge: Color::BLACK.with_alpha(0.62),
             badge_text: Color::WHITE,
@@ -83,6 +82,17 @@ pub(crate) fn new_project_hint() -> String {
         &KeyBinding::new(Key::Char('n'), KeyModifiers::COMMAND | KeyModifiers::OPTION),
         Platform::current(),
     )
+}
+
+/// The tooltip of a start-window control whose key hint left its face (r8): the name and its shortcut.
+pub(crate) fn key_tip(hit: &StartHit) -> Option<String> {
+    match hit {
+        StartHit::NewProject => Some(format!("New Project ({})", new_project_hint())),
+        StartHit::OpenOther | StartHit::EmptyOpen => Some(format!("Open\u{2026} ({})", command_key('o'))),
+        StartHit::ContinueOpen => Some("Open (\u{23ce})".to_string()),
+        StartHit::Search => Some(format!("Search ({})", command_key('f'))),
+        _ => None,
+    }
 }
 
 /// A `StartButton`.
@@ -130,6 +140,13 @@ struct Poster<'a> {
 /// One line of text centered vertically in `r`.
 fn text(c: &mut Canvas, s: &str, r: CGRect, size: f64, color: Color, align: TextAlign, face: usize) -> f64 {
     c.draw_text_in(s, r, size, color, align, 0.0, face)
+}
+
+/// Like `text`, but a string wider than `r` is cut in the middle (names keep their extension) instead of running on.
+fn fit_text(c: &mut Canvas, s: &str, r: CGRect, size: f64, color: Color, face: usize, is_name: bool) {
+    let fits = |x: &str| c.size_of(x, size, face).width <= r.width;
+    let shown = if is_name { sq_draw::middle_fit::fit_name(s, fits) } else { sq_draw::middle_fit::fit_middle(s, fits) };
+    text(c, &shown, r, size, color, TextAlign::Left, face);
 }
 
 impl ShellStartScreen {
@@ -202,7 +219,6 @@ impl ShellStartScreen {
         let query = self.query();
         if query.is_empty() && !editing {
             text(c, "Search projects", text_rect, m::F_LAB, t.label4(), TextAlign::Left, 0);
-            text(c, &command_key('f'), f.inset_by(9.0, 0.0), m::F_CAP, t.label4(), TextAlign::Right, 0);
         } else if !query.is_empty() {
             c.draw_icon(
                 SQIcon::CloseCircleFilled,
@@ -217,7 +233,7 @@ impl ShellStartScreen {
 
     fn draw_status(&self, c: &mut Canvas, t: &DrawTheme, k: &Colors, env: &StartEnv) {
         let r = self.status_bar();
-        c.fill(r, k.chrome);
+        c.fill(r, k.seam);
         let n = env.recents.len();
         let folder = format!("Projects folder: {}", ShellPlatformText::abbreviating_home(env.projects_root));
         let count = if n == 1 { "1 project".to_string() } else { format!("{n} projects") };
@@ -281,12 +297,11 @@ impl ShellStartScreen {
             let hovered = self.hover.as_ref() == Some(h);
             match h {
                 StartHit::NewProject => {
-                    let hint = new_project_hint();
-                    Self::button(c, t, k, &Btn::new("New project", true, hovered).icon(SQIcon::Plus).hint(&hint), *r)
+                    // Neutral, no key hint on the button; the key is in the menu and the tooltip (r8 template).
+                    Self::button(c, t, k, &Btn::new("New Project", true, hovered).icon(SQIcon::Plus), *r)
                 }
                 StartHit::OpenOther => {
-                    let hint = command_key('o');
-                    Self::button(c, t, k, &Btn::new("Open…", false, hovered).icon(SQIcon::Folder).hint(&hint), *r)
+                    Self::button(c, t, k, &Btn::new("Open…", false, hovered).icon(SQIcon::Folder), *r)
                 }
                 StartHit::Tab(tb) => {
                     if *tb == StartTab::Home {
@@ -365,13 +380,13 @@ impl ShellStartScreen {
             return;
         }
         let s = self.support_card_rect();
-        c.fill_rounded(s, 6.0, k.group);
-        c.stroke_rounded(s.inset_by(0.5, 0.5), 6.0, 1.0, k.line);
+        // A section on a hairline from left 8 (r8:553), no card; its text sits on the nav icons' edge.
+        c.fill(CGRect::new(rail.min_x() + 8.0, s.min_y(), rail.width - 16.0, 1.0), k.row_line);
         let face = c.semibold();
         text(
             c,
             SupportEntry::Support.menu_title(),
-            CGRect::new(s.min_x() + 14.0, s.min_y() + 14.0, s.width - 26.0, 16.0),
+            CGRect::new(s.min_x() + 10.0, s.min_y() + 14.0, s.width - 22.0, 16.0),
             m::F_LAB,
             t.label(),
             TextAlign::Left,
@@ -379,7 +394,7 @@ impl ShellStartScreen {
         );
         let _ = c.draw_wrapped(
             SupportLinks::TAGLINE,
-            CGRect::new(s.min_x() + 14.0, s.min_y() + 34.0, s.width - 26.0, 60.0),
+            CGRect::new(s.min_x() + 10.0, s.min_y() + 34.0, s.width - 22.0, 60.0),
             m::F_CAP,
             16.0,
             t.label2(),
@@ -408,7 +423,7 @@ impl ShellStartScreen {
         hover: bool,
         r: CGRect,
     ) {
-        c.fill_rounded(r, m::R_CTL, if hover { t.raised_hover() } else { k.raised });
+        c.fill_rounded(r, m::R_CTL, if hover { t.token(tk::RAISED_HOVER_TOP) } else { k.raised });
         c.stroke_rounded(r.inset_by(0.5, 0.5), m::R_CTL, 1.0, k.line2);
         let mut x = r.min_x() + 9.0;
         if let Some((i, col)) = icon {
@@ -425,9 +440,9 @@ impl ShellStartScreen {
         if !primary && r.height <= 22.0 {
             return Self::flat_button(c, t, k, title, None, hover, r);
         }
-        let kind = if primary { ButtonKind::Accent } else { ButtonKind::Raised };
+        let kind = if primary { ButtonKind::Primary } else { ButtonKind::Raised };
         let r = c.stone_button(r, kind, Touch { hovering: hover, ..Touch::default() }, t);
-        let ink = if primary { Color::WHITE } else { t.label() };
+        let ink = if primary { t.primary_button_text() } else { t.label() };
         let face = c.medium();
         let mut x = r.min_x() + 10.0;
         if let Some(icon) = icon {
@@ -435,7 +450,7 @@ impl ShellStartScreen {
                 icon,
                 CGPoint::new(x, r.mid_y() - 7.0),
                 14.0,
-                if primary { Color::WHITE.with_alpha(0.72) } else { tint.unwrap_or(t.label3()) },
+                if primary { t.primary_button_text().with_alpha(0.72) } else { tint.unwrap_or(t.label3()) },
                 None,
             );
             x += 22.0;
@@ -451,7 +466,7 @@ impl ShellStartScreen {
                 hint,
                 r.inset_by(10.0, 0.0),
                 m::F_CAP,
-                if primary { Color::WHITE.with_alpha(0.72) } else { t.label3() },
+                if primary { t.primary_button_text().with_alpha(0.72) } else { t.label3() },
                 TextAlign::Right,
                 0,
             );
@@ -483,7 +498,7 @@ impl ShellStartScreen {
     }
 
     fn draw_pane(&mut self, c: &mut Canvas, t: &DrawTheme, k: &Colors, env: &StartEnv) {
-        c.fill(self.pane_rect(), k.panel);
+        c.fill(self.pane_rect(), k.content);
         let h = self.pane_header();
         let title_rect = CGRect::new(h.min_x() + m::S6, h.min_y() + 19.0, h.width - 2.0 * m::S6, 20.0);
         let semibold = c.semibold();
@@ -527,6 +542,9 @@ impl ShellStartScreen {
             // The two layout segments: a sunken track, the chosen one raised.
             let seg = self.layout_toggle_rect(env);
             c.stone_segment_track(seg, Touch::default(), t);
+            if self.toggle_focus {
+                c.stone_focus_ring(seg, m::R_CTL, t);
+            }
             for list in [false, true] {
                 let r = self.layout_segment(env, list);
                 let on = self.list_layout() == list;
@@ -547,6 +565,9 @@ impl ShellStartScreen {
             let semibold = c.semibold();
             // The text wraps at word boundaries; more than two lines lift the block so it never reaches the buttons.
             let (lines, lift) = self.empty_state_body(env, &body);
+            // A long query is cut in the middle so the title stays on one line.
+            let title_room = (content.width - 2.0 * m::S6).max(0.0);
+            let title = sq_draw::middle_fit::fit_middle(&title, |x| c.size_of(x, 15.0, semibold).width <= title_room);
             text(
                 c,
                 &title,
@@ -649,9 +670,13 @@ impl ShellStartScreen {
                     text(c, s, rr, 10.0, t.label2(), TextAlign::Center, face);
                 }
             }
-            Element::Tile(r) => {
-                c.fill_rounded(*r, 6.0, k.group);
-                c.stroke_rounded(r.inset_by(0.5, 0.5), 6.0, 1.0, k.line);
+            Element::Section(title, r) => {
+                c.fill(CGRect::new(r.min_x() + 16.0, r.min_y(), (r.width - 32.0).max(0.0), 1.0), k.row_line);
+                if !title.is_empty() {
+                    let face = c.semibold();
+                    let hr = CGRect::new(r.min_x() + 16.0, r.min_y() + 13.0, (r.width - 32.0).max(0.0), 16.0);
+                    text(c, title, hr, m::F_LAB, t.label(), TextAlign::Left, face);
+                }
             }
             Element::Card(entry, r) => self.draw_card(c, t, k, env, entry, *r),
             Element::ListHeader(r) => {
@@ -731,7 +756,7 @@ impl ShellStartScreen {
                     );
                     c.fill(CGRect::new(row.min_x(), row.max_y() - 1.0, row.width, 1.0), k.row_line);
                 }
-                let open = Btn::new("Open", false, self.hover == Some(StartHit::ContinueOpen)).hint("⏎");
+                let open = Btn::new("Open", false, self.hover == Some(StartHit::ContinueOpen));
                 Self::button(c, t, k, &open, Self::open_rect(*r));
             }
             Element::Quick(tmpl, r) => self.draw_quick(c, t, k, tmpl.as_ref(), *r),
@@ -837,13 +862,13 @@ impl ShellStartScreen {
 
     fn draw_quick(&self, c: &mut Canvas, t: &DrawTheme, k: &Colors, tmpl: Option<&ProjectTemplate>, r: CGRect) {
         let h = tmpl.map_or(StartHit::AllFormats, |t| StartHit::QuickSize(t.id.clone()));
-        if self.hover.as_ref() == Some(&h) {
-            c.fill_rounded(r, m::R_CTL, Color::WHITE.with_alpha(0.04));
-        }
         let x = r.min_x() + 6.0 + 34.0 + 12.0;
         let tile = CGRect::new(r.min_x() + 6.0, r.mid_y() - 17.0, 34.0, 34.0);
-        c.fill_rounded(tile, 6.0, k.raised);
-        c.stroke_rounded(tile.inset_by(0.5, 0.5), 6.0, 1.0, k.line);
+        // No well at rest; it appears under the pointer (r8:520-522).
+        if self.hover.as_ref() == Some(&h) {
+            c.fill_rounded(tile, 6.0, k.raised);
+            c.stroke_rounded(tile.inset_by(0.5, 0.5), 6.0, 1.0, k.line);
+        }
         let glyph = |c: &mut Canvas, icon: SQIcon| {
             c.draw_icon(icon, CGPoint::new(tile.mid_x() - 8.0, tile.mid_y() - 8.0), 16.0, t.label2(), None)
         };
@@ -925,24 +950,9 @@ impl ShellStartScreen {
         };
         let face = c.medium();
         let w = r.width - m::CONTROL_SMALL;
-        text(
-            c,
-            &e.name,
-            CGRect::new(r.min_x(), well.max_y() + 8.0, w, 16.0),
-            m::F_LAB,
-            if gone { t.label3() } else { t.label() },
-            TextAlign::Left,
-            face,
-        );
-        text(
-            c,
-            &sub,
-            CGRect::new(r.min_x(), well.max_y() + 26.0, r.width, 14.0),
-            m::F_CAP,
-            t.label3(),
-            TextAlign::Left,
-            0,
-        );
+        let name_color = if gone { t.label3() } else { t.label() };
+        fit_text(c, &e.name, CGRect::new(r.min_x(), well.max_y() + 8.0, w, 16.0), m::F_LAB, name_color, face, true);
+        fit_text(c, &sub, CGRect::new(r.min_x(), well.max_y() + 26.0, r.width, 14.0), m::F_CAP, t.label3(), 0, false);
         if hovering {
             let mr = Self::more_rect(r);
             if self.hover == Some(StartHit::CardMore(e.path.clone())) {
@@ -972,7 +982,7 @@ impl ShellStartScreen {
                 SQIcon::Warning,
                 CGPoint::new(thumb.mid_x() - 5.5, thumb.mid_y() - 5.5),
                 m::F_CAP,
-                k.warning,
+                k.red,
                 None,
             );
         } else {
@@ -990,9 +1000,9 @@ impl ShellStartScreen {
         let face = c.medium();
         let (name_room, locate) = Self::locate_row_parts(&col, r);
         let name_rect = if gone { name_room } else { col.name };
-        text(c, &e.name, name_rect, m::F_LAB, if gone { t.label2() } else { t.label() }, TextAlign::Left, face);
+        fit_text(c, &e.name, name_rect, m::F_LAB, if gone { t.label2() } else { t.label() }, face, true);
         if gone {
-            cell(c, "File not found", col.size, 110.0 + 64.0 + m::S3, k.warning);
+            cell(c, "File not found", col.size, 110.0 + 64.0 + m::S3, k.red);
             Self::button(c, t, k, &Btn::new("Locate…", false, false), locate);
         } else {
             let dash = || "–".to_string();
@@ -1017,7 +1027,9 @@ impl ShellStartScreen {
     fn poster_well(&self, c: &mut Canvas, t: &DrawTheme, k: &Colors, p: &Poster, r: CGRect) {
         let Poster { info, path, gone, poster, inset } = *p;
         // art.html `.thumb`: the viewer color with a hair2 inset ring.
-        c.fill_rounded(r, m::R_CTL, if gone { k.lane } else { t.viewer() });
+        // Template `media` of a missing tile: surface-control (the start pane turns it to the lane color in light).
+        let gone_fill = if t.palette.is_dark() { t.token(tk::WELL) } else { k.lane };
+        c.fill_rounded(r, m::R_CTL, if gone { gone_fill } else { t.viewer() });
         if gone {
             c.stroke_rounded(r.inset_by(0.5, 0.5), m::R_CTL, 1.0, k.line2);
         }
@@ -1044,7 +1056,21 @@ impl ShellStartScreen {
             );
         }
         if gone {
-            c.draw_icon(SQIcon::Warning, CGPoint::new(r.mid_x() - 11.0, r.mid_y() - 11.0), 22.0, t.label4(), None);
+            let pill_w = c.size_of("File missing", m::F_CAP, 0).width + 12.0 + 15.0;
+            let tile = path.is_some() && r.height >= 90.0 && r.width >= pill_w + Self::LOCATE_W + 16.0;
+            let up = if tile { 8.0 } else { 0.0 };
+            if tile {
+                // Template: the 20 pt warning mark sits top-left, 12 pt in.
+                c.draw_icon(SQIcon::Warning, CGPoint::new(r.min_x() + 12.0, r.min_y() + 12.0), 20.0, t.label4(), None);
+            } else {
+                c.draw_icon(SQIcon::Warning, CGPoint::new(r.mid_x() - 11.0, r.mid_y() - 11.0 - up), 22.0, t.label4(), None);
+            }
+            if tile {
+                // A missing project tile carries the same raised Locate… button as the list row (a click on the tile locates too).
+                // Same row as the File missing pill (template): pill left, Locate… right.
+                let b = CGRect::new(r.max_x() - 8.0 - Self::LOCATE_W, r.max_y() - 4.0 - m::CONTROL_SMALL, Self::LOCATE_W, m::CONTROL_SMALL);
+                Self::button(c, t, k, &Btn::new("Locate…", false, false), b);
+            }
             // The design's pill: a 11 pt warning mark, 4 pt gap, the label, 6 pt padding each side.
             let w = c.size_of("File missing", m::F_CAP, 0).width + 12.0 + 15.0;
             let pill = CGRect::new(r.min_x() + 8.0, r.max_y() - 26.0, w, 18.0);
@@ -1061,13 +1087,13 @@ impl ShellStartScreen {
                 face,
             );
         } else if media_missing {
-            c.draw_icon(SQIcon::Unlink, CGPoint::new(r.mid_x() - 6.5, r.mid_y() - 14.0), m::ICON_BODY, k.warning, None);
+            c.draw_icon(SQIcon::Unlink, CGPoint::new(r.mid_x() - 6.5, r.mid_y() - 14.0), m::ICON_BODY, k.red, None);
             text(
                 c,
                 "Locate media…",
                 CGRect::new(r.min_x(), r.mid_y() + 2.0, r.width, 14.0),
                 m::F_CAP,
-                k.warning,
+                k.red,
                 TextAlign::Center,
                 0,
             );
@@ -1150,9 +1176,29 @@ mod hint_tests {
     use sq_uikit::editor_command::EditorCommand;
 
     #[test]
+    fn the_start_controls_without_a_hint_on_their_face_have_tooltips() {
+        for h in [StartHit::NewProject, StartHit::OpenOther, StartHit::EmptyOpen, StartHit::ContinueOpen, StartHit::Search] {
+            let tip = key_tip(&h).expect("a tooltip");
+            assert!(tip.contains('(') && tip.ends_with(')'), "{tip}");
+        }
+        assert!(key_tip(&StartHit::Sort).is_none());
+    }
+
+    #[test]
     fn the_new_project_hint_is_the_key_the_file_menu_shows() {
         let bound = CommandMap::sq_default().binding_for(&EditorCommand::NewProject).expect("New Project has a key");
         assert_eq!(new_project_hint(), KeyBindingText::text(&bound, Platform::current()));
         assert_ne!(new_project_hint(), command_key('n'), "Ctrl+N is New Sequence");
+    }
+
+    #[test]
+    fn the_view_toggle_is_reached_by_tab_and_chosen_with_left_and_right() {
+        use sq_draw::InputKey;
+        let mut screen = ShellStartScreen::new(&Default::default());
+        assert!(!screen.key_toggle(InputKey::Right), "Right does nothing before the toggle has the focus");
+        assert!(screen.key_toggle(InputKey::Character('\t')) && screen.toggle_focus);
+        assert!(screen.key_toggle(InputKey::Right) && screen.list_layout());
+        assert!(screen.key_toggle(InputKey::Left) && !screen.list_layout());
+        assert!(screen.key_toggle(InputKey::Escape) && !screen.toggle_focus);
     }
 }

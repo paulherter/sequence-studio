@@ -229,7 +229,7 @@ impl EffectControlsDrawPanel {
         let trash = |label: &str, id: Id| -> Widget {
             Widget::new(
                 k("remove"),
-                g.control_frame(g.reset_x(), ControlsGrid::RESET_WIDTH, h, ControlsGrid::CONTROL_HEIGHT),
+                g.control_frame(g.reset_x(), ControlsGrid::RESET_SLOT_WIDTH, h, ControlsGrid::CONTROL_HEIGHT),
                 WidgetKind::Icon(SQIcon::Trash, None),
             )
             .with_help(label)

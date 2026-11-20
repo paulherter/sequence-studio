@@ -50,6 +50,7 @@ mod shell_flow_env;
 mod shell_flows;
 mod shell_focused_edit;
 mod shell_form;
+mod shell_form_pictures;
 mod shell_format;
 mod shell_full_screen;
 mod shell_help;
@@ -165,7 +166,7 @@ pub use shell_preferences::{
 pub use shell_quick_apply::{QuickApplyEvent, QuickApplyPopup};
 pub use shell_settings::{BytesView, MemoryDefaults, NumbersView, SharedDefaults, SharedView};
 pub use shell_shortcuts::{ShellShortcutsEditor, ShortcutsFlow, TemplateChoice};
-pub use shell_start::{LocalCalendar, ShellStartScreen, StartAction, StartEnv, StartHit, StartSort, StartTab};
+pub use shell_start::{START_BAR_EDGE, LocalCalendar, ShellStartScreen, StartAction, StartEnv, StartHit, StartSort, StartTab};
 pub use shell_start_windows::{ShellStartWindows, StartWindowState, StartWindowStep};
 pub use shell_text_input::{ShellTextInput, TextOutput};
 

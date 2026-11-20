@@ -45,7 +45,8 @@ pub fn first_run(env: &DesktopEnv, state: &DesktopState, offers_allowed: bool) -
         DesktopState::Offer => Machine::welcome(Job::LinuxAdd, apps, LocationCheck::Ok { free: u64::MAX }),
         DesktopState::Outdated { installed } => {
             let installed = Version::parse(installed)?;
-            let location = di::integrated_file(env)?;
+            // The folder of the integrated file (the update replaces the file inside it), like the add screen shows.
+            let location = di::integrated_file(env)?.parent()?.to_path_buf();
             InstallerScreen::Update {
                 job: Job::LinuxUpdate { from: installed.clone() },
                 kind: update_kind(&version, &installed),

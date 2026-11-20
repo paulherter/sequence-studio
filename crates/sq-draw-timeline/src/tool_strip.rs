@@ -48,6 +48,8 @@ pub struct ToolStrip {
     strip: CGRect,
     scale: f32,
     hovered: Option<usize>,
+    /// The pointer is on the grip (it lights from .6 to full, r8:559).
+    grip_hot: bool,
     press: Option<Press>,
 }
 
@@ -65,6 +67,8 @@ impl ToolStrip {
     /// The glyph while a key-only tool's name chip sits under it, and the chip's type size.
     const BADGE_GLYPH: f64 = 12.0;
     const BADGE_SIZE: f64 = 8.0;
+    /// The header grip icon (`size/icon`, r8:558).
+    const GRIP_ICON: f32 = sq_uikit::redesign_tokens::size::ICON;
 
     /// Where the glyph and the name chip of a button `r` go: the glyph centered, or (with a name `name_w` wide) smaller at
     /// the top with the chip below it inside the button, so the two never touch.
@@ -87,6 +91,7 @@ impl ToolStrip {
             strip: CGRect::new(0.0, 0.0, 0.0, 0.0),
             scale: 1.0,
             hovered: None,
+            grip_hot: false,
             press: None,
         }
     }
@@ -170,6 +175,11 @@ impl ToolStrip {
 
     // MARK: Drawing
 
+    /// The `surface-toggle` pill of an active tool, Snap or Link (r8:285, 463): flat, hover and press shift the fill.
+    pub(crate) fn toggle_pill(cv: &mut Canvas, r: CGRect, hot: bool, pressed: bool, t: &DrawTheme) {
+        cv.stone_toggle_pill(r, hot, pressed, t);
+    }
+
     /// Draws the grip and the tools (the dock draws the card and the line under the header) in window points.
     pub fn draw(&self, cv: &mut Canvas, state: &ToolState) {
         if self.strip.width <= 0.0 {
@@ -178,10 +188,17 @@ impl ToolStrip {
         let t = &self.theme;
         let b = self.strip;
         let (grip, tools) = self.slots();
-        // The dots-six grip in the panel header (spec 9, Tools).
-        for (dx, dy) in [(-2.5, -5.0), (2.5, -5.0), (-2.5, 0.0), (2.5, 0.0), (-2.5, 5.0), (2.5, 5.0)] {
-            cv.fill_ellipse(CGRect::new(grip.mid_x() + dx - 1.0, grip.mid_y() + dy - 1.0, 2.0, 2.0), t.label3());
-        }
+        // The grip-horizontal glyph in the panel header (r8:555-559): icon 14, opacity .6 at rest, 1 on hover.
+        let mut ink = t.label2();
+        ink.a *= if self.grip_hot { 1.0 } else { 0.6 };
+        let g = f64::from(Self::GRIP_ICON);
+        cv.draw_icon(
+            sq_uikit::sqicon::SQIcon::GripHorizontal,
+            CGPoint { x: (grip.mid_x() - g / 2.0).round(), y: (grip.mid_y() - g / 2.0).round() },
+            g,
+            ink,
+            None,
+        );
         if let Some(r) = self.overflow_frame() {
             if self.hovered == Some(usize::MAX) {
                 cv.stone_button(r, ButtonKind::Quiet, Touch { hovering: true, ..Touch::default() }, t);
@@ -195,7 +212,7 @@ impl ToolStrip {
             // On = raised stone, hover = the quiet button's fill; the glyph is text3 off and text on.
             let hover = self.hovered == Some(i);
             if on {
-                cv.stone_button(r, ButtonKind::Raised, Touch::default(), t);
+                Self::toggle_pill(cv, r, hover, false, t);
             } else if hover {
                 cv.stone_button(r, ButtonKind::Quiet, Touch { hovering: true, ..Touch::default() }, t);
             }
@@ -292,6 +309,7 @@ impl ToolStrip {
             InputEvent::MouseMoved { x, y } => {
                 let p = self.pt(x, y);
                 self.hovered = self.slots().1.iter().position(|r| r.contains(p));
+                self.grip_hot = self.slots().0.contains(p);
                 if self.overflow_frame().is_some_and(|r| r.contains(p)) {
                     self.hovered = Some(usize::MAX);
                 }

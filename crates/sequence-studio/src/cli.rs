@@ -39,6 +39,8 @@ pub struct Pose {
     pub poses: Vec<String>,
     /// Show the first-run Welcome tour (`--tour`): the shot does not mark it seen. Steps: `--key enter` per step.
     pub tour: bool,
+    /// `--theme dark|light`: the shot's Appearance. `None` falls back to `SQ_SHOT_THEME` (see `headless::shot_light`).
+    pub theme_light: Option<bool>,
     /// Ordered steps run after the poses (see [`STEP_HELP`]): the flags above run all clicks before all keys, so a flow that
     /// alternates between a click and typing needs these.
     pub steps: Vec<Step>,
@@ -292,7 +294,7 @@ pub enum Mode {
         out: PathBuf,
         width: u32,
         height: u32,
-        /// `--bench-from`, `--bench-secs`, `--bench-json`, `--bench-tag`.
+        /// `--bench-from`, `--bench-secs`, `--bench-json`, `--bench-tag`, `--quality`.
         bench: crate::bench_report::BenchOpts,
     },
     /// First Play after the open and after a switch to a second sequence, through the real session and engine without a
@@ -428,6 +430,10 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
             "--bench-secs" => {
                 bench.secs_ms = Some(parse_ms(value("seconds")?).filter(|ms| *ms >= 1000).ok_or("bad --bench-secs")?)
             }
+            "--quality" => {
+                bench.quality = crate::bench_report::BenchQuality::parse(value("auto|full|half|quarter")?)
+                    .ok_or("--quality takes auto, full, half or quarter")?
+            }
             "--bench-json" => bench.json = Some(PathBuf::from(value("a file")?)),
             "--bench-tag" => {
                 let text = value("key=value")?;
@@ -510,8 +516,14 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
                 }
             }
             "--theme" => match value("dark or light")?.as_str() {
-                "dark" => light = false,
-                "light" => light = true,
+                "dark" => {
+                    light = false;
+                    pose.theme_light = Some(false);
+                }
+                "light" => {
+                    light = true;
+                    pose.theme_light = Some(true);
+                }
                 _ => return Err("bad --theme, expected dark or light".into()),
             },
             "--scale" => {
@@ -636,6 +648,17 @@ mod tests {
     }
 
     #[test]
+    fn the_ui_shot_takes_a_theme() {
+        let theme = |a: &[&str]| match parse(&args(a)).expect("parses").mode {
+            Mode::UiShot { pose, .. } => pose.theme_light,
+            other => panic!("{other:?}"),
+        };
+        assert_eq!(theme(&["--ui-shot", "s.png", "--theme", "light"]), Some(true));
+        assert_eq!(theme(&["--ui-shot", "s.png", "--theme", "dark"]), Some(false));
+        assert_eq!(theme(&["--ui-shot", "s.png"]), None);
+    }
+
+    #[test]
     fn the_start_error_shot_takes_a_theme_and_a_scale() {
         let c = parse(&args(&["--start-error-shot", "e.png", "--theme", "light", "--scale", "2"])).expect("parses");
         assert_eq!(c.mode, Mode::StartErrorShot { out: "e.png".into(), scale: 2.0, light: true });
@@ -662,6 +685,11 @@ mod tests {
         assert_eq!((bench.from_ms, bench.secs_ms), (2500, Some(30_000)));
         assert_eq!(bench.tags, vec![("case".to_string(), "P1".to_string())]);
         assert!(parse(&args(&["--play-bench", "o.txt", "--bench-secs", "0.1"])).is_err());
+        assert_eq!(bench.quality, crate::bench_report::BenchQuality::Auto, "a fresh install's choice by default");
+        let c = parse(&args(&["p.sqproj", "--play-bench", "o.txt", "--quality", "half"])).expect("parses");
+        let Mode::PlayBench { bench, .. } = c.mode else { panic!("mode") };
+        assert_eq!(bench.quality, crate::bench_report::BenchQuality::Half);
+        assert!(parse(&args(&["--play-bench", "o.txt", "--quality", "best"])).is_err());
     }
 
     #[test]

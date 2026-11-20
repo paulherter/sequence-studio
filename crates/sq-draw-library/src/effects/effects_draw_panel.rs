@@ -5,12 +5,13 @@ use crate::effects::effect_folder_model::{EffectFolderOutline, EffectFolderStore
 use crate::effects::effects_catalog::{EffectsCatalog, EffectsEntry, EffectsRow};
 use crate::effects::effects_grid_model::{EffectsGridLayout, EffectsViewMode};
 use crate::effects::effects_tile_atlas::{EffectsTileAtlas, EffectsTilePicture};
+use crate::empty_state::{EmptyPane, draw_empty_pane};
 use crate::geom::{dist, offset_by, trim_ws};
 use crate::menu_queue::MenuQueue;
 use sq_app_shell::HostCx;
 use sq_core_time::{Id, IdSource};
 use sq_draw::scroll::{ScrollBody, ScrollGesture};
-use sq_draw::theme::{radius, spacing, type_size};
+use sq_draw::theme::{radius, spacing};
 use sq_draw::{
     Alignment, Canvas, Color, DrawTheme, InputEvent, InputKey, InputModifiers, TextAlign, TextFieldControl, UiCx,
 };
@@ -846,29 +847,19 @@ impl EffectsDrawPanel {
 
     fn draw_empty(&self, c: &mut Canvas, t: &DrawTheme) {
         let q = trim_ws(&self.query).to_string();
-        let lr = self.list_rect();
-        let r = lr.inset_by(spacing::MD as f64, 0.0);
-        let semibold = c.semibold();
-        c.draw_text_in(
-            if q.is_empty() { "Nothing here yet" } else { "No results" },
-            CGRect::new(r.min_x(), r.mid_y() - 20.0, r.width, 18.0),
-            type_size::TITLE as f64,
-            t.label2(),
-            TextAlign::Center,
-            0.0,
-            semibold,
-        );
-        if !q.is_empty() {
-            c.draw_text_in(
-                &format!("Nothing here matches \u{201C}{q}\u{201D}."),
-                CGRect::new(r.min_x(), r.mid_y(), r.width, 16.0),
-                11.0,
-                t.label3(),
-                TextAlign::Center,
-                0.0,
-                0,
-            );
-        }
+        // r8: the shared empty state (icon, title, hint) centered in the list column, top-aligned when it is short.
+        let hint = if q.is_empty() {
+            String::new()
+        } else {
+            format!("Nothing here matches \u{201C}{q}\u{201D}.")
+        };
+        let empty = EmptyPane {
+            icon: if q.is_empty() { SQIcon::Folder } else { SQIcon::Search },
+            title: if q.is_empty() { "Nothing here yet" } else { "No results" },
+            hint: &hint,
+            button: None,
+        };
+        draw_empty_pane(c, t, self.list_rect(), &empty, |_| false);
     }
 
     fn draw_list(&mut self, c: &mut Canvas, t: &DrawTheme) {

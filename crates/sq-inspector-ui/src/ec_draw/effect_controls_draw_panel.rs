@@ -257,6 +257,10 @@ pub struct EffectControlsDrawPanel {
     pub(crate) notices_laid_out: Vec<sq_draw::experimental::Feature>,
     pub(super) events: Vec<PanelEvent>,
     pub(super) hover_point: Option<CGPoint>,
+    /// Section titles cut by the last draw, with their full text (the header tooltip).
+    pub(crate) cut_titles: HashMap<EffectSection, (String, CGRect)>,
+    /// Set while a row is drawn: the pointer is over it (r8:542-545: its reset shows).
+    pub(super) pointer_in_row: bool,
     pub(crate) press_target: Target,
     pub(super) press_point: CGPoint,
     pub(super) press_modifiers: InputModifiers,
@@ -301,6 +305,8 @@ impl EffectControlsDrawPanel {
             notices_laid_out: Vec::new(),
             events: Vec::new(),
             hover_point: None,
+            cut_titles: HashMap::new(),
+            pointer_in_row: false,
             press_target: Target::None,
             press_point: CGPoint::ZERO,
             press_modifiers: InputModifiers::NONE,
@@ -669,8 +675,12 @@ impl EffectControlsDrawPanel {
     }
     pub(crate) fn blend_frame(&self, h: f64) -> CGRect {
         let g = self.grid();
-        g.fill_frame(h, Some(g.value_max_x()), Portable::POPUP_WIDTH)
+        let f = g.fill_frame(h, Some(g.value_max_x()), Portable::POPUP_WIDTH);
+        // FUNDE: in a narrow panel the pop-up keeps room for its title and arrow instead of shrinking to nothing.
+        CGRect::new(f.min_x(), f.min_y(), f.width.max(Self::BLEND_MIN_WIDTH), f.height)
     }
+    /// Narrowest the blend-mode pop-up gets: two minimum number fields.
+    pub(crate) const BLEND_MIN_WIDTH: f64 = 2.0 * ControlsGrid::MIN_FIELD;
     pub(super) fn checkbox_frame(&self, h: f64) -> CGRect {
         self.grid().control_frame(ControlsGrid::VALUE_X, InspectorTokens::CHECKBOX, h, InspectorTokens::CHECKBOX)
     }
@@ -847,6 +857,7 @@ impl EffectControlsDrawPanel {
             }
             c.save_gstate();
             c.translate_by(0.0, top);
+            self.pointer_in_row = self.hover_point.is_some_and(|p| p.y >= top && p.y < top + r.height);
             self.draw_row(model, &r, c, &hover, cx);
             c.restore_gstate();
         }
@@ -864,18 +875,23 @@ impl EffectControlsDrawPanel {
         model.clip().is_none()
     }
     /// Title of the empty state.
-    pub const EMPTY_TITLE: &'static str = "No clip selected";
+    pub const EMPTY_TITLE: &'static str = "No Clip Selected";
     /// Hint of the empty state.
-    pub const EMPTY_HINT: &'static str = "Select a clip in the timeline to see its Controls.";
+    pub const EMPTY_HINT: &'static str = "Select a clip in the timeline to see and keyframe its controls here.";
 
+    /// r8:734: mouse-pointer-2 at 20, the title, then the hint.
     fn draw_empty_state(&self, c: &mut Canvas) {
-        c.draw_empty_state(
-            &SQL10n::string(Self::EMPTY_TITLE),
-            &SQL10n::string(Self::EMPTY_HINT),
-            CGRect::new(0.0, 0.0, self.size.width, self.size.height),
-            0.0,
-            &self.theme,
-        );
+        const ICON: f64 = 20.0;
+        const ICON_GAP: f64 = spacing::MD as f64;
+        let hint = SQL10n::string(Self::EMPTY_HINT);
+        let area = CGRect::new(0.0, (ICON + ICON_GAP) / 2.0, self.size.width, self.size.height);
+        let bottom = c.draw_empty_state(&SQL10n::string(Self::EMPTY_TITLE), &hint, area, 0.0, &self.theme);
+        let w = (self.size.width - 2.0 * spacing::LG as f64).max(0.0);
+        let lines = c.wrap(&hint, w, type_size::BODY as f64).len().min(3) as f64;
+        let text_h = 20.0 + if lines > 0.0 { spacing::XS as f64 + lines * 14.0 } else { 0.0 };
+        let top = bottom - text_h - ICON_GAP - ICON;
+        let r = CGRect::new(0.0, top, self.size.width, ICON);
+        self.icon(c, SQIcon::ToolSelect, r, ICON, self.theme.label3());
     }
 
     /// RowBackground: fill, the 1 pt row line at the bottom, a hairline at the top of a group.
@@ -923,11 +939,17 @@ impl EffectControlsDrawPanel {
             f.width = natural.min((max_x - ControlsGrid::LABEL_X).max(f.width));
         }
         let col = color.unwrap_or_else(|| self.theme.label2());
-        match Self::label_lines(&text, f.width, |s| c.size_of(s, fs, 0).width).as_slice() {
+        Self::draw_label_lines(c, &text, f, h, fs, col);
+    }
+
+    /// `text` in `f` by the one label rule of every inspector row: one line when it fits, two lines when it wraps at a
+    /// space (centered in a row of height `h`), else cut at a word boundary. The effect rows and the clip sections share it.
+    pub fn draw_label_lines(c: &mut Canvas, text: &str, f: CGRect, h: f64, fs: f64, col: Color) {
+        match Self::label_lines(text, f.width, |s| c.size_of(s, fs, 0).width).as_slice() {
             [first, second] => {
                 // Two lines close together, centered in the row: a long name stays whole without a wider column.
                 let pitch = fs - 1.0;
-                let top = ((h - pitch - fs) / 2.0).max(0.0);
+                let top = f.min_y() + ((h - pitch - fs) / 2.0).max(0.0);
                 for (i, line) in [first, second].into_iter().enumerate() {
                     let r = CGRect::new(f.min_x(), top + pitch * i as f64, f.width, fs);
                     c.draw_text_in(line, r, fs, col, TextAlign::Left, 0.0, 0);
@@ -1082,6 +1104,7 @@ impl EffectControlsDrawPanel {
                 || [Target::Chevron(s.clone()), Target::Eye(s.clone()), Target::SectionReset(s.clone())].contains(&tg)
         });
         self.background(c, h, if model.is_section_selected(s) { t.current() } else { t.panel() }, true, false);
+        c.fill(CGRect::new(0.0, h - 1.0, self.size.width, 1.0), t.separator()); // `.grp`: border-group
         let collapsed = model.collapsed_sections().contains(s);
         self.icon(
             c,
@@ -1106,8 +1129,10 @@ impl EffectControlsDrawPanel {
             self.icon(c, icon, self.eye_frame(h), 10.0, tint);
         }
         let resettable = s.properties().iter().any(|p| !model.is_default(p)) || !on;
-        let tint = self.button_tint(None, *hover == Target::SectionReset(s.clone()), resettable, a);
-        self.icon(c, SQIcon::Reset, g.reset_frame(h), 10.0, tint);
+        if self.reset_shown(None, resettable, *hover == Target::SectionReset(s.clone())) {
+            let tint = self.button_tint(None, *hover == Target::SectionReset(s.clone()), resettable, a);
+            self.icon(c, SQIcon::Reset, g.reset_frame(h), 10.0, tint);
+        }
         // Title (bodyStrong), your-default marker, summary right aligned up to the eye slot.
         let fs = type_size::BODY as f64;
         let title_x = ControlsGrid::HEADER_LABEL_X;
@@ -1124,9 +1149,14 @@ impl EffectControlsDrawPanel {
             name = m.name.clone();
         }
         let title_w = (c.size_of(&name, fs, bold).width.ceil() + 4.0).min((right_x - title_x - marker_w).max(0.0));
-        let cut = Self::label_cut(&name, title_w, |s| c.size_of(s, fs, bold).width);
+        // FUNDE 1: a long effect or mask name is cut in the middle; the tooltip carries the full name.
+        let cut = sq_draw::middle_fit::truncate_name(&name, |s| c.size_of(s, fs, bold).width <= title_w + 0.5);
+        match &cut.full {
+            Some(full) => self.cut_titles.insert(s.clone(), (full.clone(), CGRect::new(title_x, 0.0, title_w, h))),
+            None => self.cut_titles.remove(s),
+        };
         c.draw_text_in(
-            &cut,
+            &cut.shown,
             CGRect::new(title_x, ly, title_w, lh),
             fs,
             if on { t.label() } else { t.label3() },
@@ -1211,8 +1241,18 @@ impl EffectControlsDrawPanel {
                 );
             }
         }
-        let tint = self.button_tint(None, *hover == Target::Reset(rr.clone()), resettable, 1.0);
-        self.icon(c, SQIcon::Reset, g.reset_frame(h), 10.0, tint);
+        if self.reset_shown(Some(&rr), resettable, *hover == Target::Reset(rr.clone())) {
+            let tint = self.button_tint(None, *hover == Target::Reset(rr.clone()), resettable, 1.0);
+            self.icon(c, SQIcon::Reset, g.reset_frame(h), 10.0, tint);
+        }
+    }
+
+    /// r8:542-545: reset shows on a changed row, or on the row under the pointer or the keyboard focus.
+    pub(crate) fn reset_shown(&self, rr: Option<&RowRef>, changed: bool, on_button: bool) -> bool {
+        changed
+            || on_button
+            || self.pointer_in_row
+            || rr.is_some_and(|rr| self.focused_field.as_ref().is_some_and(|f| f.row == *rr))
     }
 
     /// PropertyRow, and EffectParamRows for color, checkbox and choice parameters.
@@ -1348,8 +1388,10 @@ impl EffectControlsDrawPanel {
                     };
                     self.draw_key_controls(c, &rr, h, &keys, hover);
                 } else {
-                    let tint = self.button_tint(None, *hover == Target::Reset(rr.clone()), resettable, 1.0);
-                    self.icon(c, SQIcon::Reset, g.reset_frame(h), 10.0, tint);
+                    if self.reset_shown(Some(&rr), resettable, *hover == Target::Reset(rr.clone())) {
+                        let tint = self.button_tint(None, *hover == Target::Reset(rr.clone()), resettable, 1.0);
+                        self.icon(c, SQIcon::Reset, g.reset_frame(h), 10.0, tint);
+                    }
                 }
                 self.label(c, "Speed", h, None, None);
             }

@@ -16,6 +16,7 @@
 //! known limit: the viewer shows the host's live frame (`preview_frame`) or the item's poster, and LUT tiles show their icon, not the look on the test
 //! picture; upgrade when the draw toolkit has a live picture slot per panel.
 
+use crate::empty_state::{EmptyPane, draw_empty_pane, ellipsize};
 use crate::geom::{dist, trim_ws};
 use crate::library::library_menus::{Action, Context, LibraryMenus, Organize, Run};
 use crate::library::library_panel_logic::{
@@ -55,6 +56,8 @@ use std::rc::Rc;
 pub enum LibraryRequest {
     /// Choose a folder to watch.
     AddFolder,
+    /// File > Import…: the shell's import flow (media into the project).
+    ImportMedia,
     /// Show the files in the file manager.
     Reveal(Vec<PathBuf>),
     /// Whoosh at the selected cuts with this sound.
@@ -292,13 +295,18 @@ pub struct LibraryDrawPanel {
     pub(crate) search: TextFieldControl,
     /// Measured chip widths by title (filled while drawing; see `chip_frames`).
     chip_widths: HashMap<String, f64>,
+    /// How far the sidebar tree is scrolled (points).
+    sidebar_scroll: f64,
+    /// Tips of cut names of the last list draw (panel-local frames).
+    cut_tips: Vec<(CGRect, String)>,
     events: Vec<LibraryPanelEvent>,
     menu: MenuQueue<MenuCmd>,
 }
 
 impl LibraryDrawPanel {
-    /// Width of the sidebar before the user drags it.
-    pub const SIDEBAR_WIDTH: f64 = 132.0;
+    /// Width of the sidebar before the user drags it: 6 + the 112 pt tree + 4 + the split line (r8).
+    /// The tree sits 6 pt in from the panel edge, so its rows are 11 pt narrower than the sidebar.
+    pub const SIDEBAR_WIDTH: f64 = 123.0;
     /// Height of the search row.
     pub const SEARCH_ROW_HEIGHT: f64 = 38.0;
     /// Height of a chip row.
@@ -377,6 +385,8 @@ impl LibraryDrawPanel {
             hover: None,
             search,
             chip_widths: HashMap::new(),
+            sidebar_scroll: 0.0,
+            cut_tips: Vec::new(),
             events: Vec::new(),
             menu: MenuQueue::default(),
         }
@@ -592,10 +602,11 @@ impl LibraryDrawPanel {
     /// The two segments of the Media | Presets switch.
     pub fn mode_rects(&self) -> (CGRect, CGRect) {
         let x = self.content_x() + Self::PAD;
-        let y = if self.model.is_showing_presets() { 8.0 } else { Self::SEARCH_ROW_HEIGHT + 4.0 };
+        // Segments are 24 high (r8): centered in the search row (Presets) or in the 30 pt switch row (Media).
+        let y = if self.model.is_showing_presets() { 7.0 } else { Self::SEARCH_ROW_HEIGHT + 3.0 };
         // Presets mode shares the row with the star and the search field: the segments are slimmer there.
         let w = if self.model.is_showing_presets() { 56.0 } else { 64.0 };
-        (CGRect::new(x, y, w, 22.0), CGRect::new(x + w, y, w, 22.0))
+        (CGRect::new(x, y, w, 24.0), CGRect::new(x + w, y, w, 24.0))
     }
 
     /// Width the "Import…" button takes in the tab strip.
@@ -618,7 +629,18 @@ impl LibraryDrawPanel {
     }
     /// The "Import…" button in the tab strip (Presets mode).
     pub fn import_rect(&self) -> Option<CGRect> {
-        self.strip_import.filter(|_| self.wants_import())
+        if self.wants_import() {
+            return self.strip_import;
+        }
+        // Media mode: Import… sits at the right end of the Media | Presets row (r8), 12 pt from the edge.
+        self.shows_header().then(|| {
+            CGRect::new(
+                (self.size.width - 12.0 - Self::IMPORT_WIDTH).max(0.0),
+                Self::SEARCH_ROW_HEIGHT + (Self::MODE_ROW_HEIGHT - 20.0) / 2.0,
+                Self::IMPORT_WIDTH,
+                20.0,
+            )
+        })
     }
 
     /// The preset groups (Text, Captions, Effects, Transitions, Motion, Audio, LUTs); none outside Presets mode.
@@ -678,7 +700,9 @@ impl LibraryDrawPanel {
         let mut out = Vec::new();
         for (k, title) in self.chip_items() {
             let estimate = title.chars().count() as f64 * 6.5 + 12.0;
+            // A chip never grows past the row (its title is cut with "…" when drawn).
             let w = self.chip_widths.get(&title).copied().unwrap_or(estimate);
+            let w = if right > left { w.min(right - left) } else { w };
             if x > left && x + w > right {
                 row += 1;
                 x = left;
@@ -791,17 +815,29 @@ impl LibraryDrawPanel {
         if !self.sidebar_rect().contains(p) {
             return None;
         }
-        let i = ((p.y - self.sidebar_rect().min_y() - Self::SIDEBAR_INSET) / Self::ROW_HEIGHT).floor();
+        let i = ((p.y - self.sidebar_rect().min_y() - Self::SIDEBAR_INSET + self.sidebar_scroll_clamped())
+            / Self::ROW_HEIGHT)
+            .floor();
         (i >= 0.0 && (i as usize) < self.sidebar.len()).then_some(i as usize)
     }
 
-    fn sidebar_row_rect(&self, i: usize) -> CGRect {
+    /// The tree sits 6 pt in from the panel edge and ends 5 pt before the split line (112 wide at the default).
+    pub(crate) fn sidebar_row_rect(&self, i: usize) -> CGRect {
         CGRect::new(
-            0.0,
-            self.sidebar_rect().min_y() + Self::SIDEBAR_INSET + i as f64 * Self::ROW_HEIGHT,
-            self.sidebar_w(),
+            6.0,
+            self.sidebar_rect().min_y() + Self::SIDEBAR_INSET + i as f64 * Self::ROW_HEIGHT - self.sidebar_scroll_clamped(),
+            (self.sidebar_w() - 11.0).max(0.0),
             Self::ROW_HEIGHT,
         )
+    }
+
+    /// How far the tree can scroll: its rows past the sidebar's height.
+    fn sidebar_max_scroll(&self) -> f64 {
+        (2.0 * Self::SIDEBAR_INSET + self.sidebar.len() as f64 * Self::ROW_HEIGHT - self.sidebar_rect().height).max(0.0)
+    }
+
+    fn sidebar_scroll_clamped(&self) -> f64 {
+        self.sidebar_scroll.clamp(0.0, self.sidebar_max_scroll())
     }
 
     /// The "Add Folder..." button of the empty state.
@@ -1265,7 +1301,8 @@ impl LibraryDrawPanel {
         }
         if self.import_rect().is_some_and(|r| r.contains(p)) {
             self.end_search_editing();
-            self.events.push(LibraryPanelEvent::Request(LibraryRequest::ImportPack));
+            let request = if self.wants_import() { LibraryRequest::ImportPack } else { LibraryRequest::ImportMedia };
+            self.events.push(LibraryPanelEvent::Request(request));
             return;
         }
         if let Some(i) = self.sidebar_index(p) {
@@ -1350,7 +1387,7 @@ impl LibraryDrawPanel {
             return;
         }
         if self.content_count() == 0 && self.offers_add_folder() && self.add_folder_button_rect().contains(p) {
-            self.events.push(LibraryPanelEvent::Request(LibraryRequest::AddFolder));
+            self.events.push(LibraryPanelEvent::Request(LibraryRequest::ImportMedia));
             return;
         }
         let Some(i) = self.cell_index(p) else {
@@ -1505,6 +1542,11 @@ impl LibraryDrawPanel {
 
     /// The wheel over `p`; true when the list took it.
     pub fn scroll_at(&mut self, p: CGPoint, gesture: Option<ScrollGesture>, dy: f64) -> bool {
+        if self.shows_sidebar() && self.sidebar_rect().contains(p) {
+            // shortcut: the tree scrolls by the wheel without momentum; upgrade with a ScrollBody if it feels stiff.
+            self.sidebar_scroll = (self.sidebar_scroll_clamped() - dy).clamp(0.0, self.sidebar_max_scroll());
+            return true;
+        }
         let lr = self.list_rect();
         if !lr.contains(p) {
             return false;
@@ -1652,6 +1694,9 @@ impl LibraryDrawPanel {
 
     /// The tooltip under the pointer: a sidebar folder's path, a cell's full name.
     pub fn help(&mut self, p: CGPoint) -> Option<String> {
+        if let Some((_, full)) = self.cut_tips.iter().find(|(r, _)| r.contains(p)) {
+            return Some(full.clone());
+        }
         if let Some(i) = self.sidebar_index(p) {
             if let Some(LibrarySection::Folder(id)) = &self.sidebar[i].section {
                 return self.model.folder(*id).map(|f| f.url.to_string_lossy().to_string());
@@ -1747,9 +1792,10 @@ impl LibraryDrawPanel {
             // The AppKit sidebar: a folder icon on the group rows only; the items are plain text.
             // NSTableCellView turns its text field white, whatever textColor says
             let ink = if row.is_offline { t.label3() } else { t.label() };
-            let text_x = if row.is_group { 32.0 } else { 26.0 };
+            // r8: every tree row's text starts 28 pt into the row; a group's folder icon sits in that gap.
+            let text_x = r.min_x() + 28.0;
             if row.is_group {
-                c.draw_icon(SQIcon::Folder, CGPoint::new(14.0, r.mid_y() - 6.0), 12.0, t.label3(), None);
+                c.draw_icon(SQIcon::Folder, CGPoint::new(r.min_x() + 8.0, r.mid_y() - 6.0), 12.0, t.label3(), None);
             }
             c.draw_text_in(
                 &row.title,
@@ -1845,6 +1891,17 @@ impl LibraryDrawPanel {
                 0,
             );
         }
+        // "N items" at the right end of the switch row (r8 foot, like the Project panel); dropped when it does not fit.
+        if !in_presets {
+            let n = self.content_count();
+            let text = if n == 1 { String::from("1 item") } else { format!("{n} items") };
+            let w = c.size_of(&text, 11.0, 0).width;
+            // The count stays left of the Import... button that shares this row.
+            let right = self.import_rect().map_or(self.size.width - Self::PAD, |r| r.min_x() - 8.0);
+            if right - w > track.max_x() + 8.0 {
+                c.draw_text(&text, CGPoint::new(right - w, track.mid_y() - 7.0), 11.0, t.label3(), f64::INFINITY, 0);
+            }
+        }
     }
 
     fn draw_import(&self, c: &mut Canvas, t: &DrawTheme) {
@@ -1865,6 +1922,7 @@ impl LibraryDrawPanel {
             // The active group is a filled chip in the current fill (artifact: level-2 pills).
             let hot = self.hover.is_some_and(|h| frame.contains(h));
             c.stone_filter_chip(frame, on, Touch { hovering: hot, ..Touch::default() }, t);
+            let title = ellipsize(c, &title, Self::LIST_FONT, (frame.width - 12.0).max(0.0));
             c.draw_text_in(
                 &title,
                 frame,
@@ -1879,34 +1937,27 @@ impl LibraryDrawPanel {
 
     fn draw_empty(&self, c: &mut Canvas, t: &DrawTheme) {
         let text = self.empty_text();
-        // The AppKit empty state is centered in the pane under the search row (chips included), 20 pt in from the edges.
-        let pane = CGRect::new(
-            self.content_x(),
-            Self::SEARCH_ROW_HEIGHT,
-            (self.size.width - self.content_x()).max(0.0),
-            (self.size.height - Self::SEARCH_ROW_HEIGHT).max(0.0),
-        );
-        let r = pane.inset_by(20.0, 0.0);
-        // One quiet line, no art (art.html R7); the add-folder button stays below it when offered.
-        // The text block and the button are centered as one group: the button's height and gap are kept free below the text.
-        let (button_h, gap) = (24.0, 12.0);
-        let reserve = if self.offers_add_folder() { button_h + gap } else { 0.0 };
-        let text_bottom = c.draw_empty_state_art(&text.0, &text.1, r, reserve, true, t);
-        if self.offers_add_folder() {
-            let b = CGRect::new(r.mid_x() - 56.0, text_bottom + gap, 112.0, button_h);
-            self.add_folder_rect.set(Some(b));
-            let hot = self.hover.is_some_and(|h| b.contains(h));
-            c.stone_button(b, ButtonKind::Raised, Touch { hovering: hot, ..Touch::default() }, t);
-            c.draw_text_in(
-                &SQL10n::string("Add Folder\u{2026}"),
-                b,
-                type_size::BODY as f64,
-                t.label(),
-                TextAlign::Center,
-                0.0,
-                0,
-            );
-        }
+        // Centered in the column right of the tree, under the header rows; top-aligned when the column is shorter.
+        let pane = self.list_rect();
+        let q = self.trimmed_query();
+        let icon = if self.offers_add_folder() {
+            SQIcon::Import
+        } else if !q.is_empty() {
+            SQIcon::Search
+        } else if self.model.is_selected_folder_offline() {
+            SQIcon::DriveOffline
+        } else {
+            SQIcon::Folder
+        };
+        let empty = EmptyPane {
+            icon,
+            title: &text.0,
+            hint: &text.1,
+            button: self.offers_add_folder().then_some("Import\u{2026}"),
+        };
+        let hover = self.hover;
+        let b = draw_empty_pane(c, t, pane, &empty, |b| hover.is_some_and(|h| b.contains(h)));
+        self.add_folder_rect.set(b);
     }
 
     /// The list's text columns of a cell: Kind, Size, Date (items) or Kind, Date (presets).
@@ -1934,8 +1985,19 @@ impl LibraryDrawPanel {
         }
     }
 
-    fn list_col_widths(&self) -> Vec<f64> {
+    /// The text columns right of the name: Kind, Size, Created (media) or Kind, Created (presets).
+    pub(crate) fn list_col_widths(&self) -> Vec<f64> {
         if self.model.is_showing_presets() { vec![84.0, 92.0] } else { vec![64.0, 64.0, 92.0] }
+    }
+
+    /// The texts right of the name in a list row (see [`Self::list_col_widths`]).
+    fn list_columns(&self, cell: &Cell) -> Vec<String> {
+        self.columns(cell)
+    }
+
+    /// Whether the list has room for its text columns; narrower, they drop from the right edge together.
+    pub(crate) fn shows_list_columns(&self, width: f64) -> bool {
+        width > 300.0
     }
 
     /// The AppKit table header: Name, then the text columns, in label3 semibold over a separator.
@@ -1946,26 +2008,30 @@ impl LibraryDrawPanel {
         c.fill(CGRect::new(r.min_x(), r.max_y() - 1.0, r.width, 1.0), t.separator());
         let size = type_size::BODY as f64;
         let semibold = c.semibold();
+        // Name starts over the names (16 pt icon + gap in), each title cut to its cell.
+        let show_columns = self.shows_list_columns(lr.width);
+        let cols_w: f64 = if show_columns { self.list_col_widths().iter().sum() } else { 0.0 };
+        let name_x = r.min_x() + Self::PAD + 4.0 + 18.0;
+        let name_w = (r.max_x() - Self::PAD - cols_w - name_x - 4.0).max(0.0);
         c.draw_text_in(
-            "Name",
-            CGRect::new(r.min_x() + Self::PAD + 4.0, r.min_y(), r.width / 2.0, r.height),
+            &ellipsize(c, "Name", size, name_w),
+            CGRect::new(name_x, r.min_y(), name_w, r.height),
             size,
             t.label3(),
             TextAlign::Left,
             0.0,
             semibold,
         );
-        if lr.width <= 300.0 {
+        if !show_columns {
             return;
         }
         let mut right = r.max_x() - Self::PAD;
-        let titles: Vec<&str> =
-            if self.model.is_showing_presets() { vec!["Kind", "Created"] } else { vec!["Kind", "Size", "Created"] };
+        let titles: Vec<&str> = if self.model.is_showing_presets() { vec!["Kind", "Created"] } else { vec!["Kind", "Size", "Created"] };
         for (i, (w, s)) in
             self.list_col_widths().into_iter().zip(titles).enumerate().collect::<Vec<_>>().into_iter().rev()
         {
             c.draw_text_in(
-                s,
+                &ellipsize(c, s, size, w),
                 CGRect::new(right - w, r.min_y(), w, r.height),
                 size,
                 t.label3(),
@@ -1980,7 +2046,8 @@ impl LibraryDrawPanel {
     fn draw_list(&mut self, c: &mut Canvas, t: &DrawTheme, picture: PictureFn) {
         let col_widths = self.list_col_widths();
         let lr = self.list_rect();
-        let show_columns = lr.width > 300.0;
+        let show_columns = self.shows_list_columns(lr.width);
+        self.cut_tips.clear();
         for pl in self.placed() {
             let rr = self.cell_rect(&pl);
             if rr.max_y() < lr.min_y() || rr.min_y() > lr.max_y() {
@@ -2001,7 +2068,7 @@ impl LibraryDrawPanel {
             }
             let mut right = rr.max_x() - Self::PAD;
             if show_columns {
-                let texts = self.columns(&cell);
+                let texts = self.list_columns(&cell);
                 for (i, (w, s)) in col_widths.iter().zip(texts.iter()).enumerate().collect::<Vec<_>>().into_iter().rev()
                 {
                     c.draw_text_in(
@@ -2020,15 +2087,12 @@ impl LibraryDrawPanel {
                 c.draw_icon(SQIcon::Star, CGPoint::new(right - 14.0, rr.mid_y() - 5.0), 10.0, t.accent(), None);
                 right -= 16.0;
             }
-            c.draw_text_in(
-                &name,
-                CGRect::new(x + 18.0, rr.min_y(), (right - x - 22.0).max(0.0), rr.height),
-                Self::LIST_FONT,
-                t.label(),
-                TextAlign::Left,
-                0.0,
-                0,
-            );
+            let name_cell = CGRect::new(x + 18.0, rr.min_y(), (right - x - 22.0).max(0.0), rr.height);
+            let cut = sq_draw::middle_fit::truncate_name(&name, |s| c.size_of(s, Self::LIST_FONT, 0).width <= name_cell.width);
+            c.draw_text_in(&cut.shown, name_cell, Self::LIST_FONT, t.label(), TextAlign::Left, 0.0, 0);
+            if let Some(full) = cut.full {
+                self.cut_tips.push((name_cell, full));
+            }
             self.draw_progress(c, t, &cell, CGRect::new(pill.min_x(), pill.max_y() - 2.0, pill.width, 2.0));
         }
     }

@@ -135,6 +135,10 @@ pub struct AppRoot {
     /// The project the app was launched with (command line) is on the recent list already.
     /// Stored defaults, floating frames, autosave and recovery (`None`: nothing is kept).
     persist: Option<Persist>,
+    /// Clock of the Auto quality governor.
+    started: std::time::Instant,
+    /// The active sequence and its own preview quality as last applied to the Program monitor.
+    sequence_quality: Option<(sq_core_time::Id, Option<sq_core_model::SequencePreviewQuality>)>,
     popover_guard: crate::popover_guard::PopoverCloseGuard,
     /// The user's effect and transition defaults and their file (Swift `EffectDefaultsLibrary.shared`).
     effect_defaults: Option<Box<sq_editor_session::EffectDefaultsLibrary>>,
@@ -144,6 +148,8 @@ pub struct AppRoot {
     load_watch: crate::load_watch::LoadWatch,
     /// The project version the dialogue pause store was last pruned at.
     silences_pruned_at: u64,
+    /// What the editor is opening (r8 loading state); `None` once loaded. See [`AppRoot::set_opening`].
+    opening: Option<String>,
     edit_api: Option<crate::edit_api_host::EditApiController>,
     /// The Edit API run state the shell last heard of (`state_changed`): a new one reaches an open Preferences page.
     edit_api_seen: Option<sq_draw_shell::EditApiState>,
@@ -335,11 +341,14 @@ impl AppRoot {
             workspaces_path: None,
             recents_path: None,
             persist: None,
+            started: std::time::Instant::now(),
+            sequence_quality: None,
             popover_guard: crate::popover_guard::PopoverCloseGuard::default(),
             effect_defaults: None,
             effect_defaults_unapplied: false,
             load_watch: crate::load_watch::LoadWatch::default(),
             silences_pruned_at: u64::MAX,
+            opening: None,
             edit_api: None,
             edit_api_seen: None,
             cache_used: media_prefs::CacheUsed::Unknown,
@@ -686,6 +695,7 @@ impl AppRoot {
                     }
                 }
             }
+            LibraryRequest::ImportMedia => cx.emit(AppEvent::Flow(ShellFlow::ImportAnything)),
             LibraryRequest::Whoosh(url) => lines.extend(self.whoosh(cx, &url)),
             // The Color LUT popup's pick: the look slot of the clip the Color page shows.
             LibraryRequest::ApplyLut(path) => {
@@ -1075,6 +1085,12 @@ impl AppRoot {
                 // The empty Program monitor's button runs File > New > Sequence... (Swift `onNewSequence`).
                 MonitorDeferred::Model(sq_draw_monitor::monitor_panel_model::MonitorEvent::NewSequence) => {
                     self.shell.run_command(cx, sq_uikit::editor_command::EditorCommand::NewSequence);
+                }
+                // The offline card's Locate… runs the Reconnect Media flow (r8:745).
+                MonitorDeferred::Model(sq_draw_monitor::monitor_panel_model::MonitorEvent::LocateOffline) => {
+                    if cx.session.can_relink() {
+                        cx.emit(AppEvent::Flow(ShellFlow::Project(sq_draw_shell::ShellAction::RelinkMedia)));
+                    }
                 }
                 // The "..." menu's Show Scopes toggles the Scopes panel (Swift `SharedUIController`: `dock.toggle(.scopes)`).
                 MonitorDeferred::Model(sq_draw_monitor::monitor_panel_model::MonitorEvent::ShowScopes) => {
@@ -1484,6 +1500,12 @@ impl AppRoot {
         session: &mut sq_editor_session::EditorSession,
     ) {
         sq_audio_out::output::devices::set_preferred(s.audio_output_uid.clone());
+        // Help > Check for Updates follows the channel chosen in Settings.
+        let feed = {
+            let shell = self.shell.shell();
+            sq_editor_session::UpdateCheck::feed_url_for(s.update_channel, &*shell.defaults)
+        };
+        self.shell.shell().update_feed = feed;
         self.monitor.panel.model.drop_indicator_enabled = s.drop_indicator;
         self.apply_monitor_settings(s);
         crate::persist::apply_session_settings_from(s, session);
@@ -1493,9 +1515,19 @@ impl AppRoot {
     /// Preferences > Playback: the Program monitor's quality (Default Quality, or Auto) and the Source monitor's Preroll
     /// and Postroll for Play In to Out with roll and Play Around (Swift `applyRememberedQuality`).
     fn apply_monitor_settings(&mut self, s: &sq_editor_session::AppSettings) {
-        // Auto stays Auto (the governor picks and lowers the level); Swift sets the resolved base as a fixed quality.
+        // Auto stays Auto: it starts at the machine's pick and the governor lowers it on sustained lateness.
         let wanted = s.start_quality(sq_editor_session::MonitorQuality::Auto);
+        // The active sequence's own quality keeps winning over a Preferences change.
+        let wanted = self
+            .sequence_quality
+            .and_then(|(_, own)| own)
+            .map_or(wanted, sq_editor_session::MonitorQuality::from_sequence);
         let model = &mut self.monitor.panel.model;
+        let start = sq_playback::engine::memory_budget::auto_start_scale_here(
+            |k| std::env::var(k).ok(),
+            sq_platform::physical_memory().unwrap_or(16 << 30),
+        );
+        model.set_auto_base(sq_editor_session::MonitorQuality::from_scale(start));
         if model.quality() != wanted || model.quality() == sq_editor_session::MonitorQuality::Auto {
             model.set_quality(wanted);
         }
@@ -1504,9 +1536,33 @@ impl AppRoot {
         }
     }
 
+    /// Every frame: the one place where the sequence's own preview quality is put over the app's quality, and where the
+    /// Auto quality reads how the engine keeps up. A new active sequence starts Auto over (the governor re-bases).
+    fn pump_quality(&mut self, session: &sq_editor_session::EditorSession) {
+        let own = session.active_timeline().map(|t| (t.id, t.preview_quality()));
+        if own != self.sequence_quality {
+            self.sequence_quality = own;
+            // Without stored settings (tests) only a sequence value is applied.
+            let stored = match &self.persist {
+                Some(persist) => Some(sq_editor_session::AppSettings::load(&*persist.defaults().borrow())),
+                None => own.and_then(|(_, q)| q).map(|_| sq_editor_session::AppSettings::standard()),
+            };
+            if let Some(stored) = stored {
+                self.apply_monitor_settings(&stored);
+            }
+        }
+        let now = self.started.elapsed().as_secs_f64();
+        let counts = session.engine().play_counts();
+        self.monitor.panel.model.update_play_counts(counts, session.is_playing(), now);
+    }
+
     /// Saves a quality picked by hand in the Program monitor as the new default; Auto is saved as Auto.
     fn remember_quality(&mut self, q: sq_editor_session::MonitorQuality) {
         use sq_editor_session::{AppSettings, MonitorQuality};
+        // A sequence's own preview quality is temporary: it never becomes the app's default.
+        if self.sequence_quality.is_some_and(|(_, own)| own.is_some()) {
+            return;
+        }
         let Some(persist) = &self.persist else { return };
         let defaults = persist.defaults();
         let stored = AppSettings::load(&*defaults.borrow());
@@ -2597,6 +2653,42 @@ impl AppRoot {
 }
 
 impl AppRoot {
+    /// The project is opening (r8 loading state): the viewer and timeline show it, the next frame draws the skeletons of the
+    /// Inspector, Library and Project. `None` is the loaded editor. Nothing opens a project through here yet: the shot
+    /// pose `state-loading` is the one caller (shortcut: wire it to the real open when it reports progress).
+    pub fn set_opening(&mut self, name: Option<String>) {
+        self.timeline.inner().panel.loading = name.is_some();
+        self.monitor.panel.model.opening = name.clone();
+        self.chrome.set_export_locked(name.is_some());
+        self.opening = name;
+    }
+
+    /// Grey skeleton rows over the Inspector, Library and Project while a project opens (r8:733, 774, 781).
+    fn draw_opening_skeletons(&mut self, c: &mut Canvas, t: &DrawTheme) {
+        use sq_draw::empty_pane::{SkeletonKind, draw_skeleton};
+        if self.opening.is_none() {
+            return;
+        }
+        for g in self.dock.groups() {
+            match g.selected {
+                PanelID::EffectControls => draw_skeleton(c, t, g.content, SkeletonKind::Inspector, 15),
+                PanelID::Library => {
+                    let list = self.library.panel_host().panel.list_rect();
+                    let area = CGRect::new(g.content.min_x() + list.min_x(), g.content.min_y() + list.min_y(), list.width, list.height);
+                    draw_skeleton(c, t, area, SkeletonKind::Browser, 7);
+                }
+                // The 24 pt column header stays: the rows start below it.
+                PanelID::Project => {
+                    let area = CGRect::new(g.content.min_x(), g.content.min_y() + 24.0, g.content.width, (g.content.height - 24.0).max(0.0));
+                    draw_skeleton(c, t, area, SkeletonKind::Browser, 10);
+                }
+                _ => {}
+            }
+        }
+    }
+}
+
+impl AppRoot {
     /// The "Media offline" card and the resolution badge of the Program monitor, per frame (equal values are not
     /// re-assigned). Swift: MonitorCardHost.swift:371 `refreshOfflineAndSize`.
     fn refresh_offline_and_size(&mut self, session: &EditorSession) {
@@ -2622,6 +2714,15 @@ impl AppRoot {
                 }
             }
             None => model.offline_file_name = None,
+        }
+        // r8:759: a sequence without a clip says so on the picture (the Project's own count and the Library's empty state
+        // follow the project by themselves).
+        let empty = session
+            .active_timeline()
+            .filter(|tl| tl.tracks.iter().all(|t| t.clips().is_empty()))
+            .map(|tl| tl.name.clone());
+        if model.empty_sequence != empty {
+            model.empty_sequence = empty;
         }
     }
 }
@@ -3002,6 +3103,7 @@ impl AppHost for AppRoot {
         self.color.set_focused_panel(self.dock.focused());
         self.color.set_picture_view(self.monitor.panel.canvas_rect(), self.monitor.panel.sequence_size().width);
         self.color.draw(c, t, cx);
+        self.draw_opening_skeletons(c, t);
         // The blue focus frame follows this dock's current panel rect every frame; the shell's dialogs and menus draw over it.
         self.dock.draw_focus_frame(c, t);
         self.shell.draw(c, t, cx);
@@ -3074,6 +3176,7 @@ impl AppHost for AppRoot {
             }
             return true;
         }
+        cx.ui.hover.offer_tip(self.menu.tip_at(e, scale, &tm).as_deref());
         if self.menu.handle(e, scale, &tm) {
             self.pump_menu_picks(cx);
             self.answer(cx);
@@ -3328,6 +3431,64 @@ impl AppHost for AppRoot {
                     d.arm();
                 }
             }
+            // The editor while its project opens (loader and skeletons), without a loaded project change.
+            "state-loading" => {
+                let name = cx.session.project().name.clone();
+                self.set_opening(Some(name));
+            }
+            // A project with no clip and no media, through the session's own delete paths.
+            "state-empty" => {
+                self.set_opening(None);
+                cx.session.select_all_clips();
+                cx.session.delete_selection(false, None);
+            }
+            // Offline is not a pose of its own: the media file is really missing (a removed symlink, or the use pass's
+            // sample project). It only plays the playhead onto the first clip so the viewer reads the card.
+            "state-offline" => {
+                self.set_opening(None);
+                cx.session.seek(sq_core_time::Time::ZERO);
+            }
+            // Library list columns for the proof shots: the Library watches the folder named by `SQ_POSE_LIBRARY_DIR` and is
+            // maximized, so its list is wide enough for Kind / Size / Created (the docked panel is under the 300 pt column
+            // rule). `project-deep` adds a bin nested 4 levels deep to the Project panel (each New Folder opens inside the
+            // one just made). Nothing is removed; both are ordinary user actions.
+            "library-media" => {
+                if let Some(dir) = std::env::var_os("SQ_POSE_LIBRARY_DIR") {
+                    self.add_library_folder(std::path::PathBuf::from(dir));
+                }
+                self.library.panel_host().panel.model.set_view_mode(sq_draw_library::library::library_panel_model::LibraryViewMode::List);
+                self.dock.show(PanelID::Library);
+                self.dock.toggle_maximize(PanelID::Library);
+                self.dock.set_focused(None);
+            }
+            // Website shots: the Library watches the folder named by `SQ_POSE_LIBRARY_DIR` in the normal docked layout.
+            "library-watch" => {
+                if let Some(dir) = std::env::var_os("SQ_POSE_LIBRARY_DIR") {
+                    self.add_library_folder(std::path::PathBuf::from(dir));
+                }
+            }
+            // Library preview proof: the watched folder's first video starts previewing (use with SQ_SHOT_WAIT_MS).
+            "library-preview" => {
+                if let Some(dir) = std::env::var_os("SQ_POSE_LIBRARY_DIR") {
+                    self.add_library_folder(std::path::PathBuf::from(dir));
+                }
+                self.dock.show(PanelID::Library);
+                self.dock.toggle_maximize(PanelID::Library);
+                self.dock.set_focused(None);
+                let panel = &mut self.library.panel_host().panel;
+                panel.refresh();
+                let video = panel
+                    .model
+                    .items()
+                    .into_iter()
+                    .find(|i| sq_library::library_preview_math::mode(i.entry.kind) == Some(sq_library::library_preview_math::PreviewMode::Video));
+                panel.model.select_item_for_preview(video.as_ref());
+            }
+            "project-deep" => {
+                for _ in 0..4 {
+                    self.project.new_folder(cx);
+                }
+            }
             "max-ec" => {
                 self.dock.show(PanelID::EffectControls);
                 self.dock.toggle_maximize(PanelID::EffectControls);
@@ -3393,6 +3554,13 @@ impl AppHost for AppRoot {
             }
             // The Timeline takes the blue focus frame, like the design frames of the Editor.
             "focus-timeline" => self.dock.set_focused(Some(PanelID::Timeline)),
+            // `mask-ellipse:<feather px>:<half width>:<opacity %>`: a soft ellipse mask (site clips).
+            n if n.starts_with("mask-ellipse:") => {
+                let v: Vec<f64> = n["mask-ellipse:".len()..].split(':').filter_map(|x| x.parse().ok()).collect();
+                if let [feather, half, opacity] = v[..] {
+                    self.inspector.controls().model.add_ellipse_mask(feather, half, opacity);
+                }
+            }
             "mask" => {
                 self.inspector.controls().model.add_mask(sq_core_model::MaskShapeKind::Rectangle);
             }
@@ -3516,6 +3684,7 @@ impl AppHost for AppRoot {
 
     fn pump(&mut self, cx: &mut HostCx) {
         self.shell.shell().tick_shuttle(cx.session);
+        self.pump_quality(cx.session);
         self.shell_pump(cx);
         // The Color page's turn: the armed white-balance picker's answer, LUT choosers and decisions. It ran only after a
         // menu closed before, so the picker beeped until some menu had been used.

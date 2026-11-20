@@ -93,7 +93,7 @@ fn no_audited_command_is_dead_with_the_demo_project() {
         let mut ran_somewhere = false;
         let mut enabled_somewhere = false;
         for scenario in [Scenario::Plain, Scenario::InOut, Scenario::FastCut] {
-            let dir = crate::test_rig::unique_dir("sq-dead-root");
+            let dir = crate::test_rig::test_dir("sq-dead-root");
             std::fs::create_dir_all(&dir).expect("dir");
             let mut root = crate::standard_root_with_source(
                 &dir,
@@ -152,7 +152,7 @@ fn no_audited_command_is_dead_with_the_demo_project() {
 #[test]
 fn the_view_menu_switches_toggle_the_program_monitor() {
     use sq_uikit::editor_command::EditorCommand as C;
-    let dir = crate::test_rig::unique_dir("sq-dead-view");
+    let dir = crate::test_rig::test_dir("sq-dead-view");
     std::fs::create_dir_all(&dir).expect("dir");
     let mut root = crate::standard_root(&dir, Arc::new(FakeClock::new()), DrawTheme::default()).expect("root");
     let mut rig = crate::test_rig::Rig::new(demo_session(Scenario::Plain));
@@ -171,7 +171,7 @@ fn the_view_menu_switches_toggle_the_program_monitor() {
 #[test]
 fn a_disabled_panel_command_is_silent() {
     let map = CommandMap::premiere_default();
-    let dir = crate::test_rig::unique_dir("sq-dead-silent");
+    let dir = crate::test_rig::test_dir("sq-dead-silent");
     std::fs::create_dir_all(&dir).expect("dir");
     let mut root = crate::standard_root(&dir, Arc::new(FakeClock::new()), DrawTheme::default()).expect("root");
     let mut rig = crate::test_rig::Rig::new(demo_session(Scenario::Plain));

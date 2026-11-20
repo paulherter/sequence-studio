@@ -700,6 +700,7 @@
 "Next Keyframe" = "Nächster Keyframe";
 "Previous Keyframe" = "Vorheriger Keyframe";
 "No clip selected" = "Kein Clip ausgewählt";
+"No Clip Selected" = "Kein Clip ausgewählt";
 "No keyframes" = "Keine Keyframes";
 "No layers yet" = "Noch keine Ebenen";
 "No sequence open" = "Keine Sequenz geöffnet";
@@ -2596,6 +2597,7 @@
 "Saved" = "Gesichert";
 "Scale Keyframe Times" = "Keyframe-Zeiten skalieren";
 "Select a clip in the timeline to grade it." = "Wähle einen Clip in der Timeline, um ihn zu korrigieren.";
+"Select a clip in the timeline to see and keyframe its controls here." = "Wähle einen Clip in der Timeline, um seine Einstellungen hier zu sehen und zu animieren.";
 "Select a clip in the timeline to see its Controls." = "Wähle einen Clip in der Timeline, um seine Einstellungen zu sehen.";
 "Settings can change later in Sequence Settings." = "Du kannst die Einstellungen später in den Sequenz-Einstellungen ändern.";
 "Short" = "Kurz";
@@ -2739,12 +2741,16 @@
 "Right-click an item and choose Toggle Favorite to find it here." = "Klicke mit rechts auf ein Objekt und wähle Favorit umschalten, dann findest du es hier.";
 "No library folders" = "Keine Bibliotheksordner";
 "Add a folder of footage, music or sound effects to see its files here." = "Füge einen Ordner mit Material, Musik oder Soundeffekten hinzu, um seine Dateien hier zu sehen.";
+"No Media Yet" = "Noch keine Medien";
+"Import video, audio and images to use them in this project." = "Importiere Video, Audio und Bilder, um sie in diesem Projekt zu nutzen.";
+"Offline: file not found" = "Offline: Datei nicht gefunden";
+"%@ missing" = "%@ fehlen";
 "Nothing in this folder" = "Nichts in diesem Ordner";
 "Files you add to the folder appear here." = "Dateien, die du dem Ordner hinzufügst, erscheinen hier.";
 "Nothing here" = "Hier ist nichts";
 "No preset matches the current filter. Open the ... menu and choose Show: All." = "Keine Voreinstellung passt zum aktuellen Filter. Öffne das Menü ... und wähle Zeige: Alle.";
 "Full" = "Voll";
-"Media offline" = "Medien offline";
+"Media Offline" = "Medien offline";
 "Preview unavailable" = "Vorschau nicht verfügbar";
 "Add to SFX Folder" = "Zum SFX-Ordner hinzufügen";
 "Apply Absolute (Replace Values)" = "Absolut anwenden (Werte ersetzen)";
@@ -2859,3 +2865,10 @@
 "Remove from the app menu?" = "Aus dem Appmenü entfernen?";
 "Removed from the app menu" = "Aus dem Appmenü entfernt";
 "Move the app file to the Trash" = "App-Datei in den Papierkorb legen";
+"1 job" = "1 Auftrag";
+"%@ jobs" = "%@ Aufträge";
+"Clear Search" = "Suche löschen";
+"Opening %@…" = "%@ wird geöffnet…";
+"%@ is empty" = "%@ ist leer";
+"Drag Clips Here" = "Clips hierher ziehen";
+"Drop media from the Library or Project on a track, or import new files." = "Ziehe Medien aus der Bibliothek oder dem Projekt auf eine Spur oder importiere neue Dateien.";

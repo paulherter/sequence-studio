@@ -17,7 +17,6 @@ use sq_draw::{Canvas, Color, DrawTheme, InputEvent, TextAlign, TextMeasure};
 use sq_os::Platform;
 use sq_runtime::UiRef;
 use sq_uikit::about_content::{self, ACKNOWLEDGMENTS, CREDITS, LICENSE, LICENSE_NOTE, Link, TAGLINE};
-use sq_uikit::app_version::AppVersion;
 use sq_uikit::controls_grid::{CGPoint, CGRect};
 use sq_uikit::localization::SQL10n;
 use sq_uikit::platform_wording::PlatformWording;
@@ -171,7 +170,7 @@ impl ShellAboutContent {
                 y += m::ICON + 10.0;
                 lines(&mut out, &mut y, "Sequence Studio", m::DISPLAY, w, Tone::Label, true, true, None);
                 y += 2.0;
-                lines(&mut out, &mut y, &AppVersion::about_line(), m::BODY, w, Tone::Label3, false, true, None);
+                lines(&mut out, &mut y, &sq_editor_session::ReleaseChannel::about_line(), m::BODY, w, Tone::Label3, false, true, None);
                 y += m::MD;
                 lines(
                     &mut out,

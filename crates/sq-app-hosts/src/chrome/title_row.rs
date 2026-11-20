@@ -37,10 +37,6 @@ const ICON: f64 = 14.0;
 const SAMPLES: [&str; 5] =
     ["Edited just now", "Edited 59 min ago", "Edited 23 h ago", "Edited 99 d ago", "Saved 59 min ago"];
 
-fn inset(r: CGRect, d: f64) -> CGRect {
-    CGRect::new(r.x + d, r.y + d, r.width - 2.0 * d, r.height - 2.0 * d)
-}
-
 /// The parts that take the pointer.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TitlePart {
@@ -74,6 +70,8 @@ pub struct TitleRow {
     /// The menu bar in this row already carries the app icon (Windows, Linux): the bar then shows neither the name nor the
     /// edit time, as in the kit's Windows frame (one app icon, top left, menus, page switch, buttons).
     pub icon_in_menu_bar: bool,
+    /// Export is locked (dimmed, no click) while the project opens (r8:818).
+    pub export_locked: bool,
     switch: Option<CGRect>,
     pub(super) name: Option<CGRect>,
     /// The app icon left of the project name.
@@ -178,7 +176,7 @@ impl TitleRow {
     /// Draws the row's own parts (the bar itself belongs to the caller).
     pub fn draw(&self, c: &mut Canvas, t: &DrawTheme, now: SystemTime) {
         if let Some(r) = self.icon {
-            sq_draw_shell::ShellAppIcon::draw(r, c, false);
+            sq_draw_shell::ShellAppIcon::draw_ink_flush(r, c);
         }
         if let Some(r) = self.name.filter(|r| r.width > 0.0) {
             c.draw_text_in(&self.project_name, r, NAME_FONT, t.label(), TextAlign::Left, 0.0, c.semibold());
@@ -190,7 +188,11 @@ impl TitleRow {
         self.draw_switch(c, t);
         if let Some(r) = self.workspace {
             let touch = self.touch(TitlePart::Workspace);
-            let r = c.stone_button(r, ButtonKind::RaisedMenu, touch, t);
+            // Text plus a chevron, no well; the control fill shows only under the pointer (r8:493-495).
+            let hot = touch.hovering || touch.pressed;
+            if hot {
+                c.fill_rounded(r, f64::from(sq_uikit::redesign_tokens::radius::CONTROL), t.token(sq_uikit::redesign_tokens::color::WELL));
+            }
             let icon = CGPoint::new(r.min_x() + 8.0, (r.mid_y() - ICON / 2.0).round());
             c.draw_icon(WORKSPACE_ICON, icon, ICON, t.label3(), None);
             let text = CGRect::new(
@@ -199,14 +201,16 @@ impl TitleRow {
                 r.width - 8.0 - ICON - 2.0 * ICON_GAP - 18.0,
                 r.height,
             );
-            c.draw_text_in(&self.workspace_name, text, SMALL_FONT, t.label(), TextAlign::Left, 0.0, 0);
+            let color = if hot { t.label() } else { t.label2() };
+            c.draw_text_in(&self.workspace_name, text, SMALL_FONT, color, TextAlign::Left, 0.0, 0);
             let at = CGPoint::new(r.max_x() - 9.0 - 9.0, (r.mid_y() - 4.5).round());
             c.draw_icon(SQIcon::ChevronDown, at, 9.0, t.label4(), None);
         }
         if let Some(r) = self.export {
-            let touch = self.touch(TitlePart::Export);
+            let mut touch = self.touch(TitlePart::Export);
+            touch.disabled = self.export_locked;
             let r = c.stone_button(r, ButtonKind::Accent, touch, t);
-            let white = sq_draw::Color::rgb(1.0, 1.0, 1.0);
+            let white = if self.export_locked { t.accent_button_text().with_alpha(0.4) } else { t.accent_button_text() };
             let icon = CGPoint::new(r.min_x() + 11.0, (r.mid_y() - ICON / 2.0).round());
             c.draw_icon(EXPORT_ICON, icon, ICON, white, None);
             let label = CGRect::new(icon.x + ICON + ICON_GAP, r.min_y(), r.width, r.height);
@@ -249,11 +253,17 @@ impl TitleRow {
     /// The switch: one well, the shown page raised, each segment an icon and its name.
     fn draw_switch(&self, c: &mut Canvas, t: &DrawTheme) {
         let Some(f) = self.switch else { return };
-        c.stone_segment_track(f, Touch::default(), t);
+        // No well: only the current page carries a fill (r8:497-498).
+        let _ = f;
         for (page, icon, title) in PAGES {
             let Some(r) = self.segment(page) else { continue };
             let on = (page == WorkspacePage::Color) == self.color_page;
-            c.stone_segment(inset(r, 2.0), on, self.touch(TitlePart::Page(page)), t);
+            let radius = f64::from(sq_uikit::redesign_tokens::radius::FIELD);
+            if on {
+                c.fill_rounded(r, radius, t.token(sq_uikit::redesign_tokens::color::WELL));
+            } else if self.touch(TitlePart::Page(page)).hovering {
+                c.fill_rounded(r, radius, t.token(sq_uikit::redesign_tokens::color::HOVER));
+            }
             let color = if on { t.label() } else { t.label2() };
             let (icon_w, gap) = (ICON, ICON_GAP);
             let tw = c.size_of(title, SMALL_FONT, 0).width;
@@ -289,7 +299,7 @@ impl TitleRow {
             }
             Mouse::Up => {
                 let Some(pressed) = self.pressed.take() else { return (false, None) };
-                (true, (pressed == TitlePart::Export && part == Some(pressed)).then_some(TitleAction::Export))
+                (true, (pressed == TitlePart::Export && part == Some(pressed) && !self.export_locked).then_some(TitleAction::Export))
             }
         }
     }

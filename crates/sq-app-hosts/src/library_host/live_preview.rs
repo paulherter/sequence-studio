@@ -14,7 +14,7 @@ use std::sync::Arc;
 pub(super) struct LivePreview {
     video: PreviewVideo,
     atlas: Option<SharedAtlas>,
-    /// The atlas cell the pictures go to: reserved with the first picture, given back when the preview ends.
+    /// The atlas cell the pictures go to: reserved when the atlas is shared and kept for the whole session.
     cell: Option<Placed>,
     /// The file the decoder works on.
     loaded: Option<LibraryEntryID>,
@@ -35,6 +35,10 @@ impl LivePreview {
 
     /// Pictures go into `atlas`; without one the viewer keeps showing the poster.
     pub(super) fn share_atlas(&mut self, atlas: SharedAtlas) {
+        // The preview's cell is taken now, while the atlas is empty, and kept for good: posters and stills fill the shared
+        // atlas shelf by shelf and never merge cells, so a full library left no 640 x 360 hole for the first picture and
+        // the viewer stayed on its poster.
+        self.cell = atlas.borrow_mut().acquire(MAX_WIDTH, MAX_HEIGHT);
         self.atlas = Some(atlas);
     }
 
@@ -82,7 +86,7 @@ impl LivePreview {
         panel.preview_frame = Some(LibraryPicture { slot: ATLAS_SLOT, source: shown.uv(), size: shown.size() });
     }
 
-    /// The preview left the video: the decoder lets go of the file, the cell goes back, the viewer shows the poster.
+    /// The preview left the video: the decoder lets go of the file, the viewer shows the poster.
     fn end(&mut self, panel: &mut LibraryDrawPanel) {
         if self.loaded.take().is_none() {
             return;
@@ -90,9 +94,6 @@ impl LivePreview {
         self.video.unload();
         self.upload = None;
         panel.preview_frame = None;
-        if let (Some(atlas), Some(cell)) = (&self.atlas, self.cell.take()) {
-            atlas.borrow_mut().release(cell);
-        }
     }
 
     pub(super) fn take_upload(&mut self) -> Option<ImageUpload> {

@@ -175,15 +175,64 @@ pub fn probe(kind: ProbeKind) -> Option<Probe> {
     found
 }
 
+/// The background probe thread of `warm_up`, kept so the process can wait for it before it ends.
+static WARM_UP: std::sync::Mutex<Option<(std::thread::JoinHandle<()>, std::sync::mpsc::Receiver<()>)>> =
+    std::sync::Mutex::new(None);
+/// How long the end of the process waits for the probe thread.
+const WARM_UP_DEADLINE: std::time::Duration = std::time::Duration::from_secs(2);
+/// Set by `finish_warm_up`: the probe thread starts no further kind.
+static WARM_UP_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// The kinds `warm_up` probes, hardware first.
+fn warm_up_kinds() -> impl Iterator<Item = ProbeKind> {
+    [true, false].into_iter().flat_map(|hardware| {
+        [(false, false), (true, false), (true, true)]
+            .into_iter()
+            .map(move |(hevc, ten_bit)| ProbeKind { hevc, ten_bit, hardware })
+    })
+}
+
 /// Probes every kind the export sheet can ask for, on a background thread, so the sheet opens with the answers.
+/// The caller ends the run with `finish_warm_up`.
 pub fn warm_up() {
-    let _ = std::thread::Builder::new().name("encoder-probe".to_string()).spawn(|| {
-        for hardware in [true, false] {
-            for (hevc, ten_bit) in [(false, false), (true, false), (true, true)] {
-                let _ = probe(ProbeKind { hevc, ten_bit, hardware });
+    WARM_UP_STOP.store(false, std::sync::atomic::Ordering::SeqCst);
+    let (done, finished) = std::sync::mpsc::channel();
+    let started = std::thread::Builder::new().name("encoder-probe".to_string()).spawn(move || {
+        for kind in warm_up_kinds() {
+            if WARM_UP_STOP.load(std::sync::atomic::Ordering::SeqCst) {
+                break;
             }
+            let _ = probe(kind);
         }
+        let _ = done.send(());
     });
+    if let (Ok(handle), Ok(mut slot)) = (started, WARM_UP.lock()) {
+        *slot = Some((handle, finished));
+    }
+}
+
+/// Waits for the probe thread (at most the kind it is in) and stops it from starting more. The process must not end
+/// while that thread is inside a GPU driver: exit runs the driver's teardown under it and the run died with a segfault
+/// in `radeonsi_drv_video.so` (a short headless mode such as `--perf-project`, which has no work of its own to wait for).
+/// Safe to call without `warm_up`, and twice.
+pub fn finish_warm_up() {
+    WARM_UP_STOP.store(true, std::sync::atomic::Ordering::SeqCst);
+    let taken = WARM_UP.lock().ok().and_then(|mut slot| slot.take());
+    if let Some((handle, finished)) = taken {
+        wait_for_probe(handle, &finished, WARM_UP_DEADLINE);
+    }
+}
+
+/// Joins the probe thread when it reports done within `deadline`; else lets it go (a hung driver call must not hold the
+/// exit) and logs one line. Returns whether it was joined.
+fn wait_for_probe(handle: std::thread::JoinHandle<()>, finished: &std::sync::mpsc::Receiver<()>, deadline: std::time::Duration) -> bool {
+    // A disconnected channel means the thread ended (or died): joining returns at once.
+    if matches!(finished.recv_timeout(deadline), Err(std::sync::mpsc::RecvTimeoutError::Timeout)) {
+        sq_core_time::milestones::info("encoder probe: still running at exit, left behind");
+        return false;
+    }
+    let _ = handle.join();
+    true
 }
 
 /// Frames the test writes: enough for the B-frame decision of a hardware encoder to show.
@@ -241,6 +290,37 @@ fn run(kind: ProbeKind) -> Option<Probe> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_run_waits_for_the_probe_thread_before_it_ends() {
+        let kinds: Vec<_> = warm_up_kinds().collect();
+        assert_eq!(kinds.len(), 6);
+        assert!(kinds[..3].iter().all(|k| k.hardware) && kinds[3..].iter().all(|k| !k.hardware));
+        finish_warm_up(); // without warm_up: nothing to wait for
+        warm_up();
+        assert!(WARM_UP.lock().expect("lock").is_some(), "the thread handle is kept");
+        finish_warm_up();
+        assert!(WARM_UP.lock().expect("lock").is_none(), "the thread was joined");
+        finish_warm_up(); // twice is fine
+    }
+
+    #[test]
+    fn a_hung_probe_does_not_hold_the_exit() {
+        let (release, wait) = std::sync::mpsc::channel::<()>();
+        let (_done, finished) = std::sync::mpsc::channel::<()>();
+        let hung = std::thread::spawn(move || {
+            let _ = wait.recv();
+        });
+        let start = std::time::Instant::now();
+        assert!(!wait_for_probe(hung, &finished, std::time::Duration::from_millis(50)));
+        assert!(start.elapsed() < std::time::Duration::from_secs(1), "gave up at the deadline");
+        let _ = release.send(());
+        let (done, finished) = std::sync::mpsc::channel::<()>();
+        let quick = std::thread::spawn(move || {
+            let _ = done.send(());
+        });
+        assert!(wait_for_probe(quick, &finished, std::time::Duration::from_secs(5)), "a finished probe is joined");
+    }
 
     #[test]
     fn hardware_encoders_do_ten_bit_only_as_hevc() {

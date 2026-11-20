@@ -22,7 +22,7 @@ use sq_timeline_ui::{
     TransitionLayout, ZoomMode as ZoomAnimationMode,
 };
 use sq_uikit::controls_grid::CGPoint;
-use sq_uikit::editor_command::EditorTool;
+use sq_uikit::editor_command::{EditorCommand, EditorTool};
 use sq_uikit::key_binding::Key;
 use std::collections::BTreeMap;
 
@@ -62,6 +62,10 @@ impl TimelinePanel {
                     return Vec::new();
                 }
                 let p = self.point(x, y);
+                // The empty state's Import button (r8:796) runs the shell's Import command.
+                if self.empty_import.get().is_some_and(|b| b.contains(p)) {
+                    return vec![TimelineAction::Command(EditorCommand::ImportMedia)];
+                }
                 // A press catches a running rubber-band spring at once (the view settles at its end, a few points away).
                 if self.is_springing_back() {
                     self.end_spring_back(true);

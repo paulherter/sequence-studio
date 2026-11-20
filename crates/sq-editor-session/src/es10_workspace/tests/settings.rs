@@ -17,8 +17,9 @@ use crate::es10_workspace::defaults::TestDefaults;
 use crate::es10_workspace::{
     AppSettings, AppSettingsKey, AudioOutputChoices, AudioOutputDevice, AudioPreferences, CardImportSettings,
     DefaultsExt, DefaultsMigration, EffectDefaultsEntry, EffectDefaultsGroup, EffectDefaultsSettings, KeyboardLayout,
-    KeyboardLayoutModel, KeyboardStyle, MediaSettings, OnboardingContent, ProxyMove, StorageFolderChoice,
-    StorageLocations, StorageLocationsKey, StorageProblem, UpdateCheck, UpdateOutcome, UpdateRelease,
+    KeyboardLayoutModel, KeyboardStyle, MediaSettings, OnboardingContent, ProxyMove, ReleaseChannel,
+    StorageFolderChoice, StorageLocations, StorageLocationsKey, StorageProblem, UpdateCheck, UpdateOutcome,
+    UpdateRelease,
 };
 
 fn tmp() -> PathBuf {
@@ -647,4 +648,69 @@ fn layout_model_lists_bindings_global_first() {
     assert!(m.summary(Key::Char('x'), Platform::Mac).ends_with(": free"));
     assert!(m.summary(Key::Char('c'), Platform::Mac).contains('('));
     let _ = Id::parse("");
+}
+
+#[test]
+fn update_channel_defaults_to_the_build_channel_and_round_trips() {
+    let mut d = TestDefaults::default();
+    let mut s = AppSettings::load(&d);
+    assert_eq!(s.update_channel, ReleaseChannel::build());
+    s.update_channel = ReleaseChannel::Nightly;
+    s.save(&mut d);
+    assert_eq!(AppSettings::load(&d).update_channel, ReleaseChannel::Nightly);
+    assert_eq!(d.string("sq.updates.channel").as_deref(), Some("nightly"));
+    d.set_string("sq.updates.channel", "garbage");
+    assert_eq!(AppSettings::load(&d).update_channel, ReleaseChannel::Stable);
+}
+
+#[test]
+fn release_channel_reads_its_raw_value() {
+    assert_eq!(ReleaseChannel::from_raw(None), ReleaseChannel::Stable);
+    assert_eq!(ReleaseChannel::from_raw(Some(" Nightly ")), ReleaseChannel::Nightly);
+    assert_eq!(ReleaseChannel::from_raw(Some("beta")), ReleaseChannel::Stable);
+    assert_eq!(ReleaseChannel::Nightly.index(), 1);
+}
+
+#[test]
+fn each_channel_has_its_feed_address() {
+    let d = TestDefaults::default();
+    if std::env::var("SQ_UPDATE_URL").is_err() {
+        assert_eq!(UpdateCheck::feed_url_for(ReleaseChannel::Stable, &d), UpdateCheck::DEFAULT_FEED_URL);
+        assert_eq!(UpdateCheck::feed_url_for(ReleaseChannel::Nightly, &d), UpdateCheck::NIGHTLY_FEED_URL);
+    }
+    assert!(
+        UpdateCheck::NIGHTLY_FEED_URL.starts_with("https://")
+            && UpdateCheck::NIGHTLY_FEED_URL.ends_with("nightly.json")
+    );
+}
+
+#[test]
+fn nightly_versions_compare_by_number_then_date() {
+    let n = |d: &str| format!("0.2.0-nightly.{d}");
+    assert!(UpdateCheck::is_newer(&n("20261120"), &n("20261119")));
+    assert!(!UpdateCheck::is_newer(&n("20261119"), &n("20261119")));
+    assert!(!UpdateCheck::is_newer(&n("20261118"), &n("20261119")));
+    // The release of a number beats its nightly; a nightly never beats the release it leads to.
+    assert!(UpdateCheck::is_newer("0.2.0", &n("20261119")));
+    assert!(!UpdateCheck::is_newer(&n("20261119"), "0.2.0"));
+    // A higher number wins whatever the date.
+    assert!(UpdateCheck::is_newer("0.3.0-nightly.20260101", &n("20261119")));
+    // The app's own version line carries the stage word.
+    assert!(UpdateCheck::is_newer(&n("20261120"), "0.2.0-nightly.20261119 Alpha"));
+    assert!(UpdateCheck::is_newer("0.2.1", "0.2.0 Alpha"));
+}
+
+#[test]
+fn a_nightly_build_is_offered_a_newer_nightly_of_the_same_number() {
+    let local =
+        ReleaseChannel::local_version_of(ReleaseChannel::Nightly, Some("0.2.0-nightly.20261119"), "0.2.0 Alpha");
+    assert_eq!(local, "0.2.0-nightly.20261119");
+    assert!(UpdateCheck::is_newer("0.2.0-nightly.20261120", &local));
+    assert!(!UpdateCheck::is_newer("0.2.0-nightly.20261119", &local));
+    // Stable builds, or a nightly without the build string, keep the display version.
+    assert_eq!(
+        ReleaseChannel::local_version_of(ReleaseChannel::Stable, Some("0.2.0-nightly.1"), "0.2.0 Alpha"),
+        "0.2.0 Alpha"
+    );
+    assert_eq!(ReleaseChannel::local_version_of(ReleaseChannel::Nightly, None, "0.2.0 Alpha"), "0.2.0 Alpha");
 }

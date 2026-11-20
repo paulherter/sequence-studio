@@ -225,7 +225,7 @@ fn clip_count(rig: &crate::test_rig::Rig) -> usize {
 #[test]
 fn timeline_scope_keys_work_with_no_panel_focused() {
     // A fresh window: nothing was clicked, so only the root's own start focus can route the keys.
-    let dir = crate::test_rig::unique_dir("sq-fresh-window-keys");
+    let dir = crate::test_rig::test_dir("sq-fresh-window-keys");
     std::fs::create_dir_all(&dir).expect("dir");
     let mut root = crate::standard_root_with_source(
         &dir,

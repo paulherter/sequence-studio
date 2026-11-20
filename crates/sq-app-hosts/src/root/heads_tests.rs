@@ -25,7 +25,7 @@ fn atlas() -> &'static GlyphAtlas {
 }
 
 fn full_root(page: WorkspacePage) -> (AppRoot, crate::test_rig::Rig) {
-    let dir = crate::test_rig::unique_dir("sq-heads");
+    let dir = crate::test_rig::test_dir("sq-heads");
     std::fs::create_dir_all(&dir).expect("dir");
     let clock = Arc::new(FakeClock::new());
     let mut r = crate::standard_root(&dir, clock, DrawTheme::default()).expect("root");
@@ -224,7 +224,7 @@ impl sq_export::core::traits::ExportEncoding for NoEncoder {
 /// `size`, with the bundled Inter so the text log measures real widths. Cmd+M and Cmd+, start async flows
 /// (`AppEvent::Flow`) that only this loop runs; a bare `AppRoot` never opens a sheet.
 fn app_window(size: (f32, f32), clock: &Arc<FakeClock>) -> sq_app_shell::Headless {
-    let dir = crate::test_rig::unique_dir("sq-heads-window");
+    let dir = crate::test_rig::test_dir("sq-heads-window");
     std::fs::create_dir_all(&dir).expect("dir");
     let mut deps = sq_app_shell::AppDeps::headless(Arc::clone(clock) as _);
     deps.atlas = GlyphAtlas::inter(&fonts_root());
@@ -304,6 +304,13 @@ fn the_export_sheet_and_settings_fit_at_the_smallest_window_on_every_system() {
                     );
                     let with = window_text(&h, size);
                     let added = dialog_runs(&with, &plain);
+                    // The headless Windows rig has no Videos folder, so the sheet shows the temp dir as export folder; a runner's
+                    // TMPDIR is longer than a card line and a path has no word break, so that one run is not a layout finding.
+                    // (The sheet shows it home-relative, so match on its last folder name.)
+                    let temp = std::env::temp_dir();
+                    let leaf = temp.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+                    let added: Vec<_> =
+                        added.into_iter().filter(|r| leaf.is_empty() || !r.asked.ends_with(&format!("/{leaf}"))).collect();
                     for mark in marks {
                         assert!(
                             added.iter().any(|r| r.asked == mark),

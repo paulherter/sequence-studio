@@ -5,7 +5,6 @@ use crate::action::TimelineAction;
 use crate::panel::TimelinePanel;
 use sq_core_edit::timeline_magnetic_ops::MagneticOpsExt as _;
 use sq_draw::Canvas;
-use sq_draw::Color;
 use sq_editor_session::TimelineTool;
 use sq_timeline_ui::TimelineGeometry;
 use sq_uikit::controls_grid::{CGPoint, CGRect};
@@ -36,12 +35,15 @@ impl TimelinePanel {
         vec![TimelineAction::Skim(t)]
     }
 
-    /// The 2 pt line over the tracks in `Theme.Colors.skimmer`.
+    /// The 2 pt line over the tracks in the `content-skimmer` token.
     pub(crate) fn draw_skimmer(&self, cv: &mut Canvas) {
         let Some(t) = self.skimmer_time else { return };
         let ruler = TimelineGeometry::RULER_HEIGHT;
         // `Skimmer.lineRect` / `Theme.PlayheadSkin.lineFrame`: 2 pt, centered on the frame's x, ruler to zoom bar.
         let h = (self.size.height - Self::ZOOM_BAR_HEIGHT - ruler).max(0.0);
-        cv.fill(CGRect::new(self.geometry.x(t).round() - 1.0, ruler, 2.0, h), Color::hex(0xFFE566, 1.0));
+        cv.fill(
+            CGRect::new(self.geometry.x(t).round() - 1.0, ruler, 2.0, h),
+            self.theme.token(sq_uikit::tokens::color::content::SKIMMER),
+        );
     }
 }

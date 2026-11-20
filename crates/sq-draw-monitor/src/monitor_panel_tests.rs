@@ -49,7 +49,7 @@ fn an_engine_failure_shows_the_card_with_its_reason_and_offline_media_keeps_its_
     assert_eq!(p.model.offline_card_detail().as_deref(), Some("compositor: no adapter"));
     assert!(p.offline_card_rect(80.0, 160.0).is_some());
     p.model.offline_file_name = Some("A001.mov".to_string());
-    assert_eq!(p.model.offline_card_title(), "Media offline");
+    assert_eq!(p.model.offline_card_title(), "Media Offline");
     assert_eq!(p.model.offline_card_detail().as_deref(), Some("A001.mov was moved or renamed"));
 }
 
@@ -81,7 +81,7 @@ fn offline_card_centers_on_the_slot_while_a_file_is_offline() {
     assert_eq!(p.model.offline_card_detail().as_deref(), Some("A001.mov was moved or renamed"));
     let r = p.offline_card_rect(80.0, 160.0);
     assert_eq!(r.map(|r| r.width), Some(192.0));
-    assert_eq!(r.map(|r| r.height), Some(44.0));
+    assert_eq!(r.map(|r| r.height), Some(89.0), "icon, title, path and the Locate button");
     let r = r.unwrap_or_default();
     assert!((r.mid_x() - p.slot().mid_x()).abs() <= 0.5);
     assert!((r.mid_y() - p.slot().mid_y()).abs() <= 0.5);
@@ -160,7 +160,7 @@ fn tabs_replace_the_title_and_a_click_switches() {
     assert!(p.take_events().iter().any(|e| matches!(e, PanelEvent::SelectTab(1))));
 }
 
-/// The header tabs lay out like the dock's tab strip (10 pt padding, 2 pt apart, first tab `sm - 2` in).
+/// The header tabs lay out like the dock's tab strip (8 pt padding, 2 pt apart, first tab `sm - 2` in).
 #[test]
 fn tabs_follow_the_dock_strip_layout() {
     let mut p = panel(MonitorMode::Program);
@@ -169,7 +169,7 @@ fn tabs_follow_the_dock_strip_layout() {
     assert_eq!(p.tab_rects.len(), 2);
     assert_eq!(p.tab_rects[0].min_x(), p.header_rect().min_x() + spacing::SM as f64 - 2.0);
     assert_eq!(p.tab_rects[1].min_x(), p.tab_rects[0].max_x() + 2.0);
-    assert!(p.tab_rects[0].width >= 20.0);
+    assert!(p.tab_rects[0].width >= 16.0);
 }
 
 /// With tabs the header is as tall as the dock's strip, so the labels sit on the line of the other panels' tabs.
@@ -861,4 +861,13 @@ fn a_narrow_header_keeps_zoom_and_quality_in_the_menu() {
     draw_with_text(&mut p);
     let items = p.header_items(HeaderControl::Options);
     assert!(items.iter().any(|i| i.title == "Zoom") && items.iter().any(|i| i.title == "Playback Quality"));
+}
+
+#[test]
+fn opening_hides_the_picture_under_the_loader() {
+    let mut p = panel(MonitorMode::Program);
+    p.has_picture = true;
+    p.model.opening = Some("T2".to_string());
+    let c = draw(&mut p);
+    assert!(!c.list.quads().iter().any(|q| q.kind == sq_draw::draw_list::QuadKind::Video), "no picture while the project opens");
 }

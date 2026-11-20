@@ -16,7 +16,7 @@ use sq_draw::monitor::monitor_guides::MonitorGuides;
 use sq_draw::monitor::monitor_modes::{MonitorAction, MonitorMode, MonitorZoom};
 use sq_draw::monitor::viewer_frame_guides::{AspectFrame, SafeMarginSizes};
 use sq_editor_session::EditorSession;
-use sq_editor_session::es01_session_core::{AutoQualityGovernor, MonitorQuality};
+use sq_editor_session::es01_session_core::{AutoQualityGovernor, MonitorQuality, PlayCounts};
 use sq_media::waveform_data::WaveformData;
 use sq_playback::engine::preview_rate::PreviewRate;
 use sq_uikit::appearance_palette::UiDefaults;
@@ -82,6 +82,8 @@ impl ProgramEmptyKind {
 pub enum MonitorEvent {
     /// `onNewSequence`.
     NewSequence,
+    /// The offline card's Locate… button: the relink flow (r8:745).
+    LocateOffline,
     /// `onTransparencyGridChange`.
     TransparencyGridChange(bool),
     /// `onPreviewRateChange`.
@@ -300,6 +302,10 @@ pub struct MonitorPanelModel {
     preview_rate: PreviewRate,
     /// File name of the offline media under the playhead; non-nil shows the "Media offline" card over the picture.
     pub offline_file_name: Option<String>,
+    /// Name of the Program sequence while it holds no clip: the viewer says "<name> is empty" (r8:759).
+    pub empty_sequence: Option<String>,
+    /// Name of what is being opened: the viewer shows the loader and "Opening <name>…" (r8:758).
+    pub opening: Option<String>,
     /// The engine cannot draw (compositor creation failed): the card says so instead of showing a silent black picture.
     pub engine_failure: Option<String>,
     drops: DropIndicator,
@@ -406,6 +412,8 @@ impl MonitorPanelModel {
             safe_margin_sizes: SafeMarginSizes::DEFAULT,
             preview_rate: PreviewRate::NORMAL,
             offline_file_name: None,
+            empty_sequence: None,
+            opening: None,
             engine_failure: None,
             drops,
             viewer_mode: SourceViewerMode::Picture,
@@ -619,7 +627,7 @@ impl MonitorPanelModel {
         SQL10n::string(if self.offline_file_name.is_none() && self.engine_failure.is_some() {
             "Preview unavailable"
         } else {
-            "Media offline"
+            "Media Offline"
         })
     }
     /// Detail line of the "Media offline" card.
@@ -645,6 +653,11 @@ impl MonitorPanelModel {
             },
             _ => fit(&full, "").unwrap_or_default(),
         }
+    }
+    /// The path line of the offline card: the detail cut in the middle (name keeps its extension), `full` set when cut.
+    pub fn offline_card_label(&self, _max_width: f64, fits: impl Fn(&str) -> bool) -> sq_draw::middle_fit::TruncatedLabel {
+        let full = self.offline_card_detail().unwrap_or_default();
+        sq_draw::middle_fit::truncate_name(&full, fits)
     }
     /// The marks can be dragged (the owner edits them and the view is not a source file).
     pub fn marks_editable(&self) -> bool {
@@ -679,12 +692,17 @@ impl MonitorPanelModel {
         self.drop_tooltip = self.drops.tooltip();
         self.drop_badge_text = self.drops.badge_text();
         self.drop_realtime_not_achieved = self.drops.realtime_not_achieved();
-        if self.quality == MonitorQuality::Auto {
-            self.governor.update(dropped, is_playing);
-            if self.governor.current() != self.effective_quality {
-                self.effective_quality = self.governor.current();
-                self.emit(MonitorEvent::QualityChange(self.effective_quality));
-            }
+    }
+
+    /// Polled by the host every frame with the engine's play counters: Auto quality steps down on sustained lateness.
+    pub fn update_play_counts(&mut self, counts: PlayCounts, is_playing: bool, now: f64) {
+        if self.quality != MonitorQuality::Auto {
+            return;
+        }
+        self.governor.update(counts, is_playing, now);
+        if self.governor.current() != self.effective_quality {
+            self.effective_quality = self.governor.current();
+            self.emit(MonitorEvent::QualityChange(self.effective_quality));
         }
     }
 

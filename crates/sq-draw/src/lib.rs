@@ -6,6 +6,7 @@ pub mod canvas_shapes;
 pub mod close_x;
 pub mod cursor_glyph;
 pub mod display_gamma;
+pub mod empty_pane;
 pub mod draw_list;
 pub mod experimental;
 pub mod glyph_atlas;

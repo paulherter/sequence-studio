@@ -135,5 +135,6 @@ mod tests {
             assert_eq!(serde_json::to_string(&p).ok(), Some(format!("\"{}\"", p.raw_value())));
         }
         assert_eq!(PanelID::Timeline.min_size(), (320.0, 150.0));
+        assert_eq!((PanelID::Tools.min_size().0, PanelID::AudioMeter.min_size().0), (36.0, 56.0));
     }
 }

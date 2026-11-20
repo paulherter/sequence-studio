@@ -197,6 +197,10 @@ impl ProgramEngine for HandleProgramEngine {
     fn dropped_frames(&self) -> i64 {
         i64::try_from(self.handle.status().skipped_frames).unwrap_or(i64::MAX)
     }
+    fn play_counts(&self) -> crate::PlayCounts {
+        let s = self.handle.status();
+        crate::PlayCounts { shown: s.shown_frames, skipped: s.skipped_frames, late: s.late_frames, run: s.run, clock_running: s.clock_running }
+    }
     // Swift: PlaybackEngine+ProgramEngine.swift:9
     // shortcut: `PlayStats` keeps no scrub-latency summary yet, upgrade when it does.
     fn scrub_latency_text(&self) -> Option<String> {

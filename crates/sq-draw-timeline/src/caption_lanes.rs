@@ -14,17 +14,18 @@ use sq_draw::{Canvas, Color, TextAlign};
 use sq_timeline_ui::{CaptionDrawing, CaptionRow, CaptionWordLayout, TimelineGeometry};
 use sq_uikit::controls_grid::{CGPoint, CGRect};
 use sq_uikit::design_tokens::sq_tokens::{radius, type_size};
+use sq_uikit::redesign_tokens::color;
 use sq_uikit::sqicon::SQIcon;
 
 impl TimelinePanel {
     /// `Theme.Colors.clipCaption` (the caption label color).
     fn caption_fill(&self) -> Color {
-        self.theme.caption_clip()
+        self.theme.token(color::RAISED)
     }
 
-    /// `Theme.Colors.clipCaptionWord`.
+    /// The word boxes: the same chip color (draft `.tl-cap`, `surface-raised`).
     fn caption_word_fill(&self) -> Color {
-        self.theme.caption_clip()
+        self.theme.token(color::RAISED)
     }
 
     pub(crate) fn draw_caption_lanes(&self, cv: &mut Canvas, clip: CGRect) {
@@ -106,7 +107,9 @@ impl TimelinePanel {
         cv.fill_rounded(drawn, rad, self.caption_fill());
         cv.stroke_rounded(drawn.inset(0.25, 0.25), rad, 0.5, skin.clip_edge());
         if selected {
+            // Draft `.tl-cap.sel`: the clip selection ring, its dark edge outside.
             cv.stroke_rounded(drawn.inset(1.0, 1.0), (rad - 1.0).max(0.0), 2.0, self.theme.yellow());
+            cv.stroke_rounded(drawn.inset(0.5, 0.5), rad, 1.0, self.theme.token(color::CLIP_SELECTION_EDGE));
         }
         let text_left = body.min_x().max(visible.min_x()) + 6.0;
         let text_width = body.max_x().min(visible.max_x()) - text_left - 4.0;
@@ -124,7 +127,7 @@ impl TimelinePanel {
             &shown,
             CGPoint { x: text_left, y: (mid - line_h / 2.0).round() },
             size,
-            TimelineSkin::text_on(self.caption_fill()),
+            self.theme.token(color::TEXT),
             f64::INFINITY,
             medium,
         );
@@ -197,7 +200,7 @@ impl TimelinePanel {
             let y = (b.mid_y() - line_h / 2.0).round();
             cv.save_gstate();
             cv.clip_to(b.inset(text_inset - 1.0, 0.0));
-            cv.draw_text(&w.text, CGPoint { x, y }, size, self.theme.on_clip(), f64::INFINITY, 0);
+            cv.draw_text(&w.text, CGPoint { x, y }, size, self.theme.token(color::TEXT), f64::INFINITY, 0);
             cv.restore_gstate();
             if w.is_unsure() && b.max_x() - text_inset > b.min_x() + text_inset {
                 // `drawUnsureMark`: 1 pt under the text

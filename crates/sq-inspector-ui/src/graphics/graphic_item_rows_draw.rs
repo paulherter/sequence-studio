@@ -601,6 +601,6 @@ mod tests {
                     && q.radius == radius
             })
         };
-        assert!(at(4.0) && !at(6.0));
+        assert!(at(6.0) && !at(4.0));
     }
 }

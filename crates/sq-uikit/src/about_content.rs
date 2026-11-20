@@ -32,7 +32,7 @@ pub const ACKNOWLEDGMENTS: [Acknowledgment; 11] = [
     ack("ONNX Runtime", "1.24", "MIT", "Runs the subject mask, speech and translation models"),
     ack("Inter", "4.x", "SIL OFL 1.1", "Interface and title font"),
     ack("Google Fonts selection", "25 families", "SIL OFL 1.1", "Title fonts"),
-    ack("Phosphor Icons", "2.1", "MIT", "Icons"),
+    ack("Lucide", "1.65.0", "ISC", "Icons"),
     ack("RNNoise", "0.1.1", "BSD-3-Clause", "Voice cleanup"),
     ack(
         "Gyroflow core",

@@ -203,6 +203,11 @@ pub fn default_apps_dir(env: &DesktopEnv) -> PathBuf {
     env.home.join("Applications")
 }
 
+/// Whether the running AppImage and `integrated` are the same file.
+fn runs_integrated_file(env: &DesktopEnv, integrated: &Path) -> bool {
+    matches!((std::fs::canonicalize(&env.appimage), std::fs::canonicalize(integrated)), (Ok(a), Ok(b)) if a == b)
+}
+
 /// The current state, from the files on disk.
 pub fn state(env: Option<&DesktopEnv>) -> DesktopState {
     let Some(env) = env else { return DesktopState::Unavailable };
@@ -214,6 +219,10 @@ pub fn state(env: Option<&DesktopEnv>) -> DesktopState {
         return DesktopState::Stale;
     }
     match (Version::parse(&installed), Version::parse(&env.version)) {
+        // The running file IS the integrated one (replaced in place by a newer build): only the recorded version is old.
+        (Some(have), Some(running)) if have < running && runs_integrated_file(env, &exec) => {
+            DesktopState::Stale
+        }
         (Some(have), Some(running)) if have < running => DesktopState::Outdated { installed },
         (Some(_), Some(_)) => DesktopState::Installed,
         _ if installed == env.version => DesktopState::Installed,
@@ -352,26 +361,32 @@ pub fn add(
     apps_dir: &Path,
     progress: &mut dyn FnMut(u64, u64) -> bool,
 ) -> Result<AddEnd, SetupFailure> {
-    integrate(env, apps_dir, move_file, progress)
+    integrate(env, &apps_dir.join(INTEGRATED_NAME), move_file, progress)
 }
 
 /// Replaces the integrated AppImage with the running one (the old file goes to the XDG trash) and rewrites the entry.
-/// Same steps and results as [`add`].
+/// Same steps and results as [`add`]. The file replaced is the one the entry starts (wherever it lives and whatever its
+/// name); `apps_dir` is only used when there is no such file, and a file given as `apps_dir` counts as its folder.
+/// Staging happens next to the target, so the last step is one atomic rename on one file system.
 pub fn update(
     env: &DesktopEnv,
     apps_dir: &Path,
     progress: &mut dyn FnMut(u64, u64) -> bool,
 ) -> Result<AddEnd, SetupFailure> {
-    integrate(env, apps_dir, move_file, progress)
+    let target = integrated_file(env).unwrap_or_else(|| {
+        let dir = if apps_dir.is_file() { apps_dir.parent().unwrap_or(apps_dir) } else { apps_dir };
+        dir.join(INTEGRATED_NAME)
+    });
+    integrate(env, &target, move_file, progress)
 }
 
 fn integrate(
     env: &DesktopEnv,
-    apps_dir: &Path,
+    target: &Path,
     mover: impl Fn(&Path, &Path, &mut dyn FnMut(u64, u64) -> bool) -> std::io::Result<Moved>,
     progress: &mut dyn FnMut(u64, u64) -> bool,
 ) -> Result<AddEnd, SetupFailure> {
-    let target = apps_dir.join(INTEGRATED_NAME);
+    let apps_dir = target.parent().unwrap_or(Path::new("."));
     let was_declined = env.marker_path().exists();
     // The entry goes first: a data folder that does not allow writing fails before the AppImage is touched.
     let undo = |failure: SetupFailure| {
@@ -381,15 +396,15 @@ fn integrate(
         }
         failure
     };
-    write_entry(env, &target).map_err(undo)?;
-    let already_there = match (std::fs::canonicalize(&env.appimage), std::fs::canonicalize(&target)) {
+    write_entry(env, target).map_err(undo)?;
+    let already_there = match (std::fs::canonicalize(&env.appimage), std::fs::canonicalize(target)) {
         (Ok(a), Ok(b)) => a == b,
         _ => false,
     };
     if !already_there {
         let moving = |e: std::io::Error| SetupFailure::new(302, "moving the AppImage", Some(apps_dir), e);
         create_apps_dir(apps_dir).map_err(|e| undo(moving(e)))?;
-        let stage = apps_dir.join(format!("{INTEGRATED_NAME}.new"));
+        let stage = apps_dir.join(format!("{}.new", target.file_name().and_then(|n| n.to_str()).unwrap_or(INTEGRATED_NAME)));
         match mover(&env.appimage, &stage, progress) {
             Ok(Moved::Done) => {}
             Ok(Moved::Canceled) => {
@@ -398,15 +413,18 @@ fn integrate(
             }
             Err(e) => return Err(undo(moving(e))),
         }
-        let placed = (if target.exists() { trash_file(env, &target) } else { Ok(()) })
-            .and_then(|()| std::fs::rename(&stage, &target));
-        if let Err(e) = placed {
+        // The old file goes to the trash when it can; a trash that refuses must not stop the update, the rename below
+        // replaces the old file atomically either way (a running old app keeps its inode).
+        if target.exists() {
+            let _ = trash_file(env, target);
+        }
+        if let Err(e) = std::fs::rename(&stage, target) {
             let _ = std::fs::remove_file(&stage);
-            return Err(undo(SetupFailure::new(302, "moving the AppImage", Some(&target), e)));
+            return Err(undo(SetupFailure::new(302, "moving the AppImage", Some(target), e)));
         }
     }
     refresh_caches(env);
-    Ok(AddEnd::Done { integrated: target })
+    Ok(AddEnd::Done { integrated: target.to_path_buf() })
 }
 
 /// Deletes the three files this module wrote (and a "No thanks").
@@ -566,7 +584,7 @@ mod tests {
             calls.set(calls.get() + 1);
             Ok(Moved::Done)
         };
-        let end = integrate(&env, &root.join("home/Applications"), mover, &mut no_progress());
+        let end = integrate(&env, &target, mover, &mut no_progress());
         assert_eq!(end, Ok(AddEnd::Done { integrated: target }));
         assert_eq!(calls.get(), 0);
         assert_eq!(state(Some(&env)), DesktopState::Installed);
@@ -580,7 +598,7 @@ mod tests {
         std::fs::write(&env.appimage, &big).expect("big");
         // A mover that never renames stands in for a second file system.
         let mut seen = Vec::new();
-        let end = integrate(&env, &default_apps_dir(&env), copy_file, &mut |d, t| {
+        let end = integrate(&env, &default_apps_dir(&env).join(INTEGRATED_NAME), copy_file, &mut |d, t| {
             seen.push((d, t));
             true
         });
@@ -599,7 +617,7 @@ mod tests {
         let (root, env) = rig("cancel");
         std::fs::write(&env.appimage, vec![1u8; 3 << 20]).expect("big");
         decline(&env).expect("decline");
-        let end = integrate(&env, &default_apps_dir(&env), copy_file, &mut |done, _| done < (1 << 20));
+        let end = integrate(&env, &default_apps_dir(&env).join(INTEGRATED_NAME), copy_file, &mut |done, _| done < (1 << 20));
         assert_eq!(end, Ok(AddEnd::Canceled));
         assert!(env.appimage.is_file(), "the original stays");
         let apps = root.join("home/Applications");
@@ -613,7 +631,7 @@ mod tests {
     fn a_failed_move_is_302_and_writes_nothing() {
         let (root, env) = rig("move-fails");
         let mover = |_: &Path, _: &Path, _: &mut dyn FnMut(u64, u64) -> bool| Err(std::io::Error::other("disk gone"));
-        let end = integrate(&env, &default_apps_dir(&env), mover, &mut no_progress()).expect_err("fails");
+        let end = integrate(&env, &default_apps_dir(&env).join(INTEGRATED_NAME), mover, &mut no_progress()).expect_err("fails");
         assert_eq!((end.code, end.step.as_str()), (302, "moving the AppImage"));
         assert!(end.system.contains("disk gone"));
         assert!(env.appimage.is_file());
@@ -637,6 +655,22 @@ mod tests {
         assert!(env.appimage.is_file());
         assert!(!root.join("home/Applications").exists());
         assert_eq!(decline(&env).expect_err("fails").code, 301);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_build_replaced_in_place_is_refreshed_not_offered_as_an_update() {
+        let (root, mut env) = rig("in-place");
+        env.version = "0.2.0".into();
+        let target = added(&env);
+        // The user overwrites the integrated file with 0.2.1 and starts it.
+        env.version = "0.2.1".into();
+        env.appimage = target.clone();
+        assert_eq!(state(Some(&env)), DesktopState::Stale);
+        refresh(&env).expect("refresh");
+        assert_eq!(state(Some(&env)), DesktopState::Installed);
+        let entry = std::fs::read_to_string(env.desktop_path()).expect("entry");
+        assert!(entry.contains("0.2.1"), "{entry}");
         let _ = std::fs::remove_dir_all(root);
     }
 
@@ -667,6 +701,56 @@ mod tests {
         env.version = "0.3.0".into();
         update(&env, &default_apps_dir(&env), &mut no_progress()).expect("again");
         assert!(env.data_home.join("Trash/files/SequenceStudio 2.AppImage").is_file());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn update_given_the_integrated_file_as_location_replaces_it_and_keeps_other_files() {
+        // The Linux update screen once passed the integrated FILE as the folder: 302 "couldn't be moved".
+        let (root, mut env) = rig("update-file");
+        env.version = "0.2.0".into();
+        let target = added(&env);
+        let bak = target.with_file_name("SequenceStudio.AppImage.bak");
+        write(&bak, b"old-copy").expect("bak");
+        env.version = "0.2.1".into();
+        env.appimage = root.join("home/Downloads/SequenceStudio-0.2.1-x86_64.AppImage");
+        write(&env.appimage, b"new-bytes").expect("new");
+        let end = update(&env, &target, &mut no_progress());
+        assert_eq!(end, Ok(AddEnd::Done { integrated: target.clone() }));
+        assert_eq!(std::fs::read(&target).expect("file"), b"new-bytes");
+        assert_eq!(std::fs::read(&bak).expect("bak"), b"old-copy");
+        assert!(!apps_leftovers(&root));
+        assert_eq!(state(Some(&env)), DesktopState::Installed);
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn update_still_replaces_when_the_trash_refuses() {
+        let (root, mut env) = rig("update-trash");
+        env.version = "0.2.0".into();
+        let target = added(&env);
+        env.version = "0.2.1".into();
+        env.appimage = root.join("home/Downloads/SequenceStudio-0.2.1-x86_64.AppImage");
+        write(&env.appimage, b"new-bytes").expect("new");
+        // A file where the trash folder must go: the trash cannot take the old file.
+        write(&env.data_home.join("Trash"), b"in the way").expect("block");
+        assert!(update(&env, &default_apps_dir(&env), &mut no_progress()).is_ok());
+        assert_eq!(std::fs::read(&target).expect("file"), b"new-bytes");
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn update_reached_with_the_integrated_file_running_changes_nothing_and_asks_nothing() {
+        let (root, mut env) = rig("update-inplace");
+        env.version = "0.2.0".into();
+        let target = added(&env);
+        env.version = "0.2.1".into();
+        env.appimage = target.clone();
+        let end = update(&env, &default_apps_dir(&env), &mut no_progress());
+        assert_eq!(end, Ok(AddEnd::Done { integrated: target.clone() }));
+        assert_eq!(std::fs::read(&target).expect("file"), b"appimage-bytes");
+        assert_eq!(state(Some(&env)), DesktopState::Installed);
+        assert!(!env.data_home.join("Trash/files").exists(), "nothing trashed");
         let _ = std::fs::remove_dir_all(root);
     }
 

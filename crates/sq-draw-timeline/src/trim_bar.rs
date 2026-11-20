@@ -10,6 +10,7 @@ use sq_editor_session::{EdgeRef, EdgeSelection, TrimModeModel};
 use sq_uikit::controls_grid::{CGPoint, CGRect};
 use sq_uikit::design_tokens::sq_tokens::{metrics, spacing, type_size};
 use sq_uikit::localization::SQL10n;
+use sq_uikit::redesign_tokens::color;
 
 /// What a press on the trim bar asks for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -184,8 +185,8 @@ impl TrimBar {
             return;
         }
         let t = &self.theme;
-        c.fill(self.frame, t.panel());
-        c.fill(CGRect::new(self.frame.min_x(), self.frame.min_y(), self.frame.width, 1.0), t.separator());
+        c.fill(self.frame, t.token(color::GROUP));
+        c.fill(CGRect::new(self.frame.min_x(), self.frame.min_y(), self.frame.width, 1.0), t.token(color::ROW_LINE));
         for (part, r) in self.rects() {
             let (title, accent) = match part {
                 Part::Side(s) => {

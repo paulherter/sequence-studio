@@ -236,6 +236,8 @@ impl TrackAudioDraw {
     const GATE_LIGHT_LONG: f64 = 130.0;
     const GATE_LIGHT_SHORT: f64 = 56.0;
     const SWITCH_WIDTH: f64 = 34.0;
+    /// The width of the "On"/"Off" note left of a header switch.
+    const ON_NOTE_WIDTH: f64 = 40.0;
     const LOUDNESS_WIDTH: f64 = 150.0;
     const SWITCH_HEIGHT: f64 = 20.0;
     const FIELD_WIDTH: f64 = 52.0;
@@ -854,34 +856,36 @@ impl TrackAudioDraw {
         for r in self.rows() {
             if r.header {
                 // The kit's section header (`Panels/SectionHeader/Open/*`): a group band with a hairline above and below,
-                // the chevron, the semibold title; the On switch sits at the right end (drawn with its control).
+                // the semibold title; the On switch sits at the right end (drawn with its control).
                 let band = CGRect::new(0.0, r.y, self.width, r.height);
                 c.fill(band, t.token(tk::GROUP));
                 c.fill(CGRect::new(0.0, band.min_y(), self.width, 1.0), t.token(tk::LINE));
                 c.fill(CGRect::new(0.0, band.max_y() - 1.0, self.width, 1.0), t.token(tk::LINE));
-                InspectorDraw::chevron(
-                    c,
-                    CGRect::new(ControlsGrid::HEADER_TOGGLE_X, band.min_y(), 12.0, band.height),
-                    sq_draw::inspector::Direction::Down,
-                    t.label3(),
-                    5.0,
-                );
+                // No chevron: this card has no fold (a chevron that did nothing was decoration, r8 FUNDE).
             }
             if let Some(l) = r.label {
                 let face = if r.header { c.semibold() } else { 0 };
-                let x = if r.header { ControlsGrid::HEADER_LABEL_X } else { ControlsGrid::LABEL_X };
+                let x = ControlsGrid::LABEL_X;
+                // The header title ends before the On/Off note and its switch, whatever the width.
+                let header_right = r
+                    .controls
+                    .iter()
+                    .map(|(_, f)| f.min_x() - Self::ON_NOTE_WIDTH - 6.0)
+                    .fold(self.width, f64::min);
+                let room = if r.header {
+                    (header_right - x - ControlsGrid::GAP).max(0.0)
+                } else {
+                    ControlsGrid::VALUE_X - ControlsGrid::LABEL_X - ControlsGrid::GAP
+                };
+                let title = SQL10n::string(l);
+                let shown = if r.header {
+                    sq_draw::middle_fit::truncate_name(&title, |n| c.size_of(n, fs, face).width <= room).shown
+                } else {
+                    title
+                };
                 c.draw_text_in(
-                    &SQL10n::string(l),
-                    CGRect::new(
-                        x,
-                        r.y,
-                        if r.header {
-                            (self.width - x - 60.0).max(0.0)
-                        } else {
-                            ControlsGrid::VALUE_X - ControlsGrid::LABEL_X - ControlsGrid::GAP
-                        },
-                        r.height,
-                    ),
+                    &shown,
+                    CGRect::new(x, r.y, room, r.height),
                     fs,
                     if r.header { t.label() } else { t.label2() },
                     sq_draw::TextAlign::Left,
@@ -954,7 +958,7 @@ impl TrackAudioDraw {
                         self.hover == Some(k),
                         false,
                         true,
-                        false,
+                        true,
                         f64::from(InspectorTokens::CAPSULE),
                         None,
                         t,
@@ -979,7 +983,7 @@ impl TrackAudioDraw {
                             self.hover == Some(k),
                             false,
                             true,
-                            false,
+                            true,
                             f64::from(InspectorTokens::CAPSULE),
                             None,
                             t,
@@ -1060,7 +1064,7 @@ impl TrackAudioDraw {
         c.stone_switch(f, on, touch, t);
         c.draw_text_in(
             &SQL10n::string(if on { "On" } else { "Off" }),
-            CGRect::new(f.min_x() - 6.0 - 40.0, f.min_y(), 40.0, f.height),
+            CGRect::new(f.min_x() - 6.0 - Self::ON_NOTE_WIDTH, f.min_y(), Self::ON_NOTE_WIDTH, f.height),
             f64::from(type_size::CAPTION),
             t.label3(),
             sq_draw::TextAlign::Right,

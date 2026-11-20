@@ -232,6 +232,8 @@ pub struct AppearancePalette {
     pub label: PaletteColor,
     pub label2: PaletteColor,
     pub label3: PaletteColor,
+    /// Secondary text lifted to 4.5:1 on the selection and menu surfaces, where the design's `text-secondary` falls short.
+    pub label2_on_raised: PaletteColor,
     /// Disabled text (t4); fixed, not part of the 4.5:1 guard.
     pub label4: PaletteColor,
     /// Destructive menu rows.
@@ -308,7 +310,7 @@ impl AppearancePalette {
                 m = m.min(t.contrast_with(s));
             }
         }
-        for t in [self.label, self.label2] {
+        for t in [self.label, self.label2_on_raised] {
             m = m.min(t.contrast_with(self.selection_on_panel()));
             m = m.min(t.contrast_with(self.overlay));
         }
@@ -363,6 +365,7 @@ impl AppearancePalette {
             label: PaletteColor::WHITE,
             label2: PaletteColor::WHITE,
             label3: PaletteColor::WHITE,
+            label2_on_raised: PaletteColor::WHITE,
             label4: pick(tk::TEXT4),
             err_text: pick(tk::RED),
             ink: if d { PaletteColor::WHITE } else { PaletteColor::BLACK },
@@ -381,24 +384,27 @@ impl AppearancePalette {
             let shift = (ct - 50.0) * (if i == 0 { 0.2 } else { 0.6 }) + bg * f * 0.6;
             let step = if d { shift } else { -shift };
             let mut c = t.map(|v| v + step).quantized();
-            let mut checks = surfaces.to_vec();
-            if i < 2 {
-                checks.push(p.selection_on_panel());
-                checks.push(p.overlay);
-            }
+            // The resting surfaces decide the text color itself; selection and menu get their own lifted value below.
             let mut guard_steps = 0;
-            while guard_steps < 255 && !checks.iter().all(|s| c.contrast_with(*s) >= 4.5) {
+            while guard_steps < 255 && !surfaces.iter().all(|s| c.contrast_with(*s) >= 4.5) {
                 c = c.map(|v| v + if d { 1.0 } else { -1.0 }).quantized();
                 guard_steps += 1;
+            }
+            if i == 1 {
+                let mut raised = c;
+                let extra = [p.selection_on_panel(), p.overlay];
+                let mut steps = 0;
+                while steps < 255 && !extra.iter().all(|s| raised.contrast_with(*s) >= 4.5) {
+                    raised = raised.map(|v| v + if d { 1.0 } else { -1.0 }).quantized();
+                    steps += 1;
+                }
+                p.label2_on_raised = raised;
             }
             out.push(c);
         }
         p.label = out[0];
         p.label2 = out[1];
         p.label3 = out[2];
-        if !d {
-            p.keyframe = p.label2;
-        }
         p
     }
 }
@@ -478,24 +484,25 @@ mod tests {
     fn dark_default_keeps_the_app_values() {
         let p = AppearancePalette::resolve(&AppearanceSettings::standard());
         assert_eq!(p.panel, hex(0x1C1C1E));
-        assert_eq!(p.titlebar, hex(0x111113));
-        assert_eq!(p.content, hex(0x09090A));
+        assert_eq!(p.titlebar, hex(0x1C1C1E));
+        assert_eq!(p.content, hex(0x0E0E10));
         assert_eq!(p.timeline, hex(0x161618));
         assert_eq!(p.overlay, hex(0x29292C));
-        assert_eq!(p.divider, hex(0x09090A));
-        assert_eq!(p.canvas, hex(0x09090A));
-        assert_eq!(p.label, hex(0xE8E8EA));
-        assert_eq!(p.label2, hex(0xADADB4));
-        assert_eq!(p.label3, hex(0x85858D));
+        assert_eq!(p.divider, hex(0x0E0E10));
+        assert_eq!(p.canvas, hex(0x0E0E10));
+        assert_eq!(p.label, hex(0xE2E2E5));
+        assert_eq!(p.label2, hex(0x8D8D93));
+        assert_eq!(p.label2_on_raised, hex(0xA6A6AC));
+        assert_eq!(p.label3, hex(0x8D8D93));
         assert_eq!(p.label4, hex(0x5E5E65));
         assert_eq!(p.accent, hex(0x0A84FF));
-        assert_eq!(p.accent_fill, hex(0x0A6CF0));
+        assert_eq!(p.accent_fill, hex(0x0A84FF));
     }
 
     #[test]
     fn light_is_derived_and_uses_the_filled_accent() {
         let p = AppearancePalette::resolve(&AppearanceSettings::new(AppearanceMode::Light, 0, 50));
-        assert_eq!(p.panel, hex(0xF4F4F5));
+        assert_eq!(p.panel, hex(0xF1F1F3));
         assert_eq!(p.accent, hex(0x0A7AF0));
         assert_eq!(p.accent_fill, hex(0x0A6CF0));
         assert!(p.label.luminance() < 0.05);

@@ -176,8 +176,10 @@ impl LookGalleryDraw {
         self.draw_sample(c, look, tile, now);
         c.restore_gstate();
         c.stroke_rounded(tile, rad, if current { 2.0 } else { 1.0 }, if current { t.label() } else { t.separator() });
+        let title = SQL10n::string(&look.title);
+        let title = c.truncated_name(&title, f64::from(type_size::CAPTION), 0, r.width + 8.0).shown;
         c.draw_text_in(
-            &SQL10n::string(&look.title),
+            &title,
             CGRect::new(r.min_x() - 4.0, r.max_y() - 15.0, r.width + 8.0, 14.0),
             f64::from(type_size::CAPTION),
             if current { t.label() } else { t.label2() },

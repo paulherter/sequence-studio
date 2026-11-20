@@ -268,6 +268,33 @@ mod menus {
         assert!(!c.is_open());
     }
 
+    /// Down, Up, Home and End jump over disabled rows, and Enter never runs one.
+    #[test]
+    fn keyboard_navigation_skips_disabled_rows() {
+        let (ran, now, m) = (Ran::default(), Rc::new(Cell::new(10.0)), measure());
+        let mut c = controller(&now);
+        let mut off = row("Off", &ran, None);
+        off.is_enabled = false;
+        let mut last_off = row("Last", &ran, None);
+        last_off.is_enabled = false;
+        c.present(
+            vec![row("A", &ran, None), off, row("B", &ran, None), last_off],
+            CGPoint::new(100.0, 50.0),
+            None,
+            None,
+            None,
+            &m,
+        );
+        for k in [InputKey::Down, InputKey::Down] {
+            c.handle(&press(k, NONE), 1.0, &m);
+        }
+        c.handle(&press(InputKey::Up, NONE), 1.0, &m);
+        c.handle(&press(InputKey::Down, NONE), 1.0, &m);
+        c.handle(&press(InputKey::End, NONE), 1.0, &m);
+        c.handle(&press(InputKey::Enter, NONE), 1.0, &m);
+        assert_eq!(*ran.borrow(), vec!["B"], "Off and Last are never highlighted or run");
+    }
+
     /// A click (press + release) and a quick tap on a disabled row do nothing and keep the menu open: a context menu at a
     /// point, a popup under a control, with the press landing first or the release alone.
     #[test]
@@ -639,6 +666,39 @@ mod menus {
         v.draw(&mut c, &DrawTheme::default());
         assert!(c.list.quads().len() > 3);
     }
+
+    #[test]
+    fn a_disabled_row_does_not_highlight() {
+        let m = measure();
+        let quads = |enabled: bool, highlighted: Option<usize>| {
+            let mut item = SQMenuItem::new("Paste");
+            item.is_enabled = enabled;
+            let mut v = MenuListView::new(vec![item]);
+            v.highlighted = highlighted;
+            v.relayout(&m);
+            let mut c = Canvas::with_size(400.0, 300.0, None, 2.0);
+            v.draw(&mut c, &DrawTheme::default());
+            c.list.quads().len()
+        };
+        assert_eq!(quads(false, Some(0)), quads(false, None));
+        assert!(quads(true, Some(0)) > quads(true, None));
+    }
+
+    #[test]
+    fn a_long_row_never_widens_the_menu_past_its_cap_and_keeps_its_tip() {
+        let m = measure();
+        let long = format!("{}.mov", "Interview ".repeat(30));
+        let mut v = MenuListView::new(vec![SQMenuItem::new(&long), SQMenuItem::new("Cut")]);
+        v.max_width = Some(300.0);
+        v.relayout(&m);
+        assert!(v.width <= 300.0, "{}", v.width);
+        assert_eq!(v.title_tip(0, &m).as_deref(), Some(long.as_str()));
+        assert_eq!(v.title_tip(1, &m), None);
+        // Without a cap the same row makes the menu wider than the cap.
+        let mut free = MenuListView::new(vec![SQMenuItem::new(&long)]);
+        free.relayout(&m);
+        assert!(free.width > 300.0);
+    }
 }
 
 // MARK: ShellDialog
@@ -813,7 +873,7 @@ mod main_menu {
             out.push_str(&format!("## {}\n", m.title));
             dump(&m.items, 1, &mut out);
         }
-        std::fs::write("/tmp/sq-menu-dump.txt", out).unwrap();
+        std::fs::write(std::env::temp_dir().join("sq-menu-dump.txt"), out).unwrap();
     }
 
     #[test]

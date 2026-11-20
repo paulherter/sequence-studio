@@ -9,16 +9,14 @@ use crate::draw_list::Color;
 use crate::motion::{self, Ease};
 use crate::theme::DrawTheme;
 use sq_uikit::controls_grid::CGRect;
-use sq_uikit::redesign_tokens::{color as tk, motion as mt, radius as rd, size as sz};
+use sq_uikit::redesign_tokens::{color as tk, motion as mt, radius as rd};
 
-/// Pressed scale of everything pressable (HAUPTFENSTER section 12).
-pub const PRESS_SCALE: f64 = 0.97;
-/// Pressed downward nudge in points (`translateY(.5px)`).
-pub const PRESS_NUDGE: f64 = 0.5;
 /// Alpha of a disabled control (specs: opacity .4).
 pub const DISABLED_ALPHA: f32 = 0.4;
-/// Keyboard focus ring: 2 pt wide, 2 pt away from the control (spec: frame padding 2, outside stroke 2).
-pub const FOCUS_GAP: f64 = 2.0;
+/// Keyboard focus ring (r8): a 1 pt line hugging the control, then a 2.5 pt halo (`0 0 0 1px ring, 0 0 0 3.5px quiet`).
+pub const FOCUS_RING_W: f64 = 1.0;
+/// Width of the halo outside the ring.
+pub const FOCUS_HALO_W: f64 = 2.5;
 
 // Shadow values the specs write as literals (the token file has no variable for them): `0 1px 1.5px #00000080` under a
 // raised part, the sunken ring `inset 0 0 0 1px #00000080`, the soft inner top shadow `inset 0 1px 2px #00000059`, the
@@ -173,6 +171,11 @@ pub enum ButtonKind {
     RaisedMenu,
     /// Red (`Button/Destructive`).
     Destructive,
+    /// The neutral emphasised button of a dialog (r8 `.btn.primary`): `text-primary` as a flat fill, dark ink on it
+    /// (light on dark, near-black on light). Blue stays with Export (`Accent`).
+    Primary,
+    /// A button on the black viewer (offline card, r8:639-640): the same dark stone in both themes.
+    OnViewer,
     /// No surface at rest (`Button/Quiet`, icon buttons that are off).
     Quiet,
 }
@@ -198,6 +201,9 @@ fn raised(top: Color, bottom: Color, t: &DrawTheme, top_light: Color) -> Look {
     }
 }
 
+/// How far the red button's hover lifts toward white.
+const DESTRUCTIVE_HOVER_LIFT: f32 = 0.12;
+
 fn pressed(top: Color, bottom: Color, soft: Color, t: &DrawTheme) -> Look {
     Look {
         fill: Fill::Gradient(top, bottom),
@@ -209,6 +215,8 @@ fn pressed(top: Color, bottom: Color, soft: Color, t: &DrawTheme) -> Look {
 
 /// The look of `kind` in `state`, straight from the tokens and the button specs.
 pub fn button_look(kind: ButtonKind, state: Interaction, t: &DrawTheme) -> Look {
+    // A background window has no blue button: it turns raised (r8:562-569).
+    let kind = if t.window_inactive && kind == ButtonKind::Accent { ButtonKind::Raised } else { kind };
     let d = t.palette.is_dark();
     let k = |x| t.token(x);
     let filled =
@@ -224,8 +232,13 @@ pub fn button_look(kind: ButtonKind, state: Interaction, t: &DrawTheme) -> Look 
         (ButtonKind::Destructive, Interaction::Pressed) => {
             pressed(k(tk::DESTRUCTIVE_PRESSED_TOP), k(tk::DESTRUCTIVE_PRESSED_BOTTOM), lit(FILLED_PRESS_SOFT, d), t)
         }
-        // The specs define no hover for the red button: it keeps its rest look.
-        (ButtonKind::Destructive, _) => {
+        // The specs define no red hover: it lifts like the Primary hover (toward white), so hover differs from rest.
+        (ButtonKind::Destructive, Interaction::Hover) => filled(
+            k(tk::DESTRUCTIVE_TOP).mix(Color::WHITE, DESTRUCTIVE_HOVER_LIFT),
+            k(tk::DESTRUCTIVE_BOTTOM).mix(Color::WHITE, DESTRUCTIVE_HOVER_LIFT),
+            DESTRUCTIVE_TOP_LIGHT,
+        ),
+        (ButtonKind::Destructive, Interaction::Rest) => {
             filled(k(tk::DESTRUCTIVE_TOP), k(tk::DESTRUCTIVE_BOTTOM), DESTRUCTIVE_TOP_LIGHT)
         }
         (ButtonKind::Raised, Interaction::Rest) => raised(k(tk::RAISED_TOP), k(tk::RAISED_BOTTOM), t, k(tk::HIGHLIGHT)),
@@ -241,9 +254,29 @@ pub fn button_look(kind: ButtonKind, state: Interaction, t: &DrawTheme) -> Look 
         (ButtonKind::Raised | ButtonKind::RaisedMenu, Interaction::Pressed) => {
             pressed(k(tk::PRESSED_TOP), k(tk::PRESSED_BOTTOM), k(tk::EDGE_DARK), t)
         }
+        (ButtonKind::Primary, state) => {
+            let rest = t.label();
+            let fill = match state {
+                Interaction::Rest => rest,
+                // r8: the hover lifts away from the page (dark: toward white, light: toward grey); press = brightness .88
+                Interaction::Hover => rest.mix(Color::WHITE, if d { 0.5 } else { 0.12 }),
+                Interaction::Pressed => rest.mix(Color::BLACK, 0.12),
+            };
+            Look { fill: Fill::Flat(fill), ..Look::NONE }
+        }
+        (ButtonKind::OnViewer, state) => {
+            let (top, bottom) = (k(tk::VIEWER_BUTTON), k(tk::VIEWER_BUTTON));
+            let lift = |c: Color, w: f32| c.mix(Color::WHITE, w);
+            match state {
+                Interaction::Rest => raised(top, bottom, t, Color::WHITE.with_alpha(0.08)),
+                Interaction::Hover => raised(lift(top, 0.06), lift(bottom, 0.06), t, Color::WHITE.with_alpha(0.08)),
+                Interaction::Pressed => pressed(top.mix(Color::BLACK, 0.12), bottom, k(tk::EDGE_DARK), t),
+            }
+        }
         (ButtonKind::Quiet, Interaction::Rest) => Look::NONE,
         (ButtonKind::Quiet, Interaction::Hover) => Look { fill: Fill::Flat(k(tk::HOVER)), ..Look::NONE },
-        (ButtonKind::Quiet, Interaction::Pressed) => Look { fill: Fill::Flat(k(tk::PRESS_DIM)), ..Look::NONE },
+        // r8:581: pressed is the raised surface (editor `surface-pressed` = `surface-raised`), apart from the hover wash.
+        (ButtonKind::Quiet, Interaction::Pressed) => Look { fill: Fill::Flat(k(tk::RAISED)), ..Look::NONE },
     }
 }
 
@@ -283,17 +316,6 @@ pub fn field_look(state: FieldState, t: &DrawTheme) -> Look {
     }
 }
 
-/// `rect` pressed by `level` (0...1): scaled to .97 about its center and nudged down .5 pt. Nothing moves in reduce motion.
-pub fn pressed_rect(rect: CGRect, level: f32) -> CGRect {
-    if level <= 0.0 || motion::reduce_motion() {
-        return rect;
-    }
-    let l = f64::from(level);
-    let s = 1.0 - (1.0 - PRESS_SCALE) * l;
-    let (w, h) = (rect.width * s, rect.height * s);
-    CGRect::new(rect.mid_x() - w / 2.0, rect.mid_y() - h / 2.0 + PRESS_NUDGE * l, w, h)
-}
-
 /// The press level of the control at `r`: rises in 60 ms, falls in 160 ms ease-out (`motion/press_in_ms`, `press_out_ms`).
 pub fn press_level(c: &Canvas, r: CGRect, down: bool) -> f32 {
     let p = c.px(r);
@@ -322,7 +344,7 @@ pub struct Touch {
     pub pressed: bool,
     /// Enabled; a disabled one is dimmed to 40 percent and ignores hover and press.
     pub disabled: bool,
-    /// Keyboard focus: the 2 pt accent ring.
+    /// Keyboard focus: the 1 pt ring with its halo.
     pub focused: bool,
 }
 
@@ -401,15 +423,17 @@ impl Canvas<'_> {
         }
     }
 
-    /// The 2 pt accent keyboard focus ring around a control of `r` with corner `radius` (never removed, never animated).
+    /// The keyboard focus ring around a control of `r` with corner `radius`: 1 pt line and 2.5 pt halo, no gap (r8),
+    /// grey in a background window (never removed, never animated).
     pub fn stone_focus_ring(&mut self, r: CGRect, radius: f64, t: &DrawTheme) {
-        let w = f64::from(sz::FOCUS_FRAME.max(2.0));
-        let grow = FOCUS_GAP + w / 2.0;
-        self.stroke_rounded(r.inset_by(-grow, -grow), radius + grow, w, t.token(tk::ACCENT));
+        // `stroke_rounded` centers the line on the rect: the ring spans 0..1 pt off the control, the halo 1..3.5 pt.
+        let (c1, c2) = (FOCUS_RING_W / 2.0, FOCUS_RING_W + FOCUS_HALO_W / 2.0);
+        self.stroke_rounded(r.inset_by(-c2, -c2), radius + c2, FOCUS_HALO_W, t.focus_ring_quiet());
+        self.stroke_rounded(r.inset_by(-c1, -c1), radius + c1, FOCUS_RING_W, t.focus_ring());
     }
 
-    /// A stone button body of `kind` with hover and press motion and the focus ring. Returns the (pressed-scaled) rect
-    /// for the label and icon, which the caller centers in it.
+    /// A stone button body of `kind` with hover and press (a darker fill, the size never changes) and the focus ring.
+    /// Returns the rect for the label and icon, which the caller centers in it.
     pub fn stone_button(&mut self, r: CGRect, kind: ButtonKind, touch: Touch, t: &DrawTheme) -> CGRect {
         self.note(crate::canvas::Probe::Control, r);
         let live = !touch.disabled;
@@ -419,12 +443,31 @@ impl Canvas<'_> {
         let look =
             rest.mix(button_look(kind, Interaction::Hover, t), hl).mix(button_look(kind, Interaction::Pressed, t), pl);
         let look = if touch.disabled { look.faded(DISABLED_ALPHA) } else { look };
-        let body = pressed_rect(r, pl);
-        self.stone_body(body, f64::from(rd::CONTROL), &look);
+        self.stone_body(r, f64::from(rd::CONTROL), &look);
         if touch.focused {
             self.stone_focus_ring(r, f64::from(rd::CONTROL), t);
         }
-        body
+        r
+    }
+
+    /// A button box with no surface at rest: `fill` (already scaled by the hover / press level) and the focus ring.
+    pub fn stone_ghost_button(&mut self, r: CGRect, radius: f64, fill: Color, focused: bool, t: &DrawTheme) {
+        if fill.a > 0.0 {
+            self.fill_rounded(r, radius, fill);
+        }
+        if focused {
+            self.stone_focus_ring(r, radius, t);
+        }
+    }
+
+    /// A panel number without a box: nothing at rest, the `surface-well` fill when `shown`, the focus ring when `ring`.
+    pub fn stone_flat_field(&mut self, r: CGRect, radius: f64, shown: bool, ring: bool, t: &DrawTheme) {
+        if shown {
+            self.fill_rounded(r, radius, t.token(tk::WELL));
+        }
+        if ring {
+            self.stone_focus_ring(r, radius, t);
+        }
     }
 
     /// A sunken scroll or scrub track: the kit's stone well (`Scrub`, 4 pt, fully rounded) with the inset 3D look.

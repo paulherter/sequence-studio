@@ -80,7 +80,7 @@ impl StabilizationAnalyzing for Counting {
 
 #[test]
 fn a_result_is_kept_in_memory_and_on_disk() {
-    let dir = crate::test_rig::unique_dir("sq-stab");
+    let dir = crate::test_rig::test_dir("sq-stab");
     let media = dir.join("clip.mov");
     std::fs::create_dir_all(&dir).expect("dir");
     std::fs::write(&media, b"not really a movie").expect("media");
@@ -106,7 +106,7 @@ fn a_result_is_kept_in_memory_and_on_disk() {
 
 #[test]
 fn a_new_launch_finds_the_result_without_a_run() {
-    let dir = crate::test_rig::unique_dir("sq-stab-lookup");
+    let dir = crate::test_rig::test_dir("sq-stab-lookup");
     let media = dir.join("clip.mov");
     std::fs::create_dir_all(&dir).expect("dir");
     std::fs::write(&media, b"not really a movie").expect("media");
@@ -233,7 +233,7 @@ fn checks_rolling_and_perspective_survive_the_disk_cache() {
 
 #[test]
 fn the_disk_cache_drops_the_least_recently_used_files_over_its_cap() {
-    let dir = crate::test_rig::unique_dir("sq-stab-lru");
+    let dir = crate::test_rig::test_dir("sq-stab-lru");
     std::fs::create_dir_all(&dir).expect("dir");
     let now = std::time::SystemTime::now();
     // Three files of 100 bytes; "b" was used last, "a" longest ago.

@@ -62,45 +62,45 @@ fn rest() -> Touch {
 fn raised_button_looks_match_the_spec() {
     let t = dark();
     let l = button_look(ButtonKind::Raised, Interaction::Rest, &t);
-    assert_eq!(grad(&l), (0x3C3C40FF, 0x333337FF));
+    assert_eq!(grad(&l), (0x363639FF, 0x303033FF));
     assert_eq!((ho(l.top_light), ho(l.shadow), l.ring, l.inset_soft), (Some(0xFFFFFF14), Some(0x00000080), None, None));
     let l = button_look(ButtonKind::Raised, Interaction::Hover, &t);
-    assert_eq!(grad(&l), (0x424246FF, 0x38383CFF));
+    assert_eq!(grad(&l), (0x3C3C3FFF, 0x363639FF));
     let l = button_look(ButtonKind::Raised, Interaction::Pressed, &t);
-    assert_eq!(grad(&l), (0x2C2C30FF, 0x333337FF));
+    assert_eq!(grad(&l), (0x2A2A2DFF, 0x303033FF));
     assert_eq!((ho(l.inset_soft), ho(l.lift), l.shadow, l.top_light), (Some(0x0000008C), Some(0xFFFFFF0A), None, None));
 }
 
 #[test]
 fn menu_accent_destructive_and_quiet_looks_match_the_spec() {
     let t = dark();
-    assert_eq!(grad(&button_look(ButtonKind::RaisedMenu, Interaction::Rest, &t)), (0x2E2E31FF, 0x28282BFF));
-    assert_eq!(grad(&button_look(ButtonKind::RaisedMenu, Interaction::Hover, &t)), (0x333336FF, 0x2C2C2FFF));
+    assert_eq!(grad(&button_look(ButtonKind::RaisedMenu, Interaction::Rest, &t)), (0x252528FF, 0x252528FF));
+    assert_eq!(grad(&button_look(ButtonKind::RaisedMenu, Interaction::Hover, &t)), (0x2C2C2FFF, 0x2C2C2FFF));
     let a = button_look(ButtonKind::Accent, Interaction::Rest, &t);
-    assert_eq!(grad(&a), (0x1C8BFFFF, 0x0A6CF0FF));
+    assert_eq!(grad(&a), (0x0A84FFFF, 0x0A84FFFF));
     assert_eq!((ho(a.top_light), ho(a.ring), ho(a.shadow)), (Some(0xFFFFFF38), Some(0x0000002E), Some(0x00000080)));
-    assert_eq!(grad(&button_look(ButtonKind::Accent, Interaction::Hover, &t)), (0x1F99FFFF, 0x0B77FFFF));
+    assert_eq!(grad(&button_look(ButtonKind::Accent, Interaction::Hover, &t)), (0x2B95FFFF, 0x2B95FFFF));
     let p = button_look(ButtonKind::Accent, Interaction::Pressed, &t);
-    assert_eq!((grad(&p), ho(p.inset_soft)), ((0x0A62DAFF, 0x1478F5FF), Some(0x00000073)));
+    assert_eq!((grad(&p), ho(p.inset_soft)), ((0x0974DFFF, 0x0974DFFF), Some(0x00000073)));
     let d = button_look(ButtonKind::Destructive, Interaction::Rest, &t);
     assert_eq!((grad(&d), ho(d.top_light)), ((0xE0443AFF, 0xC93A31FF), Some(0xFFFFFF2E)));
     assert_eq!(grad(&button_look(ButtonKind::Destructive, Interaction::Pressed, &t)), (0xBC352DFF, 0xD2433AFF));
     assert_eq!(button_look(ButtonKind::Quiet, Interaction::Rest, &t), Look::NONE);
     assert_eq!(flat(&button_look(ButtonKind::Quiet, Interaction::Hover, &t)), 0xFFFFFF0F);
-    assert_eq!(flat(&button_look(ButtonKind::Quiet, Interaction::Pressed, &t)), 0x00000040);
+    assert_eq!(flat(&button_look(ButtonKind::Quiet, Interaction::Pressed, &t)), 0x303033FF, "surface-pressed = raised (r8:581)");
 }
 
 #[test]
 fn field_looks_match_the_spec_and_light_uses_the_light_tokens() {
     let t = dark();
     let r = field_look(FieldState::Rest, &t);
-    assert_eq!(flat(&r), 0x17171AFF);
+    assert_eq!(flat(&r), 0x252528FF);
     assert_eq!((ho(r.ring), ho(r.inset_soft), ho(r.lift)), (Some(0x00000080), Some(0x00000059), Some(0xFFFFFF0B)));
     assert_eq!(ho(field_look(FieldState::Hover, &t).ring), Some(0xFFFFFF1F));
     let e = field_look(FieldState::Editing, &t);
     assert_eq!((ho(e.ring), ho(e.halo), e.inset_soft, e.lift), (Some(0x0A84FFFF), Some(0x0A84FF38), None, None));
-    assert_eq!(grad(&button_look(ButtonKind::Raised, Interaction::Rest, &light())), (0xFFFFFFFF, 0xF2F2F4FF));
-    assert_eq!(flat(&field_look(FieldState::Rest, &light())), 0xFFFFFFFF);
+    assert_eq!(grad(&button_look(ButtonKind::Raised, Interaction::Rest, &light())), (0xDCDCE0FF, 0xD5D5D9FF));
+    assert_eq!(flat(&field_look(FieldState::Rest, &light())), 0xFBFBFCFF);
 }
 
 #[test]
@@ -117,10 +117,10 @@ fn a_raised_button_draws_gradient_bands_highlight_and_shadow_at_the_spec_size() 
     let mut c = canvas();
     let r = CGRect::new(10.0, 10.0, 60.0, 22.0);
     c.stone_button(r, ButtonKind::Raised, rest(), &t);
-    let bands: Vec<_> = fills_of(&c, r, 4.0).into_iter().filter(|q| q.color.a == 1.0).collect();
+    let bands: Vec<_> = fills_of(&c, r, 6.0).into_iter().filter(|q| q.color.a == 1.0).collect();
     assert!(bands.len() >= 6 && bands.len() <= 22, "banded gradient: {}", bands.len());
-    assert!(near(h(bands[0].color), 0x3C3C40FF, 2), "top {:08X}", h(bands[0].color));
-    assert!(near(h(bands[bands.len() - 1].color), 0x333337FF, 2));
+    assert!(near(h(bands[0].color), 0x363639FF, 2), "top {:08X}", h(bands[0].color));
+    assert!(near(h(bands[bands.len() - 1].color), 0x303033FF, 2));
     // The highlight edge: the same rounded rect in #FFFFFF14, clipped to the top point.
     let top = quads(&c).into_iter().find(|q| h(q.color) == 0xFFFFFF14 && q.stroke == 0.0).expect("top light");
     assert_eq!((top.clip[1], top.clip[3]), (10.0, 11.0));
@@ -129,16 +129,31 @@ fn a_raised_button_draws_gradient_bands_highlight_and_shadow_at_the_spec_size() 
 }
 
 #[test]
-fn pressed_button_is_scaled_to_97_percent_and_nudged_half_a_point() {
+fn pressed_button_keeps_its_size_and_darkens() {
+    motion::set_snap(true);
+    let t = dark();
+    let r = CGRect::new(10.0, 10.0, 100.0, 22.0);
+    let body = |down: bool| {
+        let mut c = canvas();
+        assert_eq!(c.stone_button(r, ButtonKind::Raised, Touch { pressed: down, ..Touch::default() }, &t), r);
+        let f = quads(&c).into_iter().find(|q| q.stroke == 0.0 && (q.rect.x, q.rect.y, q.rect.w, q.rect.h) == (10.0, 10.0, 100.0, 22.0)).expect("body");
+        (f.rect, f.color)
+    };
+    let (rest, down) = (body(false), body(true));
+    assert_eq!(rest.0, down.0, "press never shrinks the body");
+    assert_ne!(h(rest.1), h(down.1), "press changes the fill");
     motion::set_snap(false);
-    let r = CGRect::new(0.0, 0.0, 100.0, 22.0);
-    let p = pressed_rect(r, 1.0);
-    assert!((p.width - 97.0).abs() < 1e-9 && (p.height - 21.34).abs() < 1e-9);
-    assert!((p.mid_x() - 50.0).abs() < 1e-9 && (p.mid_y() - 11.5).abs() < 1e-9);
-    assert_eq!(pressed_rect(r, 0.0), r);
-    motion::set_reduce_motion(true);
-    assert_eq!(pressed_rect(r, 1.0), r, "reduce motion: no scale, no offset");
-    motion::set_reduce_motion(false);
+}
+
+#[test]
+fn background_window_turns_the_blue_button_raised_and_the_ring_grey() {
+    let t = DrawTheme::default();
+    let grey = DrawTheme { window_inactive: true, ..t };
+    assert_ne!(button_look(ButtonKind::Accent, Interaction::Rest, &t), button_look(ButtonKind::Raised, Interaction::Rest, &t));
+    assert_eq!(button_look(ButtonKind::Accent, Interaction::Rest, &grey), button_look(ButtonKind::Raised, Interaction::Rest, &grey));
+    assert_ne!(t.focus_ring(), grey.focus_ring());
+    assert_ne!(t.focus_edge(), grey.focus_edge());
+    assert_ne!(t.accent_button_text(), grey.accent_button_text());
 }
 
 #[test]
@@ -215,19 +230,21 @@ fn motion_tokens_are_the_ones_of_the_hauptfenster_rules() {
 }
 
 #[test]
-fn focus_ring_is_two_points_wide_two_points_off_in_accent() {
+fn focus_ring_is_a_one_point_line_with_no_gap_and_a_quiet_halo() {
     let t = dark();
     let mut c = canvas();
     let r = CGRect::new(20.0, 20.0, 50.0, 22.0);
     c.stone_focus_ring(r, 4.0, &t);
-    let q = quads(&c).pop().unwrap();
-    assert_eq!(h(q.color), 0x0A84FFFF);
-    assert_eq!(
-        (q.stroke, q.rect.x, q.rect.y, q.rect.w, q.rect.h),
-        (2.0, 16.0, 16.0, 58.0, 30.0),
-        "outer edge 4 pt off"
-    );
-    assert_eq!(q.radius, 8.0);
+    let qs = quads(&c);
+    let (halo, ring) = (&qs[qs.len() - 2], &qs[qs.len() - 1]);
+    assert_eq!(h(ring.color), 0x0A84FFFF);
+    assert_eq!((ring.stroke, ring.rect.x, ring.rect.w, ring.radius), (1.0, 19.0, 52.0, 5.0), "touches the control");
+    assert_eq!(h(halo.color), 0x0A84FF29);
+    assert_eq!((halo.stroke, halo.rect.x, halo.rect.w), (2.5, 16.5, 57.0), "ends 3.5 pt off");
+    let grey = DrawTheme { window_inactive: true, ..t };
+    let mut c = canvas();
+    c.stone_focus_ring(r, 4.0, &grey);
+    assert_eq!(h(quads(&c).pop().unwrap().color), h(t.token(tk::TEXT2)));
 }
 
 #[test]
@@ -237,7 +254,7 @@ fn field_draws_well_ring_and_editing_halo() {
     let r = CGRect::new(10.0, 10.0, 62.0, 20.0);
     let mut c = canvas();
     c.stone_field(r, 3.0, false, rest(), &t);
-    assert_eq!(h(fills_of(&c, r, 3.0)[0].color), 0x17171AFF);
+    assert_eq!(h(fills_of(&c, r, 3.0)[0].color), 0x252528FF);
     assert!(quads(&c).iter().any(|q| h(q.color) == 0x00000080 && q.stroke == 1.0), "1 pt inner ring");
     let mut c = canvas();
     c.stone_field(r, 3.0, true, rest(), &t);
@@ -257,10 +274,10 @@ fn switch_geometry_and_colors_match_the_spec() {
     assert_eq!(SWITCH_KNOB, 16.0);
     let mut c = canvas();
     c.stone_switch(track, true, rest(), &t);
-    assert_eq!(h(fills_of(&c, track, 10.0)[0].color), 0x0A6CF0FF, "on: accent fill, radius 10");
+    assert_eq!(h(fills_of(&c, track, 10.0)[0].color), 0x0A84FFFF, "on: accent fill, radius 10");
     let mut c = canvas();
     c.stone_switch(track, false, rest(), &t);
-    assert_eq!(h(fills_of(&c, track, 10.0)[0].color), 0x17171AFF, "off: well");
+    assert_eq!(h(fills_of(&c, track, 10.0)[0].color), 0x252528FF, "off: well");
     let knob = CGRect::new(12.0, 12.0, 16.0, 16.0);
     let bands = fills_of(&c, knob, 8.0);
     assert!(near(h(bands[0].color), 0xF4F4F6FF, 2) && near(h(bands[bands.len() - 1].color), 0xD6D6DAFF, 2));
@@ -270,24 +287,24 @@ fn switch_geometry_and_colors_match_the_spec() {
 fn checkbox_radio_and_slider_sizes_and_fills() {
     motion::set_snap(true);
     let t = dark();
-    let b = CGRect::new(10.0, 10.0, 14.0, 14.0);
+    let b = CGRect::new(10.0, 10.0, 18.0, 18.0); // r8 `.check` is an 18 px square whatever slot it gets
     let mut c = canvas();
     c.stone_checkbox(b, true, rest(), &t);
-    assert_eq!(h(fills_of(&c, b, 3.0)[0].color), 0x0A6CF0FF, "on: accent fill, radius field");
+    assert_eq!(h(fills_of(&c, b, 6.0)[0].color), 0x0A84FFFF, "on: accent fill, radius field");
     let mut c = canvas();
     c.stone_checkbox(b, false, rest(), &t);
-    assert_eq!(h(fills_of(&c, b, 3.0)[0].color), 0x17171AFF);
+    assert!(fills_of(&c, b, 6.0).is_empty(), "off: no body, only the r8 outline");
     let rr = CGRect::new(10.0, 40.0, 12.0, 12.0);
     let mut c = canvas();
     c.stone_radio(rr, true, rest(), &t);
-    assert_eq!(h(fills_of(&c, rr, 6.0)[0].color), 0x0A6CF0FF);
+    assert_eq!(h(fills_of(&c, rr, 6.0)[0].color), 0x0A84FFFF);
     assert!(quads(&c).iter().any(|q| q.rect.w == 5.0 && h(q.color) == 0xFFFFFFFF), "5 pt dot");
     let s = CGRect::new(10.0, 60.0, 120.0, 12.0);
     let mut c = canvas();
     c.stone_slider_track(s, Some((10.0, 70.0)), rest(), &t);
     let track = CGRect::new(10.0, 64.0, 120.0, 4.0);
-    assert_eq!(h(fills_of(&c, track, 2.0)[0].color), 0x17171AFF, "4 pt well track");
-    assert!(quads(&c).iter().any(|q| q.rect.w == 60.0 && h(q.color) == 0x85858DFF), "text3 fill");
+    assert_eq!(h(fills_of(&c, track, 2.0)[0].color), 0x252528FF, "4 pt well track");
+    assert!(quads(&c).iter().any(|q| q.rect.w == 60.0 && h(q.color) == 0x8D8D93FF), "text3 fill");
     let k = c.stone_slider_knob(70.0, 66.0, false, rest(), &t);
     assert_eq!((k.width, k.height), (SLIDER_KNOB, 12.0));
     assert_eq!(c.stone_slider_knob(70.0, 66.0, true, rest(), &t).width, 8.0, "no-fill knob is an 8 x 16 pill");
@@ -300,19 +317,19 @@ fn segment_chip_and_tab_follow_the_spec() {
     let seg = CGRect::new(12.0, 12.0, 40.0, 16.0);
     let mut c = canvas();
     c.stone_segment(seg, true, rest(), &t);
-    let bands = fills_of(&c, seg, 3.0);
-    assert!(near(h(bands[0].color), 0x3C3C40FF, 2), "selected thumb is raised, radius field");
+    let bands = fills_of(&c, seg, 6.0);
+    assert!(near(h(bands[0].color), 0x363639FF, 2), "selected thumb is raised, radius field");
     let mut c = canvas();
     c.stone_segment(seg, false, rest(), &t);
     assert!(quads(&c).is_empty(), "an unselected segment has no surface at rest");
     let chip = CGRect::new(10.0, 10.0, 26.0, 18.0);
     let mut c = canvas();
     c.stone_chip(chip, false, true, rest(), &t);
-    assert!(quads(&c).iter().any(|q| h(q.color) == 0xFFFFFF1A && q.stroke == 1.0), "off chip: 1 pt line2 edge");
+    assert!(quads(&c).iter().any(|q| h(q.color) == 0xFFFFFF1C && q.stroke == 1.0), "off chip: 1 pt line2 edge");
     let mut c = canvas();
     c.stone_filter_chip(CGRect::new(10.0, 10.0, 50.0, 20.0), false, rest(), &t);
     assert!(
-        quads(&c).iter().any(|q| h(q.color) == 0xFFFFFF1A && q.stroke == 1.0),
+        quads(&c).iter().any(|q| h(q.color) == 0xFFFFFF1C && q.stroke == 1.0),
         "off filter chip: a bordered pill, not flat text"
     );
     let tab = CGRect::new(0.0, 0.0, 70.0, 28.0);
@@ -321,7 +338,7 @@ fn segment_chip_and_tab_follow_the_spec() {
     let q = quads(&c).pop().unwrap();
     assert_eq!(
         (h(q.color), q.rect.h, q.rect.w, q.rect.y),
-        (0x85858DFF, 2.0, 54.0, 26.0),
+        (0x8D8D93FF, 2.0, 54.0, 26.0),
         "gray 2 pt underline, never blue"
     );
     let mut c = canvas();
@@ -336,68 +353,9 @@ fn a_disabled_control_ignores_hover_and_press() {
     let r = CGRect::new(10.0, 10.0, 60.0, 22.0);
     let mut c = canvas();
     c.stone_button(r, ButtonKind::Raised, Touch { hovering: true, pressed: true, disabled: true, focused: false }, &t);
-    let bands = fills_of(&c, r, 4.0);
+    let bands = fills_of(&c, r, 6.0);
     assert_eq!(bands[0].color.a, 0.4, "40 percent, not the pressed scale");
-    assert!(near(h(bands[0].color) | 0xFF, 0x3C3C40FF, 2));
-}
-
-/// Renders the stone controls on black to `$SQ_STONE_SHEET/<name>.rgba` (`w h\n` then RGBA bytes) for the pixel comparison
-/// with the component frames of the UI kit: `SQ_STONE_SHEET=dir cargo test -p sq-draw stone_sheet -- --ignored`.
-#[test]
-#[ignore = "writes files for the visual comparison"]
-fn stone_sheet() {
-    use crate::software::{SoftwareRenderer, Sources};
-    let Ok(dir) = std::env::var("SQ_STONE_SHEET") else { return };
-    motion::set_snap(true);
-    let t = dark();
-    let mut shots: Vec<(&str, Canvas)> = Vec::new();
-    let mut add = |name: &'static str, f: &dyn Fn(&mut Canvas)| {
-        let mut c = Canvas::with_size(100.0, 40.0, None, 1.0);
-        f(&mut c);
-        shots.push((name, c));
-    };
-    let b = CGRect::new(4.0, 4.0, 59.0, 22.0);
-    add("Button-Raised-Default", &|c| {
-        c.stone_button(b, ButtonKind::Raised, rest(), &t);
-    });
-    add("Button-Raised-Hover", &|c| {
-        c.stone_button(b, ButtonKind::Raised, Touch { hovering: true, ..rest() }, &t);
-    });
-    add("Button-Raised-Pressed", &|c| {
-        c.stone_button(b, ButtonKind::Raised, Touch { pressed: true, ..rest() }, &t);
-    });
-    let p = CGRect::new(4.0, 4.0, 84.0, 24.0);
-    add("Button-Primary-Default", &|c| {
-        c.stone_button(p, ButtonKind::Accent, rest(), &t);
-    });
-    let f = CGRect::new(4.0, 4.0, 62.0, 20.0);
-    add("Field-Number-Default", &|c| c.stone_field(f, 3.0, false, rest(), &t));
-    add("Field-Number-Editing", &|c| c.stone_field(f, 3.0, true, rest(), &t));
-    let s = CGRect::new(4.0, 4.0, 34.0, 20.0);
-    add("Switch-On", &|c| {
-        c.stone_switch(s, true, rest(), &t);
-    });
-    add("Switch-Off", &|c| {
-        c.stone_switch(s, false, rest(), &t);
-    });
-    let cb = CGRect::new(4.0, 4.0, 14.0, 14.0);
-    add("Checkbox-On", &|c| c.stone_checkbox(cb, true, rest(), &t));
-    let sg = CGRect::new(4.0, 4.0, 100.0, 24.0);
-    add("Segmented-24-Two", &|c| {
-        c.stone_segment_track(sg, rest(), &t);
-        c.stone_segment(CGRect::new(6.0, 6.0, 48.0, 20.0), true, rest(), &t);
-    });
-    let sl = CGRect::new(4.0, 4.0, 120.0, 12.0);
-    add("Slider-Fill", &|c| {
-        c.stone_slider_track(sl, Some((4.0, 59.0)), rest(), &t);
-        c.stone_slider_knob(65.0, 10.0, false, rest(), &t);
-    });
-    for (name, c) in shots {
-        let img = SoftwareRenderer::render(&c.list, 100, 40, Color::BLACK, &Sources::default());
-        let mut out = format!("{} {}\n", img.width, img.height).into_bytes();
-        out.extend_from_slice(&img.pixels);
-        std::fs::write(format!("{dir}/{name}.rgba"), out).unwrap();
-    }
+    assert!(near(h(bands[0].color) | 0xFF, 0x363639FF, 2));
 }
 
 // ---- Shadow parameters pinned to the UI kit (specs/components/01-Controls, neu.html `#after.light`) ----
@@ -550,4 +508,101 @@ fn snapping_follows_the_translation_and_never_drops_a_thin_rect() {
     assert_eq!(p.x, p.x.round());
     assert!(p.w >= 1.0, "a thin line keeps a pixel: {p:?}");
     assert_eq!(Canvas::with_size(10.0, 10.0, None, 2.0).snap_to_device(CGRect::new(0.25, 0.0, 1.0, 1.0)).x, 0.25);
+}
+
+// ---- Every control state looks different from rest (ui-gefuehl: hover, press, focus and disabled are all visible) ----
+
+/// A signature of everything a control draws: color, size and stroke of every quad.
+fn look_of(draw: impl Fn(&mut Canvas, Touch, &DrawTheme)) -> impl Fn(Touch, &DrawTheme) -> Vec<(u32, [i32; 4], i32)> {
+    move |touch, t| {
+        motion::set_snap(true);
+        let mut c = canvas();
+        draw(&mut c, touch, t);
+        quads(&c)
+            .iter()
+            .map(|q| {
+                (h(q.color), [q.rect.x, q.rect.y, q.rect.w, q.rect.h].map(|v| (v * 100.0) as i32), (q.stroke * 100.0) as i32)
+            })
+            .collect()
+    }
+}
+
+fn assert_states_differ(name: &str, sig: impl Fn(Touch, &DrawTheme) -> Vec<(u32, [i32; 4], i32)>, states: &[(&str, Touch)]) {
+    for t in [dark(), light()] {
+        let rest = sig(Touch::default(), &t);
+        for (state, touch) in states {
+            assert_ne!(sig(*touch, &t), rest, "{name} {state} must not equal rest");
+        }
+    }
+}
+
+const HOVER: Touch = Touch { hovering: true, pressed: false, disabled: false, focused: false };
+const DOWN: Touch = Touch { hovering: true, pressed: true, disabled: false, focused: false };
+const FOCUS: Touch = Touch { hovering: false, pressed: false, disabled: false, focused: true };
+const OFF: Touch = Touch { hovering: false, pressed: false, disabled: true, focused: false };
+
+#[test]
+fn the_red_button_has_a_hover_between_rest_and_press() {
+    let sig = look_of(|c, touch, t| {
+        c.stone_button(CGRect::new(10.0, 10.0, 60.0, 22.0), ButtonKind::Destructive, touch, t);
+    });
+    assert_states_differ("destructive", &sig, &[("hover", HOVER), ("pressed", DOWN), ("focus", FOCUS), ("disabled", OFF)]);
+    for t in [dark(), light()] {
+        assert_ne!(sig(HOVER, &t), sig(DOWN, &t), "hover and press differ");
+    }
+}
+
+#[test]
+fn the_segmented_control_shows_focus_and_disabled() {
+    for on in [false, true] {
+        let sig = look_of(move |c, touch, t| {
+            c.stone_segment_track(CGRect::new(10.0, 10.0, 100.0, 24.0), touch, t);
+            c.stone_segment(CGRect::new(12.0, 12.0, 48.0, 20.0), on, touch, t);
+        });
+        assert_states_differ("segmented", &sig, &[("focus", FOCUS), ("disabled", OFF)]);
+    }
+}
+
+#[test]
+fn the_slider_knob_shows_hover_and_press() {
+    let sig = look_of(|c, touch, t| {
+        c.stone_slider_track(CGRect::new(10.0, 10.0, 120.0, 12.0), Some((10.0, 60.0)), touch, t);
+        c.stone_slider_knob(65.0, 16.0, false, touch, t);
+    });
+    assert_states_differ("slider", &sig, &[("hover", HOVER), ("pressed", DOWN), ("focus", FOCUS), ("disabled", OFF)]);
+    for t in [dark(), light()] {
+        assert_ne!(sig(HOVER, &t), sig(DOWN, &t));
+    }
+}
+
+#[test]
+fn checkbox_and_radio_show_hover_press_focus_and_disabled_on_and_off() {
+    for on in [false, true] {
+        let cb = look_of(move |c, touch, t| c.stone_checkbox(CGRect::new(10.0, 10.0, 14.0, 14.0), on, touch, t));
+        let rd = look_of(move |c, touch, t| c.stone_radio(CGRect::new(10.0, 10.0, 14.0, 14.0), on, touch, t));
+        // An accent-on box has no hover look in the specs; every other state must show.
+        let mut states = vec![("pressed", DOWN), ("focus", FOCUS), ("disabled", OFF)];
+        if !on {
+            states.push(("hover", HOVER));
+        }
+        assert_states_differ(if on { "checkbox on" } else { "checkbox off" }, &cb, &states);
+        assert_states_differ(if on { "radio on" } else { "radio off" }, &rd, &states);
+    }
+}
+
+#[test]
+fn a_button_on_the_viewer_is_the_same_dark_stone_in_both_themes() {
+    for t in [dark(), light()] {
+        assert_eq!(grad(&button_look(ButtonKind::OnViewer, Interaction::Rest, &t)), (0x303033FF, 0x303033FF));
+    }
+}
+
+#[test]
+fn a_pressed_chip_differs_from_a_hovered_chip_in_both_themes() {
+    for t in [dark(), light()] {
+        let pressed = flat(&button_look(ButtonKind::Quiet, Interaction::Pressed, &t));
+        let hover = button_look(ButtonKind::Quiet, Interaction::Hover, &t);
+        assert_ne!(pressed, flat(&hover), "pressed is the raised surface, hover only a wash");
+        assert_eq!(pressed, h(t.token(sq_uikit::redesign_tokens::color::RAISED)));
+    }
 }

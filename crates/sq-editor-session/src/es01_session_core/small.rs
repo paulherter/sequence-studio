@@ -99,6 +99,15 @@ impl MonitorQuality {
         }
     }
 
+    /// The quality a sequence stores as its own preview quality.
+    pub fn from_sequence(q: sq_core_model::SequencePreviewQuality) -> MonitorQuality {
+        match q {
+            sq_core_model::SequencePreviewQuality::Full => MonitorQuality::Full,
+            sq_core_model::SequencePreviewQuality::Half => MonitorQuality::Half,
+            sq_core_model::SequencePreviewQuality::Quarter => MonitorQuality::Quarter,
+        }
+    }
+
     /// A stored raw value; the retired "eighth" and "sixteenth" (old builds) read as quarter, what they decoded at.
     // Swift: MonitorQuality.swift:39
     pub fn stored(raw: &str) -> Option<MonitorQuality> {
@@ -117,30 +126,70 @@ impl MonitorQuality {
     }
 }
 
-/// Playback quality "Auto": starts every play run at `base` and steps one quality down (never below 1/4, the decoder
-/// floor) each time `DROPS_PER_STEP` more frames were dropped. Pure: the host feeds the engine's running drop total.
-// Swift: AutoQualityGovernor.swift:6
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+/// The engine's counters since the last `play`: frame positions shown, skipped, and shown with a stand-in layer (late),
+/// the run number (changes at Play, at a seek while playing and at a loop wrap) and whether the clock runs yet.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PlayCounts {
+    pub shown: u64,
+    pub skipped: u64,
+    pub late: u64,
+    pub run: u64,
+    /// False while Play waits for its first picture (the pre-roll).
+    pub clock_running: bool,
+}
+
+impl PlayCounts {
+    fn positions(self) -> u64 {
+        self.shown + self.skipped
+    }
+    fn bad(self) -> u64 {
+        self.skipped + self.late
+    }
+}
+
+/// Where the Auto governor is in a play run.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum GovernorPhase {
+    /// Not playing.
+    Idle,
+    /// Playing, ignoring the pre-roll (until the clock runs) and then `SETTLE_SECONDS` more (first decodes, and the
+    /// re-decode after a step). `since` is set once the clock runs.
+    Settling { run: u64, since: Option<f64> },
+    /// Counting one `WINDOW_SECONDS` window from `since`.
+    Watching { run: u64, since: f64, from: PlayCounts },
+}
+
+/// Playback quality "Auto": starts at `base` and steps one quality down (never below 1/4, the decoder floor) when a whole
+/// `WINDOW_SECONDS` window of play had `LATE_SHARE_PERCENT` % or more of its frame positions skipped or late. The pre-roll
+/// and `SETTLE_SECONDS` after it are not counted (also after a seek and after a step), and one bad frame never steps. A new
+/// run (Play, seek, loop wrap: `PlayCounts::run`) restarts the window. A step stays across play runs but goes back to
+/// `base` after `RESET_IDLE_SECONDS` without playing; `set_base` (settings, machine or sequence changed) starts over.
+/// Pure: the host feeds the engine's counters and a clock.
+#[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AutoQualityGovernor {
     base: MonitorQuality,
     current: MonitorQuality,
-    run_base: i64,
-    stepped: i64,
-    was_playing: bool,
+    phase: GovernorPhase,
+    idle_since: Option<f64>,
 }
 
 impl AutoQualityGovernor {
-    // Swift: AutoQualityGovernor.swift:7
-    pub const DROPS_PER_STEP: i64 = 6;
+    pub const SETTLE_SECONDS: f64 = 0.5;
+    pub const WINDOW_SECONDS: f64 = 2.0;
+    pub const LATE_SHARE_PERCENT: u64 = 10;
+    pub const RESET_IDLE_SECONDS: f64 = 5.0;
     const LADDER: [MonitorQuality; 3] = [MonitorQuality::Full, MonitorQuality::Half, MonitorQuality::Quarter];
 
-    // Swift: AutoQualityGovernor.swift:16
     pub fn new(base: MonitorQuality) -> AutoQualityGovernor {
-        AutoQualityGovernor { base: base.fixed(), current: base.fixed(), run_base: 0, stepped: 0, was_playing: false }
+        AutoQualityGovernor {
+            base: base.fixed(),
+            current: base.fixed(),
+            phase: GovernorPhase::Idle,
+            idle_since: None,
+        }
     }
 
-    /// The quality a run starts at (the platform's memory budget pick).
-    // Swift: AutoQualityGovernor.swift:9
+    /// The quality Auto starts at (the machine's pick, `auto_start_scale`).
     pub fn base(&self) -> MonitorQuality {
         self.base
     }
@@ -150,36 +199,68 @@ impl AutoQualityGovernor {
         self.current
     }
 
-    /// Re-bases the ladder (settings or budget changed).
-    // Swift: AutoQualityGovernor.swift:23
+    pub fn phase(&self) -> GovernorPhase {
+        self.phase
+    }
+
+    /// Re-bases the ladder (settings, machine pick or sequence changed).
     pub fn set_base(&mut self, q: MonitorQuality) {
         self.base = q.fixed();
         self.current = self.base;
-        self.stepped = 0;
+        self.phase = GovernorPhase::Idle;
+        self.idle_since = None;
     }
 
-    /// One poll. A new play run resets to `base`; drops while paused count for nothing.
-    // Swift: AutoQualityGovernor.swift:30
-    pub fn update(&mut self, dropped: i64, is_playing: bool) {
-        if dropped < self.run_base {
-            self.run_base = dropped;
-        }
-        if is_playing && !self.was_playing {
-            self.run_base = dropped;
-            self.stepped = 0;
-            self.current = self.base;
-        }
-        self.was_playing = is_playing;
+    /// One poll at `now` seconds.
+    pub fn update(&mut self, counts: PlayCounts, is_playing: bool, now: f64) {
         if !is_playing {
+            if self.phase != GovernorPhase::Idle || self.idle_since.is_none() {
+                self.idle_since = Some(now);
+            }
+            self.phase = GovernorPhase::Idle;
+            if self.idle_since.is_some_and(|t| now - t >= Self::RESET_IDLE_SECONDS) {
+                self.current = self.base;
+            }
             return;
         }
-        let steps = (dropped - self.run_base).max(0) / Self::DROPS_PER_STEP;
-        if steps <= self.stepped {
+        self.idle_since = None;
+        // A new run (or the first poll of play) restarts the window.
+        let run = match self.phase {
+            GovernorPhase::Idle => None,
+            GovernorPhase::Settling { run, .. } | GovernorPhase::Watching { run, .. } => Some(run),
+        };
+        if run != Some(counts.run) {
+            self.phase = GovernorPhase::Settling { run: counts.run, since: None };
+        }
+        if let GovernorPhase::Settling { run, since } = self.phase {
+            // The settle time starts when the clock is released, not at Play.
+            let since = match since {
+                None if counts.clock_running => Some(now),
+                other => other,
+            };
+            self.phase = match since {
+                Some(t) if now - t >= Self::SETTLE_SECONDS => GovernorPhase::Watching { run, since: now, from: counts },
+                _ => GovernorPhase::Settling { run, since },
+            };
             return;
         }
-        self.stepped = steps;
-        let start = Self::LADDER.iter().position(|q| *q == self.base).unwrap_or(0);
-        self.current = Self::LADDER[(start + steps as usize).min(Self::LADDER.len() - 1)];
+        if let GovernorPhase::Watching { run, since, from } = self.phase
+            && now - since >= Self::WINDOW_SECONDS
+        {
+            let positions = counts.positions().saturating_sub(from.positions());
+            let bad = counts.bad().saturating_sub(from.bad());
+            self.phase = if positions > 0 && bad * 100 >= positions * Self::LATE_SHARE_PERCENT {
+                self.step_down();
+                GovernorPhase::Settling { run, since: Some(now) }
+            } else {
+                GovernorPhase::Watching { run, since: now, from: counts }
+            };
+        }
+    }
+
+    fn step_down(&mut self) {
+        let at = Self::LADDER.iter().position(|q| *q == self.current).unwrap_or(0);
+        self.current = Self::LADDER[(at + 1).min(Self::LADDER.len() - 1)];
     }
 }
 
@@ -654,21 +735,117 @@ impl Default for DeadlineQueue {
 mod tests {
     use super::*;
 
+    /// A play session: polls every 0.5 s, `bad_per_poll` of each poll's 15 positions bad.
+    struct Run {
+        g: AutoQualityGovernor,
+        c: PlayCounts,
+        now: f64,
+    }
+
+    impl Run {
+        fn new(base: MonitorQuality) -> Run {
+            Run { g: AutoQualityGovernor::new(base), c: PlayCounts { run: 1, clock_running: true, ..Default::default() }, now: 0.0 }
+        }
+        fn play(&mut self, seconds: f64, bad_per_poll: u64) {
+            for _ in 0..(seconds / 0.5).round() as u64 {
+                self.now += 0.5;
+                self.c.shown += 15 - bad_per_poll;
+                self.c.skipped += bad_per_poll;
+                self.g.update(self.c, true, self.now);
+            }
+        }
+    }
+
     #[test]
-    fn governor_steps_down_per_drops_and_resets_per_run() {
+    fn governor_ignores_a_hiccup_and_the_first_half_second() {
+        let mut r = Run::new(MonitorQuality::Full);
+        r.g.update(r.c, true, 0.0);
+        r.play(0.5, 15); // all bad inside the settle time
+        assert!(matches!(r.g.phase(), GovernorPhase::Watching { .. }));
+        r.play(0.5, 1); // 1 bad of 60 in the window
+        r.play(1.5, 0);
+        assert_eq!(r.g.current(), MonitorQuality::Full);
+    }
+
+    #[test]
+    fn governor_steps_down_on_a_sustained_window_and_keeps_it_across_runs() {
+        let mut r = Run::new(MonitorQuality::Full);
+        r.g.update(r.c, true, 0.0);
+        r.play(0.5, 0);
+        r.play(2.0, 3); // 20 % late
+        assert_eq!(r.g.current(), MonitorQuality::Half);
+        assert!(matches!(r.g.phase(), GovernorPhase::Settling { .. }), "a step settles again");
+        r.play(2.5, 3);
+        assert_eq!(r.g.current(), MonitorQuality::Quarter);
+        r.play(5.0, 8);
+        assert_eq!(r.g.current(), MonitorQuality::Quarter, "never below a quarter");
+        // Stop for a moment and play again with new counters: the step stays.
+        r.g.update(r.c, false, r.now);
+        r.now += 2.0;
+        r.c = PlayCounts { run: 2, clock_running: true, ..Default::default() };
+        r.g.update(r.c, true, r.now);
+        assert_eq!(r.g.current(), MonitorQuality::Quarter);
+        r.g.set_base(MonitorQuality::Auto);
+        assert_eq!((r.g.base(), r.g.current()), (MonitorQuality::Full, MonitorQuality::Full));
+    }
+
+    #[test]
+    fn governor_goes_back_to_the_start_after_five_idle_seconds() {
+        let mut r = Run::new(MonitorQuality::Half);
+        r.g.update(r.c, true, 0.0);
+        r.play(0.5, 0);
+        r.play(2.0, 3);
+        assert_eq!(r.g.current(), MonitorQuality::Quarter);
+        r.g.update(r.c, false, r.now);
+        r.g.update(r.c, false, r.now + 4.0);
+        assert_eq!(r.g.current(), MonitorQuality::Quarter, "not yet");
+        r.g.update(r.c, false, r.now + 5.5);
+        assert_eq!(r.g.current(), MonitorQuality::Half);
+    }
+
+    #[test]
+    fn governor_waits_for_the_clock_and_restarts_its_window_on_a_new_run() {
+        let mut r = Run::new(MonitorQuality::Full);
+        // A pre-roll of 3 s: the clock is held, every position late; nothing counts and nothing steps.
+        r.c.clock_running = false;
+        for _ in 0..6 {
+            r.now += 0.5;
+            r.c.skipped += 15;
+            r.g.update(r.c, true, r.now);
+        }
+        assert_eq!(r.g.current(), MonitorQuality::Full);
+        assert!(matches!(r.g.phase(), GovernorPhase::Settling { since: None, .. }));
+        r.c.clock_running = true;
+        r.play(1.0, 0); // settles 0.5 s from the release
+        assert!(matches!(r.g.phase(), GovernorPhase::Watching { .. }));
+        r.play(1.5, 3);
+        // A seek: a new run, the window starts over, so 0.5 s later it is not judged.
+        r.c.run += 1;
+        r.play(0.5, 3);
+        assert!(matches!(r.g.phase(), GovernorPhase::Settling { .. }));
+        assert_eq!(r.g.current(), MonitorQuality::Full);
+    }
+
+    #[test]
+    fn governor_counts_late_frames_like_skipped_ones_and_starts_from_the_base() {
+        let mut r = Run::new(MonitorQuality::Half);
+        r.g.update(r.c, true, 0.0);
+        for _ in 0..5 {
+            r.now += 0.5;
+            r.c.shown += 15;
+            r.c.late += 3;
+            r.g.update(r.c, true, r.now);
+        }
+        assert_eq!(r.g.current(), MonitorQuality::Quarter);
+    }
+
+    #[test]
+    fn governor_does_not_judge_a_pause() {
         let mut g = AutoQualityGovernor::new(MonitorQuality::Full);
-        g.update(0, true);
-        g.update(5, true);
-        assert_eq!(g.current(), MonitorQuality::Full);
-        g.update(6, true);
-        assert_eq!(g.current(), MonitorQuality::Half);
-        g.update(40, true);
-        assert_eq!(g.current(), MonitorQuality::Quarter);
-        g.update(40, false);
-        g.update(40, true);
-        assert_eq!(g.current(), MonitorQuality::Full);
-        g.set_base(MonitorQuality::Auto);
-        assert_eq!(g.base(), MonitorQuality::Full);
+        for i in 0..20 {
+            g.update(PlayCounts { shown: 0, skipped: 99, late: 0, run: 1, clock_running: true }, false, i as f64);
+        }
+        assert_eq!((g.current(), g.phase()), (MonitorQuality::Full, GovernorPhase::Idle));
     }
 
     #[test]

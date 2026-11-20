@@ -925,7 +925,7 @@ impl ClipSectionsDraw {
             0.0,
             0,
         );
-        c.fill(CGRect::new(0.0, hh - 1.0, self.width, 1.0), t.track_row_line());
+        c.fill(CGRect::new(0.0, hh - 1.0, self.width, 1.0), t.separator());
         if !self.is_collapsed() {
             self.draw_body(c, cx, &t);
         }
@@ -935,7 +935,15 @@ impl ClipSectionsDraw {
     fn label(&self, c: &mut Canvas, s: &str, y: f64) {
         let w = ControlsGrid::VALUE_X - ControlsGrid::LABEL_X - ControlsGrid::GAP;
         let r = CGRect::new(ControlsGrid::LABEL_X, y, w, ControlsGrid::ROW_HEIGHT);
-        c.draw_text_in(&SQL10n::string(s), r, f64::from(type_size::BODY), self.theme.label2(), TextAlign::Left, 0.0, 0);
+        let fs = f64::from(type_size::BODY);
+        crate::ec_draw::effect_controls_draw_panel::EffectControlsDrawPanel::draw_label_lines(
+            c,
+            &SQL10n::string(s),
+            r,
+            ControlsGrid::ROW_HEIGHT,
+            fs,
+            self.theme.label2(),
+        );
     }
 
     fn draw_body(&mut self, c: &mut Canvas, cx: &mut UiCx, t: &DrawTheme) {
@@ -998,7 +1006,7 @@ impl ClipSectionsDraw {
                         .and_then(|id| self.graphic_picker.iter().find(|e| e.0 == id))
                         .map_or_else(|| SQL10n::string("Whole graphic"), |e| e.1.clone());
                     let hovering = self.hover == Hit::LayerPicker;
-                    InspectorDraw::popup(c, &title, f, hovering, false, true, false, f.height, None, t);
+                    InspectorDraw::popup(c, &title, f, hovering, false, true, true, f.height, None, t);
                 }
                 let f = self.edit_frame();
                 let dy = ((ControlsGrid::ROW_HEIGHT - f.height) / 2.0).round();

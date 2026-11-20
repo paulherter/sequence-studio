@@ -294,4 +294,31 @@ mod tests {
         video.show(1.0);
         assert!(wait_for(&mut video).is_none());
     }
+
+    /// The real FFmpeg decoder on a generated file: playing on gives a different picture each second.
+    #[test]
+    fn a_real_file_gives_different_pictures_as_the_position_moves() {
+        let dir = crate::test_rig::test_dir("sq-preview-real");
+        let file = dir.join("clip.mp4");
+        let ff = std::env::var("SQ_FFMPEG_BIN").unwrap_or_else(|_| "ffmpeg".into());
+        let made = std::process::Command::new(ff)
+            .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=30", "-t", "4"])
+            .args(["-c:v", "libx264", "-pix_fmt", "yuv420p"])
+            .arg(&file)
+            .status();
+        if !matches!(made, Ok(s) if s.success()) {
+            return; // no ffmpeg binary here: the stand-in tests above cover the plumbing
+        }
+        let mut video = PreviewVideo::new(ffmpeg_pictures());
+        video.load(&file);
+        let mut seen = Vec::new();
+        for t in [0.0, 1.0, 2.0, 3.0] {
+            video.show(t);
+            let p = wait_for(&mut video).unwrap_or_else(|| panic!("no picture at {t} s"));
+            seen.push(p.rgba);
+        }
+        for w in seen.windows(2) {
+            assert_ne!(w[0], w[1], "the picture did not change");
+        }
+    }
 }

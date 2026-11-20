@@ -10,6 +10,9 @@
 //! the same way scripts/package.sh does. Credentials are never read or stored here. The Developer ID path is documented
 //! in packaging/macos/README.md and has not been run.
 //!
+//! `--channel nightly` (or `SQ_CHANNEL=nightly`) packages Sequence Studio Nightly: own name, bundle id, icon and file names, version
+//! `<x.y.z>-nightly.<YYYYMMDD>`, so it installs beside Stable (names in channel.rs).
+//!
 //! Environment: `SQ_FFMPEG` (FFmpeg folder, see sq-media-ffmpeg/build.rs), `SQ_ONNXRUNTIME` (folder with
 //! libonnxruntime*.dylib to bundle instead of the pinned download), `SQ_SUBJECT_MASK_MODELS` (EdgeTAM ONNX parts to bundle),
 //! `SQ_BUILD_CACHE` (download cache), `SQ_NICE`.
@@ -17,6 +20,8 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+use crate::channel::{self, Channel};
 
 const APP_NAME: &str = "Sequence Studio";
 
@@ -251,6 +256,9 @@ fn notarize(app: &Path, out_dir: &Path) -> Result<(), String> {
 }
 
 pub fn run_package(args: &[String]) -> Result<(), String> {
+    let (channel, args) = Channel::extract(args)?;
+    let args = args.as_slice();
+    let date = channel::today();
     let root = Path::new(env!("CARGO_MANIFEST_DIR")).ancestors().nth(2).unwrap_or(Path::new(".")).to_path_buf();
     if cfg!(windows) {
         // The Windows installer (zip, and the setup program `sq-installer` with the release folder as its payload):
@@ -259,19 +267,24 @@ pub fn run_package(args: &[String]) -> Result<(), String> {
         let mut cmd = Command::new("powershell");
         cmd.args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-File"])
             .arg(script)
-            .arg("-Version")
-            .arg(workspace_version(&root));
+            .args(channel.windows_script_args(&workspace_version(&root), &date));
         cmd.args(args.iter().filter(|a| *a == "--sign").map(|_| "-Sign"));
         // The exe must delay-load the FFmpeg DLLs (sq-media-ffmpeg/build.rs): a missing tool fails the build.
         cmd.env("SQ_REQUIRE_DELAYLOAD", "1");
+        // shortcut: the new setup program (sq-setup-engine) has the Stable names built in (plan.rs consts), so a Nightly
+        // installer is the Inno one until the engine reads the channel; upgrade when the Windows installer takes a channel.
         cmd.args(args.iter().filter(|a| *a == "--inno").map(|_| "-Inno"));
+        if channel != Channel::Stable && !args.iter().any(|a| a == "--inno") {
+            cmd.arg("-Inno");
+        }
+        cmd.env("SQ_CHANNEL", channel.id()).env("SQ_BUILD_VERSION", channel.version(&workspace_version(&root), &date));
         // `--release`: file names without the build stamp (SequenceStudio-Setup-<version>.exe).
         cmd.args(args.iter().filter(|a| *a == "--release").map(|_| "-Release"));
         let status = cmd.status().map_err(|e| format!("cannot start powershell: {e}"))?;
         return if status.success() { Ok(()) } else { Err(format!("build-installer.ps1 failed ({status})")) };
     }
     if cfg!(target_os = "linux") {
-        return crate::package_linux::run_package(&root, args);
+        return crate::package_linux::run_package(&root, args, channel, &date);
     }
     if !cfg!(target_os = "macos") {
         return Err("package builds the macOS bundle, the Windows installer or the Linux AppImage".into());
@@ -287,7 +300,9 @@ pub fn run_package(args: &[String]) -> Result<(), String> {
         "-".to_string()
     };
 
-    crate::step("release build", crate::cargo(&["build", "--release", "-p", "sequence-studio"]))?;
+    let mut build = crate::cargo(&["build", "--release", "-p", "sequence-studio"]);
+    build.env("SQ_CHANNEL", channel.id()).env("SQ_BUILD_VERSION", channel.version(&workspace_version(&root), &date));
+    crate::step("release build", build)?;
     // Same rule as the Linux package: a CARGO_TARGET_DIR outside the tree holds the build, the bundle stays in target/.
     let target = std::env::var_os("CARGO_TARGET_DIR").map(PathBuf::from).unwrap_or_else(|| root.join("target"));
     let release = target.join("release/sequence-studio");
@@ -296,7 +311,7 @@ pub fn run_package(args: &[String]) -> Result<(), String> {
     }
 
     let out = root.join("target/package");
-    let app = out.join(format!("{APP_NAME}.app"));
+    let app = out.join(format!("{}.app", channel.display_name()));
     let _ = std::fs::remove_dir_all(&app);
     let (macos, resources, frameworks) =
         (app.join("Contents/MacOS"), app.join("Contents/Resources"), app.join("Contents/Frameworks"));
@@ -308,10 +323,12 @@ pub fn run_package(args: &[String]) -> Result<(), String> {
 
     let plist = std::fs::read_to_string(pk.join("Info.plist.in"))
         .map_err(|e| e.to_string())?
-        .replace("@VERSION@", &workspace_version(&root))
+        .replace("@VERSION@", &channel.version(&workspace_version(&root), &date))
+        .replace("@BUNDLE_ID@", channel.bundle_id())
+        .replace("@NAME@", channel.display_name())
         .replace("@BUILD@", "1");
     std::fs::write(app.join("Contents/Info.plist"), plist).map_err(|e| e.to_string())?;
-    std::fs::copy(pk.join("AppIcon.icns"), resources.join("AppIcon.icns")).map_err(|e| e.to_string())?;
+    std::fs::copy(pk.join(channel.mac_icon()), resources.join("AppIcon.icns")).map_err(|e| e.to_string())?;
     std::fs::write(app.join("Contents/PkgInfo"), "APPL????").map_err(|e| e.to_string())?;
     let fonts = resources.join("Fonts");
     crate::stage::copy_fonts(&root.join("Packages/SQText/Sources/SQText/Resources/Fonts"), &fonts)?;
@@ -411,23 +428,31 @@ pub fn run_package(args: &[String]) -> Result<(), String> {
         notarize(&app, &out)?;
     }
     if opts.dmg {
-        make_dmg(&root, &app, &out, opts.sign.then_some(id.as_str()), opts.notarize)?;
+        make_dmg(&root, &app, &out, opts.sign.then_some(id.as_str()), opts.notarize, channel, &date)?;
     }
     println!("package ok: {}", app.display());
     Ok(())
 }
 
 #[cfg(unix)]
-fn make_dmg(root: &Path, app: &Path, out: &Path, sign_id: Option<&str>, notarize: bool) -> Result<(), String> {
+fn make_dmg(
+    root: &Path,
+    app: &Path,
+    out: &Path,
+    sign_id: Option<&str>,
+    notarize: bool,
+    channel: Channel,
+    date: &str,
+) -> Result<(), String> {
     // Every DMG gets its own name (version + local date and time), so a stale copy in Downloads is never mistaken for it.
     let stamp = run(Command::new("date").arg("+%Y%m%d-%H%M"))?.trim().to_string();
-    let dmg = out.join(format!("{APP_NAME} {} {stamp}.dmg", workspace_version(root)));
+    let dmg = out.join(format!("{} {} {stamp}.dmg", channel.display_name(), channel.version(&workspace_version(root), date)));
     let stage = out.join("dmg");
     let _ = std::fs::remove_dir_all(&stage);
     std::fs::create_dir_all(&stage).map_err(|e| e.to_string())?;
-    copy_dir(app, &stage.join(format!("{APP_NAME}.app")))?;
+    copy_dir(app, &stage.join(format!("{}.app", channel.display_name())))?;
     std::os::unix::fs::symlink("/Applications", stage.join("Applications")).map_err(|e| e.to_string())?;
-    run(Command::new(root.join("scripts/make-dmg.sh")).arg(&stage).arg(&dmg).arg(APP_NAME))?;
+    run(Command::new(root.join("scripts/make-dmg.sh")).arg(&stage).arg(&dmg).arg(channel.display_name()))?;
     let _ = std::fs::remove_dir_all(stage);
     // The DMG is a file of its own: Gatekeeper checks its signature and staple, not only the app inside.
     let profile = std::env::var("SQ_NOTARY_PROFILE").unwrap_or_else(|_| "sq-notary".into());
@@ -462,7 +487,15 @@ fn dmg_finish_steps(dmg: &Path, sign_id: Option<&str>, notary_profile: Option<&s
 }
 
 #[cfg(not(unix))]
-fn make_dmg(_root: &Path, _app: &Path, _out: &Path, _sign_id: Option<&str>, _notarize: bool) -> Result<(), String> {
+fn make_dmg(
+    _root: &Path,
+    _app: &Path,
+    _out: &Path,
+    _sign_id: Option<&str>,
+    _notarize: bool,
+    _channel: Channel,
+    _date: &str,
+) -> Result<(), String> {
     Err("--dmg needs macOS".into())
 }
 

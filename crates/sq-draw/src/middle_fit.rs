@@ -87,6 +87,57 @@ pub fn fit_path(path: &str, fits: impl Fn(&str) -> bool) -> String {
     }
 }
 
+/// The text a cut label shows, and what a tooltip must say when it is cut. The one answer to "this text does not fit its
+/// box" (FUNDE pattern 1): every label that can overflow builds one of these, draws `shown` and offers `tip()` to the
+/// pointer (`Hover::offer_truncated`), so nothing is cut without the full text one hover away.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct TruncatedLabel {
+    /// What to draw: the whole text when it fits, else the Finder-style cut.
+    pub shown: String,
+    /// The whole text when `shown` is a cut of it, else `None`.
+    pub full: Option<String>,
+}
+
+impl TruncatedLabel {
+    /// The tooltip text: the full text, only when the label is cut.
+    pub fn tip(&self) -> Option<&str> {
+        self.full.as_deref()
+    }
+}
+
+/// The file extension of `name` with its dot (".mov"): the last dot that is not the first character, followed by 1 to 8
+/// letters or digits. `None` for names without one ("Interview 2. take", "archive.").
+fn extension_start(name: &str) -> Option<usize> {
+    let dot = name.rfind('.')?;
+    let ext = &name[dot + 1..];
+    (dot > 0 && (1..=8).contains(&ext.chars().count()) && ext.chars().all(char::is_alphanumeric)).then_some(dot)
+}
+
+/// A file or item name cut like the Finder: the start of the name and its extension stay, the middle becomes an ellipsis
+/// (`Interview Final Cu…v3.mov` loses the end of the stem, never the `.mov`). A name without an extension is cut in
+/// its middle by [`fit_middle`]. The name itself when `fits` accepts it.
+pub fn fit_name(name: &str, fits: impl Fn(&str) -> bool) -> String {
+    if fits(name) {
+        return name.to_string();
+    }
+    let Some(dot) = extension_start(name) else { return fit_middle(name, fits) };
+    let (stem, ext) = name.split_at(dot);
+    let chars: Vec<char> = stem.chars().collect();
+    let join = |head: usize| format!("{}{ELLIPSIS}{ext}", chars[..head].iter().collect::<String>());
+    let mut head = chars.len();
+    while head > 0 && !fits(&join(head)) {
+        head -= 1;
+    }
+    if head == 0 && !fits(&join(0)) { fit_middle(name, fits) } else { join(head) }
+}
+
+/// [`fit_name`] packed with the tooltip: `full` is set exactly when the name had to be cut.
+pub fn truncate_name(name: &str, fits: impl Fn(&str) -> bool) -> TruncatedLabel {
+    let shown = fit_name(name, fits);
+    let full = (shown != name).then(|| name.to_string());
+    TruncatedLabel { shown, full }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -139,5 +190,29 @@ mod tests {
         assert!(cut.chars().count() <= 24);
         let bare = fit_path("a-very-long-file-name-for-an-export.mp4", within(16));
         assert!(bare.starts_with("a-ver") && bare.ends_with(".mp4"), "{bare}");
+    }
+
+    #[test]
+    fn a_name_keeps_its_start_and_its_extension() {
+        let name = "Interview Final Cut v3.mov";
+        let cut = fit_name(name, within(15));
+        assert!(cut.starts_with("Interview") && cut.ends_with(".mov") && cut.contains('\u{2026}'), "{cut}");
+        assert!(cut.chars().count() <= 15);
+        assert_eq!(fit_name(name, within(40)), name);
+        // Too narrow for the extension plus anything: falls back to the middle cut.
+        assert!(fit_name(name, within(3)).chars().count() <= 3);
+        // No extension: middle cut, both ends.
+        let plain = fit_name("A very long title without a dot at all", within(16));
+        assert!(plain.starts_with("A ve") && plain.ends_with("all") && plain.chars().count() <= 16, "{plain}");
+    }
+
+    #[test]
+    fn a_cut_label_registers_the_full_text_as_its_tooltip() {
+        let name = "Interview Final Cut v3.mov";
+        let cut = truncate_name(name, within(15));
+        assert_eq!(cut.tip(), Some(name));
+        assert_ne!(cut.shown, name);
+        let whole = truncate_name("a.mov", within(15));
+        assert_eq!((whole.shown.as_str(), whole.tip()), ("a.mov", None));
     }
 }

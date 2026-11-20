@@ -178,3 +178,45 @@ fn the_app_icon_sits_left_of_the_project_name_and_goes_first_when_narrow() {
     row.layout(78.0, (330.0, 318.0), 0.0, 44.0, &m, SystemTime::UNIX_EPOCH);
     assert!(row.icon.is_none(), "a narrow bar keeps the name, not the icon");
 }
+
+#[test]
+fn export_is_locked_while_the_project_opens() {
+    let mut row = TitleRow::default();
+    row.project_name = "Holiday".into();
+    let m = TextMeasure::new(None, 1.0);
+    row.layout(78.0, (1200.0, 1188.0), 0.0, 44.0, &m, SystemTime::UNIX_EPOCH);
+    row.export_locked = true;
+    let export = CGPoint::new(1180.0, 22.0);
+    row.mouse(Mouse::Down, export);
+    assert_eq!(row.mouse(Mouse::Up, export), (true, None));
+}
+
+/// The right group was not flush right (a shot reserved the caption buttons' 146 pt). Default inset = left inset, at two widths.
+#[test]
+fn the_right_inset_equals_the_left_inset_at_two_widths() {
+    for w in [1200.0, 1920.0] {
+        let mut row = TitleRow::default();
+        row.project_name = "Holiday".into();
+        row.workspace_name = "Editing".into();
+        let m = TextMeasure::new(None, 1.0);
+        let inset = f64::from(sq_uikit::design_tokens::sq_tokens::spacing::MD);
+        row.layout(0.0, (w, w - inset), 0.0, 44.0, &m, SystemTime::UNIX_EPOCH);
+        let right = row.controls().into_iter().map(|r| r.max_x()).fold(0.0, f64::max);
+        let left = row.icon.expect("icon").min_x();
+        assert_eq!(w - right, left, "width {w}");
+    }
+}
+
+/// Edit/Color must sit in the window's exact middle, not between the side groups.
+#[test]
+fn the_page_switch_centre_is_the_window_centre_at_two_widths() {
+    for w in [1201.0, 1600.0] {
+        let mut row = TitleRow::default();
+        row.project_name = "Holiday".into();
+        row.workspace_name = "Editing".into();
+        let m = TextMeasure::new(None, 1.0);
+        row.layout(78.0, (w, w - 12.0), 0.0, 44.0, &m, SystemTime::UNIX_EPOCH);
+        let sw = row.controls().into_iter().find(|r| (r.width - 144.0).abs() < 0.01).expect("switch");
+        assert!((sw.min_x() + sw.width / 2.0 - w / 2.0).abs() <= 0.5, "width {w}");
+    }
+}

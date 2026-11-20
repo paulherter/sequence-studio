@@ -131,6 +131,7 @@ impl EffectKeyframeLanesDraw {
         c.save_gstate();
         c.clip_to(bounds);
         c.fill(bounds, t.lane()); // v9 `.kg > .r`
+        c.fill(CGRect::new(0.0, 0.0, 1.0, self.size.height), t.row_line()); // `.kfbg`: inset 1px 0 0 border-row
         let geo = self.geometry(model);
         let slack = Self::HIT_RADIUS * 2.0;
         let in_view = |x: f64| x >= -slack && x <= self.size.width + slack;
@@ -145,7 +146,9 @@ impl EffectKeyframeLanesDraw {
             if !(top + row.height > 0.0 && top < self.size.height) {
                 continue;
             }
-            c.fill(CGRect::new(0.0, top + row.height - 1.0, self.size.width, 1.0), t.row_line()); // one 1 pt line per row
+            // one 1 pt line per row; a group header's line is the stronger border-group
+            let line = if matches!(row.kind, EffectRowKind::Section(_)) { t.hair2() } else { t.row_line() };
+            c.fill(CGRect::new(0.0, top + row.height - 1.0, self.size.width, 1.0), line);
             let cy = top + row.height / 2.0;
             let side = ControlsMetrics::KEY_SIDE;
             match &row.kind {

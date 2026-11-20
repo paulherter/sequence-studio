@@ -18,7 +18,9 @@ pub mod tokens {
     pub const VALUE_WIDTH: f64 = 50.0;
     pub const TRAILING: f64 = 12.0;
     pub const RESET_WIDTH: f64 = 22.0;
-    pub const NAVIGATION_WIDTH: f64 = 72.0;
+    /// r8:517-520: key navigation 252..306 and the reset slot 306..326 of the 326 px column; the lane starts at 326.
+    pub const NAVIGATION_WIDTH: f64 = 54.0;
+    pub const RESET_SLOT_WIDTH: f64 = 20.0;
     pub const LABEL_HEIGHT: f64 = 14.0;
     pub const ROW_HEIGHT: f64 = 24.0;
     pub const SECTION_GAP: f64 = 4.0;
@@ -68,6 +70,7 @@ impl ControlsGrid {
     pub const TRAILING: f64 = tokens::TRAILING;
     pub const RESET_WIDTH: f64 = tokens::RESET_WIDTH;
     pub const NAVIGATION_WIDTH: f64 = tokens::NAVIGATION_WIDTH;
+    pub const RESET_SLOT_WIDTH: f64 = tokens::RESET_SLOT_WIDTH;
     /// One nesting level (a group header inside a section): its chevron and title sit on the rows' toggle and label
     /// columns, one step right of the section header.
     pub const LEVEL_INDENT: f64 = Self::ROW_INDENT;
@@ -79,8 +82,9 @@ impl ControlsGrid {
     pub const CONTROL_HEIGHT: f64 = tokens::CONTROL_HEIGHT;
     /// The link button after a pair of fields.
     pub const LINK_WIDTH: f64 = tokens::CONTROL_HEIGHT;
-    /// The narrowest a number field gets before a pair of them stacks: "0.0" at body size with the field's 8 pt insets.
-    pub const MIN_FIELD: f64 = 38.0;
+    /// The narrowest a number field gets before a pair of them stacks: the widest angle text "-180.0 °" at body size with
+    /// the field's minimum 3 pt insets (measured: 48; guarded by sq-draw `the_narrowest_field_holds_a_negative_angle_with_its_unit`).
+    pub const MIN_FIELD: f64 = 48.0;
     pub const LABEL_HEIGHT: f64 = tokens::LABEL_HEIGHT;
 
     pub fn new(width: f64) -> ControlsGrid {
@@ -98,13 +102,14 @@ impl ControlsGrid {
         self.width - Self::TRAILING
     }
 
+    /// The reset slot runs to the lane edge (r8:518: reset at 306 of 326).
     pub fn reset_x(&self) -> f64 {
-        self.tail_max_x() - Self::RESET_WIDTH
+        self.width - Self::RESET_SLOT_WIDTH
     }
 
     /// The key navigation sits left of the reset slot, which every keyframable row reserves at the trailing edge.
     pub fn navigation_x(&self) -> f64 {
-        self.reset_x() - Self::GAP - Self::NAVIGATION_WIDTH
+        self.reset_x() - Self::NAVIGATION_WIDTH
     }
 
     /// Right edge of the values of a row that has key navigation in its tail.
@@ -223,7 +228,7 @@ impl ControlsGrid {
     }
 
     pub fn reset_frame(&self, height: f64) -> CGRect {
-        CGRect::new(self.reset_x(), 0.0, Self::RESET_WIDTH, height)
+        CGRect::new(self.reset_x(), 0.0, Self::RESET_SLOT_WIDTH, height)
     }
 
     pub fn navigation_frame(&self, height: f64) -> CGRect {
@@ -252,10 +257,17 @@ mod tests {
     fn width_dependent_edges() {
         let g = ControlsGrid::new(400.0);
         assert_eq!(g.tail_max_x(), 388.0);
-        assert_eq!(g.reset_x(), 366.0);
-        assert_eq!(g.navigation_x(), 288.0);
-        assert_eq!(g.value_max_x(), 282.0);
-        assert_eq!(g.reset_frame(24.0), CGRect::new(366.0, 0.0, 22.0, 24.0));
+        assert_eq!(g.reset_x(), 380.0);
+        assert_eq!(g.navigation_x(), 326.0);
+        assert_eq!(g.value_max_x(), 320.0);
+        assert_eq!(g.reset_frame(24.0), CGRect::new(380.0, 0.0, 20.0, 24.0));
+    }
+
+    #[test]
+    fn r8_columns_at_the_326_column() {
+        let g = ControlsGrid::new(326.0);
+        assert_eq!(g.navigation_x(), 252.0);
+        assert_eq!(g.reset_x(), 306.0);
     }
 
     #[test]

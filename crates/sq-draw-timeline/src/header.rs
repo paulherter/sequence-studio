@@ -310,7 +310,8 @@ impl TrackHeaderLayout {
     /// name, M, S on audio. Sync lock is never a head button (it lives in the track's right-click menu), and the audio
     /// lock is menu-only too.
     pub fn shows(track: &Track, _hovered: bool) -> (bool, bool) {
-        (false, track.kind == TrackKind::Video)
+        // A locked audio track still shows its lock, so the state is never hidden.
+        (false, track.kind == TrackKind::Video || track.is_locked)
     }
 
     /// The head's slots and the name's right end.
@@ -738,10 +739,13 @@ impl<'a> TimelineHeaderStrip<'a> {
             _ => self.frames.marker,
         };
         let hot = self.hovered == Some(c) || self.press == Some(Press::Control(c));
-        // On = raised stone with a bright glyph; off = flat with the hover fill only.
-        let kind = if on == Some(true) { ButtonKind::Raised } else { ButtonKind::Quiet };
+        // On = the `surface-toggle` pill with a text-primary glyph; off = flat with the hover fill only.
         let pressed = self.press == Some(Press::Control(c));
-        cv.stone_button(r, kind, Touch { hovering: hot, pressed, ..Touch::default() }, t);
+        if on == Some(true) {
+            crate::tool_strip::ToolStrip::toggle_pill(cv, r, hot, pressed, t);
+        } else {
+            cv.stone_button(r, ButtonKind::Quiet, Touch { hovering: hot, pressed, ..Touch::default() }, t);
+        }
         cv.draw_icon(
             icon,
             CGPoint { x: r.mid_x() - GLYPH / 2.0, y: r.mid_y() - GLYPH / 2.0 },
@@ -761,8 +765,7 @@ impl<'a> TimelineHeaderStrip<'a> {
         for (i, tab) in self.state.tabs.iter().enumerate() {
             let Some((r, close)) = self.tab_rects.get(i) else { continue };
             let hover = self.hovered == Some(HeaderControl::Tab(i)) || self.hovered == Some(HeaderControl::TabClose(i));
-            // Gray underline, 8 pt in from each side; blue is only the panel focus frame.
-            cv.stone_tab_underline(CGRect::new(r.min_x(), self.bar.min_y(), r.width, self.bar.height), tab.active, t);
+            // No underline: the r8 template marks the active tab by its label alone; blue is only the panel focus frame.
             let reserve = if many { CLOSE_SIZE + 4.0 } else { 0.0 };
             let color = if tab.active {
                 t.label()
@@ -1428,6 +1431,16 @@ mod tests {
         assert_eq!(TrackHeaderLayout::display_name("", "V1", TrackKind::Video), "Video 1");
         assert_eq!(TrackHeaderLayout::display_name("a2", "A2", TrackKind::Audio), "Audio 2");
         assert_eq!(TrackHeaderLayout::display_name("", "X", TrackKind::Video), "");
+    }
+
+    #[test]
+    fn a_locked_audio_track_shows_its_lock() {
+        let mut audio = track(TrackKind::Audio);
+        audio.is_locked = true;
+        assert_eq!(TrackHeaderLayout::shows(&audio, false), (false, true));
+        let sl = TrackHeaderLayout::layout(&audio, 190.0, 40.0, false);
+        assert_ne!(sl.lock, ZERO);
+        assert!(sl.name_right <= sl.lock.min_x());
     }
 
     #[test]

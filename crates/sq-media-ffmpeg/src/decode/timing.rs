@@ -37,40 +37,74 @@ pub struct PacketTiming {
     pub dts: i64,
     pub duration: i64,
     pub is_key: bool,
+    /// The container's edit list does not present this sample (FFmpeg's discard flag); it stays for decoding.
+    pub hidden: bool,
 }
 
 /// The `SampleIndex` of an FFmpeg-demuxed video stream, and the way back from a decoded picture's pts to its frame.
 pub struct FrameTable {
     pub index: SampleIndex,
     pub time_base: TimeBase,
-    /// Smallest pts: the index starts at 0 there.
+    /// Pts of the first presented frame: the index starts at 0 there (a negative stream start, an MP4 edit list, puts the
+    /// samples before it in the file; they are hidden, not frames of the clip).
     pub origin_ticks: i64,
     presentation_of_ticks: HashMap<i64, usize>,
+    /// (pts, dts, duration) per decode ordinal on the table's clock; a hidden sample sits at the nearest presented time with
+    /// zero duration, so a sample reader and the index tell the same story.
+    times: Vec<(Time, Time, Time)>,
 }
 
 impl FrameTable {
     pub fn new(packets: &[PacketTiming], time_base: TimeBase) -> FrameTable {
-        let origin = packets.iter().map(|p| p.pts).min().unwrap_or(0);
-        let entries = packets
-            .iter()
-            .enumerate()
-            .map(|(ordinal, p)| Entry {
-                pts: time_base.time(p.pts - origin),
+        let shown = || packets.iter().filter(|p| !p.hidden);
+        // Without any presented sample nothing is hidden (a broken edit list must not empty the clip).
+        let any_shown = shown().next().is_some();
+        let hidden_of = |p: &PacketTiming| p.hidden && any_shown;
+        let source: Vec<&PacketTiming> = if any_shown { shown().collect() } else { packets.iter().collect() };
+        let origin = source.iter().map(|p| p.pts).min().unwrap_or(0);
+        let end = source.iter().map(|p| p.pts + p.duration.max(0)).max().unwrap_or(0);
+        let make = |ordinal: usize, p: &PacketTiming| {
+            let hidden = hidden_of(p);
+            let pts = if hidden { p.pts.clamp(origin, end) } else { p.pts };
+            Entry {
+                pts: time_base.time(pts - origin),
                 dts: time_base.time(p.dts - origin),
-                duration: time_base.time(p.duration.max(0)),
+                duration: if hidden { Time::ZERO } else { time_base.time(p.duration.max(0)) },
                 is_sync: p.is_key,
                 decode_ordinal: ordinal as i64,
+            }
+        };
+        let times = packets
+            .iter()
+            .enumerate()
+            .map(|(o, p)| {
+                let e = make(o, p);
+                (e.pts, e.dts, e.duration)
             })
             .collect();
-        let index = SampleIndex::new(entries);
+        // Hidden samples (an edit list cuts them out) are no frames: frame 0 is the first presented picture. They stay
+        // in the decode plan, since a presented frame may reference them and the decoder may never output them (leading
+        // pictures of a cut GOP).
+        let (hidden, shown): (Vec<_>, Vec<_>) =
+            packets.iter().enumerate().map(|(o, p)| (hidden_of(p), make(o, p))).partition(|(h, _)| *h);
+        let index = SampleIndex::with_hidden(
+            shown.into_iter().map(|(_, e)| e).collect(),
+            hidden.into_iter().map(|(_, e)| e).collect(),
+        );
         let mut map = HashMap::new();
         for (i, e) in index.entries().iter().enumerate() {
-            let key = time_base.ticks(e.pts) + origin;
+            // The decoder reports the sample's own pts.
+            let key = packets[e.decode_ordinal as usize].pts;
             if e.duration > Time::ZERO || !map.contains_key(&key) {
                 map.insert(key, i);
             }
         }
-        FrameTable { index, time_base, origin_ticks: origin, presentation_of_ticks: map }
+        FrameTable { index, time_base, origin_ticks: origin, presentation_of_ticks: map, times }
+    }
+
+    /// (pts, dts, duration) of the sample with decode ordinal `ordinal`, as the index tells it.
+    pub fn sample_times(&self, ordinal: usize) -> Option<(Time, Time, Time)> {
+        self.times.get(ordinal).copied()
     }
 
     /// Presentation index of a decoded picture's pts (stream ticks); `None` when no packet had that pts.
@@ -137,7 +171,7 @@ mod tests {
     }
 
     fn pk(pts: i64, dts: i64, duration: i64, is_key: bool) -> PacketTiming {
-        PacketTiming { pts, dts, duration, is_key }
+        PacketTiming { pts, dts, duration, is_key, hidden: false }
     }
 
     #[test]
@@ -189,6 +223,62 @@ mod tests {
         assert_eq!(table.presentation_index(1024), Some(0));
         assert_eq!(table.presentation_index(999), None);
         assert_eq!(table.time_base.ticks(e[3].pts) + table.origin_ticks, 2560);
+    }
+
+    /// An MP4 cut between key frames (`ffmpeg -ss .. -c copy`): the edit list hides the samples before time 0, among them two
+    /// leading B pictures whose references are not in the file, so the decoder never outputs them. The clip starts at the
+    /// first presented sample; the hidden ones stay in the table with zero duration and nobody waits for them.
+    #[test]
+    fn samples_hidden_by_an_edit_list_do_not_start_the_clip() {
+        let h = |pts, dts, key| PacketTiming { pts, dts, duration: 1001, is_key: key, hidden: true };
+        let packets = vec![
+            h(-3003, -6006, true),
+            h(-5005, -5005, false),
+            h(-4004, -4004, false),
+            pk(0, -3003, 1001, false),
+            h(-2002, -2002, false),
+            h(-1001, -1001, false),
+            pk(1001, 0, 1001, false),
+        ];
+        let table = FrameTable::new(&packets, TimeBase::new(1, 30_000).unwrap());
+        assert_eq!(table.origin_ticks, 0);
+        let e = table.index.entries();
+        assert_eq!(table.index.count(), 2);
+        // Hidden samples are no frames: only the two presented pictures are numbered.
+        assert_eq!(e.iter().map(|x| x.decode_ordinal).collect::<Vec<_>>(), vec![3, 6]);
+        assert_eq!(table.index.frame_at(Time::ZERO), Some(0));
+        assert_eq!(table.index.sync_decode_ordinal(0), 0); // frame 0 decodes from the hidden key frame
+        // The decoder reports each sample's own pts; a hidden picture is not looked up.
+        assert_eq!(table.presentation_index(1001), Some(1));
+        assert_eq!(table.presentation_index(-3003), None);
+        // The sample reader agrees: hidden samples sit at the nearest presented time with no duration.
+        let t30 = TimeBase::new(1, 30_000).unwrap();
+        assert_eq!(table.sample_times(0), Some((Time::ZERO, t30.time(-6006), Time::ZERO)));
+        assert_eq!(table.sample_times(6).map(|t| t.2), Some(t30.time(1001)));
+    }
+
+    /// A cut in the middle of the stream: the hidden sample is neither a frame nor a lookup target.
+    #[test]
+    fn a_sample_hidden_mid_stream_is_never_looked_up() {
+        let hid = PacketTiming { pts: 500, dts: 500, duration: 500, is_key: false, hidden: true };
+        let packets = vec![pk(0, 0, 500, true), hid, pk(1001, 1001, 500, false)];
+        let table = FrameTable::new(&packets, TimeBase::new(1, 1000).unwrap());
+        assert_eq!(table.index.count(), 2);
+        for ms in [0, 400, 500, 700, 1000, 1001, 1400] {
+            let i = table.index.frame_at(Time::new(ms, 1000)).expect("a frame");
+            assert!(table.index.entries()[i].duration > Time::ZERO, "{ms} ms");
+        }
+        assert_eq!(table.index.frame_at(Time::new(700, 1000)), Some(0));
+        assert_eq!(table.sample_times(1).map(|t| t.2), Some(Time::ZERO));
+    }
+
+    /// Without an edit list the table is the plain one: every sample a frame, pts shifted to 0, times as the entries.
+    #[test]
+    fn a_stream_without_hidden_samples_keeps_its_table() {
+        let table = FrameTable::new(&reordered_packets(), tb());
+        for (o, p) in reordered_packets().iter().enumerate() {
+            assert_eq!(table.sample_times(o), Some((tb().time(p.pts - 1024), tb().time(p.dts - 1024), tb().time(512))));
+        }
     }
 
     #[test]

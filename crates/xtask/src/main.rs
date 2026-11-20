@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `cargo xtask <check|gate|hook|driver>`: repo automation without shell scripts (macOS and Windows alike).
 
+mod channel;
 mod driver;
 mod hooks;
 mod json;

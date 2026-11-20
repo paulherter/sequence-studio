@@ -47,6 +47,10 @@ impl InputKey {
     /// cut, paste, undo and redo, the cursor keys and the delete keys stay the field's; a field neither takes nor keeps the
     /// rest, so a menu shortcut works whatever field was typed in last.
     pub fn is_menu_chord(self, modifiers: InputModifiers) -> bool {
+        // Option+Space is Quick Apply on the Mac; it types only a no-break space, so a field never keeps it.
+        if self == InputKey::Space && modifiers.contains(InputModifiers::OPTION) {
+            return true;
+        }
         if !(modifiers.contains(InputModifiers::COMMAND) || modifiers.contains(InputModifiers::CONTROL)) {
             return false;
         }
@@ -192,6 +196,13 @@ impl InputEvent {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn option_space_is_a_menu_chord_so_a_field_never_keeps_it() {
+        assert!(InputKey::Space.is_menu_chord(InputModifiers::OPTION));
+        assert!(!InputKey::Space.is_menu_chord(InputModifiers::NONE));
+        assert!(!InputKey::Character('e').is_menu_chord(InputModifiers::OPTION), "Option letters still type");
+    }
 
     #[test]
     fn a_menu_chord_is_a_command_key_that_is_no_text_verb() {

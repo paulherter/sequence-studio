@@ -117,7 +117,7 @@ mod tests {
 
     #[test]
     fn extract_writes_an_m4a_with_the_swift_settings_next_to_the_name() {
-        let dir = crate::test_rig::unique_dir("sq-extract");
+        let dir = crate::test_rig::test_dir("sq-extract");
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("dir");
         let r = media("Take.mov", true);

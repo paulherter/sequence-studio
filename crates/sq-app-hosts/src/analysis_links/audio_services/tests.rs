@@ -99,7 +99,7 @@ fn the_services_answer_loudness_and_waveforms_when_the_app_attached_them() {
 /// A file that is not a package: the host path reports the importer's own message, not "cannot be read in this build".
 #[test]
 fn a_file_that_is_not_a_template_is_refused_with_the_importers_message() {
-    let dir = crate::test_rig::unique_dir("sq-mogrt");
+    let dir = crate::test_rig::test_dir("sq-mogrt");
     std::fs::create_dir_all(&dir).unwrap();
     let path = dir.join("x.mogrt");
     std::fs::write(&path, b"not a zip").unwrap();

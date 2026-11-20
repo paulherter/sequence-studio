@@ -23,7 +23,7 @@ use sq_core_model::{
     CaptionHorizontal, CaptionPosition, CaptionVertical, EffectColor, KaraokeStyle, MotionDefaults, StyleKit,
 };
 use sq_core_time::{Id, IdSource, Time};
-use sq_draw::inspector::inspector_controls::{CheckState, Direction, InspectorDraw, InspectorTokens};
+use sq_draw::inspector::inspector_controls::{CheckState, InspectorDraw, InspectorTokens};
 use sq_draw::inspector::scrub_field_control::{ClickCounter, Event as ScrubEvent, ScrubFieldControl};
 use sq_draw::stone::Touch;
 use sq_draw::theme::{radius, type_size};
@@ -1019,33 +1019,9 @@ impl CaptionStyleTabDraw {
     }
 
     fn draw_header(&self, c: &mut Canvas, s: Section, f: CGRect, top_line: bool) {
-        let (t, is_open) = (self.theme, self.is_open(s));
-        if top_line {
-            c.fill(CGRect::new(0.0, f.min_y(), self.size.width, 1.0), t.separator());
-        }
-        let ink = if self.hover == Some(Control::Header(s)) { t.label() } else { t.label3() };
-        InspectorDraw::chevron(
-            c,
-            CGRect::new(ControlsGrid::HEADER_TOGGLE_X, f.min_y(), 12.0, f.height),
-            if is_open { Direction::Down } else { Direction::Right },
-            ink,
-            8.0,
-        );
-        c.draw_text_in(
-            &SQL10n::string(s.title()),
-            CGRect::new(
-                ControlsGrid::HEADER_LABEL_X,
-                f.min_y(),
-                (self.size.width - ControlsGrid::HEADER_LABEL_X).max(0.0),
-                f.height,
-            ),
-            f64::from(type_size::BODY),
-            t.label(),
-            TextAlign::Left,
-            0.0,
-            0,
-        );
-        c.fill(CGRect::new(0.0, f.max_y() - 1.0, self.size.width, 1.0), t.track_row_line());
+        // The shared inspector group header (r8 `.grp`), not a copy.
+        let hovered = self.hover == Some(Control::Header(s));
+        crate::ec_draw::group_header(c, f, self.size.width, s.title(), self.is_open(s), hovered, "", top_line, &self.theme);
     }
 
     fn draw_segment(
@@ -1099,14 +1075,14 @@ impl CaptionStyleTabDraw {
             }
             Control::Track => {
                 let title = self.track_index.and_then(|i| self.tracks.get(i)).map(|t| t.1.clone()).unwrap_or_default();
-                InspectorDraw::popup(c, &title, r, hovering, false, en, false, ControlsGrid::CONTROL_HEIGHT, None, &t);
+                InspectorDraw::popup(c, &title, r, hovering, false, en, true, ControlsGrid::CONTROL_HEIGHT, None, &t);
             }
             Control::Animation => {
                 let title = self
                     .animation_selected_id
                     .as_deref()
                     .map_or_else(|| SQL10n::string("Saved Animation"), AnimationPresetName::title);
-                InspectorDraw::popup(c, &title, r, hovering, false, en, false, ControlsGrid::CONTROL_HEIGHT, None, &t);
+                InspectorDraw::popup(c, &title, r, hovering, false, en, true, ControlsGrid::CONTROL_HEIGHT, None, &t);
             }
             Control::Karaoke => {
                 let touch = Touch { hovering, pressed, disabled: !en, ..Touch::default() };
@@ -1177,7 +1153,7 @@ impl CaptionStyleTabDraw {
                     hovering,
                     false,
                     true,
-                    false,
+                    true,
                     ControlsGrid::CONTROL_HEIGHT,
                     None,
                     &t,
@@ -1199,7 +1175,7 @@ impl CaptionStyleTabDraw {
                     hovering,
                     false,
                     true,
-                    false,
+                    true,
                     ControlsGrid::CONTROL_HEIGHT,
                     None,
                     &t,

@@ -45,6 +45,14 @@ pub enum FormValue {
 /// The form body of a dialog (Swift `ShellForm`): rows between the header and the footer.
 /// The dialog drives it through this trait; a form that wants a popup list returns it from `take_popup`.
 pub trait DialogForm {
+    /// The tooltip of a cut label or path under `p` (none when everything shows whole).
+    fn tip_at(&self, _p: CGPoint, _tm: &TextMeasure) -> Option<String> {
+        None
+    }
+    /// A wheel turn at `p` over the page list; true when the list scrolled (the page keeps still).
+    fn sidebar_wheel(&mut self, _p: CGPoint, _dy: f64) -> bool {
+        false
+    }
     /// Moves the keyboard focus to the first text field; true when there is one.
     fn focus_first_text_field(&mut self) -> bool;
     /// The focused row.
@@ -255,6 +263,8 @@ pub(crate) mod m {
     /// The start sheet's header (title and note, kit `New Project`): 64 high.
     pub(crate) const START_HEADER_HEIGHT: f64 = 64.0;
     pub(crate) const BUTTON_PADDING: f64 = 14.0;
+    /// The side padding a button keeps in a narrow footer: padding shrinks to this before any title is cut.
+    pub(crate) const BUTTON_PADDING_MIN: f64 = 6.0;
     /// The icon before a button's title and its gap to the text.
     pub(crate) const BUTTON_ICON: f64 = 14.0;
     pub(crate) const BUTTON_ICON_GAP: f64 = 6.0;
@@ -283,10 +293,10 @@ pub(crate) mod m {
     pub(crate) const SCROLL_BAR_WIDTH: f64 = 4.0;
 }
 
-/// The kit dialog card (`dialogs.html` `.d`): 420 wide, 10 radius, no bands. Alerts carry a 40 pt icon slot; a form sits 14
+/// The kit dialog card (`dialogs.html` `.d`, r8 17-dialoge alert): 400 wide, 10 radius, no bands. Alerts carry a 40 pt icon slot; a form sits 14
 /// under the header; the footer is 16 above, 18 under its 24 pt buttons, right aligned 20 from the edge.
 pub(crate) mod k {
-    pub(crate) const WIDTH: f64 = 420.0;
+    pub(crate) const WIDTH: f64 = 400.0;
     pub(crate) const RADIUS: f64 = 10.0;
     pub(crate) const PAD: f64 = 20.0;
     pub(crate) const ALERT_TOP: f64 = 20.0;
@@ -376,8 +386,15 @@ pub struct ShellDialog {
     pub button_hints: BTreeMap<usize, String>,
     /// An icon before a button's title (the Export sheet's primary: upload), white on the accent buttons.
     pub button_icons: BTreeMap<usize, SQIcon>,
+    /// Buttons that are starting something: the spinner (loader-circle, turning) replaces the icon and the label keeps its
+    /// width (r8 "Export: loading state").
+    pub button_busy: BTreeSet<usize>,
+    /// The clock of the last `draw`, for the spinner's turn.
+    spin_now: std::cell::Cell<f64>,
     close_hovered: bool,
     close_pressed: bool,
+    /// The close X has the keyboard focus (Tab reaches it after the buttons; Enter and Space close).
+    close_focused: bool,
     /// Whether button `i` takes clicks and Return (`SQButton.isEnabled`); `None`: all enabled.
     pub button_enabled: Option<Box<dyn Fn(usize) -> bool>>,
     /// An alert that the Mac shows as a sheet (band footer, 56 pt header: the Reconnect Media sheet) without a form or content.
@@ -394,6 +411,8 @@ pub struct ShellDialog {
     pub header_subtitle: Option<String>,
     /// A state icon before the title.
     pub header_icon: Option<Tone>,
+    /// The icon slot of a kit alert when the kind is not a tone (a finished result); see `slot_icon`.
+    pub(crate) slot: Option<SlotIcon>,
     /// Opt in to the kit card for a dialog with a form (`k`); alerts without a form or content always use it.
     pub kit_layout: bool,
     /// The kit welcome body: Pip beside the title, then these steps in one card (no form).
@@ -437,13 +456,11 @@ impl ShellDialog {
     /// art.html `.frm` label columns by dialog title (each dialog has its own: 56 ... 104).
     fn label_column(title: &str) -> Option<f64> {
         Some(match title {
-            "Rename Workspace" | "Save as New Workspace" => 56.0,
+            "Rename Workspace" | "Save as New Workspace" | "Track Volume and Pan" | "Sequence Volume" => 56.0,
             "Marker"
             | "Clip Marker"
             | "Go to Timecode"
             | "New Color Matte"
-            | "Track Volume and Pan"
-            | "Sequence Volume"
             | "Punch In Cuts"
             | "Anonymize" => 64.0,
             "Tone Settings" | "Speed" => 72.0,
@@ -482,8 +499,11 @@ impl ShellDialog {
             button_widths: BTreeMap::new(),
             button_hints: BTreeMap::new(),
             button_icons: BTreeMap::new(),
+            button_busy: BTreeSet::new(),
+            spin_now: std::cell::Cell::new(0.0),
             close_hovered: false,
             close_pressed: false,
+            close_focused: false,
             button_enabled: None,
             sheet_style: false,
             footer_mascot: false,
@@ -493,6 +513,7 @@ impl ShellDialog {
             button_frames: BTreeMap::new(),
             header_subtitle: None,
             header_icon: None,
+            slot: None,
             kit_layout: false,
             kit_steps: Vec::new(),
             steps_layout: kit_steps::StepsLayout::default(),
@@ -878,25 +899,20 @@ impl ShellDialog {
             && (self.kit_layout || !self.sheet_style)
     }
 
-    /// `dialogs.html` `tone()`: the icon slot of an alert, from the given tone or the title.
+    /// The icon slot of an alert, by the dialog's kind and never by words in its title: an explicit `slot` or tone
+    /// (errors, results), else a red button or a Cancel button makes it a warning question, else the app icon.
     pub(crate) fn slot_icon(&self) -> SlotIcon {
+        if let Some(slot) = self.slot {
+            return slot;
+        }
         match self.header_icon {
             Some(Tone::Error) => return SlotIcon::Err,
             Some(Tone::Warning) => return SlotIcon::Warn,
             Some(Tone::Info) => return SlotIcon::Info,
             None => {}
         }
-        let t = self.message_text.to_lowercase();
-        let has = |words: &[&str]| words.iter().any(|w| t.contains(w));
-        if has(&["fail", "could not", "cannot", "error", "missing", "not found"]) {
-            SlotIcon::Err
-        } else if has(&["finished", "done", "saved", "complete"]) {
-            SlotIcon::Ok
-        } else if t.ends_with('?') || has(&["stop", "replace", "discard", "delete", "space"]) {
-            SlotIcon::Warn
-        } else {
-            SlotIcon::App
-        }
+        let asks = self.model.buttons.iter().any(|b| matches!(b.role, SQDialogRole::Destructive | SQDialogRole::Cancel));
+        if asks { SlotIcon::Warn } else { SlotIcon::App }
     }
 
     fn layout_plain(&mut self, window: CGRect, tm: &TextMeasure) {
@@ -1121,7 +1137,7 @@ impl ShellDialog {
             match self.slot_icon() {
                 SlotIcon::App => crate::shell_app_icon::ShellAppIcon::draw(slot, c, false),
                 SlotIcon::Warn => glyph(c, SQIcon::Warning, t.warning()),
-                SlotIcon::Err => glyph(c, SQIcon::CloseCircle, t.err_text()),
+                SlotIcon::Err => glyph(c, SQIcon::AlertCircle, t.err_text()),
                 SlotIcon::Ok => glyph(c, SQIcon::CheckCircle, t.green()),
                 SlotIcon::Info => glyph(c, SQIcon::Info, t.accent()),
             }
@@ -1268,7 +1284,12 @@ impl ShellDialog {
 
     /// The widths of the buttons `order` in `avail` points: a footer still wider than the card (a window too small to widen it) shrinks its widest titles; `draw_buttons` cuts them with an ellipsis.
     fn fitted_button_widths(&self, order: &[usize], avail: f64, tm: &TextMeasure) -> BTreeMap<usize, f64> {
-        let natural: Vec<f64> = order.iter().map(|&i| self.button_width(i, tm)).collect();
+        let room = avail - m::BUTTON_GAP * order.len().saturating_sub(1) as f64;
+        let mut natural: Vec<f64> = order.iter().map(|&i| self.button_width(i, tm)).collect();
+        if natural.iter().sum::<f64>() > room {
+            // Narrow window: shrink the padding first so "Don't Save" keeps its whole title; only then titles are cut.
+            natural = order.iter().map(|&i| self.button_width_padded(i, tm, m::BUTTON_PADDING_MIN)).collect();
+        }
         let fixed: Vec<bool> = order.iter().map(|i| self.button_widths.contains_key(i)).collect();
         let fitted = Self::shrink_widths(&natural, &fixed, avail, m::BUTTON_GAP, 2.0 * m::BUTTON_PADDING + 24.0);
         order.iter().copied().zip(fitted).collect()
@@ -1293,10 +1314,14 @@ impl ShellDialog {
     }
 
     fn button_width(&self, i: usize, tm: &TextMeasure) -> f64 {
+        self.button_width_padded(i, tm, m::BUTTON_PADDING)
+    }
+
+    fn button_width_padded(&self, i: usize, tm: &TextMeasure, pad: f64) -> f64 {
         // The Mac SQButton has no minimum width (`OK` is 46 pt). A set width is a minimum: a longer (German) title grows it.
-        let icon = if self.button_icons.contains_key(&i) { m::BUTTON_ICON + m::BUTTON_ICON_GAP } else { 0.0 };
+        let icon = if self.button_icons.contains_key(&i) || self.button_busy.contains(&i) { m::BUTTON_ICON + m::BUTTON_ICON_GAP } else { 0.0 };
         let measured =
-            tm.width(&self.button_title(i), m::BUTTON_FONT, tm.medium()).ceil() + icon + 2.0 * m::BUTTON_PADDING;
+            tm.width(&self.button_title(i), m::BUTTON_FONT, tm.medium()).ceil() + icon + 2.0 * pad;
         self.button_widths.get(&i).map_or(measured, |w| w.max(measured))
     }
 
@@ -1307,6 +1332,30 @@ impl ShellDialog {
             Some(h) => format!("{title}  {h}"),
             None => title,
         }
+    }
+
+    /// Tab / Shift-Tab over the footer buttons and then the close X (wrapping). From nothing, Tab lands on the main
+    /// button as before and Shift-Tab on the last stop.
+    fn tab_focus(&mut self, back: bool) {
+        let order = self.model.display_order();
+        let x = self.close_frame.width > 0.0;
+        let stops = order.len() + usize::from(x);
+        if stops == 0 {
+            return;
+        }
+        let at = if self.close_focused {
+            Some(order.len())
+        } else {
+            self.focused.and_then(|f| order.iter().position(|&i| i == f))
+        };
+        let to = match (at, back) {
+            (None, false) => self.model.primary_index().and_then(|p| order.iter().position(|&i| i == p)).unwrap_or(0),
+            (None, true) => stops - 1,
+            (Some(a), false) => (a + 1) % stops,
+            (Some(a), true) => (a + stops - 1) % stops,
+        };
+        self.close_focused = x && to == order.len();
+        self.focused = order.get(to).copied().filter(|_| !self.close_focused);
     }
 
     // MARK: Responses
@@ -1325,6 +1374,9 @@ impl ShellDialog {
                 "s" => self.model.save_index().map(|i| SQDialogResponse(i as i64)),
                 _ => None,
             };
+        }
+        if self.close_focused && matches!(key, InputKey::Enter | InputKey::Space) {
+            return self.model.response(false);
         }
         match key {
             InputKey::Escape => {
@@ -1418,6 +1470,7 @@ impl ShellDialog {
         let pt = |x: f32, y: f32| CGPoint::new(f64::from(x / scale), f64::from(y / scale));
         if self.menu.is_open() {
             let _ = self.menu.handle(e, scale, tm);
+            cx.hover.offer_tip(self.menu.tip_at(e, scale, tm).as_deref());
             return;
         }
         if self.close_frame.width > 0.0 {
@@ -1498,15 +1551,14 @@ impl ShellDialog {
                         if form.key(key, modifiers, cx) {
                             if form.focused().is_some() || form.sidebar_focused() {
                                 self.focused = None;
+                                self.close_focused = false;
                                 self.reveal_focused_row(tm);
                             }
                             return;
                         }
                     }
                     if key == tab {
-                        if self.focused.is_none() {
-                            self.focused = self.model.primary_index();
-                        }
+                        self.tab_focus(modifiers.contains(InputModifiers::SHIFT));
                         return;
                     }
                     // A key no row used scrolls a long form (Windows: Down, Up, Page and Home / End did nothing).
@@ -1534,6 +1586,7 @@ impl ShellDialog {
                 }
                 InputEvent::MouseDown { x, y, .. } => {
                     let p = pt(x, y);
+                    self.close_focused = false;
                     if self.button_at(p).is_none() {
                         if self.form_viewport.contains(p)
                             && let Some(form) = self.form.as_mut()
@@ -1563,9 +1616,18 @@ impl ShellDialog {
                     if let Some(form) = self.form.as_mut() {
                         form.mouse_moved(at);
                     }
+                    if let Some(form) = self.form.as_ref() {
+                        cx.hover.offer_tip(form.tip_at(at, tm).as_deref());
+                    }
                 }
-                InputEvent::Scroll { dy, .. } => {
-                    self.scroll_form(-f64::from(dy / scale), tm);
+                InputEvent::Scroll { x, y, dy, .. } => {
+                    let step = -f64::from(dy / scale);
+                    let on_list = self.form.as_mut().is_some_and(|f| f.sidebar_wheel(pt(x, y), step));
+                    if on_list {
+                        self.layout(self.last_window, tm);
+                    } else {
+                        self.scroll_form(step, tm);
+                    }
                     return;
                 }
             }
@@ -1573,6 +1635,7 @@ impl ShellDialog {
         match *e {
             InputEvent::KeyDown { key, modifiers } => {
                 if key == InputKey::Character('\t') {
+                    self.tab_focus(modifiers.contains(InputModifiers::SHIFT));
                     return;
                 }
                 if key == InputKey::Left || key == InputKey::Right {
@@ -1586,6 +1649,7 @@ impl ShellDialog {
                         && let Some(&i) = order.get(n)
                     {
                         self.focused = Some(i);
+                        self.close_focused = false;
                     }
                     return;
                 }
@@ -1594,7 +1658,10 @@ impl ShellDialog {
                 }
             }
             InputEvent::MouseMoved { x, y } => self.hovered = self.button_at(pt(x, y)),
-            InputEvent::MouseDown { x, y, .. } => self.pressed = self.button_at(pt(x, y)),
+            InputEvent::MouseDown { x, y, .. } => {
+                self.pressed = self.button_at(pt(x, y));
+                self.close_focused = false;
+            }
             InputEvent::MouseDragged { x, y, .. } => self.hovered = self.button_at(pt(x, y)),
             InputEvent::MouseUp { x, y } => {
                 if let Some(p) = self.pressed
@@ -1620,6 +1687,7 @@ impl ShellDialog {
 
     /// Draws the scrim, the card and its parts.
     pub fn draw(&mut self, c: &mut Canvas, t: &DrawTheme, window: CGRect, cx: &mut UiCx) {
+        self.spin_now.set(cx.now);
         if self.kit_plain() {
             return self.draw_plain(c, t, window, cx);
         }
@@ -1801,7 +1869,7 @@ impl ShellDialog {
         self.draw_buttons(c, t);
         if self.close_frame.width > 0.0 {
             // The kit's close X (`Form/IconButton/Close`): a hairline X, the 28 pt frame is the pointer target.
-            let state = sq_draw::close_x::CloseXState { hovered: self.close_hovered, pressed: self.close_pressed };
+            let state = sq_draw::close_x::CloseXState { hovered: self.close_hovered, pressed: self.close_pressed, focused: self.close_focused };
             c.close_x(self.close_frame, state, t);
         }
         self.menu.draw(c, t);
@@ -1845,11 +1913,11 @@ impl ShellDialog {
             let over = self.hovered == Some(i) && on;
             // Stone buttons (specs 01-buttons): primary = accent, destructive = red, ghost = quiet, secondary = raised;
             // hover, press (scale .97) and the 2 pt focus ring come from the one stone button.
+            // r8 17-dialoge: a destructive button is raised with red text, never a red fill.
+            let red_text = b.role == SQDialogRole::Destructive;
             let kind = if main {
-                ButtonKind::Accent
-            } else if destructive {
-                ButtonKind::Destructive
-            } else if self.ghost_buttons.contains(&i) {
+                ButtonKind::Primary
+            } else if self.ghost_buttons.contains(&i) && !destructive {
                 ButtonKind::Quiet
             } else {
                 ButtonKind::Raised
@@ -1861,32 +1929,33 @@ impl ShellDialog {
                 focused: self.focused == Some(i),
             };
             let body = c.stone_button(r, kind, touch, t);
-            let mut text = if main || destructive {
-                Color::WHITE
+            let mut text = if main {
+                t.primary_button_text()
+            } else if red_text {
+                t.err_text()
             } else if self.ghost_buttons.contains(&i) {
                 if over || down { t.label() } else { t.label2() }
             } else {
                 t.label()
             };
             if !on {
-                text = if main || destructive { Color::WHITE.with_alpha(0.4) } else { t.label3() };
+                text = if main { t.primary_button_text().with_alpha(0.55) } else { t.label3() };
             }
-            let icon = self.button_icons.get(&i).copied();
+            let busy = self.button_busy.contains(&i);
+            // Busy: the spinner takes the icon's slot (or the lead of a button without one), so the width never changes.
+            let icon = if busy { Some(SQIcon::LoaderCircle) } else { self.button_icons.get(&i).copied() };
             let lead = icon.map_or(0.0, |_| m::BUTTON_ICON + m::BUTTON_ICON_GAP);
             let title =
-                c.ellipsized(&self.button_title(i), m::BUTTON_FONT, medium, r.width - 2.0 * m::BUTTON_PADDING - lead);
+                c.ellipsized(&self.button_title(i), m::BUTTON_FONT, medium, r.width - 2.0 * m::BUTTON_PADDING_MIN - lead);
             let mut label = CGRect::new(body.x, body.y + 1.0, body.width, body.height);
             if let Some(icon) = icon {
                 // Icon and title sit together, centered in the button.
                 let text_w = c.size_of(&title, m::BUTTON_FONT, medium).width.ceil();
                 let left = (body.mid_x() - (lead + text_w) / 2.0).round();
-                c.draw_icon(
-                    icon,
-                    CGPoint::new(left, (body.mid_y() - m::BUTTON_ICON / 2.0).round()),
-                    m::BUTTON_ICON,
-                    text,
-                    None,
-                );
+                let at = CGPoint::new(left, (body.mid_y() - m::BUTTON_ICON / 2.0).round());
+                // One turn per second.
+                let turn = if busy { self.spin_now.get().fract() * 360.0 } else { 0.0 };
+                c.draw_icon_turned(icon, at, m::BUTTON_ICON, text, None, turn);
                 label = CGRect::new(left + lead, label.y, text_w + 2.0, label.height);
             }
             c.draw_text_in(
@@ -2039,8 +2108,8 @@ mod kit_shadow_tests {
         assert_eq!((m::SHADOW_BLUR, m::SHADOW_DY, m::SHADOW_ALPHA), (64.0, 24.0, 0.65));
     }
 
-    /// The Save prompt at 1100x744 (pose `dlg-save`): the kit card is 420 wide (its 1 px border sits outside the box), centered
-    /// in the window, so the left edge is x = 340 and the top is the floored centering of the height. The kit PNG then lines up
+    /// The Save prompt at 1100x744 (pose `dlg-save`): the kit card is 400 wide since r8 (its 1 px border sits outside the box), centered
+    /// in the window, so the left edge is x = 350 and the top is the floored centering of the height. The kit PNG then lines up
     /// at offset (293, 279) for the content box, (293, 280) for its border row. The F3 acceptance run's 3 px offset came from the
     /// compare tool's search, not from the card (see PIXEL-PARITY.md, dlg-save).
     #[test]
@@ -2048,7 +2117,7 @@ mod kit_shadow_tests {
         let mut d = crate::shell_host::ShellHost::save_changes_dialog("P", true);
         d.layout(CGRect::new(0.0, 0.0, 1100.0, 744.0), &sq_draw::TextMeasure::new(None, 1.0));
         let card = d.card;
-        assert_eq!((card.min_x(), card.width), (340.0, k::WIDTH));
+        assert_eq!((card.min_x(), card.width), (350.0, k::WIDTH));
         assert_eq!(card.min_y(), (372.0 - card.height / 2.0).floor());
         assert!((card.mid_y() - 372.0).abs() <= 1.0, "centered within 1 px: {card:?}");
     }
@@ -2104,5 +2173,68 @@ mod escape_tests {
         d.add_button("Delete", Role::Destructive, false);
         d.add_button("Keep", Role::Normal, false);
         assert_eq!(esc(&d), None, "a choice with no way out must be answered");
+    }
+
+    #[test]
+    fn the_alert_icon_follows_the_kind_never_the_title_words() {
+        // A title full of error words, but a plain dialog: the app icon, no red circle.
+        let d = ShellDialog::new("Could not find a failed error", "");
+        assert_eq!(d.slot_icon(), SlotIcon::App);
+        let mut tone = ShellDialog::new("Anything", "");
+        tone.header_icon = Some(Tone::Error);
+        assert_eq!(tone.slot_icon(), SlotIcon::Err);
+        let mut q = ShellDialog::new("Finished", "");
+        q.add_button("Remove", SQDialogRole::Destructive, false);
+        q.add_button("Cancel", SQDialogRole::Cancel, false);
+        assert_eq!(q.slot_icon(), SlotIcon::Warn);
+        let mut ok = ShellDialog::new("Anything", "");
+        ok.slot = Some(SlotIcon::Ok);
+        assert_eq!(ok.slot_icon(), SlotIcon::Ok);
+    }
+
+    #[test]
+    fn a_destructive_button_never_becomes_the_default_cancel_sits_rightmost() {
+        let mut d = ShellDialog::new("Revert?", "");
+        d.add_button("Revert", SQDialogRole::Destructive, false);
+        d.add_button("Cancel", SQDialogRole::Cancel, false);
+        let order: Vec<&str> = d.footer_order().into_iter().map(|i| d.model.buttons[i].title.as_str()).collect();
+        assert_eq!(order, ["Revert", "Cancel"]);
+        assert_eq!(d.model.initial_focus_index(), Some(1));
+    }
+
+    /// WP13b: Tab walks the buttons and then the close X; the X shows the focus ring and Enter closes with Cancel.
+    #[test]
+    fn tab_reaches_the_close_x_and_enter_closes() {
+        let tm = crate::tests::measure();
+        let mut d = ShellHost::save_changes_dialog("T2", true);
+        d.close_button = true;
+        d.layout(CGRect::new(0.0, 0.0, 900.0, 600.0), &tm);
+        assert!(d.close_frame.width > 0.0, "the card has a close X");
+        let stops = d.model.display_order().len() + 1;
+        for _ in 0..stops {
+            d.tab_focus(false);
+            if d.close_focused {
+                break;
+            }
+        }
+        assert!(d.close_focused && d.focused.is_none(), "after the buttons the X has the focus");
+        assert_eq!(d.response(InputKey::Enter, InputModifiers::NONE), d.model.response(false));
+        d.tab_focus(false);
+        assert!(!d.close_focused && d.focused.is_some(), "Tab wraps to the first button");
+        d.tab_focus(true);
+        assert!(d.close_focused, "Shift-Tab goes back to the X");
+    }
+
+    /// WP13b: in a narrow window the buttons give up padding before a title is cut ("Don't Save" stays whole).
+    #[test]
+    fn a_narrow_window_shrinks_button_padding_before_cutting_titles() {
+        let tm = crate::tests::measure();
+        let mut d = ShellHost::save_changes_dialog("T2", true);
+        d.layout(CGRect::new(0.0, 0.0, 300.0, 400.0), &tm);
+        for (&i, f) in &d.button_frames {
+            let text = tm.width(&d.button_title(i), m::BUTTON_FONT, tm.medium()).ceil();
+            assert!(f.width + 0.5 >= text + 2.0 * m::BUTTON_PADDING_MIN, "{} is cut: {} for {text}", d.button_title(i), f.width);
+            assert!(f.min_x() >= d.card.min_x() && f.max_x() <= d.card.max_x(), "button {i} leaves the card");
+        }
     }
 }

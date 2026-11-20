@@ -23,6 +23,7 @@ use sq_timeline_ui::{
 };
 use sq_uikit::controls_grid::{CGPoint, CGRect};
 use sq_uikit::design_tokens::sq_tokens::{metrics, radius, type_size};
+use sq_uikit::sqicon::SQIcon;
 use std::collections::BTreeSet;
 
 /// A run of touching sub-3 pt clips of one color (and one veil) drawn as a single fill.
@@ -54,6 +55,7 @@ impl TimelinePanel {
     }
 
     pub(crate) fn draw_timeline(&mut self, cv: &mut Canvas) {
+        self.cut_tips.borrow_mut().clear();
         let bounds = CGRect::new(0.0, 0.0, self.size.width, self.size.height);
         let origin = TimelineGeometry::CONTENT_ORIGIN_X;
         let ruler = TimelineGeometry::RULER_HEIGHT;
@@ -79,12 +81,63 @@ impl TimelinePanel {
         self.draw_item_lane_move_ghost(cv);
         self.draw_speed_tip(cv);
         self.draw_word_field(cv, content);
+        self.draw_state_overlay(cv, &rows, content);
         cv.restore_gstate();
         self.draw_vertical_scroll_hint(cv);
         self.draw_headers(cv, &rows);
         self.draw_item_lane_headers(cv, &rows);
         self.draw_zoom_bar(cv); // over the header column's foot, like the Mac footer subview
         self.draw_ruler(cv);
+    }
+
+    /// r8 states of the lanes: skeleton clips while the project opens (r8:1121), "Drag Clips Here" while no track holds a
+    /// clip (r8:641, 796). Over everything in the lane area, the playhead included.
+    fn draw_state_overlay(&self, cv: &mut Canvas, rows: &[TrackRow], content: CGRect) {
+        self.empty_import.set(None);
+        if self.loading {
+            cv.fill(content, self.theme.timeline()); // the clips are hidden while the project opens
+            let (bar, r) = (self.theme.pressed().with_alpha(0.65), sq_uikit::redesign_tokens::radius::CLIP as f64);
+            for (i, row) in rows.iter().enumerate() {
+                // shortcut: a fixed pattern of blocks per row, no pulse; upgrade when a real open reports its clips.
+                let blocks: &[(f64, f64)] = match i % 4 {
+                    0 => &[(0.0, 0.34), (0.36, 0.26)],
+                    1 => &[(0.0, 0.2)],
+                    2 => &[(0.0, 0.5), (0.52, 0.2)],
+                    _ => &[(0.0, 0.9)],
+                };
+                for (x, w) in blocks {
+                    let b = CGRect::new(
+                        content.min_x() + x * content.width,
+                        row.y + 2.0,
+                        w * content.width,
+                        (row.height - 4.0).max(0.0),
+                    );
+                    cv.fill_rounded(b, r, bar);
+                }
+            }
+            return;
+        }
+        if !self.timeline.tracks.iter().all(|t| t.clips().is_empty()) {
+            return;
+        }
+        let t = self.theme;
+        cv.fill(content, t.lane());
+        let text = (
+            sq_uikit::localization::SQL10n::string("Drag Clips Here"),
+            sq_uikit::localization::SQL10n::string(
+                "Drop media from the Library or Project on a track, or import new files.",
+            ),
+            sq_uikit::localization::SQL10n::string("Import\u{2026}"),
+        );
+        let pane = sq_draw::empty_pane::EmptyPane {
+            icon: SQIcon::Import,
+            title: &text.0,
+            hint: &text.1,
+            button: Some(&text.2),
+        };
+        let hover = self.hover_point;
+        let b = sq_draw::empty_pane::draw_empty_pane(cv, &t, content, &pane, |b| hover.is_some_and(|h| b.contains(h)));
+        self.empty_import.set(b);
     }
 
     /// The thumb of the lanes' vertical scroll hint in panel points: `None` while everything fits. It sits at the right
@@ -187,6 +240,9 @@ impl TimelinePanel {
             }
             let lane_color = if Self::is_alt_lane(row_index, rows) { self.theme.lane() } else { self.theme.timeline() };
             cv.fill(lane_rect, lane_color);
+            if track.is_locked {
+                self.draw_lock_hatch(cv, lane_rect);
+            }
             if let Some(m) = &main_row
                 && row.track == m.track
             {
@@ -303,6 +359,25 @@ impl TimelinePanel {
         }
     }
 
+    /// A locked lane's hatch (draft `.lane.locked`): 135 degree hairlines every 7 pt in `border-row`.
+    fn draw_lock_hatch(&self, cv: &mut Canvas, lane: CGRect) {
+        use sq_uikit::redesign_tokens::color;
+        const STEP: f64 = 7.0;
+        let ink = self.theme.token(color::ROW_LINE);
+        cv.save_gstate();
+        cv.clip_to(lane);
+        let mut x = lane.min_x() - lane.height + (STEP - lane.min_x().rem_euclid(STEP)) % STEP;
+        while x < lane.max_x() {
+            cv.stroke_polyline(
+                &[CGPoint { x, y: lane.max_y() }, CGPoint { x: x + lane.height, y: lane.min_y() }],
+                1.0,
+                ink,
+            );
+            x += STEP;
+        }
+        cv.restore_gstate();
+    }
+
     pub(crate) fn refresh_draw_caches(&mut self) {
         self.content_revision = self.content_revision.wrapping_add(1);
         self.transition_layer_tracks = self
@@ -352,6 +427,65 @@ impl TimelinePanel {
 
     /// `ClipDrawing.draw`: body, trim hints, edge, selection ring, thumbnail well and name.
     fn draw_clip(&self, cv: &mut Canvas, c: &Clip, rect: CGRect, visible: CGRect, selected: bool, track: &Track) {
+        self.draw_clip_content(cv, c, rect, visible, selected, track);
+        self.draw_clip_pressed_veil(cv, rect, visible);
+        self.draw_clip_ring(cv, rect, visible, selected);
+    }
+
+    /// The pressed clip darkens (`brightness(.88)`, draft `.clip.is-down`): a black veil of 12 % under the ring. The
+    /// pressed clip is the one under the pointer while a clip gesture runs.
+    fn draw_clip_pressed_veil(&self, cv: &mut Canvas, rect: CGRect, visible: CGRect) {
+        use sq_uikit::redesign_tokens::color;
+        if !matches!(self.gesture, Some(Gesture::Clips)) {
+            return;
+        }
+        let body = rect.inset(0.0, TimelineSkin::CLIP_INSET);
+        let x0 = body.min_x().max(visible.min_x() - 8.0);
+        let x1 = body.max_x().min(visible.max_x() + 8.0);
+        let drawn = CGRect::new(x0, body.min_y(), (x1 - x0).max(0.0), body.height);
+        if body.width < 3.0 || !self.hover_point.is_some_and(|p| drawn.has(p)) {
+            return;
+        }
+        cv.fill_rounded(drawn, Self::CLIP_RADIUS.min(body.height / 2.0), self.theme.token(color::CLIP_PRESSED));
+    }
+
+    /// The ring above everything in the clip (r8:433-436): `clip-ring`, `clip-hover` under the pointer, and selected =
+    /// `inset 3px clip-selection` (white) under `inset 1px clip-selection-edge`.
+    fn draw_clip_ring(&self, cv: &mut Canvas, rect: CGRect, visible: CGRect, selected: bool) {
+        use sq_uikit::redesign_tokens::color;
+        let body = rect.inset(0.0, TimelineSkin::CLIP_INSET);
+        if body.width < 3.0 {
+            return;
+        }
+        let x0 = body.min_x().max(visible.min_x() - 8.0);
+        let x1 = body.max_x().min(visible.max_x() + 8.0);
+        let drawn = CGRect::new(x0, body.min_y(), (x1 - x0).max(0.0), body.height);
+        let radius = Self::CLIP_RADIUS.min(body.height / 2.0);
+        if selected {
+            let w = 3.0;
+            cv.stroke_rounded(
+                drawn.inset(w / 2.0, w / 2.0),
+                (radius - w / 2.0).max(0.0),
+                w,
+                self.theme.token(color::USE),
+            );
+            cv.stroke_rounded(drawn.inset(0.5, 0.5), radius, 1.0, self.theme.token(color::CLIP_SELECTION_EDGE));
+            return;
+        }
+        let hover = self.gesture.is_none() && self.hover_point.is_some_and(|p| drawn.has(p));
+        let ring = if hover { color::CLIP_HOVER } else { color::CLIP_RING };
+        cv.stroke_rounded(drawn.inset(0.5, 0.5), radius, 1.0, self.theme.token(ring));
+    }
+
+    fn draw_clip_content(
+        &self,
+        cv: &mut Canvas,
+        c: &Clip,
+        rect: CGRect,
+        visible: CGRect,
+        selected: bool,
+        track: &Track,
+    ) {
         let skin = self.skin();
         let body = rect.inset(0.0, TimelineSkin::CLIP_INSET);
         let offline = self.is_offline(c);
@@ -369,7 +503,14 @@ impl TimelinePanel {
         // The band (name strip) carries the clip color, the body is one step darker; selected lifts the band 12 %.
         let band_h = ClipBodyMetrics::NAME_STRIP_HEIGHT.min(drawn.height);
         let band_color = if selected && !offline { fill_color.lifted(0.12) } else { fill_color };
-        if offline || drawn.height < ClipBodyMetrics::BODY_MIN_HEIGHT {
+        if offline {
+            // r8:645-647: the clip is `surface-raised`, only the name band is `state-error`.
+            cv.fill_rounded(drawn, radius, fill_color);
+            cv.save_gstate();
+            cv.clip_to(CGRect::new(drawn.min_x(), drawn.min_y(), drawn.width, band_h));
+            cv.fill_rounded(drawn, radius, self.theme.token(sq_uikit::redesign_tokens::color::RED));
+            cv.restore_gstate();
+        } else if drawn.height < ClipBodyMetrics::BODY_MIN_HEIGHT {
             cv.fill_rounded(drawn, radius, band_color);
         } else {
             cv.fill_rounded(drawn, radius, self.theme.clip_body(self.labels.label(c)));
@@ -378,29 +519,8 @@ impl TimelinePanel {
             cv.fill_rounded(drawn, radius, band_color);
             cv.restore_gstate();
         }
-        if offline {
-            cv.fill(
-                CGRect::new(drawn.min_x() + radius, body.min_y(), (drawn.width - 2.0 * radius).max(0.0), 2.0),
-                skin.red(),
-            );
-        }
         if selected {
             self.draw_trim_hints(cv, body, drawn);
-        }
-        // 1 px inner ring (`color/clip_ring`), then the selection: 1.5 px white inside.
-        cv.stroke_rounded(
-            drawn.inset(0.5, 0.5),
-            radius,
-            1.0,
-            self.theme.token(sq_uikit::redesign_tokens::color::CLIP_RING),
-        );
-        if selected {
-            let w = f64::from(sq_uikit::redesign_tokens::size::FOCUS_FRAME);
-            cv.stroke_rounded(drawn.inset(w / 2.0, w / 2.0), (radius - w / 2.0).max(0.0), w, Color::WHITE);
-            // Light theme (spec 13): a 1 px outline in the ink color around the white one, so it reads on pale lanes.
-            if !self.theme.palette.is_dark() {
-                cv.stroke_rounded(drawn.inset(-0.5, -0.5), radius + 0.5, 1.0, self.theme.label());
-            }
         }
         let flat = c.generator.is_some() || c.sequence.is_some() || offline;
         let tall = !flat && drawn.height >= ClipBodyMetrics::BODY_MIN_HEIGHT;
@@ -418,27 +538,36 @@ impl TimelinePanel {
         };
         self.draw_item_lane_chevron(cv, c, rect, visible);
         let lane_reserve = if self.item_lanes_offered(c) { ItemLaneMetrics::chevron_reserve(rect.width) } else { 0.0 };
-        let text_left = (body.min_x() + thumb_w).max(visible.min_x()) + 6.0 + lane_reserve;
-        let text_width = body.max_x().min(visible.max_x()) - text_left - 4.0 - fx_reserve - thumbs.1;
+        // Selecting never moves the name: the white ring is an overlay, the band keeps its place.
+        let band_in = 0.0;
+        let text_left = (body.min_x() + thumb_w).max(visible.min_x()) + 6.0 + lane_reserve + band_in;
+        let text_width = body.max_x().min(visible.max_x()) - text_left - 4.0 - fx_reserve - thumbs.1 - band_in;
         if text_width < 14.0 {
             return;
         }
-        let name =
-            if offline { "Media offline".to_string() } else { format!("{}{}", c.name, SpeedLabel::name_suffix(c)) };
-        let color = if offline { skin.offline_text() } else { TimelineSkin::text_on(fill_color) };
+        // An offline clip keeps its file name next to the notice.
+        let full = format!("{}{}", c.name, SpeedLabel::name_suffix(c));
+        let name = if offline { format!("Media offline \u{2013} {full}") } else { full };
+        let color = if offline { self.theme.on_clip() } else { TimelineSkin::text_on(fill_color) };
         let size = f64::from(sq_uikit::redesign_tokens::type_size::SMALL);
         let medium = cv.medium();
         let line_h = cv.size_of("Ag", size, medium).height;
         // The name is centered in the 14 pt band.
-        let mid = body.min_y() + band_h / 2.0;
+        let band_top = body.min_y() + band_in;
+        let mid = band_top + band_h / 2.0;
         cv.save_gstate();
         cv.clip_to(CGRect::new(
             text_left,
-            body.min_y(),
+            band_top,
             text_width,
-            body.height.min(f64::from(metrics::CLIP_NAME_BAND) + 6.0),
+            (body.height - band_in).min(f64::from(metrics::CLIP_NAME_BAND) + 6.0),
         ));
-        let shown = cv.ellipsized(&name, size, medium, text_width);
+        let cut = sq_draw::middle_fit::truncate_name(&name, |t| cv.size_of(t, size, medium).width <= text_width);
+        if let Some(full) = cut.full {
+            let at = CGRect::new(text_left, band_top, text_width, band_h);
+            self.cut_tips.borrow_mut().push((at, full));
+        }
+        let shown = cut.shown;
         cv.draw_text(
             &shown,
             CGPoint { x: text_left, y: (mid - line_h / 2.0).round() },
@@ -733,5 +862,144 @@ impl TimelinePanel {
             cv.fill(m, skin.accent_tint());
             cv.stroke_rounded(m.inset(0.5, 0.5), 0.0, 1.0, self.theme.accent());
         }
+    }
+}
+
+#[cfg(test)]
+mod hover_ring_tests {
+    use crate::panel::TimelinePanel;
+    use sq_draw::{Canvas, DrawTheme};
+    use sq_uikit::controls_grid::{CGPoint, CGRect};
+
+    /// The ring's colors drawn for one clip with the pointer at `at`.
+    fn ring_colors(at: Option<CGPoint>, selected: bool) -> Vec<sq_draw::Color> {
+        let mut p = TimelinePanel::new(DrawTheme::default());
+        p.hover_point = at;
+        let mut cv = Canvas::with_size(400.0, 100.0, None, 1.0);
+        let rect = CGRect::new(10.0, 10.0, 200.0, 60.0);
+        p.draw_clip_ring(&mut cv, rect, CGRect::new(0.0, 0.0, 400.0, 100.0), selected);
+        cv.list.quads().iter().map(|q| q.color).collect()
+    }
+
+    #[test]
+    fn a_clip_under_the_pointer_draws_the_clip_hover_ring() {
+        use sq_uikit::redesign_tokens::color;
+        let t = DrawTheme::default();
+        let (hover, rest) = (t.token(color::CLIP_HOVER), t.token(color::CLIP_RING));
+        let under = ring_colors(Some(CGPoint::new(60.0, 40.0)), false);
+        assert!(!under.is_empty() && under.iter().all(|c| *c == hover), "hover ring expected: {under:?}");
+        let away = ring_colors(Some(CGPoint::new(300.0, 40.0)), false);
+        assert!(!away.is_empty() && away.iter().all(|c| *c == rest), "rest ring expected: {away:?}");
+        assert_ne!(hover, rest);
+    }
+}
+
+/// Selecting a clip changes only the ring; hovering the ruler or a track head highlights nothing.
+#[cfg(test)]
+mod select_hover_tests {
+    use crate::panel::TimelinePanel;
+    use crate::tests::{clip, track, uid};
+    use sq_core_model::TrackKind;
+    use sq_draw::{Canvas, DrawTheme, GlyphAtlas, text_log};
+    use sq_uikit::controls_grid::{CGPoint, CGRect};
+
+    fn atlas() -> Option<GlyphAtlas> {
+        let fonts = std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("../../Packages/SQText/Sources/SQText/Resources/Fonts");
+        GlyphAtlas::inter(&fonts)
+    }
+
+    /// The text boxes a clip's content draws.
+    fn clip_text(selected: bool, kind: TrackKind, atlas: &GlyphAtlas) -> Vec<(String, (f32, f32, f32, f32))> {
+        let p = TimelinePanel::new(DrawTheme::default());
+        let mut c = clip(1, 0, 100, kind);
+        c.name = "C2176.mp4".into();
+        let tr = track(2, kind, vec![c.clone()]);
+        let mut cv = Canvas::with_size(600.0, 120.0, Some(atlas), 1.0);
+        let rect = CGRect::new(10.0, 10.0, 400.0, 60.0);
+        text_log::start();
+        p.draw_clip_content(&mut cv, &c, rect, CGRect::new(0.0, 0.0, 600.0, 120.0), selected, &tr);
+        text_log::finish().into_iter().map(|r| (r.asked, r.rect)).collect()
+    }
+
+    #[test]
+    fn a_selected_clip_keeps_its_name_where_it_was() {
+        let Some(atlas) = atlas() else { return };
+        for kind in [TrackKind::Video, TrackKind::Audio] {
+            let (off, on) = (clip_text(false, kind, &atlas), clip_text(true, kind, &atlas));
+            assert!(off.iter().any(|(t, _)| t.contains("C2176")), "the name is drawn: {off:?}");
+            assert_eq!(off, on, "selecting moved the text of a {kind:?} clip");
+        }
+    }
+
+    #[test]
+    fn hovering_a_track_head_away_from_its_buttons_draws_no_highlight() {
+        let tr = track(2, TrackKind::Video, Vec::new());
+        let draw = |hover: bool| {
+            let mut p = TimelinePanel::new(DrawTheme::default());
+            if hover {
+                p.hover_track = Some(tr.id);
+                p.hover_point = Some(CGPoint::new(80.0, 5.0));
+            }
+            let mut cv = Canvas::with_size(300.0, 80.0, None, 1.0);
+            p.draw_header(&mut cv, &tr, "V1", 140.0, 40.0, false);
+            cv.list.quads().iter().map(|q| (q.rect, q.color)).collect::<Vec<_>>()
+        };
+        assert_eq!(draw(false), draw(true));
+        let _ = uid(0);
+    }
+
+    #[test]
+    fn hovering_the_ruler_draws_no_highlight() {
+        let draw = |hover: bool| {
+            let mut p = TimelinePanel::new(DrawTheme::default());
+            p.hover_point = hover.then(|| CGPoint::new(300.0, 5.0));
+            let mut cv = Canvas::with_size(800.0, 60.0, None, 1.0);
+            p.draw_ruler(&mut cv);
+            cv.list.quads().iter().map(|q| (q.rect, q.color)).collect::<Vec<_>>()
+        };
+        assert_eq!(draw(false), draw(true));
+    }
+
+    /// Proof render (`cargo test -p sq-draw-timeline select_proof -- --ignored`, `SQ_PROOF_DIR`): the same clip unselected
+    /// and selected as PPM files, and the pixel diff of the name region inside the ring.
+    #[test]
+    #[ignore = "writes proof images"]
+    fn select_proof_renders() {
+        use sq_draw::{SoftwareRenderer, Sources};
+        let Some(atlas) = atlas() else { panic!("Inter not found") };
+        let dir = std::path::PathBuf::from(std::env::var("SQ_PROOF_DIR").expect("SQ_PROOF_DIR"));
+        std::fs::create_dir_all(&dir).unwrap();
+        let scale = 2.0_f32;
+        let render = |selected: bool| {
+            let p = TimelinePanel::new(DrawTheme::default());
+            let mut c = clip(1, 0, 100, TrackKind::Video);
+            c.name = "C2176.mp4".into();
+            let tr = track(2, TrackKind::Video, vec![c.clone()]);
+            let mut cv = Canvas::with_size(420.0, 80.0, Some(&atlas), scale);
+            let (rect, vis) = (CGRect::new(10.0, 6.0, 400.0, 64.0), CGRect::new(0.0, 0.0, 420.0, 80.0));
+            cv.fill(vis, p.theme.timeline());
+            p.draw_clip(&mut cv, &c, rect, vis, selected, &tr);
+            let src = Sources { atlas: Some(&atlas), video: None, images: &[] };
+            SoftwareRenderer::render(&cv.list, 840, 160, p.theme.timeline(), &src)
+        };
+        let (off, on) = (render(false), render(true));
+        for (name, img) in [("clip-unselected", &off), ("clip-selected", &on)] {
+            let mut ppm = format!("P6\n{} {}\n255\n", img.width, img.height).into_bytes();
+            ppm.extend(img.pixels.chunks(4).flat_map(|p| [p[0], p[1], p[2]]));
+            std::fs::write(dir.join(format!("{name}.ppm")), ppm).unwrap();
+        }
+        // The name region inside the ring (3 pt = 6 px in from the clip edge), in pixels.
+        let (x0, x1, y0, y1) = (((10.0 + 8.0) * scale) as usize, ((410.0 - 8.0) * scale) as usize, ((6.0 + 4.0) * scale) as usize, ((6.0 + 20.0) * scale) as usize);
+        let mut differ = 0;
+        for y in y0..y1 {
+            for x in x0..x1 {
+                let i = (y * off.width + x) * 4;
+                if off.pixels[i..i + 3] != on.pixels[i..i + 3] {
+                    differ += 1;
+                }
+            }
+        }
+        std::fs::write(dir.join("text-region-diff.txt"), format!("region x {x0}..{x1} y {y0}..{y1} (px): {differ} differing pixels of {}\n", (x1 - x0) * (y1 - y0))).unwrap();
     }
 }

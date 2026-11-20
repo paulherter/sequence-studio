@@ -16,7 +16,7 @@ const TICK: Duration = Duration::from_millis(16);
 
 /// The real app root over `session`, on a clock the test moves.
 fn window(session: EditorSession) -> (Headless, Arc<FakeClock>) {
-    let dir = crate::test_rig::unique_dir("sq-idle-window");
+    let dir = crate::test_rig::test_dir("sq-idle-window");
     std::fs::create_dir_all(&dir).expect("dir");
     let clock = Arc::new(FakeClock::new());
     let h = Headless::new(session, AppDeps::headless(Arc::clone(&clock) as _), 1280, 800);

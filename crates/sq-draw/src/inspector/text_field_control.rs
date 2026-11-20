@@ -264,13 +264,32 @@ impl InspectorDraw {
         height: f64,
         t: &DrawTheme,
     ) {
+        Self::button_kind(c, title, rect, hovering, pressed, enabled, if accent { ButtonKind::Accent } else { ButtonKind::Raised }, height, t);
+    }
+
+    /// `button` with an explicit stone kind (`OnViewer` for a button on the black viewer).
+    #[allow(clippy::too_many_arguments)]
+    pub fn button_kind(
+        c: &mut Canvas,
+        title: &str,
+        rect: CGRect,
+        hovering: bool,
+        pressed: bool,
+        enabled: bool,
+        kind: ButtonKind,
+        height: f64,
+        t: &DrawTheme,
+    ) {
         let h = height.min(rect.height);
         let boxed = CGRect::new(rect.min_x(), rect.min_y() + ((rect.height - h) / 2.0).round(), rect.width, h);
         let a = if enabled { 1.0 } else { InspectorTokens::DISABLED_ALPHA };
-        let kind = if accent { ButtonKind::Accent } else { ButtonKind::Raised };
         let touch = Touch { hovering, pressed, disabled: !enabled, focused: false };
         let body = c.stone_button(boxed, kind, touch, t);
-        let text = if accent { t.token(tk::ON_ACCENT) } else { t.label() };
+        let text = match kind {
+            ButtonKind::Accent => t.token(tk::ON_ACCENT),
+            ButtonKind::OnViewer => t.token(tk::VIEWER_BUTTON_TEXT),
+            _ => t.label(),
+        };
         c.draw_text_in(
             title,
             body.inset_by(4.0, 0.0),

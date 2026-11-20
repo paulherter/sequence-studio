@@ -600,17 +600,12 @@ impl ColorStripToolsDraw {
         }
         // The chevron follows the label (the board's dropdowns hug their text); a long name is cut before it.
         let room = (r.max_x() - 8.0 - 12.0 - 4.0 - x).max(0.0);
+        let label = c.truncated_name(&label, Self::FONT_SIZE, 0, room).shown;
         let tw = (c.size_of(&label, Self::FONT_SIZE, 0).width.ceil() + 1.0).min(room);
-        c.draw_text_in(
-            &label,
-            CGRect::new(x, r.min_y(), tw, r.height),
-            Self::FONT_SIZE,
-            t.label(),
-            TextAlign::Left,
-            0.0,
-            0,
-        );
-        c.draw_icon(SQIcon::ChevronDown, CGPoint::new(x + tw + 2.0, r.mid_y() - 6.0), 12.0, t.label3(), None);
+        // The r8 flat drop-down (`.dd`): text-secondary, text-primary while hovered or open, a 12 pt chevron in the same ink.
+        let ink = if hot { t.label() } else { t.label2() };
+        c.draw_text_in(&label, CGRect::new(x, r.min_y(), tw, r.height), Self::FONT_SIZE, ink, TextAlign::Left, 0.0, 0);
+        c.draw_icon(SQIcon::ChevronDown, CGPoint::new(x + tw + 2.0, r.mid_y() - 6.0), 12.0, ink, None);
     }
 
     pub fn mouse_moved(&mut self, p: Option<StripPanel>, strip: Option<CGRect>, q: CGPoint) {

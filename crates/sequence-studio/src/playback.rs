@@ -487,6 +487,10 @@ impl SessionEngine {
 }
 
 impl ProgramEngine for SessionEngine {
+    fn play_counts(&self) -> sq_editor_session::PlayCounts {
+        let s = self.handle.status();
+        sq_editor_session::PlayCounts { shown: s.shown_frames, skipped: s.skipped_frames, late: s.late_frames, run: s.run, clock_running: s.clock_running }
+    }
     fn set_timeline(&mut self, timeline: &Timeline, sequences: &BTreeMap<Id, Timeline>) {
         let refs = media_refs(self.media.as_ref(), std::iter::once(timeline).chain(sequences.values()));
         self.send_media(refs);

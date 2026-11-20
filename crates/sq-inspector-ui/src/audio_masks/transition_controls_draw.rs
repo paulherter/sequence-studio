@@ -113,6 +113,8 @@ pub struct TransitionControlsDraw {
     /// A picker session is open and has sent its first color.
     pick_open: bool,
     hover: Option<Control>,
+    /// The ease chip under the pointer (r8: chips lift on hover), set with `hover`.
+    hover_chip: Option<usize>,
     pressed: Option<Control>,
     counter: ClickCounter,
     clicks: ClickCounter,
@@ -183,6 +185,7 @@ impl TransitionControlsDraw {
             focused: None,
             pick_open: false,
             hover: None,
+            hover_chip: None,
             pressed: None,
             counter: ClickCounter::new(),
             clicks: ClickCounter::new(),
@@ -809,7 +812,7 @@ impl TransitionControlsDraw {
         let tr = &s.transition;
         let ch = Self::CONTROL_HEIGHT;
         let popup = |c: &mut Canvas, title: &str, enabled: bool| {
-            InspectorDraw::popup(c, &SQL10n::string(title), f, hov, false, enabled, false, ch, None, &t);
+            InspectorDraw::popup(c, &SQL10n::string(title), f, hov, false, enabled, true, ch, None, &t);
         };
         let well = |c: &mut Canvas, rgb: [u8; 3]| {
             let col = Color::new(f32::from(rgb[0]) / 255.0, f32::from(rgb[1]) / 255.0, f32::from(rgb[2]) / 255.0, 1.0);
@@ -961,6 +964,12 @@ impl TransitionControlsDraw {
         self.curve.mouse_moved(on_curve.map(|p| self.curve_local(p)));
         if self.pressed.is_none() {
             self.hover = p.and_then(|p| self.control_at(p));
+            self.hover_chip = match (&self.hover, p) {
+                (Some(Control::Row(Row::Easing)), Some(p)) => {
+                    Some(self.chip_at(p.x, self.frame(&Control::Row(Row::Easing))))
+                }
+                _ => None,
+            };
         }
     }
 
@@ -1399,7 +1408,8 @@ impl TransitionControlsDraw {
                 None => current_name.is_none(),
             };
             let r = self.chip_rect(f, i);
-            c.stone_chip(r, on, false, Touch::default(), &t);
+            let touch = Touch { hovering: self.hover_chip == Some(i), ..Touch::default() };
+            c.stone_chip(r, on, false, touch, &t);
             // The mini curve: the curve itself (Custom shows the one that is set).
             let src = curve.clone().unwrap_or_else(|| shown.clone());
             // Kit: the mini curve and the name side by side; a chip too narrow for the name keeps the curve alone.
@@ -1428,7 +1438,8 @@ impl TransitionControlsDraw {
         }
         // The ☆ My Curves chip: the saved curves, as a menu.
         let r = self.chip_rect(f, Self::CHIP_COUNT - 1);
-        c.stone_chip(r, false, true, Touch::default(), &t);
+        let touch = Touch { hovering: self.hover_chip == Some(Self::CHIP_COUNT - 1), ..Touch::default() };
+        c.stone_chip(r, false, true, touch, &t);
         let star = CGRect::new(r.min_x() + 6.0, r.min_y(), 14.0, r.height);
         c.draw_icon(SQIcon::Star, CGPoint::new(star.min_x(), star.mid_y() - 7.0), 14.0, t.label3(), None);
         if self.chips_labeled {
@@ -1581,6 +1592,11 @@ impl TransitionControlsDraw {
             Control::Row(Row::StingerClip) => "Stinger Clip",
             Control::Row(Row::StingerCut) | Control::Track(Row::StingerCut) => "Stinger Cut Point",
             Control::Row(Row::Duration) => "Transition duration",
+            // A chip below the width for labels shows the curve alone: the tip names it (FUNDE).
+            Control::Row(Row::Easing) if !self.chips_labeled => {
+                let chip = self.chip_at(p.x, self.frame(&Control::Row(Row::Easing)));
+                if chip == Self::CHIP_COUNT - 1 { "My Curves" } else { Self::chip_names()[chip] }
+            }
             _ => return None,
         };
         Some(SQL10n::string(text))
@@ -1913,6 +1929,21 @@ mod tests {
         assert!(p.curve_visible(), "Custom shows its curve inline");
         let f = p.curve_frame();
         assert!(f.height > 0.0 && f.min_y() > p.frame(&Control::Row(Row::Easing)).max_y() - 1.0);
+    }
+
+    #[test]
+    fn an_ease_chip_lifts_on_hover_and_an_icon_only_chip_has_a_tip() {
+        let (ses, id) = make_session(TransitionKind::SoftWipe);
+        let mut p = panel(&ses, id);
+        let f = p.frame(&Control::Row(Row::Easing));
+        let x = p.chip_rect(f, 2).mid_x();
+        p.mouse_moved(Some(pt(x, f.mid_y())));
+        assert_eq!(p.hover_chip, Some(2));
+        p.mouse_moved(None);
+        assert_eq!(p.hover_chip, None);
+        p.chips_labeled = false;
+        p.mouse_moved(Some(pt(x, f.mid_y())));
+        assert_eq!(p.help(pt(x, f.mid_y())).as_deref(), Some("Ease Out"));
     }
 
     #[test]

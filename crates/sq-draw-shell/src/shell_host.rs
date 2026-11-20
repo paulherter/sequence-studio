@@ -490,6 +490,9 @@ pub struct ShellHost {
     /// Keyboard Shortcuts while it is up (`ShellShortcuts.swift`).
     pub(crate) shortcuts: Option<crate::shell_shortcuts::ShellShortcutsEditor>,
     pub(crate) keymap_change: Option<CommandMap>,
+    /// The Shortcuts page handed over to another Settings page: the Settings card is the same window, so it appears at once,
+    /// without the open motion (`draw_overlays` clears it once the card is drawn).
+    pub(crate) settings_card_instant: bool,
     /// The dockable panel layout (Window menu rows, panel commands, floating windows).
     pub dock: ShellDock,
     dialog: Option<ShellDialog>,
@@ -568,6 +571,7 @@ impl ShellHost {
             is_program_full_screen: false,
             full_screen_started: 0.0,
             mac_keys: Platform::current().command_is_cmd_key(),
+            settings_card_instant: false,
             platform: Platform::current(),
             about_supporters: Vec::new(),
             start: None,
@@ -1121,6 +1125,7 @@ impl ShellHost {
                 _ => bar.handle(e, scale, &cx.measure, &mut refresh),
             }
         };
+        cx.ui.hover.offer_tip(bar.controller.tip_at(e, scale, &cx.measure).as_deref());
         self.menu_bar = bar;
         self.perform_queued(cx);
         // A row picked in a menu the start screen opened queues a start action; the menu took the event, so
@@ -1186,7 +1191,11 @@ impl ShellHost {
         let window = self.window();
         if let Some(d) = self.dialog.as_mut() {
             let card = d.card();
-            c.open_motion(card, 0, true, |c| d.draw(c, t, window, cx));
+            if std::mem::take(&mut self.settings_card_instant) && d.message_text == "Settings" {
+                d.draw(c, t, window, cx);
+            } else {
+                c.open_motion(card, 0, true, |c| d.draw(c, t, window, cx));
+            }
             if d.footer_mascot && d.mascot_frame().width > 0.0 {
                 ShellMascot::draw(SQMascotAnim::Wink, d.mascot_frame(), c);
             }
@@ -1230,6 +1239,9 @@ impl ShellHost {
         d.completion = Some(Box::new(move |r| {
             answer.answer(r);
         }));
+        if d.message_text == "Settings" {
+            self.shortcuts = None; // swapped with the card in this step
+        }
         self.dialog = Some(d);
         self.layout_dirty = true;
         ask

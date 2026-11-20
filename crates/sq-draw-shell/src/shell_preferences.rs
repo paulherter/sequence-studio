@@ -33,7 +33,7 @@ use sq_draw::monitor::audio_meter::MeterStyle;
 use sq_editor_session::{
     AppSettings, AudioOutputChoices, AudioOutputDevice, AudioPreferences, AudioRoleDefaults, CardImportSettings,
     DuckTimingChoices, EffectDefaultsEntry, EffectDefaultsGroup, EffectDefaultsSettings, MediaSettings, MonitorQuality,
-    StorageFolderChoice, TransitionDefaults, UpdateCheck,
+    ReleaseChannel, StorageFolderChoice, TransitionDefaults, UpdateCheck,
 };
 use sq_library::library_folder_store::SettingsStore;
 use sq_os::Platform;
@@ -129,6 +129,8 @@ enum PrefsExit {
     AddAppMenu,
     /// General > App menu > Remove…
     RemoveAppMenu,
+    /// General > Updates > Nightly was picked: ask first, then come back to this page.
+    ConfirmNightly(Page),
 }
 
 /// One watched Library folder as Preferences shows it.
@@ -357,7 +359,17 @@ impl Extras {
             exp.labels = self.experimental_labels;
             exp.save(d);
         }
-        sq_draw::experimental::set_prefs(exp);
+    }
+
+    /// What the live marks follow after a save: the stored choice. Pure, so a test can read it without the process-wide
+    /// switch (`sq_draw::experimental::set_prefs`), which parallel tests would overwrite.
+    pub fn live_prefs(d: &dyn UiDefaults) -> sq_draw::experimental::Prefs {
+        sq_draw::experimental::Prefs::load(d)
+    }
+
+    /// Makes the stored experimental switch the live one. Called by the Settings screen after `save`, never by `save`.
+    pub fn apply_live(d: &dyn UiDefaults) {
+        sq_draw::experimental::set_prefs(Self::live_prefs(d));
     }
 }
 
@@ -370,6 +382,8 @@ pub(crate) enum ButtonAction {
     AddLibraryFolder,
     RemoveLibraryFolder(usize),
     ClearCache,
+    /// The "No settings match" page's way out: the search text goes.
+    ClearSearch,
 }
 
 /// A storage folder row.
@@ -775,6 +789,7 @@ impl ShellPreferences {
         }
         if all.rows.is_empty() {
             all.rows.push(Row::Text(SQL10n::format("No settings match “%@”.", &[query])));
+            all.rows.push(Row::buttons("clearSearch", "", "", &["Clear Search"]));
         }
         let mut f = ShellForm::with_sidebar(all.rows, Some(Self::sidebar(c)), -1);
         f.side_pad = 24.0;
@@ -882,6 +897,14 @@ impl ShellPreferences {
                     } else {
                         "Asks one address for the newest version number; nothing else is sent."
                     }),
+                );
+                p.popup(
+                    "channel",
+                    "Update Channel",
+                    ReleaseChannel::ALL.iter().map(|c| c.title().to_string()).collect(),
+                    s.update_channel.index(),
+                    196.0,
+                    None,
                 );
                 if let (Some(row), Some(status)) = (c.app_menu.row(), c.app_menu.status()) {
                     p.rows.push(row);
@@ -1245,7 +1268,7 @@ impl ShellPreferences {
                 p.rows.push(Row::Buttons {
                     id: "cacheFolder".to_string(),
                     label: "Cache Folder".to_string(),
-                    detail: StorageFolderChoice::short_path(&s.effective_cache_folder()),
+                    detail: ShellHost::folder_detail(&s.effective_cache_folder(), s.cache_folder.is_some()),
                     titles: vec!["Choose…".to_string(), "Use Default".to_string()],
                     enabled: vec![true, s.cache_folder.is_some()],
                 });
@@ -1276,14 +1299,14 @@ impl ShellPreferences {
                 p.rows.push(Row::Buttons {
                     id: "scratchFolder".to_string(),
                     label: "Scratch Folder".to_string(),
-                    detail: StorageFolderChoice::short_path(&l.scratch_root()),
+                    detail: ShellHost::folder_detail(&l.scratch_root(), l.scratch_folder.is_some()),
                     titles: vec!["Choose…".to_string(), "Use Default".to_string()],
                     enabled: vec![true, l.scratch_folder.is_some()],
                 });
                 p.rows.push(Row::Buttons {
                     id: "projectsFolder".to_string(),
                     label: "Projects Folder".to_string(),
-                    detail: StorageFolderChoice::short_path(&l.projects_root()),
+                    detail: ShellHost::folder_detail(&l.projects_root(), l.projects_folder.is_some()),
                     titles: vec!["Choose…".to_string(), "Use Default".to_string()],
                     enabled: vec![true, l.projects_folder.is_some()],
                 });
@@ -1317,6 +1340,9 @@ impl ShellPreferences {
     pub fn apply_settings(f: &dyn DialogForm, s: &mut AppSettings, c: &PreferencesHost) {
         fn pick<T: Clone>(f: &dyn DialogForm, id: &str, list: &[T]) -> Option<T> {
             f.index(id).and_then(|i| usize::try_from(i).ok()).and_then(|i| list.get(i)).cloned()
+        }
+        if let Some(c) = pick(f, "channel", &ReleaseChannel::ALL) {
+            s.update_channel = c;
         }
         if let Some(v) = pick(f, "autosave", &AppSettings::AUTOSAVE_CHOICES) {
             s.autosave_interval = v;
@@ -1523,6 +1549,7 @@ impl ShellPreferences {
         match id {
             "libFolderAdd" => return Some(ButtonAction::AddLibraryFolder),
             "cacheClear" => return Some(ButtonAction::ClearCache),
+            "clearSearch" => return Some(ButtonAction::ClearSearch),
             "libFolder" => return Some(ButtonAction::RemoveLibraryFolder(button)),
             _ => {}
         }
@@ -1633,14 +1660,21 @@ impl ShellHost {
             let shell = &mut *r.shell_parts().shell;
             shell.preferences.search.clear();
             shell.preferences.focus_search = search;
-            shell.hide_shortcuts(); // one modal at a time
+            // One modal at a time: the Shortcuts editor goes when the Settings card is presented (`ShellHost::present`), so
+            // no frame shows neither.
         });
         // shortcut: SQ_SHOT_SETTINGS_PAGE=<index> opens a given page for `--ui-shot` (shots cannot click inside the dialog); remove once shots take clicks after keys.
         let start = Self::start_page(std::env::var("SQ_SHOT_SETTINGS_PAGE").ok().as_deref(), page);
         // Reset to Defaults (ghost button, footer left, art.html Settings) keeps the window open (`present_preferences`).
         // Shortcuts is no form page: the editor takes over the window, as when the sidebar row is clicked.
         let direct = start == Page::Shortcuts;
-        let exit = if direct { Some(PrefsExit::Shortcuts) } else { Self::present_preferences(&h, start).await };
+        let mut exit = if direct { Some(PrefsExit::Shortcuts) } else { Self::present_preferences(&h, start).await };
+        // Nightly asks first; the window comes back on the same page either way.
+        while let Some(PrefsExit::ConfirmNightly(page)) = exit {
+            let _ = h.with(|r| r.shell_parts().shell.close_dialog(SQDialogResponse::FIRST));
+            Self::confirm_nightly(&h).await;
+            exit = Self::present_preferences(&h, page).await;
+        }
         if let Some(PrefsExit::AddAppMenu | PrefsExit::RemoveAppMenu) = exit {
             let _ = h.with(|r| {
                 let shell = &mut *r.shell_parts().shell;
@@ -1664,6 +1698,23 @@ impl ShellHost {
                 shell.show_shortcuts_page();
             });
         }
+    }
+
+    /// The Nightly warning (SQ dialog). Switching is saved only on "Switch to Nightly"; Cancel leaves Stable.
+    async fn confirm_nightly<R: ShellRoot + ?Sized>(h: &UiRef<R>) {
+        let mut d = ShellDialog::new(ReleaseChannel::NIGHTLY_WARNING_TITLE, ReleaseChannel::NIGHTLY_WARNING);
+        d.add_button(ReleaseChannel::NIGHTLY_SWITCH_BUTTON, SQDialogRole::Default, false);
+        d.add_button("Cancel", SQDialogRole::Cancel, false);
+        if Self::ask(h, d).await != Some(SQDialogResponse::FIRST) {
+            return;
+        }
+        let _ = h.with(|r| {
+            let shell = &mut *r.shell_parts().shell;
+            let mut settings = AppSettings::load(&*shell.defaults);
+            settings.update_channel = ReleaseChannel::Nightly;
+            settings.save(&mut *shell.defaults);
+            shell.emit(ShellEvent::SettingsChanged(Box::new(settings)));
+        });
     }
 
     /// The page Settings opens on: the shot pose's index wins, then the asked page, then General.
@@ -1700,6 +1751,7 @@ impl ShellHost {
         factory.save(&mut *shell.defaults);
         let x = Extras { ui_language: Extras::load(&*shell.defaults).ui_language, ..Extras::default() };
         x.save(&mut *shell.defaults);
+        Extras::apply_live(&*shell.defaults);
         shell.emit(ShellEvent::SettingsChanged(Box::new(factory)));
     }
 
@@ -1847,6 +1899,12 @@ impl ShellHost {
                             (id, v)
                         };
                         // Advanced: the Edit API switch (`apiChanged`) and Copy address (`copyAPIAddress`), not stored here.
+                        if id == "channel"
+                            && v == FormValue::Index(ReleaseChannel::Nightly.index() as i64)
+                            && settings.update_channel != ReleaseChannel::Nightly
+                        {
+                            return Some(PrefsExit::ConfirmNightly(page));
+                        }
                         if id == "api" {
                             if let FormValue::Bool(on) = v {
                                 h.with(|r| {
@@ -1902,6 +1960,7 @@ impl ShellHost {
                             settings.save(&mut *shell.defaults);
                             ShellPreferences::apply_extras(&*form, &mut extras);
                             extras.save(&mut *shell.defaults);
+                            Extras::apply_live(&*shell.defaults);
                             ShellPreferences::sync(&mut *form, &extras);
                             let (changed, counts) =
                                 ShellPreferences::marks(&*form, &settings, &extras, &c, &*shell.defaults);
@@ -1919,6 +1978,13 @@ impl ShellHost {
         }
     }
 
+    /// A storage folder's line: its short path, and "(missing)" after a folder the user chose that is gone (a default
+    /// folder is made when first used, so it is never marked).
+    pub(crate) fn folder_detail(path: &std::path::Path, chosen: bool) -> String {
+        let short = StorageFolderChoice::short_path(path);
+        if chosen && !path.exists() { format!("{short} (missing)") } else { short }
+    }
+
     /// A button of a Preferences row: the folder chooser first where there is one, then the change. `None` when the root is
     /// gone.
     async fn preferences_button<R: ShellRoot + ?Sized>(
@@ -1927,6 +1993,10 @@ impl ShellHost {
         settings: &mut AppSettings,
         note: &mut String,
     ) -> Option<()> {
+        if act == ButtonAction::ClearSearch {
+            h.with(|r| r.shell_parts().shell.preferences.search.clear())?;
+            return Some(());
+        }
         let url: Option<PathBuf> = match act {
             ButtonAction::ChooseFolder(_) => {
                 h.with(|r| r.shell_parts().files.choose_folder(&SQL10n::string("Choose")))?.await?.into()
@@ -1955,6 +2025,7 @@ impl ShellHost {
                         shell.emit(ShellEvent::AddLibraryFolder(url));
                     }
                 }
+                ButtonAction::ClearSearch => {}
                 ButtonAction::ClearCache => {
                     shell.emit(ShellEvent::ClearCache);
                     shell.preferences.cache_used =
@@ -2300,6 +2371,22 @@ mod tests {
     }
 
     #[test]
+    fn the_update_channel_row_follows_the_setting_and_marks_a_change() {
+        let d = ShellDefaults::default();
+        let c = PreferencesHost::default();
+        let x = Extras::default();
+        let mut s = AppSettings::standard();
+        let mut f = form(Page::General, &s, &x, &c, &d);
+        assert_eq!(f.index("channel"), Some(ReleaseChannel::build().index() as i64));
+        f.set_value("channel", FormValue::Index(ReleaseChannel::Nightly.index() as i64));
+        ShellPreferences::apply_settings(&f, &mut s, &c);
+        assert_eq!(s.update_channel, ReleaseChannel::Nightly);
+        let f = form(Page::General, &s, &x, &c, &d);
+        let (changed, _) = ShellPreferences::marks(&f, &s, &x, &c, &d);
+        assert!(changed.contains("channel") == (ReleaseChannel::build() != ReleaseChannel::Nightly));
+    }
+
+    #[test]
     fn the_factory_value_is_what_the_reset_arrow_goes_back_to() {
         let d = ShellDefaults::default();
         let c = PreferencesHost::default();
@@ -2324,7 +2411,7 @@ mod tests {
         assert!(ShellPreferences::search_form("audio", &s, &x, &c, &d).rows().len() > 5);
         // nothing found: a line says so
         let none = ShellPreferences::search_form("qqqzzz", &s, &x, &c, &d);
-        assert!(matches!(none.rows(), [Row::Text(t)] if t.contains("qqqzzz")));
+        assert!(matches!(none.rows(), [Row::Text(t), Row::Buttons { id, .. }] if t.contains("qqqzzz") && id == "clearSearch"));
     }
 
     #[test]
@@ -2336,7 +2423,7 @@ mod tests {
         assert!(captions(&f).contains(&"Shortcuts".to_string()), "{:?}", captions(&f));
         assert!(f.rows().iter().any(|r| matches!(r, Row::Text(t) if t.starts_with("Undo"))));
         let f = ShellPreferences::search_form("qqqzzz", &s, &x, &c, &d);
-        assert!(matches!(f.rows(), [Row::Text(t)] if t.contains("qqqzzz")));
+        assert!(matches!(f.rows(), [Row::Text(t), Row::Buttons { id, .. }] if t.contains("qqqzzz") && id == "clearSearch"));
         // the sidebar counter of Shortcuts is the changed bindings
         let pages = ShellPreferences::visible_pages(&c);
         let at = pages.iter().position(|p| *p == Page::Shortcuts).unwrap();
@@ -2517,14 +2604,11 @@ mod tests {
     }
 
     #[test]
-    fn settings_icons_and_tiles_follow_the_kit() {
+    fn settings_icons_follow_the_kit() {
         assert_eq!(Page::Editing.icon(), SQIcon::ToolBlade, "scissors");
         assert_eq!(Page::Advanced.icon(), SQIcon::Settings, "gear");
-        assert_eq!(SQIcon::ToolBlade.resource(), "ph-scissors");
-        assert_eq!(SQIcon::Settings.resource(), "ph-gear-six");
-        let tile = |t: &str| crate::shell_form::ShellForm::tile_color(t);
-        assert_eq!(tile("Editing"), sq_draw::Color::hex(0x7350C0, 1.0));
-        assert_eq!(tile("Advanced"), sq_draw::Color::hex(0x4F78A3, 1.0));
+        assert_eq!(SQIcon::ToolBlade.resource(), "lucide-scissors");
+        assert_eq!(SQIcon::Settings.resource(), "lucide-settings");
     }
 
     #[test]
@@ -2535,10 +2619,10 @@ mod tests {
         x.experimental_labels = false;
         x.save(&mut d);
         assert!(!Extras::load(&d).experimental_labels);
-        assert!(!sq_draw::experimental::prefs().shows_mark(), "the live marks follow the switch");
+        assert!(!Extras::live_prefs(&d).shows_mark(), "the live marks follow the switch");
         x.experimental_labels = true;
         x.save(&mut d);
-        assert!(sq_draw::experimental::prefs().shows_mark());
+        assert!(Extras::live_prefs(&d).shows_mark());
     }
 
     #[test]
@@ -2767,6 +2851,9 @@ mod tests {
         assert_eq!(ShellPreferences::button_action("libFolder", 0, None), Some(ButtonAction::RemoveLibraryFolder(0)));
         assert_eq!(ShellPreferences::button_action("libFolderAdd", 0, None), Some(ButtonAction::AddLibraryFolder));
         assert_eq!(ShellPreferences::button_action("cacheClear", 0, None), Some(ButtonAction::ClearCache));
+        assert_eq!(ShellPreferences::button_action("clearSearch", 0, None), Some(ButtonAction::ClearSearch));
+        assert_eq!(ShellHost::folder_detail(std::path::Path::new("/nonexistent-sq-folder"), true).ends_with("(missing)"), true);
+        assert!(!ShellHost::folder_detail(std::path::Path::new("/nonexistent-sq-folder"), false).contains("missing"));
     }
 
     #[test]
@@ -2951,6 +3038,40 @@ mod tests {
             });
             assert!(told.is_some_and(|s| check(&s)), "{id} reaches the app");
         }
+    }
+
+    #[test]
+    fn nightly_asks_first_and_is_saved_only_on_switch() {
+        let rig = Rig::new();
+        rig.with(|r| r.shell.start_flow(crate::ShellFlow::ShowPreferences));
+        rig.run_flows();
+        let saved = |rig: &Rig| rig.with(|r| AppSettings::load(&*r.shell.defaults).update_channel);
+        let before = saved(&rig);
+        let nightly = FormValue::Index(ReleaseChannel::Nightly.index() as i64);
+        // Cancel: nothing is saved and the window comes back.
+        change(&rig, "channel", nightly.clone());
+        let text = rig.with(|r| r.shell.dialog_mut().map(|d| d.informative_text.clone()));
+        assert_eq!(text.as_deref(), Some(ReleaseChannel::NIGHTLY_WARNING));
+        answer_swept(&rig, SQDialogResponse::SECOND);
+        assert_eq!(saved(&rig), before);
+        assert!(rig.with(|r| r.shell.dialog_mut().is_some_and(|d| d.form.is_some())), "Settings is back");
+        // Switch to Nightly: saved, and the app is told.
+        rig.with(|r| r.shell.take_events());
+        change(&rig, "channel", nightly);
+        answer_swept(&rig, SQDialogResponse::FIRST);
+        assert_eq!(saved(&rig), ReleaseChannel::Nightly);
+        let told = rig.with(|r| {
+            r.shell
+                .take_events()
+                .into_iter()
+                .any(|e| matches!(e, ShellEvent::SettingsChanged(s) if s.update_channel == ReleaseChannel::Nightly))
+        });
+        assert!(told);
+        // Back to Stable asks nothing.
+        let stable = FormValue::Index(ReleaseChannel::Stable.index() as i64);
+        type_into(&rig, "channel", stable.clone());
+        change(&rig, "channel", stable);
+        assert_eq!(saved(&rig), ReleaseChannel::Stable);
     }
 
     #[test]

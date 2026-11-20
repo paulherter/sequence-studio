@@ -120,7 +120,7 @@ mod tests {
 
     #[test]
     fn moving_the_star_writes_prefs_json_at_once() {
-        let dir = crate::test_rig::unique_dir("sq-look-host-flush");
+        let dir = crate::test_rig::test_dir("sq-look-host-flush");
         let defaults = FileDefaults::shared(&dir);
         let store = Arc::new(LookStore::new(None, None, None, None));
         let mut h = AppCaptionLooks::new(Arc::clone(&store), Rc::clone(&defaults));

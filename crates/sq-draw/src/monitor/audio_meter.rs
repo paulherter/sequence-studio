@@ -30,6 +30,9 @@ pub enum MeterStyle {
     Fast,
 }
 
+/// Corner of a meter trough and its level (no radius token has this value).
+const TROUGH_RADIUS: f64 = 2.0;
+
 impl MeterStyle {
     /// Every preset, in declaration order.
     pub const ALL: [MeterStyle; 3] = [MeterStyle::Smooth, MeterStyle::Standard, MeterStyle::Fast];
@@ -334,7 +337,18 @@ impl AudioMeter {
 
     /// Bar labels under the bars.
     pub fn channel_names(&self) -> Vec<&'static str> {
-        if self.is_mono { vec!["M"] } else { vec!["L", "R"] }
+        const NUMBERED: [&str; 8] = ["1", "2", "3", "4", "5", "6", "7", "8"];
+        match self.channels.len() {
+            _ if self.is_mono => vec!["M"],
+            // More than a pair is a surround source: numbered bars, never a forced L / R.
+            n @ 3..=8 => NUMBERED[..n].to_vec(),
+            _ => vec!["L", "R"],
+        }
+    }
+
+    /// Bar width and gap: the stereo pair as designed; a surround source packs its bars into the same strip.
+    fn bar_metrics(&self) -> (f64, f64) {
+        if !self.is_mono && self.channels.len() > 2 { (4.0, 1.0) } else { (Self::BAR_WIDTH, Self::GAP) }
     }
 
     /// Output channels a bar stands for (of `channel_count`): the Mono bar is both.
@@ -344,16 +358,15 @@ impl AudioMeter {
 
     /// One bar (Mono) sits where the pair's middle is.
     fn bar_x(&self, i: usize) -> f64 {
-        Self::BARS_X
-            + i as f64 * (Self::BAR_WIDTH + Self::GAP)
-            + if self.is_mono { (Self::BAR_WIDTH + Self::GAP) / 2.0 } else { 0.0 }
+        let (w, g) = self.bar_metrics();
+        Self::BARS_X + i as f64 * (w + g) + if self.is_mono { (w + g) / 2.0 } else { 0.0 }
     }
 
     /// Bar index whose label column is at `x`, `None` between the columns.
     pub fn bar_at_x(&self, x: f64) -> Option<usize> {
         (0..if self.is_mono { 1 } else { 2 }).find(|&i| {
             let bx = self.bar_x(i);
-            x >= bx - Self::GAP && x <= bx + Self::BAR_WIDTH + Self::GAP
+            x >= bx - self.bar_metrics().1 && x <= bx + self.bar_metrics().0 + self.bar_metrics().1
         })
     }
 
@@ -441,7 +454,7 @@ impl AudioMeter {
 
     fn zone_color(zone: MeterZone, t: &DrawTheme) -> Color {
         match zone {
-            MeterZone::Green => Color::hex(0x30D158, 1.0), // Theme.Colors.green
+            MeterZone::Green => t.token(sq_uikit::tokens::color::status::SUCCESS),
             MeterZone::Yellow => t.yellow(),
             MeterZone::Red => t.red(),
         }
@@ -449,7 +462,7 @@ impl AudioMeter {
 
     fn label_color(l: MeterChannelLabel, t: &DrawTheme) -> Color {
         match l {
-            MeterChannelLabel::Normal => t.label3(),
+            MeterChannelLabel::Normal => t.label2(),
             MeterChannelLabel::Soloed => t.accent(),
             MeterChannelLabel::Muted => t.red(),
             MeterChannelLabel::Silenced => t.red().with_alpha(0.6),
@@ -510,7 +523,7 @@ impl AudioMeter {
             let label = labels.get(i).copied().unwrap_or(MeterChannelLabel::Normal);
             c.draw_text(
                 name,
-                CGPoint { x: r.min_x() + self.bar_x(i) + (Self::BAR_WIDTH - size.width) / 2.0, y: meter_top + h + 4.0 },
+                CGPoint { x: r.min_x() + self.bar_x(i) + (self.bar_metrics().0 - size.width) / 2.0, y: meter_top + h + 4.0 },
                 font,
                 Self::label_color(label, t),
                 f64::INFINITY,
@@ -525,22 +538,23 @@ impl AudioMeter {
         ];
         for (i, ch) in self.channels.iter().enumerate() {
             let x = r.min_x() + self.bar_x(i);
-            let track = CGRect::new(x, meter_top, Self::BAR_WIDTH, h);
+            let track = CGRect::new(x, meter_top, self.bar_metrics().0, h);
             c.save_gstate();
             c.clip_to(track);
-            c.fill_rounded(track, 2.0, t.well()); // the sunk track: Theme.Radius.small / 2, the well fill in both modes
+            // r8 trough: `surface-control` (light: `surface-raised`) with a 1 px `border-row` edge.
+            c.fill_rounded(track, TROUGH_RADIUS, if t.dark() { t.well() } else { t.raised() });
             let level_top = y(ch.level_db);
             for (lo, hi, zone) in segments {
                 let top = y(hi).max(level_top);
                 let bottom = y(lo);
                 if bottom > top {
                     // The Mac clips the level to the 2 pt rounded track: a segment at the track's end takes its corners.
-                    let seg = CGRect::new(x, top, Self::BAR_WIDTH, bottom - top);
+                    let seg = CGRect::new(x, top, self.bar_metrics().0, bottom - top);
                     let color = Self::zone_color(zone, t);
                     let at_top = top <= meter_top;
                     let at_bottom = bottom >= meter_top + h;
                     if at_top || at_bottom {
-                        c.fill_rounded(seg, 2.0, color);
+                        c.fill_rounded(seg, TROUGH_RADIUS, color);
                         // Square the corners on the side that is not the track's end.
                         let half = seg.height / 2.0;
                         let square = if at_top {
@@ -555,11 +569,13 @@ impl AudioMeter {
                 }
             }
             c.restore_gstate();
+            c.stroke_rounded(track.inset_by(0.5, 0.5), TROUGH_RADIUS, 1.0, t.row_line());
             if ch.hold_db > MeterBallistics::FLOOR_DB {
+                // r8 peak hold: 4 x 1 in `text-secondary`, drawn only while there is signal.
                 let hy = y(ch.hold_db).max(meter_top).min(meter_top + h - 1.0);
                 c.fill(
-                    CGRect::new(x, hy, Self::BAR_WIDTH, 1.5),
-                    Self::zone_color(MeterBallistics::zone(ch.hold_db), t),
+                    CGRect::new(x + (self.bar_metrics().0 - 4.0) / 2.0, hy, 4.0, 1.0),
+                    t.label2(),
                 );
             }
         }
@@ -594,6 +610,24 @@ mod tests {
         m.update(&[0.1, 1.0], 0.0);
         assert!(m.channels().len() == 1 && m.channels()[0].clipped());
         assert!(m.channel_names() == ["M"] && m.channels_for_bar(0, 2) == [0, 1]);
+    }
+
+    #[test]
+    fn a_surround_source_is_not_labeled_l_r() {
+        let mut m = AudioMeter::new(MeterStyle::Standard);
+        assert_eq!(m.channel_names(), ["L", "R"]);
+        m.update(&[0.1; 6], 0.0);
+        assert_eq!(m.channel_names(), ["1", "2", "3", "4", "5", "6"]);
+    }
+
+    #[test]
+    fn trough_edge_and_peak_hold_follow_r8() {
+        let mut m = AudioMeter::new(MeterStyle::Standard);
+        m.update(&[0.5, 0.5], 0.0);
+        let mut c = Canvas::with_size(54.0, 300.0, None, 1.0);
+        let t = DrawTheme::default();
+        m.draw(&mut c, CGRect::new(0.0, 0.0, 54.0, 300.0), &t, &[]);
+        assert!(c.list.quads().iter().any(|q| q.color == t.label2() && q.rect.w == 4.0 && q.rect.h == 1.0));
     }
 
     #[test]

@@ -334,6 +334,8 @@ pub struct ProjectListView {
     size_slider_dragging: bool,
     column_press: Option<ColumnPress>,
     scrub: Option<HoverScrubState>,
+    /// Tips of the last drawn rows (offline triangle, cut names), in window points.
+    row_tips: Vec<(CGRect, String)>,
     events: Vec<ProjectListEvent>,
     queue: MenuQueue,
     /// Posters of media items for the icon grid (the host fills it from its thumbnails); `None` while one loads.
@@ -355,11 +357,16 @@ impl ProjectListView {
     pub const COLUMN_HEADER_HEIGHT: f64 = 24.0;
     const NAME_LEAD: f64 = 12.0;
     const LEVEL_INDENT: f64 = 14.0;
+    /// Levels past this one indent by the smaller `DEEP_INDENT`, so names keep room; every level stays visible.
+    const FULL_INDENT_LEVELS: usize = 3;
+    const DEEP_INDENT: f64 = 4.0;
     const CHIP: f64 = 16.0;
     const DOUBLE_CLICK: f64 = 0.4;
     /// Icon grid thumbnail width range (the Mac slider's 64...160 range).
     pub const THUMB_RANGE: (f64, f64) = (64.0, 160.0);
     const DRAG_SLOP: f64 = 4.0;
+    /// The red triangle after an offline name (14 pt).
+    const OFFLINE_ICON: f64 = 14.0;
     const OFFLINE_RED: Color = Color::rgb(0.898, 0.282, 0.302);
     const CELL_PAD: f64 = spacing::XS as f64;
     const CELL_INSET: f64 = spacing::SM as f64;
@@ -377,6 +384,12 @@ impl ProjectListView {
     const TILE_NAME_HEIGHT: f64 = 14.0;
     const TILE_PAD: f64 = 6.0;
     const RING_WIDTH: f64 = 2.0;
+
+    /// The x offset of nesting `level` from the name lead: 14 pt per level up to 3 levels, then 4 pt per level.
+    pub(crate) fn indent(level: usize) -> f64 {
+        let full = level.min(Self::FULL_INDENT_LEVELS);
+        full as f64 * Self::LEVEL_INDENT + (level - full) as f64 * Self::DEEP_INDENT
+    }
 
     /// A list with the user's saved `settings`.
     pub fn new(settings: ProjectListSettings) -> ProjectListView {
@@ -404,6 +417,7 @@ impl ProjectListView {
             size_slider_dragging: false,
             column_press: None,
             scrub: None,
+            row_tips: Vec::new(),
             events: Vec::new(),
             queue: Rc::new(RefCell::new(Vec::new())),
             posters: Default::default(),
@@ -816,7 +830,7 @@ impl ProjectListView {
         }
         // The disclosure arrow sits before a folder's chip.
         if let (Some(row), BinItemRef::Bin(id)) = (rows.get(i), item)
-            && p.x < self.frame.min_x() + Self::NAME_LEAD + (row.depth + 1) as f64 * Self::LEVEL_INDENT
+            && p.x < self.frame.min_x() + Self::NAME_LEAD + Self::indent(row.depth + 1)
         {
             self.toggle(id);
             return;
@@ -1710,7 +1724,9 @@ impl ProjectListView {
     // MARK: Health line (ProjectListView+Health.swift)
 
     fn health_rect(&self, model: &ProjectPanelModel) -> Option<CGRect> {
-        if model.health().is_healthy() {
+        // The foot always counts the files ("N in folder"); a project with no files has no foot.
+        let h = model.health();
+        if h.in_folder + h.outside + h.missing == 0 {
             return None;
         }
         Some(CGRect::new(
@@ -1723,20 +1739,31 @@ impl ProjectListView {
 
     /// The texts of the segments, in order.
     pub fn health_texts(h: &sq_core_project::relink_scoring::ProjectHealth) -> Vec<(HealthPart, String)> {
-        // One missing status only ("2 files missing"); the in-folder count is gone from the line.
-        let mut out = Vec::new();
+        // "N in folder" always; "N outside" and "· N missing" (red triangle) only when there are some.
+        let mut out = vec![(HealthPart::InFolder, SQL10n::format("%@ in folder", &[&h.in_folder.to_string()]))];
         if h.outside > 0 {
             out.push((HealthPart::Outside, SQL10n::format("%@ outside", &[&h.outside.to_string()])));
         }
         if h.missing > 0 {
-            out.push((HealthPart::Missing, SQL10n::plural(h.missing as i64, "%@ file missing", "%@ files missing")));
+            out.push((HealthPart::Missing, SQL10n::format("%@ missing", &[&h.missing.to_string()])));
         }
         out
     }
 
-    /// The button's label: "Locate…" while files are missing, else "Fix…".
-    pub fn fix_label(h: &sq_core_project::relink_scoring::ProjectHealth) -> String {
-        SQL10n::string(if h.missing > 0 { "Locate…" } else { "Fix…" })
+    /// The button's label (r8): always "Fix…"; with only missing files it relinks at once like the old "Locate…".
+    pub fn fix_label() -> String {
+        SQL10n::string("Fix…")
+    }
+
+    /// Room before a segment's text: the "· " separator and the red triangle for Missing, nothing for the plain
+    /// in-folder count, a dot for Outside.
+    fn health_lead(part: HealthPart, m: &TextMeasure) -> f64 {
+        let fs = type_size::CAPTION as f64;
+        match part {
+            HealthPart::Missing => m.width("·", fs, 0) + spacing::XS as f64 + Self::OFFLINE_ICON,
+            HealthPart::InFolder | HealthPart::Fix => 0.0,
+            HealthPart::Outside => m.width("●", fs, 0),
+        }
     }
 
     /// The segments (dot + count) from the left and the Fix… button at the right, `Theme.Spacing.md` apart.
@@ -1744,19 +1771,23 @@ impl ProjectListView {
         let Some(r) = self.health_rect(model) else { return Vec::new() };
         let (fs, g) = (type_size::CAPTION as f64, spacing::SM as f64);
         let fix_w =
-            m.width(&Self::fix_label(&model.health()), type_size::BODY as f64, 0).ceil() + 2.0 * spacing::MD as f64;
+            m.width(&Self::fix_label(), type_size::BODY as f64, 0).ceil() + 2.0 * spacing::MD as f64;
         let fix = CGRect::new(r.max_x() - g - fix_w, r.min_y() + 2.0, fix_w, r.height - spacing::XS as f64);
         let mut out = Vec::new();
         let mut x = r.min_x() + g;
         for (part, text) in Self::health_texts(&model.health()) {
-            let w = (m.width("●", fs, 0) + spacing::XS as f64 + m.width(&text, fs, 0)).ceil();
+            let lead = Self::health_lead(part, m);
+            let gap = if part == HealthPart::InFolder { 0.0 } else { spacing::XS as f64 };
+            let w = (lead + gap + m.width(&text, fs, 0)).ceil();
             if x + w > fix.min_x() - g {
                 break;
             }
             out.push((part, CGRect::new(x, r.min_y(), w, r.height)));
             x += w + spacing::MD as f64;
         }
-        out.push((HealthPart::Fix, fix));
+        if !model.health().is_healthy() {
+            out.push((HealthPart::Fix, fix));
+        }
         out
     }
 
@@ -1900,6 +1931,9 @@ impl ProjectListView {
     fn item_tip(&mut self, cx: &ProjectListCx, p: CGPoint) -> Option<String> {
         if self.is_dragging {
             return None;
+        }
+        if let Some((_, tip)) = self.row_tips.iter().find(|(r, _)| r.contains(p)) {
+            return Some(tip.clone());
         }
         let i = self.item_at(cx.model, p)?;
         let items = self.items(cx.model);
@@ -2098,11 +2132,13 @@ impl ProjectListView {
         let cols = self.column_frames(cx, Some(&refs));
         let name_end = cols.iter().find(|f| f.column == Column::Name).map_or(self.frame.max_x(), |f| f.max_x);
         let lr = self.list_rect(cx.model);
+        self.row_tips.clear();
         for (i, r) in list.iter().enumerate() {
             let rr = self.row_rect(cx.model, i);
             if rr.max_y() < lr.min_y() || rr.min_y() > lr.max_y() {
                 continue;
             }
+            let indent = Self::indent(r.depth);
             // Artifact: an inset rounded highlight (6 pt radius, margin from the panel edge), not a flat full-width band.
             let selected = if r.variant.is_some() {
                 r.variant == self.variant_selection
@@ -2110,11 +2146,16 @@ impl ProjectListView {
                 self.selection.contains(&r.item_ref)
             };
             c.stone_row_pill(rr, selected, self.hover_row == Some(i) && !self.is_dragging, t);
+            // A thin guide line under each ancestor's arrow keeps every level readable once the indent shrinks.
+            for l in 1..=r.depth {
+                let gx = rr.min_x() + Self::NAME_LEAD + Self::indent(l - 1) + 4.0;
+                c.fill(CGRect::new(gx, rr.min_y(), 1.0, rr.height), t.separator());
+            }
             if let (Some(v), BinItemRef::Sequence(sid)) = (r.variant, r.item_ref)
                 && let Some(f) = cx.model.project().timeline(sid).and_then(|tl| tl.variants.iter().find(|x| x.id == v))
             {
                 // A format variant: the row part again, named with its aspect ("Vertical 9:16").
-                let x = rr.min_x() + Self::NAME_LEAD + r.depth as f64 * Self::LEVEL_INDENT;
+                let x = rr.min_x() + Self::NAME_LEAD + indent;
                 let chip = CGRect::new(x, rr.mid_y() - Self::CHIP / 2.0, Self::CHIP, Self::CHIP);
                 let icon =
                     SQIcon::from_raw(ProjectItemIcon::icon(sq_editor_session::ProjectItemKind::Sequence, false).symbol)
@@ -2131,20 +2172,17 @@ impl ProjectListView {
                     f.name,
                     sq_core_effects::sequence_conform::SequenceConform::aspect_label(f.width, f.height)
                 );
-                c.draw_text_in(
-                    &label,
-                    CGRect::new(chip.max_x() + 10.0, rr.min_y(), (name_end - chip.max_x() - 14.0).max(0.0), rr.height),
-                    Self::LIST_FONT,
-                    t.label(),
-                    TextAlign::Left,
-                    0.0,
-                    0,
-                );
+                let cell = CGRect::new(chip.max_x() + 10.0, rr.min_y(), (name_end - chip.max_x() - 14.0).max(0.0), rr.height);
+                let cut = sq_draw::middle_fit::truncate_name(&label, |s| c.size_of(s, Self::LIST_FONT, 0).width <= cell.width);
+                c.draw_text_in(&cut.shown, cell, Self::LIST_FONT, t.label(), TextAlign::Left, 0.0, 0);
+                if let Some(full) = cut.full {
+                    self.row_tips.push((cell, full));
+                }
                 continue;
             }
             let offline = matches!(r.item_ref, BinItemRef::Media(m) if cx.model.is_offline(m));
             let kind = cx.model.item_kind(r.item_ref);
-            let mut x = rr.min_x() + Self::NAME_LEAD + r.depth as f64 * Self::LEVEL_INDENT;
+            let mut x = rr.min_x() + Self::NAME_LEAD + indent;
             if let BinItemRef::Bin(id) = r.item_ref {
                 let open = self.expanded.contains(&id);
                 let mid = CGPoint::new(x + 4.0, rr.mid_y());
@@ -2178,39 +2216,32 @@ impl ProjectListView {
                 t.label2(),
                 None,
             );
-            // The dot at the icon names the kind (video, audio, picture, sequence, ...), not the label color.
-            c.fill_ellipse(CGRect::new(chip.max_x() - 4.0, chip.max_y() - 4.0, 5.0, 5.0), Self::kind_dot(kind, t));
+            // The kind shows by the icon shape only (no dot). An offline row: the name in secondary text and a red
+            // triangle right after it, tip "Offline: file not found".
             let name_x = chip.max_x() + 10.0;
-            let tag_font = type_size::CAPTION as f64;
-            let tag_w = if offline { c.size_of("Missing", tag_font, 0).width.ceil() } else { 0.0 };
-            let lay = sq_draw::stone_rows::offline_layout(name_x, name_end, tag_w, rr, offline);
+            let tri = Self::OFFLINE_ICON;
+            let name = cx.model.cell_text(Column::Name, r.item_ref);
+            let room = (name_end - name_x - 4.0 - if offline { tri + 4.0 } else { 0.0 }).max(0.0);
+            let cut = sq_draw::middle_fit::truncate_name(&name, |s| c.size_of(s, Self::LIST_FONT, 0).width <= room);
+            let name_w = c.size_of(&cut.shown, Self::LIST_FONT, 0).width.ceil();
+            let name_cell = CGRect::new(name_x, rr.min_y(), room, rr.height);
             c.draw_text_in(
-                &cx.model.cell_text(Column::Name, r.item_ref),
-                CGRect::new(name_x, rr.min_y(), lay.name_w, rr.height),
+                &cut.shown,
+                name_cell,
                 Self::LIST_FONT,
-                t.label(),
+                if offline { t.label2() } else { t.label() },
                 TextAlign::Left,
                 0.0,
                 0,
             );
-            if let Some(pill) = lay.pill {
-                c.fill_rounded(pill, pill.height / 2.0, t.err_text().with_alpha(0.16));
-                c.draw_icon(
-                    SQIcon::Warning,
-                    CGPoint::new(pill.min_x() + 6.0, pill.mid_y() - 6.0),
-                    12.0,
-                    t.err_text(),
-                    None,
-                );
-                c.draw_text_in(
-                    "Missing",
-                    CGRect::new(pill.min_x() + 21.0, pill.min_y(), tag_w, pill.height),
-                    tag_font,
-                    t.err_text(),
-                    TextAlign::Left,
-                    0.0,
-                    0,
-                );
+            if let Some(full) = cut.full {
+                self.row_tips.push((name_cell, full));
+            }
+            if offline {
+                let at = CGRect::new(name_x + name_w + 4.0, rr.mid_y() - tri / 2.0, tri, tri);
+                c.draw_icon(SQIcon::Warning, CGPoint::new(at.min_x(), at.min_y()), tri, t.err_text(), None);
+                // First in the list, so it wins over the name's own tip.
+                self.row_tips.insert(0, (at, SQL10n::string("Offline: file not found")));
             }
             for col in cols.iter().filter(|f| f.column != Column::Name) {
                 let cell = CGRect::new(col.min_x, rr.min_y(), col.max_x - col.min_x, rr.height);
@@ -2224,19 +2255,6 @@ impl ProjectListView {
                     0,
                 );
             }
-        }
-    }
-
-    /// The color of the kind dot at a row's icon.
-    pub fn kind_dot(kind: sq_editor_session::ProjectItemKind, t: &DrawTheme) -> Color {
-        use sq_editor_session::ProjectItemKind as K;
-        match kind {
-            K::Video | K::VideoAudio => t.accent(),
-            K::Audio => Color::hex(0x30D158, 1.0),
-            K::Image => t.yellow(),
-            K::Sequence | K::NestedSequence => t.label2(),
-            K::Text | K::Generator => t.warning(),
-            K::Bin => t.label3(),
         }
     }
 
@@ -2330,7 +2348,7 @@ impl ProjectListView {
             if part == HealthPart::Fix {
                 InspectorDraw::button(
                     c,
-                    &Self::fix_label(&h),
+                    &Self::fix_label(),
                     rect,
                     self.health_hover == Some(HealthPart::Fix),
                     false,
@@ -2341,21 +2359,34 @@ impl ProjectListView {
                 );
                 continue;
             }
-            let dot = match part {
-                HealthPart::InFolder => Color::hex(0x30D158, 1.0),
-                HealthPart::Outside => t.warning(),
-                _ => Self::OFFLINE_RED,
-            };
-            let d = 6.0;
-            c.fill_ellipse(CGRect::new(rect.min_x(), rect.mid_y() - d / 2.0, d, d), dot);
-            let tx = rect.min_x() + d + spacing::XS as f64;
+            let dot = if part == HealthPart::Outside { t.warning() } else { Self::OFFLINE_RED };
+            let lead = Self::health_lead(part, &m);
+            match part {
+                HealthPart::Missing => {
+                    // "· " then the red alert triangle, then "N missing".
+                    c.draw_text("·", CGPoint::new(rect.min_x(), rect.mid_y() - fs * 0.6), fs, t.label3(), f64::INFINITY, 0);
+                    let d = Self::OFFLINE_ICON;
+                    c.draw_icon(SQIcon::Warning, CGPoint::new(rect.min_x() + lead - d, rect.mid_y() - d / 2.0), d, t.err_text(), None);
+                }
+                HealthPart::Outside => {
+                    c.fill_ellipse(CGRect::new(rect.min_x(), rect.mid_y() - 3.0, 6.0, 6.0), dot);
+                }
+                _ => {}
+            }
+            let tx = rect.min_x() + lead + if part == HealthPart::InFolder { 0.0 } else { spacing::XS as f64 };
             let text = texts.iter().find(|(p, _)| *p == part).map(|(_, s)| s.as_str()).unwrap_or("");
             let hot = self.health_hover == Some(part) && part != HealthPart::InFolder;
             c.draw_text_in(
                 text,
                 CGRect::new(tx, rect.min_y(), (rect.max_x() - tx).max(0.0), rect.height),
                 fs,
-                if hot { t.label() } else { t.label3() },
+                if part == HealthPart::Missing {
+                    t.err_text()
+                } else if hot {
+                    t.label()
+                } else {
+                    t.label2()
+                },
                 TextAlign::Left,
                 0.0,
                 0,
@@ -2612,25 +2643,30 @@ mod tests {
     }
 
     #[test]
-    fn the_icon_dot_names_the_kind_not_the_label() {
-        use sq_editor_session::ProjectItemKind as K;
-        let t = DrawTheme::default();
-        assert_eq!(ProjectListView::kind_dot(K::Video, &t), ProjectListView::kind_dot(K::VideoAudio, &t));
-        assert_ne!(ProjectListView::kind_dot(K::Video, &t), ProjectListView::kind_dot(K::Audio, &t));
-        assert_ne!(ProjectListView::kind_dot(K::Audio, &t), ProjectListView::kind_dot(K::Image, &t));
+    fn a_five_level_tree_shows_five_distinct_levels() {
+        let xs: Vec<f64> = (0..5).map(ProjectListView::indent).collect();
+        assert!(xs.windows(2).all(|w| w[1] > w[0]), "{xs:?}");
+        assert_eq!(xs[3] - xs[2], 14.0);
+        assert_eq!(xs[4] - xs[3], 4.0);
     }
 
     #[test]
     fn health_texts_name_the_counts() {
         let h = sq_core_project::relink_scoring::ProjectHealth { in_folder: 312, outside: 4, missing: 1 };
         let t = ProjectListView::health_texts(&h);
-        assert_eq!(t.iter().map(|(p, _)| *p).collect::<Vec<_>>(), [HealthPart::Outside, HealthPart::Missing]);
-        assert_eq!(t[1].1, "1 file missing");
+        assert_eq!(
+            t.iter().map(|(p, _)| *p).collect::<Vec<_>>(),
+            [HealthPart::InFolder, HealthPart::Outside, HealthPart::Missing]
+        );
+        assert_eq!((t[0].1.as_str(), t[2].1.as_str()), ("312 in folder", "1 missing"));
         let two = sq_core_project::relink_scoring::ProjectHealth { in_folder: 0, outside: 0, missing: 2 };
-        assert_eq!(ProjectListView::health_texts(&two), [(HealthPart::Missing, "2 files missing".to_string())]);
-        assert_eq!(ProjectListView::fix_label(&two), "Locate…");
+        assert_eq!(
+            ProjectListView::health_texts(&two),
+            [(HealthPart::InFolder, "0 in folder".to_string()), (HealthPart::Missing, "2 missing".to_string())]
+        );
+        assert_eq!(ProjectListView::fix_label(), "Fix…");
         let healthy = sq_core_project::relink_scoring::ProjectHealth { in_folder: 2, outside: 0, missing: 0 };
-        assert!(ProjectListView::health_texts(&healthy).is_empty());
+        assert_eq!(ProjectListView::health_texts(&healthy), [(HealthPart::InFolder, "2 in folder".to_string())]);
     }
 
     #[test]

@@ -337,12 +337,15 @@ impl InspectorDraw {
         // A title wider than the popup ends in an ellipsis instead of running under the chevron or past the window edge.
         let text_w = (boxed.width - 8.0 - chevron_w).max(0.0);
         let title = c.ellipsized(title, size, 0, text_w);
+        // Flat: the text box ends 4 pt before the chevron (the box ends 16 pt before the edge, the chevron starts 14 pt before it).
+        let text_x = if plain { boxed.min_x() + 6.0 } else { boxed.min_x() + 8.0 };
         c.draw_text_in(
             &title,
-            CGRect::new(boxed.min_x() + 8.0, boxed.min_y(), text_w, boxed.height),
+            CGRect::new(text_x, boxed.min_y(), text_w, boxed.height),
             size,
             faded(t.label(), a),
-            TextAlign::Left,
+            // r8 `.num.sel`: a flat pop-up right-aligns value + chevron together (gap s-1 before the chevron).
+            if plain { TextAlign::Right } else { TextAlign::Left },
             0.0,
             0,
         );

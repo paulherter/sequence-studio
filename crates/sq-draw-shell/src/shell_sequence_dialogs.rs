@@ -391,11 +391,7 @@ impl ShellSequenceSettings {
 
 /// `MonitorQuality(rawValue: q.rawValue)`: the sequence's fixed qualities are the monitor's.
 fn monitor_quality(q: SequencePreviewQuality) -> MonitorQuality {
-    match q {
-        SequencePreviewQuality::Full => MonitorQuality::Full,
-        SequencePreviewQuality::Half => MonitorQuality::Half,
-        SequencePreviewQuality::Quarter => MonitorQuality::Quarter,
-    }
+    MonitorQuality::from_sequence(q)
 }
 
 impl ShellHost {

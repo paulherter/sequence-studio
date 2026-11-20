@@ -247,7 +247,9 @@ impl ColorSourcesDraw {
                 let w = ColorSourcesLayout::RING;
                 c.stroke_rounded(thumb.inset_by(-w / 2.0, -w / 2.0), rad + w / 2.0, w, t.yellow());
             }
-            c.draw_text(&item.name, CGPoint::new(r.min_x(), thumb.max_y() + gap), fs, t.label(), r.width, 0);
+            // A long name is cut Finder-style (start and extension stay); the tile's tip (`help`) carries the whole name.
+            let name = c.truncated_name(&item.name, fs, 0, r.width).shown;
+            c.draw_text(&name, CGPoint::new(r.min_x(), thumb.max_y() + gap), fs, t.label(), r.width, 0);
             let line = SQL10n::string(&ColorUses::tile_line(item.clips.len() as i64, &item.grade_text));
             c.draw_text(&line, CGPoint::new(r.min_x(), thumb.max_y() + 2.0 * gap + lh), fs, t.label3(), r.width, 0);
         }

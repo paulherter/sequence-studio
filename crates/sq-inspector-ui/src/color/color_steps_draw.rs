@@ -434,7 +434,7 @@ impl ColorStepsDraw {
                 self.hover_button == Some(b),
                 self.pressed_button == Some(b),
                 true,
-                b == StepsButton::StartEmpty,
+                false,
                 f64::MAX,
                 t,
             );
@@ -687,8 +687,11 @@ impl ColorStepsDraw {
         let rr = f64::from(radius::SMALL);
         if let Some(name) = name {
             c.stone_button(r, ButtonKind::Raised, Touch::default(), t);
+            let name = tr(&name);
+            let name =
+                c.truncated_name(&name, f64::from(type_size::CAPTION), c.medium(), (r.width - 24.0).max(0.0)).shown;
             c.draw_text_in(
-                &tr(&name),
+                &name,
                 CGRect::new(r.min_x() + 12.0, r.min_y() + 5.0, (r.width - 24.0).max(0.0), 16.0),
                 f64::from(type_size::CAPTION),
                 t.label(),
@@ -782,6 +785,20 @@ impl ColorStepsDraw {
             c.stroke_ellipse(o, 1.0, t.label3());
         }
         if r.height < 30.0 {
+            // Zoomed out (30 Steps in a 240 pt panel): the tile keeps its number so no tile reads blank; the footer has the count.
+            let size = (r.height - 4.0).min(10.0);
+            let num = format!("{number:02}");
+            if size >= 6.0 && c.size_of(&num, size, 0).width + 2.0 <= r.width {
+                c.draw_text_in(
+                    &num,
+                    r,
+                    size,
+                    if s.enabled { t.label2() } else { t.label3() },
+                    TextAlign::Center,
+                    0.0,
+                    0,
+                );
+            }
             return;
         }
         let eye = StepsCanvas::eye_rect(&r);
@@ -804,8 +821,10 @@ impl ColorStepsDraw {
             );
             let nx = r.min_x() + 12.0 + nw + 5.0;
             let name_rect = CGRect::new(nx, r.min_y() + 8.0, (eye.min_x() - nx).max(0.0), 16.0);
+            let label = tr(&s.label);
+            let label = c.truncated_name(&label, cap, c.medium(), name_rect.width).shown;
             c.draw_text_in(
-                &tr(&s.label),
+                &label,
                 name_rect,
                 cap,
                 if s.enabled { t.label() } else { t.label3() },

@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn delete_cache_keeps_the_proxy_folder_and_removes_the_rest() {
-        let dir = crate::test_rig::unique_dir("sq-app-hosts-clear-cache");
+        let dir = crate::test_rig::test_dir("sq-app-hosts-clear-cache");
         let (proxies, previews) = (dir.join("Proxies"), dir.join("Previews"));
         std::fs::create_dir_all(&proxies).expect("dir");
         std::fs::create_dir_all(&previews).expect("dir");

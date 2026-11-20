@@ -217,6 +217,8 @@ int sq_demux_open_with(const char *path, int fullProbe, SQFFDemux **out, char *e
                 x.pos = pkt->pos;
                 x.size = pkt->size;
                 x.key = (pkt->flags & AV_PKT_FLAG_KEY) ? 1 : 0;
+                x.discard = (pkt->flags & AV_PKT_FLAG_DISCARD) ? 1 : 0;
+                x.reserved = 0;
                 d->packets.push_back(x);
             }
             av_packet_unref(pkt);

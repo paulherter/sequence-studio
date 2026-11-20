@@ -242,8 +242,9 @@ impl LoudnessMeter {
     fn field(t: &DrawTheme) -> Color {
         Color::new(0.0, 0.0, 0.0, if t.palette.is_dark() { 0.28 } else { 0.05 }) // Theme.Colors.field
     }
-    fn green() -> Color {
-        Color::hex(0x30D158, 1.0) // Theme.Colors.green
+    /// The level colour of a bar inside the target (`status-success`, r8 meters: colour only with signal, never the accent).
+    fn green(t: &DrawTheme) -> Color {
+        t.token(sq_uikit::tokens::color::status::SUCCESS)
     }
     fn tp_fraction(db: f64) -> f64 {
         if db.is_finite() { ((db + 60.0) / 60.0).clamp(0.0, 1.0) } else { 0.0 }
@@ -285,14 +286,14 @@ impl LoudnessMeter {
                 c,
                 y,
                 LoudnessScale::fraction(value),
-                if self.target.is_over_target(value) { t.yellow() } else { t.accent() },
+                if self.target.is_over_target(value) { t.yellow() } else { Self::green(t) },
             );
             Self::text(c, &LoudnessScale::text(value), bar_x + bar_w + gap, y + 1.0, t.label());
             y += row_h + row_gap;
         }
         // True peak: bar over -60...0 dBTP mapped like a short scale, with hold tick.
         Self::text(c, "TP", b.min_x(), y + 1.0, t.label2());
-        let tp_color = if self.target.is_over_ceiling(self.reading.true_peak_db) { red } else { Self::green() };
+        let tp_color = if self.target.is_over_ceiling(self.reading.true_peak_db) { red } else { Self::green(t) };
         bar(c, y, Self::tp_fraction(self.reading.true_peak_db), tp_color);
         let hold = self.peak_hold.value_db();
         if hold.is_finite() {
@@ -328,7 +329,7 @@ impl LoudnessMeter {
         let iw = c.size_of(&integ, Self::FONT_SIZE, 0).width;
         Self::text(c, &integ, b.min_x() + ((b.width - iw) / 2.0).round(), b.min_y(), t.label());
         let red = t.red();
-        let over = |v: Option<f64>| if self.target.is_over_target(v) { t.yellow() } else { t.accent() };
+        let over = |v: Option<f64>| if self.target.is_over_target(v) { t.yellow() } else { Self::green(t) };
         let r = &self.reading;
         let cols: [(&str, f64, Color); 4] = [
             ("M", LoudnessScale::fraction(r.momentary_lufs), over(r.momentary_lufs)),
@@ -337,7 +338,7 @@ impl LoudnessMeter {
             (
                 "T",
                 Self::tp_fraction(r.true_peak_db),
-                if self.target.is_over_ceiling(r.true_peak_db) { red } else { Self::green() },
+                if self.target.is_over_ceiling(r.true_peak_db) { red } else { Self::green(t) },
             ),
         ];
         for (i, (name, fill, color)) in cols.iter().enumerate() {
@@ -406,7 +407,7 @@ mod tests {
             let w = if style == Style::Rows { 300.0 } else { LoudnessMeter::COLUMNS_WIDTH };
             m.draw(&mut c, CGRect::new(0.0, 0.0, w, 200.0), &t);
             let has = |col: Color| c.list.quads().iter().any(|q| q.color == col);
-            assert!(has(t.yellow()) && has(t.accent()) && has(t.red()), "{style:?}");
+            assert!(has(t.yellow()) && has(LoudnessMeter::green(&t)) && !has(t.accent()) && has(t.red()), "{style:?}");
         }
     }
 

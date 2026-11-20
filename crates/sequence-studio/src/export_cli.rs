@@ -114,6 +114,7 @@ pub fn run(project: &Path, args: &ExportArgs) -> Result<(), String> {
         Err(Stop::Error(e)) => Err(e),
         Err(Stop::Canceled(text)) => {
             eprintln!("{text}");
+            sq_media_ffmpeg::encode::finish_warm_up();
             std::process::exit(CANCELED_EXIT)
         }
     }

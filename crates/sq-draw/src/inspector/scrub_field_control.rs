@@ -12,12 +12,12 @@ use crate::draw_list::Color;
 use crate::glyph_atlas::TextAlign;
 use crate::input::{InputKey, InputModifiers};
 use crate::stone::Touch;
-use crate::theme::{self, DrawTheme};
+use crate::theme::DrawTheme;
 use crate::ui_cx::DrawCursor;
 use crate::ui_cx::UiCx;
 use sq_core_model::trim_spaces;
 use sq_uikit::controls_grid::CGRect;
-use sq_uikit::redesign_tokens::radius as rd;
+use sq_uikit::tokens::{radius as rd, type_size};
 use sq_uikit::scrub_math::{ScrubMath, StepBurst, WheelAccumulator};
 use std::ops::RangeInclusive;
 
@@ -72,6 +72,11 @@ pub struct ScrubFieldControl {
     pub true_minus: bool,
     /// The pointer is over the field.
     pub hovering: bool,
+    /// Draws the sunken box at rest (form and export fields). Off: a panel number is plain text and only shows a field on
+    /// hover, while dragging or typing (r8 `#st-editor .num`).
+    pub well: bool,
+    /// The keyboard (Tab) put focus on the field: the ring shows without typing. A pointer scrub never sets it.
+    pub keyboard_focus: bool,
 
     // State
     is_dragging: bool,
@@ -96,6 +101,11 @@ impl ScrubFieldControl {
     pub const PAD: f64 = 8.0;
     /// The least padding a long value squeezes down to.
     pub const PAD_MIN: f64 = 3.0;
+    /// Padding of a panel number without a box (r8 `#st-editor .num`).
+    pub const FLAT_PAD: f64 = 5.0;
+    /// Width of the unit column of a panel number, and the gap before it.
+    pub const UNIT_COLUMN: f64 = 13.0;
+    const UNIT_GAP: f64 = 1.0;
 
     /// A field showing `value`.
     pub fn new(value: f64) -> ScrubFieldControl {
@@ -114,6 +124,8 @@ impl ScrubFieldControl {
             value_parser: None,
             true_minus: false,
             hovering: false,
+            well: false,
+            keyboard_focus: false,
             is_dragging: false,
             editor: None,
             pressed: false,
@@ -455,7 +467,7 @@ impl ScrubFieldControl {
     /// The focus ring shows while the field takes keys (typing). A field the pointer only scrubbed stays the owner of the
     /// wheel and arrow keys (`focused`) but shows no ring: the ring is for keyboard focus (PRUEF-LIN-3 D4).
     pub fn shows_focus_ring(&self, focused: bool) -> bool {
-        focused && self.is_editing()
+        focused && (self.is_editing() || self.keyboard_focus)
     }
 
     /// The pointer shape over the field: the I-beam while typing, else the horizontal drag arrows (the field scrubs).
@@ -469,21 +481,25 @@ impl ScrubFieldControl {
         }
     }
 
-    /// Draws the field in `bounds`. Every field rests as a sunken well (kit `.field`: fill and edge at rest, a stronger edge
-    /// on hover, the accent ring while typing). Without the well a
-    /// number reads as a caption, not as something to drag or type into.
+    /// Draws the field in `bounds`. A field with `well` rests as a sunken well (kit `.field`: fill and edge at rest, a
+    /// stronger edge on hover, the accent ring while typing). A panel number rests as plain text: the `surface-well` fill
+    /// shows on hover, and the focus ring while it is dragged or typed in.
     pub fn draw(&self, c: &mut Canvas, bounds: CGRect, t: &DrawTheme, focused: bool, cx: &mut UiCx) {
         let boxed = Self::box_in(bounds);
         let dim = if self.is_enabled { 1.0 } else { InspectorTokens::DISABLED_ALPHA };
         let ring = self.shows_focus_ring(focused);
-        let touch =
-            Touch { hovering: self.hovering && !ring, pressed: false, disabled: !self.is_enabled, focused: ring };
-        c.stone_field(boxed, f64::from(rd::FIELD), self.is_editing(), touch, t);
+        if self.well {
+            let touch =
+                Touch { hovering: self.hovering && !ring, pressed: false, disabled: !self.is_enabled, focused: ring };
+            c.stone_field(boxed, f64::from(rd::FIELD), self.is_editing(), touch, t);
+        } else {
+            self.draw_flat_body(c, boxed, t, ring);
+        }
         if self.hovering {
             cx.hover.request(self.cursor());
         }
         let value_color = self.value_tint.unwrap_or_else(|| t.label());
-        let size = theme::type_size::BODY as f64;
+        let size = type_size::BODY as f64;
         if let Some(e) = &self.editor {
             InspectorDraw::edit_text(c, e, boxed.inset_by(Self::PAD, 0.0), size, t.label(), !self.leading_text, t, cx);
             return;
@@ -495,17 +511,35 @@ impl ScrubFieldControl {
             return;
         }
         let (value_text, unit_text) = self.shown_text();
-        let (line, unit) = Self::place(c, boxed, &value_text, &unit_text, self.leading_text);
+        let (line, unit) = if self.well {
+            Self::place(c, boxed, &value_text, &unit_text, self.leading_text)
+        } else {
+            Self::place_flat(c, boxed, &value_text, &unit_text, self.leading_text)
+        };
+        // A value wider than the well starts at the left pad (the sign stays) and is cut at the well's right pad, never run
+        // into the next field.
+        c.save_gstate();
+        c.clip_to(boxed.inset_by(Self::PAD_MIN, 0.0));
         c.draw_text_in(&value_text, line, size, faded(value_color, dim), TextAlign::Left, 0.0, 0);
         if let Some(r) = unit {
-            c.draw_text_in(&unit_text, r, size, faded(t.label3(), dim), TextAlign::Left, 0.0, 0);
+            c.draw_text_in(&unit_text, r, size, faded(t.label2(), dim), TextAlign::Left, 0.0, 0);
         }
+        c.restore_gstate();
+    }
+
+    /// The body of a panel number: nothing at rest, the `surface-well` fill on hover, the ring while dragged or typed in.
+    fn draw_flat_body(&self, c: &mut Canvas, boxed: CGRect, t: &DrawTheme, ring: bool) {
+        let hot = self.is_enabled && (self.is_dragging || self.is_editing());
+        let shown = self.is_enabled && (self.hovering || hot);
+        c.stone_flat_field(boxed, f64::from(rd::FIELD), shown, hot || ring, t);
     }
 
     /// The number and its unit as drawn: the unit muted after the number (board `.hv` / `.un`), empty when there is none.
+    /// A custom formatter (Rotation's turns, "1x 30.0 °") that ends in the unit splits the same way, so every unit,
+    /// degrees included, is drawn as the number and the unit column.
     fn shown_text(&self) -> (String, String) {
         let value_text = self.display_text();
-        if !self.unit.is_empty() && self.value_formatter.is_none() && value_text.ends_with(&self.unit) {
+        if !self.unit.is_empty() && value_text.ends_with(&self.unit) {
             let keep = value_text.chars().count() - self.unit.chars().count();
             let number = trim_spaces(&value_text.chars().take(keep).collect::<String>(), false).to_string();
             return (number, self.unit.clone());
@@ -525,14 +559,39 @@ impl ScrubFieldControl {
     /// Where the number and the unit go inside the well `boxed`. The padding gives way before a long value ("-1080.0",
     /// "100.0 %") is cut, so both texts always stay inside the well.
     pub fn place(c: &mut Canvas, boxed: CGRect, value: &str, unit: &str, leading: bool) -> (CGRect, Option<CGRect>) {
-        let size = theme::type_size::BODY as f64;
+        let size = type_size::BODY as f64;
         let vw = c.size_of(value, size, 0).width;
-        let gap = 3.0; // the unit sits a space after the number, muted ("0.0 °", kit)
+        let gap = c.size_of(" ", size, 0).width; // the unit sits a space after the number, muted ("0.0 °", kit)
         let uw = if unit.is_empty() { 0.0 } else { c.size_of(unit, size, 0).width + gap };
         let pad = Self::PAD.min(((boxed.width - vw - uw) / 2.0).max(Self::PAD_MIN));
         let x0 = if leading { boxed.min_x() + pad } else { (boxed.max_x() - pad - vw - uw).max(boxed.min_x() + pad) };
         let line = CGRect::new(x0, boxed.min_y(), vw, boxed.height);
         let unit = (!unit.is_empty()).then(|| CGRect::new(x0 + vw + gap, boxed.min_y(), uw - gap, boxed.height));
+        (line, unit)
+    }
+
+    /// Where the number and the unit go in a panel number: padding 5, the value right-aligned against a unit column 13
+    /// wide (kept free when the field has a unit, so the numbers of a column line up).
+    /// The unit column is at least `UNIT_COLUMN` and grows to the measured unit ("px" is wider than 13 pt): a unit rect
+    /// narrower than its text made the draw cut it to "…" ("0 px" showed "0…").
+    pub fn place_flat(c: &mut Canvas, boxed: CGRect, value: &str, unit: &str, leading: bool) -> (CGRect, Option<CGRect>) {
+        let size = type_size::BODY as f64;
+        let has_unit = !unit.is_empty();
+        let vw = c.size_of(value, size, 0).width.ceil();
+        let measured = if has_unit { c.size_of(unit, size, 0).width.ceil() } else { 0.0 };
+        let mut unit_w = if has_unit { Self::UNIT_COLUMN.max(measured) } else { 0.0 };
+        let mut pad = Self::FLAT_PAD;
+        // A wide value ("100.0 %" in the 50 pt field) first gives back the unit column's slack, then the side padding, so the
+        // value never runs into the unit ("100.0%" touched).
+        if has_unit && boxed.width < 2.0 * pad + vw + Self::UNIT_GAP + unit_w {
+            unit_w = measured;
+            pad = ((boxed.width - vw - Self::UNIT_GAP - unit_w) / 2.0).clamp(Self::PAD_MIN, Self::FLAT_PAD);
+        }
+        let column = if has_unit { unit_w + Self::UNIT_GAP } else { 0.0 };
+        let right = boxed.max_x() - pad - column;
+        let x0 = if leading { boxed.min_x() + pad } else { (right - vw).max(boxed.min_x() + pad) };
+        let line = CGRect::new(x0, boxed.min_y(), vw, boxed.height);
+        let unit = has_unit.then(|| CGRect::new((right + Self::UNIT_GAP).max(x0 + vw + Self::UNIT_GAP), boxed.min_y(), unit_w, boxed.height));
         (line, unit)
     }
 
@@ -620,6 +679,118 @@ mod tests {
             }
             assert_eq!(boxed.height, InspectorTokens::CAPSULE as f64, "every field well has the one capsule height");
         }
+    }
+
+    /// "0 px" showed "0…". Every unit kind of the inspector (px, %, deg, s, dB, frames) and the widest short
+    /// values fit the default 50 pt column whole: value and unit rects hold their text and stay inside the field.
+    #[test]
+    fn short_numbers_with_every_unit_kind_fit_the_default_column_whole() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../Packages/SQText/Sources/SQText/Resources/Fonts");
+        let atlas = crate::GlyphAtlas::inter(&root).expect("bundled Inter loads");
+        let mut c = Canvas::with_size(200.0, 40.0, Some(&atlas), 1.0);
+        let size = type_size::BODY as f64;
+        let boxed = ScrubFieldControl::box_in(CGRect::new(10.0, 4.0, sq_uikit::controls_grid::tokens::VALUE_WIDTH, 24.0));
+        for (v, u) in [("0", "px"), ("100", "%"), ("-180", "\u{b0}"), ("0.0", "s"), ("-12", "dB"), ("24", "f"), ("-100", "px"), ("360", "\u{b0}")] {
+            let (line, unit) = ScrubFieldControl::place_flat(&mut c, boxed, v, u, false);
+            let unit = unit.expect("unit rect");
+            assert!(c.size_of(v, size, 0).width <= line.width, "{v}: value rect cuts the text");
+            assert!(c.size_of(u, size, 0).width <= unit.width, "{u}: unit rect cuts the text");
+            assert!(line.min_x() >= boxed.min_x() && unit.max_x() <= boxed.max_x(), "{v} {u} leaves the field");
+            assert!(line.max_x() <= unit.min_x(), "{v} {u}: value runs into the unit");
+        }
+    }
+
+    /// Tilt and Rotation are both degrees: the number and the muted degree sign are drawn the same way, whether the text
+    /// comes from the plain format or from Rotation's turns formatter ("0.0°" next to "0.0 °").
+    #[test]
+    fn every_degree_value_splits_into_number_and_unit_the_same_way() {
+        let mut tilt = ScrubFieldControl::new(0.0);
+        tilt.decimals = 1;
+        tilt.unit = "\u{b0}".to_string();
+        let mut rotation = ScrubFieldControl::new(0.0);
+        rotation.unit = "\u{b0}".to_string();
+        rotation.value_formatter = Some(Box::new(sq_uikit::rotation_text::format));
+        assert_eq!(tilt.shown_text(), ("0.0".to_string(), "\u{b0}".to_string()));
+        assert_eq!(rotation.shown_text(), tilt.shown_text());
+        rotation.value = 390.0;
+        assert_eq!(rotation.shown_text(), ("1x 30.0".to_string(), "\u{b0}".to_string()));
+    }
+
+    /// The unit never touches the value ("100.0%"): at least `UNIT_GAP` between their rects, for every unit kind,
+    /// also for the widest short value in the default field.
+    #[test]
+    fn value_and_unit_never_touch_for_px_percent_degree_and_db() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../Packages/SQText/Sources/SQText/Resources/Fonts");
+        let atlas = crate::GlyphAtlas::inter(&root).expect("bundled Inter loads");
+        let mut c = Canvas::with_size(200.0, 40.0, Some(&atlas), 1.0);
+        let boxed = ScrubFieldControl::box_in(CGRect::new(10.0, 4.0, sq_uikit::controls_grid::tokens::VALUE_WIDTH, 24.0));
+        for (v, u) in [("100.0", "%"), ("38.0", "%"), ("-100.0", "px"), ("0", "px"), ("-180.0", "\u{b0}"), ("-12.0", "dB"), ("100.0", "dB")] {
+            let (line, unit) = ScrubFieldControl::place_flat(&mut c, boxed, v, u, false);
+            let unit = unit.expect("unit rect");
+            assert!(unit.min_x() - line.max_x() >= ScrubFieldControl::UNIT_GAP, "{v} {u}: gap {}", unit.min_x() - line.max_x());
+        }
+    }
+
+    /// The narrowest field of a pair (`ControlsGrid::MIN_FIELD`) holds the widest angle text of the Inspector, "-180.0 °",
+    /// whole: number, gap, unit and the minimum side padding all inside the well.
+    #[test]
+    fn the_narrowest_field_holds_a_negative_angle_with_its_unit() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../Packages/SQText/Sources/SQText/Resources/Fonts");
+        let atlas = crate::GlyphAtlas::inter(&root).expect("bundled Inter loads");
+        let mut c = Canvas::with_size(200.0, 40.0, Some(&atlas), 1.0);
+        let size = type_size::BODY as f64;
+        let needed = c.size_of("-180.0", size, 0).width.ceil()
+            + ScrubFieldControl::UNIT_GAP
+            + c.size_of("\u{b0}", size, 0).width.ceil()
+            + 2.0 * ScrubFieldControl::PAD_MIN;
+        let w = sq_uikit::controls_grid::ControlsGrid::MIN_FIELD;
+        assert!(w >= needed, "MIN_FIELD {w} < needed {needed}");
+        let boxed = ScrubFieldControl::box_in(CGRect::new(10.0, 4.0, w, 24.0));
+        let (line, unit) = ScrubFieldControl::place_flat(&mut c, boxed, "-180.0", "\u{b0}", false);
+        let unit = unit.expect("unit rect");
+        assert!(line.min_x() >= boxed.min_x() + ScrubFieldControl::PAD_MIN - 0.01, "sign cut: {line:?} in {boxed:?}");
+        assert!(unit.max_x() <= boxed.max_x() - ScrubFieldControl::PAD_MIN + 0.01, "unit cut: {unit:?} in {boxed:?}");
+    }
+
+    /// A value far wider than the well starts at the left pad, so its sign stays visible; the draw clips it to the well.
+    #[test]
+    fn a_huge_negative_value_keeps_its_sign_and_is_cut_at_the_well() {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+            .join("../../Packages/SQText/Sources/SQText/Resources/Fonts");
+        let atlas = crate::GlyphAtlas::inter(&root).expect("bundled Inter loads");
+        let mut c = Canvas::with_size(200.0, 40.0, Some(&atlas), 1.0);
+        let boxed = ScrubFieldControl::box_in(CGRect::new(10.0, 4.0, 50.0, 24.0));
+        let (line, _) = ScrubFieldControl::place(&mut c, boxed, "-9876543210.2", "", false);
+        assert_eq!(line.min_x(), boxed.min_x() + ScrubFieldControl::PAD_MIN);
+        assert!(line.max_x() > boxed.max_x(), "the test value must overflow the well");
+    }
+
+    /// A panel number rests as plain text (no quad at all), shows the well on hover and the ring while dragged;
+    /// a form field (`well`) keeps its box at rest.
+    #[test]
+    fn a_panel_number_draws_no_well_at_rest_and_one_on_hover() {
+        let t = DrawTheme::default();
+        let bounds = CGRect::new(4.0, 2.0, 60.0, 24.0);
+        let quads = |f: &ScrubFieldControl| {
+            let mut c = Canvas::with_size(80.0, 30.0, None, 1.0);
+            let mut cx = UiCx::new();
+            f.draw(&mut c, bounds, &t, false, &mut cx);
+            c.list.quads().len()
+        };
+        let mut f = ScrubFieldControl::new(5.0);
+        assert_eq!(quads(&f), 0, "rest draws no body");
+        f.hovering = true;
+        let hover = quads(&f);
+        assert!(hover >= 1, "hover draws the well");
+        f.hovering = false;
+        f.begin_editing();
+        assert!(quads(&f) > hover, "typing adds the ring to the well");
+        let mut boxed = ScrubFieldControl::new(5.0);
+        boxed.well = true;
+        assert!(quads(&boxed) >= 1, "a form field keeps its box at rest");
     }
 
     #[test]
@@ -844,6 +1015,10 @@ mod tests {
         f.begin_editing();
         assert!(f.shows_focus_ring(true), "typing shows the ring");
         assert!(!f.shows_focus_ring(false), "an unfocused field never does");
+        let mut k = ScrubFieldControl::new(100.0);
+        assert!(!k.shows_focus_ring(true), "a field that merely owns the wheel shows no ring");
+        k.keyboard_focus = true;
+        assert!(k.shows_focus_ring(true), "keyboard focus shows the ring without typing");
     }
 
     /// PRUEF-LIN-3 D2: real pointers move in 1 px events; 20 px right are +10 steps (not +9), Shift +100.

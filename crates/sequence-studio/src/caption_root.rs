@@ -110,7 +110,7 @@ impl AppHost for CaptionRoot {
         self.root.set_title_right_margin(caption::export_margin(sq_os::Platform::current()));
         // The start screen's search sits in the bar, left of the buttons.
         self.root.shell.shell().start_search_in_bar = true;
-        self.root.shell.shell().start_bar_right_inset = caption::BUTTONS_WIDTH;
+        self.root.shell.shell().start_bar_right_inset = caption::START_BAR_INSET;
         let bar = self.root.shell.shell().menu_bar.height();
         if (bar - caption::HEIGHT).abs() > f64::EPSILON {
             self.root.shell.shell().menu_bar.set_height(caption::HEIGHT, &m);

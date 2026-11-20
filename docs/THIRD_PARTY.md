@@ -95,16 +95,11 @@ Sequence Studio is GPL-3.0-or-later. Every binary release (Mac .dmg, Windows set
 from (the GitHub Release notes name the tag and commit), so the corresponding source is available to anyone
 who received the binary. The Rust dependencies are pinned by `Cargo.lock` (Gyroflow at rev `5fa0309a`), with the one exception of the lens-profile download above. Anyone may rebuild with `cargo xtask package`.
 
-## Phosphor icons (SQUIKit/Resources/Icons; Rust app: crates/sq-uikit/resources/Icons, embedded with include_str)
+## Lucide icons (crates/sq-uikit/resources/Icons, embedded with include_str)
 
-- Phosphor Icons (Regular and Fill weights), MIT licence, https://github.com/phosphor-icons/core. Only the SVGs in use are
-  bundled (`ph-<name>[-fill].svg`, 256 grid, filled outlines), loaded solely by `SQIcon` (SQUIKit), rendered as template
-  images. The Discord and GitHub logos are the brand marks below, not Phosphor. Lucide (ISC) was used before 2026-11 and is no longer bundled.
+- Lucide, ISC licence, https://lucide.dev, package lucide-static 1.65.0 (24 grid, stroke 2, round caps). The SVGs in use are bundled unchanged as
+  `lucide-<name>.svg`, loaded solely by `SQIcon`; the old name-to-icon table is design/redesign-abgenommen/ICON-MAP.md. The one remaining own file is `sq-textOverline.svg` (no Lucide match).
 - Brand marks (`brand-github.svg`, `brand-discord.svg`, 24 grid): the GitHub Invertocat and the Discord Clyde mark from simple-icons (https://github.com/simple-icons/simple-icons, CC0-1.0). The marks are trademarks of GitHub Inc. and Discord Inc.; they appear only as links to those services (About, Start window, Help menu).
-- Also Phosphor (Regular, MIT): `magnet`, the Fast Cut card on the Start window's Learn page (`ph-magnet.svg`).
-- Our own drawings (`sq-<case>.svg`, own work, 24 grid, stroke 1.5 = Phosphor's 16/256): the cases marked `own` in the design
-  kit's icon-map.json (tool and mark glyphs, text overline/direction, distribute, power, page icons and more).
-- `scripts/gen-icons.mjs` regenerates the files and `SQIcon+Resources.swift` from the kit's icon-map.json.
 
 ## Beat tracking (SQAnalysis/BeatDetector.swift)
 

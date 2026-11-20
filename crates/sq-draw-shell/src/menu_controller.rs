@@ -216,6 +216,8 @@ impl MenuController {
         let has_submenu = items.iter().any(|i| i.submenu.is_some());
         let mut view = MenuListView::new(items);
         view.max_height = Some(SQMenuLayout::max_height(self.screen()));
+        // Never wider than the window: a long row is cut Finder-style and carries its full title as a tooltip.
+        view.max_width = Some((self.screen().width - 2.0 * SQMenuLayout::SCREEN_MARGIN).max(SQMenuLayout::MIN_WIDTH));
         // Only a menu dropped from a real control is a value list that scrolls after ten rows; a context menu opened at a
         // point (a zero-size anchor) is as tall as its rows, flipped upward when the room below is short.
         let from_control = self.anchor_rect.is_some_and(|r| r.width > 0.0 && r.height > 0.0);
@@ -406,6 +408,14 @@ impl MenuController {
                 }
             }
         }
+    }
+
+    /// The tooltip for a mouse move over a row whose title was cut (its full title); `None` for any other event or spot.
+    /// The host offers it with `Hover::offer_tip` while it routes the move.
+    pub fn tip_at(&self, e: &InputEvent, scale: f32, m: &TextMeasure) -> Option<String> {
+        let InputEvent::MouseMoved { x, y } = *e else { return None };
+        let (level, row) = self.level_and_row(CGPoint::new(f64::from(x / scale), f64::from(y / scale)))?;
+        self.views[level].title_tip(row?, m)
     }
 
     // MARK: Drawing

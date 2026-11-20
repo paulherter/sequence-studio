@@ -62,14 +62,22 @@ impl SQDialogModel {
     }
 
     /// The main action (rightmost, accent): an explicit `.default`, else `.save`, else the first button that is neither
-    /// cancel, destructive nor leading, else the first non-cancel non-leading button (a destructive one), else none.
+    /// cancel, destructive nor leading, else a lone destructive button (only when there is no Cancel: with a Cancel
+    /// button, Cancel is the default and sits rightmost, r8 17-dialoge), else none.
     pub fn primary_index(&self) -> Option<usize> {
         let b = &self.buttons;
+        let has_cancel = self.cancel_index().is_some();
         b.iter()
             .position(|x| x.role == SQDialogRole::Default)
             .or_else(|| b.iter().position(|x| x.role == SQDialogRole::Save))
             .or_else(|| b.iter().position(|x| x.role == SQDialogRole::Normal && !x.is_leading()))
-            .or_else(|| b.iter().position(|x| x.role != SQDialogRole::Cancel && !x.is_leading()))
+            .or_else(|| {
+                b.iter().position(|x| {
+                    x.role != SQDialogRole::Cancel
+                        && !x.is_leading()
+                        && !(has_cancel && x.role == SQDialogRole::Destructive)
+                })
+            })
     }
 
     /// The button Return presses: the main action, but never a destructive one while a cancel button exists (Return then
@@ -177,7 +185,9 @@ mod tests {
     #[test]
     fn destructive_dialog_returns_cancel_and_focuses_it() {
         let m = model(&[("Delete", Destructive), ("Cancel", Cancel)]);
-        assert_eq!(m.primary_index(), Some(0));
+        // Cancel is the default and sits rightmost; the red button is never the main action.
+        assert_eq!(m.primary_index(), None);
+        assert_eq!(m.display_order(), vec![0, 1]);
         assert_eq!(m.return_index(), Some(1));
         assert_eq!(m.initial_focus_index(), Some(1));
         assert_eq!(m.response(true), Some(SQDialogResponse::SECOND));

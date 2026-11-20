@@ -19,7 +19,13 @@ param(
     # Part of the output file names, so every run is unique and reproducible by its inputs: yyyyMMdd-HHmm.
     [string]$Stamp = (Get-Date -Format 'yyyyMMdd-HHmm'),
     # A public release: the output files carry only the version (SequenceStudio-Setup-<version>.exe), no build stamp.
-    [switch]$Release
+    [switch]$Release,
+    # Channel names from `cargo xtask package --channel nightly` (crates/xtask/src/channel.rs); the defaults are Stable.
+    [string]$Name = 'Sequence Studio',
+    [string]$FilePrefix = 'SequenceStudio',
+    [string]$Aumid = 'SequenceStudio.App',
+    [string]$AppGuid = '6C1E2A57-3B0D-4F52-9A0E-5E51A7C0D2B4',
+    [string]$Icon = 'SequenceStudio.ico'
 )
 $ErrorActionPreference = 'Stop'
 $root = Resolve-Path (Join-Path $PSScriptRoot '..\..')
@@ -133,7 +139,7 @@ try {
     $lic = Join-Path $stage 'Licenses'
     New-Item -ItemType Directory -Force $lic | Out-Null
     foreach ($f in 'packaging\licenses\FFMPEG-LICENSE.txt', 'packaging\licenses\FFMPEG-NOTICE.txt', 'packaging\licenses\APACHE-2.0.txt', 'packaging\licenses\THIRD-PARTY-NOTICES.txt', 'packaging\licenses\WHISPER-CPP-MIT.txt', 'crates\sq-onnx\vendor\ORT-LICENSE-MIT.txt', 'docs\THIRD_PARTY.md', 'docs\THIRD_PARTY-CRATES.md') { Copy-Item $f $lic }
-    Copy-Item 'packaging\windows\SequenceStudio.ico' $stage                                # the exe carries it too (build.rs)
+    Copy-Item (Join-Path 'packaging\windows' $Icon) (Join-Path $stage 'SequenceStudio.ico')                                # the exe carries it too (build.rs)
     foreach ($f in 'vcruntime140.dll', 'vcruntime140_1.dll', 'msvcp140.dll') { Copy-Item "$env:SystemRoot\System32\$f" $stage -ErrorAction SilentlyContinue }  # app-local VC++ runtime
 
     # Nothing else may be in the stage (packaging\stage-allowlist.txt, the list the Mac and Linux packages use too).
@@ -151,7 +157,7 @@ try {
     }
 
     New-Item -ItemType Directory -Force $out | Out-Null
-    $zip = Join-Path $out "SequenceStudio-$tag-win64.zip"
+    $zip = Join-Path $out "$FilePrefix-$tag-win64.zip"
     Remove-Item $zip -ErrorAction SilentlyContinue
     Compress-Archive -Path "$stage\*" -DestinationPath $zip
     Write-Host "zip: $zip"
@@ -160,7 +166,7 @@ try {
         $iscc = (Get-Command iscc -ErrorAction SilentlyContinue).Source
         if (-not $iscc) { $iscc = @("$env:LOCALAPPDATA\Programs\Inno Setup 6\ISCC.exe", "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe") | Where-Object { Test-Path $_ } | Select-Object -First 1 }
         if (-not $iscc) { throw 'Inno Setup (iscc) not found' }
-        & $iscc "/DAppVersion=$Version" "/DStamp=$Stamp" "/DStageDir=$stage" "/DOutDir=$out" (Join-Path $root 'packaging\windows\SequenceStudio.iss')
+        & $iscc "/DAppName=$Name" "/DFilePrefix=$FilePrefix" "/DAumid=$Aumid" "/DAppGuid=$AppGuid" "/DAppVersion=$Version" "/DStamp=$Stamp" "/DStageDir=$stage" "/DOutDir=$out" (Join-Path $root 'packaging\windows\SequenceStudio.iss')
         if ($LASTEXITCODE) { throw 'iscc failed' }
     } else {
         # The setup program: sq-installer with the stage folder appended as its payload (sq-installer --pack). A signature goes
@@ -178,7 +184,7 @@ try {
             if ($LASTEXITCODE) { throw 'signtool failed on the setup program' }
             $stub = $signed
         }
-        $setup = Join-Path $out "SequenceStudio-Setup-$tag.exe"
+        $setup = Join-Path $out "$FilePrefix-Setup-$tag.exe"
         # sq-installer is a GUI-subsystem program: `&` would not wait for it and `$LASTEXITCODE` would not be its exit code.
         # Start-Process joins the arguments without quoting them, so each path carries its own quotes.
         $pack = Start-Process -FilePath $stub -ArgumentList @('--pack', "`"$stage`"", '--out', "`"$setup`"") -Wait -PassThru -NoNewWindow

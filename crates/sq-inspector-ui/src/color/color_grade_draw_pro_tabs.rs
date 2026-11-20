@@ -275,7 +275,18 @@ impl ColorGradeDraw {
             }
             Control::CurveReset => InspectorDraw::button(c, &tr("Reset"), f, hov, prs, enabled, false, h, t),
             Control::StepHueKind => {
-                InspectorDraw::popup(c, &tr(self.step_hue_kind.title()), f, hov, false, enabled, false, h, None, t);
+                super::color_grade_draw::flat_popup(
+                    c,
+                    &tr(self.step_hue_kind.title()),
+                    f,
+                    hov,
+                    false,
+                    enabled,
+                    false,
+                    h,
+                    None,
+                    t,
+                );
             }
             Control::QualOn => self.draw_check(
                 c,
@@ -340,7 +351,9 @@ impl ColorGradeDraw {
             Control::LutImport => {
                 InspectorDraw::button(c, &tr("Import\u{2026}"), f, hov, prs, step.is_some(), false, h, t)
             }
-            Control::AddEffect => InspectorDraw::popup(c, &tr("Add effect"), f, false, false, false, false, h, None, t),
+            Control::AddEffect => {
+                super::color_grade_draw::flat_popup(c, &tr("Add effect"), f, false, false, false, false, h, None, t);
+            }
             _ => return false,
         }
         true

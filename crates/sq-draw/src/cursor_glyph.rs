@@ -210,6 +210,17 @@ fn winding_and_distance(contours: &[Vec<CGPoint>], p: Pt) -> (bool, f32) {
     (winding != 0, d2.sqrt())
 }
 
+/// Distance from `p` to the nearest segment of the open `strokes` (polylines, not closed).
+fn stroke_distance(strokes: &[Vec<CGPoint>], p: Pt) -> f32 {
+    let mut d2 = f32::MAX;
+    for s in strokes {
+        for w in s.windows(2) {
+            d2 = d2.min(seg_dist2(p, (w[0].x as f32, w[0].y as f32), (w[1].x as f32, w[1].y as f32)));
+        }
+    }
+    d2.sqrt()
+}
+
 /// The overlay cursor (white glyph with a dark halo) from the icon outline, the same pixels on every system.
 pub fn render_overlay(cursor: DrawCursor, scale: f32) -> Option<CursorImage> {
     let (icon, degrees) = overlay_spec(cursor)?;
@@ -217,6 +228,8 @@ pub fn render_overlay(cursor: DrawCursor, scale: f32) -> Option<CursorImage> {
     let k = OVERLAY_ICON / glyph.grid as f32; // grid unit -> point
     let origin = (OVERLAY_SIZE - OVERLAY_ICON) / 2.0;
     let contours: Vec<Vec<CGPoint>> = glyph.fills.iter().filter(|c| c.len() > 2).cloned().collect();
+    // Lucide glyphs are strokes: a point is inside when it lies within half the line width of a stroke.
+    let half_line = (glyph.line_width / 2.0) as f32;
     let side = (OVERLAY_SIZE * scale).ceil() as u32;
     let mut rgba = vec![0u8; (side * side * 4) as usize];
     let (sin, cos) = (-degrees.to_radians()).sin_cos();
@@ -233,7 +246,9 @@ pub fn render_overlay(cursor: DrawCursor, scale: f32) -> Option<CursorImage> {
                     // Back through the turn into the icon box, then onto the icon grid.
                     let (qx, qy) = (px * cos - py * sin + mid, px * sin + py * cos + mid);
                     let g = ((qx - origin) / k, (qy - origin) / k);
-                    let (inside, d) = winding_and_distance(&contours, g);
+                    let (filled, fd) = winding_and_distance(&contours, g);
+                    let sd = stroke_distance(&glyph.strokes, g) - half_line;
+                    let (inside, d) = (filled || sd <= 0.0, fd.min(sd));
                     if inside {
                         white += 1;
                     } else if d * k <= OVERLAY_HALO {

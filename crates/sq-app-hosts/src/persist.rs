@@ -234,6 +234,22 @@ pub fn stored_settings(support: &Path) -> AppSettings {
     AppSettings::load(&FileDefaults::load(&support.join("prefs.json")))
 }
 
+/// Stores the Program monitor's quality choice in `support/prefs.json` before the app starts, the way Preferences > Playback
+/// does: `None` = Auto (the default of a fresh install), `Some(q)` = a fixed Default Quality. The app then applies it
+/// through its own start path (`apply_monitor_settings`); the playback bench uses this for `--quality`.
+pub fn store_start_quality(support: &Path, fixed: Option<sq_editor_session::MonitorQuality>) {
+    let path = support.join("prefs.json");
+    let mut d = FileDefaults::load(&path);
+    let stored = AppSettings::load(&d);
+    let next = match fixed {
+        Some(q) => stored.choosing_fixed_quality(q),
+        None => AppSettings { preview_quality_auto: true, ..stored },
+    };
+    next.save(&mut d);
+    let _ = std::fs::create_dir_all(support);
+    let _ = d.save(&path);
+}
+
 /// [`apply_session_settings`] for settings already at hand (Preferences saved them: Swift runs it again then).
 pub fn apply_session_settings_from(settings: &AppSettings, session: &mut sq_editor_session::EditorSession) {
     session.engine_mut().set_audio_scrubbing(settings.audio_scrubbing);
@@ -505,6 +521,20 @@ mod tests {
     use sq_core_model::Project;
     use sq_core_time::Id;
     use sq_editor_session::{SessionDeps, WorkspaceStore};
+
+    #[test]
+    fn the_start_quality_is_stored_like_preferences_do() {
+        use sq_editor_session::MonitorQuality;
+        let support = scratch("start-quality");
+        store_start_quality(&support, Some(MonitorQuality::Half));
+        let s = stored_settings(&support);
+        assert!(!s.preview_quality_auto);
+        assert_eq!(s.start_quality(MonitorQuality::Auto), MonitorQuality::Half);
+        store_start_quality(&support, None);
+        let s = stored_settings(&support);
+        assert!(s.preview_quality_auto);
+        assert_eq!(s.start_quality(MonitorQuality::Full), MonitorQuality::Full);
+    }
 
     #[test]
     fn a_headless_support_folder_gets_its_own_projects_folder() {

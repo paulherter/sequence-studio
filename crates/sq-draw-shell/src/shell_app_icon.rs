@@ -79,6 +79,21 @@ impl ShellAppIcon {
         }
     }
 
+    /// Draws the icon so its first INK column (not its transparent margin) starts at `rect.min_x()`: the title bar's left inset
+    /// must look as wide as the right one (the artwork has about 1.5 pt of empty margin inside its square).
+    /// The margin is measured from the real picture at the device size, never guessed.
+    pub fn draw_ink_flush(rect: CGRect, c: &mut Canvas) {
+        let px = 1.0 / c.scale as f64;
+        let side_px = (rect.width.min(rect.height) * c.scale as f64).round().max(1.0) as usize;
+        let margin = Self::ink_margin_px(side_px) as f64 * px;
+        Self::draw(CGRect::new(rect.min_x() - margin, rect.min_y(), rect.width, rect.height), c, false);
+    }
+
+    /// Transparent device pixels left of the first ink at `side_px` (first pixel at half opacity or more: a faint anti-aliased fringe is not ink).
+    pub fn ink_margin_px(side_px: usize) -> usize {
+        runs(side_px).iter().filter(|r| r.color.a >= 0.5).map(|r| r.x).min().unwrap_or(0)
+    }
+
     /// The portable redraw of `App/AppIcon.icon` (the gradient field, Pip's head, his face): the fallback.
     pub(crate) fn draw_vector(rect: CGRect, c: &mut Canvas) {
         let s = rect.width.min(rect.height) / 512.0;
@@ -198,6 +213,19 @@ fn scaled_runs(src: &[u8], n: usize, side: usize) -> Vec<Run> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The ink of the icon starts left of the layout rect's edge by exactly its measured margin (about 1.5 pt at 18 pt, 2x).
+    #[test]
+    fn the_icon_has_a_measured_transparent_margin_that_draw_ink_flush_removes() {
+        let m = ShellAppIcon::ink_margin_px(36);
+        assert!((1..=6).contains(&m), "margin {m}");
+        let mut c = Canvas::with_size(100.0, 40.0, None, 2.0);
+        ShellAppIcon::draw_ink_flush(CGRect::new(12.0, 10.0, 18.0, 18.0), &mut c);
+        // Ink is a pixel at half opacity or more, as `ink_margin_px` counts it: a fainter anti-aliased fringe left of it is not ink.
+        let first = c.list.quads().iter().filter(|q| q.color.a >= 0.5).map(|q| f64::from(q.rect.x)).fold(f64::MAX, f64::min);
+        assert!((first - 24.0).abs() < 0.01, "first ink at {first} device px (rect edge 12 pt at 2x)");
+    }
+
 
     #[test]
     fn the_scaled_icon_is_clean_at_one_and_two_times() {

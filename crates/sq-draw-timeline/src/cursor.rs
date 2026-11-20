@@ -193,7 +193,7 @@ impl TimelinePanel {
             InputEvent::MouseMoved { x, y } => {
                 ui.hover.request(self.cursor_at(x, y, live));
                 if self.frame.contains(x, y) {
-                    ui.hover.offer_tip(self.header_tip_at(self.point(x, y)));
+                    ui.hover.offer_tip(self.header_tip_at(self.point(x, y)).as_deref());
                 }
             }
             InputEvent::MouseDown { x, y, .. }

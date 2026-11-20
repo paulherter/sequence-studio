@@ -6,10 +6,12 @@ use crate::draw_list::Color;
 use crate::motion::{self, Ease};
 use crate::stone::{
     ButtonKind, DISABLED_ALPHA, FieldState, Interaction, Look, Touch, button_look, field_look, hover_level,
-    press_level, pressed_rect,
+    press_level,
 };
 use crate::theme::DrawTheme;
 use sq_uikit::controls_grid::{CGPoint, CGRect};
+/// r8 `.check` width and height.
+const CHECKBOX_SIZE: f64 = 18.0;
 use sq_uikit::redesign_tokens::{color as tk, motion as mt, radius as rd, size as sz};
 
 /// Switch knob side at rest, and while pressed (`Switch/Pressed`: 15, padding 2.5).
@@ -64,18 +66,28 @@ pub fn zoom_bar_stone(c: &mut Canvas, bounds: CGRect, inset: f64, xl: f64, xh: f
     }
 }
 
+/// A knob's hover and press shade: `shade` > 0 lifts away from the page (hover), < 0 darkens (press, ui-gefuehl: darker).
+fn knob_shade(c: Color, shade: f32, t: &DrawTheme) -> Color {
+    if shade >= 0.0 {
+        c.mix(if t.palette.is_dark() { Color::WHITE } else { Color::BLACK }, shade * if t.palette.is_dark() { 0.25 } else { 0.06 })
+    } else {
+        c.mix(Color::BLACK, -shade * 0.18)
+    }
+}
+
 fn faded(c: Color, disabled: bool) -> Color {
     if disabled { c.with_alpha(c.a * DISABLED_ALPHA) } else { c }
 }
 
 impl Canvas<'_> {
     /// A round knob: token gradient, a half-point ring and a 1 pt shadow (`Switch` and `Slider` knobs).
-    fn stone_knob(&mut self, r: CGRect, radius: f64, ring: Color, disabled: bool, t: &DrawTheme) {
+    fn stone_knob(&mut self, r: CGRect, radius: f64, ring: Color, disabled: bool, shade: f32, t: &DrawTheme) {
         let a = if disabled { DISABLED_ALPHA } else { 1.0 };
         let (ring, drop) = if t.palette.is_dark() { (ring, KNOB_SHADOW) } else { (LIGHT_KNOB_RING, LIGHT_KNOB_SHADOW) };
         self.fill_rounded(r.inset_by(-0.5, -0.5), radius + 0.5, faded(ring, disabled));
         self.shadow(r, radius, 2.0, 1.0, faded(drop, disabled), true);
         let (top, bottom) = (t.token(tk::KNOB_TOP), t.token(tk::KNOB_BOTTOM));
+        let (top, bottom) = (knob_shade(top, shade, t), knob_shade(bottom, shade, t));
         self.fill_gradient_rounded(r, radius, top.with_alpha(top.a * a), bottom.with_alpha(bottom.a * a));
     }
 
@@ -104,21 +116,25 @@ impl Canvas<'_> {
         let look = off.mix(on_look, level);
         self.stone_body(track, radius, &if touch.disabled { look.faded(DISABLED_ALPHA) } else { look });
         let knob = Self::switch_knob_rect(track, f64::from(level), f64::from(pl));
-        self.stone_knob(knob, knob.width / 2.0, KNOB_SHADOW, touch.disabled, t);
+        self.stone_knob(knob, knob.width / 2.0, KNOB_SHADOW, touch.disabled, 0.0, t);
         if touch.focused {
             self.stone_focus_ring(track, radius, t);
         }
         level
     }
 
-    /// The checkbox box (14 pt, radius `field`): well when off, accent when on with a white check (10 pt).
+    /// The checkbox box (18 pt rounded square, radius `field` = 6): well when off, accent when on with a white check (10 pt).
     pub fn stone_checkbox(&mut self, r: CGRect, on: bool, touch: Touch, t: &DrawTheme) {
+        // r8 `.check`: always an 18 px rounded square (r-check 6), centered in the caller's slot.
+        let r = CGRect::new(r.mid_x() - CHECKBOX_SIZE / 2.0, r.mid_y() - CHECKBOX_SIZE / 2.0, CHECKBOX_SIZE, CHECKBOX_SIZE);
         let radius = f64::from(rd::FIELD);
         if on {
-            let look = Look { fill: crate::stone::Fill::Flat(t.token(tk::ACCENT_FILL)), ..Look::NONE };
+            let on = Look { fill: crate::stone::Fill::Flat(t.token(tk::ACCENT_FILL)), ..Look::NONE };
+            let down = Look { fill: crate::stone::Fill::Flat(t.token(tk::ACCENT_PRESSED_BOTTOM)), ..Look::NONE };
             let pl = press_level(self, r, touch.pressed && !touch.disabled);
+            let look = on.mix(down, pl);
             let look = if touch.disabled { look.faded(DISABLED_ALPHA) } else { look };
-            self.stone_body(pressed_rect(r, pl), radius, &look);
+            self.stone_body(r, radius, &look);
             let (w, h) = (r.width, r.height);
             let white = faded(t.token(tk::ON_ACCENT), touch.disabled);
             self.stroke_polyline(
@@ -134,7 +150,25 @@ impl Canvas<'_> {
                 self.stone_focus_ring(r, radius, t);
             }
         } else {
-            self.stone_field(r, radius, false, touch, t);
+            // r8 `.check`: no body, a 1.5 pt inset outline in text-tertiary (text-secondary on hover); pressed darkens the inside.
+            // text-secondary and text-tertiary are the same gray in r8, so hover shows as a faint tint inside the outline.
+            let edge = if touch.hovering && !touch.disabled { t.label2() } else { t.label3() };
+            if touch.hovering && !touch.disabled && !touch.pressed {
+                self.fill_rounded(r, radius, edge.with_alpha(0.12));
+            }
+            self.stone_press_shade(r, radius, touch);
+            self.stroke_rounded(r.inset_by(0.75, 0.75), radius - 0.75, 1.5, faded(edge, touch.disabled));
+            if touch.focused {
+                self.stone_focus_ring(r, radius, t);
+            }
+        }
+    }
+
+    /// The pressed look of an off checkbox or radio: the inside darkens (never smaller), 60 ms in, 160 ms out like a button.
+    fn stone_press_shade(&mut self, r: CGRect, radius: f64, touch: Touch) {
+        let pl = press_level(self, r, touch.pressed && !touch.disabled);
+        if pl > 0.0 {
+            self.fill_rounded(r, radius, Color::BLACK.with_alpha(0.16 * pl));
         }
     }
 
@@ -142,7 +176,9 @@ impl Canvas<'_> {
     pub fn stone_radio(&mut self, r: CGRect, on: bool, touch: Touch, t: &DrawTheme) {
         let radius = r.width / 2.0;
         if on {
-            let look = Look { fill: crate::stone::Fill::Flat(t.token(tk::ACCENT_FILL)), ..Look::NONE };
+            let on = Look { fill: crate::stone::Fill::Flat(t.token(tk::ACCENT_FILL)), ..Look::NONE };
+            let down = Look { fill: crate::stone::Fill::Flat(t.token(tk::ACCENT_PRESSED_BOTTOM)), ..Look::NONE };
+            let look = on.mix(down, press_level(self, r, touch.pressed && !touch.disabled));
             self.stone_body(r, radius, &if touch.disabled { look.faded(DISABLED_ALPHA) } else { look });
             let d = RADIO_DOT;
             self.fill_ellipse(
@@ -154,12 +190,14 @@ impl Canvas<'_> {
             }
         } else {
             self.stone_field(r, radius, false, touch, t);
+            self.stone_press_shade(r, radius, touch);
         }
     }
 
     /// The track of a segmented control (a well, radius `control`).
     pub fn stone_segment_track(&mut self, r: CGRect, touch: Touch, t: &DrawTheme) {
-        self.stone_field(r, f64::from(rd::CONTROL), false, Touch { hovering: false, ..touch }, t);
+        // The ring belongs to the segment that has the keyboard, not to the track.
+        self.stone_field(r, f64::from(rd::CONTROL), false, Touch { hovering: false, focused: false, ..touch }, t);
     }
 
     /// The selected segment: a raised thumb (radius `field`) with the highlight edge and shadow; a hovered unselected one
@@ -176,6 +214,9 @@ impl Canvas<'_> {
         };
         let look = button_look(kind, state, t);
         self.stone_body(r, radius, &if touch.disabled { look.faded(DISABLED_ALPHA) } else { look });
+        if touch.focused {
+            self.stone_focus_ring(r, radius, t);
+        }
     }
 
     /// A slider track (4 pt well, radius 2) with an optional gray fill (`text3`) up to `fill_to` (x).
@@ -193,7 +234,9 @@ impl Canvas<'_> {
     pub fn stone_slider_knob(&mut self, cx: f64, cy: f64, pill: bool, touch: Touch, t: &DrawTheme) -> CGRect {
         let (w, h, radius) = if pill { (8.0, 16.0, 3.0) } else { (SLIDER_KNOB, SLIDER_KNOB, SLIDER_KNOB / 2.0) };
         let r = CGRect::new(cx - w / 2.0, cy - h / 2.0, w, h);
-        self.stone_knob(r, radius, SLIDER_KNOB_RING, touch.disabled, t);
+        let live = !touch.disabled;
+        let shade = hover_level(touch.hovering && live && !touch.pressed) - press_level(self, r, touch.pressed && live);
+        self.stone_knob(r, radius, SLIDER_KNOB_RING, touch.disabled, shade, t);
         if touch.focused {
             self.stone_focus_ring(r, radius, t);
         }
@@ -219,6 +262,19 @@ impl Canvas<'_> {
         if touch.focused {
             self.stone_focus_ring(r, radius, t);
         }
+    }
+
+    /// The `surface-toggle` pill of an active toggle (r8:131, 276; tools, Snap, Link, Bold, Italic): flat grey, hover and
+    /// press shift the fill. One part for the timeline and the inspector panels.
+    pub fn stone_toggle_pill(&mut self, r: CGRect, hot: bool, pressed: bool, t: &DrawTheme) {
+        let fill = if pressed {
+            t.pressed()
+        } else if hot {
+            t.raised_hover()
+        } else {
+            t.raised()
+        };
+        self.fill_rounded(r, f64::from(rd::CONTROL), fill);
     }
 
     /// The Library's filter chip (kit Panels/Chip): 20 pt, radius `control`, raised when on, a 1 pt `line2` edge when off.

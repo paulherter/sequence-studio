@@ -235,7 +235,7 @@ impl ScrubMath {
         result.is_finite().then_some(result)
     }
 
-    /// Fixed decimals plus unit. Degree sign hugs the number (90°), other units get a space (42 %, 3 dB).
+    /// Fixed decimals plus unit. Every unit, the degree sign too, gets a space (90 °, 42 %, 3 dB).
     pub fn format(v: f64, decimals: i64, unit: &str) -> String {
         let places = usize::try_from(decimals.max(0)).unwrap_or(0);
         let mut s = if v.is_nan() { "nan".to_string() } else { format!("{v:.places$}") };

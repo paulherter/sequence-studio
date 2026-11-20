@@ -660,3 +660,48 @@ fn prores_4444_carries_its_fourcc_to_the_decoder() {
     let shim::Received::Frame(f) = dec.receive().unwrap() else { panic!("a frame") };
     assert_eq!((f.width, f.height), (64, 48));
 }
+
+/// A stream-copy excerpt cut between key frames starts at a negative time (edit list): it must open quickly, index every
+/// frame from time 0 and decode frame 0. `SQ_NEG_START_FILE` points the same checks at a real camera excerpt.
+#[test]
+fn a_negative_start_clip_opens_fast_and_decodes_its_first_shown_frame() {
+    let Some(ffmpeg) = ["/opt/homebrew/bin", "/usr/local/bin", "/usr/bin"]
+        .iter()
+        .map(|d| format!("{d}/ffmpeg"))
+        .find(|p| Path::new(p).exists())
+    else {
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("sq-negstart-{}", std::process::id()));
+    let _ = std::fs::create_dir_all(&dir);
+    let src = dir.join("src.mp4");
+    let cut = dir.join("cut.mp4");
+    let run = |args: &[&str]| {
+        std::process::Command::new(&ffmpeg).args(["-v", "error", "-y"]).args(args).status().is_ok_and(|s| s.success())
+    };
+    let from_env = std::env::var("SQ_NEG_START_FILE").ok().map(std::path::PathBuf::from);
+    let clip = if let Some(f) = from_env {
+        f
+    } else {
+        let make = "-f lavfi -i testsrc2=size=128x96:rate=30:duration=8 -f lavfi -i sine=duration=8 -c:v libx264 \
+            -preset ultrafast -bf 2 -g 60 -x264-params open-gop=1 -pix_fmt yuv420p -c:a aac -shortest";
+        let args: Vec<&str> = make.split_whitespace().chain([src.to_str().unwrap()]).collect();
+        if !run(&args) {
+            eprintln!("skipped: this ffmpeg has no libx264 (LGPL build)");
+            let _ = std::fs::remove_dir_all(&dir);
+            return;
+        }
+        assert!(run(&["-ss", "4.1", "-i", src.to_str().unwrap(), "-t", "3", "-c", "copy", cut.to_str().unwrap()]));
+        cut
+    };
+    let began = std::time::Instant::now();
+    let demuxer = Arc::new(FFmpegDemuxer::open(&clip).expect("open"));
+    let n = demuxer.index().count();
+    assert!(n > 0);
+    let first = demuxer.index().frame_at(sq_core_time::Time::ZERO).expect("a frame at time 0");
+    let dec = FFmpegVideoDecoder::new(Arc::clone(&demuxer), Id::from_u128(1), false, 0).unwrap();
+    let frames = block_on(dec.decode(first..=first)).expect("first shown frame");
+    assert_eq!(frames.len(), 1);
+    assert!(began.elapsed().as_secs_f64() < 2.0, "open + frame 0 took {:?}", began.elapsed());
+    let _ = std::fs::remove_dir_all(&dir);
+}

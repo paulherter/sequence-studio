@@ -16,6 +16,100 @@ pub struct BenchOpts {
     pub json: Option<std::path::PathBuf>,
     /// Free labels written into the JSON (`--bench-tag key=value`, repeatable): case, variant, commit.
     pub tags: Vec<(String, String)>,
+    /// The Program monitor's playback quality at the start (`--quality`, default Auto like a fresh install).
+    pub quality: BenchQuality,
+}
+
+/// `--quality auto|full|half|quarter`: what Preferences > Playback holds for the run.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum BenchQuality {
+    #[default]
+    Auto,
+    Full,
+    Half,
+    Quarter,
+}
+
+impl BenchQuality {
+    pub fn parse(text: &str) -> Option<BenchQuality> {
+        Some(match text {
+            "auto" => BenchQuality::Auto,
+            "full" => BenchQuality::Full,
+            "half" => BenchQuality::Half,
+            "quarter" => BenchQuality::Quarter,
+            _ => return None,
+        })
+    }
+
+    pub fn name(self) -> &'static str {
+        match self {
+            BenchQuality::Auto => "auto",
+            BenchQuality::Full => "full",
+            BenchQuality::Half => "half",
+            BenchQuality::Quarter => "quarter",
+        }
+    }
+}
+
+/// The decode quality the engine used during a run: the value at Play, every change and the value at the end.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct QualityTrace {
+    /// The `--quality` choice ("auto", "full", ...).
+    pub requested: String,
+    pub start: String,
+    pub changes: Vec<QualityChange>,
+}
+
+/// One change of the effective quality.
+#[derive(Clone, Debug, PartialEq)]
+pub struct QualityChange {
+    /// Seconds since Play.
+    pub at_play_s: f64,
+    /// Position on the timeline when it happened (NaN when unknown).
+    pub timeline_s: f64,
+    pub to: String,
+}
+
+impl QualityTrace {
+    pub fn new(requested: &str, start: &str) -> QualityTrace {
+        QualityTrace { requested: requested.into(), start: start.into(), changes: Vec::new() }
+    }
+
+    /// The quality in effect now (the last change, or the start value).
+    pub fn current(&self) -> &str {
+        self.changes.last().map_or(self.start.as_str(), |c| c.to.as_str())
+    }
+
+    /// Notes `now` seen at `at_play_s` / `timeline_s`; records a change when it differs from the last value.
+    pub fn observe(&mut self, now: &str, at_play_s: f64, timeline_s: f64) {
+        if now != self.current() {
+            self.changes.push(QualityChange { at_play_s, timeline_s, to: now.into() });
+        }
+    }
+
+    pub fn to_json(&self) -> Value {
+        json!({
+            "requested": self.requested,
+            "start": self.start,
+            "changes": self.changes.iter().map(|c| json!({ "at_play_s": c.at_play_s, "timeline_s": c.timeline_s, "to": c.to })).collect::<Vec<_>>(),
+            "final": self.current(),
+        })
+    }
+
+    /// One text line for the run log.
+    pub fn line(&self) -> String {
+        let steps: Vec<String> =
+            self.changes.iter().map(|c| format!("{} at {:.1}s play / {:.1}s timeline", c.to, c.at_play_s, c.timeline_s)).collect();
+        format!(
+            "quality: requested {}, start {}, {} change(s){}{}, final {}\n",
+            self.requested,
+            self.start,
+            self.changes.len(),
+            if steps.is_empty() { "" } else { ": " },
+            steps.join(", "),
+            self.current()
+        )
+    }
 }
 
 /// The nearest-rank percentile of an ascending list (`q` 0...1); `NaN` for an empty list.
@@ -85,6 +179,7 @@ pub struct BenchReport {
     pub rss_mb: (f64, f64, f64),
     pub gpu_busy: u64,
     pub machine: Machine,
+    pub quality: QualityTrace,
 }
 
 /// Which machine and how loaded it was.
@@ -173,6 +268,7 @@ impl BenchReport {
                 "underruns": self.underruns, "underruns_per_min": per_min,
                 "av_drift_max_abs_ms": self.drift_max_abs_ms, "av_drift_mean_ms": self.drift_mean_ms,
             },
+            "quality": self.quality.to_json(),
             "ui": { "frames_per_s": self.ui_frames_per_s, "avg_ms": self.ui_avg_ms },
             "rss_mb": { "start": self.rss_mb.0, "max": self.rss_mb.1, "end": self.rss_mb.2 },
         })
@@ -220,8 +316,33 @@ mod tests {
         assert_eq!(j["gap_ms"]["p95"], 40.0);
         assert_eq!(j["audio"]["underruns_per_min"], 6.0);
         assert!(j["picture"]["play_first_ms"].is_null());
-        for key in ["machine", "run", "picture", "gap_ms", "audio", "ui", "rss_mb"] {
+        for key in ["machine", "run", "picture", "gap_ms", "audio", "ui", "rss_mb", "quality"] {
             assert!(j.get(key).is_some(), "{key}");
         }
+    }
+
+    #[test]
+    fn the_quality_trace_records_start_every_change_and_the_final_value() {
+        let mut t = QualityTrace::new("auto", "half");
+        t.observe("half", 0.1, 10.1);
+        t.observe("quarter", 3.5, 13.5);
+        t.observe("quarter", 4.0, 14.0);
+        assert_eq!(t.changes.len(), 1);
+        assert_eq!(t.current(), "quarter");
+        let r = BenchReport { quality: t, ..BenchReport::default() };
+        let q = &r.to_json()["quality"];
+        assert_eq!((q["requested"].as_str(), q["start"].as_str(), q["final"].as_str()), (Some("auto"), Some("half"), Some("quarter")));
+        assert_eq!(q["changes"][0]["to"], "quarter");
+        assert_eq!(q["changes"][0]["timeline_s"], 13.5);
+        assert!(QualityTrace::new("full", "full").to_json()["changes"].as_array().is_some_and(Vec::is_empty));
+    }
+
+    #[test]
+    fn the_quality_names_round_trip() {
+        for q in [BenchQuality::Auto, BenchQuality::Full, BenchQuality::Half, BenchQuality::Quarter] {
+            assert_eq!(BenchQuality::parse(q.name()), Some(q));
+        }
+        assert_eq!(BenchQuality::parse("best"), None);
+        assert_eq!(BenchQuality::default(), BenchQuality::Auto);
     }
 }

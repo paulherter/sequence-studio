@@ -65,7 +65,7 @@ fn the_new_clip_is_as_long_as_the_stored_new_text_length() {
     defaults.default_text_seconds = 8;
     // Without a stored file the root uses 5 s; the stored value reaches it through `new_text_seconds`.
     assert_eq!(r.new_text_seconds(), 5);
-    let dir = crate::test_rig::unique_dir("sq-app-hosts-create-prefs");
+    let dir = crate::test_rig::test_dir("sq-app-hosts-create-prefs");
     std::fs::create_dir_all(&dir).expect("dir");
     let store = crate::persist::FileDefaults::shared(&dir);
     let concrete = std::rc::Rc::clone(&store);

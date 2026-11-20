@@ -165,6 +165,21 @@ impl EffectControlsModel {
         Some(id)
     }
 
+    /// An ellipse mask of the given soft edge (px), half width (share of the frame) and opacity (%), for the shot poses.
+    pub fn add_ellipse_mask(&mut self, feather: f64, half: f64, opacity: f64) -> Option<Id> {
+        let mut c = self.working_clip()?;
+        let mut m = ClipMask::make(self.ids.next_id(), MaskShapeKind::Ellipse, &c.next_mask_name());
+        m.path.value = MaskPath::ellipse(Vec2::new(0.5, 0.5), Vec2::new(half, half * 16.0 / 9.0));
+        m.feather.value = feather;
+        m.opacity.value = opacity;
+        let id = m.id;
+        let mut masks = c.masks().to_vec();
+        masks.push(m);
+        c.set_masks(masks);
+        self.commit(c, "Add Mask", None);
+        Some(id)
+    }
+
     /// Deletes every mask of the clip, one undo step.
     pub fn remove_all_masks(&mut self) {
         let Some(mut c) = self.working_clip() else { return };

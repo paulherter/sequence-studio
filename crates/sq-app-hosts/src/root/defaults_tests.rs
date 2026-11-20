@@ -24,7 +24,7 @@ fn copy_text_reaches_the_clipboard() {
 
 #[test]
 fn a_changed_default_is_stored_and_restore_factory_removes_it_everywhere() {
-    let dir = crate::test_rig::unique_dir("sq-app-hosts-effect-defaults");
+    let dir = crate::test_rig::test_dir("sq-app-hosts-effect-defaults");
     std::fs::create_dir_all(&dir).expect("dir");
     let mut r = root().with_prefs(&dir);
     let mut rig = crate::test_rig::Rig::new(session());
@@ -60,7 +60,7 @@ fn a_changed_default_is_stored_and_restore_factory_removes_it_everywhere() {
 
 #[test]
 fn defaults_saved_earlier_reach_the_session_on_the_first_answer() {
-    let dir = crate::test_rig::unique_dir("sq-app-hosts-effect-defaults-load");
+    let dir = crate::test_rig::test_dir("sq-app-hosts-effect-defaults-load");
     std::fs::create_dir_all(&dir).expect("dir");
     let mut d = EffectDefaults::default();
     d.set_default_transition(TransitionPreset::new(TransitionKind::CrossDissolve, sq_core_time::Time::seconds(2)));

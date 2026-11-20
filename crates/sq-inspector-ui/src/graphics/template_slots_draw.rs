@@ -236,7 +236,7 @@ impl TemplateSlotsDraw {
                         hov,
                         false,
                         true,
-                        false,
+                        true,
                         f64::from(InspectorTokens::CAPSULE),
                         None,
                         &t,
@@ -272,7 +272,7 @@ impl TemplateSlotsDraw {
             (self.width - boxed.max_x() - 6.0 - ControlsGrid::TRAILING).max(0.0),
             h,
         );
-        c.draw_text_in(&title, rect, fs, t.label(), TextAlign::Left, 0.0, 0);
+        crate::ec_draw::effect_controls_draw_panel::EffectControlsDrawPanel::draw_label_lines(c, &title, rect, h, fs, t.label());
         let Some(z) = &self.zones else { return };
         self.label(c, "Middle", Self::row_y(self.slots.len() + 1));
         for (i, name) in ["Hold", "Stretch"].into_iter().enumerate() {
@@ -298,7 +298,14 @@ impl TemplateSlotsDraw {
             ControlsGrid::VALUE_X - ControlsGrid::LABEL_X - ControlsGrid::GAP,
             Self::ROW_HEIGHT,
         );
-        c.draw_text_in(&SQL10n::string(s), r, f64::from(type_size::BODY), self.theme.label2(), TextAlign::Left, 0.0, 0);
+        crate::ec_draw::effect_controls_draw_panel::EffectControlsDrawPanel::draw_label_lines(
+            c,
+            &SQL10n::string(s),
+            r,
+            Self::ROW_HEIGHT,
+            f64::from(type_size::BODY),
+            self.theme.label2(),
+        );
     }
 
     // MARK: Pointer and keys

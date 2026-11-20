@@ -176,7 +176,7 @@ const EXPERIMENTAL_WORD: &str = "experimental";
 
 /// Draws the bar.
 pub fn draw(c: &mut Canvas, s: &StatusBarContent, bar: CGRect, t: &DrawTheme) {
-    c.fill(bar, t.titlebar());
+    c.fill(bar, t.panel_ground());
     let f = {
         let c = &*c;
         layout(s, bar, &|x| c.size_of(x, FONT, 0).width, &|x| c.size_of(x, CHIP_FONT, 0).width)
@@ -187,19 +187,19 @@ pub fn draw(c: &mut Canvas, s: &StatusBarContent, bar: CGRect, t: &DrawTheme) {
             c.draw_text_in(text, r, size, color, TextAlign::Left, 0.0, 0);
         }
     };
-    put(c, &s.format, f.format, FONT, t.label3());
+    put(c, &s.format, f.format, FONT, t.label2());
     if let (Some(r), Some(save)) = (f.dot, &s.save) {
         let ok = matches!(save.kind, SaveStatusKind::Saved | SaveStatusKind::Empty);
         c.fill_ellipse(r, if ok { t.green() } else { warning });
-        put(c, &save.text, f.save, FONT, t.label3());
+        put(c, &save.text, f.save, FONT, t.label2());
     }
     put(c, &s.message, f.message, FONT, t.label2());
-    put(c, &s.version, f.version, FONT, t.label3());
-    put(c, &s.playback, f.playback, FONT, t.label3());
+    put(c, &s.version, f.version, FONT, t.label2());
+    put(c, &s.playback, f.playback, FONT, t.label2());
     match (f.grade, s.grade.strip_suffix(EXPERIMENTAL_WORD)) {
         // "No Pro grade · experimental": the word is amber like the flask (kit status bar).
         (Some(r), Some(head)) => {
-            let w = c.draw_text_in(head, r, FONT, t.label3(), TextAlign::Left, 0.0, 0);
+            let w = c.draw_text_in(head, r, FONT, t.label2(), TextAlign::Left, 0.0, 0);
             let word = CGRect::new(r.x + w, r.y, (r.width - w).max(0.0), r.height);
             c.draw_text_in(
                 EXPERIMENTAL_WORD,
@@ -211,10 +211,10 @@ pub fn draw(c: &mut Canvas, s: &StatusBarContent, bar: CGRect, t: &DrawTheme) {
                 0,
             );
         }
-        _ => put(c, &s.grade, f.grade, FONT, t.label3()),
+        _ => put(c, &s.grade, f.grade, FONT, t.label2()),
     }
     put(c, LINKED_SELECTION_OFF, f.link, FONT, warning);
-    put(c, &s.relink_offer, f.relink, CHIP_FONT, warning);
+    put(c, &s.relink_offer, f.relink, CHIP_FONT, t.token(sq_uikit::redesign_tokens::color::RED_TEXT));
     match (f.ring, s.export_progress) {
         (Some(r), Some(p)) => draw_ring(c, r, p, t),
         (Some(r), None) => c.stroke_ellipse(r.inset_by(0.75, 0.75), 1.5, t.label4()),

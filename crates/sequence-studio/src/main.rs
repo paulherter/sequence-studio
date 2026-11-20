@@ -285,12 +285,8 @@ fn add_root_with(
                 root.shell.shell().menu_bar.use_system_bar();
                 root.shell.shell().window_lights = true;
             }
-            // Linux draws its own caption buttons like Windows, so Export keeps 146 pt from the edge (spec §14); a shot has
-            // no window and shows the spacing without the buttons (the real window wraps the root in `CaptionRoot`).
-            #[cfg(not(any(windows, target_os = "macos")))]
-            if std::env::var_os("SQ_SHOT_SYSTEM_BAR").is_none() {
-                root.set_title_right_margin(caption::export_margin(sq_os::Platform::Linux));
-            }
+            // No right margin for caption buttons here: a shot has no window buttons, the real window wraps the root in
+            // `CaptionRoot`, which sets the margin itself. Reserving 146 pt in a shot left an empty strip right of Export.
             // One bar on Linux and Windows, as in their real windows (the Windows caption root sets it in `layout`): the
             // start screen's search sits in the app bar, with no extra "Sequence Studio" title row under it.
             #[cfg(not(target_os = "macos"))]
@@ -1970,6 +1966,7 @@ fn exit_soon(message: String) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(3));
         eprintln!("{message}");
+        sq_media_ffmpeg::encode::finish_warm_up();
         std::process::exit(1);
     });
 }
@@ -1999,7 +1996,10 @@ fn window_outcome(failed: Option<String>) -> Result<(), String> {
 }
 
 fn main() -> std::process::ExitCode {
-    match run() {
+    let outcome = run();
+    // The encoder probe thread may sit in a GPU driver: wait for it before the process (and the driver) ends.
+    sq_media_ffmpeg::encode::finish_warm_up();
+    match outcome {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
             eprintln!("{e}");

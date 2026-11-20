@@ -395,6 +395,6 @@ mod tests {
         assert!(pixels_differ(&dark, &light) > size.0 * size.1, "dark and light must differ");
         let panel = |img: &RgbaImage| img.pixels[(5 * img.width + 5) * 4..][..3].to_vec();
         assert_eq!(panel(&dark), vec![0x1C, 0x1C, 0x1E], "the window surface is the PANEL token in dark");
-        assert_eq!(panel(&light), vec![0xF4, 0xF4, 0xF5], "and in light");
+        assert_eq!(panel(&light), vec![0xF1, 0xF1, 0xF3], "and in light");
     }
 }

@@ -248,7 +248,7 @@ impl GraphEditorDraw {
         }
         let radius = InspectorTokens::CONTROL_RADIUS;
         c.fill_rounded(r, radius, t.overlay());
-        c.stroke_rounded(r, radius, 0.5, t.ink_fill(0.14));
+        c.stroke_rounded(r.inset_by(0.5, 0.5), radius - 0.5, 1.0, t.menu_edge());
         for (i, l) in lines.iter().enumerate() {
             text_in(
                 c,
