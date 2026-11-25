@@ -258,8 +258,13 @@ impl EditorSession {
                 let m = if still { SourceMarks::default() } else { usable_marks(&marks, r.id) };
                 let plan = Timeline::source_edit_plan(&m, total, None, None, at, tl.frame_duration(), still)
                     .ok_or(EditError::EmptyClip)?;
-                let source =
-                    if still { TimeRange::new(Time::ZERO, total.snapped(tl.frame_duration())) } else { plan.source };
+                // A still has no media length: its default is `total`; the edit API's `sourceOut` / `duration` sets its
+                // length (the marks of a still stay ignored, as in the UI).
+                let still_length = options.source.and_then(|(_, out)| out).unwrap_or(total).snapped(tl.frame_duration());
+                if still && still_length <= Time::ZERO {
+                    return Err(EditError::EmptyClip);
+                }
+                let source = if still { TimeRange::new(Time::ZERO, still_length) } else { plan.source };
                 let has_video = r.info.as_ref().is_none_or(|i| i.video.is_some()) && streams.includes_video();
                 let has_audio = r.info.as_ref().is_some_and(|i| i.audio.is_some()) && streams.includes_audio();
                 let mut targets: Vec<Id> = Vec::new();

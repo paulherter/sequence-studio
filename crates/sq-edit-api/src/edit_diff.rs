@@ -4,6 +4,7 @@
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sq_core_model::{Clip, Project, Timeline};
+use crate::project_state::TransitionState;
 use sq_core_time::{Id, Time, TimeRange};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -88,6 +89,12 @@ pub struct EditDiff {
     /// Inspector parameters (motion, opacity, volume, effects, text layers) that differ, per clip; absent when none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub param_changes: Vec<ClipParamChanges>,
+    /// Transitions only the new state has; absent when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transitions_added: Vec<TransitionState>,
+    /// Transitions only the old state has; absent when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transitions_removed: Vec<TransitionState>,
 }
 
 fn order(a: &ClipRef, b: &ClipRef) -> std::cmp::Ordering {
@@ -166,6 +173,8 @@ impl EditDiff {
             && self.markers_removed == 0
             && self.pixel_aspect_changes.is_none()
             && self.param_changes.is_empty()
+            && self.transitions_added.is_empty()
+            && self.transitions_removed.is_empty()
     }
 
     /// The diff from `before` to `after`.
@@ -185,6 +194,9 @@ impl EditDiff {
         changed.sort_by(|x, y| order(&x.before, &y.before));
         let mb: BTreeSet<Id> = before.markers.iter().map(|m| m.id).collect();
         let ma: BTreeSet<Id> = after.markers.iter().map(|m| m.id).collect();
+        let (tb, ta) = (TransitionState::all(before), TransitionState::all(after));
+        let transitions_added = ta.iter().filter(|x| !tb.iter().any(|y| y.id == x.id)).cloned().collect();
+        let transitions_removed = tb.iter().filter(|x| !ta.iter().any(|y| y.id == x.id)).cloned().collect();
         EditDiff {
             added,
             removed,
@@ -195,6 +207,8 @@ impl EditDiff {
             markers_removed: mb.difference(&ma).count() as i64,
             pixel_aspect_changes: None,
             param_changes: param_changes(before, after),
+            transitions_added,
+            transitions_removed,
         }
     }
 

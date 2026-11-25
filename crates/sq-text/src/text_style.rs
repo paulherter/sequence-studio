@@ -259,12 +259,16 @@ pub struct TextBackground {
     pub padding: BoxPadding,
     /// Corner radius.
     pub corner_radius: f64,
+    /// The box grows word by word with the words the In animator reveals and shrinks again with the Out animator (an empty
+    /// pill shows first). Only an animated text draws it; at rest the box is the whole block.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub follow_reveal: bool,
 }
 
 impl TextBackground {
     /// Corner radius at least 0.
     pub fn new(color: RGBAColor, padding: BoxPadding, corner_radius: f64) -> Self {
-        TextBackground { color, padding, corner_radius: corner_radius.max(0.0) }
+        TextBackground { color, padding, corner_radius: corner_radius.max(0.0), follow_reveal: false }
     }
 }
 

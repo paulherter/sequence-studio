@@ -12,7 +12,10 @@ use sq_core_model::{
     AnimatedProperty, Clip, ClipAnimation, ClipEffect, EffectCatalog, EffectColor, EffectParamKind, EffectParamSpec,
     GraphicsContent, GraphicsLayer, TrackKind, TrackPan,
 };
-use sq_core_time::{Id, IdSource, Interpolation, Keyframe, KeyframeValue, Time, Vec2};
+use sq_core_time::{
+    EaseHandle, EaseSide, EasingCurve, Id, IdSource, Interpolation, Keyframe, KeyframeValue, Time, Vec2,
+};
+use sq_core_time::keyframes_model::keyframe_math;
 
 /// The animation fields a clip or layer has.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -288,7 +291,7 @@ impl<'a> Host<'a> {
         addr: &Addr,
         at: Time,
         value: &Value,
-        interpolation: Option<Interpolation>,
+        shape: &KeyShape,
         ids: &mut dyn IdSource,
     ) -> Result<(), String> {
         if at < Time::ZERO || at > self.duration {
@@ -296,11 +299,10 @@ impl<'a> Host<'a> {
         }
         let (slot, meta) = self.slot(addr)?;
         match slot {
-            Slot::Num(p) => put_key(p, at, number_in(value, &meta)?, interpolation, ids),
-            Slot::Vec(p) => put_key(p, at, parse_vec2(value)?, interpolation, ids),
-            Slot::Col(p) => put_key(p, at, parse_color(value)?, interpolation, ids),
+            Slot::Num(p) => put_key(p, at, number_in(value, &meta)?, shape, ids),
+            Slot::Vec(p) => put_key(p, at, parse_vec2(value)?, shape, ids),
+            Slot::Col(p) => put_key(p, at, parse_color(value)?, shape, ids),
         }
-        Ok(())
     }
 
     /// Removes the key at clip-local `at`.
@@ -312,6 +314,54 @@ impl<'a> Host<'a> {
             Slot::Col(p) => drop_key(p, at),
         };
         if removed { Ok(()) } else { Err("no keyframe at that time".into()) }
+    }
+
+    /// Moves the key at clip-local `from` to `to`, keeping value, interpolation and handles.
+    pub fn move_key(&mut self, addr: &Addr, from: Time, to: Time) -> Result<(), String> {
+        let d = self.duration;
+        let (slot, _) = self.slot(addr)?;
+        match slot {
+            Slot::Num(p) => move_in(p, from, to, d),
+            Slot::Vec(p) => move_in(p, from, to, d),
+            Slot::Col(p) => move_in(p, from, to, d),
+        }
+    }
+
+    /// Moves every key at or after `after` (all keys when `None`) by `by`; returns how many moved.
+    pub fn shift_keys(&mut self, addr: &Addr, by: Time, after: Option<Time>) -> Result<usize, String> {
+        let d = self.duration;
+        let (slot, _) = self.slot(addr)?;
+        match slot {
+            Slot::Num(p) => shift_in(p, by, after, d),
+            Slot::Vec(p) => shift_in(p, by, after, d),
+            Slot::Col(p) => shift_in(p, by, after, d),
+        }
+    }
+
+    /// The addresses of every parameter that has keys (clip animation and effect parameters).
+    pub fn keyed_addrs(&mut self) -> Vec<Addr> {
+        let mut out: Vec<Addr> = Vec::new();
+        let m = &*self.anim;
+        let anims = [
+            (Anim::Position, m.position.is_animated()),
+            (Anim::Scale, m.scale.is_animated()),
+            (Anim::Anchor, m.anchor.is_animated()),
+            (Anim::Rotation, m.rotation.is_animated()),
+            (Anim::Opacity, m.opacity.is_animated()),
+            (Anim::Volume, m.volume.is_animated()),
+            (Anim::Shutter, m.shutter_angle.is_animated()),
+            (Anim::AntiFlicker, m.anti_flicker.is_animated()),
+            (Anim::TiltX, m.tilt_x.is_animated()),
+            (Anim::TiltY, m.tilt_y.is_animated()),
+        ];
+        out.extend(anims.into_iter().filter(|(_, k)| *k).map(|(a, _)| Addr::Anim(a)));
+        for e in self.effects.iter() {
+            let keys = e.parameters.iter().filter(|(_, p)| p.is_animated()).map(|(k, _)| k)
+                .chain(e.points.iter().filter(|(_, p)| p.is_animated()).map(|(k, _)| k))
+                .chain(e.colors.iter().filter(|(_, p)| p.is_animated()).map(|(k, _)| k));
+            out.extend(keys.map(|k| Addr::Effect(e.id, k.clone())));
+        }
+        out
     }
 
     /// Every parameter as JSON (`prefix` = `layer.<id>.` or empty). Works on a copy: listing never creates a parameter.
@@ -386,25 +436,159 @@ impl<'a> Host<'a> {
     }
 }
 
-fn put_key<V: KeyframeValue>(
+/// One explicit bezier handle as Premiere's temporal bezier writes it: `influence` 0...100 % of the segment, `speed`
+/// in value units per second (needs the neighbor key; left out = flat).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(crate) struct HandleSpec {
+    influence: f64,
+    speed: Option<f64>,
+}
+
+impl HandleSpec {
+    fn parse(name: &str, v: &Value) -> Result<HandleSpec, String> {
+        let o = v.as_object().ok_or_else(|| format!("{name}: expected {{influence: 0...100, speed?}}"))?;
+        if let Some(k) = o.keys().find(|k| *k != "influence" && *k != "speed") {
+            return Err(format!("{name}: unknown field '{k}'; known: influence, speed"));
+        }
+        let influence = o
+            .get("influence")
+            .and_then(Value::as_f64)
+            .filter(|i| (0.0..=100.0).contains(i))
+            .ok_or_else(|| format!("{name}.influence: a number 0...100 (percent of the segment)"))?;
+        let speed = match o.get("speed") {
+            None | Some(Value::Null) => None,
+            Some(s) => Some(s.as_f64().filter(|s| s.is_finite()).ok_or_else(|| format!("{name}.speed: a number"))?),
+        };
+        Ok(HandleSpec { influence: influence / 100.0, speed })
+    }
+}
+
+/// How a key is shaped: the interpolation, an `ease` shortcut (the UI's own built-in curves) and explicit handles.
+#[derive(Clone, Debug, Default)]
+pub(crate) struct KeyShape {
+    pub interpolation: Option<Interpolation>,
+    ease: Option<EasingCurve>,
+    in_handle: Option<HandleSpec>,
+    out_handle: Option<HandleSpec>,
+}
+
+impl KeyShape {
+    /// Parses the wire fields; an error names the field and what is allowed.
+    pub fn parse(
+        interpolation: Option<&str>,
+        ease: Option<&str>,
+        in_handle: Option<&Value>,
+        out_handle: Option<&Value>,
+    ) -> Result<KeyShape, String> {
+        let ease = ease
+            .map(|e| match e {
+                "linear" => Ok(EasingCurve::linear()),
+                "easeIn" => Ok(EasingCurve::ease_in_100()),
+                "easeOut" => Ok(EasingCurve::ease_out_100()),
+                "easeInOut" => Ok(EasingCurve::ease_in_out()),
+                other => Err(format!("ease: unknown '{other}'; known: linear, easeIn, easeOut, easeInOut")),
+            })
+            .transpose()?;
+        let shape = KeyShape {
+            interpolation: interpolation.map(parse_interpolation).transpose()?,
+            ease,
+            in_handle: in_handle.map(|v| HandleSpec::parse("inHandle", v)).transpose()?,
+            out_handle: out_handle.map(|v| HandleSpec::parse("outHandle", v)).transpose()?,
+        };
+        if shape.ease.is_some() && (shape.in_handle.is_some() || shape.out_handle.is_some()) {
+            return Err("ease and inHandle/outHandle are alternatives: give one".into());
+        }
+        Ok(shape)
+    }
+}
+
+pub(crate) fn put_key<V: KeyframeValue>(
     p: &mut AnimatedProperty<V>,
     at: Time,
     v: V,
-    interpolation: Option<Interpolation>,
+    shape: &KeyShape,
     ids: &mut dyn IdSource,
-) {
+) -> Result<(), String> {
     let id = p.track.keys.iter().find(|k| k.time == at).map_or_else(|| ids.next_id(), |k| k.id);
+    let value = v.clone();
     let mut k = Keyframe::new(id, at, v);
-    if let Some(i) = interpolation {
+    if let Some(i) = shape.interpolation {
         k.interpolation = i;
     }
+    if let Some(c) = &shape.ease {
+        // The same curve application the inspector's ease menu makes.
+        c.apply(&mut k, EaseSide::Both);
+    }
+    if (shape.in_handle.is_some() || shape.out_handle.is_some()) && shape.interpolation.is_none() {
+        k.interpolation = Interpolation::Bezier;
+    }
+    if let Some(h) = shape.in_handle {
+        k.in_handle = EaseHandle { dx: h.influence, dy: 0.0 };
+    }
+    if let Some(h) = shape.out_handle {
+        k.out_handle = EaseHandle { dx: h.influence, dy: 0.0 };
+    }
     p.track.insert(k);
+    // A speed needs the neighbor key: the importer's one conversion, applied once both ends exist.
+    if let Some(speed) = shape.out_handle.and_then(|h| h.speed) {
+        let (nt, nv) = p.track.next_key_after(at).map(|n| (n.time, n.value.clone())).ok_or(
+            "outHandle.speed needs a later key: add that key first, or leave speed out",
+        )?;
+        let seconds = keyframe_math::seconds(nt - at);
+        let h = EaseHandle::from_speed(speed, shape.out_handle.map_or(0.0, |h| h.influence), seconds, V::minus(&nv, &value).speed_magnitude());
+        p.track.update(id, |k| k.out_handle = h);
+    }
+    if let Some(speed) = shape.in_handle.and_then(|h| h.speed) {
+        let (pt, pv) = p.track.previous_key_before(at).map(|n| (n.time, n.value.clone())).ok_or(
+            "inHandle.speed needs an earlier key: add that key first, or leave speed out",
+        )?;
+        let seconds = keyframe_math::seconds(at - pt);
+        let h = EaseHandle::from_speed(speed, shape.in_handle.map_or(0.0, |h| h.influence), seconds, V::minus(&value, &pv).speed_magnitude());
+        p.track.update(id, |k| k.in_handle = h);
+    }
+    Ok(())
 }
 
-fn drop_key<V: KeyframeValue>(p: &mut AnimatedProperty<V>, at: Time) -> bool {
+/// Moves one key to `to` (inside the clip), keeping its id, value, interpolation and handles; refused when a key sits there.
+pub(crate) fn move_in<V: KeyframeValue>(p: &mut AnimatedProperty<V>, from: Time, to: Time, duration: Time) -> Result<(), String> {
+    if to < Time::ZERO || to > duration {
+        return Err("to must lie inside the clip (clip-local time, 0 = clip start)".into());
+    }
+    let id = p.track.keys.iter().find(|k| k.time == from).map(|k| k.id).ok_or("no keyframe at 'from'")?;
+    if from != to && p.track.keys.iter().any(|k| k.time == to) {
+        return Err("a keyframe already sits at 'to'".into());
+    }
+    p.track.move_key(id, to);
+    Ok(())
+}
+
+/// Moves the keys at or after `after` by `by`, all or nothing: refused when one leaves the clip or lands on a key that stays.
+pub(crate) fn shift_in<V: KeyframeValue>(p: &mut AnimatedProperty<V>, by: Time, after: Option<Time>, duration: Time) -> Result<usize, String> {
+    let moving = |t: Time| after.is_none_or(|a| t >= a);
+    let mut n = 0;
+    for k in p.track.keys.iter().filter(|k| moving(k.time)) {
+        let to = k.time + by;
+        if to < Time::ZERO || to > duration {
+            return Err("a shifted keyframe would leave the clip (clip-local 0...clip length)".into());
+        }
+        n += 1;
+    }
+    if p.track.keys.iter().any(|s| !moving(s.time) && p.track.keys.iter().any(|k| moving(k.time) && k.time + by == s.time)) {
+        return Err("a shifted keyframe would land on a keyframe that stays".into());
+    }
+    p.track.edit_keys(|keys| keys.iter_mut().filter(|k| moving(k.time)).for_each(|k| k.time += by));
+    Ok(n)
+}
+
+pub(crate) fn drop_key<V: KeyframeValue>(p: &mut AnimatedProperty<V>, at: Time) -> bool {
     let Some(id) = p.track.keys.iter().find(|k| k.time == at).map(|k| k.id) else { return false };
     p.track.remove(id);
     true
+}
+
+/// A handle as the wire reads it: `influence` in percent of the segment, `dy` the normalized value influence.
+pub(crate) fn handle_json(h: EaseHandle) -> Value {
+    json!({"influence": (h.dx * 1000.0).round() / 10.0, "dy": (h.dy * 1000.0).round() / 1000.0})
 }
 
 fn interp_name(i: Interpolation) -> &'static str {
@@ -438,7 +622,10 @@ fn describe(slot: &Slot<'_>, meta: &Meta) -> (Value, bool, Vec<Value>) {
         p.track
             .keys
             .iter()
-            .map(|k| json!({"at": k.time, "value": f(&k.value), "interpolation": interp_name(k.interpolation)}))
+            .map(|k| {
+                json!({"at": k.time, "value": f(&k.value), "interpolation": interp_name(k.interpolation),
+                    "inHandle": handle_json(k.in_handle), "outHandle": handle_json(k.out_handle)})
+            })
             .collect()
     }
     match slot {
@@ -547,6 +734,12 @@ pub fn clip_params_json(clip: &Clip) -> Value {
             } else {
                 entry.insert("type".into(), json!("shape"));
             }
+            if let Some(a) = crate::text_animators::layer_animators(&l) {
+                entry.insert("animators".into(), Value::Object(a));
+            }
+            if let Some(a) = crate::text_accent::read_back(&l) {
+                entry.insert("accent".into(), a);
+            }
             layers.push(Value::Object(entry));
             let name = l.name.clone();
             let is_text = l.is_text();
@@ -557,16 +750,25 @@ pub fn clip_params_json(clip: &Clip) -> Value {
             let mut host = Host::of_layer(&mut l, duration);
             params.extend(host.list(&format!("layer.{id}."), Some(("layer", id))));
             if is_text && let Some((tpl, _)) = text {
+                params.push(crate::text_tracking::param_json(&name, id, &tpl));
                 let mut text_param = |path: String, title: &str, ty: Ty, value: Value| {
                     params.push(json!({"path": format!("layer.{id}.{path}"), "group": name, "title": title, "type": ty.name(),
                         "value": value, "animated": false, "layer": id}));
                 };
                 text_param("text".into(), "Text", Ty::Text, json!(tpl.text));
                 text_param("style".into(), "Text style", Ty::Text, serde_json::to_value(&tpl.style).unwrap_or(Value::Null));
+                for (side, a) in crate::text_animators::layer_animators(&l).unwrap_or_default() {
+                    text_param(format!("animator.{side}"), &format!("Text animator ({side})"), Ty::Text, a);
+                }
             }
         }
     }
-    json!({"clip": clip.id, "name": clip.name, "params": params, "effects": effects, "layers": layers})
+    let mut out = json!({"clip": clip.id, "name": clip.name, "params": params, "effects": effects, "layers": layers});
+    let masks = crate::mask_ops::read_back(clip);
+    if !masks.is_empty() {
+        out["masks"] = Value::Array(masks);
+    }
+    out
 }
 
 /// The Effects panel catalog: video and audio effects with their parameters.

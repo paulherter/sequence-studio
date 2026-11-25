@@ -154,6 +154,7 @@ impl LayerRasters {
         let mut k = DefaultHasher::new();
         slot.hash(&mut k);
         hash_states(frame.character_states.as_deref(), &mut k);
+        frame.tracking.to_bits().hash(&mut k);
         let raster = Raster {
             key: k.finish(),
             width: u32::try_from(frame.picture.width).ok()?,

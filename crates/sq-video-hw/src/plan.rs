@@ -19,15 +19,11 @@ pub struct Cursor {
     pub origin: i64,
 }
 
-/// Presentation index of every decode ordinal.
+/// Presentation index of every decode ordinal (a hidden sample: the first presented frame after it). One slot per packet
+/// of the file, hidden ones included: sized by the frame count it lost the last decode ordinals of a clip with a
+/// stream copy's preroll, so the pictures of its last frames never reached a caller.
 pub fn ordinal_map(index: &SampleIndex) -> Vec<usize> {
-    let mut map = vec![0usize; index.count()];
-    for (i, e) in index.entries().iter().enumerate() {
-        if let Some(slot) = usize::try_from(e.decode_ordinal).ok().and_then(|o| map.get_mut(o)) {
-            *slot = i;
-        }
-    }
-    map
+    (0..index.ordinal_count()).map(|o| index.presentation_index_of_decode_ordinal(o).unwrap_or(0)).collect()
 }
 
 /// First ordinal to send for `range`, and whether the session must drop its state first (a seek).
@@ -166,6 +162,27 @@ mod tests {
         assert_eq!(step_back(&ix, 5), Some(0));
         assert_eq!(step_back(&ix, 2), None);
         assert_eq!(ordinal_map(&ix), vec![0, 3, 1, 2, 4, 7, 5, 6]);
+    }
+
+    /// 6 packets, the first two hidden preroll (an edit list), then frames 0..4 in decode order 2 0 1 4 3 (a B pair at the
+    /// end): the map has a slot for every ordinal, so the last two ordinals still name the last frames.
+    #[test]
+    fn the_ordinal_map_covers_the_packets_after_hidden_preroll() {
+        let e = |pts: i64, o: i64, sync: bool| Entry {
+            pts: Time::new(pts, 30),
+            dts: Time::new(o, 30),
+            duration: Time::new(1, 30),
+            is_sync: sync,
+            decode_ordinal: o,
+        };
+        let shown = vec![e(2, 3, false), e(0, 2, true), e(1, 4, false), e(4, 5, false), e(3, 6, false)];
+        let hidden = vec![e(-2, 0, true), e(-1, 1, false)];
+        let ix = SampleIndex::with_hidden(shown, hidden);
+        assert_eq!((ix.count(), ix.ordinal_count()), (5, 7));
+        let map = ordinal_map(&ix);
+        assert_eq!(map.len(), 7);
+        assert_eq!(&map[5..], &[4, 3], "the last two packets are the last two frames");
+        assert!(ix.is_hidden_ordinal(0) && !ix.is_hidden_ordinal(5));
     }
 
     #[test]

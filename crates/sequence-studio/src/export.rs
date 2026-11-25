@@ -39,6 +39,31 @@ use std::time::{Duration, Instant};
 /// How long one frame may take to decode and compose before the export gives up.
 const FRAME_TIMEOUT: Duration = Duration::from_secs(20);
 
+/// How long an engine error (file does not open, picture does not decode) may stand with no frame shown before the wait
+/// ends with that error: a frame that cannot decode never shows, so waiting out `FRAME_TIMEOUT` only hides the reason
+/// (the Edit API's capture answered 503 at its 15 s deadline instead of naming the file).
+const ERROR_GRACE: Duration = Duration::from_millis(500);
+
+/// The engine error to give up with: `error` is new since the wait began (`stale` is the `last_error` before the seek; the
+/// engine keeps it sticky, so an unchanged one says nothing about this frame) and has stood for `ERROR_GRACE`. `seen`
+/// remembers when it first showed. Only a `fail_fast` wait (the Edit API's still) gives up on an error; an export never does.
+// shortcut: an error with the very same text as the stale one is not seen, the wait runs to `FRAME_TIMEOUT`; upgrade when the engine counts its errors.
+fn error_due(
+    seen: &mut Option<Instant>,
+    error: Option<String>,
+    stale: Option<&str>,
+    fail_fast: bool,
+    now: Instant,
+) -> Option<String> {
+    let error = error.filter(|e| fail_fast && stale != Some(e.as_str()));
+    let Some(error) = error else {
+        *seen = None;
+        return None;
+    };
+    let first = *seen.get_or_insert(now);
+    (now.duration_since(first) >= ERROR_GRACE).then_some(error)
+}
+
 /// The queue with the FFmpeg encoder and the renderer of the app.
 pub fn setup() -> ExportSetup {
     let encoder = Arc::new(FfmpegExportEncoder::new());
@@ -90,15 +115,17 @@ pub(crate) fn sources(
     id: Id,
     settings: &ExportSettings,
 ) -> Result<ExportSources, ExportError> {
-    sources_in(snapshot, id, settings, true)
+    sources_in(snapshot, id, settings, true, false)
 }
 
 /// `gpu_yuv`: an 8-bit 4:2:0 delivery reads back NV12 made on the GPU; `false` keeps RGBA frames (tests that read the pixels).
+/// `fail_fast`: a new engine error ends a frame wait after `ERROR_GRACE` (stills); an export waits out `FRAME_TIMEOUT`.
 fn sources_in(
     snapshot: &ExportSnapshot,
     id: Id,
     settings: &ExportSettings,
     gpu_yuv: bool,
+    fail_fast: bool,
 ) -> Result<ExportSources, ExportError> {
     let timeline = snapshot
         .timelines
@@ -120,6 +147,7 @@ fn sources_in(
         settings.applied_hdr_delivery().is_some(),
         gpu_yuv && settings.source_pixel_format() == sq_export::core::settings::ExportPixelFormat::Yuv420v,
         snapshot.use_proxies_for_export,
+        fail_fast,
     )
     .inspect_err(|e| crate::applog::info(&format!("export source for {id:?} failed: {e}")))?;
     let audio = settings.audio.enabled.then(|| {
@@ -172,7 +200,7 @@ pub(crate) fn render_still(
     }
     settings.range = RangeSelection::InOut(TimeRange::new(at, timeline.format.frame_duration));
     settings.captions = sq_export::core::settings::CaptionMode::BurnIn;
-    let mut source = sources_in(snapshot, id, &settings, false).map_err(|e| e.to_string())?;
+    let mut source = sources_in(snapshot, id, &settings, false, true).map_err(|e| e.to_string())?;
     let frame = source.video.frame(0).map_err(|e| e.to_string())?;
     frame_pixels(&frame).ok_or_else(|| "the frame has no 8-bit picture (HDR sequence?)".to_string())
 }
@@ -195,6 +223,8 @@ struct EngineFrames {
     pending: Option<(usize, Pending)>,
     /// The index the next sequential call asks for; a jump (the export dialog's preview) does not prefetch.
     expected: usize,
+    /// A new engine error ends a frame wait after `ERROR_GRACE` (the Edit API's still); an export keeps `FRAME_TIMEOUT`.
+    fail_fast: bool,
 }
 
 /// Whether an export decodes in software: the VA-API copy of a decoded 4K picture to memory ran 20 ms (about 55 pictures/s, three copy
@@ -256,6 +286,7 @@ impl EngineFrames {
         hdr: bool,
         yuv420: bool,
         use_proxies: bool,
+        fail_fast: bool,
     ) -> Result<EngineFrames, ExportError> {
         let gpu = Gpu::new().map_err(|e| ExportError::Other(format!("No graphics device for the export: {e}")))?;
         crate::surface::limit_pool(&gpu);
@@ -335,6 +366,7 @@ impl EngineFrames {
             yuv,
             pending: None,
             expected: 0,
+            fail_fast,
         })
     }
 
@@ -346,9 +378,11 @@ impl EngineFrames {
     /// once the engine shows the exact pictures of it; its readback is submitted, not waited for.
     fn submit(&self, t: Time) -> Result<Pending, ExportError> {
         let t_start = Instant::now();
+        let stale = self.handle.status().last_error;
         self.handle.seek(t);
         self.handle.sync();
         let end = Instant::now() + FRAME_TIMEOUT;
+        let mut error_seen = None;
         loop {
             let at = self.handle.status().position;
             if let Some(shown) = self.handle.latest_shown().filter(|s| s.exact && s.position == at)
@@ -375,8 +409,13 @@ impl EngineFrames {
             {
                 return Ok(Pending::Black);
             }
+            let last_error = self.handle.status().last_error;
+            if let Some(why) = error_due(&mut error_seen, last_error.clone(), stale.as_deref(), self.fail_fast, Instant::now())
+            {
+                return Err(ExportError::Other(why));
+            }
             if Instant::now() > end {
-                let why = self.handle.status().last_error.unwrap_or_else(|| "a frame did not render in time".into());
+                let why = last_error.unwrap_or_else(|| "a frame did not render in time".into());
                 return Err(ExportError::Other(why));
             }
             std::thread::sleep(Duration::from_millis(2));
@@ -494,7 +533,7 @@ pub(crate) mod tests {
         id: Id,
         settings: &ExportSettings,
     ) -> Result<ExportSources, ExportError> {
-        sources_in(snapshot, id, settings, false)
+        sources_in(snapshot, id, settings, false, false)
     }
     use sq_core_model::{Clip, MediaFingerprint, SequenceFormat, Track, TrackKind};
     use sq_export::core::preset::ExportPreset;
@@ -552,6 +591,44 @@ pub(crate) mod tests {
         let timeline = Timeline::new(Id::from_u128(1), "tiny", format, vec![track, sound]);
 
         (timeline, reference)
+    }
+
+    #[test]
+    fn a_new_engine_error_ends_a_fail_fast_wait_after_the_grace_not_the_timeout() {
+        let t0 = Instant::now();
+        let mut seen = None;
+        let e = || Some("open /x.mp4: no decoder".to_string());
+        assert_eq!(error_due(&mut seen, None, None, true, t0), None);
+        assert_eq!(error_due(&mut seen, e(), None, true, t0), None, "the first sight only starts the grace");
+        assert_eq!(error_due(&mut seen, e(), None, true, t0 + Duration::from_millis(400)), None);
+        let due = error_due(&mut seen, e(), None, true, t0 + ERROR_GRACE);
+        assert_eq!(due.as_deref(), Some("open /x.mp4: no decoder"));
+        assert_eq!(error_due(&mut seen, None, None, true, t0 + Duration::from_secs(1)), None, "a cleared error resets");
+        assert_eq!(error_due(&mut seen, e(), None, true, t0 + Duration::from_secs(1)), None);
+    }
+
+    #[test]
+    fn an_export_wait_never_fails_fast_on_an_engine_error() {
+        let t0 = Instant::now();
+        let mut seen = None;
+        let e = || Some("decode: transient".to_string());
+        for s in [0, 1, 5, 19] {
+            assert_eq!(error_due(&mut seen, e(), None, false, t0 + Duration::from_secs(s)), None);
+        }
+    }
+
+    #[test]
+    fn a_stale_engine_error_from_before_the_wait_is_ignored() {
+        let t0 = Instant::now();
+        let mut seen = None;
+        let stale = "decode: old".to_string();
+        assert_eq!(error_due(&mut seen, Some(stale.clone()), Some(&stale), true, t0), None);
+        assert_eq!(error_due(&mut seen, Some(stale.clone()), Some(&stale), true, t0 + Duration::from_secs(5)), None);
+        // A different error that shows up later counts, from its own first sight.
+        let new = Some("open /y.mp4: gone".to_string());
+        assert_eq!(error_due(&mut seen, new.clone(), Some(&stale), true, t0 + Duration::from_secs(6)), None);
+        let due = error_due(&mut seen, new, Some(&stale), true, t0 + Duration::from_secs(6) + ERROR_GRACE);
+        assert_eq!(due.as_deref(), Some("open /y.mp4: gone"));
     }
 
     #[test]
@@ -1267,7 +1344,7 @@ pub(crate) mod tests {
         (settings.video.width, settings.video.height) = (320, 180);
         settings.video.frame_duration = Time::new(1, 25);
         settings.audio.enabled = false;
-        let mut src = sources_in(&snapshot, Id::from_u128(1), &settings, gpu_yuv).expect("sources").video;
+        let mut src = sources_in(&snapshot, Id::from_u128(1), &settings, gpu_yuv, false).expect("sources").video;
         let mut at = |i: usize| {
             let f = src.frame(i).expect("frame");
             if gpu_yuv {

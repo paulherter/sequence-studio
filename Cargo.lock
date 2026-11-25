@@ -5401,8 +5401,11 @@ dependencies = [
  "serde",
  "serde_json",
  "sq-core-edit",
+ "sq-core-effects",
+ "sq-core-masks",
  "sq-core-model",
  "sq-core-time",
+ "sq-text",
  "workspace-hack",
 ]
 
@@ -5769,6 +5772,7 @@ dependencies = [
  "sq-core-color",
  "sq-core-edit",
  "sq-core-effects",
+ "sq-core-masks",
  "sq-core-model",
  "sq-core-project",
  "sq-core-time",

@@ -23,6 +23,20 @@ impl PerceiveError {
     }
 }
 
+/// One word of `addCaptions {words}`: its text and where it is spoken, in sequence time.
+#[derive(Clone, Debug, PartialEq)]
+pub struct CaptionWordSpec {
+    /// The word.
+    pub text: String,
+    /// First instant.
+    pub from: Time,
+    /// End.
+    pub to: Time,
+}
+
+/// Most words one `addCaptions` request may carry.
+pub const MAX_CAPTION_WORDS: usize = 5000;
+
 /// `contactSheet {from,to,count}`: one PNG grid of `count` frames between `from` and `to`, each with its timecode.
 #[derive(Clone, Debug, PartialEq)]
 pub struct ContactSheet {
@@ -61,9 +75,21 @@ pub enum PerceiveRequest {
     /// `POST /v1/importPremiere`.
     ImportPremiere { path: String, dry_run: bool },
     /// `POST /v1/addCaptions`: the app's own Create Captions on a clip's or a sequence's speech, one undo step.
-    AddCaptions { target: Target, style: Option<String>, word_by_word: bool, position: CaptionSpot },
+    AddCaptions {
+        target: Target,
+        style: Option<String>,
+        word_by_word: bool,
+        position: CaptionSpot,
+        look: CaptionLookSpec,
+        /// The words to caption (sequence time) instead of a transcript of the speech.
+        words: Option<Vec<CaptionWordSpec>>,
+        /// The name of a look in the user's Look store (the Captions panel's saved looks).
+        saved_look: Option<String>,
+    },
     /// `GET /v1/captionStyles`.
     CaptionStyles,
+    /// `GET /v1/fonts`: the families the font picker lists.
+    Fonts,
 }
 
 /// Where added captions sit.
@@ -78,7 +104,173 @@ pub enum CaptionSpot {
 }
 
 /// Caption looks the API knows (the built-in styles of the Captions panel).
-pub const CAPTION_STYLES: [&str; 3] = ["default", "outline", "pill"];
+pub const CAPTION_STYLES: [&str; 4] = ["default", "outline", "pill", "paul"];
+
+/// A part of the look that is switched off or set.
+#[derive(Clone, Debug, PartialEq)]
+pub enum Part<T> {
+    /// Off (`false` on the wire).
+    Off,
+    /// On with these values.
+    On(T),
+}
+
+/// The shadow of a caption: color black at `opacity`, `blur` and `offset` (down) in text points.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct ShadowSpec {
+    /// Blur radius.
+    pub blur: f64,
+    /// Opacity 0...1.
+    pub opacity: f64,
+    /// Offset down.
+    pub offset: f64,
+}
+
+/// The box (pill) behind a caption.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub struct BoxSpec {
+    /// Fill color r, g, b, a.
+    pub color: [f64; 4],
+    /// Corner radius.
+    pub radius: f64,
+}
+
+/// What `addCaptions` may change of the look at creation; unset keys keep the base style.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub struct CaptionLookSpec {
+    /// 1...3 words per caption (1 = word by word).
+    pub words_per_caption: Option<u8>,
+    /// Text size.
+    pub size: Option<f64>,
+    /// Text color r, g, b, a.
+    pub color: Option<[f64; 4]>,
+    /// Shadow.
+    pub shadow: Option<Part<ShadowSpec>>,
+    /// Box behind the text.
+    pub box_: Option<Part<BoxSpec>>,
+    /// Vertical place of the caption, 0 (top) ... 1 (bottom) of the frame.
+    pub position_y: Option<f64>,
+    /// Font family or PostScript name.
+    pub font: Option<String>,
+    /// Weight 100...900.
+    pub weight: Option<i64>,
+}
+
+/// `words: [{text, from, to}]` (sequence seconds, rational or bare), sorted by start.
+fn parse_caption_words(v: &Value) -> Result<Vec<CaptionWordSpec>, String> {
+    let list = v.as_array().filter(|a| !a.is_empty()).ok_or("words: a non-empty list of {text, from, to}")?;
+    if list.len() > MAX_CAPTION_WORDS {
+        return Err(format!("words: at most {MAX_CAPTION_WORDS} words"));
+    }
+    let mut out = Vec::with_capacity(list.len());
+    for (i, w) in list.iter().enumerate() {
+        let o = w.as_object().ok_or_else(|| format!("words[{i}]: an object {{text, from, to}}"))?;
+        check_strict_keys(o, &["text", "from", "to"], &format!("words[{i}]"))?;
+        let text: String = required(o, "text").map_err(|e| format!("words[{i}]: {e}"))?;
+        let (from, to) = (
+            required::<WireTime>(o, "from").map_err(|e| format!("words[{i}]: {e}"))?.time,
+            required::<WireTime>(o, "to").map_err(|e| format!("words[{i}]: {e}"))?.time,
+        );
+        if text.trim().is_empty() {
+            return Err(format!("words[{i}]: text must not be empty"));
+        }
+        if from < Time::ZERO || to <= from {
+            return Err(format!("words[{i}]: needs 0 <= from < to"));
+        }
+        out.push(CaptionWordSpec { text, from, to });
+    }
+    out.sort_by_key(|w| w.from);
+    Ok(out)
+}
+
+impl CaptionLookSpec {
+    /// True when no key asks for a changed look.
+    pub fn is_empty(&self) -> bool {
+        *self == CaptionLookSpec::default()
+    }
+
+    /// The named style "paul": white Inter Bold, 2 words, y 0.7068, soft shadow, size 70 px at 1080 wide, pop 90 -> 105 -> 100 %, no box.
+    pub fn paul() -> CaptionLookSpec {
+        CaptionLookSpec {
+            words_per_caption: Some(2),
+            size: None,
+            color: Some([1.0, 1.0, 1.0, 1.0]),
+            shadow: Some(Part::On(ShadowSpec { blur: 8.0, opacity: 0.6, offset: 2.0 })),
+            box_: Some(Part::Off),
+            position_y: Some(0.7068),
+            font: Some("Inter-Bold".into()),
+            weight: Some(700),
+        }
+    }
+
+    fn parse(m: &Map<String, Value>, base: CaptionLookSpec) -> Result<CaptionLookSpec, String> {
+        use crate::clip_params::parse_rgba;
+        let mut l = base;
+        let num = |v: &Value, k: &str| v.as_f64().filter(|x| x.is_finite()).ok_or_else(|| format!("{k}: a number"));
+        if let Some(v) = m.get("wordsPerCaption") {
+            let n = v.as_u64().filter(|n| (1..=3).contains(n)).ok_or("wordsPerCaption: 1, 2 or 3")?;
+            l.words_per_caption = Some(n as u8);
+        }
+        if let Some(v) = m.get("size") {
+            let n = num(v, "size")?;
+            if !(1.0..=1000.0).contains(&n) {
+                return Err("size: 1...1000".into());
+            }
+            l.size = Some(n);
+        }
+        if let Some(v) = m.get("color") {
+            l.color = Some(parse_rgba(v).map_err(|e| format!("color: {e}"))?);
+        }
+        if let Some(v) = m.get("shadow") {
+            l.shadow = Some(match v {
+                Value::Bool(false) => Part::Off,
+                Value::Object(o) => {
+                    check_strict_keys(o, &["blur", "opacity", "offset"], "shadow")?;
+                    let get = |k: &str, d: f64| o.get(k).map_or(Ok(d), |x| num(x, k));
+                    let (blur, opacity, offset) = (get("blur", 8.0)?, get("opacity", 0.6)?, get("offset", 2.0)?);
+                    if blur < 0.0 || !(0.0..=1.0).contains(&opacity) {
+                        return Err("shadow: blur >= 0, opacity 0...1".into());
+                    }
+                    Part::On(ShadowSpec { blur, opacity, offset })
+                }
+                _ => return Err("shadow: false or {blur, opacity, offset}".into()),
+            });
+        }
+        if let Some(v) = m.get("box") {
+            l.box_ = Some(match v {
+                Value::Bool(false) => Part::Off,
+                Value::Object(o) => {
+                    check_strict_keys(o, &["color", "radius"], "box")?;
+                    let color = o.get("color").map_or(Ok([0.0, 0.0, 0.0, 0.6]), parse_rgba).map_err(|e| format!("box.color: {e}"))?;
+                    let radius = o.get("radius").map_or(Ok(12.0), |x| num(x, "box.radius"))?;
+                    if radius < 0.0 {
+                        return Err("box.radius: at least 0".into());
+                    }
+                    Part::On(BoxSpec { color, radius })
+                }
+                _ => return Err("box: false or {color, radius}".into()),
+            });
+        }
+        if let Some(v) = m.get("positionY") {
+            let n = num(v, "positionY")?;
+            if !(0.0..=1.0).contains(&n) {
+                return Err("positionY: 0...1".into());
+            }
+            l.position_y = Some(n);
+        }
+        if let Some(v) = m.get("font") {
+            l.font = Some(v.as_str().filter(|f| !f.trim().is_empty()).ok_or("font: a font name")?.to_string());
+        }
+        if let Some(v) = m.get("weight") {
+            let w = crate::text_layers::weight(v).map_err(|e| e.to_string())?;
+            if sq_text::text_style::FontWeight::from_raw(w).is_none() {
+                return Err("weight: 100, 300, 400, 500, 600, 700, 800 or 900".into());
+            }
+            l.weight = Some(w);
+        }
+        Ok(l)
+    }
+}
 
 /// Most frames one call renders (each is a full render).
 pub const MAX_FRAMES: usize = 24;
@@ -147,7 +339,14 @@ impl PerceiveRequest {
                 Ok(PerceiveRequest::Levels { target, from: time("from")?, to: time("to")? })
             }
             "/v1/addCaptions" => {
-                check_strict_keys(&m, &["clip", "sequence", "style", "wordByWord", "position"], "addCaptions request")?;
+                check_strict_keys(
+                    &m,
+                    &[
+                        "clip", "sequence", "style", "wordByWord", "position", "wordsPerCaption", "size", "color", "shadow", "box",
+                        "positionY", "font", "weight", "words", "look",
+                    ],
+                    "addCaptions request",
+                )?;
                 let target = match (optional(&m, "clip")?, optional(&m, "sequence")?) {
                     (Some(id), None) => Target::Clip(id),
                     (None, Some(id)) => Target::Sequence(id),
@@ -165,7 +364,27 @@ impl PerceiveRequest {
                     Some("bottom") => CaptionSpot::Bottom,
                     Some(o) => return Err(format!("position: unknown '{o}'; known: top, center, bottom")),
                 };
-                Ok(PerceiveRequest::AddCaptions { target, style, word_by_word: optional(&m, "wordByWord")?.unwrap_or(true), position })
+                let base = if style.as_deref() == Some("paul") { CaptionLookSpec::paul() } else { CaptionLookSpec::default() };
+                let look = CaptionLookSpec::parse(&m, base)?;
+                let word_by_word = match look.words_per_caption {
+                    Some(n) => n == 1,
+                    None => optional(&m, "wordByWord")?.unwrap_or(true),
+                };
+                let saved_look: Option<String> = optional(&m, "look")?;
+                if saved_look.is_some() {
+                    let own = ["style", "wordByWord", "wordsPerCaption", "size", "color", "shadow", "box", "positionY", "font", "weight"];
+                    if let Some(k) = own.iter().find(|k| m.contains_key(**k)) {
+                        return Err(format!("look: a saved look carries its own style and segmentation; leave out `{k}` (only `position`, `words`, `clip`/`sequence` combine with it)"));
+                    }
+                    if saved_look.as_deref().is_some_and(|n| n.trim().is_empty()) {
+                        return Err("look: the name of a saved look".into());
+                    }
+                }
+                let words = match m.get("words") {
+                    None | Some(Value::Null) => None,
+                    Some(v) => Some(parse_caption_words(v)?),
+                };
+                Ok(PerceiveRequest::AddCaptions { target, style, word_by_word, position, look, words, saved_look })
             }
             "/v1/media/scenes" => {
                 check_strict_keys(&m, &["media"], "scenes request")?;
@@ -241,7 +460,20 @@ mod tests {
         assert!(PerceiveRequest::parse("/v1/importPremiere", br#"{"path":" "}"#).is_err());
         let ok = format!(r#"{{"clip":"{id}","style":"pill","position":"center"}}"#);
         assert!(matches!(PerceiveRequest::parse("/v1/addCaptions", ok.as_bytes()), Ok(PerceiveRequest::AddCaptions { word_by_word: true, position: CaptionSpot::Center, .. })));
+        let paul = PerceiveRequest::parse("/v1/addCaptions", format!(r#"{{"clip":"{id}","style":"paul","wordsPerCaption":3,"box":{{"radius":4}}}}"#).as_bytes());
+        assert!(matches!(&paul, Ok(PerceiveRequest::AddCaptions { word_by_word: false, look, .. })
+            if look.words_per_caption == Some(3) && look.position_y == Some(0.7068) && matches!(look.box_, Some(Part::On(b)) if b.radius == 4.0)));
+        for bad in [r#""wordsPerCaption":4"#, r#""shadow":true"#, r#""positionY":1.5"#, r#""weight":"huge""#, r#""size":0"#] {
+            assert!(PerceiveRequest::parse("/v1/addCaptions", format!(r#"{{"clip":"{id}",{bad}}}"#).as_bytes()).is_err(), "{bad}");
+        }
         assert!(PerceiveRequest::parse("/v1/addCaptions", format!(r#"{{"clip":"{id}","style":"nope"}}"#).as_bytes()).is_err());
         assert!(PerceiveRequest::parse("/v1/addCaptions", format!(r#"{{"clip":"{id}","track":"{id}"}}"#).as_bytes()).is_err());
+        // Own words (bare seconds and rational) and a saved look by name; a look refuses the keys it carries itself.
+        let own = format!(r#"{{"sequence":"{id}","look":"Caption Look 1","words":[{{"text":"b","from":1.5,"to":2}},{{"text":"a","from":0,"to":{{"value":1,"timescale":2}}}}]}}"#);
+        assert!(matches!(PerceiveRequest::parse("/v1/addCaptions", own.as_bytes()),
+            Ok(PerceiveRequest::AddCaptions { words: Some(w), saved_look: Some(l), .. }) if l == "Caption Look 1" && w[0].text == "a" && w[1].from == Time::new(3, 2)));
+        for bad in [r#""look":"x","size":50"#, r#""look":"x","style":"pill""#, r#""words":[]"#, r#""words":[{"text":"a","from":2,"to":1}]"#, r#""words":[{"text":" ","from":0,"to":1}]"#, r#""words":[{"text":"a","from":0,"to":1,"x":1}]"#] {
+            assert!(PerceiveRequest::parse("/v1/addCaptions", format!(r#"{{"sequence":"{id}",{bad}}}"#).as_bytes()).is_err(), "{bad}");
+        }
     }
 }

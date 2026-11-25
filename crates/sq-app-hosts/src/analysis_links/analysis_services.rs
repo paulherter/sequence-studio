@@ -229,7 +229,7 @@ impl ShellServices for AnalysisServices {
     // the Library model shares one store.
     fn preset_store(&mut self) -> Option<&mut PresetStore> {
         let support = self.preset_support.as_ref()?;
-        self.presets = PresetStore::open(support, false, wall_now()).ok();
+        self.presets = PresetStore::open_in_support(support, false, wall_now()).ok();
         self.presets.as_mut()
     }
 

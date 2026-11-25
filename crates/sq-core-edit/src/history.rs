@@ -250,6 +250,16 @@ impl<S: Clone + PartialEq> History<S> {
         std::mem::take(&mut self.folded)
     }
 
+    /// Renames the undo steps made since `depth` (a value of `undo_depth` taken earlier); returns how many. The API
+    /// calls the steps an import made "Agent: Import" so the agent can undo them.
+    pub fn rename_steps_since(&mut self, depth: usize, name: &str) -> usize {
+        let from = depth.saturating_sub(self.dropped).min(self.undo_stack.len());
+        for e in &mut self.undo_stack[from..] {
+            e.name = name.to_string();
+        }
+        self.undo_stack.len() - from
+    }
+
     /// Tags the newest undo step (false when there is none).
     pub fn tag_newest_step(&mut self, tag: Id) -> bool {
         let Some(last) = self.undo_stack.last_mut() else { return false };

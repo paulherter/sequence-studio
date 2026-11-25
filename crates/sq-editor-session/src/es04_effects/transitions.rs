@@ -5,7 +5,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use sq_core_edit::stinger::StingerExt;
 use sq_core_effects::transition::EffectDefaultsTransitionExt;
 use sq_core_effects::transition::{
-    ResolvedTransition, TimelineTransitions, TrackTransitions, TransitionChange, TransitionKindExt, TransitionPoint,
+    ResolvedTransition, TransitionSpec, add_element_transitions_looked, add_transition_looked, TimelineTransitions, TrackTransitions, TransitionChange, TransitionKindExt, TransitionPoint,
 };
 use sq_core_effects::transition_feel::TimelineTransitionFeel;
 use sq_core_model::{
@@ -228,12 +228,7 @@ impl EditorSession {
                 .as_ref()
                 .map(|u| u.duration)
                 .unwrap_or_else(|| Self::factory_transition_duration(kind, fd, defaults));
-            let id = t.add_transition_at(point, kind, track, d, alignment, ids)?;
-            match &user {
-                Some(u) => t.apply_transition_default(u, id)?,
-                None => t.apply_factory_look(id, true)?,
-            }
-            made = Some(id);
+            made = Some(add_transition_looked(t, point, &TransitionSpec { kind, track, duration: d, alignment }, user.as_ref(), ids)?);
             Ok(())
         });
         if ok {
@@ -307,13 +302,14 @@ impl EditorSession {
                 .as_ref()
                 .map(|u| u.duration)
                 .unwrap_or_else(|| Self::factory_transition_duration(kind, fd, defaults));
-            made = t.add_element_transitions(kind, track, clip, edges, d, ids)?;
-            for id in &made {
-                match &user {
-                    Some(u) => t.apply_transition_default(u, *id)?,
-                    None => t.apply_factory_look(*id, true)?,
-                }
-            }
+            made = add_element_transitions_looked(
+                t,
+                clip,
+                edges,
+                &TransitionSpec { kind, track, duration: d, alignment: TransitionAlignment::Center },
+                user.as_ref(),
+                ids,
+            )?;
             Ok(())
         });
         if !ok {

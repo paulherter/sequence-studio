@@ -167,6 +167,25 @@ pub struct EaseHandle {
 impl EaseHandle {
     /// Handle of a straight segment.
     pub const LINEAR: EaseHandle = EaseHandle { dx: 1.0 / 3.0, dy: 1.0 / 3.0 };
+
+    /// Premiere's temporal bezier as a handle: `slope` in value units per second, `influence` the share of the segment
+    /// (0...1), `seconds` the segment length and `delta` the value distance across it (signed for scalars). The one
+    /// formula for the Premiere import and the Edit API.
+    pub fn from_speed(slope: f64, influence: f64, seconds: f64, delta: f64) -> EaseHandle {
+        let dx = influence.clamp(0.0, 1.0);
+        if delta.abs() <= 1e-12 {
+            return EaseHandle { dx, dy: 0.0 };
+        }
+        EaseHandle { dx, dy: slope * dx * seconds / delta }
+    }
+
+    /// The speed (value units per second) this handle stands for: the inverse of [`EaseHandle::from_speed`].
+    pub fn speed(&self, seconds: f64, delta: f64) -> f64 {
+        if self.dx.abs() <= 1e-12 || seconds.abs() <= 1e-12 {
+            return 0.0;
+        }
+        self.dy * delta / (self.dx * seconds)
+    }
 }
 
 /// One key of a track. Times are clip-local.

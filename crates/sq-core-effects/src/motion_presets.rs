@@ -10,7 +10,7 @@ use crate::motion_effects::{MotionMode, MoveSide, MoveSpin};
 use crate::motion_recipes::{MotionRecipes as R, bezier_key, make_effect, ms};
 use sq_core_model::motion_easing::MotionCurve;
 use sq_core_model::{AnimatedProperty, ClipEffect, hidden_catalog};
-use sq_core_time::{Keyframe, KeyframeTrack, SequentialIds};
+use sq_core_time::{EaseHandle, Interpolation, Keyframe, KeyframeTrack, SequentialIds, Time};
 
 /// Swift `MotionPresets`.
 pub struct MotionPresets;
@@ -56,6 +56,50 @@ fn keyed(kind: &str, values: Values, keys: &[(&str, &[(f64, f64)])], linear: boo
             .collect();
         fx.parameters
             .insert((*param).to_string(), AnimatedProperty { value: pts[0].1, track: KeyframeTrack::with_keys(ks) });
+    }
+    fx
+}
+
+/// A key on a Transform effect parameter: `time`, `value`, and (for a bezier key) the out / in ease handles. Handles are
+/// (time influence, speed share): (1.0, 0.0) is "100 % influence, speed 0", `EaseHandle::LINEAR` a straight side.
+struct Key(Time, f64, Option<(EaseHandle, EaseHandle)>);
+
+const EASE_100: EaseHandle = EaseHandle { dx: 1.0, dy: 0.0 };
+const STRAIGHT: EaseHandle = EaseHandle::LINEAR;
+
+/// `n` frames at 29.97 fps, as an exact rational time (`tenths` = frames x 10).
+fn frames_x10(tenths: i64) -> Time {
+    Time::new(tenths * 1001, 300_000)
+}
+
+/// A fraction of the 1 s reference clip (stretch anchor), exact to the microsecond.
+fn of_clip(fraction_permille_x10: i64) -> Time {
+    Time::new(fraction_permille_x10, 10_000)
+}
+
+/// A Transform stage effect whose Scale (%) and / or Opacity (%) are keyed with explicit bezier handles.
+fn transform_keys(scale: &[Key], opacity: &[Key]) -> ClipEffect {
+    let mut ids = SequentialIds::default();
+    let mut fx = make_effect(&mut ids, ClipEffect::TRANSFORM_KIND, &[]);
+    for (param, keys) in [(ClipEffect::STAGE_SCALE_KEY, scale), (ClipEffect::STAGE_OPACITY_KEY, opacity)] {
+        if keys.is_empty() {
+            continue;
+        }
+        let ks = keys
+            .iter()
+            .map(|Key(t, v, handles)| {
+                use sq_core_time::IdSource;
+                let mut k = Keyframe::new(ids.next_id(), *t, *v);
+                if let Some((out, inn)) = handles {
+                    k.interpolation = Interpolation::Bezier;
+                    k.out_handle = *out;
+                    k.in_handle = *inn;
+                }
+                k
+            })
+            .collect();
+        fx.parameters
+            .insert(param.to_string(), AnimatedProperty { value: keys[0].1, track: KeyframeTrack::with_keys(ks) });
     }
     fx
 }
@@ -184,6 +228,68 @@ impl MotionPresets {
                     false,
                 )],
             ),
+            // Keyed zooms and a pop (docs/EDIT-API.md): scale / opacity keys on a Transform stage, times at 29.97 fps.
+            // Tail Zoom: 100 % at 19.4 f before the end (ease-out 100 %, speed 0), 110 % on the last frame (linear in).
+            end(
+                "tailZoom",
+                "Tail Zoom",
+                vec![transform_keys(
+                    &[
+                        Key(Time::new(300_000 - 194 * 1001, 300_000), 100.0, Some((EASE_100, STRAIGHT))),
+                        Key(Time::new(30_000 - 1001, 30_000), 110.0, None),
+                    ],
+                    &[],
+                )],
+            ),
+            // Head Zoom: 130 % on frame 0 (linear out), 100 % at 19.4 f (in-handle 100 %, speed 0).
+            p(
+                "headZoom",
+                "Head Zoom",
+                vec![transform_keys(
+                    &[
+                        Key(Time::ZERO, 130.0, Some((STRAIGHT, STRAIGHT))),
+                        Key(frames_x10(194), 100.0, Some((STRAIGHT, EASE_100))),
+                    ],
+                    &[],
+                )],
+            ),
+            // Overlay Pop: fades 0 -> 100 -> 0 (1.75 / 5.25 / 94.75 / 98.25 % of the clip) while the scale swells
+            // 100 -> 110 (by 31.6 %), holds, and settles back to 100 at the end. Stretch anchor: keys are fractions of the clip.
+            EffectStackPreset {
+                anchor: Anchor::Stretch,
+                ..p(
+                    "overlayPop",
+                    "Overlay Pop",
+                    vec![transform_keys(
+                        &[
+                            Key(of_clip(0), 100.0, Some((STRAIGHT, STRAIGHT))),
+                            Key(of_clip(3160), 110.0, Some((STRAIGHT, EASE_100))),
+                            Key(of_clip(6670), 110.0, Some((EASE_100, STRAIGHT))),
+                            Key(of_clip(10_000), 100.0, None),
+                        ],
+                        &[
+                            Key(of_clip(175), 0.0, None),
+                            Key(of_clip(525), 100.0, None),
+                            Key(of_clip(9475), 100.0, None),
+                            Key(of_clip(9825), 0.0, None),
+                        ],
+                    )],
+                )
+            },
+            // Talk Pulse: 100 -> 110 % in 29 f, holds to 77.1 f, back to 100 % at 110.1 f (absolute frames from the head).
+            p(
+                "talkPulse",
+                "Talk Pulse",
+                vec![transform_keys(
+                    &[
+                        Key(Time::ZERO, 100.0, Some((EASE_100, STRAIGHT))),
+                        Key(frames_x10(290), 110.0, None),
+                        Key(frames_x10(771), 110.0, Some((EaseHandle { dx: 0.15, dy: 0.0 }, STRAIGHT))),
+                        Key(frames_x10(1101), 100.0, Some((STRAIGHT, EASE_100))),
+                    ],
+                    &[],
+                )],
+            ),
             // Pop 0-120-100: scale 0 / 120 / 100 % at frames 0 / 4 / 10 (30 fps).
             p(
                 "pop0120100",
@@ -293,7 +399,7 @@ impl MotionPresets {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::effect_preset::{ApplyMode, ClipEffectPresetExt};
+    use crate::effect_preset::{ApplyMode, ClipEffectPresetExt, EffectPreset};
     use crate::effect_stack_preset::EffectStackPresets;
     use crate::effect_transform_stage::{ClipEffectStage, ClipStageEval};
     use sq_core_model::{Clip, EffectCatalog, TrackKind};
@@ -476,6 +582,129 @@ mod tests {
                 c.effects.iter().map(|e| &e.kind).collect::<Vec<_>>(),
                 p.effects.iter().map(|e| &e.kind).collect::<Vec<_>>()
             );
+        }
+    }
+
+    // --- keyed zooms and pops, checked at 29.97 fps ---
+    const F: i64 = 1001; // one frame = 1001 / 30000 s
+
+    fn fps_clip(frames: i64) -> Clip {
+        let source = TimeRange::new(Time::ZERO, Time::new(frames * F, 30_000));
+        Clip::new(Id::from_u128(1), "v", Id::from_u128(2), TrackKind::Video, source, Time::ZERO)
+    }
+
+    fn keys(c: &Clip, param: &str) -> Vec<sq_core_time::Keyframe<f64>> {
+        let fx = c.effects.iter().find(|e| e.kind == ClipEffect::TRANSFORM_KIND).expect("transform effect");
+        fx.parameters[param].track.keys.clone()
+    }
+
+    fn frame_time(tenths: i64) -> Time {
+        Time::new(tenths * F, 300_000)
+    }
+
+    #[test]
+    fn tail_zoom_keys_the_last_19_4_frames_from_100_to_110() {
+        let mut c = fps_clip(300);
+        apply(&mut c, "Tail Zoom");
+        let k = keys(&c, ClipEffect::STAGE_SCALE_KEY);
+        assert_eq!(k.len(), 2);
+        assert_eq!(k[0].time, c.duration() - frame_time(194));
+        assert_eq!(k[1].time, c.duration() - Time::new(F, 30_000), "last frame");
+        assert_eq!((k[0].value, k[1].value), (100.0, 110.0));
+        assert_eq!(k[0].interpolation, sq_core_time::Interpolation::Bezier);
+        assert_eq!(k[0].out_handle, EASE_100, "out influence 100 %, speed 0");
+        assert_eq!(k[1].in_handle, EaseHandle::LINEAR);
+        assert!((scale(&c, Time::ZERO) - 1.0).abs() < 1e-9, "100 % until the zoom starts");
+        assert!((scale(&c, c.duration() - Time::new(F, 30_000)) - 1.1).abs() < 1e-9);
+        assert_eq!(EffectStackPresets::preset("tailZoom").expect("id").anchor, Anchor::End);
+    }
+
+    #[test]
+    fn tail_zoom_on_a_short_clip_stays_between_100_and_110() {
+        let mut c = fps_clip(10);
+        apply(&mut c, "Tail Zoom");
+        for i in 0..10 {
+            let s = scale(&c, Time::new(i * F, 30_000));
+            assert!((1.0 - 1e-9..=1.1 + 1e-9).contains(&s), "frame {i}: {s}");
+        }
+        assert!((scale(&c, c.duration() - Time::new(F, 30_000)) - 1.1).abs() < 1e-9);
+    }
+
+    #[test]
+    fn head_zoom_goes_130_to_100_in_19_4_frames() {
+        let mut c = fps_clip(300);
+        apply(&mut c, "Head Zoom");
+        let k = keys(&c, ClipEffect::STAGE_SCALE_KEY);
+        assert_eq!((k[0].time, k[0].value), (Time::ZERO, 130.0));
+        assert_eq!((k[1].time, k[1].value), (frame_time(194), 100.0));
+        assert_eq!(k[0].out_handle, EaseHandle::LINEAR);
+        assert_eq!(k[1].in_handle, EASE_100, "in influence 100 %, speed 0");
+        assert!((scale(&c, Time::ZERO) - 1.3).abs() < 1e-9);
+        assert!((scale(&c, Time::new(5, 1)) - 1.0).abs() < 1e-9);
+        let mid = scale(&c, frame_time(97));
+        assert!(mid < 1.15, "ease-out 100 %: past the halfway point at half the time ({mid})");
+    }
+
+    #[test]
+    fn head_zoom_on_a_short_clip_never_leaves_100_to_130() {
+        let mut c = fps_clip(8);
+        apply(&mut c, "Head Zoom");
+        for i in 0..8 {
+            let s = scale(&c, Time::new(i * F, 30_000));
+            assert!((1.0 - 1e-9..=1.3 + 1e-9).contains(&s), "frame {i}: {s}");
+        }
+    }
+
+    #[test]
+    fn overlay_pop_keys_follow_the_clip_length() {
+        for frames in [300_i64, 90] {
+            let mut c = fps_clip(frames);
+            apply(&mut c, "Overlay Pop");
+            let d = c.duration();
+            let at = |permille_x10: i64| EffectPreset::scaled(d, Time::new(permille_x10, 10_000), Time::new(1, 1));
+            let op = keys(&c, ClipEffect::STAGE_OPACITY_KEY);
+            let got: Vec<_> = op.iter().map(|k| (k.time, k.value)).collect();
+            assert_eq!(got, [(at(175), 0.0), (at(525), 100.0), (at(9475), 100.0), (at(9825), 0.0)], "{frames} f");
+            assert!(op.iter().all(|k| k.interpolation == sq_core_time::Interpolation::Linear));
+            let sc = keys(&c, ClipEffect::STAGE_SCALE_KEY);
+            let got: Vec<_> = sc.iter().map(|k| (k.time, k.value)).collect();
+            assert_eq!(got, [(Time::ZERO, 100.0), (at(3160), 110.0), (at(6670), 110.0), (d, 100.0)], "{frames} f");
+            assert_eq!(sc[1].in_handle, EASE_100);
+            assert_eq!(sc[2].out_handle, EASE_100);
+            assert_eq!(sc[2].interpolation, sq_core_time::Interpolation::Bezier);
+        }
+        assert_eq!(EffectStackPresets::preset("overlayPop").expect("id").anchor, Anchor::Stretch);
+    }
+
+    #[test]
+    fn talk_pulse_keys_are_absolute_frames_from_the_head() {
+        let mut c = fps_clip(300);
+        apply(&mut c, "Talk Pulse");
+        let k = keys(&c, ClipEffect::STAGE_SCALE_KEY);
+        let got: Vec<_> = k.iter().map(|k| (k.time, k.value)).collect();
+        assert_eq!(
+            got,
+            [(Time::ZERO, 100.0), (frame_time(290), 110.0), (frame_time(771), 110.0), (frame_time(1101), 100.0)]
+        );
+        assert_eq!(k[0].out_handle, EASE_100);
+        assert_eq!(k[2].out_handle, EaseHandle { dx: 0.15, dy: 0.0 });
+        assert_eq!(k[3].in_handle, EASE_100);
+        assert!((scale(&c, frame_time(500)) - 1.1).abs() < 1e-9, "holds 110 %");
+        assert!((scale(&c, Time::new(9, 1)) - 1.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn motion_preset_ids_for_the_edit_api() {
+        let ids = [
+            ("tailZoom", "Tail Zoom"),
+            ("headZoom", "Head Zoom"),
+            ("overlayPop", "Overlay Pop"),
+            ("talkPulse", "Talk Pulse"),
+        ];
+        for (id, name) in ids {
+            let p = EffectStackPresets::preset(id).expect(id);
+            assert_eq!(p.name, name);
+            assert!(MotionPresets::offered().iter().any(|o| o.id == id), "{id} is offered");
         }
     }
 }

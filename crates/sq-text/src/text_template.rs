@@ -5,6 +5,7 @@
 use crate::caption_karaoke::TextHighlight;
 use crate::text_style::{TextBox, TextStyle};
 use serde::{Deserialize, Serialize};
+use sq_core_model::AnimatedProperty;
 use sq_core_model::anchored_animation::KeyframeTemplate;
 use std::fmt;
 
@@ -58,6 +59,10 @@ pub struct TextTemplate {
     /// above is what is drawn. An optional key, so older builds read the template as before.
     #[serde(default, rename = "lookID")]
     pub look_id: Option<String>,
+    /// Keyed tracking (letter spacing in points, clip-local time): replaces `style.tracking` while it is set. Lives in the
+    /// template so every edit that re-encodes the text keeps it; an optional key, so older builds read the rest as before.
+    #[serde(default, rename = "trackingKeys")]
+    pub tracking_keys: Option<AnimatedProperty<f64>>,
 }
 
 /// The coded shape: `formatVersion` first among the keys Swift writes.
@@ -76,6 +81,8 @@ struct Wire<'a> {
     highlight: &'a Option<TextHighlight>,
     #[serde(rename = "lookID", skip_serializing_if = "Option::is_none")]
     look_id: &'a Option<String>,
+    #[serde(rename = "trackingKeys", skip_serializing_if = "Option::is_none")]
+    tracking_keys: &'a Option<AnimatedProperty<f64>>,
 }
 
 impl Serialize for TextTemplate {
@@ -89,6 +96,7 @@ impl Serialize for TextTemplate {
             box_: &self.box_,
             highlight: &self.highlight,
             look_id: &self.look_id,
+            tracking_keys: &self.tracking_keys,
         }
         .serialize(s)
     }
@@ -110,6 +118,7 @@ impl TextTemplate {
             box_: None,
             highlight: None,
             look_id: None,
+            tracking_keys: None,
         }
     }
 

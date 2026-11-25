@@ -6,12 +6,22 @@
 //! (`sfnt_color_glyphs`); a sequence the face cannot join shows its parts one by one.
 
 use crate::fallback_font_files::{FallbackFontFiles, FallbackRole};
+use crate::emoji_font::EmojiFont;
 use crate::glyph_raster::GlyphRasterFont;
 use sq_os::Platform;
 use std::sync::{Arc, LazyLock, PoisonError, RwLock};
 
 static FONTS: LazyLock<RwLock<Vec<Arc<GlyphRasterFont>>>> =
     LazyLock::new(|| RwLock::new(PortableFallback::system_fonts()));
+
+/// The bitmap color emoji font (Apple `sbix`, Noto `CBDT`) of this machine, opened on first use. The outline faces above
+/// cannot draw it; `COLR` fonts (Segoe) stay in [`FONTS`]. Same [`EmojiFont`] the UI's glyph atlas uses.
+static BITMAP_EMOJI: LazyLock<RwLock<Option<Arc<EmojiFont>>>> =
+    LazyLock::new(|| RwLock::new(PortableFallback::system_bitmap_emoji()));
+
+/// Serializes tests that replace the process-wide fallback faces.
+#[cfg(test)]
+pub(crate) static FALLBACK_TEST_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 /// One scalar's face and glyph.
 #[derive(Clone, Debug)]
@@ -22,11 +32,13 @@ pub struct Pick {
     pub glyph: i64,
     /// Advance in font units when the plan sets it (a zero-advance person of a ZWJ family); nil = the face's advance.
     pub advance: Option<i64>,
+    /// Set when the glyph is a bitmap of the color emoji font (`font` is then `None`); `glyph` is its index there.
+    pub emoji: Option<Arc<EmojiFont>>,
 }
 
 impl Pick {
     fn new(font: Option<Arc<GlyphRasterFont>>, glyph: i64) -> Pick {
-        Pick { font, glyph, advance: None }
+        Pick { font, glyph, advance: None, emoji: None }
     }
 }
 
@@ -52,6 +64,51 @@ impl PortableFallback {
             .filter_map(|path| GlyphRasterFont::from_path(path))
             .map(Arc::new)
             .collect()
+    }
+
+    /// The process-wide bitmap emoji font.
+    pub fn bitmap_emoji() -> Option<Arc<EmojiFont>> {
+        BITMAP_EMOJI.read().unwrap_or_else(PoisonError::into_inner).clone()
+    }
+
+    /// Replaces the bitmap emoji font (tests).
+    pub fn set_bitmap_emoji(font: Option<Arc<EmojiFont>>) {
+        *BITMAP_EMOJI.write().unwrap_or_else(PoisonError::into_inner) = font;
+    }
+
+    /// The first bitmap color emoji font on this machine.
+    pub fn system_bitmap_emoji() -> Option<Arc<EmojiFont>> {
+        FallbackFontFiles::find(Platform::current(), FallbackRole::Emoji, |k| std::env::var_os(k))
+            .iter()
+            .filter_map(|p| EmojiFont::from_path(p))
+            .find(EmojiFont::is_bitmap)
+            .map(Arc::new)
+    }
+
+    /// Whether the scalar at `i` starts an emoji the color font should draw: a pictograph block scalar, or any scalar
+    /// followed by the emoji variation selector or a keycap.
+    fn wants_color(scalars: &[char], i: usize) -> bool {
+        let s = scalars[i];
+        let next = scalars.get(i + 1).map(|c| u32::from(*c));
+        u32::from(s) >= 0x1F000 || next == Some(0xFE0F) || next == Some(0x20E3)
+    }
+
+    /// The color emoji glyphs of the cluster `parts` (joined by the font's own substitution when it has one; else the parts
+    /// one by one without their joiners). Empty when the font has no image for the base.
+    fn color_glyphs(e: &EmojiFont, parts: &[char]) -> Vec<i64> {
+        if parts.len() > 1
+            && let Some(g) = e.sequence_glyphs(parts)
+        {
+            return g;
+        }
+        if e.glyph_for(parts[0]) == 0 {
+            return Vec::new();
+        }
+        let keycap = parts.contains(&'\u{20E3}');
+        if keycap {
+            return Vec::new(); // a keycap the font cannot join: the digit in the text face
+        }
+        parts.iter().filter(|c| !Self::is_joiner(**c)).map(|c| e.glyph_for(*c)).filter(|g| *g != 0).collect()
     }
 
     /// Scalars that only modify the one before (no glyph, no advance): variation selectors, ZWJ, skin tones, keycap.
@@ -112,13 +169,24 @@ impl PortableFallback {
 
     /// `plan` over the process-wide fallback faces.
     pub fn plan_default(scalars: &[char], primary: &GlyphRasterFont) -> Vec<(Pick, bool)> {
-        Self::plan(scalars, primary, &Self::fonts())
+        Self::plan_with(scalars, primary, &Self::fonts(), Self::bitmap_emoji().as_ref())
     }
 
     /// The face and glyph for each scalar of `text`; `font == nil` means the primary face (glyph may be 0 = notdef).
     /// An emoji sequence the fallback face turns into one glyph (GSUB: ZWJ family, skin tone, flag, keycap) puts it on the
     /// first scalar and marks the rest `skip` (no glyph, no advance); the glyphs it leaves (a family is several) take the first scalars.
     pub fn plan(scalars: &[char], primary: &GlyphRasterFont, fallbacks: &[Arc<GlyphRasterFont>]) -> Vec<(Pick, bool)> {
+        Self::plan_with(scalars, primary, fallbacks, None)
+    }
+
+    /// [`plan`](Self::plan) with a bitmap color emoji font: an emoji scalar (or sequence) it has an image for is drawn from it
+    /// before the outline faces are asked.
+    pub fn plan_with(
+        scalars: &[char],
+        primary: &GlyphRasterFont,
+        fallbacks: &[Arc<GlyphRasterFont>],
+        emoji: Option<&Arc<EmojiFont>>,
+    ) -> Vec<(Pick, bool)> {
         let mut out: Vec<(Pick, bool)> = Vec::new();
         let mut i = 0;
         while i < scalars.len() {
@@ -128,6 +196,27 @@ impl PortableFallback {
                 out.push(skipped());
                 i += 1;
                 continue;
+            }
+            if let Some(e) = emoji
+                && !s.is_whitespace()
+                && Self::wants_color(scalars, i)
+            {
+                let end = Self::cluster_end(scalars, i);
+                let glyphs = Self::color_glyphs(e, &scalars[i..end]);
+                if !glyphs.is_empty() {
+                    // Like the outline path: the glyphs sit on the first scalars of the cluster, the rest take no room.
+                    for k in 0..end - i {
+                        match glyphs.get(k) {
+                            Some(&glyph) => out.push((
+                                Pick { font: None, glyph, advance: None, emoji: Some(Arc::clone(e)) },
+                                false,
+                            )),
+                            None => out.push(skipped()),
+                        }
+                    }
+                    i = end;
+                    continue;
+                }
             }
             let g = primary.glyph_for(s);
             let next = |k: usize| scalars.get(i + k).map(|c| u32::from(*c));
@@ -174,7 +263,7 @@ impl PortableFallback {
                 for k in 0..parts.len() {
                     if let Some(&glyph) = joined.get(k) {
                         let advance = if several { Some(Self::advance_of_sequence_glyph(glyph, f)) } else { None };
-                        out.push((Pick { font: Some(Arc::clone(f)), glyph, advance }, false));
+                        out.push((Pick { font: Some(Arc::clone(f)), glyph, advance, emoji: None }, false));
                     } else {
                         out.push(skipped());
                     }
@@ -285,12 +374,30 @@ mod tests {
         use crate::portable_text_renderer::PortableTextRenderer;
         use crate::text_style::TextStyle;
         use_bundled_fonts();
+        let _lock = FALLBACK_TEST_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
         PortableFallback::set_fonts(Vec::new()); // a machine without symbol or emoji fonts
+        PortableFallback::set_bitmap_emoji(None);
         let inked = |text: &str| {
             PortableTextRenderer::render(text, &TextStyle::default(), None, None, 1.0, None)
                 .map_or(0, |r| r.picture.pixels.chunks(4).filter(|px| px[3] > 0.2).count())
         };
         assert_eq!(inked("\u{1F525}"), 0, "the fire emoji without an emoji font");
         assert!(inked("A") > 50, "ordinary text still draws");
+    }
+
+    /// With a bitmap emoji font the plan takes the emoji (also with VS16 or a skin tone) from it as one unit; the text face
+    /// keeps letters.
+    #[test]
+    fn a_bitmap_emoji_cluster_is_one_glyph_on_its_first_scalar() {
+        let _lock = FALLBACK_TEST_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        let Some(font) = PortableFallback::system_bitmap_emoji() else {
+            eprintln!("skipped: no bitmap color emoji font");
+            return;
+        };
+        let s: Vec<char> = "A\u{1F44D}\u{1F3FD}".chars().collect();
+        let plan = PortableFallback::plan_with(&s, &inter(), &[], Some(&font));
+        assert!(plan[0].0.emoji.is_none() && plan[0].0.glyph != 0, "the letter stays in the text face");
+        assert!(plan[1].0.emoji.is_some() && !plan[1].1, "the thumb is drawn from the emoji font");
+        assert!(plan[2].1 || plan[2].0.emoji.is_some(), "the skin tone is joined or a part, never a text box");
     }
 }

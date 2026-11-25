@@ -7,13 +7,15 @@ use crate::param_ops::{self, OpFailure};
 use crate::time_limits::TimeLimits;
 use sq_core_edit::timeline_add_track::AddTrackExt;
 use sq_core_edit::timeline_edits::{SlipKeyframes, TimelineEditsExt};
+use sq_core_edit::timeline_clipboard::TimelineClipboardExt;
 use sq_core_edit::timeline_enable::TimelineEnableExt;
+use sq_core_edit::timeline_solo::SoloExt;
 use sq_core_edit::timeline_markers::TimelineMarkersExt;
 use sq_core_edit::timeline_range_edits::TimelineRangeEditsExt;
 use sq_core_edit::timeline_replace::TimelineReplaceExt;
 use sq_core_edit::timeline_three_point::TimelineThreePointExt;
 use sq_core_model::{EditError, Project, Timeline};
-use sq_core_time::{Id, IdSource};
+use sq_core_time::{Id, IdSource, Time};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -63,6 +65,11 @@ impl TransactionError {
     /// An error not tied to an operation.
     pub fn new(kind: TransactionErrorKind) -> TransactionError {
         TransactionError { kind, operation_index: None, operation: None, detail: None }
+    }
+
+    /// A refusal with a reason, tied to no operation.
+    pub fn invalid(why: &str) -> TransactionError {
+        TransactionError { kind: TransactionErrorKind::Invalid, operation_index: None, operation: None, detail: Some(why.to_string()) }
     }
 
     fn at(kind: TransactionErrorKind, index: usize, operation: &str) -> TransactionError {
@@ -264,6 +271,20 @@ impl EditTransaction {
         Ok((p, diff))
     }
 
+    /// Runs `body`; with `linked` false only `clip` changes and its linked partners stay (the UI's Alt-trim, `editing_only`).
+    fn solo(
+        t: &mut Timeline,
+        clip: Id,
+        linked: bool,
+        ids: &mut dyn IdSource,
+        body: impl FnOnce(&mut Timeline) -> Result<(), EditError>,
+    ) -> Result<(), EditError> {
+        if linked {
+            return body(t);
+        }
+        t.editing_only(&BTreeSet::from([clip]), ids, |t, _| body(t))
+    }
+
     fn apply_op(op: &EditOperation, t: &mut Timeline, ids: &mut dyn IdSource) -> Result<(), OpFailure> {
         let unlocked =
             |t: &Timeline| -> Vec<Id> { t.tracks.iter().filter(|tr| !tr.is_locked).map(|tr| tr.id).collect() };
@@ -283,12 +304,38 @@ impl EditTransaction {
                 let tracks = tracks.clone().unwrap_or_else(|| unlocked(t));
                 t.lift(*range, &tracks, ids)?;
             }
-            EditOperation::Trim { clip, edge, by } => {
-                t.trim(*clip, *edge, *by)?;
+            EditOperation::Trim { clip, edge, by, linked } => {
+                let mut moved = Time::ZERO;
+                Self::solo(t, *clip, *linked, ids, |t| {
+                    moved = t.trim(*clip, *edge, *by)?;
+                    Ok(())
+                })?;
+                if moved == Time::ZERO && *by != Time::ZERO {
+                    return Err(OpFailure::Invalid(
+                        "trim moved nothing: the media, the neighbor clip or the clip's own length stops the edge there".into(),
+                    ));
+                }
             }
-            EditOperation::RippleTrim { clip, edge, by } => {
-                t.ripple_trim(*clip, *edge, *by)?;
+            EditOperation::RippleTrim { clip, edge, by, linked } => {
+                let (mut moved, mut limited_by) = (Time::ZERO, None);
+                Self::solo(t, *clip, *linked, ids, |t| {
+                    let (m, l, _) = t.ripple_trim_many(&[(*clip, *by)], *edge)?;
+                    (moved, limited_by) = (m, l);
+                    Ok(())
+                })?;
+                if moved == Time::ZERO && *by != Time::ZERO {
+                    let why = match limited_by {
+                        Some(i) => format!(
+                            "a clip on track {} right behind the edit leaves no room to close the gap (move or remove it first)",
+                            i + 1
+                        ),
+                        None => "the media, a caption inside the closed span or the clip's own length stops the edge there".into(),
+                    };
+                    return Err(OpFailure::Invalid(format!("rippleTrim moved nothing: {why}")));
+                }
             }
+            EditOperation::Link { clips } => t.link(&clips.iter().copied().collect::<BTreeSet<Id>>(), ids)?,
+            EditOperation::Unlink { clips } => t.unlink(&clips.iter().copied().collect::<BTreeSet<Id>>())?,
             EditOperation::Move { clip, to, track } => {
                 t.move_clip(*clip, *to, *track, &BTreeMap::new(), None, ids)?;
             }
@@ -337,11 +384,30 @@ impl EditTransaction {
             EditOperation::SetParam { clip, param, value } => param_ops::set_param(t, *clip, param, value)?,
             EditOperation::AddEffect { clip, effect, index } => param_ops::add_effect(t, *clip, effect, *index, ids)?,
             EditOperation::RemoveEffect { clip, effect } => param_ops::remove_effect(t, *clip, *effect)?,
-            EditOperation::SetKeyframe { clip, param, at, value, interpolation } => {
-                let i = interpolation.as_deref().map(crate::clip_params::parse_interpolation).transpose()?;
-                param_ops::set_keyframe(t, *clip, param, *at, value, i, ids)?;
+            EditOperation::AddTransition { place, kind, duration, alignment } => {
+                crate::transition_ops::add_transition(t, *place, kind, *duration, alignment, ids)?;
+            }
+            EditOperation::RemoveTransition { transition } => crate::transition_ops::remove_transition(t, *transition)?,
+            EditOperation::ApplyPreset { clip, preset, at, mode } => {
+                crate::transition_ops::apply_preset(t, *clip, preset, *at, mode.as_deref(), ids)?;
+            }
+            EditOperation::ApplyUserPreset { clip, name, preset, at, mode } => {
+                crate::transition_ops::apply_user_preset(t, *clip, name, preset, *at, mode.as_deref(), ids)?;
+            }
+            EditOperation::SetKeyframe { clip, param, at, value, interpolation, ease, in_handle, out_handle } => {
+                let shape = crate::clip_params::KeyShape::parse(
+                    interpolation.as_deref(),
+                    ease.as_deref(),
+                    in_handle.as_ref(),
+                    out_handle.as_ref(),
+                )?;
+                param_ops::set_keyframe(t, *clip, param, *at, value, &shape, ids)?;
             }
             EditOperation::RemoveKeyframe { clip, param, at } => param_ops::remove_keyframe(t, *clip, param, *at)?,
+            EditOperation::MoveKeyframe { clip, param, from, to } => param_ops::move_keyframe(t, *clip, param, *from, *to)?,
+            EditOperation::ShiftKeyframes { clip, param, by, after } => {
+                param_ops::shift_keyframes(t, *clip, param.as_deref(), *by, *after)?;
+            }
             EditOperation::AddGraphic { track, at, duration, name, layers } => {
                 param_ops::add_graphic(t, *track, *at, *duration, name.as_deref(), layers, ids)?;
             }
@@ -350,6 +416,23 @@ impl EditTransaction {
                 param_ops::add_text_layer(t, *clip, fields, *index, ids)?;
             }
             EditOperation::RemoveTextLayer { clip, layer } => param_ops::remove_text_layer(t, *clip, *layer)?,
+            EditOperation::AddTextAnimator { clip, layer, fields } => {
+                param_ops::text_animator(t, *clip, *layer, |l| crate::text_animators::apply(l, fields, true))?;
+            }
+            EditOperation::SetTextAnimator { clip, layer, fields } => {
+                param_ops::text_animator(t, *clip, *layer, |l| crate::text_animators::apply(l, fields, false))?;
+            }
+            EditOperation::SetTextAccent { clip, layer, fields } => {
+                param_ops::text_animator(t, *clip, *layer, |l| match fields {
+                    serde_json::Value::Object(m) => crate::text_accent::apply(l, m),
+                    _ => Err("setTextAccent: fields must be an object".into()),
+                })?;
+            }
+            EditOperation::AddMask { clip, fields } => param_ops::add_mask(t, *clip, fields, ids)?,
+            EditOperation::RemoveTextAnimator { clip, layer, side } => {
+                let side = side.as_deref().map(serde_json::Value::from);
+                param_ops::text_animator(t, *clip, *layer, |l| crate::text_animators::remove(l, side.as_ref()))?;
+            }
         }
         Ok(())
     }
@@ -501,7 +584,7 @@ mod tests {
         let huge = Time::new(i64::MAX / 2, 3);
         let ops = [
             EditOperation::AddMarker { at: s(1), name: String::new() },
-            EditOperation::Trim { clip: f.a, edge: sq_core_model::ClipEdge::Tail, by: huge },
+            EditOperation::Trim { clip: f.a, edge: sq_core_model::ClipEdge::Tail, by: huge, linked: true },
         ];
         let e = EditTransaction::apply(&ops, &mut p, f.seq, &mut ids());
         assert_eq!(e, Err(TransactionError::at(TransactionErrorKind::InvalidTime, 1, "trim")));
@@ -529,13 +612,13 @@ mod tests {
         let ops = [
             EditOperation::Razor { at: far, tracks: None },
             EditOperation::Razor { at: back, tracks: None },
-            EditOperation::Trim { clip: f.a, edge: Tail, by: far },
-            EditOperation::Trim { clip: f.a, edge: Head, by: back },
+            EditOperation::Trim { clip: f.a, edge: Tail, by: far, linked: true },
+            EditOperation::Trim { clip: f.a, edge: Head, by: back, linked: true },
             EditOperation::Move { clip: f.b, to: far, track: None },
             EditOperation::Slip { clip: f.a, by: far },
             EditOperation::Slide { clip: f.b, by: back },
             EditOperation::Roll { clip: f.a, by: far },
-            EditOperation::RippleTrim { clip: f.b, edge: Tail, by: back },
+            EditOperation::RippleTrim { clip: f.b, edge: Tail, by: back, linked: true },
             EditOperation::AddMarker { at: far, name: String::new() },
             EditOperation::Extract { range: TimeRange::new(Time::ZERO, far), tracks: None },
         ];
@@ -543,6 +626,37 @@ mod tests {
             let mut p = f.project.clone();
             let _ = EditTransaction::apply(&[op], &mut p, f.seq, &mut ids());
         }
+    }
+
+    /// A ripple trim that shortens but cannot (a clip right behind the edit on another track leaves no room) says why.
+    #[test]
+    fn a_trim_that_moves_nothing_is_refused_with_the_reason() {
+        use sq_core_model::{Clip, TrackKind};
+        let f = Fixture::new();
+        let mut p = f.project.clone();
+        // An unlinked audio clip [4 s, 8 s) and one right behind it [8 s, 12 s): nothing can close under b's tail at 8 s.
+        let media = p.media[0].id;
+        let mk = |n: u128, at: i64| {
+            let mut c = Clip::new(Id::from_u128(2000 + n), "x", media, TrackKind::Audio, TimeRange::new(s(0), s(4)), s(at));
+            c.media_duration = Some(s(20));
+            c
+        };
+        let t = p.timelines.iter_mut().find(|t| t.id == f.seq).expect("timeline");
+        let a1 = t.tracks.iter_mut().find(|x| x.id == f.a1).expect("a1");
+        let mut clips = a1.clips().to_vec();
+        clips.extend([mk(1, 4), mk(2, 8)]);
+        a1.set_clips(clips);
+        let half = Time::new(-1, 2);
+        let op = EditOperation::RippleTrim { clip: f.b, edge: sq_core_model::ClipEdge::Tail, by: half, linked: true };
+        let err = EditTransaction::apply(&[op], &mut p, f.seq, &mut ids()).expect_err("blocked");
+        assert_eq!(err.kind, TransactionErrorKind::Invalid);
+        assert!(err.message().contains("rippleTrim moved nothing"), "{}", err.message());
+        // A plain shortening on a free track moves as asked.
+        let mut free = f.project.clone();
+        let op = EditOperation::RippleTrim { clip: f.b, edge: sq_core_model::ClipEdge::Tail, by: half, linked: true };
+        EditTransaction::apply(&[op], &mut free, f.seq, &mut ids()).expect("shortens");
+        let len = free.timeline(f.seq).and_then(|t| t.find(f.b)).map(|m| m.clip.timeline().duration);
+        assert_eq!(len, Some(Time::new(7, 2)));
     }
 
     #[test]
@@ -743,5 +857,43 @@ mod tests {
         let ops = [EditOperation::SetPixelAspect { media: id, aspect: None }];
         let e = EditTransaction::apply(&ops, &mut q, f.seq, &mut ids()).err();
         assert!(e.is_some_and(|e| e.kind == TransactionErrorKind::NoPicture && e.operation_index == Some(0)));
+    }
+
+    /// An L-cut: clip A's sound runs 8 frames under B's picture; the picture cut stays. `linked: false` is the Alt-trim.
+    #[test]
+    fn an_unlinked_trim_cuts_sound_and_picture_at_different_times() {
+        use sq_core_model::ClipEdge::Tail;
+        let f = Fixture::new();
+        let by = Time::new(8, 25);
+        let clip_end = |p: &Project, id: Id| p.timeline(f.seq).and_then(|t| t.find(id)).map(|m| m.clip.timeline().end());
+        let mut p = f.project.clone();
+        let op = EditOperation::Trim { clip: f.a_audio, edge: Tail, by, linked: false };
+        assert!(EditTransaction::apply(&[op], &mut p, f.seq, &mut ids()).is_ok());
+        assert_eq!(clip_end(&p, f.a_audio), Some(s(4) + by), "the sound runs on");
+        assert_eq!(clip_end(&p, f.a), Some(s(4)), "the picture cut stays");
+        assert!(p.timeline(f.seq).and_then(|t| t.find(f.a)).is_some_and(|m| m.clip.link.is_some()), "still linked");
+        // The linked default moves both.
+        let mut q = f.project.clone();
+        let op = EditOperation::Trim { clip: f.a_audio, edge: Tail, by: Time::new(-8, 25), linked: true };
+        assert!(EditTransaction::apply(&[op], &mut q, f.seq, &mut ids()).is_ok());
+        assert_eq!(clip_end(&q, f.a), Some(s(4) - Time::new(8, 25)));
+    }
+
+    #[test]
+    fn unlink_and_link_change_who_follows_a_trim() {
+        use sq_core_model::ClipEdge::Tail;
+        let f = Fixture::new();
+        let mut p = f.project.clone();
+        let both = vec![f.a, f.a_audio];
+        assert!(EditTransaction::apply(&[EditOperation::Unlink { clips: both.clone() }], &mut p, f.seq, &mut ids()).is_ok());
+        let link = |p: &Project, id: Id| p.timeline(f.seq).and_then(|t| t.find(id)).and_then(|m| m.clip.link);
+        assert_eq!((link(&p, f.a), link(&p, f.a_audio)), (None, None));
+        let by = Time::new(-8, 25);
+        let op = EditOperation::Trim { clip: f.a_audio, edge: Tail, by, linked: true };
+        assert!(EditTransaction::apply(&[op], &mut p, f.seq, &mut ids()).is_ok());
+        let end = |p: &Project, id: Id| p.timeline(f.seq).and_then(|t| t.find(id)).map(|m| m.clip.timeline().end());
+        assert_eq!(end(&p, f.a), Some(s(4)), "unlinked: the picture stays");
+        assert!(EditTransaction::apply(&[EditOperation::Link { clips: both }], &mut p, f.seq, &mut ids()).is_ok());
+        assert!(link(&p, f.a).is_some() && link(&p, f.a) == link(&p, f.a_audio));
     }
 }

@@ -37,7 +37,7 @@ fn a_changed_default_is_stored_and_restore_factory_removes_it_everywhere() {
     assert!(
         r.shell.shell().preferences.effect_defaults.as_ref().is_some_and(|p| p.has_default_transition("crossDissolve"))
     );
-    let file = sq_library::effect_defaults_file::EffectDefaultsFile::file_url_in(&dir);
+    let file = sq_library::effect_defaults_file::EffectDefaultsFile::file_url_in_support(&dir);
     assert!(file.exists(), "the library file is written");
     // Restore Factory.
     event(
@@ -64,7 +64,7 @@ fn defaults_saved_earlier_reach_the_session_on_the_first_answer() {
     std::fs::create_dir_all(&dir).expect("dir");
     let mut d = EffectDefaults::default();
     d.set_default_transition(TransitionPreset::new(TransitionKind::CrossDissolve, sq_core_time::Time::seconds(2)));
-    let file = sq_library::effect_defaults_file::EffectDefaultsFile::file_url_in(&dir);
+    let file = sq_library::effect_defaults_file::EffectDefaultsFile::file_url_in_support(&dir);
     std::fs::create_dir_all(file.parent().expect("parent")).expect("dir");
     sq_library::effect_defaults_file::EffectDefaultsFile::save(&d, &file).expect("saved");
     let mut r = root().with_prefs(&dir);

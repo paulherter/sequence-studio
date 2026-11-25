@@ -164,3 +164,32 @@ fn a_refused_drop_on_clips_names_the_effect_and_what_it_needs_and_transitions_ar
     assert_eq!(drop_on_clips(&mut s, &["gaussianBlur".to_string()], &BTreeSet::new(), &apply()), None);
     assert_eq!(effects_count(&s), 0);
 }
+
+/// A real user `presets.json` (copy in `scratch-real/`, skipped when absent): the Library loads it and the Effects panel
+/// lists every preset in its Presets folder.
+#[test]
+fn real_user_presets_reach_the_effects_panel() {
+    let src = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scratch-real/presets.json");
+    let Ok(bytes) = std::fs::read(&src) else {
+        assert!(std::env::var("SQ_REAL_PRESETS").is_err(), "copy missing");
+        return;
+    };
+    let root = crate::test_rig::unique_dir("sq-real-presets");
+    let url = sq_library::preset_store::PresetStore::file_url_in_support(&root);
+    std::fs::create_dir_all(url.parent().unwrap()).unwrap();
+    std::fs::write(&url, bytes).unwrap();
+    let panel = crate::standard::library_panel(&root).expect("panel");
+    let presets = panel.model.presets().to_vec();
+    let mut h = host();
+    h.list_presets(&presets);
+    let listed = EffectsCatalog::preset_entries(&presets).len();
+    let rows = h.inner.panel.rows().len();
+    eprintln!("library presets {}, effects entries {listed}, rows {rows}", presets.len());
+    assert!(presets.len() >= 57, "library lists {}", presets.len());
+    assert_eq!(listed, 57);
+    let mut h2 = h;
+    h2.inner.panel.set_query("Zoom In");
+    let hits = h2.inner.panel.rows().iter().filter(|r| r.id.starts_with("preset.")).count();
+    assert!(hits >= 1, "search finds no user preset");
+    let _ = std::fs::remove_dir_all(&root);
+}

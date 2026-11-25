@@ -7,7 +7,7 @@ mod common;
 
 use common::{ItemSpec, PRFixture, SECOND as S, Source};
 use sq_core_masks::ClipMasksExt;
-use sq_core_model::{Clip, ClipEffect, TrackKind, TransitionKind};
+use sq_core_model::{Clip, ClipEffect, MatteChannel, TrackKind, TransitionKind};
 use sq_core_time::SequentialIds;
 use sq_premiere_import::prdocument::PRReader;
 use sq_premiere_import::primport_report::Status;
@@ -256,6 +256,43 @@ fn impact_effects_map_to_the_nearest_sq_effect() {
     assert_eq!(c.effects[1].parameters[ClipEffect::BLUR_DIRECTION_KEY].value, 45.0);
     assert_eq!(c.effects[1].parameters[ClipEffect::BLUR_LENGTH_KEY].value, 20.0);
     assert_eq!(r.report.status_of("AE.Impact_Mosaic_FX"), Some(Status::Approximated));
+}
+
+/// V1 clip with a Track Matte Key (matte = `track` number, `using` 0 alpha / 1 luma, `reverse`), V2 clip as the matte.
+fn matte_sequence(track: &str, using: &str, reverse: &str) -> PRImportResult {
+    let mut f = PRFixture::new();
+    let m = f.media("/f/a.mov", "a.mov");
+    let ps = [f.p(1, track), f.p(2, using), f.p(3, reverse)];
+    let key = f.component("AE.ADBE Legacy Key Track Matte", &ps);
+    let base = f.item(ItemSpec::new(0, S, 0, S, Source::Media(m.clone())).components(&[key.as_str()]));
+    let matte = f.item(ItemSpec::new(0, S, 0, S, Source::Media(m)));
+    let (v1, v2) = (f.track(&[base]), f.track(&[matte]));
+    f.sequence("Main", &[v1, v2], &[]);
+    map(&f)
+}
+
+#[test]
+fn a_track_matte_key_becomes_a_picture_mask_of_the_matte_track() {
+    let r = matte_sequence("2.", "0.", "false");
+    let tracks: Vec<_> = r.project.timelines[0].tracks.iter().filter(|t| t.kind == TrackKind::Video).collect();
+    let m = &tracks[0].clips()[0].masks()[0];
+    assert_eq!(m.picture_track, Some(tracks[1].id));
+    assert_eq!((m.picture_channel(), m.inverted, m.used_by_opacity()), (MatteChannel::Shape, false, true));
+    assert_eq!(r.report.status_of("AE.ADBE Legacy Key Track Matte"), Some(Status::Mapped));
+}
+
+#[test]
+fn a_track_matte_key_keeps_luma_and_reverse() {
+    let r = matte_sequence("2.", "1.", "true");
+    let m = &r.project.timelines[0].tracks[0].clips()[0].masks()[0];
+    assert_eq!((m.picture_channel(), m.inverted), (MatteChannel::Brightness, true));
+}
+
+#[test]
+fn a_track_matte_key_without_its_track_is_reported_dropped() {
+    let r = matte_sequence("5.", "0.", "false");
+    assert_eq!(r.project.timelines[0].tracks[0].clips()[0].masks()[0].picture_track, None);
+    assert_eq!(r.report.status_of("Track Matte Key"), Some(Status::Dropped));
 }
 
 /// Headless import of real projects: `SQ_PRPROJ_DIR=<folder of copies> SQ_IMPORT_OUT=<file> cargo test ... real_projects`.

@@ -9,7 +9,7 @@ use super::hardware::{
 use super::timing::{DecodeCursor, DecodePlan};
 use crate::shim::{Decoder, DecoderConfig, Frame, InputPacket, Received, Sent};
 use sq_core_model::{FieldOrder, VideoTrackInfo};
-use sq_core_time::Id;
+use sq_core_time::{Id, Time};
 use sq_frame::sqframe::{SQFrame, SQFrameColorSpace, SQFramePixelFormat, SQFrameStorage};
 use sq_media::demuxing::{BoxFuture, Demuxing};
 use sq_media::media_error::MediaError;
@@ -65,6 +65,10 @@ struct State {
     session: Option<SessionGuard<'static>>,
     /// Hardware frames the pool holds beyond the decoder's own references (the `extra_hw_frames` it was opened with).
     extra_hw_frames: i32,
+    /// The last picture this file decoded near its end, with its presentation index: what frames after it hold when they
+    /// never decode (`tail_hold_source`). Kept across calls (a continuing decode only sees the new pictures) and dropped
+    /// by a call far from the end.
+    tail: Option<(usize, DecodedFrame)>,
 }
 
 impl State {
@@ -207,6 +211,7 @@ impl FFmpegVideoDecoder {
                 preview: false,
                 session,
                 extra_hw_frames: pool_frames(extra_hw_frames),
+                tail: None,
             }),
             hardware_flag: AtomicBool::new(is_hardware),
             preview_flag: AtomicBool::new(false),
@@ -312,6 +317,7 @@ impl FFmpegVideoDecoder {
                 preview: false,
                 session: None,
                 extra_hw_frames: 0,
+                tail: None,
             };
             return self.decode_locked(&range, &mut once, None, None);
         }
@@ -353,7 +359,10 @@ impl FFmpegVideoDecoder {
         stop: Option<&dyn Fn() -> bool>,
     ) -> Result<Vec<DecodedFrame>, MediaError> {
         let carry_cap = carry_cap(s);
-        let State { decoder, cursor, carry, .. } = s;
+        let State { decoder, cursor, carry, tail, .. } = s;
+        if *range.end() + sq_media::video_decoding::TAIL_HOLD_FRAMES + 1 < self.demuxer.index().count() {
+            *tail = None;
+        }
         let dec = decoder.as_mut().ok_or(MediaError::DecodeFailed(-1))?;
         let index = self.demuxer.index();
         let (mut ordinal, flush) = DecodePlan::start(range, index, *cursor, &carry.keys().copied().collect());
@@ -401,9 +410,14 @@ impl FFmpegVideoDecoder {
             stop,
             stopped: false,
             origin_drops: 0,
+            last_decoded: tail.take(),
         };
         let packets = self.demuxer.packet_count();
         let (mut sent_end, mut ended) = (false, false);
+        // A damaged packet near the end of the file must not end the decode: what it never yields is held (`hold_tail`).
+        let tail_zone = |ordinal: i64| {
+            usize::try_from(ordinal).is_ok_and(|o| o + sq_media::video_decoding::TAIL_HOLD_FRAMES + 8 >= packets)
+        };
         while !run.wanted.is_empty() && !ended {
             if run.stop_now() {
                 break;
@@ -413,25 +427,46 @@ impl FFmpegVideoDecoder {
                 let p = self.demuxer.packet(next)?;
                 let input =
                     InputPacket { data: &sample.data, pts: p.pts, dts: p.dts, duration: p.duration, key: p.key != 0 };
-                let mut sent = dec.send(&input).map_err(|e| media_error(&e, ""))?;
+                let mut sent = match dec.send(&input) {
+                    Ok(sent) => sent,
+                    Err(_) if tail_zone(ordinal) => {
+                        ordinal += 1;
+                        continue;
+                    }
+                    Err(e) => return Err(media_error(&e, "")),
+                };
                 if sent == Sent::Full {
                     // Decoder full: take pictures out, then send again.
-                    ended |= run.drain(dec)?;
-                    sent = dec.send(&input).map_err(|e| media_error(&e, ""))?;
+                    ended |= run.drain_tolerant(dec, tail_zone(ordinal), false)?;
+                    sent = match dec.send(&input) {
+                        Ok(sent) => sent,
+                        Err(_) if tail_zone(ordinal) => {
+                            ordinal += 1;
+                            continue;
+                        }
+                        Err(e) => return Err(media_error(&e, "")),
+                    };
                 }
                 if sent == Sent::Full {
                     return Err(MediaError::DecodeFailed(-11));
                 }
                 ordinal += 1;
             } else if !sent_end {
-                dec.send_end().map_err(|e| media_error(&e, ""))?;
+                // At the end of the file a failing flush is the end too: the damaged tail is held.
+                if let Err(e) = dec.send_end() {
+                    if !tail_zone(ordinal) {
+                        return Err(media_error(&e, ""));
+                    }
+                    ended = true;
+                }
                 sent_end = true;
             } else {
                 break;
             }
-            ended |= run.drain(dec)?;
+            ended |= run.drain_tolerant(dec, tail_zone(ordinal), sent_end)?;
         }
         if run.stopped {
+            *tail = run.last_decoded.take();
             note_undelivered(self.media, range, run.wanted.len(), run.origin_drops, "cancel");
             // The caller dropped the rest: the stream position is unknown, the next call seeks.
             run.carry.clear();
@@ -439,11 +474,29 @@ impl FFmpegVideoDecoder {
             dec.flush();
             return Ok(Vec::new());
         }
-        let Run { wanted, results, origin_drops, .. } = run;
+        let hold = sent_end.then(|| run.hold_tail()).flatten();
+        let Run { mut wanted, mut results, origin_drops, last_decoded, .. } = run;
+        *tail = last_decoded;
         // After end of stream the decoder needs a flush before new input: the next call seeks.
         *cursor = (!sent_end).then_some(DecodeCursor { next_ordinal: ordinal, last_presented: *range.end(), origin });
         if sent_end {
             dec.flush();
+        }
+        if let Some(held) = hold {
+            // Run to the end of the file and the tail still did not decode: those frames show the last good picture.
+            note_undelivered(self.media, range, wanted.len(), origin_drops, "held tail");
+            let mut missing: Vec<usize> = wanted.drain().collect();
+            missing.sort_unstable();
+            for i in missing {
+                let entry = self.demuxer.index().entries()[i];
+                let frame = held.held_at(entry.pts, entry.duration);
+                match deliver {
+                    Some(deliver) => deliver(frame),
+                    None => {
+                        results.insert(i, frame);
+                    }
+                }
+            }
         }
         if !wanted.is_empty() {
             note_undelivered(
@@ -477,6 +530,9 @@ struct Run<'a> {
     stopped: bool,
     /// Pictures of the range dropped because they reference frames before `origin` (trace only).
     origin_drops: usize,
+    /// The picture with the highest presentation index this call decoded (range or not): what a tail that never
+    /// decodes holds (`tail_hold_source`).
+    last_decoded: Option<(usize, DecodedFrame)>,
 }
 
 /// Trace note (`SQ_TRACE_JSON` / milestones sink): a range ended with frames not delivered while the cursor still moves
@@ -497,9 +553,29 @@ fn note_undelivered(
 }
 
 impl Run<'_> {
+    /// The picture to show for wanted frames the decoder never produced, once it ran to the end of the file.
+    fn hold_tail(&self) -> Option<DecodedFrame> {
+        let count = self.decoder.demuxer.index().count();
+        let source = sq_media::video_decoding::tail_hold_source(
+            self.wanted.iter().copied(),
+            count,
+            self.last_decoded.as_ref().map(|(i, _)| *i),
+        )?;
+        self.last_decoded.as_ref().filter(|(i, _)| *i == source).map(|(_, f)| f.clone())
+    }
+
     fn stop_now(&mut self) -> bool {
         self.stopped = self.stopped || self.stop.is_some_and(|s| s());
         self.stopped
+    }
+
+    /// [`Run::drain`], except that a decoder error inside the tail zone is no failure: the pictures it would have given are
+    /// missing (and held); after the end was sent it counts as the end of the stream.
+    fn drain_tolerant(&mut self, dec: &mut Decoder, in_tail: bool, sent_end: bool) -> Result<bool, MediaError> {
+        match self.drain(dec) {
+            Err(_) if in_tail => Ok(sent_end),
+            other => other,
+        }
     }
 
     /// Receives every picture the decoder has ready; true when the stream ended.
@@ -532,6 +608,11 @@ impl Run<'_> {
         let storage: Arc<dyn SQFrameStorage> = Arc::new(frame);
         let sq = SQFrame::new(w, h, d.pixel_format, d.color_space, entry.pts, storage);
         let decoded = DecodedFrame::new(d.media, entry.duration, sq);
+        // Only near the end of the file: a picture held for nothing would keep a hardware surface out of the pool.
+        let near_end = i + sq_media::video_decoding::TAIL_HOLD_FRAMES + 1 >= d.demuxer.index().count();
+        if near_end && entry.duration > Time::ZERO && self.last_decoded.as_ref().is_none_or(|(last, _)| *last < i) {
+            self.last_decoded = Some((i, decoded.clone()));
+        }
         if self.range.contains(&i) {
             if !self.wanted.remove(&i) {
                 return;

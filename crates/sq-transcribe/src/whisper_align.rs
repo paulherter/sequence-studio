@@ -98,6 +98,88 @@ pub fn dtw(cost: &[f32], rows: usize, cols: usize) -> Vec<(usize, usize)> {
     path
 }
 
+/// Which 20 ms frames of `samples` (16 kHz mono) hold speech: the frame's RMS is above 8 % of the loud frames' level
+/// (95th percentile) and above a floor for digital near-silence.
+pub fn voiced_frames(samples: &[f32]) -> Vec<bool> {
+    const FRAME: usize = 320;
+    let rms: Vec<f32> =
+        samples.chunks(FRAME).map(|c| (c.iter().map(|v| v * v).sum::<f32>() / c.len().max(1) as f32).sqrt()).collect();
+    let mut sorted = rms.clone();
+    sorted.sort_by(f32::total_cmp);
+    let loud = sorted.get(sorted.len() * 95 / 100).copied().unwrap_or(0.0);
+    let limit = (loud * 0.08).max(1e-3);
+    let mut voiced: Vec<bool> = rms.iter().map(|r| *r > limit).collect();
+    // A click or breath shorter than this is not speech: it would pull the first word of a chunk back into the silence.
+    const MIN_RUN: usize = 5;
+    let mut i = 0;
+    while i < voiced.len() {
+        if !voiced[i] {
+            i += 1;
+            continue;
+        }
+        let end = voiced[i..].iter().position(|v| !*v).map_or(voiced.len(), |n| i + n);
+        if end - i < MIN_RUN {
+            voiced[i..end].fill(false);
+        }
+        i = end;
+    }
+    voiced
+}
+
+/// A time span (centiseconds from the chunk start) cut back to the speech inside it: the start moves forward to the first
+/// voiced frame and the end back behind the last one, each with one frame of margin. The span is left alone when it holds no
+/// voiced frame: it then has no time of its own (zero length at its start; a word takes its end from its last token, so a
+/// trailing "." in the pause after the word no longer stretches it). Without any voiced frame at all nothing changes.
+pub fn trim_to_voice(start_cs: i64, end_cs: i64, voiced: &[bool]) -> (i64, i64) {
+    if end_cs <= start_cs || !voiced.iter().any(|v| *v) {
+        return (start_cs, end_cs);
+    }
+    let from = usize::try_from(start_cs.max(0) / FRAME_CS).unwrap_or(0).min(voiced.len());
+    let to = usize::try_from((end_cs + FRAME_CS - 1) / FRAME_CS).unwrap_or(0).min(voiced.len());
+    let slice = voiced.get(from..to).unwrap_or(&[]);
+    let (Some(first), Some(last)) = (slice.iter().position(|v| *v), slice.iter().rposition(|v| *v)) else {
+        return (start_cs, start_cs);
+    };
+    let first = (from + first).saturating_sub(1) as i64 * FRAME_CS;
+    let last = (from + last + 2) as i64 * FRAME_CS;
+    (start_cs.max(first), end_cs.min(last).max(start_cs.max(first)))
+}
+
+/// Voiced frames of a whole recording, measured per 30 s chunk (the loudness reference of `voiced_frames` is local, so a quiet
+/// passage next to a loud one keeps its own speech frames).
+pub fn voiced_frames_chunked(samples: &[f32]) -> Vec<bool> {
+    samples.chunks(crate::whisper_mel::CHUNK_SAMPLES).flat_map(voiced_frames).collect()
+}
+
+/// A pause inside one word that is still bridged (centiseconds): longer silence ends the word.
+pub const WORD_HOLD_CS: i64 = 20;
+
+/// The end of a word (centiseconds from the start of `voiced`) that starts at `start_cs` and was given `end_cs`: the end of
+/// the voiced run that begins at the start, bridging gaps up to `WORD_HOLD_CS`, plus one frame of margin. Alignment can run a
+/// word's end on to the next word's start across a pause (or even into that word's voice); this cuts it back to where the
+/// voice stops. Never later than `end_cs`, never before `start_cs`; unchanged when the span holds no voiced frame.
+pub fn word_end_in_voice(start_cs: i64, end_cs: i64, voiced: &[bool]) -> i64 {
+    if end_cs <= start_cs {
+        return end_cs;
+    }
+    let from = usize::try_from(start_cs.max(0) / FRAME_CS).unwrap_or(0);
+    let to = usize::try_from((end_cs + FRAME_CS - 1) / FRAME_CS).unwrap_or(0).min(voiced.len());
+    let hold = usize::try_from(WORD_HOLD_CS / FRAME_CS).unwrap_or(0);
+    let (mut last, mut gap) = (None, 0usize);
+    for (f, &v) in voiced.iter().enumerate().take(to).skip(from) {
+        if v {
+            (last, gap) = (Some(f), 0);
+        } else if last.is_some() {
+            gap += 1;
+            if gap > hold {
+                break;
+            }
+        }
+    }
+    let Some(last) = last else { return end_cs };
+    end_cs.min((last as i64 + 2) * FRAME_CS).max(start_cs)
+}
+
 /// The frame at which the alignment path enters each row (token). `heads` are the selected heads' weights, each `rows` by
 /// `cols` row-major (`cols` = the frames that hold audio). `None` for an empty or odd shape.
 pub fn entry_frames(heads: &[Vec<f32>], rows: usize, cols: usize) -> Option<Vec<usize>> {
@@ -135,6 +217,30 @@ pub fn token_times(entry: &[usize], n_tokens: usize, end_frame: usize) -> Vec<(i
 
 #[cfg(test)]
 mod tests {
+    use super::word_end_in_voice;
+
+    #[test]
+    fn word_end_stops_at_the_voice_and_ignores_voice_after_a_long_pause() {
+        let mut v = vec![false; 600];
+        v[0..30].fill(true); // 0-0.6 s
+        v[300..320].fill(true); // the next word, after a pause
+        assert_eq!(word_end_in_voice(0, 600, &v), 62);
+        assert_eq!(word_end_in_voice(0, 40, &v), 40, "never later than the given end");
+        assert_eq!(word_end_in_voice(100, 200, &v), 200, "no voice in the span: unchanged");
+        v[34..40].fill(true); // a 0.08 s gap is bridged
+        assert_eq!(word_end_in_voice(0, 600, &v), 82);
+    }
+
+    #[test]
+    fn a_short_click_is_not_voiced_but_a_word_is() {
+        let mut samples = vec![0.0f32; 320 * 100];
+        samples[320 * 10..320 * 12].fill(0.5); // 2 frames: a click
+        samples[320 * 50..320 * 70].fill(0.5); // 20 frames: speech
+        let v = voiced_frames(&samples);
+        assert!(!v[10] && !v[11]);
+        assert!(v[50] && v[69]);
+    }
+
     use super::*;
 
     #[test]

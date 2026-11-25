@@ -651,6 +651,11 @@ impl EditorSession {
         self.history.undo_depth()
     }
 
+    /// Renames the undo steps made since `depth` (from `undo_step_depth`); returns how many.
+    pub fn rename_steps_since(&mut self, depth: usize, name: &str) -> usize {
+        self.history.rename_steps_since(depth, name)
+    }
+
     /// Ties `undo` / `redo` (a change outside the project) to the undo step the edit since `depth` made, so it is ONE
     /// step; an edit that made none gets a named step of its own. The project counts as changed.
     // Swift: EditorSession.swift:391

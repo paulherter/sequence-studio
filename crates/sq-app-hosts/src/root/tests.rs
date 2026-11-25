@@ -1078,7 +1078,7 @@ fn the_text_styles_are_saved_in_the_support_folder_and_come_back() {
     library.add("Lower third", style, &mut SequentialIds::default());
     r.inspector.defer(SectionAction::StylesChanged(Box::new(library)));
     r.answer(&mut rig.cx());
-    assert!(support.join("looks.json").exists());
+    assert!(support.join("Library").join("looks.json").exists());
     let again = root().with_prefs(&support).text_styles().expect("a store");
     let names: Vec<String> = again.user().into_iter().map(|e: TextStyleEntry| e.name).collect();
     assert_eq!(names, ["Lower third"]);

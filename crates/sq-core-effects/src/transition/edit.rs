@@ -549,6 +549,56 @@ impl TimelineTransitions for Timeline {
     }
 }
 
+/// What to apply: style, track, requested length and alignment (an element transition ignores the alignment).
+#[derive(Clone, Copy, Debug)]
+pub struct TransitionSpec {
+    /// Style.
+    pub kind: TransitionKind,
+    /// The track.
+    pub track: Id,
+    /// Requested duration.
+    pub duration: Time,
+    /// Where it lies around the cut.
+    pub alignment: TransitionAlignment,
+}
+
+/// A transition as the UI applies it: the new transition and then its look (the user's default of the kind, else the factory
+/// look). The one path of the session's Apply Transition and the Edit API.
+pub fn add_transition_looked(
+    tl: &mut Timeline,
+    point: TransitionPoint,
+    spec: &TransitionSpec,
+    user: Option<&TransitionPreset>,
+    ids: &mut dyn IdSource,
+) -> Result<Id, EditError> {
+    let id = tl.add_transition_at(point, spec.kind, spec.track, spec.duration, spec.alignment, ids)?;
+    apply_look_of(tl, user, id)?;
+    Ok(id)
+}
+
+/// `add_element_transitions` plus the look of each (see `add_transition_looked`).
+pub fn add_element_transitions_looked(
+    tl: &mut Timeline,
+    clip: Id,
+    edges: &[ClipEdge],
+    spec: &TransitionSpec,
+    user: Option<&TransitionPreset>,
+    ids: &mut dyn IdSource,
+) -> Result<Vec<Id>, EditError> {
+    let made = tl.add_element_transitions(spec.kind, spec.track, clip, edges, spec.duration, ids)?;
+    for id in &made {
+        apply_look_of(tl, user, *id)?;
+    }
+    Ok(made)
+}
+
+fn apply_look_of(tl: &mut Timeline, user: Option<&TransitionPreset>, id: Id) -> Result<(), EditError> {
+    match user {
+        Some(u) => tl.apply_transition_default(u, id),
+        None => tl.apply_factory_look(id, true),
+    }
+}
+
 /// A preset's params that its kind knows.
 fn known_params(d: &TransitionPreset) -> BTreeMap<String, f64> {
     d.params.iter().flatten().filter(|(k, _)| d.kind.element_param(k).is_some()).map(|(k, v)| (k.clone(), *v)).collect()

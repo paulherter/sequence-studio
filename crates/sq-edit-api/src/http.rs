@@ -11,6 +11,8 @@ pub struct HTTPRequest {
     pub method: String,
     /// Path without the query string.
     pub path: String,
+    /// The query string after `?` (empty when none).
+    pub query: String,
     /// Header names lowercased.
     pub headers: HashMap<String, String>,
     /// Body bytes.
@@ -155,7 +157,8 @@ impl HTTPParser {
         let body = data[body_start..body_start + length].to_vec();
         let target = parts[1];
         let path = target.split('?').next().unwrap_or(target).to_string();
-        let request = HTTPRequest { method: parts[0].to_string(), path, headers, body };
+        let query = target.split_once('?').map(|(_, q)| q.to_string()).unwrap_or_default();
+        let request = HTTPRequest { method: parts[0].to_string(), path, query, headers, body };
         ParseResult::Complete(request, body_start + length)
     }
 }

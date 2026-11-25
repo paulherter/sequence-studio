@@ -524,6 +524,9 @@ impl AppRoot {
             self.shell.shell().flow_env.edit_api = Some(controller.shell_api(persist.defaults()));
         }
         self.edit_api = Some(controller);
+        if let (Some(api), Some(looks)) = (&mut self.edit_api, &self.looks) {
+            api.set_looks(std::sync::Arc::clone(looks));
+        }
         self
     }
 
@@ -572,7 +575,7 @@ impl AppRoot {
             SystemTime::now().duration_since(SystemTime::UNIX_EPOCH).map_or(0.0, |d| d.as_secs_f64()),
         );
         let library = sq_editor_session::EffectDefaultsLibrary::new(
-            Some(sq_library::effect_defaults_file::EffectDefaultsFile::file_url_in(support)),
+            Some(sq_library::effect_defaults_file::EffectDefaultsFile::file_url_in_support(support)),
             now,
             &mut ids,
         );
@@ -580,8 +583,9 @@ impl AppRoot {
         self.shell.shell().preferences.effect_defaults = Some(library.defaults().clone());
         self.effect_defaults = Some(Box::new(library));
         self.effect_defaults_unapplied = true;
-        let url = sq_editor_session::LookStore::default_url(support);
-        let legacy = sq_editor_session::LookStore::legacy_text_styles_url(support);
+        let library = sq_editor_session::LookStore::library_directory(support);
+        let url = sq_editor_session::LookStore::default_url(&library);
+        let legacy = sq_editor_session::LookStore::legacy_text_styles_url(&library);
         if self.looks.is_none() {
             let store = std::sync::Arc::new(sq_editor_session::LookStore::new(Some(url), Some(legacy), None, None));
             self.attach_looks(store);
@@ -601,6 +605,9 @@ impl AppRoot {
         self.inspector.set_looks(std::sync::Arc::clone(&looks));
         if let Some(graphics) = self.graphics.take() {
             self.graphics = Some(graphics.with_looks(std::sync::Arc::clone(&looks)));
+        }
+        if let Some(api) = &mut self.edit_api {
+            api.set_looks(std::sync::Arc::clone(&looks));
         }
         self.looks = Some(looks);
     }

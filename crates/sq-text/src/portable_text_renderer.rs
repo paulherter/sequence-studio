@@ -222,6 +222,12 @@ impl PortableTextRenderer {
             });
             group.fill(&m, LinearCanvas::linear(&color));
         }
+        let paint = glyphs.fill_colors(highlight);
+        for p in &glyphs.placed {
+            if let (Some(b), Some(_)) = (&p.bitmap, paint(p)) {
+                group.draw_bitmap(&b.bmp, b.x as i64, b.y as i64);
+            }
+        }
         for b in &bars {
             let m = mask(&|m| m.add(&rect_polygon(&b.rect)));
             group.fill(&m, LinearCanvas::linear(&style.line_style(b.style_index).color));
@@ -273,6 +279,32 @@ pub struct Placed {
     /// Set for a color glyph (emoji): its stacked outlines with their colors (nil color = the text color);
     /// `outline` is then all of them (what strokes and shadows use).
     pub layers: Option<Vec<ColorLayer>>,
+    /// Set for a bitmap color emoji (Apple `sbix`, Noto `CBDT`): it has no outline (`outline` is empty).
+    pub bitmap: Option<PlacedBitmap>,
+}
+
+/// A color emoji bitmap placed in raster pixels from the ink origin.
+#[derive(Clone, Debug)]
+pub struct PlacedBitmap {
+    /// The bitmap at the drawn size.
+    pub bmp: std::sync::Arc<crate::emoji_font::ColorBitmap>,
+    /// Left edge.
+    pub x: f64,
+    /// Top edge.
+    pub y: f64,
+}
+
+impl PlacedBitmap {
+    /// The corners of the bitmap's box, clockwise from the top-left.
+    pub fn corners(&self) -> Vec<Vec2> {
+        let (w, h) = (self.bmp.width as f64, self.bmp.height as f64);
+        vec![
+            Vec2::new(self.x, self.y),
+            Vec2::new(self.x + w, self.y),
+            Vec2::new(self.x + w, self.y + h),
+            Vec2::new(self.x, self.y + h),
+        ]
+    }
 }
 
 /// Glyph outlines of a layout in raster pixels (y down), with the UTF-16 offset of each glyph in its line's text.
@@ -316,6 +348,19 @@ impl<'a> GlyphPlacer<'a> {
                     offset += units;
                     continue;
                 }
+                if let Some(e) = &pick.emoji {
+                    // A bitmap emoji: scaled to the font size, its box placed from the pen on the baseline like the UI atlas.
+                    if let Some(bmp) = e.rasterize(pick.glyph, ls.size * s) {
+                        let (ox, oy) = ((pen - ink.x) * s, (baseline - ink.y) * s);
+                        let (x, y) = ((ox + bmp.left as f64).round(), (oy - bmp.top as f64).round());
+                        let bitmap = Some(PlacedBitmap { bmp: std::sync::Arc::new(bmp), x, y });
+                        out.push(Placed { line: li, offset, outline: Vec::new(), layers: None, bitmap });
+                    }
+                    pen += e.advance(pick.glyph) as f64 * ls.size / e.units_per_em as f64 + style.tracking;
+                    previous = None;
+                    offset += units;
+                    continue;
+                }
                 let face = pick.font.as_ref().unwrap_or(font);
                 let g = pick.glyph;
                 let gcoords: &[f64] = if pick.font.is_none() { coords } else { &[] };
@@ -343,12 +388,13 @@ impl<'a> GlyphPlacer<'a> {
                         offset,
                         outline: layers.iter().flat_map(|l| l.0.iter().cloned()).collect(),
                         layers: Some(layers),
+                        bitmap: None,
                     });
                 } else {
                     // Glyph 0 is the face's "no glyph" box: a scalar no face has draws as nothing, never as a box.
                     let contours = if g == 0 { Vec::new() } else { shape(g) };
                     if !contours.is_empty() {
-                        out.push(Placed { line: li, offset, outline: contours, layers: None });
+                        out.push(Placed { line: li, offset, outline: contours, layers: None, bitmap: None });
                     }
                 }
                 pen += pick.advance.map_or_else(|| face.advance_at(g, gcoords), |a| a as f64) * gunit + style.tracking;
@@ -490,5 +536,99 @@ impl OutlineFonts {
             out.push(poly);
         }
         out
+    }
+}
+
+#[cfg(test)]
+mod api_look_tests {
+    use super::*;
+    use crate::caption_presets::CaptionPresetLibrary;
+    use crate::text_style::{BoxPadding, RGBAColor, TextBackground, TextShadow};
+
+    fn px(p: &Picture, x: usize, y: usize) -> [f32; 4] {
+        let i = (y * p.width + x) * 4;
+        [p.pixels[i], p.pixels[i + 1], p.pixels[i + 2], p.pixels[i + 3]]
+    }
+
+    fn paul() -> crate::text_style::TextStyle {
+        let mut s = CaptionPresetLibrary::base().style(Some("default"));
+        s.size = 64.0;
+        s.color = RGBAColor::WHITE;
+        s.background = None;
+        s.shadow = Some(TextShadow::new(RGBAColor::new(0.0, 0.0, 0.0, 0.6), 0.0, 2.0, 8.0));
+        s
+    }
+
+    /// The look of the named style "paul": white glyph pixels, a soft shadow, nothing else (no box).
+    #[test]
+    fn paul_caption_has_white_text_and_no_box() {
+        let r = PortableTextRenderer::render("Hello there", &paul(), None, None, 1.0, None).expect("raster");
+        let p = &r.picture;
+        let white = (0..p.height).flat_map(|y| (0..p.width).map(move |x| (x, y))).filter(|&(x, y)| {
+            let c = px(p, x, y);
+            c[3] > 0.9 && c[0] > 0.9 && c[1] > 0.9 && c[2] > 0.9
+        });
+        assert!(white.count() > 200, "no white text pixels");
+        // A box would fill the corners and edge rows with an opaque color; the shadow is at most 60 % and dark.
+        for (x, y) in [(0, 0), (p.width - 1, 0), (0, p.height - 1), (p.width / 2, 0)] {
+            assert!(px(p, x, y)[3] < 0.7, "box pixel at {x},{y}: {:?}", px(p, x, y));
+        }
+        let opaque_dark = p.pixels.chunks(4).filter(|c| c[3] > 0.9 && c[0] < 0.5).count();
+        assert_eq!(opaque_dark, 0, "an opaque dark area: a box");
+    }
+
+    /// addGraphic `style.background`: the pixels behind and around the text are the pill color.
+    #[test]
+    fn a_background_pill_fills_the_pixels_behind_the_text() {
+        let mut s = paul();
+        s.background = Some(TextBackground::new(RGBAColor::new(1.0, 0.0, 0.0, 1.0), BoxPadding::new(24.0, 12.0), 0.0));
+        let r = PortableTextRenderer::render("Hello there", &s, None, None, 1.0, None).expect("raster");
+        let p = &r.picture;
+        // The raster also holds the shadow margin; the pill is most of what is left.
+        let pill = p.pixels.chunks(4).filter(|c| c[3] > 0.95 && c[0] > 0.9 && c[1] < 0.1 && c[2] < 0.1).count();
+        assert!(pill * 100 > p.width * p.height * 40, "pill pixels {pill} of {}", p.width * p.height);
+    }
+
+    /// "Hi 🔥" through the text layer renderer gets a colored glyph when the machine has a color emoji font.
+    #[test]
+    fn an_emoji_is_drawn_in_color_when_the_system_has_an_emoji_font() {
+        let has_font = [
+            "/System/Library/Fonts/Apple Color Emoji.ttc",
+            "/usr/share/fonts/noto/NotoColorEmoji.ttf",
+            "/usr/share/fonts/truetype/noto/NotoColorEmoji.ttf",
+            "/usr/share/fonts/google-noto-color-emoji-fonts/Noto-COLRv1.ttf",
+            "C:\\Windows\\Fonts\\seguiemj.ttf",
+        ]
+        .iter()
+        .any(|f| std::path::Path::new(f).exists());
+        if !has_font {
+            eprintln!("skipped: no color emoji font");
+            return;
+        }
+        let _lock = crate::portable_fallback::FALLBACK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        PortableFallback::set_bitmap_emoji(PortableFallback::system_bitmap_emoji());
+        let r = PortableTextRenderer::render("Hi \u{1F525}", &paul(), None, None, 1.0, None).expect("raster");
+        let colorful = r.picture.pixels.chunks(4).any(|c| c[3] > 0.8 && c[0].max(c[1]).max(c[2]) - c[0].min(c[1]).min(c[2]) > 0.3);
+        assert!(colorful, "the emoji drew no color pixel");
+    }
+
+    /// The emoji box is about the font size tall, sits on the baseline (not below it) and has the width of one glyph advance.
+    #[test]
+    fn a_bitmap_emoji_is_scaled_to_the_font_size_and_sits_on_the_baseline() {
+        let _lock = crate::portable_fallback::FALLBACK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(font) = PortableFallback::system_bitmap_emoji() else {
+            eprintln!("skipped: no color emoji font");
+            return;
+        };
+        PortableFallback::set_bitmap_emoji(Some(font));
+        let style = paul();
+        let size = style.size;
+        let r = PortableTextRenderer::render("\u{1F525}", &style, None, None, 1.0, None).expect("raster");
+        let p = &r.picture;
+        let rows: Vec<usize> =
+            (0..p.height).filter(|&y| (0..p.width).any(|x| px(p, x, y)[3] > 0.5 && px(p, x, y)[0] > px(p, x, y)[2] + 0.2)).collect();
+        assert!(!rows.is_empty(), "no colored rows");
+        let tall = (rows[rows.len() - 1] - rows[0] + 1) as f64;
+        assert!(tall > size * 0.6 && tall < size * 1.6, "emoji {tall} px tall at font size {size}");
     }
 }

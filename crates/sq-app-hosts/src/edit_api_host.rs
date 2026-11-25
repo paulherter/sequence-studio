@@ -60,6 +60,8 @@ pub(crate) struct ApiBridge {
     pub(crate) busy: Arc<AtomicBool>,
     /// The one job map of the API (export, import, transcript, captions): one id space, one `GET /v1/jobs/{id}` shape.
     pub(crate) jobs: Arc<Mutex<Jobs>>,
+    /// The app's one Look store: a caption look made through the API is saved there, like one saved in the Captions panel.
+    pub(crate) looks: Option<Arc<sq_editor_session::LookStore>>,
 }
 
 /// How a background task of the API stands.
@@ -173,32 +175,18 @@ fn run_session_batch(
     let mut failure: Option<TransactionError> = None;
     for (i, op) in r.operations.iter().enumerate() {
         let step: Result<(), TransactionErrorKind> = match op {
-            EditOperation::AddClip { media, track, at, source_in, source_out, link_audio, insert } => {
+            EditOperation::AddClip { .. } => {
                 let s = app.session_mut();
-                if s.project().media(*media).is_none() {
-                    Err(TransactionErrorKind::MediaNotFound)
-                } else if track.is_some_and(|t| s.active_timeline().is_none_or(|tl| tl.track(t).is_none())) {
-                    Err(TransactionErrorKind::TrackNotFound)
-                } else {
-                    let options = PlaceOptions {
-                        at: Some(*at),
-                        video_track: *track,
-                        mode: if *insert { ThreePointMode::Insert } else { ThreePointMode::Overwrite },
-                        adopt_format: false,
-                        streams: if *link_audio {
-                            sq_core_edit::timeline_source_edit::SourceStreams::Both
+                match add_clip_options(s, op) {
+                    Err(e) => Err(e),
+                    Ok((media, options)) => {
+                        if s.place_media(&[media], &options) {
+                            Ok(())
                         } else {
-                            sq_core_edit::timeline_source_edit::SourceStreams::VideoOnly
-                        },
-                        source: (source_in.is_some() || source_out.is_some()).then_some((*source_in, *source_out)),
-                        ..PlaceOptions::default()
-                    };
-                    if s.place_media(&[*media], &options) {
-                        Ok(())
-                    } else {
-                        Err(TransactionErrorKind::InvalidValue(
-                            "addClip placed nothing: the media is offline or has no length, the range is empty, or the track is locked or of the wrong kind",
-                        ))
+                            Err(TransactionErrorKind::InvalidValue(
+                                "addClip placed nothing: the media is offline or has no length, the range is empty, or the track is locked or of the wrong kind",
+                            ))
+                        }
                     }
                 }
             }
@@ -258,6 +246,68 @@ fn run_session_batch(
     }
     app.session_mut().fold_undo(depth, &r.name);
     Ok((before, app.session().project().clone()))
+}
+
+/// The `PlaceOptions` the UI's Overwrite / Insert would get for an `addClip`, after the checks that keep an agent from
+/// landing on the wrong track: sound goes only to an audio track (`track` = its id, or A1 by default; none is created),
+/// a picture only to a video track. A still has no length of its own: `duration` (or `sourceOut`) sets it, else the
+/// default of the UI (5 s).
+fn add_clip_options(
+    s: &sq_editor_session::EditorSession,
+    op: &EditOperation,
+) -> Result<(Id, PlaceOptions), TransactionErrorKind> {
+    use sq_core_edit::timeline_source_edit::SourceStreams;
+    use sq_core_model::TrackKind;
+    use sq_edit_api::edit_operation::ClipStreams;
+    let EditOperation::AddClip { media, track, at, source_in, source_out, link_audio, insert, streams, duration } = op
+    else {
+        return Err(TransactionErrorKind::Invalid);
+    };
+    let invalid = TransactionErrorKind::InvalidValue;
+    let Some(m) = s.project().media(*media) else { return Err(TransactionErrorKind::MediaNotFound) };
+    let info = m.info.as_ref();
+    let (has_picture, has_sound) = (info.is_none_or(|i| i.video.is_some()), info.is_some_and(|i| i.audio.is_some()));
+    let wanted = streams.unwrap_or(if *link_audio { ClipStreams::Both } else { ClipStreams::Video });
+    let placed = match (wanted, has_picture) {
+        (ClipStreams::Video, false) => {
+            return Err(invalid("addClip: the media has no picture; pass streams: \"audio\" and an audio track"));
+        }
+        (ClipStreams::Audio, _) | (ClipStreams::Both, false) => SourceStreams::AudioOnly,
+        (ClipStreams::Both, true) => SourceStreams::Both,
+        (ClipStreams::Video, true) => SourceStreams::VideoOnly,
+    };
+    let audio_only = placed == SourceStreams::AudioOnly;
+    if audio_only && !has_sound {
+        return Err(invalid("addClip: the media has no sound"));
+    }
+    let Some(tl) = s.active_timeline() else { return Err(TransactionErrorKind::Edit(EditError::TimelineNotFound)) };
+    match track.map(|t| tl.track(t).map(|tr| tr.kind)) {
+        Some(None) => return Err(TransactionErrorKind::TrackNotFound),
+        Some(Some(TrackKind::Video)) if audio_only => {
+            return Err(invalid("addClip: sound goes to an audio track; pass the id of an audio track"));
+        }
+        Some(Some(TrackKind::Audio)) if !audio_only => {
+            return Err(invalid("addClip: that is an audio track; pass streams: \"audio\" to place only the sound"));
+        }
+        None if audio_only && !tl.tracks.iter().any(|t| t.kind == TrackKind::Audio) => {
+            return Err(invalid("addClip: the sequence has no audio track; add one first (addTrack)"));
+        }
+        _ => {}
+    }
+    if duration.is_some() && source_out.is_some() {
+        return Err(invalid("addClip: pass duration or sourceOut, not both"));
+    }
+    let out = duration.map(|d| source_in.unwrap_or(Time::ZERO) + d).or(*source_out);
+    let options = PlaceOptions {
+        at: Some(*at),
+        video_track: *track,
+        mode: if *insert { ThreePointMode::Insert } else { ThreePointMode::Overwrite },
+        adopt_format: false,
+        streams: placed,
+        source: (source_in.is_some() || out.is_some()).then_some((*source_in, out)),
+        ..PlaceOptions::default()
+    };
+    Ok((*media, options))
 }
 
 /// The job answer of an export from the queue statuses of its jobs.
@@ -580,6 +630,25 @@ impl EditAPIHost for ApiBridge {
         .unwrap_or_default()
     }
 
+    fn user_effect_presets(&self) -> Vec<sq_edit_api::transition_ops::UserEffectPreset> {
+        // Read through the shell's preset store (a fresh handle on presets.json, the file the Library panel shows).
+        self.call(None, |app, _| {
+            let mut ids = sq_core_time::RandomIds;
+            let parts = app.shell_parts();
+            let Some(store) = parts.shell.flow_env.services.preset_store() else { return Vec::new() };
+            store
+                .all()
+                .iter()
+                .filter(|p| p.kind == sq_library::preset_store::PresetKind::Effect)
+                .filter_map(|p| {
+                    let preset = sq_core_effects::effect_preset::EffectPreset::from_payload(&p.payload, p.payload_version, &mut ids).ok()?;
+                    Some(sq_edit_api::transition_ops::UserEffectPreset { id: p.id.to_string(), name: p.name.clone(), preset })
+                })
+                .collect()
+        })
+        .unwrap_or_default()
+    }
+
     fn seek(&self, at: Time) -> Result<Time, HostError> {
         self.call(None, move |app, _| {
             if app.session().active_timeline().is_none() {
@@ -615,6 +684,7 @@ pub struct EditApiController {
     discovery: PathBuf,
     cache: PathBuf,
     perceive: Option<crate::edit_api_perceive::PerceiveBackend>,
+    looks: Option<Arc<sq_editor_session::LookStore>>,
     state: Arc<Mutex<EditApiState>>,
     server: Option<EditAPIServer>,
 }
@@ -628,6 +698,7 @@ impl EditApiController {
             discovery: support.join("edit-api.json"),
             cache: support.join("api-cache"),
             perceive: None,
+            looks: None,
             state: Arc::new(Mutex::new(not_running())),
             server: None,
         }
@@ -636,6 +707,11 @@ impl EditApiController {
     /// Gives the API its frame renderer and media probe (capture, frames, Premiere import).
     pub fn set_perceive(&mut self, backend: crate::edit_api_perceive::PerceiveBackend) {
         self.perceive = Some(backend);
+    }
+
+    /// Gives the API the app's Look store (looks made by `addCaptions` are saved there).
+    pub fn set_looks(&mut self, looks: Arc<sq_editor_session::LookStore>) {
+        self.looks = Some(looks);
     }
 
     /// True while a timeline gesture runs (Swift `isBusy`): a commit is refused as busy, an undo is not done.
@@ -688,6 +764,7 @@ impl EditApiController {
                 cache: self.cache.clone(),
                 busy: Arc::clone(&self.busy),
                 jobs: Arc::default(),
+                looks: self.looks.clone(),
             }),
         );
         let (shared, path) = (Arc::clone(&self.state), self.discovery.clone());
@@ -920,12 +997,21 @@ mod tests {
             let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
             let key = path.to_string_lossy().bytes().fold(7u128, |h, b| h.wrapping_mul(131).wrapping_add(u128::from(b)));
             let mut m = MediaRef::new(Id::from_u128(key), &name, &path.to_string_lossy(), MediaFingerprint::new(size));
-            let info: MediaInfo = serde_json::from_value(json!({
-                "duration": {"value": 10, "timescale": 1},
-                "video": {"width": 1920, "height": 1080, "codec": "avc1", "bitDepth": 8, "chroma": "4:2:0",
-                          "nominalFrameDuration": {"value": 1, "timescale": 25}, "isVariableFrameRate": false},
-                "audio": {"sampleRate": 48000, "channels": 2, "codec": "aac"}
-            }))
+            let ext = path.extension().map(|e| e.to_string_lossy().to_lowercase()).unwrap_or_default();
+            let video = json!({"width": 1920, "height": 1080, "codec": "avc1", "bitDepth": 8, "chroma": "4:2:0",
+                          "nominalFrameDuration": {"value": 1, "timescale": 25}, "isVariableFrameRate": false});
+            let info: MediaInfo = serde_json::from_value(match ext.as_str() {
+                // A still: the 5 s default length, a picture, no sound (what the real probe makes of a PNG / JPG).
+                "png" | "jpg" => json!({"duration": {"value": 5, "timescale": 1}, "video": video, "isStill": true}),
+                "wav" | "mp3" | "m4a" => json!({
+                    "duration": {"value": 3, "timescale": 1}, "isStill": false,
+                    "audio": {"sampleRate": 48000, "channels": 2, "codec": "pcm_s16le"}
+                }),
+                _ => json!({
+                    "duration": {"value": 10, "timescale": 1}, "video": video,
+                    "audio": {"sampleRate": 48000, "channels": 2, "codec": "aac"}
+                }),
+            })
             .expect("media info");
             m.duration = Some(info.duration);
             m.info = Some(info);
@@ -1029,6 +1115,7 @@ mod tests {
         assert_eq!(status, 200, "{made}");
         let seq = made["sequencesAdded"][0].as_str().expect("new sequence").to_string();
         assert_eq!(made["activeSequence"].as_str(), Some(seq.as_str()));
+        assert_eq!(made["sequence"].as_str(), Some(seq.as_str()), "the reply names the new open sequence: {made}");
         let state = api.state();
         assert_eq!(state["activeSequence"].as_str(), Some(seq.as_str()));
         let reel = state["sequences"].as_array().expect("sequences").iter().find(|s| s["id"] == seq.as_str()).expect("reel").clone();
@@ -1218,6 +1305,96 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    #[test]
+    fn agent_text_animators_on_two_layers_are_read_back_dry_run_checked_and_undone() {
+        let dir = crate::test_rig::test_dir("sq-edit-api-animators");
+        let app = app_with_one_clip();
+        let sender = app.with(|a| a.sender()).expect("app");
+        let mut c = EditApiController::new(sender, &dir);
+        let mut d = FileDefaults::default();
+        let port = free_port();
+        d.set_integer(ENABLED_KEY, 1);
+        d.set_integer(PORT_KEY, i64::from(port));
+        c.sync(&d);
+        let v: serde_json::Value =
+            serde_json::from_slice(&std::fs::read(dir.join("edit-api.json")).expect("file")).expect("json");
+        let token = v["token"].as_str().expect("token").to_string();
+        let undo_name = |a: &sq_app_shell::Headless| a.with(|a| a.session().undo_name().map(str::to_string)).flatten();
+        let t = token.clone();
+        let (_, body) = serve_while(&app, move || http(port, "GET", "/v1/state", Some(&t), ""));
+        let state: serde_json::Value = serde_json::from_str(&body).expect("state json");
+        let sequence = state["activeSequence"].as_str().expect("sequence").to_string();
+        let track = state["sequences"][0]["tracks"]
+            .as_array()
+            .and_then(|t| t.iter().find(|t| t["kind"] == "video"))
+            .and_then(|t| t["id"].as_str())
+            .expect("video track")
+            .to_string();
+        let commit = |app: &sq_app_shell::Headless, ops: String, name: &str| {
+            let (t, sequence) = (token.clone(), sequence.clone());
+            let body = format!(r#"{{"name":"{name}","sequence":"{sequence}","operations":[{ops}]}}"#);
+            serve_while(app, move || http(port, "POST", "/v1/commit", Some(&t), &body))
+        };
+        let (status, reply) = commit(
+            &app,
+            format!(
+                r##"{{"op":"addGraphic","track":"{track}","at":{{"value":12,"timescale":1}},"duration":{{"value":3,"timescale":1}},
+                "layers":[{{"text":"First line"}},{{"text":"Second line","position":{{"x":0,"y":120}}}}]}}"##
+            ),
+            "Titles",
+        );
+        assert_eq!(status, 200, "{reply}");
+        let reply: serde_json::Value = serde_json::from_str(&reply).expect("reply");
+        let clip = reply["diff"]["added"][0]["id"].as_str().expect("new clip").to_string();
+        let read = |app: &sq_app_shell::Headless| {
+            let (t, path) = (token.clone(), format!("/v1/clip/{clip}/params"));
+            let (_, body) = serve_while(app, move || http(port, "GET", &path, Some(&t), ""));
+            serde_json::from_str::<serde_json::Value>(&body).expect("params")
+        };
+        let params = read(&app);
+        let (l1, l2) = (params["layers"][0]["id"].as_str().expect("l1").to_string(), params["layers"][1]["id"].as_str().expect("l2").to_string());
+        let depth_name = undo_name(&app);
+        let ops = format!(
+            r#"{{"op":"addTextAnimator","clip":"{clip}","layer":"{l1}","effect":"slide","unit":"word","direction":"left"}},
+            {{"op":"addTextAnimator","clip":"{clip}","layer":"{l2}","effect":"fade","unit":"character","stagger":40}}"#
+        );
+        // dryRun: the diff names the animators, nothing changes.
+        let (t, sq) = (token.clone(), sequence.clone());
+        let dry = format!(r#"{{"name":"Animate","sequence":"{sq}","dryRun":true,"operations":[{ops}]}}"#);
+        let (status, reply) = serve_while(&app, move || http(port, "POST", "/v1/commit", Some(&t), &dry));
+        assert_eq!(status, 200, "{reply}");
+        assert!(reply.contains("animator.in"), "{reply}");
+        assert_eq!(read(&app)["layers"][0]["animators"], serde_json::json!({}));
+        assert_eq!(undo_name(&app), depth_name);
+        // Real commit: one undo step "Agent: Animate", both animators read back.
+        let (status, reply) = commit(&app, ops, "Animate");
+        assert_eq!(status, 200, "{reply}");
+        assert_eq!(undo_name(&app).as_deref(), Some("Agent: Animate"));
+        let params = read(&app);
+        assert_eq!(params["layers"][0]["animators"]["in"]["effect"], "slide");
+        assert_eq!(params["layers"][0]["animators"]["in"]["direction"], "left");
+        assert_eq!(params["layers"][1]["animators"]["in"]["unit"], "character");
+        assert_eq!(params["layers"][1]["animators"]["in"]["stagger"], 40.0);
+        // An unknown key is refused (422) and changes nothing.
+        let bad = format!(r#"{{"op":"setTextAnimator","clip":"{clip}","layer":"{l1}","speed":2}}"#);
+        let (status, _) = commit(&app, bad, "Bad");
+        assert!((400..500).contains(&status), "{status}");
+        assert_eq!(undo_name(&app).as_deref(), Some("Agent: Animate"));
+        // The catalog lists the effects.
+        let t = token.clone();
+        let (status, body) = serve_while(&app, move || http(port, "GET", "/v1/textAnimators", Some(&t), ""));
+        assert_eq!(status, 200);
+        assert!(body.contains("typewriter"), "{body}");
+        // One undo takes both animators away.
+        let t = token.clone();
+        let (s, _) = serve_while(&app, move || http(port, "POST", "/v1/undo", Some(&t), "{}"));
+        assert_eq!(s, 200);
+        assert_eq!(read(&app)["layers"][1]["animators"], serde_json::json!({}));
+        assert_eq!(undo_name(&app), depth_name);
+        c.stop();
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     /// An encoder that writes a one byte file and keeps the settings it was given.
     struct RecordingEncoder(Arc<Mutex<Vec<sq_export::core::settings::ExportSettings>>>);
     impl sq_export::core::traits::ExportEncoding for RecordingEncoder {
@@ -1329,6 +1506,7 @@ mod tests {
             cache: std::env::temp_dir(),
             busy: Arc::new(AtomicBool::new(false)),
             jobs: Arc::new(Mutex::new(Jobs::default())),
+            looks: None,
         };
         let cancel = AtomicBool::new(false);
         let slow = |_: ApiBridge| {
@@ -1362,6 +1540,159 @@ mod tests {
         assert_eq!(status, 409, "{refused}");
         assert_eq!(std::fs::read(&other).expect("file"), b"x");
         assert_eq!(api.call("POST", "/v1/save", json!({"path": other.to_string_lossy(), "overwrite": true})).0, 200);
+        api.controller.stop();
+    }
+
+    #[test]
+    fn import_is_an_agent_step_so_earlier_steps_can_be_undone() {
+        let mut api = Api::start("sq-edit-api-importundo");
+        let media_file = api.dir.join("clip.mp4");
+        std::fs::write(&media_file, vec![0_u8; 4096]).expect("media file");
+        let seq = api.state()["activeSequence"].as_str().expect("sequence").to_string();
+        let (status, marked) = api.commit(&seq, "Re-sync voice", json!([{"op": "addMarker", "at": t(1)}]));
+        assert_eq!(status, 200, "{marked}");
+        let (status, imported) = api.call("POST", "/v1/import", json!({"paths": [media_file.to_string_lossy()]}));
+        assert_eq!(status, 200, "{imported}");
+        let top = api.app.with(|a| a.session().undo_name().map(str::to_string)).flatten();
+        assert_eq!(top.as_deref(), Some("Agent: Import"));
+        assert_eq!(api.call("POST", "/v1/undo", json!({"expectedName": "Agent: Import"})).0, 200);
+        let (status, undone) = api.call("POST", "/v1/undo", json!({"expectedName": "Agent: Re-sync voice"}));
+        assert_eq!(status, 200, "{undone}");
+        api.controller.stop();
+    }
+
+    #[test]
+    fn bare_seconds_work_as_times_and_a_commit_that_changes_nothing_is_422() {
+        let mut api = Api::start("sq-edit-api-seconds");
+        let seq = api.state()["activeSequence"].as_str().expect("sequence").to_string();
+        let (status, marked) = api.commit(&seq, "Mark", json!([{"op": "addMarker", "at": 1.5}]));
+        assert_eq!(status, 200, "{marked}");
+        assert_eq!(marked["diff"]["markersAdded"], json!(1), "{marked}");
+        let (status, same) = api.commit(&seq, "Same", json!([{"op": "setTrackState", "track": api.state()["sequences"][0]["tracks"][0]["id"], "mute": false}]));
+        assert_eq!(status, 422, "{same}");
+        assert!(same["error"].as_str().is_some_and(|e| e.contains("nothing changed")), "{same}");
+        api.controller.stop();
+    }
+
+    /// The clips of a track of `seq` in the state, as (id, start, duration).
+    fn track_clips(state: &serde_json::Value, seq: &str, track: &str) -> Vec<serde_json::Value> {
+        let seqs = state["sequences"].as_array().expect("sequences");
+        let s = seqs.iter().find(|s| s["id"] == seq).expect("sequence");
+        let t = s["tracks"].as_array().expect("tracks").iter().find(|t| t["id"] == track).expect("track");
+        t["clips"].as_array().expect("clips").clone()
+    }
+
+    fn import_one(api: &Api, name: &str) -> String {
+        let file = api.dir.join(name);
+        std::fs::write(&file, vec![0_u8; 64]).expect("media file");
+        let (status, imported) = api.call("POST", "/v1/import", json!({"paths": [file.to_string_lossy()]}));
+        assert_eq!(status, 200, "{imported}");
+        imported["media"][0]["media"].as_str().expect("media id").to_string()
+    }
+
+    fn tracks_of(api: &Api, kind: &str) -> Vec<String> {
+        let state = api.state();
+        state["sequences"][0]["tracks"]
+            .as_array()
+            .expect("tracks")
+            .iter()
+            .filter(|t| t["kind"] == kind)
+            .map(|t| t["id"].as_str().expect("id").to_string())
+            .collect()
+    }
+
+    #[test]
+    fn audio_only_media_and_the_audio_of_a_video_land_on_the_chosen_audio_track() {
+        let mut api = Api::start("sq-edit-api-audioonly");
+        let seq = api.state()["activeSequence"].as_str().expect("sequence").to_string();
+        let (status, tracks) =
+            api.commit(&seq, "Tracks", json!([{"op": "addTrack", "kind": "audio"}, {"op": "addTrack", "kind": "audio"}]));
+        assert_eq!(status, 200, "{tracks}");
+        let (audio, video) = (tracks_of(&api, "audio"), tracks_of(&api, "video"));
+        assert_eq!(audio.len(), 3);
+        let sfx = import_one(&api, "boom.wav");
+        let clip = import_one(&api, "scene.mp4");
+        // A WAV on A3: exactly one clip, on A3, no new track.
+        let (status, added) = api.commit(&seq, "SFX", json!([{"op": "addClip", "media": sfx, "track": audio[2], "at": t(1)}]));
+        assert_eq!(status, 200, "{added}");
+        assert_eq!(added["diff"]["added"].as_array().map(Vec::len), Some(1), "{added}");
+        let state = api.state();
+        assert_eq!(track_clips(&state, &seq, &audio[2]).len(), 1);
+        assert_eq!(track_clips(&state, &seq, &audio[2])[0]["duration"], t(3));
+        assert_eq!(tracks_of(&api, "audio").len(), 3, "no track was created");
+        // Without a track the sound goes to A1.
+        let (status, a1) = api.commit(&seq, "SFX", json!([{"op": "addClip", "media": sfx, "at": t(5)}]));
+        assert_eq!(status, 200, "{a1}");
+        assert_eq!(track_clips(&api.state(), &seq, &audio[0]).len(), 1);
+        // A video track for sound, or an audio track for a picture, is refused and changes nothing.
+        let (status, bad) = api.commit(&seq, "Bad", json!([{"op": "addClip", "media": sfx, "track": video[0], "at": t(0)}]));
+        assert_eq!(status, 422, "{bad}");
+        let (status, bad) = api.commit(&seq, "Bad", json!([{"op": "addClip", "media": clip, "track": audio[1], "at": t(0)}]));
+        assert_eq!(status, 422, "{bad}");
+        // The sound of a video file only, on A2: one clip, nothing on V1.
+        let (status, only) =
+            api.commit(&seq, "Sound", json!([{"op": "addClip", "media": clip, "track": audio[1], "streams": "audio", "at": t(10)}]));
+        assert_eq!(status, 200, "{only}");
+        assert_eq!(only["diff"]["added"].as_array().map(Vec::len), Some(1), "{only}");
+        let state = api.state();
+        assert_eq!(track_clips(&state, &seq, &audio[1]).len(), 1);
+        assert!(track_clips(&state, &seq, &video[0]).is_empty());
+        api.controller.stop();
+    }
+
+    #[test]
+    fn a_png_and_a_jpg_are_placed_as_stills_on_a_video_track_with_a_length() {
+        let mut api = Api::start("sq-edit-api-stills");
+        let seq = api.state()["activeSequence"].as_str().expect("sequence").to_string();
+        let (status, made) = api.commit(&seq, "V2", json!([{"op": "addTrack", "kind": "video"}]));
+        assert_eq!(status, 200, "{made}");
+        let video = tracks_of(&api, "video");
+        let (png, jpg) = (import_one(&api, "sticker.png"), import_one(&api, "photo.jpg"));
+        let item = api.state()["media"].as_array().expect("media").iter().find(|m| m["id"] == png.as_str()).cloned().expect("png");
+        assert!(!item["hasAudio"].as_bool().unwrap_or(false), "{item}");
+        // With a duration: 2.6 s on V2 (no sound clip comes with a still).
+        let (status, added) = api.commit(
+            &seq,
+            "Sticker",
+            json!([{"op": "addClip", "media": png, "track": video[1], "at": t(1), "duration": {"value": 13, "timescale": 5}}]),
+        );
+        assert_eq!(status, 200, "{added}");
+        assert_eq!(added["diff"]["added"].as_array().map(Vec::len), Some(1), "{added}");
+        let clips = track_clips(&api.state(), &seq, &video[1]);
+        assert_eq!((clips.len(), &clips[0]["duration"]), (1, &json!({"value": 13, "timescale": 5})));
+        // Without a duration: the UI's default for a still, 5 s; longer than the 10 s of a video is fine too.
+        let (status, plain) = api.commit(&seq, "Photo", json!([{"op": "addClip", "media": jpg, "track": video[0], "at": t(0)}]));
+        assert_eq!(status, 200, "{plain}");
+        assert_eq!(track_clips(&api.state(), &seq, &video[0])[0]["duration"], t(5));
+        let (status, long) = api.commit(&seq, "Long", json!([{"op": "addClip", "media": jpg, "track": video[0], "at": t(5), "duration": t(30)}]));
+        assert_eq!(status, 200, "{long}");
+        assert_eq!(track_clips(&api.state(), &seq, &video[0])[1]["duration"], t(30));
+        api.controller.stop();
+    }
+
+    #[test]
+    fn gaps_lists_a_gap_shorter_than_a_frame_and_the_black_stretch() {
+        let mut api = Api::start("sq-edit-api-gaps");
+        let seq = api.state()["activeSequence"].as_str().expect("sequence").to_string();
+        let media = import_one(&api, "scene.mp4");
+        let (status, a) = api.commit(&seq, "A", json!([{"op": "addClip", "media": media, "at": t(0), "sourceOut": t(2), "linkAudio": false}]));
+        assert_eq!(status, 200, "{a}");
+        let (status, b) = api.commit(&seq, "B", json!([{"op": "addClip", "media": media, "at": t(2), "sourceOut": t(2), "linkAudio": false}]));
+        assert_eq!(status, 200, "{b}");
+        assert!(b.get("gapsOpened").is_none(), "touching clips open no gap: {b}");
+        let (status, clean) = api.call("GET", &format!("/v1/gaps?sequence={seq}"), json!({}));
+        assert_eq!((status, clean["gaps"].as_array().map(Vec::len), clean["black"].as_array().map(Vec::len)), (200, Some(0), Some(0)), "{clean}");
+        // Nudge B right by 1/60 s (less than a frame at 25 fps): the commit says so, and so does GET /v1/gaps.
+        let second = b["diff"]["added"][0]["id"].as_str().expect("clip").to_string();
+        let (status, moved) = api.commit(&seq, "Nudge", json!([{"op": "move", "clip": second, "to": {"value": 121, "timescale": 60}}]));
+        assert_eq!(status, 200, "{moved}");
+        assert_eq!(moved["gapsOpened"][0]["duration"], json!({"value": 1, "timescale": 60}), "{moved}");
+        let (status, report) = api.call("GET", "/v1/gaps", json!({}));
+        assert_eq!(status, 200, "{report}");
+        assert_eq!(report["gaps"][0]["start"], t(2), "{report}");
+        assert_eq!(report["gaps"][0]["shorterThanFrame"], json!(true), "{report}");
+        assert_eq!(report["black"][0]["duration"], json!({"value": 1, "timescale": 60}), "{report}");
+        assert_eq!(api.call("GET", "/v1/gaps?sequence=nope", json!({})).0, 400);
         api.controller.stop();
     }
 
@@ -1432,6 +1763,18 @@ mod tests {
 
     /// Starts the API of `app` with a fake renderer (an orange picture) and returns (port, token, controller).
     fn start_api(app: &sq_app_shell::Headless, dir: &Path) -> (u16, String, EditApiController) {
+        start_api_rendering(app, dir, Arc::new(|_, _, _, width| {
+            let w = width.unwrap_or(640);
+            let h = w * 9 / 16;
+            Ok(sq_draw::RgbaImage { width: w, height: h, pixels: [255, 128, 0, 255].repeat(w * h) })
+        }))
+    }
+
+    fn start_api_rendering(
+        app: &sq_app_shell::Headless,
+        dir: &Path,
+        render: crate::StillRenderer,
+    ) -> (u16, String, EditApiController) {
         struct NoProbe;
         impl sq_editor_session::ImportBackend for NoProbe {
             fn probe(&self, _: &Path) -> Result<sq_core_model::MediaRef, sq_editor_session::ImportError> {
@@ -1441,11 +1784,7 @@ mod tests {
         let sender = app.with(|a| a.sender()).expect("app");
         let mut c = EditApiController::new(sender, dir);
         c.set_perceive(crate::PerceiveBackend {
-            render: Arc::new(|_, _, _, width| {
-                let w = width.unwrap_or(640);
-                let h = w * 9 / 16;
-                Ok(sq_draw::RgbaImage { width: w, height: h, pixels: [255, 128, 0, 255].repeat(w * h) })
-            }),
+            render,
             probe: Arc::new(NoProbe),
         });
         let mut d = FileDefaults::default();
@@ -1479,6 +1818,21 @@ mod tests {
         assert_eq!((sheet.width, sheet.height), (320 * 4, 180 * 2));
         assert_eq!(v["contactSheet"]["tiles"].as_array().map(Vec::len), Some(6));
         assert_eq!(v["contactSheet"]["tiles"][1]["timecode"], "00:00:01.600");
+        c.stop();
+    }
+
+    #[test]
+    fn capture_of_a_frame_that_cannot_decode_answers_422_with_the_reason_at_once() {
+        let dir = crate::test_rig::test_dir("sq-edit-api-capture-bad");
+        let app = app_with_one_clip();
+        let render: crate::StillRenderer = Arc::new(|_, _, _, _| Err("open /clip.mp4: no decoder for this file".to_string()));
+        let (port, token, mut c) = start_api_rendering(&app, &dir, render);
+        let body = r#"{"at":[{"value":1,"timescale":1}]}"#;
+        let started = Instant::now();
+        let (status, text) = serve_while(&app, move || http(port, "POST", "/v1/capture", Some(&token), body));
+        assert_eq!(status, 422, "{text}");
+        assert!(text.contains("no decoder for this file"), "{text}");
+        assert!(started.elapsed() < Duration::from_secs(3), "took {:?}", started.elapsed());
         c.stop();
     }
 
@@ -1595,5 +1949,48 @@ mod tests {
         assert_eq!(done["result"], json!({"media": []}));
         let failed = serde_json::to_value(task_info("captions-4", "captions", &TaskState::Failed("no speech".into()))).expect("json");
         assert_eq!((failed["state"].as_str(), failed["error"].as_str()), (Some("failed"), Some("no speech")));
+    }
+
+    #[test]
+    fn user_presets_are_listed_and_apply_through_the_panel_call() {
+        use sq_library::preset_store::{PresetItem, PresetKind, PresetStore};
+        let api = Api::start("sq-edit-api-user-presets");
+        let support = api.dir.join("support");
+        let mut store = PresetStore::open_in_support(&support, false, sq_core_time::Timestamp::from_unix_seconds(1.0)).expect("store");
+        let built = sq_core_effects::effect_stack_preset::EffectStackPresets::preset("tailZoom").expect("built-in").preset();
+        let item = PresetItem::new(
+            Id::from_u128(77),
+            PresetKind::Effect,
+            "Zoom Out & In / BOT",
+            sq_core_time::Timestamp::from_unix_seconds(2.0),
+            built.payload().expect("payload"),
+            sq_core_effects::effect_preset::EffectPreset::PAYLOAD_VERSION,
+        );
+        store.add(item.clone()).expect("added");
+        let other = PresetItem::new(Id::from_u128(78), PresetKind::Easing, "Curve", item.created_at, b"{}".to_vec(), 1);
+        store.add(other).expect("added");
+        api.app.with(|a| {
+            a.shell_parts().shell.flow_env.services =
+                Box::new(crate::analysis_links::analysis_services::AnalysisServices::new(Box::new(crate::PortableAnalysisBackend)).with_preset_support(support));
+        });
+        let (status, list) = api.call("GET", "/v1/effectPresets", json!({}));
+        assert_eq!(status, 200, "{list}");
+        let mine: Vec<_> = list["presets"].as_array().expect("list").iter().filter(|p| p["user"] == true).collect();
+        assert_eq!(mine.len(), 1, "only effect presets are listed: {list}");
+        assert_eq!((mine[0]["name"].as_str(), mine[0]["anchor"].as_str(), mine[0]["at"].as_str()), (Some("Zoom Out & In / BOT"), Some("end"), Some("tail")));
+
+        let media_file = api.dir.join("clip.mp4");
+        std::fs::write(&media_file, vec![0_u8; 4096]).expect("media file");
+        let seq = api.state()["activeSequence"].as_str().expect("sequence").to_string();
+        let (_, imported) = api.call("POST", "/v1/import", json!({"paths": [media_file.to_string_lossy()]}));
+        let media = imported["media"][0]["media"].as_str().expect("media id").to_string();
+        let (_, added) = api.commit(&seq, "Add clip", json!([{"op": "addClip", "media": media, "at": t(0), "sourceIn": t(0), "sourceOut": t(4)}]));
+        let clip = added["diff"]["added"][0]["id"].as_str().expect("clip").to_string();
+        let (status, bad) = api.commit(&seq, "Preset", json!([{"op": "applyPreset", "clip": clip, "preset": "zoom out & in / bot", "at": "head"}]));
+        assert!(status >= 400 && bad.to_string().contains("anchored"), "own anchor is the tail: {status} {bad}");
+        let (status, done) = api.commit(&seq, "Preset", json!([{"op": "applyPreset", "clip": clip, "preset": "Zoom Out & In / BOT"}]));
+        assert_eq!(status, 200, "error: {done}");
+        assert_eq!(done["undoName"].as_str(), Some("Agent: Preset"));
+        assert!(done["diff"]["paramChanges"].as_array().is_some_and(|c| !c.is_empty()), "{done}");
     }
 }

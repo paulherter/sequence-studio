@@ -167,6 +167,11 @@ impl LookStore {
             "Your Looks cannot be saved: the Look file{place} cannot be written. The change stays until you quit Sequence Studio."
         )
     }
+    /// The Library folder below the app support folder (".../Sequence Studio/Library"), where the Swift app kept
+    /// `looks.json` and `presets.json`; the Look store must be opened there or the user's saved looks are not found.
+    pub fn library_directory(support: &Path) -> PathBuf {
+        support.join("Library")
+    }
     // Swift: LookStore.swift:49
     pub fn default_url(library_directory: &Path) -> PathBuf {
         library_directory.join("looks.json")

@@ -1222,36 +1222,13 @@ impl TextInspectorModel {
         self.edit_animations(|set| {
             let animator = set.template(side).and_then(|x| x.text_animator.clone());
             let anchor = if side == AnimationSide::Intro { AnimationAnchor::Start } else { AnimationAnchor::End };
-            let next = Self::combine(Some(&t), animator, anchor);
+            let next = KeyframeTemplate::combined_with_animator(Some(&t), animator, anchor);
             if side == AnimationSide::Intro {
                 set.animation_in = next;
             } else {
                 set.animation_out = next;
             }
         });
-    }
-
-    /// A side's template: the preset's tracks (none for `none`) plus the text animator; `None` when both are empty.
-    fn combine(
-        preset: Option<&KeyframeTemplate>,
-        animator: Option<TextAnimator>,
-        anchor: AnimationAnchor,
-    ) -> Option<KeyframeTemplate> {
-        let mut t = preset.filter(|p| !p.tracks.is_empty()).cloned();
-        if t.is_none() && animator.is_some() {
-            t = Some(KeyframeTemplate {
-                tracks: Vec::new(),
-                duration: Time::ZERO,
-                anchor,
-                text_animator: None,
-                loops: false,
-            });
-        }
-        if let Some(t) = t.as_mut() {
-            t.text_animator = animator;
-            t.anchor = anchor;
-        }
-        t
     }
 
     // MARK: Text animators (per character / word / line)
@@ -1271,20 +1248,16 @@ impl TextInspectorModel {
             };
             body(&mut a);
             if side == AnimatorSide::In {
-                set.animation_in = Self::combine(set.animation_in.as_ref(), a, AnimationAnchor::Start);
+                set.animation_in = KeyframeTemplate::combined_with_animator(set.animation_in.as_ref(), a, AnimationAnchor::Start);
             } else {
-                set.animation_out = Self::combine(set.animation_out.as_ref(), a, AnimationAnchor::End);
+                set.animation_out = KeyframeTemplate::combined_with_animator(set.animation_out.as_ref(), a, AnimationAnchor::End);
             }
         });
     }
 
     /// Default stagger by unit: letters follow each other fast, lines slowly.
     pub(crate) fn default_stagger(unit: TextAnimatorUnit) -> Time {
-        match unit {
-            TextAnimatorUnit::Character => Time::new(3, 100),
-            TextAnimatorUnit::Word => Time::new(2, 25),
-            TextAnimatorUnit::Line => Time::new(3, 20),
-        }
+        TextAnimator::default_stagger(unit)
     }
 
     /// `None` removes the animator. A new animator starts by word, 300 ms per unit, 80 ms stagger; pop gets the overshoot.
@@ -1294,20 +1267,8 @@ impl TextInspectorModel {
                 *a = None;
                 return;
             };
-            let mut cur = a.take().unwrap_or_else(|| {
-                TextAnimator::new(
-                    effect,
-                    TextAnimatorUnit::Word,
-                    Time::new(3, 10),
-                    Self::default_stagger(TextAnimatorUnit::Word),
-                )
-            });
-            if effect == TextAnimatorEffect::Pop {
-                cur.easing = SegmentShape::Overshoot;
-            } else if cur.easing == SegmentShape::Overshoot {
-                cur.easing = SegmentShape::EaseOut;
-            }
-            cur.effect = effect;
+            let mut cur = a.take().unwrap_or_else(|| TextAnimator::starting(effect));
+            cur.set_effect(effect);
             *a = Some(cur);
         });
     }
@@ -1318,13 +1279,7 @@ impl TextInspectorModel {
             if cur.unit == unit {
                 return;
             }
-            let old = cur.unit;
-            let old_stagger = cur.stagger;
-            cur.unit = unit;
-            // Untouched: follow the unit.
-            if old_stagger == Self::default_stagger(old) {
-                cur.stagger = Self::default_stagger(unit);
-            }
+            cur.set_unit(unit);
         });
     }
 

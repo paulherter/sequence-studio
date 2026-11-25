@@ -24,7 +24,7 @@ pub fn check_spec(v: &Value) -> Result<(), String> {
     crate::edit_operation::check_strict_keys(m, &LAYER_KEYS, "text layer")
 }
 
-fn weight(v: &Value) -> Result<i64, String> {
+pub(crate) fn weight(v: &Value) -> Result<i64, String> {
     if let Some(n) = v.as_i64() {
         return Ok(n);
     }
@@ -125,4 +125,26 @@ pub fn new_layer(spec: &Value, fallback_name: &str, ids: &mut dyn IdSource, dura
 /// The fields of a `setTextLayer` / `addTextLayer` request body (everything but the op's own keys).
 pub fn spec_from(map: &Map<String, Value>, own: &[&str]) -> Value {
     Value::Object(map.iter().filter(|(k, _)| !own.contains(&k.as_str())).map(|(k, v)| (k.clone(), v.clone())).collect())
+}
+
+#[cfg(test)]
+mod style_tests {
+    use super::*;
+    use sq_core_time::SequentialIds;
+
+    /// `addGraphic` layer `style` carries the pill and the shadow into the stored text style (the renderer test
+    /// `a_background_pill_fills_the_pixels_behind_the_text` in sq-text draws exactly that style).
+    #[test]
+    fn a_layer_style_sets_the_background_pill_and_shadow() {
+        let spec = json!({"text": "Hi", "style": {
+            "background": {"color": {"red": 1.0, "green": 0.0, "blue": 0.0, "alpha": 1.0}, "padding": {"horizontal": 24.0, "vertical": 12.0}, "cornerRadius": 12.0},
+            "shadow": {"color": {"red": 0.0, "green": 0.0, "blue": 0.0, "alpha": 0.6}, "offsetX": 0.0, "offsetY": 2.0, "blur": 8.0}
+        }});
+        let layer = new_layer(&spec, "T", &mut SequentialIds::default(), Time::new(3, 1)).expect("layer");
+        let GraphicsContent::Text { generator } = &layer.content else { panic!("text layer") };
+        let (template, _) = TextGenerator::decode(generator).expect("decode");
+        let bg = template.style.background.expect("background");
+        assert_eq!((bg.color.red, bg.padding.horizontal, bg.corner_radius), (1.0, 24.0, 12.0));
+        assert_eq!(template.style.shadow.expect("shadow").blur, 8.0);
+    }
 }

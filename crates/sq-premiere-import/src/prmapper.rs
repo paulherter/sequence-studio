@@ -24,8 +24,8 @@ use sq_core_effects::adjustment_clip::adjustment_layer;
 use sq_core_effects::transition::TransitionExt;
 use sq_core_model::{
     AnimatedProperty, BlendMode, Clip, ClipAnimation, ClipFootageColor, ClipSpeed, ColorSpaceID, EffectColor,
-    GeneratorRef, Marker, MarkerColor, MediaFingerprint, MediaRef, Project, SequenceFormat, Timeline, Track, TrackKind,
-    Transition, TransitionAlignment, TransitionKind,
+    GeneratorRef, Marker, MarkerColor, MediaFingerprint, MediaRef, Project, SequenceFormat, Timeline, Track,
+    TrackKind, Transition, TransitionAlignment, TransitionKind,
 };
 use sq_core_project::media_path_resolver::{Hit, MediaPathResolver, Request};
 use sq_core_time::{
@@ -163,6 +163,9 @@ pub(crate) struct Mapping<'a> {
     pub(crate) ids: &'a mut dyn IdSource,
     /// Masks collected by `effects` for the clip being built (taken by `take_masks`).
     pub(crate) pending_masks: Vec<sq_core_model::ClipMask>,
+    /// Track Matte Key picture masks of the sequence being mapped: (mask id, Premiere video track number). Resolved to
+    /// SQ track ids in `timeline` once all tracks exist.
+    pub(crate) pending_mattes: Vec<(Id, i64)>,
 }
 
 impl<'a> Mapping<'a> {
@@ -187,6 +190,7 @@ impl<'a> Mapping<'a> {
             cyclic_edges: Self::cyclic_nesting(&doc.sequences),
             ids,
             pending_masks: Vec::new(),
+            pending_mattes: Vec::new(),
         }
     }
 
@@ -270,6 +274,7 @@ impl<'a> Mapping<'a> {
         self.link(&mut lanes, &kinds);
         let (mut videos, mut audios) = (0, 0);
         let mut tracks = Vec::new();
+        let mut track_clips = Vec::new();
         for ((kind, t), clips) in all.iter().zip(lanes) {
             let n = if *kind == TrackKind::Video { &mut videos } else { &mut audios };
             *n += 1;
@@ -288,8 +293,13 @@ impl<'a> Mapping<'a> {
                 );
             }
             track.transitions = t.transitions.iter().filter_map(|x| self.transition(x, *kind, &clips, s)).collect();
-            track.set_clips(clips);
+            track_clips.push(clips);
             tracks.push(track);
+        }
+        let video_ids: Vec<Id> = tracks.iter().filter(|t| t.kind == TrackKind::Video).map(|t| t.id).collect();
+        self.resolve_mattes(&mut track_clips, &video_ids);
+        for (track, clips) in tracks.iter_mut().zip(track_clips) {
+            track.set_clips(clips);
         }
         let id = self.timeline_ids.get(&s.id).copied().unwrap_or(Id::NIL);
         let mut timeline = Timeline::new(id, &s.name, format, tracks);
@@ -299,6 +309,25 @@ impl<'a> Mapping<'a> {
             self.report.note("Sequence markers", Mapped, &s.markers.len().to_string());
         }
         timeline
+    }
+
+    /// Second pass: points every Track Matte Key picture mask at the SQ id of its matte track (Premiere counts video
+    /// tracks from 1). A matte track that does not exist leaves the mask without a track (it cuts nothing) and says so.
+    fn resolve_mattes(&mut self, lanes: &mut [Vec<Clip>], video_ids: &[Id]) {
+        use sq_core_masks::ClipMasksExt;
+        for (mask, number) in std::mem::take(&mut self.pending_mattes) {
+            let track = usize::try_from(number - 1).ok().and_then(|i| video_ids.get(i)).copied();
+            if track.is_none() {
+                self.report.note(
+                    "Track Matte Key",
+                    Status::Dropped,
+                    &format!("matte track Video {number} does not exist"),
+                );
+            }
+            for c in lanes.iter_mut().flatten() {
+                c.update_mask(mask, |m| m.picture_track = track);
+            }
+        }
     }
 
     fn clips(&mut self, t: &PRTrack, kind: TrackKind, seq: &PRSequence) -> Vec<Clip> {
@@ -896,12 +925,7 @@ impl ClipContext<'_> {
         b: &crate::prdocument::PRKey,
         vb: R,
     ) -> EaseHandle {
-        let dx = influence.clamp(0.0, 1.0);
         let seconds = (b.ticks as f64 - a.ticks as f64) / PRTicks::PER_SECOND as f64;
-        let delta = R::distance(va, vb);
-        if delta.abs() <= 1e-12 {
-            return EaseHandle { dx, dy: 0.0 };
-        }
-        EaseHandle { dx, dy: slope * dx * seconds / delta }
+        EaseHandle::from_speed(slope, influence, seconds, R::distance(va, vb))
     }
 }

@@ -24,6 +24,14 @@ impl DecodedFrame {
         self.frame.presentation_time
     }
 
+    /// This picture shown at another frame slot (`pts`, `duration`): the pixels are shared, not copied.
+    pub fn held_at(&self, pts: Time, duration: Time) -> DecodedFrame {
+        let mut held = self.clone();
+        held.frame.presentation_time = pts;
+        held.duration = duration;
+        held
+    }
+
     /// Bytes the frame holds, from its size and pixel format (GPU textures included: they count against the same budget).
     pub fn byte_cost(&self) -> usize {
         let px = self.frame.width * self.frame.height;
@@ -37,6 +45,21 @@ impl DecodedFrame {
             SQFramePixelFormat::Other(_) => px * 4,
         }
     }
+}
+
+/// How many frames before the end of a file a decoder may hold the last good picture for pictures it cannot produce.
+pub const TAIL_HOLD_FRAMES: usize = 32;
+
+/// A damaged or cut tail (a stream copy dropped the reference of the last B-frames, a hardware decoder drops what it cannot
+/// build) leaves pictures that a decoder which has run to the end of the file never hands out. An export or a capture must
+/// not fail on them: the last decodable picture stays on screen, as it does when a camera stops. Returns the index of the
+/// picture to hold (the last one decoded near the end; a damaged tail may still hand out pictures after a hole, those
+/// stand in too) when every `missing` frame lies within [`TAIL_HOLD_FRAMES`] of the last of `count` frames; `None` for a
+/// hole in the middle of a file, or when nothing near the end decoded, which stays an error.
+pub fn tail_hold_source(missing: impl IntoIterator<Item = usize>, count: usize, last_decoded: Option<usize>) -> Option<usize> {
+    let first_missing = missing.into_iter().min()?;
+    let last = last_decoded?;
+    (first_missing + TAIL_HOLD_FRAMES >= count).then_some(last)
 }
 
 /// Called with each frame as soon as it is decoded (decode order, on any thread).
@@ -159,6 +182,31 @@ mod tests {
     use super::*;
     use sq_frame::sqframe::{SQFrameColorSpace, SQFrameStorage};
     use std::sync::Arc;
+
+    #[test]
+    fn a_tail_that_never_decoded_holds_the_last_good_picture() {
+        assert_eq!(tail_hold_source(1194..=1199, 1200, Some(1193)), Some(1193));
+        assert_eq!(tail_hold_source([1197, 1199], 1200, Some(1196)), Some(1196));
+        assert_eq!(tail_hold_source([1190], 1200, Some(1195)), Some(1195));
+        // A hole in the middle, or nothing decoded at all, stays an error.
+        assert_eq!(tail_hold_source([500], 1200, Some(499)), None);
+        assert_eq!(tail_hold_source([1190], 1200, None), None);
+        assert_eq!(tail_hold_source(std::iter::empty(), 1200, Some(3)), None);
+    }
+
+    #[test]
+    fn a_held_picture_takes_the_slot_of_the_frame_it_stands_in_for() {
+        let frame = SQFrame::new(
+            2,
+            2,
+            SQFramePixelFormat::Nv12,
+            SQFrameColorSpace::Unspecified,
+            Time::new(5, 30),
+            Arc::new(NoStorage),
+        );
+        let held = DecodedFrame::new(Id::from_u128(1), Time::new(1, 30), frame).held_at(Time::new(7, 30), Time::new(2, 30));
+        assert_eq!((held.pts(), held.duration), (Time::new(7, 30), Time::new(2, 30)));
+    }
 
     struct NoStorage;
     impl SQFrameStorage for NoStorage {}

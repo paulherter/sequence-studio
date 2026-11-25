@@ -80,6 +80,11 @@ pub trait EditAPIHost: Send + Sync {
     fn presets(&self) -> Vec<PresetInfo> {
         Vec::new()
     }
+
+    /// The effect presets the user saved or imported (Library > Presets), decoded; `applyPreset` takes them by id or name.
+    fn user_effect_presets(&self) -> Vec<crate::transition_ops::UserEffectPreset> {
+        Vec::new()
+    }
 }
 
 /// Which part of the sequence an export writes.
@@ -278,6 +283,9 @@ pub struct CommitResponse {
     /// The open sequence after the batch, when it is not `sequence`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_sequence: Option<Id>,
+    /// Gaps between clips this batch opened (`GET /v1/gaps` lists all of them); absent when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gaps_opened: Vec<crate::gaps::Gap>,
 }
 
 #[derive(Deserialize, Default)]
@@ -290,7 +298,10 @@ struct UndoRequest {
 ///
 /// - `GET  /v1/state`   project read model (`ProjectState`)
 /// - `GET  /v1/clip/{id}/params`  every inspector parameter, effect and text layer of a clip
+/// - `GET  /v1/gaps?sequence=` every gap between clips (also under one frame) and every black stretch
 /// - `GET  /v1/effects` the Effects panel catalog (video and audio)
+/// - `GET  /v1/transitions` every transition kind; `GET /v1/effectPresets` the built-in effect presets
+/// - `GET  /v1/textAnimators` the effects, units, orders and ranges the text animator ops accept
 /// - `POST /v1/commit`  `CommitRequest` -> `CommitResponse`; `dryRun` returns the diff without changing anything
 /// - `POST /v1/undo`    undoes the last step only if it is an "Agent: ..." step (`{"expectedName"?: "Agent: X"}`)
 pub struct EditAPIRouter {
@@ -325,6 +336,10 @@ impl EditAPIRouter {
                 }
                 HTTPResponse::json(200, &s)
             }
+            ("GET", "/v1/gaps") => self.gaps(&r.query),
+            ("GET", "/v1/textAnimators") => HTTPResponse::json(200, &crate::text_animators::catalog_json()),
+            ("GET", "/v1/transitions") => HTTPResponse::json(200, &crate::transition_ops::transitions_json()),
+            ("GET", "/v1/effectPresets") => HTTPResponse::json(200, &crate::transition_ops::presets_json(&self.host.user_effect_presets())),
             ("GET", "/v1/effects") => HTTPResponse::json(200, &crate::clip_params::effects_catalog_json()),
             ("GET", p) if p.starts_with("/v1/clip/") => self.clip_params(p),
             ("POST", "/v1/commit") => self.commit(&r.body, cancel),
@@ -341,11 +356,12 @@ impl EditAPIRouter {
             ("POST", "/v1/open") => self.open(&r.body),
             ("POST", "/v1/playhead") => self.playhead(&r.body),
             ("GET", "/v1/captionStyles") => self.perceive(Ok(PerceiveRequest::CaptionStyles), cancel),
+            ("GET", "/v1/fonts") => self.perceive(Ok(PerceiveRequest::Fonts), cancel),
             ("POST", p) if PerceiveRequest::POST_PATHS.contains(&p) => self.perceive(PerceiveRequest::parse(p, &r.body), cancel),
-            (_, p) if PerceiveRequest::POST_PATHS.contains(&p) || p == "/v1/captionStyles" => {
+            (_, p) if PerceiveRequest::POST_PATHS.contains(&p) || p == "/v1/captionStyles" || p == "/v1/fonts" => {
                 HTTPResponse::error(405, "method not allowed", None)
             }
-            (_, "/v1/state" | "/v1/commit" | "/v1/undo" | "/v1/redo" | "/v1/import" | "/v1/export" | "/v1/presets" | "/v1/save" | "/v1/open" | "/v1/playhead" | "/v1/effects") => {
+            (_, "/v1/state" | "/v1/commit" | "/v1/undo" | "/v1/redo" | "/v1/import" | "/v1/export" | "/v1/presets" | "/v1/save" | "/v1/open" | "/v1/playhead" | "/v1/effects" | "/v1/textAnimators" | "/v1/transitions" | "/v1/effectPresets" | "/v1/gaps") => {
                 HTTPResponse::error(405, "method not allowed", None)
             }
             _ => HTTPResponse::error(404, "unknown endpoint", None),
@@ -366,6 +382,23 @@ impl EditAPIRouter {
     /// Host must name the loopback listener (DNS rebinding), a browser Origin must be loopback too, and the bearer token
     /// must match (constant-time compare).
     /// `GET /v1/clip/{id}/params`: every inspector parameter, effect and layer of the clip.
+    /// `GET /v1/gaps?sequence=<id>` (default: the open sequence).
+    fn gaps(&self, query: &str) -> HTTPResponse {
+        let Some(p) = self.host.project() else { return HTTPResponse::error(503, "no project open", None) };
+        let asked = query.split('&').find_map(|kv| kv.strip_prefix("sequence="));
+        let id = match asked {
+            Some(v) => match Id::parse(v) {
+                Some(id) => Some(id),
+                None => return HTTPResponse::error(400, "sequence: not an id", None),
+            },
+            None => self.host.active_sequence(),
+        };
+        match id.and_then(|i| p.timeline(i)) {
+            Some(t) => HTTPResponse::json(200, &crate::gaps::find(t)),
+            None => HTTPResponse::error(404, "no such sequence", None),
+        }
+    }
+
     fn clip_params(&self, path: &str) -> HTTPResponse {
         let id = path
             .strip_prefix("/v1/clip/")
@@ -459,8 +492,13 @@ impl EditAPIRouter {
         if cancel.load(Ordering::SeqCst) {
             return Err(TransactionError::new(TransactionErrorKind::Cancelled));
         }
-        let commit =
-            HostCommit { name: undo_name.to_string(), sequence: seq, operations: req.operations.clone(), dry_run: dry };
+        let mut operations = req.operations.clone();
+        if operations.iter().any(|o| matches!(o, EditOperation::ApplyPreset { .. })) {
+            operations = crate::transition_ops::resolve_user_presets(operations, &self.host.user_effect_presets())
+                .map_err(|why| TransactionError::invalid(&why))?;
+        }
+        let commit = HostCommit { name: undo_name.to_string(), sequence: seq, operations, dry_run: dry };
+        let active_before = self.host.active_sequence();
         let (before, after) = self.host.run(&commit, cancel)?;
         // A commit without a sequence created the first one: it is the open one now, and the "before" is empty.
         let seq = if seq == HostCommit::NO_SEQUENCE {
@@ -482,15 +520,28 @@ impl EditAPIRouter {
             }
             None => return Ok(HTTPResponse::error(409, "sequence vanished", None)),
         };
+        let gaps_opened = crate::gaps::opened(b, a);
         let mut diff = EditDiff::new(b, a);
         diff.note_media(&before, &after);
-        let applied = !dry && (!diff.is_empty() || before != after);
+        // A dry run does not move the open sequence, a real setActiveSequence does (the project itself stays equal).
+        let changed = !diff.is_empty() || before != after || (!dry && self.host.active_sequence() != active_before);
+        if !changed {
+            // Never a silent 200: an agent that sees `applied: false` cannot tell "nothing to do" from "did not work".
+            return Err(TransactionError::invalid(
+                "nothing changed: the operations left the sequence as it was (already in that state, or a trim the neighbors and the media allow no room for)",
+            ));
+        }
+        let applied = !dry;
         let sequences_added: Vec<Id> =
             after.timelines.iter().map(|t| t.id).filter(|id| before.timeline(*id).is_none()).collect();
-        let active_sequence = self.host.active_sequence().filter(|a| *a != seq);
+        // After createSequence the new sequence is the open one: it is what the reply names (the diff stays the one of
+        // the sequence the batch ran on).
+        let active_now = self.host.active_sequence();
+        let active_sequence = active_now.filter(|a| *a != seq);
+        let seq = active_now.filter(|a| !dry && sequences_added.contains(a)).unwrap_or(seq);
         Ok(HTTPResponse::json(
             200,
-            &CommitResponse { applied, sequence: seq, undo_name: undo_name.to_string(), diff, sequences_added, active_sequence },
+            &CommitResponse { applied, sequence: seq, undo_name: undo_name.to_string(), diff, sequences_added, active_sequence, gaps_opened },
         ))
     }
 
@@ -811,7 +862,11 @@ pub(crate) mod tests {
             ("authorization".to_string(), "Bearer secret-token".to_string()),
         ]
         .into();
-        HTTPRequest { method: method.into(), path: path.into(), headers, body: body.as_bytes().to_vec() }
+        HTTPRequest {
+            method: method.into(),
+            path: path.split('?').next().unwrap_or(path).into(),
+            query: path.split_once('?').map(|(_, q)| q.to_string()).unwrap_or_default(),
+            headers, body: body.as_bytes().to_vec() }
     }
 
     fn with(mut r: HTTPRequest, key: &str, value: Option<&str>) -> HTTPRequest {

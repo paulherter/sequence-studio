@@ -45,6 +45,12 @@ enum Source {
     Layers(Box<GlyphRasterFont>),
 }
 
+impl std::fmt::Debug for EmojiFont {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("EmojiFont").field("units_per_em", &self.units_per_em).finish_non_exhaustive()
+    }
+}
+
 /// A color emoji font, opened lazily by the glyph atlas.
 pub struct EmojiFont {
     source: Source,
@@ -87,6 +93,11 @@ impl EmojiFont {
             sequences: OnceLock::new(),
             source: Source::Layers(Box::new(font)),
         })
+    }
+
+    /// Whether the glyphs are stored as bitmaps (`sbix`, `CBDT`), which no outline fallback face can draw.
+    pub fn is_bitmap(&self) -> bool {
+        matches!(self.source, Source::Bitmap { .. } | Source::Sbix(_))
     }
 
     /// Bytes of font data held in memory.
@@ -436,6 +447,38 @@ pub(crate) mod tests {
                 assert!(want.is_some() && font.rasterize(g, px) == want, "{c} @{px}");
             }
         }
+    }
+
+    /// Glyph ids read independently from Apple's `cmap` (format 12) and every emoji of the font drawn like the whole-file path.
+    #[test]
+    fn apple_emoji_glyphs_match_the_cmap_and_the_whole_file_for_every_emoji() {
+        let Some(dir) = std::env::var_os("SQ_TEST_EMOJI_FONTS") else { return };
+        let path = Path::new(&dir).join("AppleColorEmoji.ttc");
+        let Some(font) = EmojiFont::from_path(&path) else { return };
+        let data = std::fs::read(&path).unwrap();
+        let face = Face::parse(&data, 0).unwrap();
+        for (c, want) in [('\u{1F4B8}', 1847), ('\u{1F4E4}', 1891), ('\u{1F914}', 2521), ('\u{1F4F8}', 1911)] {
+            assert_eq!(font.glyph_for(c), want, "{c:?}");
+        }
+        let mut bad = Vec::new();
+        for cp in 0x2190u32..0x1FAFF {
+            let Some(c) = char::from_u32(cp) else { continue };
+            let g = font.glyph_for(c);
+            let whole = face.glyph_index(c).filter(|g| face.glyph_raster_image(*g, 160).is_some());
+            if whole.map_or(0, |g| i64::from(g.0)) != g {
+                bad.push(format!("{c:?} sbix {g} whole {whole:?}"));
+                continue;
+            }
+            if g > 0
+                && font.rasterize(g, 28.0)
+                    != face
+                        .glyph_raster_image(GlyphId(g as u16), 28)
+                        .and_then(|i| finish(i.data, i.x, i.y, i.pixels_per_em, 28.0))
+            {
+                bad.push(format!("{c:?} pixels differ"));
+            }
+        }
+        assert!(bad.is_empty(), "{} differ: {:?}", bad.len(), &bad[..bad.len().min(20)]);
     }
 
     #[test]

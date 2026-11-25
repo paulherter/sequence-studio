@@ -8,7 +8,7 @@
 
 mod text_animator;
 
-pub use text_animator::{TextAnimator, TextAnimatorEffect, TextAnimatorOrder, TextAnimatorUnit, TextSlideDirection};
+pub use text_animator::{TextAnimator, TextCursor, TextAnimatorEffect, TextAnimatorOrder, TextAnimatorUnit, TextSlideDirection};
 
 use serde::{Deserialize, Serialize};
 use sq_core_time::{EaseHandle, Id, Interpolation, Keyframe, KeyframeTrack, Time, Vec2};
@@ -468,7 +468,51 @@ pub struct AnimationSet {
     pub animation_out: Option<KeyframeTemplate>,
 }
 
+impl KeyframeTemplate {
+    /// A side's template: the preset's tracks (none for `none`) plus the text animator; `None` when both are empty.
+    pub fn combined_with_animator(
+        preset: Option<&KeyframeTemplate>,
+        animator: Option<TextAnimator>,
+        anchor: AnimationAnchor,
+    ) -> Option<KeyframeTemplate> {
+        let mut t = preset.filter(|p| !p.tracks.is_empty()).cloned();
+        if t.is_none() && animator.is_some() {
+            t = Some(KeyframeTemplate {
+                tracks: Vec::new(),
+                duration: Time::ZERO,
+                anchor,
+                text_animator: None,
+                loops: false,
+            });
+        }
+        if let Some(t) = t.as_mut() {
+            t.text_animator = animator;
+            t.anchor = anchor;
+        }
+        t
+    }
+}
+
 impl AnimationSet {
+    /// The text animator of a side (`intro` = in, else out).
+    pub fn text_animator(&self, intro: bool) -> Option<&TextAnimator> {
+        let t = if intro { self.animation_in.as_ref() } else { self.animation_out.as_ref() };
+        t?.text_animator.as_ref()
+    }
+
+    /// Sets or clears the text animator of a side, keeping the side's property tracks; an empty template is dropped. The
+    /// one place the Text panel and the Edit API change an animator.
+    pub fn set_text_animator(&mut self, intro: bool, animator: Option<TextAnimator>) {
+        let anchor = if intro { AnimationAnchor::Start } else { AnimationAnchor::End };
+        let cur = if intro { self.animation_in.as_ref() } else { self.animation_out.as_ref() };
+        let t = KeyframeTemplate::combined_with_animator(cur, animator, anchor);
+        if intro {
+            self.animation_in = t;
+        } else {
+            self.animation_out = t;
+        }
+    }
+
     /// A set; the templates' anchors are forced to their side.
     pub fn new(animation_in: Option<KeyframeTemplate>, animation_out: Option<KeyframeTemplate>) -> AnimationSet {
         AnimationSet {

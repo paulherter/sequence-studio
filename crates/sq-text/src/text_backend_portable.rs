@@ -95,7 +95,10 @@ impl PortableLines {
             let n = scalar.len_utf16();
             let (pick, skip) = &plan[idx];
             if !skip {
-                if let Some(fb) = &pick.font {
+                if let Some(e) = &pick.emoji {
+                    total += e.advance(pick.glyph) as f64 * font.size / e.units_per_em as f64 + tracking;
+                    previous = None;
+                } else if let Some(fb) = &pick.font {
                     let adv = pick.advance.unwrap_or_else(|| fb.advance(pick.glyph));
                     total += adv as f64 * font.size / fb.units_per_em as f64 + tracking;
                     previous = None;

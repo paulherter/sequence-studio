@@ -2,7 +2,7 @@
 //! Read model of a project for agents: compact, ids and rational times only.
 
 use serde::{Deserialize, Serialize};
-use sq_core_model::{Clip, ClipSpeed, Project, Timeline, Track, TrackKind};
+use sq_core_model::{Clip, ClipSpeed, Project, Timeline, Track, TrackKind, Transition};
 use sq_core_time::{Id, Time, TimeRange};
 
 /// Read model of a project for agents: compact, ids and rational times only. Ids are the model's own persisted UUIDs, so
@@ -140,6 +140,53 @@ pub struct SequenceState {
     pub tracks: Vec<TrackState>,
     /// Sequence markers.
     pub markers: Vec<MarkerState>,
+    /// Transitions of all tracks (what `addTransition` made); absent when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub transitions: Vec<TransitionState>,
+}
+
+/// A transition as agents read it: the kind names match `GET /v1/transitions`, `outgoing` / `incoming` are the clips of
+/// `addTransition between`; only `incoming` = fade in at that clip's head, only `outgoing` = fade out at its tail.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TransitionState {
+    /// Transition id (`removeTransition`).
+    pub id: Id,
+    /// The track holding it.
+    pub track: Id,
+    /// Kind wire name.
+    pub kind: String,
+    /// Requested length.
+    pub duration: Time,
+    /// "center", "startAtCut" or "endAtCut" as stored.
+    pub alignment: String,
+    /// Clip before the cut.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outgoing: Option<Id>,
+    /// Clip after the cut.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub incoming: Option<Id>,
+}
+
+impl TransitionState {
+    /// The read model of `x` on `track`.
+    pub fn new(x: &Transition, track: Id) -> TransitionState {
+        let name = |v: Option<serde_json::Value>| v.and_then(|v| v.as_str().map(str::to_string)).unwrap_or_default();
+        TransitionState {
+            id: x.id,
+            track,
+            kind: name(serde_json::to_value(x.kind).ok()),
+            duration: x.duration,
+            alignment: name(serde_json::to_value(x.alignment).ok()),
+            outgoing: x.outgoing,
+            incoming: x.incoming,
+        }
+    }
+
+    /// Every transition of `t`, track by track.
+    pub fn all(t: &Timeline) -> Vec<TransitionState> {
+        t.tracks.iter().flat_map(|tr| tr.transitions.iter().map(|x| TransitionState::new(x, tr.id))).collect()
+    }
 }
 
 impl SequenceState {
@@ -161,6 +208,7 @@ impl SequenceState {
                 .iter()
                 .map(|m| MarkerState { id: m.id, time: m.time, duration: m.duration, name: m.name.clone() })
                 .collect(),
+            transitions: TransitionState::all(t),
         }
     }
 }

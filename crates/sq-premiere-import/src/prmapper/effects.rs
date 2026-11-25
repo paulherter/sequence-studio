@@ -4,7 +4,7 @@
 use super::{ClipContext, Mapping};
 use crate::prdocument::{PRComponent, PRItem, PRParamValue};
 use crate::primport_report::Status;
-use sq_core_model::{AnimatedProperty, ClipEffect, EffectColor};
+use sq_core_model::{AnimatedProperty, ClipEffect, ClipMask, EffectColor, MatteChannel};
 use sq_core_time::Vec2;
 
 fn sv(comp: &PRComponent, id: i64) -> Option<&str> {
@@ -387,6 +387,31 @@ impl Mapping<'_> {
                             Approximated,
                             "Shake with SQ's default strength; strafe / stride / roll amounts not comparable",
                         );
+                    }
+                    "AE.ADBE Legacy Key Track Matte" => {
+                        // Matte (1) = video track number, Composite Using (2) 0 alpha / 1 luma, Reverse (3). SQ's equivalent
+                        // is a Picture mask; its track is resolved once all SQ tracks exist (`resolve_mattes`).
+                        let Some(number) = PRParamValue::double(sv(comp, 1)).map(|v| v.round() as i64) else {
+                            self.report.note(name, Dropped, "no matte track");
+                            break 'arm;
+                        };
+                        let mut m = ClipMask::make_picture(self.ids.next_id(), "Track Matte", None);
+                        if PRParamValue::double(sv(comp, 2)) == Some(1.0) {
+                            m.set_picture_channel(MatteChannel::Brightness);
+                        }
+                        m.inverted = PRParamValue::bool(sv(comp, 3)) == Some(true);
+                        self.pending_mattes.push((m.id, number));
+                        self.pending_masks.push(m);
+                        let animated_param = (1..=3).any(|i| animated(comp, i));
+                        if animated_param {
+                            self.report.note(
+                                name,
+                                Approximated,
+                                "matte track, channel and Reverse animated in Premiere: the start values are used",
+                            );
+                        } else {
+                            self.report.note(name, Mapped, "Picture mask of the matte track");
+                        }
                     }
                     _ => self.report.note(name, Dropped, &comp.display_name),
                 }

@@ -38,6 +38,11 @@ impl EffectDefaultsFile {
         PresetStore::file_url_in(application_support).with_file_name("defaults.json")
     }
 
+    /// Where `defaults.json` lives below the app's own support folder (next to `presets.json`).
+    pub fn file_url_in_support(support: &Path) -> PathBuf {
+        PresetStore::file_url_in_support(support).with_file_name("defaults.json")
+    }
+
     /// Empty when there is no file. A newer format or payload fails with `NewerFormat` (file untouched); a damaged file is
     /// moved aside (stamped `now`) and the defaults start empty. `ids` give the keys of upgraded effects their ids.
     pub fn load(path: &Path, now: Timestamp, ids: &mut dyn IdSource) -> Result<EffectDefaults, LibraryStoreError> {

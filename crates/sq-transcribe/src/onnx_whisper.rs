@@ -25,6 +25,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::sync::{Arc, Mutex, PoisonError};
 
+/// A chunk's length in centiseconds.
+const CHUNK_CS: i64 = 3000;
 /// Most text tokens of one 30 second chunk (the model's context is 448 including the prompt).
 const MAX_TOKENS: usize = 224;
 /// The first timestamp of a chunk may be at most 1 second in.
@@ -120,8 +122,13 @@ pub(crate) struct Segment {
     pub tokens: Vec<(i64, f32)>,
 }
 
-/// Cuts the sampled sequence into segments at its timestamp tokens. The second value is the position of the last timestamp
-/// when the chunk ends on a single timestamp (the speech goes on after it: the next chunk starts there).
+/// Cuts the sampled sequence into segments at its timestamp tokens. The second value is where the next window starts
+/// (centiseconds from this chunk's start), `None` for the whole chunk (OpenAI whisper's seek rule):
+/// - the sequence ends on a single closing timestamp ("text <ts>"): the last segment is closed, the rest of the chunk is silent;
+/// - the last segment is open (it ends in text or an opening timestamp): its tokens are dropped and the next window starts at
+///   the last complete timestamp, so that speech is decoded again there, never lost and never twice.
+///
+/// Without a closed segment, or when that timestamp is under a second in, everything is kept and the whole chunk is used.
 pub(crate) fn segments(seq: &[(i64, f32)], timestamp_begin: i64, eot: i64) -> (Vec<Segment>, Option<i64>) {
     let cs = |t: i64| (t - timestamp_begin) * 2;
     let mut out = Vec::new();
@@ -140,12 +147,92 @@ pub(crate) fn segments(seq: &[(i64, f32)], timestamp_begin: i64, eot: i64) -> (V
             buf.push((*t, *p));
         }
     }
-    if !buf.is_empty() {
+    let closed = out.len();
+    let open = !buf.is_empty();
+    if open {
         out.push(Segment { start_cs: start.unwrap_or(0), end_cs: 3000, tokens: buf });
     }
     let n = body.len();
     let single = n >= 2 && body[n - 1].0 >= timestamp_begin && body[n - 2].0 < timestamp_begin;
-    (out, single.then(|| cs(body[n - 1].0)))
+    // The last timestamp that closed a segment: the next window can start there without cutting a segment in two.
+    let resume = closed.checked_sub(1).map(|i| out[i].end_cs).filter(|cs| *cs >= 100);
+    match resume {
+        Some(cs) if !single => {
+            if open {
+                out.truncate(closed);
+            }
+            (out, Some(cs))
+        }
+        _ => (out, None),
+    }
+}
+
+/// Where the next window starts when the model closed its last segment ("single" ending) but the chunk still holds speech
+/// after it: that closing timestamp, so the speech is decoded in the next window instead of lost. `None` when the rest is quiet.
+pub(crate) fn unspoken_tail(segs: &[Segment], voiced: &[bool]) -> Option<i64> {
+    let end_cs = segs.last().filter(|s| s.end_cs < 3000)?.end_cs;
+    let from = usize::try_from(end_cs / whisper_align::FRAME_CS).ok()? + 1;
+    let loud = voiced.get(from..)?.iter().filter(|v| **v).count();
+    // A frame is FRAME_CS long: compare in centiseconds.
+    (end_cs >= 100 && loud * usize::try_from(whisper_align::FRAME_CS).ok()? >= MIN_LOST_SPEECH_CS).then_some(end_cs)
+}
+
+/// Where the model skipped speech in the middle of a chunk: the first stretch between two tokens that holds at least
+/// `MIN_LOST_SPEECH_CS` of voice but no token. `spans` are the (start, end) centiseconds from the chunk start of the chunk's
+/// tokens in order, `voiced` its 20 ms voice frames. A speaker who says a sentence twice in one take (a retake after a short
+/// pause) makes Whisper write it once, on the first copy's time, and skip the second; decoding again from the start of the
+/// skipped voice gives the retake its own words and times. `None` when no such stretch exists. Never before 1 s, so the next
+/// window always moves on.
+pub(crate) fn lost_speech_inside(spans: &[(i64, i64)], voiced: &[bool]) -> Option<i64> {
+    let frame = whisper_align::FRAME_CS;
+    let mut prev_end = spans.first()?.1;
+    for (start, end) in &spans[1..] {
+        if *start > prev_end {
+            let from = usize::try_from(prev_end / frame).ok()?;
+            let to = usize::try_from(*start / frame).ok()?.min(voiced.len());
+            let region = voiced.get(from..to.max(from))?;
+            let loud = region.iter().filter(|v| **v).count();
+            if i64::try_from(loud).ok()? * frame >= i64::try_from(MIN_LOST_SPEECH_CS).ok()? {
+                // The first frame that starts real voice (8 of the next 10 frames), a little before it for the onset.
+                let onset = (0..region.len()).find(|i| region[*i..region.len().min(i + 10)].iter().filter(|v| **v).count() >= 8);
+                // Speech is dense from its onset to the next token; a pause with room noise or music is patchy or starts
+                // late. A gap without such a run is skipped, later gaps are still checked.
+                let dense = onset.is_some_and(|i| {
+                    let rest = &region[i..];
+                    rest.len() * frame as usize >= MIN_LOST_SPEECH_CS
+                        && rest.iter().filter(|v| **v).count() * 100 >= rest.len() * MIN_VOICE_DENSITY_PERCENT
+                });
+                if let (true, Some(i)) = (dense, onset) {
+                    let at = i64::try_from(from + i).ok()? * frame;
+                    let resume = (at - 20).max(prev_end);
+                    if resume >= 100 {
+                        return Some(resume);
+                    }
+                }
+            }
+        }
+        prev_end = prev_end.max(*end);
+    }
+    None
+}
+
+/// The tokens that start before `resume` (centiseconds from the chunk start, `None` = all): the next window decodes the rest
+/// again. A word cut in two by `resume` (its first token before, the rest after) is dropped whole, so the next window writes it
+/// once, from its beginning.
+pub(crate) fn tokens_before(timed: Vec<WhisperToken>, offset_cs: i64, resume: Option<i64>) -> Vec<WhisperToken> {
+    let Some(resume) = resume else { return timed };
+    let cut = timed.iter().position(|t| t.start_cs - offset_cs >= resume).unwrap_or(timed.len());
+    let mut kept = timed;
+    let continues = kept.get(cut).is_some_and(|t| !t.bytes.first().is_some_and(|b| matches!(b, 0x20 | 0x0A | 0x09)));
+    kept.truncate(cut);
+    if continues {
+        while let Some(last) = kept.pop() {
+            if last.bytes.first().is_some_and(|b| matches!(b, 0x20 | 0x0A | 0x09)) {
+                break;
+            }
+        }
+    }
+    kept
 }
 
 /// The tokens of a segment with times: the segment's span is shared out in proportion to each token's byte length.
@@ -180,7 +267,14 @@ pub(crate) fn aligned_tokens(
     limit_cs: i64,
 ) -> Vec<WhisperToken> {
     let start = (offset_cs + seg.start_cs).min(limit_cs);
-    let end = (offset_cs + seg.end_cs).clamp(start, limit_cs.max(start));
+    // A segment the model closed where it opened (start == end) says nothing about where its words are; the alignment does,
+    // so such a segment only holds them to the chunk. Else the words stay inside the segment.
+    let end = if seg.end_cs > seg.start_cs {
+        (offset_cs + seg.end_cs).clamp(start, limit_cs.max(start))
+    } else {
+        limit_cs.max(start).min(offset_cs + CHUNK_CS)
+    };
+    let start = if seg.end_cs > seg.start_cs { start } else { offset_cs.min(limit_cs) };
     let mut last = start;
     seg.tokens
         .iter()
@@ -218,6 +312,13 @@ pub(crate) fn chunk_tokens(
             None => out.extend(timed_tokens(s, tok, offset_cs, limit_cs)),
         }
         used += n;
+    }
+    // Segments are aligned one by one: a word never starts before the one before it.
+    let mut prev = 0i64;
+    for t in &mut out {
+        t.start_cs = t.start_cs.max(prev);
+        t.end_cs = t.end_cs.max(t.start_cs);
+        prev = t.start_cs;
     }
     out
 }
@@ -492,7 +593,7 @@ impl OnnxWhisper {
         let mut last = None;
         for (i, temperature) in TEMPERATURES.iter().enumerate() {
             // OpenAI's reference drops the carried text once the temperature is past 0.5: it may have caused the failure.
-            let carried: &[i64] = if *temperature > 0.5 { &[] } else { past };
+            let carried: &[i64] = if !CONDITION_ON_PREVIOUS_TEXT || *temperature > 0.5 { &[] } else { past };
             let d = self.decode_chunk(hidden, language, carried, *temperature, seed.wrapping_add(i as u64), cancel)?;
             let failed = d.needs_fallback();
             last = Some(d);
@@ -505,7 +606,7 @@ impl OnnxWhisper {
         let text: Vec<i64> = d.tokens.iter().map(|(t, _)| *t).filter(|t| *t < self.tok.eot).collect();
         if d.is_silence() {
             past.clear();
-        } else if !text.is_empty() {
+        } else if CONDITION_ON_PREVIOUS_TEXT && !text.is_empty() {
             past.extend(text);
             let over = past.len().saturating_sub(MAX_PROMPT);
             past.drain(..over);
@@ -570,6 +671,7 @@ impl OnnxWhisper {
         let total_cs = i64::try_from(samples.len() * 100 / SAMPLE_RATE).unwrap_or(i64::MAX);
         let mut out = Vec::new();
         let mut past: Vec<i64> = Vec::new();
+        let mut gap_resumes = 0usize;
         let mut seek = 0usize; // samples
         while seek < samples.len() {
             if cancel() {
@@ -583,13 +685,40 @@ impl OnnxWhisper {
                 let hidden = self.encode(self.mel.compute(chunk))?;
                 let d = self.decode_with_fallback(&hidden, lang, &mut past, seek as u64 + 1, cancel)?;
                 if !d.is_silence() {
-                    let (segs, single) = segments(&d.tokens, self.tok.timestamp_begin, self.tok.eot);
+                    let (segs, resume) = segments(&d.tokens, self.tok.timestamp_begin, self.tok.eot);
                     // Word times from the attentions when the model has them; else the interpolated ones.
                     let text: Vec<i64> = segs.iter().flat_map(|s| s.tokens.iter().map(|(t, _)| *t)).collect();
                     let frames = chunk.len().div_ceil(CHUNK_SAMPLES / ENCODER_FRAMES);
                     let times = self.align(&hidden, lang, &text, frames);
-                    out.extend(chunk_tokens(&segs, &self.tok, times.as_deref(), offset_cs, total_cs));
-                    if let Some(cs) = single.filter(|cs| *cs >= 100) {
+                    let voiced = whisper_align::voiced_frames(chunk);
+                    let mut timed = Vec::new();
+                    for mut t in chunk_tokens(&segs, &self.tok, times.as_deref(), offset_cs, total_cs) {
+                        // Alignment gives a token's entry frame; the silence before the first word and after the last
+                        // one belongs to no word.
+                        let (s, e) =
+                            whisper_align::trim_to_voice(t.start_cs - offset_cs, t.end_cs - offset_cs, &voiced);
+                        (t.start_cs, t.end_cs) = (offset_cs + s, offset_cs + e);
+                        timed.push(t);
+                    }
+                    let resume = resume.or_else(|| unspoken_tail(&segs, &voiced));
+                    // Speech the model skipped in the middle (a retake): decode again from there, and keep only what lies before.
+                    // A token's end is cut back to where its voice stops, the way a word's end is, so a stretch the alignment ran
+                    // a word over (it ends where the next word starts) still shows as a gap.
+                    let spans: Vec<(i64, i64)> = timed
+                        .iter()
+                        .map(|t| {
+                            let (s, e) = (t.start_cs - offset_cs, t.end_cs - offset_cs);
+                            (s, whisper_align::word_end_in_voice(s, e, &voiced))
+                        })
+                        .collect();
+                    let gap = if gap_resume_allowed(gap_resumes, offset_cs) { lost_speech_inside(&spans, &voiced) } else { None };
+                    gap_resumes += usize::from(gap.is_some());
+                    let resume = match (resume, gap) {
+                        (Some(a), Some(b)) => Some(a.min(b)),
+                        (a, b) => a.or(b),
+                    };
+                    out.extend(tokens_before(timed, offset_cs, resume));
+                    if let Some(cs) = resume {
                         advance = usize::try_from(cs).unwrap_or(0) * SAMPLE_RATE / 100;
                     }
                 }
@@ -629,6 +758,25 @@ const LOGPROB_THOLD: f64 = -1.0;
 const NO_SPEECH_THOLD: f32 = 0.6;
 /// Most carried-over tokens (1 + 200 + 3 prompt + 224 sampled stay below the context of 448).
 const MAX_PROMPT: usize = 200;
+/// Whether a chunk is decoded with the text of the chunks before it as its prompt. Off: with the prompt the model treats a
+/// speaker's retake of an earlier sentence as a repetition and skips it (real clip, 22-28 s: the intro sentence said again was
+/// dropped); it is OpenAI's `condition_on_previous_text=False`. Costs some consistency of spelling across chunks.
+const CONDITION_ON_PREVIOUS_TEXT: bool = false;
+/// Voiced audio after the last closed timestamp of a chunk that the model still ended early must be at least this long
+/// (centiseconds) to restart the next window there: the model stopped before the speech did.
+const MIN_LOST_SPEECH_CS: usize = 100;
+/// How much of the stretch after its onset must be voice for a gap to count as skipped speech (percent).
+const MIN_VOICE_DENSITY_PERCENT: usize = 80;
+/// Decoding again from skipped speech costs a whole window: at most this many times per minute of audio passed (plus a start
+/// allowance), so a music bed or room noise that looks like voice cannot make a recording many times slower.
+const GAP_RESUMES_PER_MINUTE: usize = 2;
+const GAP_RESUME_ALLOWANCE: usize = 2;
+
+/// Whether another re-decode from skipped speech is allowed after `done` of them with the window now at `seek_cs`.
+pub(crate) fn gap_resume_allowed(done: usize, seek_cs: i64) -> bool {
+    let minutes = usize::try_from(seek_cs / 6000).unwrap_or(0);
+    done < GAP_RESUME_ALLOWANCE + GAP_RESUMES_PER_MINUTE * minutes
+}
 
 /// What one decoding try of a chunk gave.
 #[derive(Clone, Debug)]
@@ -874,7 +1022,8 @@ impl OnnxWhisperService {
             })?;
         progress(1.0);
         let language = if code == AUTO { used } else { locale.bcp47() };
-        Ok(Transcript::new(&language, whisper_words::words(&tokens, ids)))
+        let voiced = whisper_align::voiced_frames_chunked(&samples);
+        Ok(Transcript::new(&language, whisper_words::words_in_voice(&tokens, Some(&voiced), ids)))
     }
 }
 
@@ -949,15 +1098,45 @@ mod tests {
     }
 
     #[test]
-    fn segments_split_at_timestamps_and_a_single_ending_moves_the_window() {
-        let (s, single) = segments(&seq(&[1000, 5, 6, 1100, 1100, 7, 1150, EOT]), TS, EOT);
+    fn segments_split_at_timestamps_and_the_seek_follows_the_last_closed_segment() {
+        // Ends on a single closing timestamp: the whole chunk is used.
+        let (s, resume) = segments(&seq(&[1000, 5, 6, 1100, 1100, 7, 1150, EOT]), TS, EOT);
         assert_eq!(s.len(), 2);
         assert_eq!((s[0].start_cs, s[0].end_cs), (0, 200));
         assert_eq!((s[1].start_cs, s[1].end_cs), (200, 300));
-        assert_eq!(single, Some(300));
-        let (s, single) = segments(&seq(&[1000, 5, 1100, 1100, 6, 1200, 1200, EOT]), TS, EOT);
+        assert_eq!(resume, None);
+        // Ends on a closed pair "ts ts": nothing is open, the next window starts at that timestamp.
+        let (s, resume) = segments(&seq(&[1000, 5, 1100, 1100, 6, 1200, 1200, EOT]), TS, EOT);
         assert_eq!(s.len(), 2);
-        assert_eq!(single, None);
+        assert_eq!(resume, Some(400));
+        // Ends in text of an open segment: its tokens are dropped and the window restarts at the open timestamp.
+        let (s, resume) = segments(&seq(&[1000, 5, 1100, 1100, 6, 7, EOT]), TS, EOT);
+        assert_eq!(s.len(), 1);
+        assert_eq!(s[0].tokens, seq(&[5]));
+        assert_eq!(resume, Some(200));
+        // Open segment right after the closing timestamp, no text yet.
+        let (s, resume) = segments(&seq(&[1000, 5, 1100, 1100, EOT]), TS, EOT);
+        assert_eq!((s.len(), resume), (1, Some(200)));
+        // Only an open segment (no closed one) or a resume point under a second: everything is kept.
+        let (s, resume) = segments(&seq(&[1000, 5, 6, EOT]), TS, EOT);
+        assert_eq!((s.len(), resume), (1, None));
+        let (s, resume) = segments(&seq(&[1000, 5, 1020, 1020, 6, EOT]), TS, EOT);
+        assert_eq!((s.len(), resume), (2, None));
+    }
+
+    #[test]
+    fn speech_after_a_closed_last_segment_restarts_the_window_there() {
+        let (s, resume) = segments(&seq(&[1000, 5, 6, 1400, EOT]), TS, EOT); // closed at 8 s
+        assert_eq!(resume, None);
+        let frames = |speech: std::ops::Range<usize>| (0..1500).map(|i| speech.contains(&i)).collect::<Vec<bool>>();
+        // Speech from 10 s to 14 s (frames of 20 ms) after the closing timestamp at 8 s: decode it again from 8 s.
+        assert_eq!(unspoken_tail(&s, &frames(500..700)), Some(800));
+        // Only the speech before the timestamp, or a short blip after it: nothing is lost.
+        assert_eq!(unspoken_tail(&s, &frames(100..380)), None);
+        assert_eq!(unspoken_tail(&s, &frames(600..610)), None);
+        // An open last segment has no closing timestamp to go back to.
+        let (s, _) = segments(&seq(&[1000, 5, 6, EOT]), TS, EOT);
+        assert_eq!(unspoken_tail(&s, &frames(0..1500)), None);
     }
 
     #[test]
@@ -997,6 +1176,63 @@ mod tests {
         assert_eq!(spans, vec![(1000, 1040), (1040, 1100), (1100, 1200)]);
         let w = whisper_words::words(&t, &mut sq_core_time::SequentialIds::default());
         assert_eq!(w.iter().map(|w| w.text.as_str()).collect::<Vec<_>>(), ["ab", "c", "d"]);
+    }
+
+    fn de_tokenizer() -> WhisperTokenizer {
+        let json = r#"{"added_tokens":[{"id":10,"content":"<|endoftext|>"},{"id":11,"content":"<|startoftranscript|>"},
+            {"id":13,"content":"<|transcribe|>"},{"id":14,"content":"<|notimestamps|>"},{"id":15,"content":"<|0.00|>"}],
+            "model":{"vocab":{"Ġab":0,"Ġc":1,"Ġd":2,"Ġef":3},"merges":[]}}"#;
+        WhisperTokenizer::from_json(json).unwrap()
+    }
+
+    fn word_spans(t: &[WhisperToken]) -> Vec<(i64, i64)> {
+        let w = whisper_words::words(t, &mut sq_core_time::SequentialIds::default());
+        w.iter()
+            .map(|w| {
+                (
+                    w.range.start.value() * 100 / w.range.start.timescale(),
+                    w.range.end().value() * 100 / w.range.end().timescale(),
+                )
+            })
+            .collect()
+    }
+
+    #[test]
+    fn a_segment_closed_where_it_opened_keeps_the_alignment_times() {
+        // <|27.00|> ab c <|27.00|>: the segment span is empty, the alignment still knows where the words are.
+        let tok = de_tokenizer();
+        let segs = [Segment { start_cs: 2700, end_cs: 2700, tokens: vec![(0, 0.9), (1, 0.8)] }];
+        let t = chunk_tokens(&segs, &tok, Some(&[(2200, 2400), (2400, 2800)]), 0, 10_000);
+        assert_eq!(word_spans(&t), vec![(2200, 2400), (2400, 2800)]);
+    }
+
+    #[test]
+    fn degenerate_segments_without_attentions_still_give_every_word_its_own_time() {
+        // Two segments with start == end, as the Mac run produced; the second one starts later.
+        let tok = de_tokenizer();
+        let segs = [
+            Segment { start_cs: 2700, end_cs: 2700, tokens: vec![(0, 0.9), (1, 0.8), (2, 0.8)] },
+            Segment { start_cs: 3200, end_cs: 3200, tokens: vec![(3, 0.9)] },
+        ];
+        let spans = word_spans(&chunk_tokens(&segs, &tok, None, 0, 10_000));
+        assert!(spans.iter().all(|(a, b)| b > a), "{spans:?}");
+        assert!(spans.windows(2).all(|p| p[0].1 <= p[1].0), "{spans:?}");
+        assert_eq!(spans[0].0, 2700);
+        assert_eq!(spans[3].0, 3200);
+    }
+
+    #[test]
+    fn times_are_cut_back_to_the_speech() {
+        // 20 ms frames: speech in frames 10..20 (0.20 s to 0.40 s).
+        let voiced: Vec<bool> = (0..50).map(|i| (10..20).contains(&i)).collect();
+        assert_eq!(whisper_align::trim_to_voice(0, 100, &voiced), (18, 42));
+        assert_eq!(whisper_align::trim_to_voice(30, 36, &voiced), (30, 36)); // inside the speech: unchanged
+        assert_eq!(whisper_align::trim_to_voice(60, 90, &voiced), (60, 60)); // silence only: no time of its own
+        assert_eq!(whisper_align::trim_to_voice(60, 90, &[false; 50]), (60, 90)); // no speech anywhere: left alone
+        let mut samples = vec![0.0f32; 16_000];
+        samples[3200..6400].iter_mut().enumerate().for_each(|(i, v)| *v = if i % 2 == 0 { 0.3 } else { -0.3 });
+        let v = whisper_align::voiced_frames(&samples);
+        assert!(v[10..20].iter().all(|x| *x) && !v[0..9].iter().any(|x| *x) && !v[22..].iter().any(|x| *x));
     }
 
     #[test]
@@ -1168,6 +1404,157 @@ mod tests {
         ));
         eprintln!("aligned model: {}", service.store.pin.aligned);
         assert!(t.words.iter().all(|w| w.confidence.is_some_and(|c| (0.0..=1.0).contains(&c))));
+    }
+
+    /// Voice frames (20 ms) from (start, end) centisecond stretches of speech.
+    fn voice(total_cs: i64, speech: &[(i64, i64)]) -> Vec<bool> {
+        (0..total_cs / 2).map(|f| speech.iter().any(|(a, b)| f * 2 >= *a && f * 2 < *b)).collect()
+    }
+
+    #[test]
+    fn a_retake_the_model_skipped_is_found_where_its_voice_starts() {
+        // Take 1 at 0.5-3 s has words; the retake's voice runs 3.8-9 s, the model only wrote its end (from 6.2 s).
+        let voiced = voice(1000, &[(50, 300), (380, 900)]);
+        let spans = [(50, 120), (120, 300), (620, 700), (700, 900)];
+        let at = lost_speech_inside(&spans, &voiced).expect("the skipped voice is found");
+        assert!((340..=380).contains(&at), "resume at {at}");
+    }
+
+    #[test]
+    fn a_gap_with_voice_but_no_dense_run_is_skipped_and_a_later_retake_is_still_found() {
+        // Gap 1 (300-620): patchy noise, 1.2 s of voice in scattered 2-frame bits, no 8-of-10 run. Gap 2 (700-1000): a retake.
+        let mut voiced = voice(1200, &[(50, 300), (700, 760)]);
+        for f in (150..310).filter(|f| f % 4 < 2) {
+            voiced[f] = true;
+        }
+        voiced[350..500].fill(true);
+        let spans = [(50, 300), (620, 700), (1000, 1100)];
+        let at = lost_speech_inside(&spans, &voiced).expect("the later gap is checked");
+        assert!((700..=720).contains(&at), "resume at {at}");
+    }
+
+    #[test]
+    fn a_noise_bed_cannot_cause_more_re_decodes_than_the_cap() {
+        // Every window of a 10 minute recording over a music bed looks like it skipped speech: the cap holds.
+        let (mut done, mut seek_cs) = (0usize, 0i64);
+        while seek_cs < 10 * 6000 {
+            if gap_resume_allowed(done, seek_cs) {
+                done += 1;
+            }
+            seek_cs += 1500; // each window moves on half a chunk
+        }
+        assert!(done <= GAP_RESUME_ALLOWANCE + GAP_RESUMES_PER_MINUTE * 10, "{done}");
+        assert!(!gap_resume_allowed(100, 600), "an exhausted budget stays closed early in the file");
+    }
+
+    #[test]
+    fn real_pauses_and_the_same_text_at_the_same_time_are_not_lost_speech() {
+        // A 0.8 s pause, a short breath of 0.3 s between words, and a chunk without any gap: nothing to decode again.
+        let voiced = voice(1000, &[(50, 300), (380, 400), (430, 900)]);
+        assert_eq!(lost_speech_inside(&[(50, 300), (430, 600), (600, 900)], &voiced), None);
+        assert_eq!(lost_speech_inside(&[(50, 900)], &voiced), None);
+        assert_eq!(lost_speech_inside(&[], &voiced), None);
+        // The same words twice on one time span (a hallucinated copy) leave no gap either.
+        assert_eq!(lost_speech_inside(&[(50, 300), (50, 300), (300, 900)], &voiced), None);
+    }
+
+    fn token_at(text: &str, start_cs: i64) -> WhisperToken {
+        WhisperToken { bytes: text.as_bytes().to_vec(), is_special: false, start_cs, end_cs: start_cs + 10, probability: 0.9 }
+    }
+
+    #[test]
+    fn a_window_keeps_the_tokens_before_the_resume_point_and_never_half_a_word() {
+        let t = || vec![token_at(" Hallo", 1000), token_at(" L", 1100), token_at("ohnt", 1200), token_at(" sich", 1300)];
+        let words = |v: Vec<WhisperToken>| v.iter().map(|t| String::from_utf8_lossy(&t.bytes).into_owned()).collect::<Vec<_>>();
+        // Offset 1000: " L" at 100, "ohnt" at 200; a resume at 150 splits the word.
+        assert_eq!(words(tokens_before(t(), 1000, Some(150))), [" Hallo"]);
+        assert_eq!(words(tokens_before(t(), 1000, Some(250))), [" Hallo", " L", "ohnt"]);
+        assert_eq!(words(tokens_before(t(), 1000, None)).len(), 4);
+    }
+
+    /// Real model, real German speech (env-gated): `SQ_WHISPER_DE_WAV` is a 16 kHz mono WAV, `SQ_WHISPER_MODELS` holds the aligned
+    /// model, `SQ_WHISPER_ONNX_SIZE` picks the size. Words must have a duration, never collide and never go backwards.
+    #[test]
+    fn real_german_speech_gets_distinct_word_times() {
+        let Ok(wav) = std::env::var("SQ_WHISPER_DE_WAV") else {
+            eprintln!("skipped: SQ_WHISPER_DE_WAV is not set");
+            return;
+        };
+        let env = |k: &str| match k {
+            "SQ_WHISPER_ONNX_SIZE" => Some(std::env::var(k).unwrap_or_else(|_| "small".into())),
+            "SQ_WHISPER_MODELS" => std::env::var(k).ok(),
+            _ => None,
+        };
+        let service = OnnxWhisperService::standard(env, Box::new(|p| read_wav(&p.to_string_lossy())));
+        let locale = Locale::new("de-DE");
+        if let Err(e) = service.prepare(&locale, &mut |_| {}, &CancelToken::new()) {
+            eprintln!("skipped: {e}");
+            return;
+        }
+        let t = service
+            .transcribe(
+                Path::new(&wav),
+                &locale,
+                &mut |_| {},
+                &CancelToken::new(),
+                &mut sq_core_time::SequentialIds::default(),
+            )
+            .unwrap_or_else(|e| panic!("transcribe failed: {e}"));
+        let secs = |t: sq_core_time::Time| t.value() as f64 / t.timescale() as f64;
+        for w in &t.words {
+            eprintln!("  {:>7.2}-{:>7.2}  {}", secs(w.range.start), secs(w.range.end()), w.text);
+        }
+        assert!(t.words.len() > 20, "{}", t.text());
+        // The 30 s chunk boundary must not swallow speech: words inside 22-28 s, none repeated across the boundary.
+        let near_edge: Vec<&str> =
+            t.words.iter().filter(|w| (22.0..28.0).contains(&secs(w.range.start))).map(|w| w.text.as_str()).collect();
+        assert!(!near_edge.is_empty(), "no word starts within 22-28 s: speech was dropped");
+        let dup: Vec<String> = t
+            .words
+            .iter()
+            .filter(|w| (25.0..40.0).contains(&secs(w.range.start)))
+            .collect::<Vec<_>>()
+            .windows(3)
+            .filter(|w| w[0].text == w[1].text && w[1].text == w[2].text)
+            .map(|w| w[0].text.clone())
+            .collect();
+        assert!(dup.is_empty(), "words repeated around the boundary: {dup:?}");
+        let zero: Vec<&str> =
+            t.words.iter().filter(|w| secs(w.range.end()) <= secs(w.range.start)).map(|w| w.text.as_str()).collect();
+        assert!(zero.is_empty(), "words without a duration: {zero:?}");
+        assert!(t.words.windows(2).all(|w| secs(w[0].range.start) <= secs(w[1].range.start)), "words go backwards");
+        // Every word starts and ends within 0.3 s of speech (the envelope of the clip itself).
+        let samples = read_wav(&wav).unwrap_or_default();
+        let voiced = whisper_align::voiced_frames(&samples);
+        let near = |t: f64| {
+            let f = (t / 0.02) as isize;
+            (f - 15..=f + 15).any(|i| usize::try_from(i).ok().and_then(|i| voiced.get(i)).copied().unwrap_or(false))
+        };
+        // A word ends with its voice: no word spans a silent stretch longer than 0.5 s, none is shorter than 8 cs.
+        let silent_span: Vec<String> = t
+            .words
+            .iter()
+            .filter(|w| {
+                let (a, b) = ((secs(w.range.start) / 0.02) as usize, (secs(w.range.end()) / 0.02) as usize);
+                let (mut run, mut worst) = (0usize, 0usize);
+                for &v in voiced.iter().take(b).skip(a) {
+                    run = if v { 0 } else { run + 1 };
+                    worst = worst.max(run);
+                }
+                worst > 25
+            })
+            .map(|w| format!("{} {:.2}-{:.2}", w.text, secs(w.range.start), secs(w.range.end())))
+            .collect();
+        assert!(silent_span.is_empty(), "words spanning a pause: {silent_span:?}");
+        let short = t.words.iter().filter(|w| secs(w.range.end()) - secs(w.range.start) < 0.0799).count();
+        assert_eq!(short, 0, "words shorter than 8 cs");
+        let off: Vec<String> = t
+            .words
+            .iter()
+            .filter(|w| !near(secs(w.range.start)) || !near(secs(w.range.end())))
+            .map(|w| format!("{} {:.2}-{:.2}", w.text, secs(w.range.start), secs(w.range.end())))
+            .collect();
+        assert!(off.is_empty(), "words away from the speech: {off:?}");
     }
 
     #[test]

@@ -117,8 +117,13 @@ impl PortableTextRenderer {
         let paint = glyphs.fill_colors(highlight);
         let mut outlines: HashMap<usize, Vec<Vec<Vec2>>> = HashMap::new();
         let mut fills: HashMap<usize, Vec<ColoredOutlines>> = HashMap::new();
+        // Bitmap emoji per character: they are one unit with their character's transform, opacity and blur.
+        let mut bitmaps: HashMap<usize, Vec<&crate::portable_text_renderer::PlacedBitmap>> = HashMap::new();
         for p in &glyphs.placed {
             let Some(&c) = geo.line_maps[p.line].get(&p.offset) else { continue };
+            if let (Some(b), Some(_)) = (&p.bitmap, paint(p)) {
+                bitmaps.entry(c).or_default().push(b);
+            }
             let o: Vec<Vec<Vec2>> =
                 p.outline.iter().map(|poly| poly.iter().map(|&q| place(Some(c), q)).collect()).collect();
             outlines.entry(c).or_default().extend(o.iter().cloned());
@@ -206,7 +211,20 @@ impl PortableTextRenderer {
                 Vec::new()
             };
             let mut m = PolygonMask::new(width, height);
-            let boxes = if words.is_empty() { vec![r] } else { words };
+            let boxes = if bg.follow_reveal {
+                // The box shows the words that are in: a word counts as far as its most visible character.
+                let mut amounts = vec![0.0_f64; layout.word_spans.len().max(1)];
+                for c in &geo.units.characters {
+                    if let Some(a) = amounts.get_mut(c.word) {
+                        *a = a.max(geo.state(c.index).opacity());
+                    }
+                }
+                vec![TextWordRects::reveal_pill(layout, style, &amounts).unwrap_or(r)]
+            } else if words.is_empty() {
+                vec![r]
+            } else {
+                words
+            };
             for w in &boxes {
                 m.add_positive(&PolygonMask::rounded_rect(
                     (w.x - b.x) * s,
@@ -226,7 +244,8 @@ impl PortableTextRenderer {
             let st = geo.state(c);
             let bar_pieces = pieces(c);
             let o: Vec<Vec<Vec2>> = outlines.get(&c).cloned().unwrap_or_default();
-            if !(st.opacity() > 0.0 && (outlines.contains_key(&c) || !bar_pieces.is_empty())) {
+            let emoji = bitmaps.get(&c).map(Vec::as_slice).unwrap_or_default();
+            if !(st.opacity() > 0.0 && (outlines.contains_key(&c) || !bar_pieces.is_empty() || !emoji.is_empty())) {
                 continue;
             }
             let blur = st.in_state.blur.max(st.out_state.blur);
@@ -241,7 +260,14 @@ impl PortableTextRenderer {
                 * k
                 + blur * s * 1.5
                 + 2.0;
-            let all: Vec<Vec<Vec2>> = o.iter().cloned().chain(bar_polys.iter().map(|p| p.0.clone())).collect();
+            let emoji_boxes: Vec<Vec<Vec2>> =
+                emoji.iter().map(|b| b.corners().into_iter().map(|q| place(Some(c), q)).collect()).collect();
+            let all: Vec<Vec<Vec2>> = o
+                .iter()
+                .cloned()
+                .chain(bar_polys.iter().map(|p| p.0.clone()))
+                .chain(emoji_boxes.iter().cloned())
+                .collect();
             let Some(bx) = PixelBox::around(&all, reach).and_then(|b| b.clipped_to(&full)) else { continue };
             let shifted = |ps: &[Vec<Vec2>]| -> Vec<Vec<Vec2>> {
                 ps.iter()
@@ -275,6 +301,15 @@ impl PortableTextRenderer {
                         }
                     });
                     layer.fill(&m, LinearCanvas::linear(color));
+                }
+            }
+            if let Some(inv) = geo.transforms[c].inverse() {
+                for b in emoji {
+                    layer.draw_bitmap_mapped(&b.bmp, |lx, ly| {
+                        // layer pixel -> raster pixel -> layout space -> before the character's transform -> ink pixels
+                        let q = inv.apply(Vec2::new((lx + bx.x as f64) / s + geo.bounds.x, (ly + bx.y as f64) / s + geo.bounds.y));
+                        ((q.x - ink.x) * s - b.x, (q.y - ink.y) * s - b.y)
+                    });
                 }
             }
             for (poly, si) in &bar_polys {
@@ -408,6 +443,16 @@ impl TextAffine {
     /// The image of `p`.
     pub fn apply(&self, p: Vec2) -> Vec2 {
         Vec2::new(self.a * p.x + self.c * p.y + self.tx, self.b * p.x + self.d * p.y + self.ty)
+    }
+
+    /// The map that undoes this one; `None` when it flattens the plane.
+    pub fn inverse(&self) -> Option<TextAffine> {
+        let det = self.a * self.d - self.b * self.c;
+        if det.abs() < 1e-12 {
+            return None;
+        }
+        let (a, b, c, d) = (self.d / det, -self.b / det, -self.c / det, self.a / det);
+        Some(TextAffine { a, b, c, d, tx: -(a * self.tx + c * self.ty), ty: -(b * self.tx + d * self.ty) })
     }
 
     /// `self` first, then `o` (`CGAffineTransform.concatenating`).
@@ -619,5 +664,47 @@ mod tests {
             Some(PixelBox { x: 2, y: 2, width: 2, height: 2 })
         );
         assert!(PixelBox { x: 9, y: 9, width: 2, height: 2 }.clipped_to(&full).is_none());
+    }
+
+    /// A bitmap emoji is one character of the animator: it moves and fades with its character like a letter.
+    #[test]
+    fn a_bitmap_emoji_moves_and_fades_with_its_character() {
+        let _lock = crate::portable_fallback::FALLBACK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+        let Some(font) = crate::portable_fallback::PortableFallback::system_bitmap_emoji() else {
+            eprintln!("skipped: no color emoji font");
+            return;
+        };
+        crate::portable_fallback::PortableFallback::set_bitmap_emoji(Some(font));
+        let s = style();
+        let state = |opacity: f64, offset_x: f64| TextCharacterState {
+            in_state: TextUnitState { opacity, offset_x, ..TextUnitState::REST },
+            out_state: TextUnitState::REST,
+            in_unit: Some(TextAnimatorUnit::Character),
+            out_unit: None,
+        };
+        // (mean x in layout space, summed alpha) of the colored pixels
+        let measure = |st: TextCharacterState| {
+            let r = PortableTextRenderer::render_with_states("\u{1F525}", &s, None, None, 1.0, None, &[st]).unwrap();
+            let p = &r.picture;
+            let (mut sx, mut n, mut a) = (0.0_f64, 0.0_f64, 0.0_f64);
+            for y in 0..p.height {
+                for x in 0..p.width {
+                    let c = &p.pixels[(y * p.width + x) * 4..][..4];
+                    if c[3] > 0.0 && c[0] > c[2] + 0.1 * c[3] {
+                        sx += x as f64 + r.origin_x;
+                        n += 1.0;
+                        a += f64::from(c[3]);
+                    }
+                }
+            }
+            (sx / n.max(1.0), a, n)
+        };
+        let (x0, a0, n0) = measure(state(1.0, 0.0));
+        let (x1, a1, _) = measure(state(1.0, 120.0));
+        let (_, a2, _) = measure(state(0.5, 0.0));
+        assert!(n0 > 500.0, "the emoji drew {n0} colored pixels");
+        assert!((x1 - x0 - 120.0).abs() < 8.0, "moved by {}", x1 - x0);
+        assert!((a1 / a0 - 1.0).abs() < 0.05, "same ink after the move: {a0} vs {a1}");
+        assert!((a2 / a0 - 0.5).abs() < 0.08, "half opacity: {a0} vs {a2}");
     }
 }

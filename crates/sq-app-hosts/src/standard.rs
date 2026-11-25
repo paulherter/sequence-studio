@@ -67,7 +67,7 @@ pub(crate) fn library_panel(root: &Path) -> Option<LibraryDrawPanel> {
 
 /// [`library_panel`] over the stored defaults the whole window shares (tile size, view mode, whoosh, watched folders).
 pub(crate) fn library_panel_with(root: &Path, defaults: Rc<RefCell<FileDefaults>>) -> Option<LibraryDrawPanel> {
-    let store = PresetStore::open(&root.join("support"), false, wall_clock()).ok()?;
+    let store = PresetStore::open_in_support(root, false, wall_clock()).ok()?;
     let cache = PreviewCache::in_caches_directory(
         &root.join("caches"),
         PreviewCache::DEFAULT_BYTE_CAP,
@@ -219,8 +219,8 @@ fn build_root(
     shell.shell().preferences.app_menu =
         crate::desktop_entry::startup_row(sq_platform::desktop_integration::DesktopEnv::current().as_ref());
     let looks = Arc::new(sq_editor_session::LookStore::new(
-        Some(sq_editor_session::LookStore::default_url(support)),
-        Some(sq_editor_session::LookStore::legacy_text_styles_url(support)),
+        Some(sq_editor_session::LookStore::default_url(&sq_editor_session::LookStore::library_directory(support))),
+        Some(sq_editor_session::LookStore::legacy_text_styles_url(&sq_editor_session::LookStore::library_directory(support))),
         None,
         None,
     ));
@@ -229,7 +229,7 @@ fn build_root(
         AnalysisServices::new(Box::new(crate::PortableAnalysisBackend))
             .with_worker_pool(app_worker_pool())
             .with_looks(Arc::clone(&looks))
-            .with_preset_support(support.join("support"))
+            .with_preset_support(support.to_path_buf())
             .with_anonymize(AnonymizeRunner::new(Arc::clone(&mattes), system_anonymize_sources(support.to_path_buf())))
             .with_speech(sq_platform_tts::system_engine())
             .with_voice_recorder(crate::MicRecorder::system(), support.join("Voiceovers"))

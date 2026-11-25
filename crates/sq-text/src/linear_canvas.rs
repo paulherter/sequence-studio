@@ -80,6 +80,71 @@ impl LinearCanvas {
         self.pixels[k + 3] = s[3] + self.pixels[k + 3] * keep;
     }
 
+    /// A color emoji bitmap (premultiplied sRGB bytes) as premultiplied linear-light floats.
+    pub fn bitmap_linear(bmp: &crate::emoji_font::ColorBitmap) -> Vec<f32> {
+        bmp.rgba
+            .as_chunks::<4>()
+            .0
+            .iter()
+            .flat_map(|p| {
+                let a = f32::from(p[3]) / 255.0;
+                if a <= 0.0 {
+                    return [0.0; 4];
+                }
+                let lin = |c: u8| Self::to_linear(f64::from(f32::from(c) / 255.0 / a).min(1.0)) * a;
+                [lin(p[0]), lin(p[1]), lin(p[2]), a]
+            })
+            .collect()
+    }
+
+    /// Source-over of a color emoji bitmap with its top-left pixel at `(x, y)`.
+    pub fn draw_bitmap(&mut self, bmp: &crate::emoji_font::ColorBitmap, x: i64, y: i64) {
+        let src = Self::bitmap_linear(bmp);
+        for j in 0..bmp.height {
+            for i in 0..bmp.width {
+                let (dx, dy) = (x + i, y + j);
+                if dx < 0 || dy < 0 || dx >= self.width as i64 || dy >= self.height as i64 {
+                    continue;
+                }
+                let k = ((j * bmp.width + i) * 4) as usize;
+                if src[k + 3] > 0.0 {
+                    self.blend(dy as usize * self.width + dx as usize, [src[k], src[k + 1], src[k + 2], src[k + 3]]);
+                }
+            }
+        }
+    }
+
+    /// Source-over of a color emoji bitmap through a map: `map` takes a pixel centre of this canvas and returns the point
+    /// in the bitmap (pixels from its top-left) it shows; the bitmap is sampled bilinearly, nothing outside it.
+    pub fn draw_bitmap_mapped(&mut self, bmp: &crate::emoji_font::ColorBitmap, map: impl Fn(f64, f64) -> (f64, f64)) {
+        let src = Self::bitmap_linear(bmp);
+        let (w, h) = (bmp.width, bmp.height);
+        for y in 0..self.height {
+            for x in 0..self.width {
+                let (u, v) = map(x as f64 + 0.5, y as f64 + 0.5);
+                if u < 0.0 || v < 0.0 || u >= w as f64 || v >= h as f64 {
+                    continue;
+                }
+                let (fu, fv) = (u - 0.5, v - 0.5);
+                let (x0, y0) = (fu.floor(), fv.floor());
+                let (tx, ty) = ((fu - x0) as f32, (fv - y0) as f32);
+                let texel = |cx: f64, cy: f64, c: usize| -> f32 {
+                    let (cx, cy) = (cx.clamp(0.0, (w - 1) as f64) as i64, cy.clamp(0.0, (h - 1) as f64) as i64);
+                    src[((cy * w + cx) * 4) as usize + c]
+                };
+                let mut px = [0.0f32; 4];
+                for (c, o) in px.iter_mut().enumerate() {
+                    let top = texel(x0, y0, c) * (1.0 - tx) + texel(x0 + 1.0, y0, c) * tx;
+                    let bottom = texel(x0, y0 + 1.0, c) * (1.0 - tx) + texel(x0 + 1.0, y0 + 1.0, c) * tx;
+                    *o = top * (1.0 - ty) + bottom * ty;
+                }
+                if px[3] > 0.0 {
+                    self.blend(y * self.width + x, px);
+                }
+            }
+        }
+    }
+
     /// An sRGB color (straight alpha) as premultiplied linear light.
     pub fn linear(c: &RGBAColor) -> Rgba {
         let a = c.alpha as f32;

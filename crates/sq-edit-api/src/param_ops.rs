@@ -6,7 +6,7 @@ use serde_json::Value;
 use sq_core_effects::effects_editing::ClipEffectsEditingExt;
 use sq_core_model::project_media_ops::GeneratorPlacement;
 use sq_core_model::{Clip, EditError, GeneratorRef, GraphicsContent, GraphicsDocument, Timeline};
-use sq_core_time::{Id, IdSource, Interpolation, Time};
+use sq_core_time::{Id, IdSource, Time};
 
 /// Why an operation failed: the model refused it, or the request does not fit the clip (message for the agent).
 pub(crate) enum OpFailure {
@@ -82,6 +82,12 @@ pub(crate) fn set_param(t: &mut Timeline, clip: Id, param: &str, value: &Value) 
             Ok(crate::text_layers::apply(l, &spec, false, d)?)
         });
     }
+    if let Some(id) = crate::text_tracking::layer_of_path(param) {
+        return with_clip(t, clip, |c| {
+            let l = layer_of(c, id)?;
+            Ok(crate::text_tracking::set(l, value)?)
+        });
+    }
     let (layer, addr) = parse_path(param)?;
     with_clip(t, clip, |c| with_host(c, layer, |h| h.set(&addr, value)))
 }
@@ -92,19 +98,78 @@ pub(crate) fn set_keyframe(
     param: &str,
     at: Time,
     value: &Value,
-    interpolation: Option<Interpolation>,
+    shape: &crate::clip_params::KeyShape,
     ids: &mut dyn IdSource,
 ) -> Result<(), OpFailure> {
+    if let Some(id) = crate::text_tracking::layer_of_path(param) {
+        return with_clip(t, clip, |c| {
+            let d = c.duration();
+            let l = layer_of(c, id)?;
+            Ok(crate::text_tracking::set_key(l, d, at, value, shape, ids)?)
+        });
+    }
     let (layer, addr) = parse_path(param)?;
     if addr == Addr::GainDb {
         return Err("audio.gainDb cannot be keyframed; use audio.volumeDb".to_string().into());
     }
-    with_clip(t, clip, |c| with_host(c, layer, |h| h.set_key(&addr, at, value, interpolation, ids)))
+    with_clip(t, clip, |c| with_host(c, layer, |h| h.set_key(&addr, at, value, shape, ids)))
 }
 
 pub(crate) fn remove_keyframe(t: &mut Timeline, clip: Id, param: &str, at: Time) -> Result<(), OpFailure> {
+    if let Some(id) = crate::text_tracking::layer_of_path(param) {
+        return with_clip(t, clip, |c| {
+            let l = layer_of(c, id)?;
+            Ok(crate::text_tracking::remove_key(l, at)?)
+        });
+    }
     let (layer, addr) = parse_path(param)?;
     with_clip(t, clip, |c| with_host(c, layer, |h| h.remove_key(&addr, at)))
+}
+
+pub(crate) fn move_keyframe(t: &mut Timeline, clip: Id, param: &str, from: Time, to: Time) -> Result<(), OpFailure> {
+    if let Some(id) = crate::text_tracking::layer_of_path(param) {
+        return with_clip(t, clip, |c| {
+            let d = c.duration();
+            let l = layer_of(c, id)?;
+            Ok(crate::text_tracking::move_key(l, d, from, to)?)
+        });
+    }
+    let (layer, addr) = parse_path(param)?;
+    with_clip(t, clip, |c| with_host(c, layer, |h| h.move_key(&addr, from, to)))
+}
+
+/// Shifts the keys of one param, or of every keyed param of the clip (its own, its effects', its layers').
+pub(crate) fn shift_keyframes(t: &mut Timeline, clip: Id, param: Option<&str>, by: Time, after: Option<Time>) -> Result<(), OpFailure> {
+    let n = with_clip(t, clip, |c| {
+        let d = c.duration();
+        if let Some(param) = param {
+            if let Some(id) = crate::text_tracking::layer_of_path(param) {
+                let l = layer_of(c, id)?;
+                return Ok(crate::text_tracking::shift_keys(l, d, by, after)?);
+            }
+            let (layer, addr) = parse_path(param)?;
+            return with_host(c, layer, |h| h.shift_keys(&addr, by, after));
+        }
+        let mut n = 0;
+        let addrs = Host::of_clip(c).keyed_addrs();
+        for a in addrs {
+            n += Host::of_clip(c).shift_keys(&a, by, after)?;
+        }
+        let ids: Vec<Id> = c.graphics_store.as_ref().map(|g| g.layers.iter().map(|l| l.id).collect()).unwrap_or_default();
+        for id in ids {
+            let l = layer_of(c, id)?;
+            let mut h = Host::of_layer(l, d);
+            for a in h.keyed_addrs() {
+                n += h.shift_keys(&a, by, after)?;
+            }
+            n += crate::text_tracking::shift_keys(l, d, by, after)?;
+        }
+        Ok(n)
+    })?;
+    if n == 0 {
+        return Err("no keyframes to shift (see GET /v1/clip/<id>/params)".to_string().into());
+    }
+    Ok(())
 }
 
 pub(crate) fn add_effect(
@@ -167,6 +232,22 @@ pub(crate) fn set_text_layer(t: &mut Timeline, clip: Id, layer: Id, spec: &Value
     })
 }
 
+/// `f` on a text layer of the clip (the animator ops).
+pub(crate) fn text_animator(
+    t: &mut Timeline,
+    clip: Id,
+    layer: Id,
+    f: impl FnOnce(&mut sq_core_model::GraphicsLayer) -> Result<(), String>,
+) -> Result<(), OpFailure> {
+    with_clip(t, clip, |c| {
+        let l = layer_of(c, layer)?;
+        if !l.is_text() {
+            return Err("the layer is not a text layer".to_string().into());
+        }
+        Ok(f(l)?)
+    })
+}
+
 pub(crate) fn add_text_layer(
     t: &mut Timeline,
     clip: Id,
@@ -197,4 +278,10 @@ pub(crate) fn remove_text_layer(t: &mut Timeline, clip: Id, layer: Id) -> Result
         doc.layers.remove(i);
         Ok(())
     })
+}
+
+/// `addMask`: a shape mask on the clip (see `mask_ops`).
+pub(crate) fn add_mask(t: &mut Timeline, clip: Id, fields: &Value, ids: &mut dyn IdSource) -> Result<(), OpFailure> {
+    let Value::Object(m) = fields else { return Err("addMask: fields must be an object".to_string().into()) };
+    with_clip(t, clip, |c| Ok(crate::mask_ops::apply(c, m, ids)?))
 }

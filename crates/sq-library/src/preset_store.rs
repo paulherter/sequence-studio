@@ -146,13 +146,24 @@ impl PresetStore {
 
     /// Location of `presets.json` below an Application Support folder (the app passes the real one).
     pub fn file_url_in(application_support: &Path) -> PathBuf {
-        application_support.join("Sequence Studio").join("Library").join("presets.json")
+        Self::file_url_in_support(&application_support.join("Sequence Studio"))
+    }
+
+    /// Location of `presets.json` below the app's own support folder (`<Application Support>/Sequence Studio`, the folder
+    /// the app passes around): `<support>/Library/presets.json`, the file the Swift app wrote.
+    pub fn file_url_in_support(support: &Path) -> PathBuf {
+        support.join("Library").join("presets.json")
     }
 
     /// Loads the store. A newer file version fails (file untouched); a damaged file is moved aside (stamped `now`) and the
     /// store starts empty. `stand_in`: this store replaces one that could not be opened (`PresetStoreOrigin::StandIn`).
     pub fn open(application_support: &Path, stand_in: bool, now: Timestamp) -> Result<PresetStore, LibraryStoreError> {
-        let file_url = Self::file_url_in(application_support);
+        Self::open_in_support(&application_support.join("Sequence Studio"), stand_in, now)
+    }
+
+    /// [`PresetStore::open`] for the app's own support folder (see [`PresetStore::file_url_in_support`]).
+    pub fn open_in_support(support: &Path, stand_in: bool, now: Timestamp) -> Result<PresetStore, LibraryStoreError> {
+        let file_url = Self::file_url_in_support(support);
         let (items, recovered) =
             match json_file_io::load_versioned::<PresetsFile>(&file_url, Self::FORMAT_VERSION, now)? {
                 json_file_io::Loaded::Missing => (Vec::new(), false),
@@ -700,5 +711,47 @@ mod tests {
     fn suggested_file_name_is_safe() {
         assert_eq!(PresetFile::suggested_file_name("Pop/In: fast"), "Pop-In- fast.sqpreset");
         assert_eq!(PresetFile::suggested_file_name("  "), "Preset.sqpreset");
+    }
+
+    /// A real user `presets.json` (57 Premiere imports), copied to `scratch-real/` (ignored by git); skipped when absent.
+    #[test]
+    fn real_user_file_loads_and_every_payload_decodes() {
+        let src = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../scratch-real/presets.json");
+        let Ok(bytes) = std::fs::read(&src) else {
+            assert!(std::env::var("SQ_REAL_PRESETS").is_err(), "copy missing");
+            return;
+        };
+        let dir = TempDir::new();
+        let url = PresetStore::file_url_in(dir.path());
+        json_file_io_write(&url, &bytes);
+        let store = open(&dir);
+        assert_eq!(store.origin(), PresetStoreOrigin::File);
+        assert_eq!(store.all().len(), 57);
+        let mut bad = Vec::new();
+        for p in store.all() {
+            let r = match p.kind {
+                PresetKind::Effect => EffectPreset::from_payload(&p.payload, p.payload_version, &mut SequentialIds::default())
+                    .map(drop)
+                    .map_err(|e| format!("{e:?}")),
+                _ => Ok(()),
+            };
+            if let Err(e) = r {
+                bad.push(format!("{} :: {e}", p.name));
+            }
+        }
+        assert!(bad.is_empty(), "undecodable: {bad:#?}");
+    }
+
+    #[test]
+    fn support_folder_variant_reads_the_swift_layout() {
+        // `<Application Support>/Sequence Studio/Library/presets.json`, opened through either entry point.
+        let dir = TempDir::new();
+        let support = dir.path().join("Sequence Studio");
+        assert_eq!(PresetStore::file_url_in_support(&support), PresetStore::file_url_in(dir.path()));
+        let mut a = open(&dir);
+        assert!(a.add(item("Zoom In & Out / TOP", PresetKind::Effect, "{}")).is_ok());
+        let b = PresetStore::open_in_support(&support, false, NOW).unwrap_or_else(|e| panic!("{e}"));
+        assert_eq!(b.all().len(), 1);
+        assert_eq!(b.file_url(), support.join("Library").join("presets.json"));
     }
 }

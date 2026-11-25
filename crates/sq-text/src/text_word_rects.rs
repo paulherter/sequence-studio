@@ -61,6 +61,27 @@ impl TextWordRects {
         ink.iter().map(|r| r.expanded(pad_x, bg.padding.vertical, pad_x, bg.padding.vertical)).collect()
     }
 
+    /// The box of a background that follows the reveal: the whole block's box (`layout.background_rect`) cut on the right to the
+    /// share of the text shown so far. `amounts[w]` is how much word `w` is shown (0 hidden ... 1 shown); the width grows from
+    /// a round end (the box height, so an empty pill shows first) to the full box in proportion to the shown word widths. It
+    /// does not depend on the play order, so the Out animator shrinks it again whatever its order. `None` without a background.
+    /// shortcut: one box over all lines; upgrade to one box per line when long titles wrap.
+    pub fn reveal_pill(layout: &TextLayoutResult, style: &TextStyle, amounts: &[f64]) -> Option<TextRect> {
+        let full = layout.background_rect?;
+        style.background?;
+        let words = Self::rects(layout, style);
+        let words = if words.is_empty() { vec![full] } else { words };
+        let total: f64 = words.iter().map(|w| w.width).sum();
+        let shown: f64 = words
+            .iter()
+            .enumerate()
+            .map(|(k, w)| w.width * amounts.get(k).copied().unwrap_or(1.0).clamp(0.0, 1.0))
+            .sum();
+        let share = if total > 0.0 { (shown / total).clamp(0.0, 1.0) } else { 1.0 };
+        let round = full.height.min(full.width);
+        Some(TextRect::new(full.x, full.y, round + (full.width - round) * share, full.height))
+    }
+
     /// Per drawn line: the typesetter whose widths give the x offset (layout px from `TextLine.x`) of a UTF-16 index.
     fn line_offsets(l: &TextLine, style: &TextStyle) -> Box<dyn LineTypesetting> {
         TextLayout::typesetter(

@@ -38,6 +38,9 @@ struct State {
     imported: u64,
     /// The session got samples since it was opened: its reference pictures are those of the old position.
     used: bool,
+    /// The last picture decoded near the end of the file, with its presentation index: what frames after it hold when they
+    /// never decode (`tail_hold_source`). Kept across calls, dropped by a call far from the end.
+    tail: Option<(usize, DecodedFrame)>,
 }
 
 impl State {
@@ -140,6 +143,7 @@ impl VtVideoDecoder {
                 generation: 0,
                 imported: 0,
                 used: false,
+                tail: None,
             }),
         };
         // Open the session now: a machine without a hardware decoder for this stream fails here, not at the first frame.
@@ -270,7 +274,10 @@ impl VtVideoDecoder {
             guard.session = Some(self.open_session()?);
             guard.used = false;
         }
-        let State { session, cursor, carry, imported, used, .. } = &mut *guard;
+        let State { session, cursor, carry, imported, used, tail, .. } = &mut *guard;
+        if *range.end() + sq_media::video_decoding::TAIL_HOLD_FRAMES + 1 < self.demuxer.index().count() {
+            *tail = None;
+        }
         let Some(session) = session.as_ref() else { return Err(MediaError::DecodeFailed(-1).into()) };
         let mut batch: Vec<Output> = Vec::new();
         if flush {
@@ -293,6 +300,7 @@ impl VtVideoDecoder {
             stopped: false,
             imported,
             origin,
+            last_decoded: tail.take(),
         };
         for i in run.carry.keys().copied().filter(|i| range.contains(i)).collect::<Vec<_>>() {
             if let Some(frame) = run.carry.remove(&i)
@@ -353,10 +361,29 @@ impl VtVideoDecoder {
         if run.stopped {
             // The caller dropped the rest: the session's position is unknown, the next call seeks.
             run.carry.clear();
+            *tail = run.last_decoded.take();
             *cursor = None;
             return Ok(Vec::new());
         }
-        let Run { wanted, results, .. } = run;
+        // Every sample went in and the session settled: what is still missing at the end of the file never decodes.
+        let sent_to_end = plan::extended_end(*range.end(), self.demuxer.index().count()) + 1 >= self.demuxer.index().count();
+        let hold = if sent_to_end { run.hold_tail() } else { None };
+        let Run { mut wanted, mut results, last_decoded, .. } = run;
+        *tail = last_decoded;
+        if let Some(held) = hold {
+            let mut missing: Vec<usize> = wanted.drain().collect();
+            missing.sort_unstable();
+            for i in missing {
+                let entry = index.entries()[i];
+                let frame = held.held_at(entry.pts, entry.duration);
+                match deliver {
+                    Some(deliver) => deliver(frame),
+                    None => {
+                        results.insert(i, frame);
+                    }
+                }
+            }
+        }
         if !wanted.is_empty() {
             *cursor = None;
             let (errors, status) = session.failures();
@@ -397,9 +424,22 @@ struct Run<'a> {
     /// Ordinal the session started at: pictures that reference frames before it (an open GOP's leading pictures) are
     /// built on missing references and are dropped.
     origin: i64,
+    /// The picture with the highest presentation index imported near the end of the file (`tail_hold_source`).
+    last_decoded: Option<(usize, DecodedFrame)>,
 }
 
 impl Run<'_> {
+    /// The picture to show for wanted frames the session never produced, once it ran to the end of the file.
+    fn hold_tail(&self) -> Option<DecodedFrame> {
+        let count = self.decoder.demuxer.index().count();
+        let source = sq_media::video_decoding::tail_hold_source(
+            self.wanted.iter().copied(),
+            count,
+            self.last_decoded.as_ref().map(|(i, _)| *i),
+        )?;
+        self.last_decoded.as_ref().filter(|(i, _)| *i == source).map(|(_, f)| f.clone())
+    }
+
     fn stop_now(&mut self) -> bool {
         self.stopped = self.stopped || self.stop.is_some_and(|s| s());
         self.stopped
@@ -410,22 +450,35 @@ impl Run<'_> {
             return Ok(()); // the picture is dropped unimported
         }
         let d = self.decoder;
+        // A hidden sample (an edit list's preroll) is decoded for the pictures after it and is no frame of the clip.
+        if d.demuxer.index().is_hidden_ordinal(out.tag) {
+            return Ok(());
+        }
         let Some(&index) = d.ordinals.get(out.tag) else { return Ok(()) };
         if d.demuxer.index().reference_start_ordinal(index) < self.origin {
             return Ok(());
         }
+        let count = d.demuxer.index().count();
+        let near_end = index + sq_media::video_decoding::TAIL_HOLD_FRAMES + 1 >= count;
         if self.range.contains(&index) {
             if !self.wanted.contains(&index) {
                 return Ok(());
             }
             let frame = self.import(out, index)?;
             self.wanted.remove(&index);
+            if near_end && self.last_decoded.as_ref().is_none_or(|(last, _)| *last < index) {
+                self.last_decoded = Some((index, frame.clone()));
+            }
             match self.deliver {
                 Some(deliver) => deliver(frame),
                 None => {
                     self.results.insert(index, frame);
                 }
             }
+        } else if near_end && index < *self.range.start() && self.last_decoded.as_ref().is_none_or(|(last, _)| *last < index) {
+            // The picture before the range (decoded on the way from the GOP start): what the range holds when its own
+            // frames never decode.
+            self.last_decoded = Some((index, self.import(out, index)?));
         } else if index > *self.range.end() && self.carry.len() < MAX_CARRY && !self.carry.contains_key(&index) {
             let frame = self.import(out, index)?;
             self.carry.insert(index, frame);

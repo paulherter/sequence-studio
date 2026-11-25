@@ -133,6 +133,17 @@ fn staggered(a: &TextAnimator, rank: usize) -> Time {
     Time::new(v.min(i128::from(i64::MAX / 4)) as i64, s.timescale())
 }
 
+/// Highest value of the `Overshoot` easing curve (handles 0.34/1.56 and 0.36/0.0).
+const OVERSHOOT_CURVE_PEAK: f64 = 1.0978035;
+
+/// Pop scale: the eased amount, with the part above 100 % stretched so the peak is `overshoot` (if set).
+fn pop_scale(a: &TextAnimator, e: f64) -> f64 {
+    match a.overshoot {
+        Some(peak) if e > 1.0 => 1.0 + (e - 1.0) * (peak - 1.0) / (OVERSHOOT_CURVE_PEAK - 1.0),
+        _ => e.max(0.0),
+    }
+}
+
 /// `visible`: linear 0 (hidden) ... 1 (rest); `eased`: the eased amount (may overshoot past 1 or below 0).
 fn state(a: &TextAnimator, v: f64, e: f64, leaving: bool) -> TextUnitState {
     let rest = TextUnitState::REST;
@@ -151,7 +162,7 @@ fn state(a: &TextAnimator, v: f64, e: f64, leaving: bool) -> TextUnitState {
     }
     match a.effect {
         TextAnimatorEffect::Fade | TextAnimatorEffect::Typewriter => TextUnitState { opacity: clamped, ..rest },
-        TextAnimatorEffect::Pop => TextUnitState { opacity: (2.0 * v).clamp(0.0, 1.0), scale: e.max(0.0), ..rest },
+        TextAnimatorEffect::Pop => TextUnitState { opacity: (2.0 * v).clamp(0.0, 1.0), scale: pop_scale(a, e), ..rest },
         TextAnimatorEffect::Slide => {
             let d = (1.0 - e) * a.distance * if leaving { -1.0 } else { 1.0 };
             match a.direction {
@@ -301,6 +312,43 @@ impl TextUnits {
             });
         }
         TextUnits { characters: chars, word_count: spans.len(), line_count: lines.len() }
+    }
+}
+
+/// Where a typewriter's cursor sits at one time.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TypewriterCursorPlace {
+    /// Index (`TextUnitCharacter::index`) of the last revealed character; the cursor sits right after it.
+    pub after_character: usize,
+    /// False in the off half of a blink.
+    pub visible: bool,
+}
+
+impl TextUnits {
+    /// The cursor of an in-animator typewriter at template-local time `t` (`None`: no cursor configured, nothing typed
+    /// yet, or the cursor has been held long enough). Solid while units are still appearing, then it blinks (on first,
+    /// `blink` per half) and goes `hold_after` after the last unit appeared. The last revealed character is the one latest in
+    /// reading order, so the cursor sits there for every play order.
+    pub fn typewriter_cursor(&self, a: &TextAnimator, t: Time) -> Option<TypewriterCursorPlace> {
+        let cursor = a.cursor.as_ref().filter(|_| a.effect == TextAnimatorEffect::Typewriter)?;
+        let n = self.count_of(a.unit);
+        let after_character = self
+            .characters
+            .iter()
+            .filter(|c| a.progress(self.index_of(c, a.unit), n, t) >= 1.0)
+            .map(|c| c.index)
+            .max()?;
+        let typed_at = a.total_duration(n);
+        if t < typed_at {
+            return Some(TypewriterCursorPlace { after_character, visible: true });
+        }
+        let elapsed = t - typed_at;
+        if elapsed >= cursor.hold_after {
+            return None;
+        }
+        let (e, b) = (elapsed, cursor.blink);
+        let halves = i128::from(e.value()) * i128::from(b.timescale()) / (i128::from(e.timescale()) * i128::from(b.value().max(1)));
+        Some(TypewriterCursorPlace { after_character, visible: halves % 2 == 0 })
     }
 }
 
@@ -620,6 +668,23 @@ mod tests {
         assert!(a.in_state(1, 2, Time::new(1, 8)).is_rest());
     }
 
+    fn pop_peak(a: &TextAnimator) -> f64 {
+        (0..=1000).map(|i| a.in_state(0, 1, Time::new(i, 1000)).scale).fold(0.0, f64::max)
+    }
+
+    #[test]
+    fn pop_overshoot_sets_the_peak_and_default_keeps_the_curve() {
+        let mut a = TextAnimator::starting(TextAnimatorEffect::Pop);
+        a.duration = Time::new(1, 1);
+        assert!((pop_peak(&a) - 1.0978).abs() < 0.002, "default look {}", pop_peak(&a));
+        a.overshoot = Some(1.08);
+        assert!((pop_peak(&a) - 1.08).abs() < 0.002, "peak {}", pop_peak(&a));
+        a.overshoot = Some(1.3);
+        assert!((pop_peak(&a) - 1.3).abs() < 0.003, "peak {}", pop_peak(&a));
+        assert!(a.in_state(0, 1, Time::new(1, 1)).is_rest());
+        assert!(a.in_state(0, 1, Time::ZERO).scale.abs() < 1e-9);
+    }
+
     #[test]
     fn rank_follows_the_order() {
         let mut a =
@@ -809,6 +874,32 @@ mod tests {
                 assert!(seen);
             }
         }
+    }
+
+    #[test]
+    fn a_typewriter_cursor_follows_the_last_character_and_blinks_after_typing() {
+        use sq_core_model::anchored_animation::TextCursor;
+        let units = TextUnits::segment("abc d", &[Utf16Range { location: 0, length: 5 }]);
+        let mut a = TextAnimator::new(TextAnimatorEffect::Typewriter, TextAnimatorUnit::Character, Time::ZERO, Time::new(1, 10));
+        let ms = |v: i64| Time::new(v, 1000);
+        assert_eq!(units.typewriter_cursor(&a, ms(0)), None, "no cursor configured");
+        a.cursor = Some(TextCursor::standard());
+        let at = |t| units.typewriter_cursor(&a, t);
+        // Characters appear at 0, 100, 200, 300 ms: the cursor is solid and after the newest one.
+        assert_eq!(at(ms(0)), Some(TypewriterCursorPlace { after_character: 0, visible: true }));
+        assert_eq!(at(ms(250)), Some(TypewriterCursorPlace { after_character: 2, visible: true }));
+        assert_eq!(at(ms(299)), Some(TypewriterCursorPlace { after_character: 2, visible: true }));
+        // Typing ends at 300 ms: on for 530 ms, off until the hold of 600 ms ends it.
+        assert_eq!(at(ms(300)), Some(TypewriterCursorPlace { after_character: 3, visible: true }));
+        assert_eq!(at(ms(829)).map(|p| p.visible), Some(true));
+        assert_eq!(at(ms(830)), Some(TypewriterCursorPlace { after_character: 3, visible: false }));
+        assert_eq!(at(ms(899)).map(|p| p.visible), Some(false));
+        assert_eq!(at(ms(900)), None, "held 600 ms after the last character");
+        // By word the cursor jumps to the end of the revealed word.
+        a.unit = TextAnimatorUnit::Word;
+        let by_word = |t| units.typewriter_cursor(&a, t).map(|p| p.after_character);
+        assert_eq!(by_word(ms(0)), Some(2));
+        assert_eq!(by_word(ms(100)), Some(3));
     }
 
     #[test]

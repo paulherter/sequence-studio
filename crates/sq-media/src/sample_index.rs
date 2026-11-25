@@ -80,6 +80,24 @@ impl SampleIndex {
         &self.entries
     }
 
+    /// Number of decode ordinals: the frames plus the samples the edit list hides (a stream copy's preroll). This is the
+    /// length of the packet list, NOT `count()`: a table over decode ordinals must be this long, or the last
+    /// `ordinal_count() - count()` samples in decode order (the last frames of the clip) fall off its end.
+    pub fn ordinal_count(&self) -> usize {
+        self.hidden_ordinal.len()
+    }
+
+    /// Presentation index of decode ordinal `o` (a hidden sample: the first presented frame after it); `None` past the
+    /// last ordinal.
+    pub fn presentation_index_of_decode_ordinal(&self, o: usize) -> Option<usize> {
+        self.presentation_index_of_ordinal.get(o).copied()
+    }
+
+    /// True when decode ordinal `o` is a sample the edit list hides: its picture is no frame of the clip.
+    pub fn is_hidden_ordinal(&self, o: usize) -> bool {
+        self.hidden_ordinal.get(o).copied().unwrap_or(false)
+    }
+
     /// Number of frames.
     pub fn count(&self) -> usize {
         self.entries.len()
@@ -304,6 +322,19 @@ mod tests {
             is_sync: sync,
             decode_ordinal: ordinal,
         }
+    }
+
+    /// A stream copy's preroll (hidden samples at the start) makes the packet list longer than the frame list: tables over
+    /// decode ordinals are `ordinal_count()` long, and the last decode ordinals belong to the clip's last frames.
+    #[test]
+    fn the_ordinal_count_includes_hidden_samples() {
+        let shown = vec![entry(0, 2, false), entry(1, 3, false), entry(2, 4, false)];
+        let hidden = vec![entry(-2, 0, true), entry(-1, 1, false)];
+        let idx = SampleIndex::with_hidden(shown, hidden);
+        assert_eq!((idx.count(), idx.ordinal_count()), (3, 5));
+        assert_eq!(idx.presentation_index_of_decode_ordinal(4), Some(2));
+        assert_eq!(idx.presentation_index_of_decode_ordinal(5), None);
+        assert!(idx.is_hidden_ordinal(0) && idx.is_hidden_ordinal(1) && !idx.is_hidden_ordinal(4));
     }
 
     /// Hidden samples (an edit list's cut) are no frames: numbering starts at the first presented one, a lookup never lands

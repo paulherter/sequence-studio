@@ -22,6 +22,7 @@ pub mod portable_fallback;
 pub mod portable_font_match;
 pub mod portable_shape_renderer;
 pub mod portable_text_carets;
+pub mod typewriter_cursor;
 pub mod portable_text_renderer;
 mod sbix_file;
 pub mod sfnt_color_glyphs;

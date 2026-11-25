@@ -59,6 +59,9 @@ impl Caption {
     }
 }
 
+/// Longest a caption stays up past the end of its last spoken word because a punctuation mark is timed later.
+const MAX_HOLD: Time = Time::new(2, 5);
+
 /// A caption being built in the one-word-per-caption mode.
 #[derive(Clone)]
 struct Unit {
@@ -103,7 +106,12 @@ impl CaptionSegmenter {
             {
                 s = le;
             }
-            let e = last.range.end().max(s);
+            let mut e = last.range.end().max(s);
+            if !has_letter_or_number(&last.text)
+                && let Some(spoken) = slice.iter().rev().find(|w| has_letter_or_number(&w.text))
+            {
+                e = e.min(spoken.range.end() + MAX_HOLD).max(spoken.range.end()).max(s);
+            }
             let texts: Vec<&str> = slice.iter().map(|w| w.text.as_str()).collect();
             let mut caption = Caption::new(
                 Self::wrap(&texts, preset.max_chars_per_line),
@@ -131,7 +139,8 @@ impl CaptionSegmenter {
                 let mut texts: Vec<&str> = current.iter().map(|w| w.text.as_str()).collect();
                 let paused = word.range.start - prev.range.end() >= preset.pause_break;
                 let too_long = word.range.end() - current[0].range.start > preset.max_duration;
-                let split = paused || too_long || {
+                let full = preset.max_words_per_caption.is_some_and(|n| current.len() as i64 >= n);
+                let split = paused || too_long || full || {
                     texts.push(&word.text);
                     if Self::wrap(&texts, preset.max_chars_per_line).len() as i64 > preset.max_lines {
                         true
@@ -181,7 +190,9 @@ impl CaptionSegmenter {
             };
             match units.last() {
                 Some(last) if !has_letter_or_number(&word.text) => {
-                    let m = Self::merged(last, &unit);
+                    let mut m = Self::merged(last, &unit);
+                    // A mark the recognizer times after a long pause must not hold the caption through the pause.
+                    m.end = m.end.min(last.end + MAX_HOLD).max(last.end);
                     let n = units.len();
                     units[n - 1] = m;
                 }
@@ -835,5 +846,53 @@ mod tests {
         let cascade =
             transcript(vec![w("Hello", 0, 50), w("wonderful", 50, 100), w("amazing", 100, 150), w("stuff", 150, 200)]);
         assert!(all_valid(&CaptionSegmenter::segment(&cascade, &CaptionPreset::short_video()), 4));
+    }
+}
+
+#[cfg(test)]
+mod words_tests {
+    use super::*;
+    use crate::transcript::test_support::*;
+
+    #[test]
+    fn a_word_cap_above_one_groups_that_many_words() {
+        let tr = transcript(vec![w("a", 0, 200), w("b", 250, 450), w("c", 500, 700), w("d", 750, 950), w("e", 1000, 1200)]);
+        let mut pr = CaptionPreset::short_video();
+        pr.max_words_per_caption = Some(2);
+        pr.max_chars_per_line = 40;
+        let lines: Vec<Vec<String>> = CaptionSegmenter::segment(&tr, &pr).into_iter().map(|c| c.lines).collect();
+        assert_eq!(lines, vec![vec!["a b".to_string()], vec!["c d".to_string()], vec!["e".to_string()]]);
+    }
+}
+
+#[cfg(test)]
+mod hang_tests {
+    use super::*;
+    use crate::transcript::test_support::*;
+
+    fn ends(pr: &CaptionPreset) -> Vec<(Time, Time)> {
+        let tr = transcript(vec![
+            w("Das", 4000, 4900),
+            w("27", 5000, 6140),
+            w(".", 8600, 8670),
+            w("ist", 8700, 8900),
+            w("gut", 8950, 9300),
+        ]);
+        CaptionSegmenter::apply_timing(&CaptionSegmenter::segment(&tr, pr), pr)
+            .iter()
+            .map(|c| (c.range.start, c.range.end()))
+            .collect()
+    }
+
+    /// "27" (5.00-6.14 s) with a mark timed at 8.6-8.67 s: the caption ends 0.4 s after the word, not at 8.67 s.
+    #[test]
+    fn a_late_punctuation_mark_does_not_hold_a_caption_through_a_pause() {
+        for pr in [CaptionPreset::short_video(), CaptionPreset::standard()] {
+            for (s, e) in ends(&pr) {
+                if s == t(5000) || s == t(4000) {
+                    assert!(e <= t(6540), "caption {s:?} holds until {e:?}");
+                }
+            }
+        }
     }
 }

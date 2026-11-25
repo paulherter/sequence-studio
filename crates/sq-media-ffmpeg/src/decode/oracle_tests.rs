@@ -707,3 +707,158 @@ fn a_negative_start_clip_opens_fast_and_decodes_its_first_shown_frame() {
     assert!(began.elapsed().as_secs_f64() < 2.0, "open + frame 0 took {:?}", began.elapsed());
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// A stream-copied cut of a B-frame, GOP-structured clip that starts between keyframes (a negative-pts preroll hidden by
+/// the edit list), the way a camera clip is trimmed with `ffmpeg -ss -t -c copy`. `x264` are encoder options, `cut` the
+/// `-ss` and `-t` seconds.
+fn make_cut_clip(name: &str, codec: &[&str], rate: &str, cut: (&str, &str)) -> Option<PathBuf> {
+    let full = scratch(&format!("full-{name}"));
+    let path = scratch(name);
+    let made = ffmpeg()
+        .args(["-y", "-v", "error", "-f", "lavfi", "-i", &format!("testsrc2=size=128x96:rate={rate}:duration=20")])
+        .args(["-pix_fmt", "yuv420p"])
+        .args(codec)
+        .arg(&full)
+        .output()
+        .ok()?;
+    let cut = made.status.success()
+        && ffmpeg()
+            .args(["-y", "-v", "error", "-ss", cut.0, "-t", cut.1, "-i"])
+            .arg(&full)
+            .args(["-c", "copy"])
+            .arg(&path)
+            .output()
+            .ok()?
+            .status
+            .success();
+    if cut && path.exists() {
+        return Some(path);
+    }
+    eprintln!("skipped {name}: ffmpeg cannot write a clip with {codec:?}");
+    None
+}
+
+#[test]
+fn every_frame_of_a_stream_copied_cut_decodes_including_the_last_ones() {
+    if !ready() {
+        return;
+    }
+    let (mut failures, mut ran) = (Vec::new(), 0);
+    let codecs: [(&[&str], &str); 4] = [
+        (&["-c:v", "mpeg4", "-bf", "2", "-g", "30"], "30"),
+        (&["-c:v", "libx264", "-x264-params", "bframes=3:b-pyramid=normal:keyint=30:open-gop=0"], "30"),
+        (&["-c:v", "libx264", "-x264-params", "bframes=2:keyint=30:open-gop=1"], "30000/1001"),
+        (&["-c:v", "libx265", "-x265-params", "bframes=3:keyint=30:open-gop=1"], "30"),
+    ];
+    let mut variants = Vec::new();
+    for (codec, rate) in codecs {
+        for ss in ["5.0", "5.3", "5.7", "5.9", "5.97", "6.0"] {
+            for t in ["8", "7.9"] {
+                variants.push((codec, rate, (ss, t)));
+            }
+        }
+    }
+    for (n, (codec, rate, cut)) in variants.into_iter().enumerate() {
+        let Some(clip) = make_cut_clip(&format!("cut{n}.mp4"), codec, rate, cut) else { continue };
+        ran += 1;
+        let demuxer = Arc::new(FFmpegDemuxer::open(&clip).unwrap());
+        let count = demuxer.index().count();
+        let dec = FFmpegVideoDecoder::new(Arc::clone(&demuxer), Id::from_u128(1), false, 0).unwrap();
+        // The last six frames first (a seek straight to the end), then the whole clip in order, then the tail again.
+        let tail = block_on(dec.decode(count - 6..=count - 1));
+        if let Err(e) = tail {
+            failures.push(format!("{codec:?} {cut:?}: last 6 of {count}: {e}"));
+        }
+        let all = block_on(dec.decode(0..=count - 1));
+        match all {
+            Ok(f) if f.len() == count => {}
+            Ok(f) => failures.push(format!("{codec:?} {cut:?}: all {count} gave {}", f.len())),
+            Err(e) => failures.push(format!("{codec:?} {cut:?}: all {count}: {e}")),
+        }
+    }
+    assert!(ran > 0 && failures.is_empty(), "ran {ran}: {failures:#?}");
+}
+
+/// A clip whose last packets are damaged (the noise filter corrupts the last 12 packets), so FFmpeg cannot hand out the
+/// pictures of the tail: the way a stream copy that dropped the references of the last B-frames behaves.
+fn make_damaged_tail_clip(name: &str) -> Option<PathBuf> {
+    let whole = scratch(&format!("whole-{name}"));
+    let path = scratch(name);
+    let made = ffmpeg()
+        .args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=128x96:rate=30:duration=4"])
+        .args(["-c:v", "mpeg4", "-bf", "2", "-g", "30", "-pix_fmt", "yuv420p"])
+        .arg(&whole)
+        .output()
+        .ok()?;
+    let damaged = made.status.success()
+        && ffmpeg()
+            .args(["-y", "-v", "error", "-i"])
+            .arg(&whole)
+            .args(["-c", "copy", "-bsf:v", "noise=amount='if(gte(n\\,108)\\,1\\,0)'"])
+            .arg(&path)
+            .output()
+            .ok()?
+            .status
+            .success();
+    (damaged && path.exists()).then_some(path)
+}
+
+#[test]
+fn frames_at_the_end_that_never_decode_show_the_last_good_picture() {
+    if !ready() {
+        return;
+    }
+    let Some(clip) = make_damaged_tail_clip("damaged-tail.mp4") else { return };
+    let demuxer = Arc::new(FFmpegDemuxer::open(&clip).unwrap());
+    let count = demuxer.index().count();
+    let dec = FFmpegVideoDecoder::new(Arc::clone(&demuxer), Id::from_u128(1), false, 0).unwrap();
+    // The last six frames after a seek (the export's read-ahead batch), the whole clip, and the last frame alone.
+    let bad: Vec<_> = (0..count).filter_map(|i| block_on(dec.decode(i..=i)).err().map(|e| (i, e.to_string()))).collect();
+    assert!(bad.is_empty(), "single frames {bad:?}");
+    for range in [count - 6..=count - 1, 0..=count - 1, count - 1..=count - 1] {
+        let frames = block_on(dec.decode(range.clone())).unwrap_or_else(|e| panic!("FAILED {range:?} of {count}: {e}"));
+        assert_eq!(frames.len(), range.clone().count(), "{range:?}");
+        let times: Vec<_> = frames.iter().map(DecodedFrame::pts).collect();
+        let wanted: Vec<_> = range.map(|i| demuxer.index().entries()[i].pts).collect();
+        assert_eq!(times, wanted, "every frame sits in its own slot");
+    }
+}
+
+/// `SQ_EOF_FILE`: a real stream-copied camera cut. Every frame of its last 60 decodes alone and as one batch, and the demuxer's
+/// numbers are printed (`--nocapture`).
+#[test]
+fn a_real_stream_copied_cut_decodes_its_last_frames() {
+    let Some(clip) = std::env::var_os("SQ_EOF_FILE").map(PathBuf::from) else { return };
+    let demuxer = Arc::new(FFmpegDemuxer::open(&clip).unwrap());
+    let count = demuxer.index().count();
+    let entries = demuxer.index().entries();
+    let zero: Vec<_> = (0..count).filter(|i| entries[*i].duration == sq_core_time::Time::ZERO).collect();
+    eprintln!("count {count} packets {} zero-duration {} first {:?} last {:?}", demuxer.packet_count(), zero.len(), zero.first(), zero.last());
+    for i in count.saturating_sub(40)..count {
+        eprintln!("idx {i} pts {:?} dur {:?} ref_start {}", entries[i].pts, entries[i].duration, demuxer.index().reference_start_ordinal(i));
+    }
+    let dec = FFmpegVideoDecoder::new(Arc::clone(&demuxer), Id::from_u128(1), false, 0).unwrap();
+    let bad: Vec<_> = (count - 60..count)
+        .filter_map(|i| {
+            eprintln!("decoding {i}");
+            let r = block_on(dec.decode(i..=i));
+            eprintln!("decoded {i} ok={}", r.is_ok());
+            r.err().map(|e| (i, e.to_string()))
+        })
+        .collect();
+    assert!(bad.is_empty(), "single frames {bad:?}");
+    let range = count - 20..=count - 1;
+    let began = std::time::Instant::now();
+    let frames = block_on(dec.decode(range.clone())).unwrap_or_else(|e| panic!("FAILED {range:?} of {count}: {e}"));
+    eprintln!("last 20 took {:?}", began.elapsed());
+    assert_eq!(frames.len(), range.count());
+    // The export's way: forward batches from the start (continuing decodes), through the last frame.
+    let began = std::time::Instant::now();
+    let mut next = 0;
+    while next < count {
+        let end = (next + 6).min(count) - 1;
+        block_on(dec.decode(next..=end)).unwrap_or_else(|e| panic!("FAILED forward {next}..={end} of {count}: {e}"));
+        next = end + 1;
+    }
+    eprintln!("forward took {:?}", began.elapsed());
+}

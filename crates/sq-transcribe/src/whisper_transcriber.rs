@@ -102,7 +102,8 @@ impl TranscriptionService for WhisperTranscriber {
                 cancel.is_cancelled()
             })?;
         progress(1.0);
-        Ok(Transcript::new(&locale.bcp47(), whisper_words::words(&tokens, ids)))
+        let voiced = crate::whisper_align::voiced_frames_chunked(&samples);
+        Ok(Transcript::new(&locale.bcp47(), whisper_words::words_in_voice(&tokens, Some(&voiced), ids)))
     }
 }
 
