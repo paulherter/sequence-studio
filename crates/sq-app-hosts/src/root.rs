@@ -139,6 +139,8 @@ pub struct AppRoot {
     started: std::time::Instant,
     /// The active sequence and its own preview quality as last applied to the Program monitor.
     sequence_quality: Option<(sq_core_time::Id, Option<sq_core_model::SequencePreviewQuality>)>,
+    /// The Program picture's size in physical pixels last sent to the engine.
+    view_px: (u32, u32),
     popover_guard: crate::popover_guard::PopoverCloseGuard,
     /// The user's effect and transition defaults and their file (Swift `EffectDefaultsLibrary.shared`).
     effect_defaults: Option<Box<sq_editor_session::EffectDefaultsLibrary>>,
@@ -224,6 +226,21 @@ pub(crate) enum PanelCommand {
 }
 
 impl AppRoot {
+    /// Checks the staged file once more (hash and signature), then puts it in place. A file that does not pass is
+    /// deleted and never applied.
+    pub fn apply_verified_update(update: &sq_editor_session::PendingUpdate, restart: bool) -> Result<(), String> {
+        if let Err(why) = update.verify() {
+            let _ = std::fs::remove_file(&update.file);
+            return Err(why.message());
+        }
+        sq_platform::app_update::apply_update(&update.file, &update.version, restart).map_err(|e| match e {
+            sq_platform::app_update::ApplyError::Unsupported => {
+                "This system cannot install updates from the app yet.".to_string()
+            }
+            sq_platform::app_update::ApplyError::Failed(why) => why,
+        })
+    }
+
     /// Runs a menu command a panel asked for (context menu rows, header buttons, monitor rows). A disabled command does
     /// nothing and says nothing; an enabled one nobody runs is a bug (`debug_assert`, and the dead-commands test).
     pub(crate) fn run_panel_command(
@@ -343,6 +360,7 @@ impl AppRoot {
             persist: None,
             started: std::time::Instant::now(),
             sequence_quality: None,
+            view_px: (0, 0),
             popover_guard: crate::popover_guard::PopoverCloseGuard::default(),
             effect_defaults: None,
             effect_defaults_unapplied: false,
@@ -1185,6 +1203,12 @@ impl AppRoot {
             match d {
                 ShellDeferred::Flow(flow) => cx.emit(AppEvent::Flow(flow)),
                 ShellDeferred::Event(ShellEvent::Quit) => {
+                    // "Later" on a downloaded update: it goes in place now, without a restart.
+                    if let Some(update) = self.shell.shell().pending_update.take()
+                        && let Err(e) = Self::apply_verified_update(&update, false)
+                    {
+                        lines.push(format!("The update could not be installed on quit: {e}"));
+                    }
                     if self.persist.is_some() {
                         cx.session.close(); // ends the crash marker: the next start offers nothing
                     }
@@ -1209,6 +1233,24 @@ impl AppRoot {
                 ShellDeferred::Event(ShellEvent::OpenUrl(url)) => {
                     if let Err(e) = crate::FileManager::open(&crate::SystemPlatform, std::path::Path::new(&url)) {
                         lines.push(e);
+                    }
+                }
+                ShellDeferred::Event(ShellEvent::ApplyUpdate { update, restart }) => {
+                    match Self::apply_verified_update(&update, restart) {
+                        Ok(()) if restart => {
+                            if self.persist.is_some() {
+                                cx.session.close();
+                            }
+                            cx.emit(AppEvent::Quit);
+                        }
+                        Ok(()) => {}
+                        Err(why) => {
+                            self.shell.shell().present_message(
+                                "The update did not finish",
+                                &why,
+                                Some(sq_draw_shell::Tone::Error),
+                            );
+                        }
                     }
                 }
                 ShellDeferred::Event(ShellEvent::AppMenu(request)) => {
@@ -1358,7 +1400,7 @@ impl AppRoot {
         if let Some(persist) = &self.persist {
             self.shell.hold_welcome(persist.recovery_pending(), persist.recovered());
         }
-        lines.extend(crate::audio_notice::take());
+        lines.extend(crate::audio_notice::take(&cx.services.audio_notices));
         // One line per call: the last wins, as the status bar shows one.
         if let Some(line) = lines.pop() {
             cx.emit(AppEvent::Status(line));
@@ -1528,6 +1570,15 @@ impl AppRoot {
             sq_platform::physical_memory().unwrap_or(16 << 30),
         );
         model.set_auto_base(sq_editor_session::MonitorQuality::from_scale(start));
+        sq_media_ffmpeg::shim::set_weak_machine(
+            sq_core_project::work_limits::MachineResources::current(
+                |k| std::env::var(k).ok(),
+                sq_platform::physical_memory().unwrap_or(16 << 30),
+                std::thread::available_parallelism().map_or(8, |n| n.get() as i64),
+                cfg!(all(target_os = "macos", target_arch = "x86_64")),
+            )
+            .is_weak_for_decode(),
+        );
         if model.quality() != wanted || model.quality() == sq_editor_session::MonitorQuality::Auto {
             model.set_quality(wanted);
         }
@@ -1552,6 +1603,9 @@ impl AppRoot {
             }
         }
         let now = self.started.elapsed().as_secs_f64();
+        if let Some(stall) = session.take_present_stall() {
+            self.monitor.panel.model.note_present_stall(stall.as_secs_f64());
+        }
         let counts = session.engine().play_counts();
         self.monitor.panel.model.update_play_counts(counts, session.is_playing(), now);
     }
@@ -2674,12 +2728,22 @@ impl AppRoot {
                 PanelID::EffectControls => draw_skeleton(c, t, g.content, SkeletonKind::Inspector, 15),
                 PanelID::Library => {
                     let list = self.library.panel_host().panel.list_rect();
-                    let area = CGRect::new(g.content.min_x() + list.min_x(), g.content.min_y() + list.min_y(), list.width, list.height);
+                    let area = CGRect::new(
+                        g.content.min_x() + list.min_x(),
+                        g.content.min_y() + list.min_y(),
+                        list.width,
+                        list.height,
+                    );
                     draw_skeleton(c, t, area, SkeletonKind::Browser, 7);
                 }
                 // The 24 pt column header stays: the rows start below it.
                 PanelID::Project => {
-                    let area = CGRect::new(g.content.min_x(), g.content.min_y() + 24.0, g.content.width, (g.content.height - 24.0).max(0.0));
+                    let area = CGRect::new(
+                        g.content.min_x(),
+                        g.content.min_y() + 24.0,
+                        g.content.width,
+                        (g.content.height - 24.0).max(0.0),
+                    );
                     draw_skeleton(c, t, area, SkeletonKind::Browser, 10);
                 }
                 _ => {}
@@ -3001,6 +3065,9 @@ impl AppHost for AppRoot {
             .into_iter()
             .map(|j| sq_draw_shell::BackgroundJob { id: j.id, title: j.title, progress: j.progress })
             .collect();
+        if let Some(line) = cx.session.take_proxy_disk_notice() {
+            self.chrome.flash(line, SystemTime::now());
+        }
         if self.draw_full_screen(c, t, cx) {
             return;
         }
@@ -3102,6 +3169,14 @@ impl AppHost for AppRoot {
         self.inspector.draw(c, t, cx);
         self.color.set_focused_panel(self.dock.focused());
         self.color.set_picture_view(self.monitor.panel.canvas_rect(), self.monitor.panel.sequence_size().width);
+        // The monitor's picture in physical pixels: playback composes at this size when it is smaller than the sequence.
+        let view = self.monitor.panel.canvas_rect();
+        let view_px =
+            ((view.width * f64::from(cx.scale)).round() as u32, (view.height * f64::from(cx.scale)).round() as u32);
+        if self.view_px != view_px {
+            self.view_px = view_px;
+            cx.session.engine_mut().set_view_size(view_px.0, view_px.1);
+        }
         self.color.draw(c, t, cx);
         self.draw_opening_skeletons(c, t);
         // The blue focus frame follows this dock's current panel rect every frame; the shell's dialogs and menus draw over it.
@@ -3456,7 +3531,11 @@ impl AppHost for AppRoot {
                 if let Some(dir) = std::env::var_os("SQ_POSE_LIBRARY_DIR") {
                     self.add_library_folder(std::path::PathBuf::from(dir));
                 }
-                self.library.panel_host().panel.model.set_view_mode(sq_draw_library::library::library_panel_model::LibraryViewMode::List);
+                self.library
+                    .panel_host()
+                    .panel
+                    .model
+                    .set_view_mode(sq_draw_library::library::library_panel_model::LibraryViewMode::List);
                 self.dock.show(PanelID::Library);
                 self.dock.toggle_maximize(PanelID::Library);
                 self.dock.set_focused(None);
@@ -3477,11 +3556,10 @@ impl AppHost for AppRoot {
                 self.dock.set_focused(None);
                 let panel = &mut self.library.panel_host().panel;
                 panel.refresh();
-                let video = panel
-                    .model
-                    .items()
-                    .into_iter()
-                    .find(|i| sq_library::library_preview_math::mode(i.entry.kind) == Some(sq_library::library_preview_math::PreviewMode::Video));
+                let video = panel.model.items().into_iter().find(|i| {
+                    sq_library::library_preview_math::mode(i.entry.kind)
+                        == Some(sq_library::library_preview_math::PreviewMode::Video)
+                });
                 panel.model.select_item_for_preview(video.as_ref());
             }
             "project-deep" => {

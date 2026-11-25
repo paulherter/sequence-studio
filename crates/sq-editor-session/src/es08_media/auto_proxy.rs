@@ -25,8 +25,8 @@ use sq_core_model::{MediaRef, Timeline, VideoTrackInfo};
 use sq_core_time::{Id, IdSource, Time, Timestamp};
 use sq_media::sample_index::SampleIndex;
 use sq_proxy::auto_proxy::{
-    AutoProxyRule, MachineProfile, ProxyDefaults, ProxyDiskGuard, ProxyMode, ProxyPlaybackMode, ProxySettingsStore,
-    ProxySizeEstimate,
+    AutoProxyRule, DiskNotice, MachineProfile, ProxyCase, ProxyDefaults, ProxyDiskGuard, ProxyIssueNotice, ProxyMode,
+    ProxyPlaybackMode, ProxySettingsStore, ProxySizeEstimate,
 };
 use sq_proxy::model::{ProxyKind, ProxyRecord};
 use sq_proxy::proxy_cache::{ProxyCache, ProxyRecordID};
@@ -74,13 +74,15 @@ struct Tracked {
     state: ProxyState<ProxyJobID, ProxyRecordID>,
     /// Estimated bytes of this media's queued or running proxy, held against the disk reserve until it is ready.
     reserved_bytes: i64,
+    /// Estimated bytes of a proxy the disk reserve refused (the notice adds them up).
+    refused_bytes: i64,
     /// No hardware decoder for the source on this machine: its job runs ahead of the others.
     software: bool,
 }
 
 impl Tracked {
     fn new(file: FileState, ticket: u64) -> Tracked {
-        Tracked { file, ticket, state: ProxyState::NotNeeded, reserved_bytes: 0, software: false }
+        Tracked { file, ticket, state: ProxyState::NotNeeded, reserved_bytes: 0, refused_bytes: 0, software: false }
     }
 }
 
@@ -98,6 +100,19 @@ pub enum ProxyEffect {
 pub struct DiskSpace {
     pub free: Option<i64>,
     pub total: Option<i64>,
+}
+
+/// The app-log line for a proxy the disk reserve refused: without it a volume under the reserve (5 GB or 2 % free at least) silently
+/// never made a proxy, and playback of heavy media stayed on software decode (Windows VM, 2026-11-23).
+pub(crate) fn disk_refusal_line(estimate: i64, reserved: i64, disk: DiskSpace) -> String {
+    let gb = |b: i64| b as f64 / f64::from(1u32 << 30);
+    let free = disk.free.map_or("unknown".to_string(), |f| format!("{:.1} GB", gb(f)));
+    format!(
+        "proxy refused: disk reserve, needs {:.1} GB (+{:.1} GB queued), {free} free; the volume keeps at least {:.1} GB free",
+        gb(estimate),
+        gb(reserved),
+        gb(ProxyDiskGuard::reserve(disk.total))
+    )
 }
 
 /// Free and total bytes of the proxy cache's volume (`ProxyDiskGuard`); injected by tests.
@@ -137,7 +152,7 @@ impl ProxyDecisionWork {
     /// Runs the decision (blocking; file reads).
     pub fn run(&self) -> ProxyOutcome {
         let path = Path::new(&self.file.path);
-        let Ok(seek) = self.prober.probe(path) else { return ProxyOutcome::Skipped };
+        let Ok(seek) = self.prober.probe(path) else { return self.skip("the source could not be probed") };
         let policy = ProxyPolicy::default();
         let video = self.video.as_ref();
         let mut decision = AutoProxyRule::decide(&seek, video, self.mode, &self.machine, false, &policy);
@@ -145,17 +160,21 @@ impl ProxyDecisionWork {
         if decision == ProxyDecision::Skip(SkipReason::LightSource) {
             // Long-GOP but light: still worth a proxy when this machine decodes it in software.
             if self.resolver.opened_demuxer(self.media).is_none() {
-                return ProxyOutcome::Skipped;
+                return self.skip("light source, original not openable");
             }
             software = self.resolver.decodes_in_hardware(self.media) == Some(false);
             if software {
                 decision = AutoProxyRule::decide(&seek, video, self.mode, &self.machine, true, &policy);
             }
         }
-        let ProxyDecision::NeedsProxy(kind) = decision else { return ProxyOutcome::Skipped };
-        let Some(original) = self.resolver.opened_demuxer(self.media) else { return ProxyOutcome::Skipped };
+        let ProxyDecision::NeedsProxy(kind) = decision else {
+            return self.skip(&format!("no proxy needed: {decision:?}"));
+        };
+        let Some(original) = self.resolver.opened_demuxer(self.media) else {
+            return self.skip("the original cannot be opened");
+        };
         if !AutoProxyService::<NoDefaults>::proxy_can_match(original.index()) {
-            return ProxyOutcome::Skipped;
+            return self.skip("a proxy would not match the original");
         }
         // Fingerprint of the current file, for the stat-only lookup.
         self.provider.warm(path);
@@ -171,6 +190,12 @@ impl ProxyDecisionWork {
         );
         let disk = self.disk_hint.unwrap_or_else(|| (self.disk_space)(&self.cache_dir));
         ProxyOutcome::NeedsJob { kind, software, estimate, disk }
+    }
+
+    /// A skipped decision with its reason in the app log (nothing else tells why a media got no proxy).
+    fn skip(&self, why: &str) -> ProxyOutcome {
+        sq_core_time::milestones::info(&format!("proxy skipped: {why} ({})", self.file.path));
+        ProxyOutcome::Skipped
     }
 }
 
@@ -228,9 +253,18 @@ pub struct AutoProxyService<D: ProxyDefaults> {
     idle_since: Option<Timestamp>,
     /// Queue start order per media (timeline-first, `ProxyOrdering`).
     ranks: BTreeMap<Id, i64>,
+    /// Where the user looks (timeline position): the nearest sources are transcoded first (`set_playhead`).
+    playhead: Time,
+    /// Clock reading of the last re-rank by playhead (throttle).
+    last_rerank: f64,
     tracked: BTreeMap<Id, Tracked>,
     next_ticket: u64,
     disk_sample: Option<(Timestamp, DiskSpace)>,
+    /// The "no room for preview files" notice (once per project open).
+    disk_notice: DiskNotice,
+    issue_notice: ProxyIssueNotice,
+    notice_lines: std::collections::VecDeque<String>,
+    next_disk_check: f64,
     last_media: Vec<MediaRef>,
     last_project: Option<Id>,
     last_timeline: Option<Timeline>,
@@ -255,6 +289,8 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
 
     /// Seconds a disk reading is reused.
     const DISK_SAMPLE_TTL: f64 = 5.0;
+    /// How often refused proxies look at the free space again, in seconds.
+    const DISK_RECHECK: f64 = 30.0;
 
     /// A service over `cache`; the proxy lookup of the resolver points at the cache (stat only: a source whose size or
     /// date changed has no proxy until its new fingerprint is computed).
@@ -293,9 +329,15 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
             busy_held: false,
             idle_since: None,
             ranks: BTreeMap::new(),
+            playhead: Time::ZERO,
+            last_rerank: f64::NEG_INFINITY,
             tracked: BTreeMap::new(),
             next_ticket: 0,
             disk_sample: None,
+            disk_notice: DiskNotice::default(),
+            issue_notice: ProxyIssueNotice::default(),
+            notice_lines: std::collections::VecDeque::new(),
+            next_disk_check: 0.0,
             last_media: Vec::new(),
             last_project: None,
             last_timeline: None,
@@ -395,12 +437,13 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
 
     /// Whether the host should call [`AutoProxyService::tick`] (about every 500 ms).
     pub fn wants_tick(&self) -> bool {
-        self.needs_busy_polling() || self.busy_held
+        self.needs_busy_polling() || self.busy_held || self.has_disk_refusal()
     }
 
     /// One poll: the busy signal, then the queue's and the cache's news.
     pub fn tick(&mut self) {
         self.poll_busy();
+        self.recheck_disk();
         while let Ok(info) = self.updates.try_recv() {
             self.job_updated(&info);
         }
@@ -427,6 +470,64 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
         self.tracked.iter().filter(|(_, t)| t.state == ProxyState::DiskRefused).map(|(id, _)| *id).collect()
     }
 
+    fn has_disk_refusal(&self) -> bool {
+        self.tracked.values().any(|t| t.state == ProxyState::DiskRefused)
+    }
+
+    /// Refused proxies read the free space again every 30 s; more room decides them again. Then the notice follows.
+    fn recheck_disk(&mut self) {
+        let now = (self.clock)().unix_seconds();
+        if self.has_disk_refusal() && now >= self.next_disk_check {
+            self.next_disk_check = now + Self::DISK_RECHECK;
+            let seen = self.disk_sample.and_then(|(_, d)| d.free);
+            let free = (self.disk_space)(self.cache.directory()).free;
+            if matches!((seen, free), (Some(a), Some(b)) if b > a) {
+                self.refresh();
+            }
+        }
+        self.update_disk_notice();
+    }
+
+    /// Feeds the notice: short while a proxy is refused; cleared when none is and no decision is still out.
+    fn update_disk_notice(&mut self) {
+        let refused: i64 =
+            self.tracked.values().filter(|t| t.state == ProxyState::DiskRefused).map(|t| t.refused_bytes).sum();
+        let short = if self.has_disk_refusal() {
+            let disk = self.disk_sample.map(|(_, d)| d);
+            let free = disk.and_then(|d| d.free).unwrap_or(0);
+            let wanted = refused + self.reserved_disk_bytes();
+            Some((free, ProxyDiskGuard::needed(wanted, disk.and_then(|d| d.total))))
+        } else if self.tracked.values().any(|t| t.state == ProxyState::Deciding) {
+            return; // the answer is not in yet: keep the notice as it is
+        } else {
+            None
+        };
+        if let Some(line) = self.disk_notice.update(short) {
+            self.notice_lines.push_back(line);
+        }
+    }
+
+    /// One proxy case that is not about disk space: logs its reason, and queues the notice when it has one.
+    fn report_case(&mut self, id: Id, case: ProxyCase) {
+        let path = self.tracked.get(&id).map_or(String::new(), |t| t.file.path.clone());
+        if case != ProxyCase::Skipped {
+            sq_core_time::milestones::info(&format!("proxy not made: {case:?} ({path})"));
+        }
+        if let Some(line) = self.issue_notice.report(&case) {
+            self.notice_lines.push_back(line);
+        }
+    }
+
+    /// The notice line to show once (status bar), taken.
+    pub fn take_disk_notice(&mut self) -> Option<String> {
+        self.notice_lines.pop_front()
+    }
+
+    /// Whether proxies are refused for disk space right now.
+    pub fn disk_notice_active(&self) -> bool {
+        self.disk_notice.is_active()
+    }
+
     /// Bytes held against the disk reserve by queued and running proxies.
     pub(crate) fn reserved_disk_bytes(&self) -> i64 {
         self.tracked.values().filter(|t| !t.state.is_ready()).map(|t| t.reserved_bytes).sum()
@@ -443,6 +544,11 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
     // Swift: AutoProxy.swift:229
     pub fn sync(&mut self, media: &[MediaRef], project_id: Option<Id>, active_timeline: Option<&Timeline>) {
         self.last_media = media.to_vec();
+        if self.last_project != project_id {
+            self.disk_notice.reset();
+            self.issue_notice.reset();
+            self.notice_lines.clear();
+        }
         self.last_project = project_id;
         self.last_timeline = active_timeline.cloned();
         self.mode = self.settings.mode(project_id);
@@ -472,16 +578,10 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
                 }
             }
         }
-        // Timeline-first: media the active timeline uses (earliest position first), then bin-only media.
+        // Nearest to the playhead first (`ProxyOrdering::sorted_near`), then bin-only media.
         let wanted_ids: Vec<Id> = wanted.iter().map(|m| m.id).collect();
-        let ordered = ProxyOrdering::sorted(&wanted_ids, &ProxyOrdering::first_use(active_timeline));
-        self.ranks = ordered.iter().enumerate().map(|(i, id)| (*id, i as i64)).collect();
-        let count = i64::try_from(self.ranks.len()).unwrap_or(i64::MAX);
-        for (id, t) in &self.tracked {
-            if let (Some(job), Some(r)) = (t.state.job(), self.ranks.get(id)) {
-                self.queue.set_rank(job, AutoProxyRule::rank(*r, t.software, count));
-            }
-        }
+        let sizes: BTreeMap<Id, i64> = wanted.iter().map(|m| (m.id, m.fingerprint.size)).collect();
+        let ordered = self.rank_media(&wanted_ids, &sizes);
         let by_id: BTreeMap<Id, &MediaRef> = wanted.iter().map(|m| (m.id, *m)).collect();
         for r in ordered.iter().filter_map(|id| by_id.get(id).copied()) {
             let mut file = FileState::read(&r.path);
@@ -507,6 +607,73 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
         if !invalid.is_empty() {
             self.notify(invalid);
         }
+    }
+
+    /// Sets `self.ranks` for `ids` by distance to the playhead and moves the queued jobs to them.
+    fn rank_media(&mut self, ids: &[Id], sizes: &BTreeMap<Id, i64>) -> Vec<Id> {
+        let uses = ProxyOrdering::uses(self.last_timeline.as_ref());
+        let ordered = ProxyOrdering::sorted_near(ids, &uses, self.playhead, sizes);
+        self.ranks = ordered.iter().enumerate().map(|(i, id)| (*id, i as i64)).collect();
+        let count = i64::try_from(self.ranks.len()).unwrap_or(i64::MAX);
+        for (id, t) in &self.tracked {
+            if let (Some(job), Some(r)) = (t.state.job(), self.ranks.get(id)) {
+                self.queue.set_rank(job, AutoProxyRule::rank(*r, t.software, count));
+            }
+        }
+        ordered
+    }
+
+    /// The playhead moved (the session calls this every frame; the work is throttled to `RERANK_INTERVAL`): queued jobs
+    /// are re-ranked by distance to it. A running job is dropped and re-decided only by
+    /// `ProxyOrdering::should_preempt` (far from the playhead, under half done, a near job waits and no slot is free).
+    pub fn set_playhead(&mut self, playhead: Time) {
+        let now = (self.clock)().unix_seconds();
+        if playhead == self.playhead || now - self.last_rerank < Self::RERANK_INTERVAL {
+            return;
+        }
+        self.playhead = playhead;
+        self.last_rerank = now;
+        if !self.tracked.values().any(|t| t.state.job().is_some()) {
+            return; // nothing queued or running: the next sync ranks with the new position
+        }
+        let ids: Vec<Id> = self.last_media.iter().map(|m| m.id).collect();
+        let sizes: BTreeMap<Id, i64> = self.last_media.iter().map(|m| (m.id, m.fingerprint.size)).collect();
+        self.rank_media(&ids, &sizes);
+        self.preempt_far_job();
+    }
+
+    const RERANK_INTERVAL: f64 = 0.5;
+
+    fn preempt_far_job(&mut self) {
+        let uses = ProxyOrdering::uses(self.last_timeline.as_ref());
+        let distance = |id: &Id| ProxyOrdering::distance(&uses, *id, self.playhead);
+        let mut running: Vec<(Id, ProxyJobID, f64)> = Vec::new();
+        let mut waiting: Vec<Option<Time>> = Vec::new();
+        for (id, t) in &self.tracked {
+            let Some(job) = t.state.job() else { continue };
+            let Some(info) = self.queue.info(job) else { continue };
+            match info.state {
+                ProxyJobState::Running => running.push((*id, job, info.progress)),
+                ProxyJobState::Queued => waiting.push(distance(id)),
+                _ => {}
+            }
+        }
+        // The nearest waiting source (a source the timeline does not use is the farthest).
+        let Some(waiting) = waiting.into_iter().min_by_key(|d| d.unwrap_or(Time::new(i64::MAX / 4, 1))) else { return };
+        if running.len() < self.queue.concurrency() {
+            return; // a slot is free: the near job starts without dropping anything
+        }
+        let victim = running
+            .iter()
+            .filter(|(id, _, p)| ProxyOrdering::should_preempt(distance(id), *p, waiting))
+            .max_by_key(|(id, _, _)| distance(id).unwrap_or(Time::new(i64::MAX / 4, 1)));
+        let Some(&(id, job, _)) = victim else { return };
+        if let Some(t) = self.tracked.get(&id).cloned() {
+            self.stop(id, &t); // cancels the running transcode
+        }
+        let _ = job;
+        let (media, project, timeline) = (self.last_media.clone(), self.last_project, self.last_timeline.clone());
+        self.sync(&media, project, timeline.as_ref()); // decides the dropped media again, now ranked behind the near ones
     }
 
     /// Re-reads the settings (mode, playback) and applies them to the last synced media.
@@ -596,11 +763,15 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
             return;
         }
         match outcome {
-            ProxyOutcome::Skipped => self.apply(id, ProxyEvent::Skipped),
+            ProxyOutcome::Skipped => {
+                self.report_case(id, ProxyCase::Skipped);
+                self.apply(id, ProxyEvent::Skipped);
+            }
             ProxyOutcome::Ready { record } => self.became_ready(id, file, ProxyEvent::FoundReady { record }),
             ProxyOutcome::NeedsJob { kind, software, estimate, disk } => {
                 if self.cache_full_of_proxies_in_use() {
                     self.apply(id, ProxyEvent::CapReached);
+                    self.report_case(id, ProxyCase::CapReached);
                     return;
                 }
                 self.disk_sample = Some(((self.clock)(), disk));
@@ -627,7 +798,9 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
                         self.tick();
                     }
                     Err(e) => {
-                        self.apply(id, ProxyEvent::JobFailed { reason: format!("{e:?}") });
+                        let reason = format!("{e:?}");
+                        self.report_case(id, ProxyCase::JobFailed { reason: reason.clone() });
+                        self.apply(id, ProxyEvent::JobFailed { reason });
                         if let Some(t) = self.tracked.get_mut(&id) {
                             t.reserved_bytes = 0;
                         }
@@ -645,7 +818,12 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
             return false;
         }
         if !ProxyDiskGuard::allows(estimate + reserved, disk.free, disk.total) {
+            sq_core_time::milestones::info(&disk_refusal_line(estimate, reserved, disk));
             self.apply(id, ProxyEvent::DiskFull);
+            if let Some(t) = self.tracked.get_mut(&id) {
+                t.refused_bytes = estimate;
+            }
+            self.update_disk_notice();
             return false;
         }
         if let Some(t) = self.tracked.get_mut(&id) {
@@ -679,7 +857,10 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
                     t.reserved_bytes = 0;
                 }
                 match &info.state {
-                    ProxyJobState::Failed(reason) => self.apply(id, ProxyEvent::JobFailed { reason: reason.clone() }),
+                    ProxyJobState::Failed(reason) => {
+                        self.report_case(id, ProxyCase::JobFailed { reason: reason.clone() });
+                        self.apply(id, ProxyEvent::JobFailed { reason: reason.clone() });
+                    }
                     _ => self.apply(id, ProxyEvent::Stopped),
                 }
             }
@@ -725,6 +906,7 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
             let mut kept = Tracked::new(t.file, t.ticket);
             kept.state = ProxyState::Capped;
             self.tracked.insert(mid, kept);
+            self.report_case(mid, ProxyCase::CapReached);
         }
     }
 
@@ -790,8 +972,14 @@ impl<D: ProxyDefaults> SessionProxyServing for AutoProxyService<D> {
         AutoProxyService::sync(self, media, project_id, active_timeline);
     }
     // Swift: AutoProxy.swift:412
+    fn set_playhead(&mut self, playhead: Time) {
+        AutoProxyService::set_playhead(self, playhead);
+    }
     fn take_effects(&mut self) -> Vec<ProxyEffect> {
         AutoProxyService::take_effects(self)
+    }
+    fn take_disk_notice(&mut self) -> Option<String> {
+        AutoProxyService::take_disk_notice(self)
     }
     fn clear_cache(&mut self) -> i64 {
         AutoProxyService::clear_cache(self)

@@ -17,7 +17,7 @@ use sq_gpu::gpu::Gpu;
 use sq_media::demuxing::Demuxing;
 use sq_media::media_error::MediaError;
 use sq_media::media_opener::{MediaOpener, OpenedMedia};
-use sq_media::video_decoding::{DecodedFrame, VideoDecoding};
+use sq_media::video_decoding::{DecodedFrame, StopCheck, VideoDecoding};
 use sq_media_ffmpeg::decode::{
     DEFAULT_EXTRA_HW_FRAMES, FFmpegDemuxer, FFmpegFrame, FFmpegVideoDecoder, flagged_full_range, frame_color,
     media_error,
@@ -126,9 +126,42 @@ impl MediaSource {
         threaded: bool,
         stats: &Arc<PlayStats>,
         deliver: Arc<dyn Fn(i64, Picture) + Send + Sync>,
+        stop: StopCheck,
     ) -> Result<(), MediaError> {
         let lo = usize::try_from(*range.start()).unwrap_or(0);
         let hi = usize::try_from(*range.end()).unwrap_or(0);
+        // What reached `deliver` (a retry after a software reopen must not send a picture twice) and the first download error.
+        let delivered: Arc<Mutex<std::collections::HashSet<i64>>> = Arc::default();
+        let failure: Arc<Mutex<Option<MediaError>>> = Arc::default();
+        let send = {
+            let (decoder, deliver, delivered, failure, label) = (
+                Arc::clone(&self.decoder),
+                Arc::clone(&deliver),
+                Arc::clone(&delivered),
+                Arc::clone(&failure),
+                self.label.clone(),
+            );
+            move |demuxer: &dyn Demuxing, f: DecodedFrame, stats: &PlayStats| {
+                match convert_picture(demuxer, f, divisor, threaded, stats) {
+                    Ok(Some((i, p))) => {
+                        decoder.report_download(true);
+                        if delivered.lock().unwrap_or_else(PoisonError::into_inner).insert(i) {
+                            deliver(i, p);
+                        }
+                    }
+                    Ok(None) => {}
+                    Err(e) => {
+                        // A dropped picture is an error of its frame, never a silent hole (the cursor already moved past it).
+                        sq_core_time::milestones::note(&format!(
+                            "download failed: {label} hardware {} divisor {divisor} threaded {threaded}: {e}",
+                            decoder.is_hardware()
+                        ));
+                        decoder.report_download(false);
+                        failure.lock().unwrap_or_else(PoisonError::into_inner).get_or_insert(e);
+                    }
+                }
+            }
+        };
         let lap = Arc::new(Mutex::new(Instant::now()));
         let take_lap = {
             let lap = Arc::clone(&lap);
@@ -139,39 +172,99 @@ impl MediaSource {
                 ms
             }
         };
-        let hand = {
-            let (demuxer, stats, deliver, label) =
-                (Arc::clone(&self.demuxer), Arc::clone(stats), Arc::clone(&deliver), self.label.clone());
-            let take_lap = take_lap.clone();
-            move |f: DecodedFrame| {
-                let ms = take_lap();
-                stats.add(Stage::Decode, ms, 1);
-                stats.decoded(&label, ms);
-                convert_and_deliver(demuxer.as_ref(), f, divisor, threaded, &stats, &*deliver);
-                let _ = take_lap();
+        // Two attempts: a hardware decoder whose downloads keep failing reopens in software at the start of the second.
+        for attempt in 0..2 {
+            // Software decoding of a paused read (an export, a paused fill): the conversion of picture n runs on a thread of its
+            // own while the decoder works on n+1 (decode and download took turns on one thread: 10 + 7 ms per 4K picture). The
+            // same conversion in the same order, so the pictures are identical; playback (`threaded`) and hardware surfaces
+            // (a small pool that must go back to the decoder) keep the inline path.
+            // Only a real FFmpeg software decoder (its label names it), never a test double.
+            let overlap = !threaded
+                && hi > lo
+                && self.label.contains("(software)")
+                && !self.decoder.is_hardware()
+                && std::env::var_os("SQ_NO_CONVERT_OVERLAP").is_none();
+            let (queue, converter) = if overlap {
+                let (tx, rx) = std::sync::mpsc::sync_channel::<DecodedFrame>(CONVERT_AHEAD);
+                let (demuxer, stats, send, stop) =
+                    (Arc::clone(&self.demuxer), Arc::clone(stats), send.clone(), Arc::clone(&stop));
+                let t = std::thread::Builder::new().name("sq-convert".into()).spawn(move || {
+                    for f in rx {
+                        if !stop() {
+                            send(demuxer.as_ref(), f, &stats);
+                        }
+                    }
+                });
+                match t {
+                    Ok(t) => (Some(Arc::new(Mutex::new(Some(tx)))), Some(t)),
+                    Err(_) => (None, None),
+                }
+            } else {
+                (None, None)
+            };
+            let hand = {
+                let (demuxer, stats, send, label) =
+                    (Arc::clone(&self.demuxer), Arc::clone(stats), send.clone(), self.label.clone());
+                let take_lap = take_lap.clone();
+                let stop = Arc::clone(&stop);
+                let queue = queue.clone();
+                move |f: DecodedFrame| {
+                    if stop() {
+                        return; // nobody wants it: no conversion
+                    }
+                    let ms = take_lap();
+                    stats.add(Stage::Decode, ms, 1);
+                    stats.decoded(&label, ms);
+                    let tx = queue.as_ref().and_then(|q| q.lock().unwrap_or_else(PoisonError::into_inner).clone());
+                    match tx {
+                        Some(tx) => {
+                            let _ = tx.send(f);
+                        }
+                        None => send(demuxer.as_ref(), f, &stats),
+                    }
+                    let _ = take_lap();
+                }
+            };
+            // Frames the decoder carried from an earlier call come back in the result, not through `hand`.
+            let decoded = block_on(self.decoder.decode_until(lo..=hi, None, Box::new(hand), Arc::clone(&stop)));
+            // Every queued picture is converted and delivered before this call returns (the job's Finished message follows it).
+            if let Some(q) = &queue {
+                q.lock().unwrap_or_else(PoisonError::into_inner).take();
             }
-        };
-        // Frames the decoder carried from an earlier call come back in the result, not through `hand`.
-        let rest = block_on(self.decoder.decode_needed_from(lo..=hi, None, Box::new(hand)))?;
-        for f in rest {
-            convert_and_deliver(self.demuxer.as_ref(), f, divisor, threaded, stats, &*deliver);
+            if let Some(t) = converter {
+                let _ = t.join();
+            }
+            let rest = decoded?;
+            for f in rest {
+                if stop() {
+                    break;
+                }
+                send(self.demuxer.as_ref(), f, stats);
+            }
+            let missing = failure.lock().unwrap_or_else(PoisonError::into_inner).take();
+            match missing {
+                None => return Ok(()),
+                Some(_) if attempt == 0 && !stop() => {} // seek again; software when the downloads kept failing
+                Some(e) => return Err(e),
+            }
         }
         Ok(())
     }
 }
 
-fn convert_and_deliver(
+/// Pictures a paused software read may hold between the decoder and its conversion thread (4K NV12: about 12 MB each).
+const CONVERT_AHEAD: usize = 2;
+
+/// The frame's index and picture; `None` when the frame has no index in the table (nothing to show).
+fn convert_picture(
     demuxer: &dyn Demuxing,
     f: DecodedFrame,
     divisor: u32,
     threaded: bool,
     stats: &PlayStats,
-    deliver: &(dyn Fn(i64, Picture) + Send + Sync),
-) {
-    let Some(i) = demuxer.index().frame_at(f.pts()) else { return };
-    if let Ok(p) = picture_of(f, divisor, threaded, stats) {
-        deliver(i as i64, p);
-    }
+) -> Result<Option<(i64, Picture)>, MediaError> {
+    let Some(i) = demuxer.index().frame_at(f.pts()) else { return Ok(None) };
+    picture_of(f, divisor, threaded, stats).map(|p| Some((i as i64, p)))
 }
 
 /// One decoded frame as a picture: FFmpeg frames downloaded into CPU planes (NV12 / P010 layout, RGBA with alpha),
@@ -203,7 +296,12 @@ pub fn picture_of(f: DecodedFrame, divisor: u32, threaded: bool, stats: &PlaySta
     if divisor > 1 || threaded {
         let reduced = stats.time(Stage::Download, || ff.download_reduced(divisor.max(1) as i32, 4)).map_err(fail)?;
         if let Some(r) = reduced {
-            return Ok(make(r.width as usize, r.height as usize, frame.pixel_format, r.bytes));
+            let format = match (r.chroma_422, frame.pixel_format) {
+                (true, SQFramePixelFormat::P010) => SQFramePixelFormat::P210,
+                (true, SQFramePixelFormat::P010FullRange) => SQFramePixelFormat::P210FullRange,
+                (_, f) => f,
+            };
+            return Ok(make(r.width as usize, r.height as usize, format, r.bytes));
         }
     }
     let bytes = stats.time(Stage::Download, || ff.download_pooled()).map_err(fail)?;
@@ -214,6 +312,7 @@ pub fn picture_of(f: DecodedFrame, divisor: u32, threaded: bool, stats: &PlaySta
 pub struct DefaultOpener {
     gpu: Option<Arc<Gpu>>,
     fields: Option<DeinterlaceOf>,
+    software_ffmpeg: bool,
 }
 
 /// The field order a media item's decoder deinterlaces with (`VideoTrackInfo::deinterlace_field_order` of the project's info).
@@ -221,7 +320,14 @@ pub type DeinterlaceOf = Arc<dyn Fn(Id) -> Option<FieldOrder> + Send + Sync>;
 
 impl DefaultOpener {
     pub fn new(gpu: Option<Arc<Gpu>>) -> DefaultOpener {
-        DefaultOpener { gpu, fields: None }
+        DefaultOpener { gpu, fields: None, software_ffmpeg: false }
+    }
+
+    /// Opens FFmpeg decoders in software even where the GPU could decode (the export on a machine with cores to spare: the VA-API
+    /// copy to memory is slower than software decoding). Only decoders of this opener; the default keeps the GPU decoder.
+    pub fn with_software_ffmpeg(mut self, on: bool) -> DefaultOpener {
+        self.software_ffmpeg = on;
+        self
     }
 
     /// Takes the field order from the project (the item's Deinterlace switch) instead of the stream's own flag.
@@ -304,7 +410,7 @@ impl DefaultOpener {
             }
         }
         let decoder = Arc::new(
-            FFmpegVideoDecoder::new(Arc::clone(&demuxer), media, true, DEFAULT_EXTRA_HW_FRAMES)?
+            FFmpegVideoDecoder::new(Arc::clone(&demuxer), media, !self.software_ffmpeg, DEFAULT_EXTRA_HW_FRAMES)?
                 .with_deinterlace(fields)
                 .with_full_range(range.read_full),
         );
@@ -323,6 +429,14 @@ impl DefaultOpener {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn software_decoding_is_an_option_of_one_opener_not_a_global() {
+        let export = DefaultOpener::new(None).with_software_ffmpeg(true);
+        let monitor = DefaultOpener::new(None);
+        assert!(export.software_ffmpeg);
+        assert!(!monitor.software_ffmpeg, "an opener made while an export's exists keeps the GPU decoder");
+    }
+
     use super::*;
 
     /// A proxy asks VideoToolbox for its own layout (a full-range request on video-range codes would rescale them) and reads

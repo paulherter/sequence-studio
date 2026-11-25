@@ -316,7 +316,11 @@ impl ShellHost {
             let id = ProjectTemplate::user_id(&mut *p.shell.ids);
             let template = ProjectTemplate::capturing(tl, &name, p.session.project().style_kit.clone(), &id);
             let Some(folder) = &p.shell.template_folder else {
-                p.shell.present_message("Could not save the template", "The template folder is not available.", Some(Tone::Error));
+                p.shell.present_message(
+                    "Could not save the template",
+                    "The template folder is not available.",
+                    Some(Tone::Error),
+                );
                 return;
             };
             match folder.save(&template) {

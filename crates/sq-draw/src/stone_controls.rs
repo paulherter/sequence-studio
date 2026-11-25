@@ -5,8 +5,7 @@ use crate::canvas::Canvas;
 use crate::draw_list::Color;
 use crate::motion::{self, Ease};
 use crate::stone::{
-    ButtonKind, DISABLED_ALPHA, FieldState, Interaction, Look, Touch, button_look, field_look, hover_level,
-    press_level,
+    ButtonKind, DISABLED_ALPHA, FieldState, Interaction, Look, Touch, button_look, field_look, hover_level, press_level,
 };
 use crate::theme::DrawTheme;
 use sq_uikit::controls_grid::{CGPoint, CGRect};
@@ -69,7 +68,10 @@ pub fn zoom_bar_stone(c: &mut Canvas, bounds: CGRect, inset: f64, xl: f64, xh: f
 /// A knob's hover and press shade: `shade` > 0 lifts away from the page (hover), < 0 darkens (press, ui-gefuehl: darker).
 fn knob_shade(c: Color, shade: f32, t: &DrawTheme) -> Color {
     if shade >= 0.0 {
-        c.mix(if t.palette.is_dark() { Color::WHITE } else { Color::BLACK }, shade * if t.palette.is_dark() { 0.25 } else { 0.06 })
+        c.mix(
+            if t.palette.is_dark() { Color::WHITE } else { Color::BLACK },
+            shade * if t.palette.is_dark() { 0.25 } else { 0.06 },
+        )
     } else {
         c.mix(Color::BLACK, -shade * 0.18)
     }
@@ -126,7 +128,8 @@ impl Canvas<'_> {
     /// The checkbox box (18 pt rounded square, radius `field` = 6): well when off, accent when on with a white check (10 pt).
     pub fn stone_checkbox(&mut self, r: CGRect, on: bool, touch: Touch, t: &DrawTheme) {
         // r8 `.check`: always an 18 px rounded square (r-check 6), centered in the caller's slot.
-        let r = CGRect::new(r.mid_x() - CHECKBOX_SIZE / 2.0, r.mid_y() - CHECKBOX_SIZE / 2.0, CHECKBOX_SIZE, CHECKBOX_SIZE);
+        let r =
+            CGRect::new(r.mid_x() - CHECKBOX_SIZE / 2.0, r.mid_y() - CHECKBOX_SIZE / 2.0, CHECKBOX_SIZE, CHECKBOX_SIZE);
         let radius = f64::from(rd::FIELD);
         if on {
             let on = Look { fill: crate::stone::Fill::Flat(t.token(tk::ACCENT_FILL)), ..Look::NONE };

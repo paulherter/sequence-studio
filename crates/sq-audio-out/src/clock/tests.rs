@@ -450,6 +450,135 @@ fn the_next_play_after_a_stall_returns_to_the_audio_clock() {
     assert!(host.rate().is_paused(), "the host clock no longer runs");
 }
 
+// MARK: slow output (priming budget)
+
+/// Drives a fake output that consumes nothing for `silent_ns`, then 480-frame calls every 10 ms. Returns
+/// (first host ns at which the position left the anchor, largest step between samples, largest backward step,
+/// final position, final host ns). `sample` reads the clock under test.
+fn run_slow_output(
+    audio: &ManualAudio,
+    now: &dyn Fn() -> Time,
+    silent_ns: i64,
+) -> (Option<i64>, Time, Time, Time, i64, Time) {
+    let anchor = now();
+    let mut first = None;
+    let mut last = anchor;
+    let mut max_step = Time::ZERO;
+    let mut max_back = Time::ZERO;
+    let mut min_step_moving = t(1, 1);
+    let mut step = |audio: &ManualAudio, last: &mut Time| {
+        let p = now();
+        if first.is_none() && p > anchor {
+            first = Some(audio.host_nanoseconds());
+        }
+        if first.is_some() && p - *last < min_step_moving {
+            min_step_moving = p - *last;
+        }
+        max_step = max_step.max(p - *last);
+        max_back = max_back.max(*last - p);
+        *last = p;
+    };
+    let frame_ns = 16_666_667;
+    let mut elapsed = 0;
+    while elapsed < silent_ns {
+        audio.advance_time(frame_ns);
+        elapsed += frame_ns;
+        step(audio, &mut last);
+    }
+    for _ in 0..150 {
+        audio.render(480);
+        step(audio, &mut last);
+    }
+    (first, max_step, max_back, last, audio.host_nanoseconds(), min_step_moving)
+}
+
+/// Picture position minus the position being heard (where the last re-seek put the audio, plus what was consumed since
+/// its acknowledgement, minus feeder and output latency): the A/V offset a viewer would see.
+fn av_offset(audio: &ManualAudio, picture: Time, m_frames: i64, out: Time) -> Time {
+    let seek = audio.last_seek().expect("audio was seeked");
+    let heard = seek + frames(audio.consumed_frames() - audio.consumed_at_epoch().1 - m_frames) - out;
+    picture - heard
+}
+
+#[test]
+fn a_silent_output_does_not_hold_the_first_picture_and_audio_catches_up_when_it_wakes() {
+    let (audio, clock) = pair();
+    clock.start(Time::ZERO, PlaybackRate::FORWARD);
+    let c = Arc::clone(&clock);
+    let (first, max_step, max_back, last, end_ns, _) = run_slow_output(&audio, &move || c.now(), 3_000_000_000);
+    let first = first.expect("the picture moved");
+    assert!(first <= 500_000_000, "first moving picture at {first} ns");
+    assert!(max_step <= t(1, 60) + t(1, 1000), "forward jump {max_step:?}");
+    assert!(max_back == Time::ZERO, "backward jump {max_back:?}");
+    let _ = end_ns;
+    let off = av_offset(&audio, last, 0, Time::ZERO);
+    assert!(abs(off) <= t(1, 60), "A/V offset {off:?}");
+    assert!(audio.flushed().generation == 2, "one re-seek of the audio after the free run");
+}
+
+#[test]
+fn a_normal_output_keeps_the_audio_clock_from_the_start() {
+    let (audio, clock) = pair();
+    clock.start(t(10, 1), PlaybackRate::FORWARD);
+    audio.advance_time(30_000_000); // priming well inside the budget
+    for i in 1..=100 {
+        audio.render(480);
+        assert_eq!(clock.now(), t(10, 1) + frames(480 * i));
+    }
+    assert_eq!(audio.flushed().generation, 1, "no re-seek");
+}
+
+#[test]
+fn the_switching_clock_keeps_the_picture_moving_and_the_audio_through_a_three_second_wake_up() {
+    let (audio, audio_clock) = pair();
+    let host = Arc::new(ManualClock::default());
+    let sw = Arc::new(SwitchingClock::new(Arc::clone(&host) as Arc<dyn PlaybackClock>, Some(Arc::clone(&audio_clock))));
+    sw.use_audio(true);
+    sw.start(Time::ZERO, PlaybackRate::FORWARD);
+    let c = Arc::clone(&sw);
+    let (first, max_step, max_back, last, end_ns, _) = run_slow_output(&audio, &move || c.now(), 3_000_000_000);
+    assert!(first.expect("moved") <= 500_000_000);
+    assert!(max_step <= t(1, 60) + t(1, 1000) && max_back == Time::ZERO);
+    assert!(sw.is_audio() && !sw.audio_failed(), "the audio was not given up");
+    let _ = end_ns;
+    let off = av_offset(&audio, last, 0, Time::ZERO);
+    assert!(abs(off) <= t(1, 60), "A/V offset {off:?}");
+}
+
+#[test]
+fn the_picture_never_stands_still_through_the_takeover_with_a_high_latency_output() {
+    // A Bluetooth-like output: 200 ms output latency, 10 ms feeder latency.
+    let (audio, clock) = pair_with(480, t(200, 1000), Time::ZERO, true);
+    clock.start(Time::ZERO, PlaybackRate::FORWARD);
+    let c = Arc::clone(&clock);
+    let (first, max_step, max_back, last, end_ns, min_step) = run_slow_output(&audio, &move || c.now(), 3_000_000_000);
+    assert!(first.expect("moved") <= 500_000_000);
+    assert!(min_step > Time::ZERO, "the picture stood still: smallest step {min_step:?}");
+    assert!(max_step <= t(1, 60) + t(1, 1000), "forward jump {max_step:?}");
+    assert!(max_back == Time::ZERO);
+    let _ = end_ns;
+    let off = av_offset(&audio, last, 480, t(200, 1000));
+    assert!(abs(off) <= t(1, 60), "A/V offset {off:?}");
+}
+
+#[test]
+fn a_pause_or_seek_after_the_wake_up_decision_drops_the_stale_re_seek() {
+    let (audio, clock) = pair();
+    clock.start(Time::ZERO, PlaybackRate::FORWARD);
+    audio.advance_time(400_000_000);
+    let _ = clock.now(); // free run
+    audio.render(480); // device wakes: the decision is taken in this sample
+    let stale = clock.restart_count();
+    // A pause and a new Play at another position overtake the decision.
+    clock.stop();
+    clock.start(t(100, 1), PlaybackRate::FORWARD);
+    let gen_ = audio.flushed().generation;
+    clock.resync(stale);
+    assert_eq!(audio.last_seek(), Some(t(100, 1)), "the stale re-seek went to the old position");
+    assert_eq!(clock.now(), t(100, 1), "the new Play keeps its hold");
+    let _ = gen_;
+}
+
 // MARK: StampSmoother
 
 /// The Windows pattern from g6: callbacks nominally every 10 ms arrive 8/12 ms apart, with a 12 ms spike now and then.

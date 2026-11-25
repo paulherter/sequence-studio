@@ -33,7 +33,8 @@ need curl
 [ "$(uname -m)" = "x86_64" ] || die "the Linux build is for x86_64 only (this machine is $(uname -m))"
 
 work="$(mktemp -d "${TMPDIR:-/tmp}/sq-install.XXXXXX")"
-trap 'rm -rf "$work"' EXIT INT TERM
+# Inline guard instead of scripts/lib-safe-delete.sh: this file is run alone through curl.
+trap 'case "$work" in /?*/sq-install.??????) rm -rf -- "$work" ;; esac' EXIT INT TERM  # unsafe-delete-ok: inline guard, this file runs alone
 
 apps="$HOME/Applications"
 data="${XDG_DATA_HOME:-$HOME/.local/share}"

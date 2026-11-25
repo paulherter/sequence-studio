@@ -5,4 +5,4 @@ reads `cfg(target_os)` for this; every property (command key name, folders, file
 is a pure method on the value, so a test can ask all three systems on any host. Folder methods take the environment as a
 closure and never touch the real one.
 
-Layer 0: no dependencies except `workspace-hack`.
+Layer 0: no workspace dependencies (`thread.rs` calls libc / windows-sys, the crate is on the unsafe allow-list).

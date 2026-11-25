@@ -160,8 +160,9 @@ mod tests {
         };
         let first = queue.enqueue(job(1));
         run_queue(Arc::clone(&queue));
+        // Running is set before the encoder logs its start; wait for the log line the assertion below counts.
         wait_until("the first export to run", || {
-            queue.status(first).is_some_and(|s| s.state == ExportJobState::Running)
+            queue.status(first).is_some_and(|s| s.state == ExportJobState::Running) && log.lock().unwrap().len() == 1
         });
         let second = queue.enqueue(job(2));
         run_queue(Arc::clone(&queue));

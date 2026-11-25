@@ -32,13 +32,20 @@ fn main() {
     {
         return;
     }
-    let ico = "../../packaging/windows/SequenceStudio.ico";
+    // The Nightly channel (SQ_CHANNEL, set by `cargo xtask package --channel nightly`) carries the blue icon.
+    println!("cargo::rerun-if-env-changed=SQ_CHANNEL");
+    let nightly = std::env::var("SQ_CHANNEL").as_deref() == Ok("nightly");
+    let ico = if nightly {
+        "../../packaging/windows/SequenceStudio-Nightly.ico"
+    } else {
+        "../../packaging/windows/SequenceStudio.ico"
+    };
     println!("cargo::rerun-if-changed={ico}");
     let version = std::env::var("CARGO_PKG_VERSION").unwrap_or_else(|_| "0.0.0".into());
     let mut res = winresource::WindowsResource::new();
     res.set_icon(ico);
     res.set_manifest(MANIFEST);
-    res.set("ProductName", "Sequence Studio");
+    res.set("ProductName", if nightly { "Sequence Studio Nightly" } else { "Sequence Studio" });
     res.set("FileDescription", "Sequence Studio Setup");
     res.set("InternalName", "SequenceStudioSetup");
     res.set("OriginalFilename", "SequenceStudio-Setup.exe");

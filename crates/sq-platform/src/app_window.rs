@@ -11,7 +11,7 @@ pub fn with_app_id(attrs: WindowAttributes) -> WindowAttributes {
     {
         use winit::platform::wayland::WindowAttributesExtWayland;
         use winit::platform::x11::WindowAttributesExtX11;
-        let id = crate::desktop_integration::APP_ID;
+        let id = crate::desktop_integration::app_id();
         // One name for both display servers: winit applies the one of the server the window ends up on.
         let attrs = WindowAttributesExtWayland::with_name(attrs, id, id);
         WindowAttributesExtX11::with_name(attrs, id, id)
@@ -29,8 +29,8 @@ mod tests {
     fn named(attrs: &WindowAttributes) -> bool {
         let want = format!(
             "general: {:?}, instance: {:?}",
-            crate::desktop_integration::APP_ID,
-            crate::desktop_integration::APP_ID
+            crate::desktop_integration::app_id(),
+            crate::desktop_integration::app_id()
         );
         format!("{attrs:?}").contains(&want)
     }

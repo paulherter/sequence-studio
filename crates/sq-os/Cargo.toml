@@ -10,5 +10,20 @@ publish.workspace = true
 [dependencies]
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
-[lints]
-workspace = true
+[target.'cfg(unix)'.dependencies]
+libc.workspace = true
+
+[target.'cfg(windows)'.dependencies]
+windows-sys.workspace = true
+
+# Workspace lints repeated: this crate is on the unsafe allow-list (thread QoS / priority and thread CPU time, `thread.rs`).
+[lints.rust]
+unsafe_code = "allow"
+
+[lints.clippy]
+unwrap_used = "deny"
+expect_used = "deny"
+clone_on_ref_ptr = "deny"
+dbg_macro = "deny"
+todo = "deny"
+unimplemented = "deny"

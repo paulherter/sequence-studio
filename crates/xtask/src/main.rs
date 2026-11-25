@@ -10,6 +10,7 @@ mod onnxruntime;
 mod package;
 mod package_linux;
 mod shaders;
+mod sign_update;
 mod stage;
 
 use std::path::Path;
@@ -31,9 +32,12 @@ fn main() -> ExitCode {
         Some("driver") => driver::run(rest(1)),
         Some("shaders") => shaders::run(rest(1)),
         Some("notices") => notices::run(rest(1)),
+        Some("fetch-onnxruntime") => onnxruntime::run_fetch(rest(1)),
         Some("package") => package::run_package(rest(1)),
+        Some("sign-update") => sign_update::run_sign(rest(1)),
+        Some("update-keygen") => sign_update::run_keygen(),
         _ => {
-            Err("usage: cargo xtask <check [crate] | gate <crate> | hook <name> | driver <cmd> | shaders [--spirv] | notices [--check] | package [--sign] [--notarize] [--dmg]>"
+            Err("usage: cargo xtask <check [crate] | gate <crate> | hook <name> | driver <cmd> | shaders [--spirv] | notices [--check] | package [--sign] [--notarize] [--dmg] | sign-update <file>... | update-keygen>"
                 .into())
         }
     };

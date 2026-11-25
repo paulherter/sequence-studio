@@ -364,6 +364,8 @@ impl Builder<'_> {
             | ShellAction::ClearRecents
             | ShellAction::About
             | ShellAction::Quit
+            | ShellAction::CheckForUpdates
+            | ShellAction::WelcomeTour
             | ShellAction::Support(_)
             | ShellAction::SendFeedback
             | ShellAction::ReportIssue

@@ -116,3 +116,42 @@ fn a_play_at_another_rate_while_playing_moves_the_clock_at_that_rate() {
         assert_eq!(rig.handle.status().rate, Some(want), "the engine reports {n}x");
     }
 }
+
+#[test]
+fn pictures_arriving_while_playing_compose_once_per_loop_pass() {
+    let clock = Arc::new(ManualClock::default());
+    let rig = rig(&clock);
+    playing(&rig, &clock, Time::ZERO);
+    let (arrivals, composes, pending_composes) = rig
+        .handle
+        .query(|e| {
+            let before = e.compose_calls();
+            for _ in 0..5 {
+                e.compose_for_arrival();
+            }
+            let during = e.compose_calls() - before;
+            e.compose_after_tick();
+            (5, during, e.compose_calls() - before)
+        })
+        .expect("query");
+    assert_eq!(arrivals, 5);
+    assert_eq!(composes, 0, "an arrival while playing only marks the frame");
+    assert_eq!(pending_composes, 1, "the loop pass composes once for all of them");
+}
+
+#[test]
+fn a_picture_arriving_while_paused_composes_at_once() {
+    let clock = Arc::new(ManualClock::default());
+    let rig = rig(&clock);
+    rig.handle.seek(Time::seconds(1));
+    rig.wait("the seek's frame", |e| e.is_frame_settled());
+    let delta = rig
+        .handle
+        .query(|e| {
+            let before = e.compose_calls();
+            e.compose_for_arrival();
+            e.compose_calls() - before
+        })
+        .expect("query");
+    assert_eq!(delta, 1);
+}

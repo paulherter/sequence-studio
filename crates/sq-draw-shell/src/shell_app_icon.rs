@@ -222,10 +222,10 @@ mod tests {
         let mut c = Canvas::with_size(100.0, 40.0, None, 2.0);
         ShellAppIcon::draw_ink_flush(CGRect::new(12.0, 10.0, 18.0, 18.0), &mut c);
         // Ink is a pixel at half opacity or more, as `ink_margin_px` counts it: a fainter anti-aliased fringe left of it is not ink.
-        let first = c.list.quads().iter().filter(|q| q.color.a >= 0.5).map(|q| f64::from(q.rect.x)).fold(f64::MAX, f64::min);
+        let first =
+            c.list.quads().iter().filter(|q| q.color.a >= 0.5).map(|q| f64::from(q.rect.x)).fold(f64::MAX, f64::min);
         assert!((first - 24.0).abs() < 0.01, "first ink at {first} device px (rect edge 12 pt at 2x)");
     }
-
 
     #[test]
     fn the_scaled_icon_is_clean_at_one_and_two_times() {

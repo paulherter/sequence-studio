@@ -6,6 +6,7 @@
 //! primitive. Entry names are the Slang names (`colorChain`, `compositeVertex`).
 
 mod passthrough;
+pub(crate) mod warm;
 
 use crate::gpu::{Gpu, GpuError, lock};
 use crate::layout::{LayoutKind, PixelFormat};
@@ -126,7 +127,33 @@ fn blend_state(blend: Blend) -> Option<wgpu::BlendState> {
     }
 }
 
+/// Held while one thread compiles a pipeline; dropping it wakes the threads waiting for that pipeline.
+pub(crate) struct BuildClaim<'a> {
+    gpu: &'a Gpu,
+    id: String,
+}
+
+impl Drop for BuildClaim<'_> {
+    fn drop(&mut self) {
+        lock(&self.gpu.building.0).remove(&self.id);
+        self.gpu.building.1.notify_all();
+    }
+}
+
 impl Gpu {
+    /// `Some` when nobody else builds `id` (the caller builds it); otherwise waits until the other build ends and gives `None`
+    /// (the caller looks in the cache again).
+    fn claim_build(&self, id: String) -> Option<BuildClaim<'_>> {
+        let mut set = lock(&self.building.0);
+        if set.insert(id.clone()) {
+            return Some(BuildClaim { gpu: self, id });
+        }
+        while set.contains(&id) {
+            set = self.building.1.wait(set).unwrap_or_else(|e| e.into_inner());
+        }
+        None
+    }
+
     /// The compute pipeline of `module.entry` writing `out0` of `out` (use `Rgba16Float` when the pass writes no texture).
     pub fn compute_pipeline(
         &self,
@@ -134,8 +161,19 @@ impl Gpu {
         entry: &'static str,
         out: PixelFormat,
     ) -> Result<Arc<ComputePipeline>, GpuError> {
-        let mut cache = lock(&self.compute);
-        if let Some(p) = cache.get(&(module, entry, out)) {
+        // The lock is held only for lookup and insert, never across the compile: the start-up warm-up thread and the render
+        // thread build different pipelines at the same time.
+        let id = format!("c {module}.{entry} {out:?}");
+        let _claim = loop {
+            if let Some(p) = lock(&self.compute).get(&(module, entry, out)) {
+                return Ok(Arc::clone(p));
+            }
+            // One build per pipeline: a thread that needs what the warm-up is compiling waits for it instead of compiling twice.
+            if let Some(claim) = self.claim_build(id.clone()) {
+                break claim;
+            }
+        };
+        if let Some(p) = lock(&self.compute).get(&(module, entry, out)) {
             return Ok(Arc::clone(p));
         }
         let shader =
@@ -144,6 +182,7 @@ impl Gpu {
             return Err(GpuError::Pipeline(format!("{out:?} cannot be a storage texture")));
         }
         let kind = if shader.out_read { LayoutKind::ComputeInPlace } else { LayoutKind::Compute };
+        let _create = sq_os::trace::span_args("gpu", "pipeline create", || format!("compute {module}.{entry}"));
         let layout = self.layout(kind, out);
         let module_handle = self.shader_module(shader)?;
         let raw = self.scoped(|| {
@@ -153,18 +192,25 @@ impl Gpu {
                 module: &module_handle,
                 entry_point: Some(entry),
                 compilation_options: Default::default(),
-                cache: None,
+                cache: self.pipeline_cache.as_ref().map(|(c, _)| c),
             })
         })?;
         let pipeline = Arc::new(ComputePipeline { raw, layout, out_format: out, label: format!("{module}.{entry}") });
-        cache.insert((module, entry, out), Arc::clone(&pipeline));
-        Ok(pipeline)
+        Ok(Arc::clone(lock(&self.compute).entry((module, entry, out)).or_insert(pipeline)))
     }
 
     /// The draw pipeline for `key`.
     pub fn render_pipeline(&self, key: RenderKey) -> Result<Arc<RenderPipeline>, GpuError> {
-        let mut cache = lock(&self.render);
-        if let Some(p) = cache.get(&key) {
+        let id = format!("r {key:?}");
+        let _claim = loop {
+            if let Some(p) = lock(&self.render).get(&key) {
+                return Ok(Arc::clone(p));
+            }
+            if let Some(claim) = self.claim_build(id.clone()) {
+                break claim;
+            }
+        };
+        if let Some(p) = lock(&self.render).get(&key) {
             return Ok(Arc::clone(p));
         }
         let vertex = find(key.module, key.vertex)
@@ -177,6 +223,8 @@ impl Gpu {
             return Err(GpuError::Pipeline(format!("{:?} cannot be a render target", key.format)));
         }
         let kind = if key.module == "DrawQuads" { LayoutKind::DrawQuads } else { LayoutKind::Render };
+        let _create =
+            sq_os::trace::span_args("gpu", "pipeline create", || format!("render {}.{}", key.module, key.fragment));
         let layout = self.layout(kind, PixelFormat::Rgba16Float);
         let (vertex_module, fragment_module) = (self.shader_module(vertex)?, self.shader_module(fragment)?);
         let topology = match key.primitive {
@@ -207,12 +255,11 @@ impl Gpu {
                     })],
                 }),
                 multiview_mask: None,
-                cache: None,
+                cache: self.pipeline_cache.as_ref().map(|(c, _)| c),
             })
         })?;
         let pipeline = Arc::new(RenderPipeline { raw, layout, label: format!("{}.{}", key.module, key.fragment) });
-        cache.insert(key, Arc::clone(&pipeline));
-        Ok(pipeline)
+        Ok(Arc::clone(lock(&self.render).entry(key).or_insert(pipeline)))
     }
 }
 

@@ -65,6 +65,7 @@ impl FfmpegProbe {
     }
 
     pub(crate) fn media_info(path: &Path) -> Result<MediaInfo, ImportError> {
+        let _span = sq_os::trace::span_args("open", "media probe", || format!("file={}", path.display()));
         if still_image::is_still(path) {
             return Self::still_info(path);
         }

@@ -303,7 +303,12 @@ impl ShellShortcutsEditor {
             let title = rect(p.x0 + 2.0, y, p.width, 16.0);
             let link = s.link.then(|| {
                 let tw = Self::text_width(m, &s.title, M::F_SMALL);
-                rect(p.x0 + 2.0 + tw + 8.0, y, Self::text_width(m, &format!("· show all {}", self.rows.len()), M::F_SMALL) + 4.0, 16.0)
+                rect(
+                    p.x0 + 2.0 + tw + 8.0,
+                    y,
+                    Self::text_width(m, &format!("· show all {}", self.rows.len()), M::F_SMALL) + 4.0,
+                    16.0,
+                )
             });
             let card_y = y + 24.0;
             let mut rows = Vec::new();

@@ -7,10 +7,16 @@ pub(crate) static ICON_SVGS: &[(&str, &str)] = &[
     ("lucide-align-center-vertical", include_str!("../resources/Icons/lucide-align-center-vertical.svg")),
     ("lucide-align-end-horizontal", include_str!("../resources/Icons/lucide-align-end-horizontal.svg")),
     ("lucide-align-end-vertical", include_str!("../resources/Icons/lucide-align-end-vertical.svg")),
-    ("lucide-align-horizontal-distribute-center", include_str!("../resources/Icons/lucide-align-horizontal-distribute-center.svg")),
+    (
+        "lucide-align-horizontal-distribute-center",
+        include_str!("../resources/Icons/lucide-align-horizontal-distribute-center.svg"),
+    ),
     ("lucide-align-start-horizontal", include_str!("../resources/Icons/lucide-align-start-horizontal.svg")),
     ("lucide-align-start-vertical", include_str!("../resources/Icons/lucide-align-start-vertical.svg")),
-    ("lucide-align-vertical-distribute-center", include_str!("../resources/Icons/lucide-align-vertical-distribute-center.svg")),
+    (
+        "lucide-align-vertical-distribute-center",
+        include_str!("../resources/Icons/lucide-align-vertical-distribute-center.svg"),
+    ),
     ("lucide-angle", include_str!("../resources/Icons/lucide-angle.svg")),
     ("lucide-aperture", include_str!("../resources/Icons/lucide-aperture.svg")),
     ("lucide-archive", include_str!("../resources/Icons/lucide-archive.svg")),

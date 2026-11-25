@@ -191,7 +191,11 @@ impl TitleRow {
             // Text plus a chevron, no well; the control fill shows only under the pointer (r8:493-495).
             let hot = touch.hovering || touch.pressed;
             if hot {
-                c.fill_rounded(r, f64::from(sq_uikit::redesign_tokens::radius::CONTROL), t.token(sq_uikit::redesign_tokens::color::WELL));
+                c.fill_rounded(
+                    r,
+                    f64::from(sq_uikit::redesign_tokens::radius::CONTROL),
+                    t.token(sq_uikit::redesign_tokens::color::WELL),
+                );
             }
             let icon = CGPoint::new(r.min_x() + 8.0, (r.mid_y() - ICON / 2.0).round());
             c.draw_icon(WORKSPACE_ICON, icon, ICON, t.label3(), None);
@@ -210,7 +214,8 @@ impl TitleRow {
             let mut touch = self.touch(TitlePart::Export);
             touch.disabled = self.export_locked;
             let r = c.stone_button(r, ButtonKind::Accent, touch, t);
-            let white = if self.export_locked { t.accent_button_text().with_alpha(0.4) } else { t.accent_button_text() };
+            let white =
+                if self.export_locked { t.accent_button_text().with_alpha(0.4) } else { t.accent_button_text() };
             let icon = CGPoint::new(r.min_x() + 11.0, (r.mid_y() - ICON / 2.0).round());
             c.draw_icon(EXPORT_ICON, icon, ICON, white, None);
             let label = CGRect::new(icon.x + ICON + ICON_GAP, r.min_y(), r.width, r.height);
@@ -299,7 +304,11 @@ impl TitleRow {
             }
             Mouse::Up => {
                 let Some(pressed) = self.pressed.take() else { return (false, None) };
-                (true, (pressed == TitlePart::Export && part == Some(pressed) && !self.export_locked).then_some(TitleAction::Export))
+                (
+                    true,
+                    (pressed == TitlePart::Export && part == Some(pressed) && !self.export_locked)
+                        .then_some(TitleAction::Export),
+                )
             }
         }
     }

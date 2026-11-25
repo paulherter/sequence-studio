@@ -87,6 +87,7 @@ preview is meant only for very weak machines. The app collects no telemetry.
 | SQ-050 | 1 | Community | A Discord channel for pre-release builds carries a pinned list of known problems, and every bug report gets a first answer within seven days. | not started |
 | SQ-200 | 1 | Color | The Program and Source viewers set the area around the picture apart from black video (a gray or checkerboard backdrop, switchable), so the frame edge is always visible. | not started |
 | SQ-201 | 1 | Platform | On Linux the main window keeps its rounded corners at small window sizes. | not started |
+| SQ-202 | 1 | Platform | On Linux (KDE Plasma) the installer and update window shows no gray veil outside its rounded corners. | not started |
 | SQ-051 | 1 | Playback | Heavy clips get a proxy automatically. | done |
 | SQ-052 | 1 | Export | Hardware encoding works on Mac, Windows and Linux (VideoToolbox, NVENC, AMF, QSV, VAAPI), with an honest warning when 10-bit is missing. | done |
 | SQ-053 | 1 | Reliability | The 22 commands that did nothing are now wired up; a Mac export crash, the Linux file dialog and an EQ error are fixed. | done |

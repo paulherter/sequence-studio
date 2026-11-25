@@ -88,6 +88,14 @@ pub enum ShellEvent {
     PresetsChanged,
     /// `openURL`: open a link in the browser or mail client.
     OpenUrl(String),
+    /// A verified update goes in place of the running app (the platform's `apply_update`); with `restart` the new
+    /// version starts and this one quits.
+    ApplyUpdate {
+        /// The staged installer with what is needed to check it once more.
+        update: sq_editor_session::PendingUpdate,
+        /// Start the new version afterwards.
+        restart: bool,
+    },
     /// Linux AppImage: Settings > General added the app to the menu or removed it; the host does the file work and
     /// answers with `ShellFlow::AppMenuDone`.
     AppMenu(AppMenuRequest),
@@ -447,6 +455,13 @@ pub struct ShellHost {
     pub log_directory: Option<PathBuf>,
     /// The address of Help > Check for Updates (`UpdateCheck::feed_url`); empty switches the check off.
     pub update_feed: String,
+    /// Whether this system installs an update in place (the platform's `apply_update` is wired); else the Download
+    /// button opens the link.
+    pub update_install: bool,
+    /// Where downloaded installers are staged; `None` switches the in-app download off.
+    pub update_cache: Option<PathBuf>,
+    /// A downloaded, verified update chosen with "Later": applied when the app quits, after a second check.
+    pub pending_update: Option<sq_editor_session::PendingUpdate>,
     pub(crate) full_screen_started: f64,
     pub(crate) shuttle_router: KeyRouter,
     /// When the shuttle router wants its `tick` (Swift's `shuttleDeadline` task).
@@ -592,6 +607,9 @@ impl ShellHost {
             os_version: String::new(),
             log_directory: None,
             update_feed: String::new(),
+            update_install: false,
+            update_cache: None,
+            pending_update: None,
             shuttle_wake: None,
             settings: Rc::clone(&settings),
             audio_role_defaults: AudioRoleDefaults::standard(),
@@ -1220,6 +1238,7 @@ impl ShellHost {
             // The flow that asked reads the typed values from the form after the answer (Swift read `d.form`).
             self.answered_form = self.dialog.take().and_then(|d| d.form);
             self.layout_dirty = true;
+            self.request_frame();
         }
     }
 
@@ -1244,6 +1263,8 @@ impl ShellHost {
         }
         self.dialog = Some(d);
         self.layout_dirty = true;
+        // A task presents it (the update offer after a feed answer): no input event follows to draw it.
+        self.request_frame();
         ask
     }
 

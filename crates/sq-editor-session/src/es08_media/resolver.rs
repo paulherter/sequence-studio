@@ -169,7 +169,23 @@ impl ProjectMediaResolver {
     }
 
     fn with<R>(&self, f: impl FnOnce(&mut State) -> R) -> R {
-        f(&mut lock(&self.state))
+        use sq_playback::engine::frame_trace::{Sub, sub_add, sub_add_duration, sub_start, trace_on};
+        if !trace_on() {
+            return f(&mut lock(&self.state));
+        }
+        // The layers phase of a composite books how long it waited for this mutex; any other thread books how long it held
+        // it, to name who blocks the render thread.
+        let waiting = sub_start();
+        let mut guard = lock(&self.state);
+        sub_add(Sub::MediaLock, waiting);
+        if waiting.is_some() {
+            return f(&mut guard);
+        }
+        let held = std::time::Instant::now();
+        let out = f(&mut guard);
+        drop(guard);
+        sub_add_duration(Sub::MediaHeldElsewhere, held.elapsed());
+        out
     }
 
     /// Per-layer color pipelines for playback and export (the render crate's `LayerColorResolver`, held type-erased

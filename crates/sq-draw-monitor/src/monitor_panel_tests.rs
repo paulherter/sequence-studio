@@ -869,5 +869,42 @@ fn opening_hides_the_picture_under_the_loader() {
     p.has_picture = true;
     p.model.opening = Some("T2".to_string());
     let c = draw(&mut p);
-    assert!(!c.list.quads().iter().any(|q| q.kind == sq_draw::draw_list::QuadKind::Video), "no picture while the project opens");
+    assert!(
+        !c.list.quads().iter().any(|q| q.kind == sq_draw::draw_list::QuadKind::Video),
+        "no picture while the project opens"
+    );
+}
+
+fn counts(run: u64, shown: u64, skipped: u64, late: u64, clock_running: bool) -> sq_editor_session::PlayCounts {
+    sq_editor_session::PlayCounts { shown, skipped, late, run, clock_running }
+}
+
+#[test]
+fn skipped_and_late_positions_light_the_dot_for_two_seconds_whatever_the_quality() {
+    let mut m = panel(MonitorMode::Program).model;
+    m.set_quality(sq_editor_session::MonitorQuality::Full);
+    m.update_play_counts(counts(1, 10, 0, 0, true), true, 0.0);
+    assert!(!m.drop_amber());
+    // Two stand-in pictures and one skipped position.
+    m.update_play_counts(counts(1, 20, 1, 2, true), true, 1.0);
+    assert!(m.drop_amber());
+    assert_eq!(m.drop_badge_text(), Some("3 dropped"));
+    assert_eq!(m.drop_tooltip(), "Last play: 3 dropped frames");
+    m.update_play_counts(counts(1, 60, 1, 2, true), true, 3.1);
+    assert!(!m.drop_amber());
+}
+
+#[test]
+fn the_pre_roll_and_a_new_run_do_not_double_count() {
+    let mut m = panel(MonitorMode::Program).model;
+    m.set_quality(sq_editor_session::MonitorQuality::Full);
+    // Waiting for the first picture counts skipped positions: not a drop.
+    m.update_play_counts(counts(1, 0, 30, 0, false), true, 0.0);
+    assert!(!m.drop_amber());
+    m.update_play_counts(counts(1, 5, 0, 0, true), true, 0.5);
+    assert!(!m.drop_amber());
+    m.update_play_counts(counts(1, 9, 2, 0, true), true, 1.0);
+    // A loop wrap restarts the counters; the two drops stay and the new run adds its own.
+    m.update_play_counts(counts(2, 3, 1, 0, true), true, 1.5);
+    assert_eq!(m.drop_badge_text(), Some("3 dropped"));
 }

@@ -391,7 +391,13 @@ impl<'a> Canvas<'a> {
 
     /// A name cut to `max_width` Finder-style (start and extension stay) with the full text as its tooltip when cut
     /// ([`crate::middle_fit::truncate_name`]). Draw `.shown`, offer `.tip()` through `Hover::offer_truncated`.
-    pub fn truncated_name(&self, name: &str, size: f64, face: usize, max_width: f64) -> crate::middle_fit::TruncatedLabel {
+    pub fn truncated_name(
+        &self,
+        name: &str,
+        size: f64,
+        face: usize,
+        max_width: f64,
+    ) -> crate::middle_fit::TruncatedLabel {
         crate::middle_fit::truncate_name(name, |t| self.size_of(t, size, face).width <= max_width)
     }
 

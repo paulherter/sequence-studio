@@ -17,8 +17,8 @@ use crate::ui_cx::DrawCursor;
 use crate::ui_cx::UiCx;
 use sq_core_model::trim_spaces;
 use sq_uikit::controls_grid::CGRect;
-use sq_uikit::tokens::{radius as rd, type_size};
 use sq_uikit::scrub_math::{ScrubMath, StepBurst, WheelAccumulator};
+use sq_uikit::tokens::{radius as rd, type_size};
 use std::ops::RangeInclusive;
 
 /// What a scrub field asks its owner to do.
@@ -574,7 +574,13 @@ impl ScrubFieldControl {
     /// wide (kept free when the field has a unit, so the numbers of a column line up).
     /// The unit column is at least `UNIT_COLUMN` and grows to the measured unit ("px" is wider than 13 pt): a unit rect
     /// narrower than its text made the draw cut it to "…" ("0 px" showed "0…").
-    pub fn place_flat(c: &mut Canvas, boxed: CGRect, value: &str, unit: &str, leading: bool) -> (CGRect, Option<CGRect>) {
+    pub fn place_flat(
+        c: &mut Canvas,
+        boxed: CGRect,
+        value: &str,
+        unit: &str,
+        leading: bool,
+    ) -> (CGRect, Option<CGRect>) {
         let size = type_size::BODY as f64;
         let has_unit = !unit.is_empty();
         let vw = c.size_of(value, size, 0).width.ceil();
@@ -591,7 +597,9 @@ impl ScrubFieldControl {
         let right = boxed.max_x() - pad - column;
         let x0 = if leading { boxed.min_x() + pad } else { (right - vw).max(boxed.min_x() + pad) };
         let line = CGRect::new(x0, boxed.min_y(), vw, boxed.height);
-        let unit = has_unit.then(|| CGRect::new((right + Self::UNIT_GAP).max(x0 + vw + Self::UNIT_GAP), boxed.min_y(), unit_w, boxed.height));
+        let unit = has_unit.then(|| {
+            CGRect::new((right + Self::UNIT_GAP).max(x0 + vw + Self::UNIT_GAP), boxed.min_y(), unit_w, boxed.height)
+        });
         (line, unit)
     }
 
@@ -690,8 +698,18 @@ mod tests {
         let atlas = crate::GlyphAtlas::inter(&root).expect("bundled Inter loads");
         let mut c = Canvas::with_size(200.0, 40.0, Some(&atlas), 1.0);
         let size = type_size::BODY as f64;
-        let boxed = ScrubFieldControl::box_in(CGRect::new(10.0, 4.0, sq_uikit::controls_grid::tokens::VALUE_WIDTH, 24.0));
-        for (v, u) in [("0", "px"), ("100", "%"), ("-180", "\u{b0}"), ("0.0", "s"), ("-12", "dB"), ("24", "f"), ("-100", "px"), ("360", "\u{b0}")] {
+        let boxed =
+            ScrubFieldControl::box_in(CGRect::new(10.0, 4.0, sq_uikit::controls_grid::tokens::VALUE_WIDTH, 24.0));
+        for (v, u) in [
+            ("0", "px"),
+            ("100", "%"),
+            ("-180", "\u{b0}"),
+            ("0.0", "s"),
+            ("-12", "dB"),
+            ("24", "f"),
+            ("-100", "px"),
+            ("360", "\u{b0}"),
+        ] {
             let (line, unit) = ScrubFieldControl::place_flat(&mut c, boxed, v, u, false);
             let unit = unit.expect("unit rect");
             assert!(c.size_of(v, size, 0).width <= line.width, "{v}: value rect cuts the text");
@@ -725,11 +743,24 @@ mod tests {
             .join("../../Packages/SQText/Sources/SQText/Resources/Fonts");
         let atlas = crate::GlyphAtlas::inter(&root).expect("bundled Inter loads");
         let mut c = Canvas::with_size(200.0, 40.0, Some(&atlas), 1.0);
-        let boxed = ScrubFieldControl::box_in(CGRect::new(10.0, 4.0, sq_uikit::controls_grid::tokens::VALUE_WIDTH, 24.0));
-        for (v, u) in [("100.0", "%"), ("38.0", "%"), ("-100.0", "px"), ("0", "px"), ("-180.0", "\u{b0}"), ("-12.0", "dB"), ("100.0", "dB")] {
+        let boxed =
+            ScrubFieldControl::box_in(CGRect::new(10.0, 4.0, sq_uikit::controls_grid::tokens::VALUE_WIDTH, 24.0));
+        for (v, u) in [
+            ("100.0", "%"),
+            ("38.0", "%"),
+            ("-100.0", "px"),
+            ("0", "px"),
+            ("-180.0", "\u{b0}"),
+            ("-12.0", "dB"),
+            ("100.0", "dB"),
+        ] {
             let (line, unit) = ScrubFieldControl::place_flat(&mut c, boxed, v, u, false);
             let unit = unit.expect("unit rect");
-            assert!(unit.min_x() - line.max_x() >= ScrubFieldControl::UNIT_GAP, "{v} {u}: gap {}", unit.min_x() - line.max_x());
+            assert!(
+                unit.min_x() - line.max_x() >= ScrubFieldControl::UNIT_GAP,
+                "{v} {u}: gap {}",
+                unit.min_x() - line.max_x()
+            );
         }
     }
 

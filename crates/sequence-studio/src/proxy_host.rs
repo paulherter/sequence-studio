@@ -5,7 +5,7 @@
 
 use crate::proxy::{FfmpegProxyTranscoder, wall_clock};
 use sq_core_model::{MediaRef, Timeline};
-use sq_core_time::Id;
+use sq_core_time::{Id, Time};
 use sq_editor_session::es08_media::{
     AutoProxyDeps, AutoProxyService, DiskSpace, ProjectMediaResolver, ProxyDecisionWork, ProxyOutcome, ResolverDeps,
 };
@@ -98,6 +98,12 @@ impl ProxyHost {
     ) -> ProxyHost {
         let disk: Arc<dyn Fn(&Path) -> DiskSpace + Send + Sync> = Arc::new(|dir| {
             let (free, total) = sq_platform::volume_bytes(dir);
+            // Test switch: SQ_TEST_DISK_FREE_GB pretends the volume has that much free (shows the low-space notice).
+            let free = std::env::var("SQ_TEST_DISK_FREE_GB")
+                .ok()
+                .and_then(|v| v.parse::<i64>().ok())
+                .map(|g| g << 30)
+                .or(free);
             DiskSpace { free, total }
         });
         ProxyHost::with_cache_and_disk(directory, defaults, machine, wake, disk)
@@ -148,6 +154,7 @@ impl ProxyHost {
         for work in self.service.take_decision_work() {
             let (tx, resolver, wake) = (self.tx.clone(), Arc::clone(&self.resolver), Arc::clone(&self.wake));
             let _ = std::thread::Builder::new().name("sq-proxy-decide".into()).spawn(move || {
+                sq_os::thread::set_current_thread_role(sq_os::thread::Role::Background);
                 // Opening the original reads its frame table and starts a decoder (the rule needs both).
                 let outcome = guarded_outcome(|| {
                     let _ = resolver.demuxer(work.media);
@@ -159,8 +166,10 @@ impl ProxyHost {
         }
         for job in self.service.take_started_jobs() {
             let (tx, wake) = (self.tx.clone(), Arc::clone(&self.wake));
-            let _ =
-                std::thread::Builder::new().name("sq-proxy-transcode".into()).spawn(move || run_job(&job, &tx, &wake));
+            let _ = std::thread::Builder::new().name("sq-proxy-transcode".into()).spawn(move || {
+                sq_os::thread::set_current_thread_role(sq_os::thread::Role::Background);
+                run_job(&job, &tx, &wake)
+            });
         }
     }
 
@@ -185,6 +194,7 @@ fn guarded_job(f: impl FnOnce() -> Result<ProxyRecord, JobError>) -> Result<Prox
 }
 
 fn run_job(job: &StartedJob, tx: &Sender<Done>, wake: &Arc<dyn Fn() + Send + Sync>) {
+    let _span = sq_os::trace::span("proxy", "proxy job");
     let mut last = -1.0;
     let mut progress = |p: f64| {
         // About every 2 %: the UI redraws on each message.
@@ -208,6 +218,11 @@ impl SessionProxyServing for ProxyHost {
         self.resolver.update(media, None);
         self.service.sync(media, project_id, active_timeline);
         self.dispatch();
+    }
+
+    fn set_playhead(&mut self, playhead: Time) {
+        self.service.set_playhead(playhead);
+        self.dispatch(); // a dropped far job is decided again
     }
 
     fn take_effects(&mut self) -> Vec<ProxyEffect> {
@@ -249,6 +264,10 @@ impl SessionProxyServing for ProxyHost {
                 }
             })
             .collect()
+    }
+
+    fn take_disk_notice(&mut self) -> Option<String> {
+        self.service.take_disk_notice()
     }
 
     fn cancel_job(&mut self, id: &str) {

@@ -170,7 +170,17 @@ impl ShellAboutContent {
                 y += m::ICON + 10.0;
                 lines(&mut out, &mut y, "Sequence Studio", m::DISPLAY, w, Tone::Label, true, true, None);
                 y += 2.0;
-                lines(&mut out, &mut y, &sq_editor_session::ReleaseChannel::about_line(), m::BODY, w, Tone::Label3, false, true, None);
+                lines(
+                    &mut out,
+                    &mut y,
+                    &sq_editor_session::ReleaseChannel::about_line(),
+                    m::BODY,
+                    w,
+                    Tone::Label3,
+                    false,
+                    true,
+                    None,
+                );
                 y += m::MD;
                 lines(
                     &mut out,

@@ -176,19 +176,117 @@ impl AutoProxyRule {
     }
 }
 
-/// Background proxies never fill the disk: after the estimated proxy the volume keeps max(15 GB, 10 % of its size, at
-/// most 30 GB) free. Unknown sizes allow the job.
+/// Background proxies never fill the disk: after the estimated proxies still to make the volume keeps max(5 GB, 2 % of
+/// its size) free. A proxy that fits is made, the rest waits. Unknown sizes allow the job.
 pub struct ProxyDiskGuard;
 
 impl ProxyDiskGuard {
     /// The smallest reserve.
-    pub const FLOOR_BYTES: i64 = 15 << 30;
+    pub const FLOOR_BYTES: i64 = 5 << 30;
 
-    /// Whether a proxy of `estimated_bytes` still leaves the reserve free.
+    /// The free space that must stay after the proxies of a volume of `volume_bytes`.
+    pub fn reserve(volume_bytes: Option<i64>) -> i64 {
+        Self::FLOOR_BYTES.max(volume_bytes.unwrap_or(0).max(0) / 50)
+    }
+
+    /// Whether `estimated_bytes` of proxies (this one plus the queued ones) still leave the reserve free.
     pub fn allows(estimated_bytes: i64, free_bytes: Option<i64>, volume_bytes: Option<i64>) -> bool {
         let Some(free) = free_bytes else { return true };
-        let reserve = Self::FLOOR_BYTES.max((volume_bytes.unwrap_or(0) / 10).min(30 << 30));
-        free - estimated_bytes.max(0) >= reserve
+        free - estimated_bytes.max(0) >= Self::reserve(volume_bytes)
+    }
+
+    /// The free space the proxies of `wanted_bytes` need: themselves plus the reserve.
+    pub fn needed(wanted_bytes: i64, volume_bytes: Option<i64>) -> i64 {
+        wanted_bytes.max(0).saturating_add(Self::reserve(volume_bytes))
+    }
+}
+
+/// A proxy that is not made for a reason other than disk space.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProxyCase {
+    /// No proxy is needed or possible (light source, mode off, probe failed): the user cannot change it, log only.
+    Skipped,
+    /// The cache is full of proxies in use: a notice, once per project.
+    CapReached,
+    /// The job failed: a notice with the reason, once per project.
+    JobFailed { reason: String },
+}
+
+/// The calm status-bar notices for `ProxyCase`s, each kind once per project open (`reset` on a new project).
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProxyIssueNotice {
+    cap_shown: bool,
+    failed_shown: bool,
+}
+
+impl ProxyIssueNotice {
+    /// The line to show for `case`, or `None` (a log-only case or a kind already shown in this project).
+    pub fn report(&mut self, case: &ProxyCase) -> Option<String> {
+        match case {
+            ProxyCase::Skipped => None,
+            ProxyCase::CapReached => {
+                if std::mem::replace(&mut self.cap_shown, true) {
+                    return None;
+                }
+                Some("The preview file cache is full of files in use, so no new preview files are made. Playback may stutter.".into())
+            }
+            ProxyCase::JobFailed { reason } => {
+                if std::mem::replace(&mut self.failed_shown, true) {
+                    return None;
+                }
+                let first = reason.lines().next().unwrap_or("").trim();
+                let short: String = first.chars().take(100).collect();
+                let why = if short.is_empty() { "unknown reason".to_string() } else { short };
+                Some(format!("A preview file could not be made ({why}). Playback may stutter."))
+            }
+        }
+    }
+
+    /// A new project opened: the notices may show again.
+    pub fn reset(&mut self) {
+        *self = ProxyIssueNotice::default();
+    }
+}
+
+/// The notice "no room for preview files": shown once per project open (`take_line`), active while a proxy is refused
+/// for disk space, off again when a re-check finds room. The platform only supplies the free space.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DiskNotice {
+    active: bool,
+    announced: bool,
+}
+
+impl DiskNotice {
+    /// The text with whole GB: free rounded down, needed rounded up.
+    pub fn text(free_bytes: i64, needed_bytes: i64) -> String {
+        let gb = 1i64 << 30;
+        format!(
+            "Not enough disk space for preview files: {} GB free, {} GB needed. Playback may stutter.",
+            free_bytes.max(0) / gb,
+            (needed_bytes.max(0) + gb - 1) / gb
+        )
+    }
+
+    /// Feeds the guard's reading: `Some((free, needed))` while proxies are refused, `None` when none is. Returns the line
+    /// the first time the notice appears in this project.
+    pub fn update(&mut self, short: Option<(i64, i64)>) -> Option<String> {
+        self.active = short.is_some();
+        let (free, needed) = short?;
+        if self.announced {
+            return None;
+        }
+        self.announced = true;
+        Some(Self::text(free, needed))
+    }
+
+    /// Whether proxies are refused for disk space right now.
+    pub fn is_active(&self) -> bool {
+        self.active
+    }
+
+    /// A new project opened: the notice may show again.
+    pub fn reset(&mut self) {
+        *self = DiskNotice::default();
     }
 }
 
@@ -487,15 +585,49 @@ mod tests {
         assert!(!real.is_weak());
     }
 
-    /// A background proxy never eats the disk: the volume keeps max(15 GB, 10 % up to 30 GB) free after the estimated proxy.
+    /// A background proxy never eats the disk: the volume keeps max(5 GB, 2 %) free after the proxies still to make.
     #[test]
     fn disk_reserve_blocks_auto_proxies() {
         assert!(ProxyDiskGuard::allows(5 * G, Some(100 * G), Some(256 * G)));
-        assert!(!ProxyDiskGuard::allows(5 * G, Some(30 * G), Some(256 * G))); // 25.6 GB reserve
-        assert!(!ProxyDiskGuard::allows(G, Some(15 * G), Some(128 * G))); // 15 GB floor
-        assert!(ProxyDiskGuard::allows(G, Some(17 * G), Some(128 * G)));
-        assert!(ProxyDiskGuard::allows(G, Some(40 * G), Some(2048 * G))); // reserve capped at 30 GB
+        assert!(!ProxyDiskGuard::allows(5 * G, Some(10 * G), Some(256 * G))); // 5.12 GB reserve (2 %)
+        assert!(ProxyDiskGuard::allows(5 * G, Some(11 * G), Some(256 * G)));
+        assert!(!ProxyDiskGuard::allows(G, Some(5 * G), Some(128 * G))); // 5 GB floor
+        assert!(ProxyDiskGuard::allows(G, Some(6 * G), Some(128 * G)));
+        assert!(!ProxyDiskGuard::allows(G, Some(40 * G), Some(2048 * G))); // 2 % of 2 TB = 41 GB
         assert!(ProxyDiskGuard::allows(G, None, None)); // unknown: allowed
+        assert_eq!(ProxyDiskGuard::needed(14 * G, Some(100 * G)), 19 * G);
+    }
+
+    #[test]
+    fn proxy_cases_give_one_notice_per_kind_and_project() {
+        let mut n = ProxyIssueNotice::default();
+        assert_eq!(n.report(&ProxyCase::Skipped), None, "skipped is log only");
+        let cap = n.report(&ProxyCase::CapReached).unwrap();
+        assert!(cap.contains("cache is full"));
+        assert_eq!(n.report(&ProxyCase::CapReached), None, "cap: once per project");
+        let failed = n.report(&ProxyCase::JobFailed { reason: "encoder died\nmore".into() }).unwrap();
+        assert_eq!(failed, "A preview file could not be made (encoder died). Playback may stutter.");
+        assert_eq!(n.report(&ProxyCase::JobFailed { reason: "x".into() }), None);
+        n.reset();
+        assert!(n.report(&ProxyCase::CapReached).is_some());
+        assert!(n.report(&ProxyCase::JobFailed { reason: String::new() }).unwrap().contains("unknown reason"));
+    }
+
+    #[test]
+    fn the_disk_notice_shows_once_per_project_and_follows_the_guard() {
+        let mut n = DiskNotice::default();
+        assert_eq!(n.update(None), None);
+        assert!(!n.is_active());
+        let line = n.update(Some((11 * G, 19 * G))).unwrap();
+        assert_eq!(line, "Not enough disk space for preview files: 11 GB free, 19 GB needed. Playback may stutter.");
+        assert!(n.is_active());
+        assert_eq!(n.update(Some((10 * G, 19 * G))), None, "still short: no second line");
+        assert_eq!(n.update(None), None);
+        assert!(!n.is_active(), "space freed");
+        assert_eq!(n.update(Some((9 * G, 19 * G))), None, "once per project open");
+        n.reset();
+        assert!(n.update(Some((9 * G, 19 * G))).is_some());
+        assert!(DiskNotice::text(G + 1, G + 1).contains("1 GB free, 2 GB needed"));
     }
 
     /// ProRes 422 Proxy at 1080p30 is about 45 Mbit/s; the estimate scales with pixels and frame rate.

@@ -7,7 +7,7 @@
 use sq_draw::GlyphAtlas;
 use sq_installer::args::Args;
 use sq_installer::shots;
-use sq_setup_engine::{Version, payload};
+use sq_setup_engine::payload;
 
 /// Inter, carried inside the program: the setup has no fonts folder next to it.
 const INTER: &[u8] =
@@ -37,7 +37,7 @@ fn pack(args: &Args) -> Result<(), String> {
     let stub_len = payload::stub_len(&exe).map_err(|e| e.to_string())?;
     let mut stub = std::fs::read(&exe).map_err(|e| format!("{}: {e}", exe.display()))?;
     stub.truncate(usize::try_from(stub_len).map_err(|e| e.to_string())?);
-    let version = Version::parse(env!("CARGO_PKG_VERSION")).ok_or("the workspace version is not a version")?;
+    let version = sq_installer::build_version();
     payload::pack(&stub, stage, &version, out).map_err(|e| e.to_string())
 }
 

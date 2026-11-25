@@ -70,7 +70,8 @@ impl Channel {
 
     /// Linux desktop file id and icon name (`<id>.desktop`).
     pub(crate) fn linux_id(self) -> &'static str {
-        if self.nightly() { "sequence-studio-nightly" } else { "sequence-studio" }
+        // One source: the app reads the same id from `Identity`, so packager and app cannot drift apart.
+        sq_setup_engine::Identity::from_raw(Some(if self.nightly() { "nightly" } else { "stable" })).linux_id()
     }
 
     /// Start of the AppImage, zip and setup file names (no spaces).
@@ -105,6 +106,18 @@ impl Channel {
         if self.nightly() { format!("{base}-nightly.{date}") } else { base.to_string() }
     }
 
+    /// `CFBundleVersion`: up to three period-separated integers, and every newer build of a channel compares higher.
+    /// Scheme `<major*1000+minor>.<patch>.<third>`: `third` is the build date (YYYYMMDD) for Nightly and 0 for Stable, so
+    /// 0.2.1 -> "2.1.0" and 0.2.1-nightly.20261121 -> "2.1.20261121". A new base version always raises the first two parts,
+    /// a later nightly of the same version raises the date. Stable and Nightly have separate bundle ids, so they are never
+    /// compared with each other. A base that is not `x.y.z` gives "0.0.0" (the caller's version check fails elsewhere).
+    pub(crate) fn bundle_build(self, base: &str, date: &str) -> String {
+        let n: Vec<u32> = base.split('.').map(|p| p.parse().unwrap_or(0)).collect();
+        let [major, minor, patch] = [0, 1, 2].map(|i| n.get(i).copied().unwrap_or(0));
+        let third = if self.nightly() { date.parse::<u32>().unwrap_or(0) } else { 0 };
+        format!("{}.{patch}.{third}", major * 1000 + minor)
+    }
+
     /// The arguments of `build-installer.ps1` that differ per channel.
     pub(crate) fn windows_script_args(self, base_version: &str, date: &str) -> Vec<String> {
         let mut a = vec!["-Version".to_string(), self.version(base_version, date)];
@@ -124,8 +137,32 @@ impl Channel {
     }
 }
 
-/// Today's date (UTC) as `YYYYMMDD`.
+/// The build date as `YYYYMMDD`: `SQ_NIGHTLY_DATE` when it is set (so two builds of one day can differ, for update tests),
+/// else today (UTC).
 pub(crate) fn today() -> String {
+    date_or_today(std::env::var("SQ_NIGHTLY_DATE").ok().as_deref())
+}
+
+/// `over` when it is a valid `YYYYMMDD` date, else today.
+fn date_or_today(over: Option<&str>) -> String {
+    if let Some(d) = over.map(str::trim).filter(|d| valid_date(d)) {
+        return d.to_string();
+    }
+    utc_today()
+}
+
+fn valid_date(d: &str) -> bool {
+    let b = d.as_bytes();
+    if b.len() != 8 || !b.iter().all(u8::is_ascii_digit) {
+        return false;
+    }
+    let (y, m, day): (u32, u32, u32) =
+        (d[..4].parse().unwrap_or(0), d[4..6].parse().unwrap_or(0), d[6..].parse().unwrap_or(0));
+    y >= 2000 && (1..=12).contains(&m) && (1..=31).contains(&day)
+}
+
+/// Today's date (UTC) as `YYYYMMDD`.
+fn utc_today() -> String {
     let secs = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_secs()).unwrap_or(0);
     ymd(i64::try_from(secs / 86_400).unwrap_or(0))
 }
@@ -161,9 +198,37 @@ mod tests {
         assert_eq!(c.file_prefix(), "SequenceStudio");
         assert_eq!(c.windows_aumid(), "SequenceStudio.App");
         assert_eq!(c.windows_app_guid(), "6C1E2A57-3B0D-4F52-9A0E-5E51A7C0D2B4");
-        assert_eq!((c.mac_icon(), c.linux_icon(), c.windows_icon()), ("AppIcon.icns", "sequence-studio.png", "SequenceStudio.ico"));
+        assert_eq!(
+            (c.mac_icon(), c.linux_icon(), c.windows_icon()),
+            ("AppIcon.icns", "sequence-studio.png", "SequenceStudio.ico")
+        );
         assert_eq!(c.version("0.2.0", "20261119"), "0.2.0");
         assert_eq!(c.windows_script_args("0.2.0", "20261119"), v(&["-Version", "0.2.0"]));
+    }
+
+    #[test]
+    fn the_bundle_build_rises_with_every_newer_build() {
+        assert_eq!(Channel::Stable.bundle_build("0.2.1", "20261121"), "2.1.0");
+        assert_eq!(Channel::Nightly.bundle_build("0.2.1", "20261121"), "2.1.20261121");
+        let key = |s: String| s.split('.').map(|p| p.parse::<u32>().unwrap_or(0)).collect::<Vec<_>>();
+        let builds = [
+            Channel::Nightly.bundle_build("0.2.1", "20261121"),
+            Channel::Nightly.bundle_build("0.2.1", "20261122"),
+            Channel::Nightly.bundle_build("0.2.2", "20261123"),
+            Channel::Nightly.bundle_build("0.3.0", "20261124"),
+            Channel::Nightly.bundle_build("1.0.0", "20270101"),
+        ];
+        assert!(builds.windows(2).all(|w| key(w[0].clone()) < key(w[1].clone())), "{builds:?}");
+        let stable = ["0.2.0", "0.2.1", "0.3.0", "1.0.0"].map(|b| key(Channel::Stable.bundle_build(b, "20261121")));
+        assert!(stable.windows(2).all(|w| w[0] < w[1]));
+        assert_eq!(Channel::Stable.bundle_build("junk", "20261121"), "0.0.0");
+    }
+
+    #[test]
+    fn the_linux_id_is_the_apps_own() {
+        use sq_setup_engine::Identity;
+        assert_eq!(Channel::Stable.linux_id(), Identity::STABLE.linux_id());
+        assert_eq!(Channel::Nightly.linux_id(), Identity::NIGHTLY.linux_id());
     }
 
     #[test]
@@ -178,7 +243,9 @@ mod tests {
         assert_eq!(c.version("0.2.0", "20261119"), "0.2.0-nightly.20261119");
         let a = c.windows_script_args("0.2.0", "20261119");
         assert_eq!(a[..2], v(&["-Version", "0.2.0-nightly.20261119"])[..]);
-        assert!(a.contains(&"SequenceStudioNightly".to_string()) && a.contains(&"SequenceStudio-Nightly.ico".to_string()));
+        assert!(
+            a.contains(&"SequenceStudioNightly".to_string()) && a.contains(&"SequenceStudio-Nightly.ico".to_string())
+        );
     }
 
     #[test]
@@ -192,6 +259,16 @@ mod tests {
         assert!(ok(&["--channel"], None).is_err());
         assert!(ok(&["--channel", "beta"], None).is_err());
         assert!(ok(&[], Some("beta")).is_err());
+    }
+
+    #[test]
+    fn the_build_date_can_be_overridden_with_a_valid_date_only() {
+        assert_eq!(date_or_today(Some("20261121")), "20261121");
+        assert_eq!(date_or_today(Some(" 20261121 ")), "20261121");
+        for bad in ["", "2026112", "202611211", "2026-11-2", "20261321", "20261100", "abcdefgh"] {
+            assert_eq!(date_or_today(Some(bad)), utc_today(), "{bad}");
+        }
+        assert_eq!(date_or_today(None), utc_today());
     }
 
     #[test]

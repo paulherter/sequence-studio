@@ -23,8 +23,9 @@ pub use demuxer::FFmpegDemuxer;
 pub use error::media_error;
 pub use frame::{FFmpegFrame, MemoryFrame};
 pub use hardware::{
-    DEFAULT_MAX_HARDWARE_SESSIONS, DecodePath, HardwareSessions, SessionGuard, acquire_hardware_session, decode_path,
-    hardware_hold_limit, supports_hardware_decode,
+    DEFAULT_MAX_HARDWARE_SESSIONS, DOWNLOAD_FAILURES_BEFORE_SOFTWARE, DecodePath, DownloadWatch, HardwareSessions,
+    SessionGuard, acquire_hardware_session, acquire_hardware_session_for, decode_path, hardware_hold_limit,
+    supports_hardware_decode,
 };
 pub use timing::{DecodeCursor, DecodePlan, FrameTable, PacketTiming, TimeBase};
 pub use video_decoder::{DEFAULT_EXTRA_HW_FRAMES, FFmpegVideoDecoder, set_fallback_hook};

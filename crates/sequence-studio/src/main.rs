@@ -6,6 +6,7 @@
 
 mod a11y;
 mod applog;
+mod bench_frames;
 mod bench_project;
 mod bench_report;
 #[cfg(test)]
@@ -20,10 +21,12 @@ mod crash;
 mod drag_pacing;
 #[cfg(test)]
 mod drag_tests;
+mod edit_bench;
 mod error_window;
 mod export;
 mod export_cli;
 mod export_scale;
+mod export_yuv;
 mod fault_inject;
 mod files;
 #[cfg(test)]
@@ -43,6 +46,7 @@ mod latency_log;
 mod live_resize;
 #[cfg(test)]
 mod locate_tests;
+mod loop_trace;
 mod meter_tap;
 #[cfg(test)]
 mod open_path_tests;
@@ -70,10 +74,15 @@ mod start_marker;
 mod start_trace;
 mod surface;
 mod system_watch;
+mod update_autotest;
 mod use_pass;
 mod window_fit;
 #[cfg(test)]
 mod window_id_tests;
+mod window_play_log;
+mod window_scrub_log;
+mod workflow_bench;
+mod workflow_synth;
 
 use files::{DesktopFiles, connect_clipboard};
 use sq_app_hosts::{MonitorPicture, SOURCE_PICTURE_SLOT};
@@ -122,6 +131,28 @@ fn display_frame(window: &Window) -> Duration {
         .and_then(|m| m.refresh_rate_millihertz())
         .filter(|&mhz| (20_000..=500_000).contains(&mhz))
         .map_or(FRAME, |mhz| Duration::from_nanos(1_000_000_000_000 / u64::from(mhz)))
+}
+
+/// Mac: the window's drawables report when they reach the glass (`sq_platform_mac::install_glass_clock`).
+/// shortcut: Windows and Linux have no present timestamps yet (DXGI frame statistics, Wayland presentation-time).
+#[cfg(target_os = "macos")]
+fn install_glass(window: &winit::window::Window) -> bool {
+    use winit::raw_window_handle::{HasWindowHandle, RawWindowHandle};
+    let Ok(handle) = window.window_handle() else { return false };
+    let RawWindowHandle::AppKit(h) = handle.as_raw() else { return false };
+    let (a, b) = (playback::display_timing(), playback::display_timing());
+    sq_platform_mac::install_glass_clock(
+        h.ns_view.as_ptr().cast(),
+        move || a.note_acquired(),
+        move |seq, at| {
+            b.glass_report(seq, at);
+        },
+    )
+}
+
+#[cfg(not(target_os = "macos"))]
+fn install_glass(_window: &winit::window::Window) -> bool {
+    false
 }
 
 /// The next frame deadline on the display grid that started at `last`: one `frame` after it, or when the loop fell
@@ -192,6 +223,9 @@ pub(crate) fn session_for(
     (session, picture)
 }
 
+/// Set once at start for the bench modes (`Mode::is_bench`): no proxy service is installed in the session.
+pub(crate) static NO_BACKGROUND_PROXY: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
 /// [`session_for`] that also says why the project could not be opened (`SQS-404`), so the window can tell the user.
 pub(crate) fn session_for_checked(
     project: Option<&Path>,
@@ -202,14 +236,17 @@ pub(crate) fn session_for_checked(
     let (mut session, picture) = untitled_session_with(support, wake);
     sq_app_hosts::apply_session_settings(support, &mut session);
     // The proxy service: its workers wake the window loop through the same slot the engines use.
-    session.set_auto_proxy(Some(Box::new(proxy_host::ProxyHost::new(
-        support,
-        Arc::new(move || {
-            if let Some(f) = slot.get() {
-                f();
-            }
-        }),
-    ))));
+    // Bench runs install none: a background transcode would skew their numbers (`NO_BACKGROUND_PROXY`).
+    if !NO_BACKGROUND_PROXY.load(std::sync::atomic::Ordering::Relaxed) {
+        session.set_auto_proxy(Some(Box::new(proxy_host::ProxyHost::new(
+            support,
+            Arc::new(move || {
+                if let Some(f) = slot.get() {
+                    f();
+                }
+            }),
+        ))));
+    }
     if project.is_some() {
         sq_core_time::milestones::begin("project open begins (command line)");
     }
@@ -359,6 +396,18 @@ struct Shell {
     /// The status line last written to the log.
     status_logged: String,
     perf: perf::FramePerf,
+    /// `SQ_WINDOW_PLAYLOG`: the window plays and measures itself, then quits.
+    playlog: Option<window_play_log::WindowPlayLog>,
+    playlog_done: bool,
+    /// `SQ_WINDOW_SCRUBLOG`: the window scrubs and measures itself, then quits.
+    scrublog: Option<window_scrub_log::WindowScrubLog>,
+    /// Which glass slot each present takes; the engine picks frames for the next slot (`PresentSlots`).
+    present_slots: sq_playback::engine::PresentSlots,
+    /// Presents made so far (their sequence number where the platform reports no glass times), and whether the Mac glass
+    /// clock runs (`install_glass`).
+    present_count: u64,
+    glass_tried: bool,
+    glass_on: bool,
     /// The monitor picture generation the renderer holds.
     uploaded_generation: i64,
     /// The last present found no drawable: the next loop turn draws again.
@@ -514,6 +563,7 @@ impl Shell {
                 monitor: None,
                 sampler: None,
                 magic: None,
+                audio_notices: Default::default(),
             },
             clock: wake_clock,
             atlas,
@@ -585,6 +635,13 @@ impl Shell {
             cursor_scale: 0.0,
             status_logged: String::new(),
             perf: perf::FramePerf::new(),
+            playlog: window_play_log::WindowPlayLog::from_env(),
+            playlog_done: false,
+            scrublog: window_scrub_log::WindowScrubLog::from_env(),
+            present_slots: sq_playback::engine::PresentSlots::default(),
+            present_count: 0,
+            glass_tried: false,
+            glass_on: false,
             uploaded_generation: -1,
             retry_draw: false,
             resize_log: resize_log::ResizeLog::default(),
@@ -994,12 +1051,104 @@ impl Shell {
         if self.perf.autoplay(self.picture.get().is_some()) {
             self.app.with(|a| a.session_mut().play_pause());
         }
+        if let Some(log) = self.playlog.as_mut() {
+            let fps = self
+                .app
+                .with(|a| a.session().active_timeline().map(|t| t.format.frame_duration))
+                .flatten()
+                .map_or(30.0, |d| d.timescale() as f64 / d.value().max(1) as f64);
+            match log.step(self.picture.get().is_some(), fps) {
+                window_play_log::Step::Play => {
+                    // `SQ_WINDOW_PLAYLOG_START=<seconds>`: measure from another start point (the first frames after the jump are in the run).
+                    let start = std::env::var("SQ_WINDOW_PLAYLOG_START")
+                        .ok()
+                        .and_then(|v| v.parse::<i64>().ok())
+                        .filter(|s| *s > 0);
+                    let range = self.app.with(|a| {
+                        let t = a.session().active_timeline()?;
+                        let fd = t.format.frame_duration;
+                        let per_sec = fd.timescale() as f64 / fd.value().max(1) as f64;
+                        let d = t.duration();
+                        let frames = (d.value() as f64 / d.timescale().max(1) as f64 * per_sec).round() as i64;
+                        Some(((start.unwrap_or(0) as f64 * per_sec).round() as i64, frames - 1))
+                    });
+                    if let Some((s, e)) = range.flatten() {
+                        log.set_range(s, Some(e));
+                    }
+                    self.app
+                        .with(|a| {
+                            if let Some(secs) = start {
+                                a.session_mut().seek(sq_core_time::Time::new(secs, 1));
+                            }
+                            a.session_mut().play_pause()
+                        })
+                        .unwrap_or(())
+                }
+                window_play_log::Step::Quit => {
+                    let text = log.finish();
+                    eprint!("{text}");
+                    self.app.with(|a| a.session_mut().play_pause());
+                    self.playlog_done = true;
+                }
+                window_play_log::Step::Abort => {
+                    let text = log.finish();
+                    eprint!("{text}");
+                    self.playlog_done = true;
+                }
+                window_play_log::Step::Nothing => {}
+            }
+        }
+        if let Some(log) = self.scrublog.as_mut() {
+            let (fps, frames) = self
+                .app
+                .with(|a| {
+                    a.session().active_timeline().map(|t| {
+                        let d = t.format.frame_duration;
+                        let fps = d.timescale() as f64 / d.value().max(1) as f64;
+                        (
+                            fps,
+                            (t.duration().value() as f64 / t.duration().timescale().max(1) as f64 * fps).round() as i64,
+                        )
+                    })
+                })
+                .flatten()
+                .unwrap_or((30.0, 0));
+            // The calls are the ones a timeline drag makes (`sq-draw-timeline/src/session_bridge.rs`: BeginScrub, Scrub, EndScrub).
+            match log.step(self.picture.get().is_some(), fps, frames, self.display_frame) {
+                window_scrub_log::Action::Begin => self.app.with(|a| a.session_mut().begin_scrub()).unwrap_or(()),
+                window_scrub_log::Action::Scrub(frame) => self
+                    .app
+                    .with(|a| {
+                        let d = a
+                            .session()
+                            .active_timeline()
+                            .map_or(sq_core_time::Time::new(1, 30), |t| t.format.frame_duration);
+                        a.session_mut().scrub(sq_core_time::Time::new(frame * d.value(), d.timescale()))
+                    })
+                    .unwrap_or(()),
+                window_scrub_log::Action::Quit => {
+                    let text = log.finish();
+                    eprint!("{text}");
+                    self.app.with(|a| a.session_mut().end_scrub());
+                    self.playlog_done = true;
+                }
+                window_scrub_log::Action::Abort => {
+                    let text = log.finish();
+                    eprint!("{text}");
+                    self.playlog_done = true;
+                }
+                window_scrub_log::Action::Nothing => {}
+            }
+        }
         #[cfg(target_os = "macos")]
         self.menu.run_picked();
         self.follow_drag();
         let may_draw = self.pacing.may_draw(Instant::now(), self.display_frame);
         let laid_out = Instant::now();
-        let (_, list) = self.app.turn_with(may_draw);
+        let (_, list) = {
+            let _held = loop_trace::hold("app.turn");
+            self.app.turn_with(may_draw)
+        };
         self.layout_took = laid_out.elapsed();
         self.log_if_slow(self.layout_took);
         self.follow_caret();
@@ -1056,26 +1205,46 @@ impl Shell {
             if let Some(g) = self.pointer.win_idle(input::modifiers(self.mods), scale, now) {
                 self.send_gesture(g);
             }
+            loop_trace::decide("gesture_wait", false, may_draw);
             return ControlFlow::WaitUntil(Instant::now() + self.display_frame);
         }
         let animating = self.app.with(|a| a.needs_redraw()).unwrap_or(false);
         if animating && !may_draw {
             // A drag: the frame waits for its refresh and then draws the newest pointer position.
+            loop_trace::decide("drag_wait", animating, may_draw);
             return ControlFlow::WaitUntil(self.pacing.due(self.display_frame).unwrap_or_else(Instant::now));
         }
         if animating || std::mem::take(&mut self.retry_draw) {
             self.app.with(App::set_needs_redraw);
-            self.tick = next_tick(self.tick, Instant::now(), self.display_frame);
+            // Playing, the timer runs a little faster than the refresh: the present queue stays full and each draw waits
+            // for the vsync that frees its drawable, so the glass slot of every present is steady (`PresentSlots`).
+            let playing = self.app.with(|a| a.session().is_playing()).unwrap_or(false);
+            let period = if playing {
+                let percent = if self.glass_on {
+                    sq_playback::engine::LOOP_PERIOD_SATURATED_PERCENT
+                } else {
+                    sq_playback::engine::LOOP_PERIOD_PERCENT
+                };
+                self.display_frame * percent as u32 / 100
+            } else {
+                self.display_frame
+            };
+            self.tick = next_tick(self.tick, Instant::now(), period);
             // The engine's display lead and frame phase lock read these ticks (winit has no present timestamps).
             playback::display_timing().tick(turn_began, self.display_frame, turn_began.elapsed());
+            loop_trace::decide("tick", animating, may_draw);
             return ControlFlow::WaitUntil(retry_deadline(self.retries, self.tick, Instant::now()));
         }
         match self.app.executor().next_deadline() {
             Some(at) => {
+                loop_trace::decide("deadline", animating, may_draw);
                 let now = self.clock.now();
                 ControlFlow::WaitUntil(Instant::now() + at.saturating_sub(now))
             }
-            None => ControlFlow::Wait,
+            None => {
+                loop_trace::decide("idle", animating, may_draw);
+                ControlFlow::Wait
+            }
         }
     }
 
@@ -1083,7 +1252,12 @@ impl Shell {
     /// playback never takes it (its frames stay on the display's beat).
     fn follow_drag(&mut self) {
         let held = self.pointer.is_down().then(|| self.pointer.position());
+        // The scrub measurement holds and moves a pointer, so the drag present path is the one measured.
+        let held = held.or_else(|| self.scrublog.as_ref().and_then(|l| l.held_pointer()));
         let playing = self.app.with(|a| a.session().is_playing()).unwrap_or(false);
+        if self.surface.set_playing(playing) > std::time::Duration::ZERO {
+            self.window.request_redraw();
+        }
         if let Some(on) = self.pacing.update(held, playing) {
             let took = self.surface.set_interactive(on);
             if latency_log::on() {
@@ -1094,6 +1268,7 @@ impl Shell {
     }
 
     fn redraw(&mut self) {
+        let _phase = loop_trace::enter(loop_trace::Phase::Redraw);
         self.follow_drag();
         if !self.pacing.may_draw(Instant::now(), self.display_frame) && self.live_resize.is_idle() {
             // Too soon after the last frame of a drag: the loop turn draws at the refresh (`turn`).
@@ -1112,7 +1287,10 @@ impl Shell {
         if self.pending.is_none() {
             self.app.with(App::set_needs_redraw);
             let laid_out = Instant::now();
-            self.pending = self.app.turn().1;
+            self.pending = {
+                let _held = loop_trace::hold("app.turn");
+                self.app.turn().1
+            };
             self.layout_took = laid_out.elapsed();
             self.log_if_slow(self.layout_took);
         }
@@ -1121,6 +1299,9 @@ impl Shell {
         let window = Arc::clone(&self.window);
         let surface = &mut self.surface;
         let began = Instant::now();
+        // The window play log's per-present columns (`SQ_WINDOW_PLAYLOG` only): the frame the pacer chose when this draw started.
+        let chosen_at_start = self.playlog.is_some().then(sq_playback::engine::frame_trace::chosen_frame).flatten();
+        let mut present_trace = None;
         // Upload only a new picture: the renderer keeps the texture, and a 30 fps clip is redrawn at 60 Hz or more.
         let generation = self.picture.generation();
         if generation != self.uploaded_generation {
@@ -1168,7 +1349,10 @@ impl Shell {
             let (x, y, w, h) = float_windows::canvas_region(f.rect, f64::from(scale));
             let region = sq_draw::Rect::new(x, y, w, h);
             let part = list.region(region);
-            let shown = self.app.with(|a| f.surface.present(&f.window, &part, a.atlas()));
+            let shown = {
+                let _held = loop_trace::hold("app.present");
+                self.app.with(|a| f.surface.present(&f.window, &part, a.atlas()))
+            };
             if let Some(Err(e)) = shown {
                 eprintln!("floating window draw failed: {e}");
             }
@@ -1179,8 +1363,69 @@ impl Shell {
         } else {
             list
         };
-        let drawn = self.app.with(|a| surface.present(&window, &list, a.atlas()));
+        let drawn = {
+            let _held = loop_trace::hold("app.present");
+            self.app.with(|a| surface.present(&window, &list, a.atlas()))
+        };
+        loop_trace::note_draw(surface.timing().acquire);
+        let drawn_ok = matches!(drawn, Some(Ok(true)));
+        // A UI frame that long stalls the picture too: the Auto quality governor cannot see it in the engine's counters.
+        if drawn_ok && began.elapsed() >= Duration::from_millis(250) {
+            let took = began.elapsed();
+            self.app.with(|a| a.session().note_present_stall(took));
+        }
+        let surface_occluded = surface.is_occluded();
+        let draw = match (drawn_ok, &drawn) {
+            (true, _) => window_play_log::Draw::Presented,
+            (_, Some(Err(_))) => window_play_log::Draw::Failed,
+            _ if surface_occluded => window_play_log::Draw::Occluded,
+            _ => window_play_log::Draw::NoDrawable,
+        };
         self.pacing.drew(Instant::now());
+        if drawn_ok {
+            // The glass sequence is the present sequence: the engine picks the frame of the next present's slot.
+            let timing = playback::display_timing();
+            if !self.glass_tried {
+                // The layer exists once a frame was presented; from here on its drawables report their glass times.
+                self.glass_tried = true;
+                self.glass_on = install_glass(&window);
+                if cfg!(target_os = "macos") && !self.glass_on {
+                    eprintln!("glass clock: not installed (the slots stay on the model)");
+                }
+            }
+            let seq = if self.glass_on { timing.acquired().saturating_sub(1) } else { self.present_count };
+            self.present_count += 1;
+            let (grid, interval) = match timing.grid() {
+                Some((vsync, interval)) => (Some(vsync), interval),
+                None => (None, i64::try_from(self.display_frame.as_micros()).unwrap_or(0)),
+            };
+            for (s, us) in timing.drain_glass() {
+                self.present_slots.glass_seen(s, us, interval);
+                if let Some(log) = self.playlog.as_mut() {
+                    log.glass(s, timing.at(us), us);
+                }
+            }
+            let returned_us = timing.micros(Instant::now());
+            timing.slot_tick(self.present_slots.presented(seq, returned_us, interval, grid));
+            if let Some(log) = self.playlog.as_mut() {
+                log.note_present(seq);
+                let start_us = timing.micros(began);
+                let spent = surface.timing();
+                let (pred_us, first_us) = self.present_slots.newest_slot().unzip();
+                present_trace = Some(window_play_log::PresentTrace {
+                    start_us,
+                    ret_us: returned_us,
+                    interval_us: interval,
+                    to_vsync_us: grid.map(|g| interval - (start_us - g).rem_euclid(interval.max(1))),
+                    first_us,
+                    pred_us,
+                    chosen: chosen_at_start,
+                    acquire_us: i64::try_from(spent.acquire.as_micros()).unwrap_or(0),
+                    draw_us: i64::try_from(spent.draw.as_micros()).unwrap_or(0),
+                    present_us: i64::try_from(spent.present.as_micros()).unwrap_or(0),
+                });
+            }
+        }
         if resize_log::on() {
             self.resize_log.frame(self.layout_took, surface.timing(), matches!(drawn, Some(Ok(true))));
         }
@@ -1266,6 +1511,27 @@ impl Shell {
             })
             .unwrap_or(0.0);
         self.perf.frame(uploaded, began.elapsed(), self.picture.generation(), head);
+        if let Some(log) = self.playlog.as_mut() {
+            let shown = self
+                .app
+                .with(|a| playback::bench_shown(a.session().engine()))
+                .flatten()
+                .map(|p| p.value() as f64 / p.timescale().max(1) as f64);
+            log.frame(shown, began.elapsed().as_secs_f64() * 1e3, draw, present_trace);
+        }
+        if let Some(log) = self.scrublog.as_mut() {
+            let fps = self
+                .app
+                .with(|a| a.session().active_timeline().map(|t| t.format.frame_duration))
+                .flatten()
+                .map_or(30.0, |d| d.timescale() as f64 / d.value().max(1) as f64);
+            let shown = self
+                .app
+                .with(|a| playback::bench_shown(a.session().engine()))
+                .flatten()
+                .map(|p| (p.value() as f64 / p.timescale().max(1) as f64 * fps).round() as i64);
+            log.frame(shown, draw == window_play_log::Draw::Presented, Instant::now());
+        }
     }
 
     fn resized(&mut self, width: u32, height: u32) {
@@ -1527,6 +1793,13 @@ struct Handler {
     asked: bool,
 }
 
+/// Whether a script drives this run (window play log, no external opens): notices are logged, never shown.
+fn automated_run() -> bool {
+    ["SQ_WINDOW_PLAYLOG", "SQ_WINDOW_SCRUBLOG", "SQ_NO_EXTERNAL_OPEN"]
+        .iter()
+        .any(|k| std::env::var_os(k).is_some_and(|v| !v.is_empty()))
+}
+
 /// The panic the hook saw last, as a start failure.
 fn panic_failure() -> StartFailure {
     let (message, place) = crash::last_panic().unwrap_or_else(|| ("unknown panic".into(), "unknown".into()));
@@ -1540,6 +1813,11 @@ impl Handler {
             return;
         }
         if let Some(failure) = self.pending.pop_front() {
+            if !failure.is_fatal() && automated_run() {
+                // An unattended run never waits on a notice window: the log has it, the run goes on.
+                failure.record();
+                return self.advance(el);
+            }
             self.show(el, failure);
         } else if self.shell.is_none() {
             if self.ask_first_run(el) {
@@ -1622,7 +1900,8 @@ impl Handler {
     /// and the log (and a fatal failure ends the run).
     fn show(&mut self, el: &ActiveEventLoop, failure: StartFailure) {
         let screen = failure.record();
-        if failure.is_fatal() {
+        // Fatal: the start ends here. The interrupted-start report: told once, so a kill of this window must not tell it again.
+        if failure.is_fatal() || failure.code == StartCode::StartInterrupted {
             start_marker::clear(&paths::app_support_dir());
         }
         match error_window::ErrorWindow::open(el, screen.clone(), &fonts_root()) {
@@ -1676,8 +1955,21 @@ impl ApplicationHandler<Wake> for Handler {
         self.advance(el);
     }
 
+    fn new_events(&mut self, _el: &ActiveEventLoop, cause: winit::event::StartCause) {
+        use winit::event::StartCause;
+        match cause {
+            StartCause::Init => loop_trace::turn_begin("init", None),
+            StartCause::Poll => loop_trace::turn_begin("poll", None),
+            StartCause::ResumeTimeReached { requested_resume, .. } => {
+                loop_trace::turn_begin("timer", Some(requested_resume));
+            }
+            StartCause::WaitCancelled { .. } => loop_trace::turn_begin("event", None),
+        }
+    }
+
     fn user_event(&mut self, _el: &ActiveEventLoop, wake: Wake) {
         let _block = start_trace::block("user_event");
+        let _phase = loop_trace::enter(loop_trace::Phase::UserEvent);
         if let (Wake::Open(path), Some(shell)) = (&wake, &mut self.shell) {
             shell.window.focus_window();
             if shell.window.is_minimized() == Some(true) {
@@ -1715,10 +2007,24 @@ impl ApplicationHandler<Wake> for Handler {
         }
         let Some(shell) = &mut self.shell else { return };
         let step = |shell: &mut Shell| {
-            el.set_control_flow(shell.turn());
+            let mut flow = shell.turn();
+            // The scrub measurement wakes the loop at its request slots, as the pointer moves of a real drag do.
+            if let Some(at) = shell.scrublog.as_ref().and_then(|l| l.next_wake()) {
+                flow = match flow {
+                    ControlFlow::Poll => ControlFlow::Poll,
+                    ControlFlow::WaitUntil(t) => ControlFlow::WaitUntil(t.min(at)),
+                    ControlFlow::Wait => ControlFlow::WaitUntil(at),
+                };
+            }
+            el.set_control_flow(flow);
             shell.apply_cursor(el);
             shell.sync_floats(el);
-            shell.app.with(|a| a.quit_requested()).unwrap_or(false)
+            loop_trace::turn_end(match flow {
+                ControlFlow::Wait => loop_trace::Wake::Wait,
+                ControlFlow::Poll => loop_trace::Wake::Poll,
+                ControlFlow::WaitUntil(at) => loop_trace::Wake::Until(at),
+            });
+            shell.app.with(|a| a.quit_requested()).unwrap_or(false) || shell.playlog_done
         };
         // Until the first frame is on screen a panic is a start failure, not a crash of a running app.
         let quit = if shell.first_frame_shown {
@@ -1742,6 +2048,7 @@ impl ApplicationHandler<Wake> for Handler {
 
     fn window_event(&mut self, el: &ActiveEventLoop, id: WindowId, event: WindowEvent) {
         let _block = start_trace::block("window_event");
+        let _phase = loop_trace::enter(loop_trace::Phase::WindowEvent);
         #[cfg(unix)]
         if let Some(run) = self.first_run.as_mut()
             && run.id() == id
@@ -1845,9 +2152,16 @@ fn run() -> Result<(), String> {
     sq_platform_win::attach_parent_console();
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cli::Cli { mode, project } = cli::parse(&args)?;
+    // `SQ_BENCH_BACKGROUND=1` keeps the proxy service in a bench run, as the window has it (the real-project numbers).
+    let keep_background = std::env::var_os("SQ_BENCH_BACKGROUND").is_some();
+    NO_BACKGROUND_PROXY.store(mode.is_bench() && !keep_background, std::sync::atomic::Ordering::Relaxed);
     if !crash::install(&paths::app_support_dir()) {
         let why = format!("the log goes to {} instead", applog::fallback_dir().display());
         StartFailure::new(StartCode::LogFolder, "opening the log folder", why).record();
+    }
+    // The updater's UI-free test hook (SQ_UPDATE_AUTOTEST): no window, no input; unset = not here.
+    if let Some(result) = update_autotest::run_from_env() {
+        return result;
     }
     sq_export::core::preflight::ExportPreflight::install_host_probes(
         sq_platform::free_bytes,
@@ -1949,6 +2263,8 @@ fn run() -> Result<(), String> {
         failure.record();
         return Err(failure.to_string());
     }
+    // An orderly end of the loop (quit, window closed, error window closed): the marker only outlives a crash or a kill.
+    start_marker::clear(&support);
     // Drop the window before the GPU: the surface must not outlive the device (G4 finding).
     let failed = handler.failed.take();
     let relaunch = handler.relaunch;
@@ -1956,6 +2272,10 @@ fn run() -> Result<(), String> {
     drop(primary);
     if relaunch {
         start_again();
+    }
+    // An installed update starts its new version now that the claim is released.
+    if let Err(e) = sq_platform::app_update::start_pending_relaunch() {
+        applog::error(&format!("update: the new version could not be started: {e}"));
     }
     window_outcome(failed)
 }
@@ -1996,7 +2316,9 @@ fn window_outcome(failed: Option<String>) -> Result<(), String> {
 }
 
 fn main() -> std::process::ExitCode {
+    sq_os::trace::init_from_env();
     let outcome = run();
+    sq_os::trace::finish();
     // The encoder probe thread may sit in a GPU driver: wait for it before the process (and the driver) ends.
     sq_media_ffmpeg::encode::finish_warm_up();
     match outcome {

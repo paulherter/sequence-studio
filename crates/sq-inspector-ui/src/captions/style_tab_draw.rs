@@ -1021,7 +1021,17 @@ impl CaptionStyleTabDraw {
     fn draw_header(&self, c: &mut Canvas, s: Section, f: CGRect, top_line: bool) {
         // The shared inspector group header (r8 `.grp`), not a copy.
         let hovered = self.hover == Some(Control::Header(s));
-        crate::ec_draw::group_header(c, f, self.size.width, s.title(), self.is_open(s), hovered, "", top_line, &self.theme);
+        crate::ec_draw::group_header(
+            c,
+            f,
+            self.size.width,
+            s.title(),
+            self.is_open(s),
+            hovered,
+            "",
+            top_line,
+            &self.theme,
+        );
     }
 
     fn draw_segment(
@@ -1146,18 +1156,7 @@ impl CaptionStyleTabDraw {
             }
             Control::BrandFont(name) => {
                 let title = self.kit.fonts.get(name).cloned().unwrap_or_default();
-                InspectorDraw::popup(
-                    c,
-                    &title,
-                    r,
-                    hovering,
-                    false,
-                    true,
-                    true,
-                    ControlsGrid::CONTROL_HEIGHT,
-                    None,
-                    &t,
-                );
+                InspectorDraw::popup(c, &title, r, hovering, false, true, true, ControlsGrid::CONTROL_HEIGHT, None, &t);
             }
             Control::BrandColor(name) => {
                 let col = self.kit.colors.get(name).copied().unwrap_or(effect_color(1.0, 1.0, 1.0, 1.0));
@@ -1168,18 +1167,7 @@ impl CaptionStyleTabDraw {
                 let i = self.kit.motion.as_ref().map_or(MotionCurve::PremiereDefault.raw_value(), |m| m.curve);
                 let titles = MotionCurve::titles();
                 let title = usize::try_from(i).ok().and_then(|i| titles.get(i)).cloned().unwrap_or_default();
-                InspectorDraw::popup(
-                    c,
-                    &title,
-                    r,
-                    hovering,
-                    false,
-                    true,
-                    true,
-                    ControlsGrid::CONTROL_HEIGHT,
-                    None,
-                    &t,
-                );
+                InspectorDraw::popup(c, &title, r, hovering, false, true, true, ControlsGrid::CONTROL_HEIGHT, None, &t);
             }
             Control::Mine(i) => {
                 let Some((id, name, _)) = self.mine.get(*i) else { return };

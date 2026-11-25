@@ -33,6 +33,8 @@ fn shared() -> &'static Shared {
         });
         pollster::block_on(Gpu::with_instance(&instance, None)).map(|gpu| {
             harden(&gpu);
+            // Known pipelines build in the background while the project opens and the first frame decodes.
+            let _ = gpu.prewarm();
             (instance, gpu)
         })
     })
@@ -194,10 +196,26 @@ pub struct Surface {
     timing: PresentTiming,
     /// Whether the system presents in Mailbox mode (the newest frame replaces a queued one).
     mailbox: bool,
+    /// `SQ_PRESENT_IMMEDIATE=1` and the system has Immediate: playback presents without display sync (A/B for the drawable stalls
+    /// under load; wgpu-hal Metal maps Immediate to `displaySyncEnabled = false`). The pacer paces the frames then.
+    immediate_playback: bool,
+    /// The drag path is on ([`Surface::set_interactive`]).
+    interactive: bool,
+    /// The timeline plays ([`Surface::set_playing`]).
+    playing: bool,
 }
 
-/// The images the swap chain may queue while the app is not dragging: playback overlaps the CPU and the GPU work of two frames.
-const QUEUED_LATENCY: u32 = 2;
+/// Images the playback path queues ahead (wgpu `desired_maximum_frame_latency`; on the Mac the layer gets one drawable more).
+/// 1 on the Mac missed vsyncs (run7: glass interval p95 16.7 ms), so every system queues 2 images while playing.
+/// `SQ_PLAY_LATENCY=<1..3>` overrides it for a comparison run.
+const QUEUED_LATENCY_DEFAULT: u32 = 2;
+
+fn queued_latency() -> u32 {
+    std::env::var("SQ_PLAY_LATENCY")
+        .ok()
+        .and_then(|v| v.parse::<u32>().ok())
+        .map_or(QUEUED_LATENCY_DEFAULT, |n| n.clamp(1, 3))
+}
 
 impl Surface {
     /// Opens the window's surface on the shared device (the G4 setup); a device of its own when that cannot present.
@@ -234,7 +252,7 @@ impl Surface {
             width: size.width.max(1),
             height: size.height.max(1),
             present_mode: wgpu::PresentMode::Fifo,
-            desired_maximum_frame_latency: QUEUED_LATENCY,
+            desired_maximum_frame_latency: queued_latency(),
             alpha_mode: wgpu::CompositeAlphaMode::Auto,
             color_space: wgpu::SurfaceColorSpace::Auto,
             view_formats: vec![],
@@ -248,8 +266,13 @@ impl Surface {
         let renderer = WgpuRenderer::new(Arc::clone(&gpu), PixelFormat::Bgra8Unorm)
             .map_err(|e| StartFailure::new(StartCode::GpuShaders, "building the drawing pipelines", e.to_string()))?;
         let mailbox = caps.present_modes.contains(&wgpu::PresentMode::Mailbox);
+        let immediate_playback = std::env::var("SQ_PRESENT_IMMEDIATE").is_ok_and(|v| v == "1")
+            && caps.present_modes.contains(&wgpu::PresentMode::Immediate);
         let mut s = Surface {
             mailbox,
+            immediate_playback,
+            interactive: false,
+            playing: false,
             gpu,
             surface,
             config,
@@ -282,11 +305,27 @@ impl Surface {
     /// queues one image; the playback path is Fifo with two queued images, which keeps the frames on the display's beat.
     /// Returns what the reconfigure cost.
     pub fn set_interactive(&mut self, on: bool) -> std::time::Duration {
+        self.interactive = on;
+        self.apply_present_mode()
+    }
+
+    /// Tells the surface whether the timeline plays. Only matters with `SQ_PRESENT_IMMEDIATE=1`: Immediate while playing,
+    /// Fifo for the idle UI and the drag path (no tearing on a still picture). Returns what the reconfigure cost.
+    pub fn set_playing(&mut self, playing: bool) -> std::time::Duration {
+        if self.playing == playing {
+            return std::time::Duration::ZERO;
+        }
+        self.playing = playing;
+        if self.immediate_playback { self.apply_present_mode() } else { std::time::Duration::ZERO }
+    }
+
+    fn apply_present_mode(&mut self) -> std::time::Duration {
         let began = std::time::Instant::now();
-        let (mode, latency) = match on {
+        let (mode, latency) = match self.interactive {
             true if self.mailbox => (wgpu::PresentMode::Mailbox, 1),
             true => (wgpu::PresentMode::Fifo, 1),
-            false => (wgpu::PresentMode::Fifo, QUEUED_LATENCY),
+            false if self.immediate_playback && self.playing => (wgpu::PresentMode::Immediate, queued_latency()),
+            false => (wgpu::PresentMode::Fifo, queued_latency()),
         };
         if (self.config.present_mode, self.config.desired_maximum_frame_latency) != (mode, latency) {
             self.config.present_mode = mode;
@@ -434,6 +473,7 @@ impl Surface {
     /// Draws `list` and presents it; false when the system was not ready for a frame (the caller draws again soon).
     pub fn present(&mut self, window: &Window, list: &DrawList, atlas: Option<&GlyphAtlas>) -> Result<bool, String> {
         self.follow_mode();
+        let _present_span = sq_os::trace::span("ui", "ui present");
         let began = std::time::Instant::now();
         // The first draws of a cold start can come before the surface is configured: configure it now, so the frame
         // below (or the next one) works instead of failing.
@@ -443,7 +483,10 @@ impl Surface {
         let configured_in = began.elapsed();
         self.ready_at_present = self.configured;
         // wgpu panics (not an error value) when the surface was never configured; a lost configuration skips the frame.
+        let waiting = crate::loop_trace::enter(crate::loop_trace::Phase::Acquire);
         let acquired = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| self.surface.get_current_texture()));
+        drop(waiting);
+        let _drawing = crate::loop_trace::enter(crate::loop_trace::Phase::Draw);
         self.timing = PresentTiming {
             configure: configured_in,
             acquire: began.elapsed() - configured_in,

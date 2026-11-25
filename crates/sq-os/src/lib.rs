@@ -4,6 +4,8 @@ pub mod app_folders;
 pub mod appearance;
 pub mod keyboard;
 pub mod paths;
+pub mod thread;
+pub mod trace;
 
 use std::ffi::OsString;
 use std::path::PathBuf;

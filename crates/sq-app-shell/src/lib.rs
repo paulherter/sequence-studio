@@ -8,7 +8,7 @@ mod app_platform;
 mod headless;
 mod host;
 
-pub use app::{App, AppDeps, AppMessage, AppServices, HostId};
+pub use app::{App, AppDeps, AppMessage, AppServices, HostId, NoticeQueue};
 pub use app_platform::{
     AppMagicMasks, AppMonitorBackend, AppMonitorEngine, AppPicture, AppPictureSource, AppPlatform, AppPointer,
     AppPointerFacts, AppPointerShape, AppScreenSampler, LUTFileTypes, MaskTintImage, MaskTintPicture, PanelFileChooser,

@@ -155,37 +155,76 @@ pub enum GovernorPhase {
     /// Playing, ignoring the pre-roll (until the clock runs) and then `SETTLE_SECONDS` more (first decodes, and the
     /// re-decode after a step). `since` is set once the clock runs.
     Settling { run: u64, since: Option<f64> },
-    /// Counting one `WINDOW_SECONDS` window from `since`.
-    Watching { run: u64, since: f64, from: PlayCounts },
+    /// Judging one `BUCKET_SECONDS` bucket from `since`.
+    /// `bad_streak`: buckets in a row that were bad (one alone is a hiccup, not a load problem).
+    Watching { run: u64, since: f64, from: PlayCounts, bad_streak: u32 },
 }
 
-/// Playback quality "Auto": starts at `base` and steps one quality down (never below 1/4, the decoder floor) when a whole
-/// `WINDOW_SECONDS` window of play had `LATE_SHARE_PERCENT` % or more of its frame positions skipped or late. The pre-roll
-/// and `SETTLE_SECONDS` after it are not counted (also after a seek and after a step), and one bad frame never steps. A new
-/// run (Play, seek, loop wrap: `PlayCounts::run`) restarts the window. A step stays across play runs but goes back to
-/// `base` after `RESET_IDLE_SECONDS` without playing; `set_base` (settings, machine or sequence changed) starts over.
-/// Pure: the host feeds the engine's counters and a clock.
+/// Playback quality "Auto": starts at `base` and steps one quality down (never below 1/4, the decoder floor) when
+/// `BAD_BUCKETS_TO_STEP` buckets of `BUCKET_SECONDS` in a row were bad (so after about 0.5 s of sustained trouble). A bucket
+/// is bad when `BUCKET_LATE_SHARE_PERCENT` % or more of its frame positions (and at least `BUCKET_MIN_BAD`) were skipped or late,
+/// or when the window loop reported a stall of `STALL_SECONDS` or more in it (`note_stall`: a UI frame the engine counters
+/// cannot see). One bad bucket alone (a far cut, one decode stall, one slow UI frame) never steps. The pre-roll and
+/// `SETTLE_SECONDS` after it are not counted (also after a seek and after a step). A new run (Play, seek, loop wrap:
+/// `PlayCounts::run`) restarts the judging. Back up: after `up_hold` clean seconds one step up toward `base`; a step down
+/// soon after a step up (the machine cannot hold the better quality) doubles `up_hold` (up to `UP_HOLD_MAX_SECONDS`),
+/// so it does not flap. It goes back to `base` after `RESET_IDLE_SECONDS` without playing; `set_base` starts over.
+/// Pure: the host feeds the engine's counters, the stalls and a clock.
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub struct AutoQualityGovernor {
     base: MonitorQuality,
     current: MonitorQuality,
     phase: GovernorPhase,
     idle_since: Option<f64>,
+    /// A stall was reported since the last bucket closed.
+    stall_pending: bool,
+    /// The last time the play was bad, stepped or paused; the step back up counts from it. It is kept across runs (a seek or
+    /// a loop wrap restarts the judging, not the clean time), so a short loop still gets back up.
+    clean_since: f64,
+    up_hold: f64,
+    /// The first hold after a step down (`UP_HOLD_SECONDS`, or `SQ_AUTO_UP_HOLD` for A/B).
+    first_hold: f64,
+    stepped_up_at: Option<f64>,
 }
 
 impl AutoQualityGovernor {
     pub const SETTLE_SECONDS: f64 = 0.5;
-    pub const WINDOW_SECONDS: f64 = 2.0;
-    pub const LATE_SHARE_PERCENT: u64 = 10;
+    pub const BUCKET_SECONDS: f64 = 0.25;
+    pub const BAD_BUCKETS_TO_STEP: u32 = 2;
+    /// A further step down (already below `base`) needs this many bad buckets in a row (2 s): a short foreign CPU spike
+    /// costs one step (Half), never Quarter; only lateness that persists at the lower quality goes on.
+    pub const BAD_BUCKETS_TO_STEP_AGAIN: u32 = 8;
+    /// 10 stepped down a cut-heavy real project on a machine that kept up (22 % of frames 3+ frames behind at cuts in the worst window).
+    pub const BUCKET_LATE_SHARE_PERCENT: u64 = 25;
+    pub const BUCKET_MIN_BAD: u64 = 3;
+    /// A UI frame this long (measured from after layout to the present's return) stalls the picture.
+    pub const STALL_SECONDS: f64 = 0.25;
+    pub const UP_HOLD_SECONDS: f64 = 8.0;
+    pub const UP_HOLD_MAX_SECONDS: f64 = 64.0;
     pub const RESET_IDLE_SECONDS: f64 = 5.0;
     const LADDER: [MonitorQuality; 3] = [MonitorQuality::Full, MonitorQuality::Half, MonitorQuality::Quarter];
 
     pub fn new(base: MonitorQuality) -> AutoQualityGovernor {
+        // Night 2026-11-23: under a steady CPU load the probe back to Full after 8 s failed every time (a 300+ ms stall each:
+        // the cache of the step is dropped and 4K H.264 decodes full size at any quality). `SQ_AUTO_UP_HOLD=<seconds>` for A/B.
+        let hold = std::env::var("SQ_AUTO_UP_HOLD")
+            .ok()
+            .and_then(|v| v.parse::<f64>().ok())
+            .map_or(Self::UP_HOLD_SECONDS, |v| v.clamp(1.0, Self::UP_HOLD_MAX_SECONDS));
+        Self::with_up_hold(base, hold)
+    }
+
+    pub fn with_up_hold(base: MonitorQuality, hold: f64) -> AutoQualityGovernor {
         AutoQualityGovernor {
+            first_hold: hold,
             base: base.fixed(),
             current: base.fixed(),
             phase: GovernorPhase::Idle,
             idle_since: None,
+            stall_pending: false,
+            clean_since: 0.0,
+            up_hold: hold,
+            stepped_up_at: None,
         }
     }
 
@@ -203,28 +242,43 @@ impl AutoQualityGovernor {
         self.phase
     }
 
-    /// Re-bases the ladder (settings, machine pick or sequence changed).
-    pub fn set_base(&mut self, q: MonitorQuality) {
-        self.base = q.fixed();
-        self.current = self.base;
-        self.phase = GovernorPhase::Idle;
-        self.idle_since = None;
+    /// Clean seconds needed before the next step up.
+    pub fn up_hold(&self) -> f64 {
+        self.up_hold
     }
 
-    /// One poll at `now` seconds.
+    /// Re-bases the ladder (settings, machine pick or sequence changed).
+    pub fn set_base(&mut self, q: MonitorQuality) {
+        *self = AutoQualityGovernor::new(q);
+    }
+
+    /// The window loop saw a UI frame (acquire, draw or the gap between draws) take `seconds`. Short ones are ignored.
+    pub fn note_stall(&mut self, seconds: f64) {
+        if seconds >= Self::STALL_SECONDS {
+            self.stall_pending = true;
+        }
+    }
+
+    fn rung(q: MonitorQuality) -> usize {
+        Self::LADDER.iter().position(|l| *l == q).unwrap_or(0)
+    }
+
+    /// One poll at `now` seconds. All transitions are here.
     pub fn update(&mut self, counts: PlayCounts, is_playing: bool, now: f64) {
         if !is_playing {
             if self.phase != GovernorPhase::Idle || self.idle_since.is_none() {
                 self.idle_since = Some(now);
             }
             self.phase = GovernorPhase::Idle;
+            self.stall_pending = false;
+            self.clean_since = now;
             if self.idle_since.is_some_and(|t| now - t >= Self::RESET_IDLE_SECONDS) {
                 self.current = self.base;
             }
             return;
         }
         self.idle_since = None;
-        // A new run (or the first poll of play) restarts the window.
+        // A new run (or the first poll of play) restarts the judging.
         let run = match self.phase {
             GovernorPhase::Idle => None,
             GovernorPhase::Settling { run, .. } | GovernorPhase::Watching { run, .. } => Some(run),
@@ -238,29 +292,62 @@ impl AutoQualityGovernor {
                 None if counts.clock_running => Some(now),
                 other => other,
             };
+            self.stall_pending = false;
             self.phase = match since {
-                Some(t) if now - t >= Self::SETTLE_SECONDS => GovernorPhase::Watching { run, since: now, from: counts },
+                Some(t) if now - t >= Self::SETTLE_SECONDS => {
+                    GovernorPhase::Watching { run, since: now, from: counts, bad_streak: 0 }
+                }
                 _ => GovernorPhase::Settling { run, since },
             };
             return;
         }
-        if let GovernorPhase::Watching { run, since, from } = self.phase
-            && now - since >= Self::WINDOW_SECONDS
+        let GovernorPhase::Watching { run, since, from, bad_streak } = self.phase else { return };
+        if now - since < Self::BUCKET_SECONDS {
+            return;
+        }
+        let positions = counts.positions().saturating_sub(from.positions());
+        let bad = counts.bad().saturating_sub(from.bad());
+        let late =
+            positions > 0 && bad >= Self::BUCKET_MIN_BAD && bad * 100 >= positions * Self::BUCKET_LATE_SHARE_PERCENT;
+        let bucket_bad = late || std::mem::take(&mut self.stall_pending);
+        let bad_streak = if bucket_bad { bad_streak + 1 } else { 0 };
+        if bucket_bad {
+            self.clean_since = now;
+        }
+        // The better quality held: after a long clean stretch at the base the hold starts over, so a later load change gets
+        // one early probe again instead of the grown wait of an earlier failure.
+        if self.current == self.base && !bucket_bad && now - self.clean_since >= Self::UP_HOLD_MAX_SECONDS {
+            self.up_hold = self.first_hold;
+        }
+        let needed = if Self::rung(self.current) > Self::rung(self.base) {
+            Self::BAD_BUCKETS_TO_STEP_AGAIN
+        } else {
+            Self::BAD_BUCKETS_TO_STEP
+        };
+        if bad_streak >= needed {
+            self.step_down(now);
+            self.clean_since = now;
+            self.phase = GovernorPhase::Settling { run, since: Some(now) };
+        } else if bad_streak == 0
+            && Self::rung(self.current) > Self::rung(self.base)
+            && now - self.clean_since >= self.up_hold
         {
-            let positions = counts.positions().saturating_sub(from.positions());
-            let bad = counts.bad().saturating_sub(from.bad());
-            self.phase = if positions > 0 && bad * 100 >= positions * Self::LATE_SHARE_PERCENT {
-                self.step_down();
-                GovernorPhase::Settling { run, since: Some(now) }
-            } else {
-                GovernorPhase::Watching { run, since: now, from: counts }
-            };
+            self.clean_since = now;
+            self.current = Self::LADDER[Self::rung(self.current) - 1];
+            self.stepped_up_at = Some(now);
+            self.phase = GovernorPhase::Settling { run, since: Some(now) };
+        } else {
+            self.phase = GovernorPhase::Watching { run, since: now, from: counts, bad_streak };
         }
     }
 
-    fn step_down(&mut self) {
-        let at = Self::LADDER.iter().position(|q| *q == self.current).unwrap_or(0);
-        self.current = Self::LADDER[(at + 1).min(Self::LADDER.len() - 1)];
+    fn step_down(&mut self, now: f64) {
+        // A step down soon after a step up: the better quality does not hold here, wait longer before trying again.
+        if self.stepped_up_at.is_some_and(|t| now - t < self.up_hold * 2.0) {
+            self.up_hold = (self.up_hold * 2.0).min(Self::UP_HOLD_MAX_SECONDS);
+        }
+        self.stepped_up_at = None;
+        self.current = Self::LADDER[(Self::rung(self.current) + 1).min(Self::LADDER.len() - 1)];
     }
 }
 
@@ -744,7 +831,11 @@ mod tests {
 
     impl Run {
         fn new(base: MonitorQuality) -> Run {
-            Run { g: AutoQualityGovernor::new(base), c: PlayCounts { run: 1, clock_running: true, ..Default::default() }, now: 0.0 }
+            Run {
+                g: AutoQualityGovernor::new(base),
+                c: PlayCounts { run: 1, clock_running: true, ..Default::default() },
+                now: 0.0,
+            }
         }
         fn play(&mut self, seconds: f64, bad_per_poll: u64) {
             for _ in 0..(seconds / 0.5).round() as u64 {
@@ -754,6 +845,20 @@ mod tests {
                 self.g.update(self.c, true, self.now);
             }
         }
+    }
+
+    #[test]
+    fn a_longer_first_hold_keeps_half_through_a_clean_stretch_the_default_would_probe_in() {
+        let go = |hold: f64| {
+            let mut r = Run::new(MonitorQuality::Full);
+            r.g = AutoQualityGovernor::with_up_hold(MonitorQuality::Full, hold);
+            r.play(3.0, 8); // trouble: steps down
+            let down = r.g.current();
+            r.play(20.0, 0);
+            (down, r.g.current())
+        };
+        assert_eq!(go(AutoQualityGovernor::UP_HOLD_SECONDS), (MonitorQuality::Half, MonitorQuality::Full));
+        assert_eq!(go(30.0), (MonitorQuality::Half, MonitorQuality::Half));
     }
 
     #[test]
@@ -768,14 +873,39 @@ mod tests {
     }
 
     #[test]
-    fn governor_steps_down_on_a_sustained_window_and_keeps_it_across_runs() {
+    fn governor_keeps_the_quality_when_a_fifth_of_the_frames_are_late_window_after_window() {
+        // Cut-heavy real project: 20 % of the frames a few frames behind at cuts, every window, while 884 of 900 are shown.
         let mut r = Run::new(MonitorQuality::Full);
         r.g.update(r.c, true, 0.0);
         r.play(0.5, 0);
-        r.play(2.0, 3); // 20 % late
+        r.play(12.0, 3);
+        assert_eq!(r.g.current(), MonitorQuality::Full);
+    }
+
+    #[test]
+    fn governor_keeps_the_quality_after_one_stalled_poll_that_recovers() {
+        // The real project at a far cut: one poll with 27 % late frames, then clean play; full all the way.
+        let mut r = Run::new(MonitorQuality::Full);
+        r.g.update(r.c, true, 0.0);
+        r.play(0.5, 0);
+        r.play(0.5, 4);
+        r.play(10.0, 0);
+        r.play(0.5, 4);
+        r.play(10.0, 0);
+        assert_eq!(r.g.current(), MonitorQuality::Full);
+    }
+
+    #[test]
+    fn governor_steps_down_on_sustained_lateness_and_keeps_it_across_runs() {
+        let mut r = Run::new(MonitorQuality::Full);
+        r.g.update(r.c, true, 0.0);
+        r.play(0.5, 0);
+        r.play(0.5, 4); // 27 % late: one bad bucket alone does not step
+        assert_eq!(r.g.current(), MonitorQuality::Full);
+        r.play(0.5, 4); // a second one in a row does
         assert_eq!(r.g.current(), MonitorQuality::Half);
         assert!(matches!(r.g.phase(), GovernorPhase::Settling { .. }), "a step settles again");
-        r.play(2.5, 3);
+        r.play(5.0, 4);
         assert_eq!(r.g.current(), MonitorQuality::Quarter);
         r.play(5.0, 8);
         assert_eq!(r.g.current(), MonitorQuality::Quarter, "never below a quarter");
@@ -794,7 +924,7 @@ mod tests {
         let mut r = Run::new(MonitorQuality::Half);
         r.g.update(r.c, true, 0.0);
         r.play(0.5, 0);
-        r.play(2.0, 3);
+        r.play(4.0, 4);
         assert_eq!(r.g.current(), MonitorQuality::Quarter);
         r.g.update(r.c, false, r.now);
         r.g.update(r.c, false, r.now + 4.0);
@@ -818,10 +948,10 @@ mod tests {
         r.c.clock_running = true;
         r.play(1.0, 0); // settles 0.5 s from the release
         assert!(matches!(r.g.phase(), GovernorPhase::Watching { .. }));
-        r.play(1.5, 3);
+        r.play(0.5, 4);
         // A seek: a new run, the window starts over, so 0.5 s later it is not judged.
         r.c.run += 1;
-        r.play(0.5, 3);
+        r.play(0.5, 4);
         assert!(matches!(r.g.phase(), GovernorPhase::Settling { .. }));
         assert_eq!(r.g.current(), MonitorQuality::Full);
     }
@@ -830,13 +960,230 @@ mod tests {
     fn governor_counts_late_frames_like_skipped_ones_and_starts_from_the_base() {
         let mut r = Run::new(MonitorQuality::Half);
         r.g.update(r.c, true, 0.0);
-        for _ in 0..5 {
+        for _ in 0..9 {
             r.now += 0.5;
             r.c.shown += 15;
-            r.c.late += 3;
+            r.c.late += 4;
             r.g.update(r.c, true, r.now);
         }
         assert_eq!(r.g.current(), MonitorQuality::Quarter);
+    }
+
+    /// A simulated play at 30 fps polled every `step` seconds; `Sim::stall` reports a UI stall like the window loop.
+    struct Sim {
+        g: AutoQualityGovernor,
+        c: PlayCounts,
+        now: f64,
+    }
+
+    impl Sim {
+        /// Starts played and past the settle time, at `base`.
+        fn watching(base: MonitorQuality) -> Sim {
+            let mut s = Sim {
+                g: AutoQualityGovernor::new(base),
+                c: PlayCounts { run: 1, clock_running: true, ..Default::default() },
+                now: 0.0,
+            };
+            s.g.update(s.c, true, 0.0);
+            s.run(0.6, 0.05, 0.0);
+            assert!(matches!(s.g.phase(), GovernorPhase::Watching { .. }));
+            s
+        }
+        /// `seconds` of play, polled every `step`; `late_share` of the positions come late.
+        fn run(&mut self, seconds: f64, step: f64, late_share: f64) {
+            let polls = (seconds / step).round() as u64;
+            for _ in 0..polls {
+                self.now += step;
+                let positions = (step * 30.0).round() as u64;
+                let late = (positions as f64 * late_share).round() as u64;
+                self.c.shown += positions - late;
+                self.c.late += late;
+                self.g.update(self.c, true, self.now);
+            }
+        }
+        fn stall(&mut self, seconds: f64) {
+            self.g.note_stall(seconds);
+        }
+    }
+
+    #[test]
+    fn auto_isolated_hiccups_keep_full_on_a_good_machine() {
+        let mut s = Sim::watching(MonitorQuality::Full);
+        for _ in 0..10 {
+            s.run(1.0, 0.05, 0.0);
+            s.run(0.05, 0.05, 1.0); // a burst of late frames inside one poll
+            s.run(1.0, 0.05, 0.0);
+        }
+        s.stall(1.4); // one long stall, nothing late around it
+        s.run(5.0, 0.05, 0.0);
+        s.stall(0.1); // a short UI frame is no stall
+        s.run(0.5, 0.05, 0.0);
+        assert_eq!(s.g.current(), MonitorQuality::Full);
+    }
+
+    #[test]
+    fn auto_a_two_second_load_spike_costs_half_never_quarter() {
+        let mut s = Sim::watching(MonitorQuality::Full);
+        s.run(2.0, 0.05, 0.6); // foreign CPU load for 2 s
+        assert_eq!(s.g.current(), MonitorQuality::Half);
+        s.run(5.0, 0.05, 0.0);
+        assert_eq!(s.g.current(), MonitorQuality::Half);
+    }
+
+    #[test]
+    fn auto_lateness_that_persists_at_half_goes_on_to_quarter() {
+        let mut s = Sim::watching(MonitorQuality::Full);
+        s.run(8.0, 0.05, 0.6);
+        assert_eq!(s.g.current(), MonitorQuality::Quarter);
+    }
+
+    #[test]
+    fn auto_sustained_lateness_steps_down_within_a_second() {
+        let mut s = Sim::watching(MonitorQuality::Full);
+        let start = s.now;
+        while s.g.current() == MonitorQuality::Full && s.now - start < 3.0 {
+            s.run(0.05, 0.05, 0.6);
+        }
+        assert_eq!(s.g.current(), MonitorQuality::Half);
+        let took = s.now - start;
+        assert!(took <= 0.75, "took {took} s");
+    }
+
+    #[test]
+    fn auto_a_stall_followed_by_lateness_steps_down_fast() {
+        let mut s = Sim::watching(MonitorQuality::Full);
+        s.stall(0.4); // the window loop saw a 400 ms frame
+        s.run(0.3, 0.05, 0.0); // the engine counters stay clean in that bucket
+        assert_eq!(s.g.current(), MonitorQuality::Full, "the stall alone is a hiccup");
+        s.run(0.3, 0.05, 0.5); // then lateness
+        assert_eq!(s.g.current(), MonitorQuality::Half);
+    }
+
+    #[test]
+    fn auto_two_stalls_in_a_row_step_down() {
+        let mut s = Sim::watching(MonitorQuality::Full);
+        s.stall(0.3);
+        s.run(0.3, 0.05, 0.0);
+        s.stall(0.3);
+        s.run(0.3, 0.05, 0.0);
+        assert_eq!(s.g.current(), MonitorQuality::Half);
+    }
+
+    #[test]
+    fn auto_recovery_steps_up_only_after_the_hold() {
+        let mut s = Sim::watching(MonitorQuality::Full);
+        s.run(1.0, 0.05, 0.6);
+        assert_eq!(s.g.current(), MonitorQuality::Half);
+        s.run(AutoQualityGovernor::UP_HOLD_SECONDS - 1.0, 0.05, 0.0);
+        assert_eq!(s.g.current(), MonitorQuality::Half, "not clean long enough");
+        s.run(2.0, 0.05, 0.0);
+        assert_eq!(s.g.current(), MonitorQuality::Full);
+    }
+
+    #[test]
+    fn auto_does_not_step_up_past_the_base() {
+        let mut s = Sim::watching(MonitorQuality::Half);
+        s.run(30.0, 0.05, 0.0);
+        assert_eq!(s.g.current(), MonitorQuality::Half);
+    }
+
+    #[test]
+    fn auto_alternating_good_and_bad_does_not_flap() {
+        let mut s = Sim::watching(MonitorQuality::Full);
+        let mut changes = 0;
+        let mut last = s.g.current();
+        // Alternating 2 s good, 0.5 s bad for a minute: it may step down, but never back up to flap.
+        for _ in 0..24 {
+            s.run(2.0, 0.05, 0.0);
+            s.run(0.6, 0.05, 0.6);
+            if s.g.current() != last {
+                changes += 1;
+                last = s.g.current();
+            }
+        }
+        assert!(changes <= 2, "changed {changes} times");
+    }
+
+    #[test]
+    fn auto_a_failed_step_up_doubles_the_hold() {
+        let mut s = Sim::watching(MonitorQuality::Full);
+        s.run(1.0, 0.05, 0.6);
+        assert_eq!(s.g.current(), MonitorQuality::Half);
+        s.run(AutoQualityGovernor::UP_HOLD_SECONDS + 1.0, 0.05, 0.0);
+        assert_eq!(s.g.current(), MonitorQuality::Full);
+        s.run(2.0, 0.05, 0.0);
+        s.run(1.0, 0.05, 0.6); // the better quality does not hold
+        assert_eq!(s.g.current(), MonitorQuality::Half);
+        assert_eq!(s.g.up_hold(), AutoQualityGovernor::UP_HOLD_SECONDS * 2.0);
+        s.run(AutoQualityGovernor::UP_HOLD_SECONDS + 1.0, 0.05, 0.0);
+        assert_eq!(s.g.current(), MonitorQuality::Half, "waits longer now");
+    }
+
+    #[test]
+    fn auto_repeated_failed_probes_grow_the_hold_to_the_cap() {
+        let mut s = Sim::watching(MonitorQuality::Full);
+        s.run(1.0, 0.05, 0.6);
+        let mut holds = Vec::new();
+        for _ in 0..5 {
+            s.run(s.g.up_hold() + 1.0, 0.05, 0.0);
+            assert_eq!(s.g.current(), MonitorQuality::Full, "probe");
+            s.run(2.0, 0.05, 0.0);
+            s.run(1.0, 0.05, 0.6);
+            assert_eq!(s.g.current(), MonitorQuality::Half);
+            holds.push(s.g.up_hold());
+        }
+        assert_eq!(holds, vec![16.0, 32.0, 64.0, 64.0, 64.0]);
+    }
+
+    #[test]
+    fn auto_a_long_clean_stretch_at_the_base_shrinks_the_hold() {
+        let mut s = Sim::watching(MonitorQuality::Full);
+        s.run(1.0, 0.05, 0.6);
+        s.run(AutoQualityGovernor::UP_HOLD_SECONDS + 1.0, 0.05, 0.0);
+        s.run(2.0, 0.05, 0.0);
+        s.run(1.0, 0.05, 0.6);
+        assert_eq!(s.g.up_hold(), AutoQualityGovernor::UP_HOLD_SECONDS * 2.0);
+        s.run(s.g.up_hold() + 1.0, 0.05, 0.0);
+        assert_eq!(s.g.current(), MonitorQuality::Full);
+        s.run(AutoQualityGovernor::UP_HOLD_MAX_SECONDS + 5.0, 0.05, 0.0);
+        assert_eq!(s.g.current(), MonitorQuality::Full);
+        assert_eq!(s.g.up_hold(), AutoQualityGovernor::UP_HOLD_SECONDS);
+    }
+
+    #[test]
+    fn auto_stalls_while_settling_or_paused_are_not_counted() {
+        let mut s = Sim {
+            g: AutoQualityGovernor::new(MonitorQuality::Full),
+            c: PlayCounts { run: 1, clock_running: true, ..Default::default() },
+            now: 0.0,
+        };
+        s.stall(2.0); // idle
+        s.g.update(s.c, false, 0.0);
+        s.now = 0.1;
+        s.g.update(s.c, true, s.now); // the clock runs: settling starts
+        s.stall(1.0);
+        s.run(0.2, 0.05, 0.0);
+        s.stall(1.0); // twice while settling
+        s.run(0.5, 0.05, 0.0);
+        assert!(matches!(s.g.phase(), GovernorPhase::Watching { bad_streak: 0, .. }), "{:?}", s.g.phase());
+        s.run(0.6, 0.05, 0.0); // two clean buckets
+        assert!(matches!(s.g.phase(), GovernorPhase::Watching { bad_streak: 0, .. }), "{:?}", s.g.phase());
+        assert_eq!(s.g.current(), MonitorQuality::Full);
+    }
+
+    #[test]
+    fn auto_a_short_loop_still_steps_back_up_after_the_hold() {
+        let mut s = Sim::watching(MonitorQuality::Full);
+        s.run(1.0, 0.05, 0.6);
+        assert_eq!(s.g.current(), MonitorQuality::Half);
+        // The loop wraps every 4 s: a new run each time, clean frames.
+        for _ in 0..4 {
+            s.c.run += 1;
+            s.c.shown = 0;
+            s.c.late = 0;
+            s.run(4.0, 0.05, 0.0);
+        }
+        assert_eq!(s.g.current(), MonitorQuality::Full);
     }
 
     #[test]

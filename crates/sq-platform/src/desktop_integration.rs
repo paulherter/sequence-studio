@@ -3,23 +3,22 @@
 //! folder (`~/.local/share`), the way AppImage helper tools do, and removes exactly those files again. The logic is plain
 //! file work and runs on any host; only the Linux build reads the AppImage's environment (`APPIMAGE`, `APPDIR`).
 
+pub use sq_setup_engine::Identity;
 use sq_setup_engine::Version;
 use std::io::{Read, Write};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
-const DESKTOP_FILE: &str = "sequence-studio.desktop";
 /// The window's app id (Wayland `app_id`, X11 class): the desktop entry's id without `.desktop`, so the dock and taskbar
 /// match the entry and its icon.
-pub const APP_ID: &str = "sequence-studio";
+pub fn app_id() -> &'static str {
+    Identity::build().linux_id()
+}
+/// The MIME package is the same file in both channels (one `.sqproj` type), so it is shared; the last channel to go removes it.
 const MIME_FILE: &str = "de.paulherter.sequencestudio.xml";
-const ICON_FILE: &str = "sequence-studio.png";
 /// Beside the user's data: remembers a "No thanks" so the offer does not come back every start.
-/// The stable name of the integrated AppImage: the menu entry keeps working across versions.
-pub const INTEGRATED_NAME: &str = "SequenceStudio.AppImage";
 /// The desktop file key that says which version the integrated file is.
 const VERSION_KEY: &str = "X-AppImage-Version";
-const DECLINED_MARKER: &str = "sequence-studio/desktop-offer-declined";
 
 /// Where the AppImage is and where its files go.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -34,16 +33,37 @@ pub struct DesktopEnv {
     pub home: PathBuf,
     /// The version of the running AppImage (the workspace version, the one `AppVersion` shows).
     pub version: String,
+    /// The channel of the running build: it names the desktop file, icon, integrated AppImage and "No thanks" marker, so
+    /// Stable and Nightly live side by side.
+    pub identity: Identity,
 }
 
 impl DesktopEnv {
+    fn desktop_file(&self) -> String {
+        format!("{}.desktop", self.identity.linux_id())
+    }
+    fn icon_file(&self) -> String {
+        format!("{}.png", self.identity.linux_id())
+    }
+    /// The stable name of the integrated AppImage: the menu entry keeps working across versions.
+    pub fn integrated_name(&self) -> &'static str {
+        self.identity.linux_integrated_name()
+    }
+
     /// `None` when the app does not run from an AppImage or the environment names no data folder.
     pub fn from_env(env: impl Fn(&str) -> Option<std::ffi::OsString>) -> Option<Self> {
         let appimage = PathBuf::from(env("APPIMAGE").filter(|v| !v.is_empty())?);
         let appdir = PathBuf::from(env("APPDIR").filter(|v| !v.is_empty())?);
         let home = PathBuf::from(env("HOME").filter(|v| !v.is_empty())?);
         let data_home = sq_os::Platform::Linux.data_dir(&env)?;
-        Some(Self { appimage, appdir, data_home, home, version: env!("CARGO_PKG_VERSION").to_string() })
+        Some(Self {
+            appimage,
+            appdir,
+            data_home,
+            home,
+            version: env!("CARGO_PKG_VERSION").to_string(),
+            identity: Identity::build(),
+        })
     }
 
     /// The running AppImage's environment, on Linux only.
@@ -52,16 +72,16 @@ impl DesktopEnv {
     }
 
     fn desktop_path(&self) -> PathBuf {
-        self.data_home.join("applications").join(DESKTOP_FILE)
+        self.data_home.join("applications").join(self.desktop_file())
     }
     fn mime_path(&self) -> PathBuf {
         self.data_home.join("mime/packages").join(MIME_FILE)
     }
     fn icon_path(&self) -> PathBuf {
-        self.data_home.join("icons/hicolor/256x256/apps").join(ICON_FILE)
+        self.data_home.join("icons/hicolor/256x256/apps").join(self.icon_file())
     }
     fn marker_path(&self) -> PathBuf {
-        self.data_home.join(DECLINED_MARKER)
+        self.data_home.join(self.identity.linux_id()).join("desktop-offer-declined")
     }
 
     /// `path` with the home folder written as `~`, the way the screens show it.
@@ -220,9 +240,7 @@ pub fn state(env: Option<&DesktopEnv>) -> DesktopState {
     }
     match (Version::parse(&installed), Version::parse(&env.version)) {
         // The running file IS the integrated one (replaced in place by a newer build): only the recorded version is old.
-        (Some(have), Some(running)) if have < running && runs_integrated_file(env, &exec) => {
-            DesktopState::Stale
-        }
+        (Some(have), Some(running)) if have < running && runs_integrated_file(env, &exec) => DesktopState::Stale,
         (Some(have), Some(running)) if have < running => DesktopState::Outdated { installed },
         (Some(_), Some(_)) => DesktopState::Installed,
         _ if installed == env.version => DesktopState::Installed,
@@ -254,11 +272,11 @@ fn write_entry(env: &DesktopEnv, exec: &Path) -> Result<(), SetupFailure> {
     let share = env.appdir.join("usr/share");
     let read =
         |p: PathBuf| std::fs::read(&p).map_err(|e| SetupFailure::new(399, "reading the app's files", Some(&p), e));
-    let template = read(share.join("applications").join(DESKTOP_FILE))?;
+    let template = read(share.join("applications").join(env.desktop_file()))?;
     let template =
         String::from_utf8(template).map_err(|e| SetupFailure::new(399, "reading the app's files", None, e))?;
     let mime = read(share.join("mime/packages").join(MIME_FILE))?;
-    let icon = read(share.join("icons/hicolor/256x256/apps").join(ICON_FILE))?;
+    let icon = read(share.join("icons/hicolor/256x256/apps").join(env.icon_file()))?;
     let put = |p: PathBuf, bytes: &[u8]| {
         write(&p, bytes).map_err(|e| SetupFailure::new(301, "writing the menu entry", Some(&p), e))
     };
@@ -361,7 +379,7 @@ pub fn add(
     apps_dir: &Path,
     progress: &mut dyn FnMut(u64, u64) -> bool,
 ) -> Result<AddEnd, SetupFailure> {
-    integrate(env, &apps_dir.join(INTEGRATED_NAME), move_file, progress)
+    integrate(env, &apps_dir.join(env.integrated_name()), move_file, progress)
 }
 
 /// Replaces the integrated AppImage with the running one (the old file goes to the XDG trash) and rewrites the entry.
@@ -375,7 +393,7 @@ pub fn update(
 ) -> Result<AddEnd, SetupFailure> {
     let target = integrated_file(env).unwrap_or_else(|| {
         let dir = if apps_dir.is_file() { apps_dir.parent().unwrap_or(apps_dir) } else { apps_dir };
-        dir.join(INTEGRATED_NAME)
+        dir.join(env.integrated_name())
     });
     integrate(env, &target, move_file, progress)
 }
@@ -404,7 +422,8 @@ fn integrate(
     if !already_there {
         let moving = |e: std::io::Error| SetupFailure::new(302, "moving the AppImage", Some(apps_dir), e);
         create_apps_dir(apps_dir).map_err(|e| undo(moving(e)))?;
-        let stage = apps_dir.join(format!("{}.new", target.file_name().and_then(|n| n.to_str()).unwrap_or(INTEGRATED_NAME)));
+        let stage = apps_dir
+            .join(format!("{}.new", target.file_name().and_then(|n| n.to_str()).unwrap_or(env.integrated_name())));
         match mover(&env.appimage, &stage, progress) {
             Ok(Moved::Done) => {}
             Ok(Moved::Canceled) => {
@@ -429,7 +448,13 @@ fn integrate(
 
 /// Deletes the three files this module wrote (and a "No thanks").
 fn remove_files(env: &DesktopEnv) -> Result<(), SetupFailure> {
-    for p in [env.desktop_path(), env.mime_path(), env.icon_path(), env.marker_path()] {
+    // The MIME package is shared by both channels: it stays while the other channel's menu entry is there.
+    let other_entry = env.data_home.join("applications").join(format!("{}.desktop", env.identity.other().linux_id()));
+    let mut files = vec![env.desktop_path(), env.icon_path(), env.marker_path()];
+    if !other_entry.exists() {
+        files.push(env.mime_path());
+    }
+    for p in files {
         match std::fs::remove_file(&p) {
             Ok(()) => {}
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -469,7 +494,7 @@ pub fn remove(env: &DesktopEnv, trash_app_file: bool) -> Result<(), SetupFailure
         env.data_home.join("icons/hicolor/256x256"),
         env.data_home.join("icons/hicolor"),
         env.data_home.join("icons"),
-        env.data_home.join("sequence-studio"),
+        env.data_home.join(env.identity.linux_id()),
     ] {
         let _ = std::fs::remove_dir(dir);
     }
@@ -489,19 +514,24 @@ mod tests {
 
     #[test]
     fn the_window_app_id_is_the_id_of_the_installed_desktop_entry() {
-        assert_eq!(format!("{APP_ID}.desktop"), DESKTOP_FILE);
+        assert_eq!(app_id(), "sequence-studio");
         let entry = include_str!("../../../packaging/linux/sequence-studio.desktop");
-        assert!(entry.lines().any(|l| l == format!("StartupWMClass={APP_ID}")));
+        assert!(entry.lines().any(|l| l == format!("StartupWMClass={}", app_id())));
     }
 
     fn rig(name: &str) -> (PathBuf, DesktopEnv) {
+        rig_for(name, Identity::STABLE)
+    }
+
+    fn rig_for(name: &str, identity: Identity) -> (PathBuf, DesktopEnv) {
         let root = std::env::temp_dir().join(format!("sq-desktop-{name}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&root);
         let appdir = root.join("mnt");
         let desktop = b"[Desktop Entry]\nName=Sequence Studio\nExec=sequence-studio %F\nIcon=sequence-studio\n";
-        write(&appdir.join("usr/share/applications").join(DESKTOP_FILE), desktop).expect("desktop");
+        let id = identity.linux_id();
+        write(&appdir.join("usr/share/applications").join(format!("{id}.desktop")), desktop).expect("desktop");
         write(&appdir.join("usr/share/mime/packages").join(MIME_FILE), b"<mime-info/>").expect("mime");
-        write(&appdir.join("usr/share/icons/hicolor/256x256/apps").join(ICON_FILE), b"png").expect("icon");
+        write(&appdir.join("usr/share/icons/hicolor/256x256/apps").join(format!("{id}.png")), b"png").expect("icon");
         let appimage = root.join("home/Downloads/SequenceStudio-0.2.0-x86_64.AppImage");
         write(&appimage, b"appimage-bytes").expect("appimage");
         let env = DesktopEnv {
@@ -510,6 +540,7 @@ mod tests {
             data_home: root.join("home/.local/share"),
             home: root.join("home"),
             version: "0.2.0".into(),
+            identity,
         };
         (root, env)
     }
@@ -576,7 +607,7 @@ mod tests {
     #[test]
     fn an_appimage_already_at_the_target_does_not_move() {
         let (root, mut env) = rig("same");
-        let target = root.join("home/Applications").join(INTEGRATED_NAME);
+        let target = root.join("home/Applications").join(env.integrated_name());
         write(&target, b"appimage-bytes").expect("file");
         env.appimage = target.clone();
         let calls = std::cell::Cell::new(0);
@@ -598,11 +629,11 @@ mod tests {
         std::fs::write(&env.appimage, &big).expect("big");
         // A mover that never renames stands in for a second file system.
         let mut seen = Vec::new();
-        let end = integrate(&env, &default_apps_dir(&env).join(INTEGRATED_NAME), copy_file, &mut |d, t| {
+        let end = integrate(&env, &default_apps_dir(&env).join(env.integrated_name()), copy_file, &mut |d, t| {
             seen.push((d, t));
             true
         });
-        let target = root.join("home/Applications").join(INTEGRATED_NAME);
+        let target = root.join("home/Applications").join(env.integrated_name());
         assert_eq!(end, Ok(AddEnd::Done { integrated: target.clone() }));
         assert_eq!(std::fs::read(&target).expect("file"), big);
         assert!(!env.appimage.exists());
@@ -617,7 +648,9 @@ mod tests {
         let (root, env) = rig("cancel");
         std::fs::write(&env.appimage, vec![1u8; 3 << 20]).expect("big");
         decline(&env).expect("decline");
-        let end = integrate(&env, &default_apps_dir(&env).join(INTEGRATED_NAME), copy_file, &mut |done, _| done < (1 << 20));
+        let end = integrate(&env, &default_apps_dir(&env).join(env.integrated_name()), copy_file, &mut |done, _| {
+            done < (1 << 20)
+        });
         assert_eq!(end, Ok(AddEnd::Canceled));
         assert!(env.appimage.is_file(), "the original stays");
         let apps = root.join("home/Applications");
@@ -631,7 +664,8 @@ mod tests {
     fn a_failed_move_is_302_and_writes_nothing() {
         let (root, env) = rig("move-fails");
         let mover = |_: &Path, _: &Path, _: &mut dyn FnMut(u64, u64) -> bool| Err(std::io::Error::other("disk gone"));
-        let end = integrate(&env, &default_apps_dir(&env).join(INTEGRATED_NAME), mover, &mut no_progress()).expect_err("fails");
+        let end = integrate(&env, &default_apps_dir(&env).join(env.integrated_name()), mover, &mut no_progress())
+            .expect_err("fails");
         assert_eq!((end.code, end.step.as_str()), (302, "moving the AppImage"));
         assert!(end.system.contains("disk gone"));
         assert!(env.appimage.is_file());
@@ -689,11 +723,12 @@ mod tests {
         assert_eq!(end, Ok(AddEnd::Done { integrated: target.clone() }));
         assert_eq!(std::fs::read(&target).expect("file"), b"new-bytes");
         assert_eq!(state(Some(&env)), DesktopState::Installed);
-        let trashed = env.data_home.join("Trash/files").join(INTEGRATED_NAME);
+        let trashed = env.data_home.join("Trash/files").join(env.integrated_name());
         assert_eq!(std::fs::read(trashed).expect("trashed"), b"appimage-bytes");
-        let info =
-            std::fs::read_to_string(env.data_home.join("Trash/info").join(format!("{INTEGRATED_NAME}.trashinfo")))
-                .expect("info");
+        let info = std::fs::read_to_string(
+            env.data_home.join("Trash/info").join(format!("{}.trashinfo", env.integrated_name())),
+        )
+        .expect("info");
         assert!(info.starts_with("[Trash Info]\nPath=") && info.contains("/Applications/SequenceStudio.AppImage\n"));
         assert!(info.contains("DeletionDate="));
         // A second update finds the name taken in the trash and picks a new one.
@@ -799,10 +834,10 @@ mod tests {
         remove(&env, true).expect("remove");
         assert!(!target.exists());
         assert_eq!(
-            std::fs::read(env.data_home.join("Trash/files").join(INTEGRATED_NAME)).expect("trash"),
+            std::fs::read(env.data_home.join("Trash/files").join(env.integrated_name())).expect("trash"),
             b"appimage-bytes"
         );
-        assert!(env.data_home.join("Trash/info").join(format!("{INTEGRATED_NAME}.trashinfo")).is_file());
+        assert!(env.data_home.join("Trash/info").join(format!("{}.trashinfo", env.integrated_name())).is_file());
         assert_eq!(state(Some(&env)), DesktopState::Offer);
         let _ = std::fs::remove_dir_all(root);
     }
@@ -850,6 +885,42 @@ mod tests {
         assert_eq!(end.code, 399);
         assert!(!env.desktop_path().exists());
         assert!(env.appimage.is_file());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn a_nightly_integrates_under_its_own_names_and_leaves_stable_untouched() {
+        let (root, stable) = rig("side-stable");
+        let nightly = DesktopEnv { identity: Identity::NIGHTLY, ..rig_for("side-nightly", Identity::NIGHTLY).1 };
+        // One shared home: the nightly env uses the stable env's data folder and its own image.
+        let nightly = DesktopEnv { data_home: stable.data_home.clone(), home: stable.home.clone(), ..nightly };
+        let stable_file = added(&stable);
+        let before = std::fs::read(stable.desktop_path()).expect("stable entry");
+        let nightly_file = added(&nightly);
+        assert_eq!(nightly_file, root.join("home/Applications/SequenceStudioNightly.AppImage"));
+        assert_ne!(nightly_file, stable_file);
+        let data = &stable.data_home;
+        assert!(data.join("applications/sequence-studio-nightly.desktop").is_file());
+        assert!(data.join("icons/hicolor/256x256/apps/sequence-studio-nightly.png").is_file());
+        assert_eq!(std::fs::read(stable.desktop_path()).expect("stable entry"), before);
+        assert_eq!(state(Some(&nightly)), DesktopState::Installed);
+        remove(&nightly, true).expect("remove nightly");
+        assert!(!data.join("applications/sequence-studio-nightly.desktop").exists());
+        assert!(!nightly_file.exists());
+        assert!(stable.desktop_path().is_file() && stable.icon_path().is_file() && stable.mime_path().is_file());
+        assert!(stable_file.is_file());
+        assert_eq!(state(Some(&stable)), DesktopState::Installed);
+        remove(&stable, false).expect("remove stable");
+        assert!(!stable.mime_path().exists());
+        let _ = std::fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn the_nightly_window_id_is_the_nightly_entry_id() {
+        assert_eq!(Identity::NIGHTLY.linux_id(), "sequence-studio-nightly");
+        let (root, env) = rig_for("nightly-names", Identity::NIGHTLY);
+        assert_eq!(env.desktop_path().file_name().and_then(|n| n.to_str()), Some("sequence-studio-nightly.desktop"));
+        assert_eq!(env.marker_path(), env.data_home.join("sequence-studio-nightly/desktop-offer-declined"));
         let _ = std::fs::remove_dir_all(root);
     }
 }

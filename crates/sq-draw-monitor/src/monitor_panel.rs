@@ -262,6 +262,8 @@ pub struct MonitorPanel {
     new_sequence_pressed: bool,
     /// The offline card's Locate… button (r8:745): where the last draw put it, and its pointer state.
     locate_rect: std::cell::Cell<CGRect>,
+    /// Where the last draw put the drop dot and its badge (zero when hidden); its tooltip is the count of the last play.
+    drop_dot_rect: std::cell::Cell<CGRect>,
     locate_hover: bool,
     locate_pressed: bool,
     /// Caret offsets of the open timecode field as last drawn (the canvas measures glyphs only while drawing).
@@ -349,6 +351,7 @@ impl MonitorPanel {
             offline_card_drawn: std::cell::Cell::new(CGRect::default()),
             new_sequence_pressed: false,
             locate_rect: std::cell::Cell::new(CGRect::default()),
+            drop_dot_rect: std::cell::Cell::new(CGRect::default()),
             locate_hover: false,
             locate_pressed: false,
             timecode_carets: Vec::new(),
@@ -916,7 +919,17 @@ impl MonitorPanel {
         let w = InspectorDraw::button_width(c, title);
         let y = r.min_y() + icon + 6.0 + 15.0 + 6.0 + 14.0 + 4.0;
         self.locate_rect.set(CGRect::new((r.mid_x() - w / 2.0).round(), y, w, 24.0));
-        InspectorDraw::button_kind(c, title, self.locate_rect.get(), self.locate_hover, self.locate_pressed, true, ButtonKind::OnViewer, 24.0, &self.theme);
+        InspectorDraw::button_kind(
+            c,
+            title,
+            self.locate_rect.get(),
+            self.locate_hover,
+            self.locate_pressed,
+            true,
+            ButtonKind::OnViewer,
+            24.0,
+            &self.theme,
+        );
     }
 
     /// MonitorPanelView.setDropHighlight / showDropZone: drop tint and focus ring over the card, and the Program half under
@@ -968,30 +981,36 @@ impl MonitorPanel {
             c.fill(r, t.viewer_hud());
             c.draw_text_in(&s, r, 10.0, if over { t.yellow() } else { t.label2() }, TextAlign::Left, 0.0, 0);
         }
+        self.drop_dot_rect.set(CGRect::default());
         if self.model.mode == MonitorMode::Program && self.model.drop_indicator_enabled {
             let size = 14.0;
-            let d = 6.0;
             let o = CGPoint::new(slot.min_x() + inset, slot.max_y() - inset - size);
             let warning = Self::color(t.palette.warning);
-            c.fill_ellipse(
-                CGRect::new(o.x + (size - d) / 2.0, o.y + (size - d) / 2.0, d, d),
-                if self.model.drop_amber() || self.model.drop_realtime_not_achieved() {
-                    warning
-                } else {
-                    t.label3().with_alpha(0.5)
-                },
-            );
+            let lit = self.model.drop_amber() || self.model.drop_realtime_not_achieved();
+            // Lit: a bigger dot in the warning color with a soft halo, so a drop is seen from the corner of the eye.
+            let d = if lit { 8.0 } else { 6.0 };
+            let dot = CGRect::new(o.x + (size - d) / 2.0, o.y + (size - d) / 2.0, d, d);
+            if lit {
+                c.fill_ellipse(dot.inset_by(-3.0, -3.0), warning.with_alpha(0.25));
+            }
+            c.fill_ellipse(dot, if lit { warning } else { t.label3().with_alpha(0.5) });
+            let mut hit = CGRect::new(o.x, o.y, size, size);
             if let Some(text) = self.model.drop_badge_text() {
+                let w = c.size_of(text, 10.0, 0).width;
+                // Like the other badges on the picture: a backing so the text reads over bright video.
+                c.fill(CGRect::new(o.x + size - 2.0, o.y, w + 6.0, size), t.viewer_hud());
                 c.draw_text_in(
                     text,
-                    CGRect::new(o.x + size, o.y, 200.0, size),
+                    CGRect::new(o.x + size, o.y, w.max(200.0), size),
                     10.0,
-                    if self.model.drop_realtime_not_achieved() { warning } else { t.label2() },
+                    if lit { warning } else { t.label2() },
                     TextAlign::Left,
                     0.0,
                     0,
                 );
+                hit = CGRect::new(o.x, o.y, size + w, size);
             }
+            self.drop_dot_rect.set(hit);
         }
         if let Some(text) = self.model.resolution_badge_text() {
             let s = format!(" {text} ");
@@ -1272,6 +1291,9 @@ impl MonitorPanel {
         self.footer.mouse_moved(p);
         self.new_sequence_hover = self.new_sequence_rect.contains(p);
         self.locate_hover = self.locate_rect.get().contains(p);
+        if self.drop_dot_rect.get().contains(p) {
+            cx.ui.hover.offer_tip(Some(self.model.drop_tooltip()));
+        }
         if self.offline_card_drawn.get().contains(p)
             && let Some(full) = self.model.offline_card_detail()
         {

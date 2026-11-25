@@ -6,8 +6,9 @@
 set -u
 SRC="$1"; OUT="$2"; VOL="${3:-Sequence Studio}"
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
-TMP="$(mktemp -d)"; RW="$TMP/rw.dmg"
-trap 'hdiutil detach "/Volumes/$VOL" -quiet -force >/dev/null 2>&1; rm -rf "$TMP"' EXIT
+. "$ROOT/scripts/lib-safe-delete.sh" || exit 1
+TMP="$(safe_tmpdir sq-dmg)" || exit 1; RW="$TMP/rw.dmg"
+trap 'hdiutil detach "/Volumes/$VOL" -quiet -force >/dev/null 2>&1; safe_delete "$TMP" "${TMPDIR:-/tmp}"' EXIT
 
 plain() { hdiutil create -quiet -volname "$VOL" -srcfolder "$SRC" -ov -format UDZO "$OUT"; }
 

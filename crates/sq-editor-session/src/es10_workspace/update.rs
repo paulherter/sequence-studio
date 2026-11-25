@@ -102,9 +102,50 @@ impl ReleaseChannel {
 
     /// The About line of this build: "Version 0.2.0 Alpha", plus " Nightly" on a nightly build.
     pub fn about_line() -> String {
-        let line = sq_uikit::app_version::AppVersion::about_line();
-        if Self::build() == Self::Nightly { format!("{line} Nightly") } else { line }
+        Self::about_line_of(
+            Self::build(),
+            &sq_uikit::app_version::AppVersion::about_line(),
+            option_env!("SQ_BUILD_VERSION"),
+        )
     }
+
+    /// [`Self::about_line`] from its inputs: a nightly build adds its date from the build string's pre-release
+    /// ("0.2.1-nightly.20261121" gives " Nightly 2026-11-21").
+    pub fn about_line_of(channel: Self, line: &str, build_version: Option<&str>) -> String {
+        if channel != Self::Nightly {
+            return line.to_string();
+        }
+        match build_version.and_then(nightly_date) {
+            Some(date) => format!("{line} Nightly {date}"),
+            None => format!("{line} Nightly"),
+        }
+    }
+}
+
+/// "2026-11-21" from "0.2.1-nightly.20261121"; `None` when the pre-release has no eight-digit date.
+fn nightly_date(version: &str) -> Option<String> {
+    let tail = version.trim().split_once("-nightly.")?.1;
+    let d: String = tail.chars().take_while(char::is_ascii_digit).collect();
+    if d.len() != 8 {
+        return None;
+    }
+    Some(format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..]))
+}
+
+/// What the app needs to install a release in place: the installer asset with the hash the feed publishes for it and the
+/// address of its detached signature. A release without all three can only be opened as a link.
+#[derive(Clone, Debug, PartialEq, Eq, Deserialize)]
+pub struct UpdateInstall {
+    /// The asset's file name.
+    pub name: String,
+    /// The asset's download address.
+    pub url: String,
+    /// The SHA-256 of the file, lowercase hex.
+    pub sha256: String,
+    /// The address of the signature file (`<asset>.sig`).
+    pub sig_url: String,
+    /// The size in bytes, when the feed says.
+    pub size: Option<u64>,
 }
 
 /// A published version.
@@ -116,6 +157,9 @@ pub struct UpdateRelease {
     pub url: String,
     // Swift: UpdateCheck.swift:31
     pub notes: Option<String>,
+    /// The in-place install data; `None` when the feed has no verifiable installer for this system.
+    #[serde(default)]
+    pub install: Option<UpdateInstall>,
 }
 
 /// Result of a check.
@@ -135,6 +179,8 @@ pub enum UpdateOutcome {
 struct GitHubAsset {
     name: String,
     browser_download_url: String,
+    digest: Option<String>,
+    size: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -176,18 +222,45 @@ impl UpdateCheck {
             .unwrap_or_else(|| channel.default_feed_url().to_string())
     }
 
+    /// Whether `url` may be fetched: always `https://`; `http://127.0.0.1:<port>/` only while `SQ_UPDATE_TEST_LOCALHOST=1`
+    /// is set (a local test feed); nothing else, never another host.
+    pub fn url_allowed(url: &str) -> bool {
+        Self::url_allowed_with(url, env_var("SQ_UPDATE_TEST_LOCALHOST").as_deref() == Some("1"))
+    }
+
+    /// [`Self::url_allowed`] with the switch given.
+    pub fn url_allowed_with(url: &str, localhost_test: bool) -> bool {
+        if let Some(rest) = url.strip_prefix("https://") {
+            return !rest.is_empty();
+        }
+        let Some(rest) = url.strip_prefix("http://127.0.0.1:") else { return false };
+        let (port, _) = rest.split_once('/').unwrap_or((rest, ""));
+        localhost_test && !port.is_empty() && port.bytes().all(|b| b.is_ascii_digit())
+    }
+
     /// A GitHub release as our release; the download is the installer asset when there is one.
     pub(crate) fn github_release(data: &[u8], suffix: &str) -> Option<UpdateRelease> {
         let g: GitHubRelease = serde_json::from_slice(data).ok()?;
         let suffix = suffix.to_lowercase();
-        let asset = g
-            .assets
-            .unwrap_or_default()
-            .into_iter()
-            .find(|a| a.name.to_lowercase().ends_with(&suffix))
-            .map(|a| a.browser_download_url);
+        let assets = g.assets.unwrap_or_default();
+        let asset = assets
+            .iter()
+            .find(|a| a.name.to_lowercase().ends_with(&suffix) && Self::url_allowed(&a.browser_download_url));
+        let install = asset.and_then(|a| {
+            let sha256 = a.digest.as_deref()?.strip_prefix("sha256:")?.trim().to_lowercase();
+            let sig_name = format!("{}.sig", a.name);
+            let sig = assets.iter().find(|s| s.name == sig_name && Self::url_allowed(&s.browser_download_url))?;
+            Some(UpdateInstall {
+                name: a.name.clone(),
+                url: a.browser_download_url.clone(),
+                sha256,
+                sig_url: sig.browser_download_url.clone(),
+                size: a.size,
+            })
+        });
+        let url = asset.map(|a| a.browser_download_url.clone());
         let notes = g.body.map(|b| b.trim().to_string()).filter(|b| !b.is_empty());
-        Some(UpdateRelease { version: g.tag_name, url: asset.unwrap_or(g.html_url), notes })
+        Some(UpdateRelease { version: g.tag_name, url: url.unwrap_or(g.html_url), notes, install })
     }
 
     // Swift: UpdateCheck.swift:56
@@ -195,7 +268,7 @@ impl UpdateCheck {
         let r = serde_json::from_slice::<UpdateRelease>(data)
             .ok()
             .or_else(|| Self::github_release(data, Self::installer_suffix()))?;
-        (!Self::parts(&r.version).is_empty() && r.url.starts_with("https://")).then_some(r)
+        (!Self::parts(&r.version).is_empty() && Self::url_allowed(&r.url)).then_some(r)
     }
 
     /// The date of a nightly version ("0.2.0-nightly.20261119" gives 20261119); `None` for any other version.
@@ -258,7 +331,7 @@ impl UpdateCheck {
         F: FnOnce(String) -> Fut,
         Fut: Future<Output = Option<Vec<u8>>>,
     {
-        if !feed.starts_with("https://") || feed.len() <= "https://".len() {
+        if !Self::url_allowed(feed) {
             return UpdateOutcome::NotConfigured;
         }
         match fetch(feed.to_string()).await {
@@ -313,5 +386,61 @@ impl OnboardingContent {
             tip("Shortcuts", "Help shows all keys, and every one can be changed in Keyboard Shortcuts.".to_string()),
             tip("Export", format!("{m}+M opens Export when the sequence is ready.")),
         ]
+    }
+}
+
+#[cfg(test)]
+mod about_line_tests {
+    use super::*;
+
+    #[test]
+    fn about_names_the_nightly_date_and_leaves_stable_alone() {
+        let line = "Version 0.2.1 Alpha";
+        assert_eq!(
+            ReleaseChannel::about_line_of(ReleaseChannel::Nightly, line, Some("0.2.1-nightly.20261121")),
+            "Version 0.2.1 Alpha Nightly 2026-11-21"
+        );
+        assert_eq!(ReleaseChannel::about_line_of(ReleaseChannel::Nightly, line, None), "Version 0.2.1 Alpha Nightly");
+        assert_eq!(ReleaseChannel::about_line_of(ReleaseChannel::Stable, line, Some("0.2.1-nightly.20261121")), line);
+    }
+}
+
+#[cfg(test)]
+mod nightly_feed_tests {
+    use super::*;
+
+    /// The document scripts/nightly.sh writes: tag_name is the version, html_url and assets sit under the nightly-YYYYMMDD release.
+    fn nightly_json(tag_name: &str) -> String {
+        let base = "https://github.com/paulherter/sequence-studio/releases/download/nightly-20261121";
+        let asset = |name: &str| {
+            format!(
+                r#"{{"name":"{name}","size":1234,"digest":"sha256:{}","browser_download_url":"{base}/{name}"}}"#,
+                "ab".repeat(32)
+            )
+        };
+        let names = [
+            "SequenceStudio-Nightly-mac.dmg",
+            "SequenceStudio-Nightly-linux-x86_64.AppImage",
+            "SequenceStudio-Nightly-windows-setup.exe",
+        ];
+        let assets: Vec<String> = names.iter().flat_map(|n| [asset(n), asset(&format!("{n}.sig"))]).collect();
+        format!(
+            r#"{{"tag_name":"{tag_name}","html_url":"https://github.com/paulherter/sequence-studio/releases/tag/nightly-20261121","prerelease":true,"body":"Nightly build","assets":[{}]}}"#,
+            assets.join(",")
+        )
+    }
+
+    #[test]
+    fn the_nightly_feed_with_the_version_as_tag_name_is_a_release_with_this_systems_installer() {
+        let r = UpdateCheck::release(nightly_json("0.2.1-nightly.20261121").as_bytes()).expect("a release");
+        assert_eq!(r.version, "0.2.1-nightly.20261121");
+        let install = r.install.expect("the installer of this platform");
+        assert!(install.name.ends_with(UpdateCheck::installer_suffix()), "{}", install.name);
+        assert!(install.sig_url.ends_with(&format!("{}.sig", install.name)));
+    }
+
+    #[test]
+    fn the_nightly_feed_with_the_release_tag_as_tag_name_is_rejected() {
+        assert!(UpdateCheck::release(nightly_json("nightly-20261121").as_bytes()).is_none());
     }
 }

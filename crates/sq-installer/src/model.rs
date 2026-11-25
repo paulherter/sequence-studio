@@ -188,6 +188,14 @@ fn row(label: &'static str, value: Value) -> Row {
     Row { label, value, button: None }
 }
 
+/// The line that says the settings and caches stay, because the other channel is installed and uses them.
+fn shared_note(other: Option<&'static str>) -> Option<Note> {
+    other.map(|name| Note {
+        text: format!("Your settings and caches stay, because {name} uses them too."),
+        tone: NoteTone::Plain,
+    })
+}
+
 impl Model {
     pub fn of(machine: &Machine) -> Model {
         let f = &machine.facts;
@@ -343,7 +351,7 @@ impl Model {
                     title: "Uninstall Sequence Studio?".into(),
                     sub: Sub::Text(format!("Version {new}")),
                     body: Body::Card(rows),
-                    note: None,
+                    note: shared_note(f.data_shared_with),
                     footer_left: vec![Btn::new(Button::Uninstall, "Uninstall", Look::Destructive)],
                     footer_right: vec![Btn::new(Button::Cancel, "Cancel", Look::Raised)],
                 }
@@ -429,7 +437,7 @@ impl Model {
                         row("Removed", Value::Text(removed.into())),
                         row("Kept", Value::Text(kept.into())),
                     ]),
-                    note: None,
+                    note: shared_note(f.data_shared_with),
                     footer_left: Vec::new(),
                     footer_right: vec![Btn::new(Button::Close, "Close", Look::Accent)],
                 }
@@ -502,6 +510,7 @@ mod tests {
             appimage_dir: Some(PathBuf::from("/home/paul/Downloads")),
             home: Some(PathBuf::from("/home/paul")),
             system_line: String::new(),
+            data_shared_with: None,
         }
     }
 

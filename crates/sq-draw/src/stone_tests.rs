@@ -87,7 +87,11 @@ fn menu_accent_destructive_and_quiet_looks_match_the_spec() {
     assert_eq!(grad(&button_look(ButtonKind::Destructive, Interaction::Pressed, &t)), (0xBC352DFF, 0xD2433AFF));
     assert_eq!(button_look(ButtonKind::Quiet, Interaction::Rest, &t), Look::NONE);
     assert_eq!(flat(&button_look(ButtonKind::Quiet, Interaction::Hover, &t)), 0xFFFFFF0F);
-    assert_eq!(flat(&button_look(ButtonKind::Quiet, Interaction::Pressed, &t)), 0x303033FF, "surface-pressed = raised (r8:581)");
+    assert_eq!(
+        flat(&button_look(ButtonKind::Quiet, Interaction::Pressed, &t)),
+        0x303033FF,
+        "surface-pressed = raised (r8:581)"
+    );
 }
 
 #[test]
@@ -136,7 +140,10 @@ fn pressed_button_keeps_its_size_and_darkens() {
     let body = |down: bool| {
         let mut c = canvas();
         assert_eq!(c.stone_button(r, ButtonKind::Raised, Touch { pressed: down, ..Touch::default() }, &t), r);
-        let f = quads(&c).into_iter().find(|q| q.stroke == 0.0 && (q.rect.x, q.rect.y, q.rect.w, q.rect.h) == (10.0, 10.0, 100.0, 22.0)).expect("body");
+        let f = quads(&c)
+            .into_iter()
+            .find(|q| q.stroke == 0.0 && (q.rect.x, q.rect.y, q.rect.w, q.rect.h) == (10.0, 10.0, 100.0, 22.0))
+            .expect("body");
         (f.rect, f.color)
     };
     let (rest, down) = (body(false), body(true));
@@ -149,8 +156,14 @@ fn pressed_button_keeps_its_size_and_darkens() {
 fn background_window_turns_the_blue_button_raised_and_the_ring_grey() {
     let t = DrawTheme::default();
     let grey = DrawTheme { window_inactive: true, ..t };
-    assert_ne!(button_look(ButtonKind::Accent, Interaction::Rest, &t), button_look(ButtonKind::Raised, Interaction::Rest, &t));
-    assert_eq!(button_look(ButtonKind::Accent, Interaction::Rest, &grey), button_look(ButtonKind::Raised, Interaction::Rest, &grey));
+    assert_ne!(
+        button_look(ButtonKind::Accent, Interaction::Rest, &t),
+        button_look(ButtonKind::Raised, Interaction::Rest, &t)
+    );
+    assert_eq!(
+        button_look(ButtonKind::Accent, Interaction::Rest, &grey),
+        button_look(ButtonKind::Raised, Interaction::Rest, &grey)
+    );
     assert_ne!(t.focus_ring(), grey.focus_ring());
     assert_ne!(t.focus_edge(), grey.focus_edge());
     assert_ne!(t.accent_button_text(), grey.accent_button_text());
@@ -521,13 +534,21 @@ fn look_of(draw: impl Fn(&mut Canvas, Touch, &DrawTheme)) -> impl Fn(Touch, &Dra
         quads(&c)
             .iter()
             .map(|q| {
-                (h(q.color), [q.rect.x, q.rect.y, q.rect.w, q.rect.h].map(|v| (v * 100.0) as i32), (q.stroke * 100.0) as i32)
+                (
+                    h(q.color),
+                    [q.rect.x, q.rect.y, q.rect.w, q.rect.h].map(|v| (v * 100.0) as i32),
+                    (q.stroke * 100.0) as i32,
+                )
             })
             .collect()
     }
 }
 
-fn assert_states_differ(name: &str, sig: impl Fn(Touch, &DrawTheme) -> Vec<(u32, [i32; 4], i32)>, states: &[(&str, Touch)]) {
+fn assert_states_differ(
+    name: &str,
+    sig: impl Fn(Touch, &DrawTheme) -> Vec<(u32, [i32; 4], i32)>,
+    states: &[(&str, Touch)],
+) {
     for t in [dark(), light()] {
         let rest = sig(Touch::default(), &t);
         for (state, touch) in states {
@@ -546,7 +567,11 @@ fn the_red_button_has_a_hover_between_rest_and_press() {
     let sig = look_of(|c, touch, t| {
         c.stone_button(CGRect::new(10.0, 10.0, 60.0, 22.0), ButtonKind::Destructive, touch, t);
     });
-    assert_states_differ("destructive", &sig, &[("hover", HOVER), ("pressed", DOWN), ("focus", FOCUS), ("disabled", OFF)]);
+    assert_states_differ(
+        "destructive",
+        &sig,
+        &[("hover", HOVER), ("pressed", DOWN), ("focus", FOCUS), ("disabled", OFF)],
+    );
     for t in [dark(), light()] {
         assert_ne!(sig(HOVER, &t), sig(DOWN, &t), "hover and press differ");
     }

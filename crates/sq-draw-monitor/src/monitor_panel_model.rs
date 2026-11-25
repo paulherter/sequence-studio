@@ -309,6 +309,10 @@ pub struct MonitorPanelModel {
     /// The engine cannot draw (compositor creation failed): the card says so instead of showing a silent black picture.
     pub engine_failure: Option<String>,
     drops: DropIndicator,
+    /// What the viewer saw go wrong since the app started: the sum of every play run's skipped + late positions.
+    drop_total: i64,
+    drop_last_bad: u64,
+    drop_last_run: u64,
     /// Source monitor: picture, or the waveform of audio-only media.
     pub viewer_mode: SourceViewerMode,
     /// Source monitor: every angle of the Angles clip at the playhead (multi-angle view); `None` = the normal viewer.
@@ -416,6 +420,9 @@ impl MonitorPanelModel {
             opening: None,
             engine_failure: None,
             drops,
+            drop_total: 0,
+            drop_last_bad: 0,
+            drop_last_run: 0,
             viewer_mode: SourceViewerMode::Picture,
             angle_tiles: None,
             source_waveform: None,
@@ -655,7 +662,11 @@ impl MonitorPanelModel {
         }
     }
     /// The path line of the offline card: the detail cut in the middle (name keeps its extension), `full` set when cut.
-    pub fn offline_card_label(&self, _max_width: f64, fits: impl Fn(&str) -> bool) -> sq_draw::middle_fit::TruncatedLabel {
+    pub fn offline_card_label(
+        &self,
+        _max_width: f64,
+        fits: impl Fn(&str) -> bool,
+    ) -> sq_draw::middle_fit::TruncatedLabel {
         let full = self.offline_card_detail().unwrap_or_default();
         sq_draw::middle_fit::truncate_name(&full, fits)
     }
@@ -694,14 +705,38 @@ impl MonitorPanelModel {
         self.drop_realtime_not_achieved = self.drops.realtime_not_achieved();
     }
 
-    /// Polled by the host every frame with the engine's play counters: Auto quality steps down on sustained lateness.
+    /// The window loop saw a UI frame take `seconds` (a stall the engine counters cannot see): Auto quality counts it.
+    pub fn note_present_stall(&mut self, seconds: f64) {
+        self.governor.note_stall(seconds);
+    }
+
+    /// Polled by the host every frame with the engine's play counters. Feeds the drop dot with what the viewer sees go wrong
+    /// (positions that never showed plus positions shown from a stand-in picture), whatever the quality setting; Auto
+    /// quality steps down on sustained lateness and lights the dot too.
     pub fn update_play_counts(&mut self, counts: PlayCounts, is_playing: bool, now: f64) {
+        let bad = counts.skipped + counts.late;
+        // The counters restart with every run (Play, seek while playing, loop wrap); the pre-roll is no drop.
+        let delta = if !counts.clock_running {
+            0
+        } else if counts.run != self.drop_last_run {
+            bad
+        } else {
+            bad.saturating_sub(self.drop_last_bad)
+        };
+        if counts.clock_running || counts.run != self.drop_last_run {
+            self.drop_last_run = counts.run;
+            self.drop_last_bad = if counts.clock_running { bad } else { 0 };
+        }
+        self.drop_total += i64::try_from(delta).unwrap_or(i64::MAX);
+        self.update_drops(self.drop_total, is_playing, now);
         if self.quality != MonitorQuality::Auto {
             return;
         }
         self.governor.update(counts, is_playing, now);
         if self.governor.current() != self.effective_quality {
             self.effective_quality = self.governor.current();
+            self.drops.note_quality_step(is_playing, now);
+            self.drop_amber = self.drops.is_amber(now);
             self.emit(MonitorEvent::QualityChange(self.effective_quality));
         }
     }

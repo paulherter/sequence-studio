@@ -1,6 +1,6 @@
 //! The export picture at the preset's size: one bilinear tap per output pixel, as Swift (`ExportShaderSource`
-//! `linSampler`: texel centers, clamp to edge). The whole picture is stretched to the output size, no letterbox: a
-//! variant gets its own shape from the queue.
+//! `linSampler`: texel centers, clamp to edge). A different shape is fitted unstretched, centered, on opaque black
+//! bars ("Scale to Fit", `fit_rect`, the same rectangle as the GPU Present pass); the same shape fills the frame.
 //!
 //! 8-bit frames are decoded with the sRGB curve, filtered in linear light and encoded again (Swift filters the linear
 //! working picture before encoding; the sRGB curve stands in for the working picture's transfer). The half-float (HDR)
@@ -105,9 +105,33 @@ fn linear_to_srgb(v: f32) -> u8 {
     lut[(v.clamp(0.0, 1.0) * N as f32).round() as usize]
 }
 
-/// `pixels` (RGBA, `bpp` 4 = 8-bit, 8 = half-float; `w` x `h`) stretched to `(tw, th)` with one bilinear tap per output pixel.
+/// `pixels` (RGBA, `bpp` 4 = 8-bit, 8 = half-float; `w` x `h`) fitted into `(tw, th)`: scaled with one bilinear tap per
+/// output pixel into the centered fit rectangle, opaque black around it (nothing around it when the shapes match).
 pub(crate) fn resample(pixels: &[u8], bpp: usize, (w, h): (usize, usize), (tw, th): (usize, usize)) -> Vec<u8> {
     if (w, h) == (tw, th) || w == 0 || h == 0 || tw == 0 || th == 0 {
+        return pixels.to_vec();
+    }
+    let (x0, y0, fw, fh) = sq_render::program::compositor::fit_rect((w as u32, h as u32), (tw as u32, th as u32));
+    let (x0, y0, fw, fh) = (x0 as usize, y0 as usize, fw as usize, fh as usize);
+    if (fw, fh) == (tw, th) {
+        return stretch(pixels, bpp, (w, h), (tw, th));
+    }
+    let inner = stretch(pixels, bpp, (w, h), (fw, fh));
+    let mut black = [0u8, 0, 0, 255].to_vec();
+    if bpp == 8 {
+        black = [0u16, 0, 0, f32_to_half(1.0)].iter().flat_map(|v| v.to_le_bytes()).collect();
+    }
+    let mut out: Vec<u8> = black.iter().copied().cycle().take(tw * th * bpp).collect();
+    for y in 0..fh {
+        let dst = ((y0 + y) * tw + x0) * bpp;
+        out[dst..dst + fw * bpp].copy_from_slice(&inner[y * fw * bpp..(y + 1) * fw * bpp]);
+    }
+    out
+}
+
+/// The whole picture stretched to `(tw, th)`.
+fn stretch(pixels: &[u8], bpp: usize, (w, h): (usize, usize), (tw, th): (usize, usize)) -> Vec<u8> {
+    if (w, h) == (tw, th) {
         return pixels.to_vec();
     }
     let half = bpp == 8;
@@ -162,7 +186,7 @@ mod tests {
     #[test]
     fn a_flat_picture_stays_flat_at_any_size() {
         let src = rgba(64, 36, |_, _| 90);
-        for size in [(32, 18), (128, 72), (40, 90)] {
+        for size in [(32, 18), (128, 72), (16, 9)] {
             let out = resample(&src, 4, (64, 36), size);
             assert_eq!(out.len(), size.0 * size.1 * 4);
             assert!(out.chunks(4).all(|p| p == [90, 90, 90, 255]), "{size:?}");
@@ -228,13 +252,34 @@ mod tests {
     }
 
     #[test]
-    fn the_whole_picture_is_stretched_to_the_new_shape_without_bars() {
-        // 4:3 into a tall 9:16 canvas: the corners keep the source corners, nothing is letterboxed.
-        let src = rgba(40, 30, |x, _| if x < 20 { 40 } else { 220 });
-        let out = resample(&src, 4, (40, 30), (18, 32));
-        assert_eq!(out.len(), 18 * 32 * 4);
-        assert!(out[0] < 60 && out[(18 * 31 + 17) * 4] > 200);
-        assert!(out.chunks(4).all(|p| p[3] == 255));
+    fn a_different_shape_is_fitted_unstretched_on_black_bars() {
+        // Behavior changed on purpose (2026-11-24): this test used to assert a stretch without bars.
+        // Tall 9:16 source into a 16:9 frame: pillarbox. Left half 40, right half 220.
+        let src = rgba(18, 32, |x, _| if x < 9 { 40 } else { 220 });
+        let out = resample(&src, 4, (18, 32), (64, 36));
+        assert_eq!(out.len(), 64 * 36 * 4);
+        let (x0, y0, fw, fh) = sq_render::program::compositor::fit_rect((18, 32), (64, 36));
+        assert_eq!((y0, fh), (0, 36));
+        assert!(fw < 64 && x0 > 0);
+        let px = |x: usize, y: usize| out[(y * 64 + x) * 4];
+        for y in 0..36 {
+            assert_eq!(px(0, y), 0);
+            assert_eq!(px(63, y), 0);
+            assert_eq!(out[(y * 64) * 4 + 3], 255);
+        }
+        assert!(px(x0 as usize + 1, 5) < 60 && px((x0 + fw) as usize - 2, 5) > 200);
+        // A wide source into a tall frame: letterbox.
+        let wide = rgba(32, 18, |_, _| 120);
+        let o = resample(&wide, 4, (32, 18), (36, 64));
+        assert_eq!(o[0], 0);
+        assert_eq!(o[(32 * 36 + 18) * 4], 120);
+        assert!(o.chunks(4).all(|p| p[3] == 255));
+    }
+
+    #[test]
+    fn the_same_aspect_is_the_plain_stretch() {
+        let src = rgba(40, 30, |x, y| (x * 5 + y) as u8);
+        assert_eq!(resample(&src, 4, (40, 30), (20, 15)), stretch(&src, 4, (40, 30), (20, 15)));
     }
 
     #[test]

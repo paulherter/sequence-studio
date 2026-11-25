@@ -52,7 +52,13 @@ pub struct MediaRef {
 struct GateState {
     indices: HashMap<Id, HashSet<i64>>,
     playing: bool,
+    /// Playing forward with no clip read backwards: a queued decode that fell behind the playhead is skipped (`is_late`).
+    forward: bool,
 }
+
+/// A queued playback decode is late once every frame the monitor wants of its file lies this many frames past the end of its
+/// range. At a healthy pace a job waits milliseconds (under one frame), so only a collapse reaches it.
+pub const LATE_SKIP_FRAMES: i64 = 3;
 
 /// The pictures the monitor wants right now, readable from the decode lanes: a paused or scrubbing playhead moves on faster
 /// than a long-GOP decode runs, so a queued decode asks (once the decoder is free) whether anything in its range is still
@@ -70,6 +76,23 @@ impl WantGate {
         for k in keys {
             s.indices.entry(k.media).or_default().insert(k.index);
         }
+    }
+
+    /// Playback runs forward and no clip reads backwards: only then may `is_late` skip a job (a backward read decodes its
+    /// window from behind the playhead on purpose).
+    pub fn set_forward(&self, forward: bool) {
+        self.state.lock().unwrap_or_else(PoisonError::into_inner).forward = forward;
+    }
+
+    /// Playing forward: the whole `range` of an urgent decode lies behind every picture its file now shows. Decoding it
+    /// would only seek the decoder back (or run it through frames nobody can show any more) while the backlog grows; the
+    /// next job reads on from the decoder's position, forward, so the late frames are skipped, never fetched.
+    pub fn is_late(&self, media: Id, range: &RangeInclusive<i64>) -> bool {
+        let s = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        if !s.playing || !s.forward {
+            return false;
+        }
+        s.indices.get(&media).is_some_and(|w| !w.is_empty() && w.iter().all(|i| *i > *range.end() + LATE_SKIP_FRAMES))
     }
 
     /// Also wanted (not stale): the neighbours a paused playhead fills the cache with.
@@ -98,6 +121,25 @@ mod tests {
 
     fn id(n: u128) -> Id {
         Id::from_u128(n)
+    }
+
+    #[test]
+    fn playing_forward_skips_a_job_the_playhead_passed_but_never_a_current_or_backward_one() {
+        let g = WantGate::default();
+        g.set(&[Key::new(id(1), 50, 1)], true);
+        g.set_forward(true);
+        assert!(g.is_late(id(1), &(32..=40)), "50 is past 40 + margin: late");
+        assert!(!g.is_late(id(1), &(45..=53)), "the range holds the wanted frame");
+        assert!(!g.is_late(id(1), &(47..=48)), "within the margin");
+        assert!(!g.is_late(id(2), &(0..=1)), "a file nothing shows is a prefetch, not late");
+        g.set(&[Key::new(id(1), 50, 1), Key::new(id(1), 20, 1)], true);
+        assert!(!g.is_late(id(1), &(32..=40)), "another clip of the file still shows frame 20");
+        g.set_forward(false);
+        g.set(&[Key::new(id(1), 50, 1)], true);
+        assert!(!g.is_late(id(1), &(32..=40)), "backward play reads behind the playhead on purpose");
+        g.set_forward(true);
+        g.set(&[Key::new(id(1), 50, 1)], false);
+        assert!(!g.is_late(id(1), &(32..=40)), "paused jobs use is_stale");
     }
 
     #[test]

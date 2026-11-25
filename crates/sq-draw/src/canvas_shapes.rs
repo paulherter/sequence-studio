@@ -125,7 +125,8 @@ pub struct IconGlyph {
     pub strokes: Vec<Vec<CGPoint>>,
 }
 
-static ICON_CACHE: Mutex<Option<HashMap<(&'static str, bool), Arc<IconGlyph>>>> = Mutex::new(None);
+type IconCache = HashMap<(&'static str, bool), Arc<IconGlyph>>;
+static ICON_CACHE: Mutex<Option<IconCache>> = Mutex::new(None);
 
 impl IconOutline {
     /// The flattened glyph of `icon` (cached; empty when the file is missing).
@@ -479,11 +480,7 @@ impl Canvas<'_> {
         // Stroked icons draw at the design's one on-screen line width (`size/icon_stroke`, 1.5 pt at every size), not at the
         // file's grid width; solid icons keep the file's width.
         let width = stroke.unwrap_or_else(|| {
-            if icon.is_filled() {
-                g.line_width
-            } else {
-                f64::from(sq_uikit::tokens::size::ICON_STROKE) / k
-            }
+            if icon.is_filled() { g.line_width } else { f64::from(sq_uikit::tokens::size::ICON_STROKE) / k }
         });
         for line in &g.strokes {
             self.stroke_polyline(&map(line), width * k, c);

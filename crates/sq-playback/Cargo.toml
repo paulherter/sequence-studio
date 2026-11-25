@@ -18,6 +18,7 @@ sq-media.workspace = true
 sq-audiofx.workspace = true
 sq-render.workspace = true
 sq-gpu.workspace = true
+sq-os.workspace = true
 sq-audio-out.workspace = true
 sq-core-project.workspace = true
 sq-core-color.workspace = true

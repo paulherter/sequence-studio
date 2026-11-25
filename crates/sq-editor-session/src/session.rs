@@ -7,6 +7,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use sq_core_color::ProjectGradeLinksExt as _;
@@ -139,6 +140,8 @@ pub(crate) struct AutosaveListing {
 // shortcut: skeleton state the ES groups read; drop the allow when TASKS.md shows no pending! left.
 #[allow(dead_code)]
 pub struct EditorSession {
+    /// Longest UI frame (microseconds) the window loop reported since the Auto quality governor last asked.
+    present_stall_micros: AtomicU64,
     pub(crate) history: History<Project>,
     pub(crate) file_url: Option<PathBuf>,
     pub(crate) active_timeline_id: Option<Id>,
@@ -298,6 +301,7 @@ impl EditorSession {
         let active_variants = project.active_variants.clone();
         let media_snapshot = CowVec::new();
         let mut session = EditorSession {
+            present_stall_micros: AtomicU64::new(0),
             history: History::with_default_limit(project),
             file_url: deps.file_url,
             active_timeline_id,
@@ -461,6 +465,20 @@ impl EditorSession {
     }
     pub fn caption_selection(&self) -> &BTreeSet<Id> {
         &self.caption_selection
+    }
+    /// The window loop reports a UI frame (acquire, draw and present) that took `took`: a stall the engine's counters cannot
+    /// see. The Auto quality governor reads it with `take_present_stall`.
+    pub fn note_present_stall(&self, took: Duration) {
+        let micros = u64::try_from(took.as_micros()).unwrap_or(u64::MAX);
+        self.present_stall_micros.fetch_max(micros, Ordering::Relaxed);
+    }
+
+    /// The longest reported UI frame since the last call, if any.
+    pub fn take_present_stall(&self) -> Option<Duration> {
+        match self.present_stall_micros.swap(0, Ordering::Relaxed) {
+            0 => None,
+            micros => Some(Duration::from_micros(micros)),
+        }
     }
     pub fn is_playing(&self) -> bool {
         self.is_playing

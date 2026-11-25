@@ -172,6 +172,8 @@ pub struct LayerRequest {
     /// The clip's enabled Stabilizer uses Gyroflow: the decoded source frame is warped by the gyro engine with these
     /// options before anything else. `None` = no gyro warp.
     pub gyro: Option<GyroflowOptions>,
+    /// The clip is reversed: its source frames fall while the timeline plays on (the engine decodes a GOP window).
+    pub reversed: bool,
     /// Transition layers this layer is part of (it lies on a track below them), outermost (highest) first.
     pub stack_transitions: Vec<StackTransition>,
     /// C6 Picture masks: set on the layers of a matte track (evaluated alone at the same time, eye ignored, transition
@@ -207,6 +209,7 @@ impl LayerRequest {
             motion_blur: None,
             clip_duration: None,
             gyro: None,
+            reversed: false,
             stack_transitions: Vec::new(),
             matte_for: None,
             matte_depth: 0,
@@ -749,6 +752,7 @@ fn layers_at(
             } else {
                 let local = t - c.start;
                 let mut r = LayerRequest::new(c.id, c.media, track.id, c.source_time(tq, fd));
+                r.reversed = c.reversed;
                 r.transform = tr;
                 r.corner_radius = fx.corner_radius();
                 r.groups = groups.to_vec();

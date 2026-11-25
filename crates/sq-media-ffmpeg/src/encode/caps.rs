@@ -186,9 +186,11 @@ static WARM_UP_STOP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBo
 /// The kinds `warm_up` probes, hardware first.
 fn warm_up_kinds() -> impl Iterator<Item = ProbeKind> {
     [true, false].into_iter().flat_map(|hardware| {
-        [(false, false), (true, false), (true, true)]
-            .into_iter()
-            .map(move |(hevc, ten_bit)| ProbeKind { hevc, ten_bit, hardware })
+        [(false, false), (true, false), (true, true)].into_iter().map(move |(hevc, ten_bit)| ProbeKind {
+            hevc,
+            ten_bit,
+            hardware,
+        })
     })
 }
 
@@ -225,7 +227,11 @@ pub fn finish_warm_up() {
 
 /// Joins the probe thread when it reports done within `deadline`; else lets it go (a hung driver call must not hold the
 /// exit) and logs one line. Returns whether it was joined.
-fn wait_for_probe(handle: std::thread::JoinHandle<()>, finished: &std::sync::mpsc::Receiver<()>, deadline: std::time::Duration) -> bool {
+fn wait_for_probe(
+    handle: std::thread::JoinHandle<()>,
+    finished: &std::sync::mpsc::Receiver<()>,
+    deadline: std::time::Duration,
+) -> bool {
     // A disconnected channel means the thread ended (or died): joining returns at once.
     if matches!(finished.recv_timeout(deadline), Err(std::sync::mpsc::RecvTimeoutError::Timeout)) {
         sq_core_time::milestones::info("encoder probe: still running at exit, left behind");

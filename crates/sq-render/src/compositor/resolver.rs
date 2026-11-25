@@ -109,7 +109,10 @@ struct Inner {
 
 impl Inner {
     fn state(&self) -> MutexGuard<'_, State> {
-        self.state.lock().unwrap_or_else(PoisonError::into_inner)
+        let t = sq_gpu::gpu::timing::sub_start();
+        let guard = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        sq_gpu::gpu::timing::sub_add(sq_gpu::gpu::timing::Sub::ColorLock, t);
+        guard
     }
 }
 
@@ -190,9 +193,14 @@ impl LayerColorResolver {
 
     /// Loads inline and caches (export, tests). Never returns a stale entry for edited LUT files.
     pub fn pipeline_blocking(&self, color: &ClipColor, media: Id, owner: Option<Id>) -> Option<Arc<ColorPipeline>> {
+        use sq_gpu::gpu::timing::{Sub, sub_add, sub_start};
+        let t = sub_start();
         let info = (self.inner.media_info)(media);
+        sub_add(Sub::GradeInfo, t);
         let key = lut_key(color, media, info.as_ref())?;
+        let t = sub_start();
         let entry = load(&self.inner, &key, media, false);
+        sub_add(Sub::GradeLoad, t);
         let slot = owner.unwrap_or(media);
         let hit = {
             let mut s = self.inner.state();
@@ -208,7 +216,12 @@ impl LayerColorResolver {
         };
         match hit {
             Some(p) => p,
-            None => assemble(&self.inner, color, media, info.as_ref(), &entry, slot),
+            None => {
+                let t = sub_start();
+                let built = assemble(&self.inner, color, media, info.as_ref(), &entry, slot);
+                sub_add(Sub::GradeAssemble, t);
+                built
+            }
         }
     }
 

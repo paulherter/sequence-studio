@@ -15,7 +15,7 @@ use sq_gpu::gpu::Gpu;
 use sq_gpu::layout::PixelFormat;
 use sq_media::demuxing::{BoxFuture, DemuxedSample, Demuxing};
 use sq_media::media_error::MediaError;
-use sq_media::video_decoding::{DecodedFrame, FrameSink, VideoDecoding};
+use sq_media::video_decoding::{DecodedFrame, FrameSink, StopCheck, VideoDecoding};
 use std::collections::{BTreeMap, HashMap};
 use std::ops::RangeInclusive;
 use std::sync::{Arc, Mutex, MutexGuard, PoisonError};
@@ -191,6 +191,7 @@ impl VtVideoDecoder {
         range: RangeInclusive<usize>,
         needed_from: Option<usize>,
         deliver: Option<&(dyn Fn(DecodedFrame) + Send + Sync)>,
+        stop: Option<&(dyn Fn() -> bool + Send + Sync)>,
     ) -> Result<Vec<DecodedFrame>, MediaError> {
         let count = self.demuxer.index().count();
         let range = *range.start()..=(*range.end()).min(count.saturating_sub(1));
@@ -214,7 +215,7 @@ impl VtVideoDecoder {
                     }
                     None => Vec::new(),
                 };
-            match self.execute(&range, needed_from, deliver, &plan, &samples) {
+            match self.execute(&range, needed_from, deliver, stop, &plan, &samples) {
                 Ok(frames) => return Ok(frames),
                 Err(Fail::Stale) => continue,
                 Err(Fail::Media(e)) => {
@@ -239,6 +240,7 @@ impl VtVideoDecoder {
         range: &RangeInclusive<usize>,
         needed_from: Option<usize>,
         deliver: Option<&(dyn Fn(DecodedFrame) + Send + Sync)>,
+        stop: Option<&(dyn Fn() -> bool + Send + Sync)>,
         plan: &Plan,
         samples: &[DemuxedSample],
     ) -> Result<Vec<DecodedFrame>, Fail> {
@@ -287,6 +289,8 @@ impl VtVideoDecoder {
             results: BTreeMap::new(),
             carry,
             deliver,
+            stop,
+            stopped: false,
             imported,
             origin,
         };
@@ -306,6 +310,9 @@ impl VtVideoDecoder {
             session.take(&mut batch);
             for out in batch.drain(..) {
                 run.route(out)?;
+            }
+            if run.stop_now() {
+                break;
             }
             if run.wanted.is_empty() {
                 break;
@@ -343,6 +350,12 @@ impl VtVideoDecoder {
                 settled = true;
             }
         }
+        if run.stopped {
+            // The caller dropped the rest: the session's position is unknown, the next call seeks.
+            run.carry.clear();
+            *cursor = None;
+            return Ok(Vec::new());
+        }
         let Run { wanted, results, .. } = run;
         if !wanted.is_empty() {
             *cursor = None;
@@ -377,6 +390,9 @@ struct Run<'a> {
     results: BTreeMap<usize, DecodedFrame>,
     carry: &'a mut HashMap<usize, DecodedFrame>,
     deliver: Option<&'a (dyn Fn(DecodedFrame) + Send + Sync)>,
+    /// Asked between pictures; once it said yes `stopped` stays set.
+    stop: Option<&'a (dyn Fn() -> bool + Send + Sync)>,
+    stopped: bool,
     imported: &'a mut u64,
     /// Ordinal the session started at: pictures that reference frames before it (an open GOP's leading pictures) are
     /// built on missing references and are dropped.
@@ -384,7 +400,15 @@ struct Run<'a> {
 }
 
 impl Run<'_> {
+    fn stop_now(&mut self) -> bool {
+        self.stopped = self.stopped || self.stop.is_some_and(|s| s());
+        self.stopped
+    }
+
     fn route(&mut self, out: Output) -> Result<(), Fail> {
+        if self.stop_now() {
+            return Ok(()); // the picture is dropped unimported
+        }
         let d = self.decoder;
         let Some(&index) = d.ordinals.get(out.tag) else { return Ok(()) };
         if d.demuxer.index().reference_start_ordinal(index) < self.origin {
@@ -454,7 +478,7 @@ impl VideoDecoding for VtVideoDecoder {
     }
 
     fn decode(&self, range: RangeInclusive<usize>) -> BoxFuture<'_, Result<Vec<DecodedFrame>, MediaError>> {
-        Box::pin(async move { self.decode_async(range, None, None).await })
+        Box::pin(async move { self.decode_async(range, None, None, None).await })
     }
 
     fn decode_deliver(
@@ -462,7 +486,7 @@ impl VideoDecoding for VtVideoDecoder {
         range: RangeInclusive<usize>,
         deliver: FrameSink,
     ) -> BoxFuture<'_, Result<Vec<DecodedFrame>, MediaError>> {
-        Box::pin(async move { self.decode_async(range, None, Some(&*deliver)).await })
+        Box::pin(async move { self.decode_async(range, None, Some(&*deliver), None).await })
     }
 
     fn decode_needed_from(
@@ -471,7 +495,17 @@ impl VideoDecoding for VtVideoDecoder {
         needed_from: Option<usize>,
         deliver: FrameSink,
     ) -> BoxFuture<'_, Result<Vec<DecodedFrame>, MediaError>> {
-        Box::pin(async move { self.decode_async(range, needed_from, Some(&*deliver)).await })
+        Box::pin(async move { self.decode_async(range, needed_from, Some(&*deliver), None).await })
+    }
+
+    fn decode_until(
+        &self,
+        range: RangeInclusive<usize>,
+        needed_from: Option<usize>,
+        deliver: FrameSink,
+        stop: StopCheck,
+    ) -> BoxFuture<'_, Result<Vec<DecodedFrame>, MediaError>> {
+        Box::pin(async move { self.decode_async(range, needed_from, Some(&*deliver), Some(&*stop)).await })
     }
 
     fn invalidate(&self) {

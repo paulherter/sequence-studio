@@ -214,6 +214,8 @@ pub struct GpuCompositor {
     pub unsupported_frame_count: usize,
     /// A layer shown at half size or less runs its effect passes at half size.
     pub limits_color_work: bool,
+    /// Playback preview (a canvas smaller than the sequence): graded layers convert and grade at the size they are shown at.
+    pub preview_reduce: bool,
     /// Loads the LUTs of masked Color effects; `None` = masked grades without LUTs.
     pub color_resolver: Option<Arc<LayerColorResolver>>,
     /// Masked grades wait for their LUTs (export) instead of drawing the last served grade.
@@ -235,6 +237,20 @@ impl GpuCompositor {
         ] {
             gpu.render_pipeline(key)?;
         }
+        // Build the other pipelines a cut, a dissolve or a title stack needs now, not at their first draw during playback: the
+        // first dissolve of the real project cost a 50 ms draw (GPU pipeline compile) at its start. Errors surface at the draw.
+        for blend in [Blend::PremultipliedOver, Blend::Additive] {
+            let _ = gpu.render_pipeline(layer_key("compositeFragment", blend));
+            let _ = gpu.render_pipeline(RenderKey {
+                module: "LayerTransition",
+                vertex: "compositeVertex",
+                fragment: "compositeFragmentTransition",
+                format: F16,
+                blend,
+                primitive: Primitive::TriangleStrip,
+            });
+        }
+        let _ = gpu.compute_pipeline("TransitionPreBlur", "transitionPreBlur", F16);
         let dummy = gpu.texture(1, 1, F16);
         gpu.upload_texture(&dummy, &[0u8; 8], 8);
         let dummy_buffer = gpu.storage_buffer(16);
@@ -254,6 +270,7 @@ impl GpuCompositor {
             picture_scopes: vec![HashMap::new()],
             unsupported_frame_count: 0,
             limits_color_work: true,
+            preview_reduce: false,
             color_resolver: None,
             color_resolver_blocks: false,
         })
@@ -293,6 +310,7 @@ impl GpuCompositor {
                 format.height
             )));
         }
+        let _encode = sq_os::trace::span_args("render", "compositor encode", || format!("nodes={}", nodes.len()));
         self.scratch.clear();
         self.scratch_buffers.clear();
         self.hooks.begin_render();
@@ -813,8 +831,20 @@ impl GpuCompositor {
         if let Some(pipeline) = pipeline {
             // The grade: conversion to source-encoded R'G'B' at the texture size, the chain in place, then drawn as
             // working-linear straight (premultiplied sources stay premultiplied).
-            let mid = self.acquire(w, h);
-            self.convert(cmds, pic, &u, shader_index(pipeline.source()), &mid)?;
+            let transfer = shader_index(pipeline.source());
+            let mid = match self.preview_grade_size(&layer.transform, (w, h), (nw, nh)) {
+                // Preview: convert (averaging the covered texels in light) and grade at the size the layer is shown at.
+                Some((rw, rh)) => {
+                    let mid = self.acquire(rw, rh);
+                    self.convert_scaled(cmds, pic, &u, transfer, &mid)?;
+                    mid
+                }
+                None => {
+                    let mid = self.acquire(w, h);
+                    self.convert(cmds, pic, &u, transfer, &mid)?;
+                    mid
+                }
+            };
             self.chain.encode(cmds, pipeline, &mid, quarter & 1 == 1)?;
             intermediate_alpha(&mut u);
             let mut d = Draw::new(u, Some(mid), None);
@@ -824,6 +854,43 @@ impl GpuCompositor {
         let mut d = Draw::new(u, Some(pic.planes.0.clone()), pic.planes.1.clone());
         d.radius_factor = factor;
         Ok(Some(d))
+    }
+
+    /// Preview only (`preview_reduce`): the size a graded layer converts and grades at, `None` = the texture size. The layer is
+    /// shown at `scale` canvas px per native px, its texture holds `texture / native` texels per native px; the grade runs at
+    /// one texel per canvas px (at least 2 x 2 source texels per output texel, at most 4 x 4: the kernel's sampling).
+    fn preview_grade_size(&self, t: &ClipTransform, texture: (i64, i64), native: (i64, i64)) -> Option<(i64, i64)> {
+        if !self.preview_reduce || t.is_tilted() || native.0 <= 0 || native.1 <= 0 {
+            return None;
+        }
+        let shown = t.scale.x.max(t.scale.y) * native.0 as f64 / texture.0 as f64;
+        if !(shown > 0.0 && shown <= 0.5) {
+            return None;
+        }
+        let rw = ((texture.0 as f64 * shown).ceil() as i64).max(1);
+        let rh = ((texture.1 as f64 * shown).ceil() as i64).max(1);
+        (rw >= 64 && rh >= 64).then_some((rw, rh))
+    }
+
+    /// `convert` at the size of `out` (any ratio; `convertToRGBScaled`).
+    pub fn convert_scaled(
+        &self,
+        cmds: &mut GpuCommands,
+        pic: &Picture,
+        u: &Uniforms,
+        transfer: u32,
+        out: &GpuTexture,
+    ) -> Result<(), CompositorError> {
+        let kernel = self.gpu.compute_pipeline("SourceConvert", "convertToRGBScaled", F16)?;
+        let mut enc = cmds.compute();
+        enc.set_pipeline(&kernel);
+        enc.set_input(&pic.planes.0, 0)?;
+        enc.set_input(pic.planes.1.as_ref().unwrap_or(&self.dummy), 1)?;
+        enc.set_constants(&u.to_bytes(), 0)?;
+        enc.set_constants(&ConvertUniforms { origin: [0, 0], transfer }.to_bytes(), 1)?;
+        enc.set_output(out);
+        enc.dispatch(out.width(), out.height())?;
+        Ok(())
     }
 
     /// Source planes to R'G'B' (source-encoded) at the texture size, into `out` (the `convertToRGB` kernel).

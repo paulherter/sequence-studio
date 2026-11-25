@@ -3,8 +3,8 @@
 //! scripts/lint-ui-allow.txt for this file only); everything else in the form uses tokens.
 
 use crate::shell_form::{ShellForm, text};
-use sq_draw::{Canvas, Color, TextAlign};
 use sq_draw::DrawTheme;
+use sq_draw::{Canvas, Color, TextAlign};
 use sq_uikit::controls_grid::CGRect;
 use sq_uikit::tokens::radius as rd;
 

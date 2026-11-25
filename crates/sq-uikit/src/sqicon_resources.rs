@@ -277,7 +277,14 @@ mod tests {
     #[test]
     fn only_lucide_the_brand_marks_and_the_overline_are_embedded() {
         for (n, _) in ICON_SVGS {
-            assert!(n.starts_with("lucide-") || n.starts_with("brand-") || *n == "sq-textOverline" || *n == "sq-markIn" || *n == "sq-markOut", "{n}");
+            assert!(
+                n.starts_with("lucide-")
+                    || n.starts_with("brand-")
+                    || *n == "sq-textOverline"
+                    || *n == "sq-markIn"
+                    || *n == "sq-markOut",
+                "{n}"
+            );
         }
         assert!(ICON_SVGS.iter().filter(|(n, _)| n.starts_with("lucide-")).count() >= 200);
     }

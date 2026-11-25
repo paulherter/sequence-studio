@@ -31,6 +31,8 @@ sq-audiofx.workspace = true
 sq-runtime.workspace = true
 serde.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
+ed25519-dalek.workspace = true
 sq-uikit.workspace = true
 sq-os.workspace = true
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }

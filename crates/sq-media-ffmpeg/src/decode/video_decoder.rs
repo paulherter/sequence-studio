@@ -2,8 +2,9 @@ use super::color::frame_color;
 use super::demuxer::FFmpegDemuxer;
 use super::error::media_error;
 use super::hardware::{
-    DecodePath, HARDWARE_API, HARDWARE_PATH, HOLDS_POOL, SessionGuard, acquire_hardware_session,
-    big_enough_for_hardware, decode_path, hardware_hold_limit, pool_frames, supports_hardware_decode,
+    DOWNLOAD_FAILURES_BEFORE_SOFTWARE, DecodePath, DownloadWatch, HARDWARE_API, HARDWARE_PATH, HOLDS_POOL,
+    SessionGuard, acquire_hardware_session_for, big_enough_for_hardware, decode_path, hardware_hold_limit, pool_frames,
+    supports_hardware_decode,
 };
 use super::timing::{DecodeCursor, DecodePlan};
 use crate::shim::{Decoder, DecoderConfig, Frame, InputPacket, Received, Sent};
@@ -12,7 +13,7 @@ use sq_core_time::Id;
 use sq_frame::sqframe::{SQFrame, SQFrameColorSpace, SQFramePixelFormat, SQFrameStorage};
 use sq_media::demuxing::{BoxFuture, Demuxing};
 use sq_media::media_error::MediaError;
-use sq_media::video_decoding::{DecodedFrame, FrameSink, VideoDecoding};
+use sq_media::video_decoding::{DecodedFrame, FrameSink, StopCheck, VideoDecoding};
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::ops::RangeInclusive;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -24,6 +25,8 @@ pub const DEFAULT_EXTRA_HW_FRAMES: i32 = 16;
 
 /// Pictures decoded past the previous range (reorder delay) kept for the next call.
 const MAX_CARRY: usize = 8;
+/// Threads of the throw-away software decoder (a one-off range, outside the shared thread budget).
+const ONE_SHOT_THREADS: i32 = 2;
 
 type FallbackHook = Arc<dyn Fn(&str) + Send + Sync>;
 static FALLBACK_HOOK: RwLock<Option<FallbackHook>> = RwLock::new(None);
@@ -78,6 +81,9 @@ pub struct FFmpegVideoDecoder {
     hardware_flag: AtomicBool,
     /// The preview request (`set_preview`), applied by the next decode when the decoder is free.
     preview_flag: AtomicBool,
+    /// Failed downloads of this stream's pictures in a row, and the request they raise: reopen in software at the next decode.
+    downloads: DownloadWatch,
+    software_flag: AtomicBool,
     /// Field order of an interlaced source whose frames leave the decoder progressive (`None`: as stored).
     deinterlace: Option<FieldOrder>,
 }
@@ -93,6 +99,16 @@ fn download_layout(bit_depth: i64, full_range: bool) -> SQFramePixelFormat {
 }
 
 fn open_decoder(d: &FFmpegDemuxer, hardware: bool, extra_hw_frames: i32) -> Result<Decoder, MediaError> {
+    open_decoder_threads(d, hardware, extra_hw_frames, 0)
+}
+
+/// `sw_threads` > 0 fixes a software decoder's threads (a throw-away decoder must not count in the shared budget).
+fn open_decoder_threads(
+    d: &FFmpegDemuxer,
+    hardware: bool,
+    extra_hw_frames: i32,
+    sw_threads: i32,
+) -> Result<Decoder, MediaError> {
     let raw = d.raw();
     let format = d.format_description();
     let cfg = DecoderConfig {
@@ -106,11 +122,23 @@ fn open_decoder(d: &FFmpegDemuxer, hardware: bool, extra_hw_frames: i32) -> Resu
         tb_den: raw.tb_den,
         hardware,
         extra_hw_frames,
+        sw_threads,
     };
+    let _span = sq_os::trace::span_args("open", "decoder open", || {
+        format!("codec={} hw={hardware} {}x{}", format.codec, raw.width, raw.height)
+    });
     Decoder::open(&cfg).map_err(|e| {
         on_fallback(&format!("decoder open failed: {e}"));
         media_error(&e, &format.codec)
     })
+}
+
+/// Pixels per second the stream asks of a decode engine (width x height x frame rate).
+fn pixel_rate(info: &VideoTrackInfo) -> u64 {
+    let d = info.nominal_frame_duration;
+    let (ts, v) = (u64::try_from(d.timescale()).unwrap_or(0), u64::try_from(d.value()).unwrap_or(1).max(1));
+    let fps = (ts + v / 2) / v;
+    u64::try_from(info.width.max(0)).unwrap_or(0) * u64::try_from(info.height.max(0)).unwrap_or(0) * fps.max(1)
 }
 
 impl FFmpegVideoDecoder {
@@ -134,7 +162,7 @@ impl FFmpegVideoDecoder {
         let mut decoder = None;
         let mut session = None;
         if hardware && HARDWARE_PATH && gpu_can && big_enough_for_hardware(info.width, info.height) && !forced {
-            match acquire_hardware_session() {
+            match acquire_hardware_session_for(pixel_rate(&info)) {
                 None => on_fallback(&format!(
                     "hardware decoder limit reached; {} opens in software",
                     demuxer.format_description().codec
@@ -172,6 +200,8 @@ impl FFmpegVideoDecoder {
             }),
             hardware_flag: AtomicBool::new(is_hardware),
             preview_flag: AtomicBool::new(false),
+            downloads: DownloadWatch::default(),
+            software_flag: AtomicBool::new(false),
             deinterlace: None,
             demuxer,
         })
@@ -216,12 +246,28 @@ impl FFmpegVideoDecoder {
         deliver: Option<&dyn Fn(DecodedFrame)>,
         is_stale: Option<&dyn Fn() -> bool>,
     ) -> Result<Vec<DecodedFrame>, MediaError> {
+        self.decode_blocking_until(range, deliver, is_stale, None)
+    }
+
+    /// As `decode_blocking`; `stop` is asked between pictures: yes ends the decode early and drops the stream position.
+    pub fn decode_blocking_until(
+        &self,
+        range: RangeInclusive<usize>,
+        deliver: Option<&dyn Fn(DecodedFrame)>,
+        is_stale: Option<&dyn Fn() -> bool>,
+        stop: Option<&dyn Fn() -> bool>,
+    ) -> Result<Vec<DecodedFrame>, MediaError> {
         let count = self.demuxer.index().count();
         let range = *range.start()..=(*range.end()).min(count.saturating_sub(1));
         if count == 0 || range.start() > range.end() {
             return Ok(Vec::new());
         }
+        let waited = std::time::Instant::now();
         let mut s = self.lock();
+        lock_wait_trace(waited.elapsed(), &range);
+        sq_os::trace::since("decode", "decoder lock wait", waited, || {
+            format!("media={} frames={}..{}", self.media, range.start(), range.end())
+        });
         if is_stale.is_some_and(|stale| stale()) {
             return Ok(Vec::new());
         }
@@ -235,6 +281,10 @@ impl FFmpegVideoDecoder {
             s.reset();
         }
         let codec = self.demuxer.format_description().codec.as_str();
+        if self.software_flag.swap(false, Ordering::Relaxed) && s.hardware {
+            on_fallback(&format!("{HARDWARE_API} pictures could not be downloaded; reopening {codec} in software"));
+            self.reopen_software(&mut s)?;
+        }
         // A list wider than the hardware texture pool holds comes from a throw-away software decoder.
         let limit = hardware_hold_limit(s.extra_hw_frames, MAX_CARRY);
         if decode_path(s.hardware && HOLDS_POOL, deliver.is_some(), range.end() - range.start() + 1, limit)
@@ -245,7 +295,7 @@ impl FFmpegVideoDecoder {
                 range.end() - range.start() + 1
             ));
             let mut once = State {
-                decoder: Some(open_decoder(&self.demuxer, false, 0)?),
+                decoder: Some(open_decoder_threads(&self.demuxer, false, 0, ONE_SHOT_THREADS)?),
                 hardware: false,
                 cursor: None,
                 carry: HashMap::new(),
@@ -253,20 +303,15 @@ impl FFmpegVideoDecoder {
                 session: None,
                 extra_hw_frames: 0,
             };
-            return self.decode_locked(&range, &mut once, None);
+            return self.decode_locked(&range, &mut once, None, None);
         }
-        let error = match self.decode_locked(&range, &mut s, deliver) {
+        let error = match self.decode_locked(&range, &mut s, deliver, stop) {
             Ok(frames) => return Ok(frames),
             Err(e) => e,
         };
         if s.hardware {
             on_fallback(&format!("{HARDWARE_API} decode failed ({error}); reopening {codec} in software"));
-            s.decoder = None;
-            s.decoder = Some(open_decoder(&self.demuxer, false, 0)?);
-            s.hardware = false;
-            s.session = None;
-            s.preview = false;
-            self.hardware_flag.store(false, Ordering::Relaxed);
+            self.reopen_software(&mut s)?;
         } else {
             // A software decode that failed midstream leaves the decoder in an unknown state: start over from a fresh seek once.
             on_fallback(&format!("decode failed ({error}); retrying {codec} from a fresh start"));
@@ -275,7 +320,19 @@ impl FFmpegVideoDecoder {
             }
         }
         s.reset();
-        self.decode_locked(&range, &mut s, deliver)
+        self.decode_locked(&range, &mut s, deliver, stop)
+    }
+
+    /// Replaces the hardware decoder by a software one and frees its session slot; the next decode seeks.
+    fn reopen_software(&self, s: &mut State) -> Result<(), MediaError> {
+        s.decoder = None;
+        s.decoder = Some(open_decoder(&self.demuxer, false, 0)?);
+        s.hardware = false;
+        s.session = None;
+        s.preview = false;
+        self.hardware_flag.store(false, Ordering::Relaxed);
+        s.reset();
+        Ok(())
     }
 
     fn decode_locked(
@@ -283,6 +340,7 @@ impl FFmpegVideoDecoder {
         range: &RangeInclusive<usize>,
         s: &mut State,
         deliver: Option<&dyn Fn(DecodedFrame)>,
+        stop: Option<&dyn Fn() -> bool>,
     ) -> Result<Vec<DecodedFrame>, MediaError> {
         let State { decoder, cursor, carry, .. } = s;
         let dec = decoder.as_mut().ok_or(MediaError::DecodeFailed(-1))?;
@@ -292,6 +350,20 @@ impl FFmpegVideoDecoder {
             Some(c) if !flush => c.origin,
             _ => ordinal,
         };
+        let prev = *cursor;
+        let _span = sq_os::trace::span_args("decode", if flush { "seek+decode" } else { "decode continue" }, || {
+            format!(
+                "clip={} frames={}..{} start_ordinal={ordinal} hw={} dec={:p} why={} prev_next={} prev_last={}",
+                self.media,
+                range.start(),
+                range.end(),
+                self.hardware_flag.load(Ordering::Relaxed),
+                self,
+                DecodePlan::seek_reason(range, index, prev, flush),
+                prev.map_or(-1, |c| c.next_ordinal),
+                prev.map_or(-1, |c| c.last_presented as i64),
+            )
+        });
         if flush {
             dec.flush();
             carry.clear();
@@ -306,10 +378,24 @@ impl FFmpegVideoDecoder {
         }
         carry.retain(|i, _| *i > *range.end());
 
-        let mut run = Run { decoder: self, range, wanted, results, carry, deliver, origin };
+        let mut run = Run {
+            decoder: self,
+            range,
+            wanted,
+            results,
+            carry,
+            deliver,
+            origin,
+            stop,
+            stopped: false,
+            origin_drops: 0,
+        };
         let packets = self.demuxer.packet_count();
         let (mut sent_end, mut ended) = (false, false);
         while !run.wanted.is_empty() && !ended {
+            if run.stop_now() {
+                break;
+            }
             if let Some(next) = usize::try_from(ordinal).ok().filter(|o| *o < packets) {
                 let sample = self.demuxer.sample(next)?;
                 let p = self.demuxer.packet(next)?;
@@ -333,13 +419,28 @@ impl FFmpegVideoDecoder {
             }
             ended |= run.drain(dec)?;
         }
-        let Run { wanted, results, .. } = run;
+        if run.stopped {
+            note_undelivered(self.media, range, run.wanted.len(), run.origin_drops, "cancel");
+            // The caller dropped the rest: the stream position is unknown, the next call seeks.
+            run.carry.clear();
+            *cursor = None;
+            dec.flush();
+            return Ok(Vec::new());
+        }
+        let Run { wanted, results, origin_drops, .. } = run;
         // After end of stream the decoder needs a flush before new input: the next call seeks.
         *cursor = (!sent_end).then_some(DecodeCursor { next_ordinal: ordinal, last_presented: *range.end(), origin });
         if sent_end {
             dec.flush();
         }
         if !wanted.is_empty() {
+            note_undelivered(
+                self.media,
+                range,
+                wanted.len(),
+                origin_drops,
+                if origin_drops > 0 { "origin drop" } else { "truncated" },
+            );
             return Err(MediaError::Truncated);
         }
         Ok(results.into_values().collect())
@@ -357,12 +458,42 @@ struct Run<'a> {
     /// Ordinal the decoder started at: pictures referencing frames before it (an open GOP's leading pictures; H.264 has
     /// no RASL flag, so FFmpeg hands them out) are built on missing references and are dropped.
     origin: i64,
+    /// Asked between pictures; once it said yes `stopped` stays set.
+    stop: Option<&'a dyn Fn() -> bool>,
+    stopped: bool,
+    /// Pictures of the range dropped because they reference frames before `origin` (trace only).
+    origin_drops: usize,
+}
+
+/// Trace note (`SQ_TRACE_JSON` / milestones sink): a range ended with frames not delivered while the cursor still moves
+/// to its end, so the next call believes those frames were served.
+fn note_undelivered(
+    media: impl std::fmt::Debug,
+    range: &RangeInclusive<usize>,
+    left: usize,
+    origin_drops: usize,
+    why: &str,
+) {
+    sq_core_time::milestones::note(&format!(
+        "undelivered: media {media:?} frames {}..{} left {left} of {} origin_drops {origin_drops} reason {why}",
+        range.start(),
+        range.end(),
+        range.end() - range.start() + 1
+    ));
 }
 
 impl Run<'_> {
+    fn stop_now(&mut self) -> bool {
+        self.stopped = self.stopped || self.stop.is_some_and(|s| s());
+        self.stopped
+    }
+
     /// Receives every picture the decoder has ready; true when the stream ended.
     fn drain(&mut self, dec: &mut Decoder) -> Result<bool, MediaError> {
         loop {
+            if self.stop_now() {
+                return Ok(true);
+            }
             match dec.receive().map_err(|e| media_error(&e, ""))? {
                 Received::Frame(frame) => self.take(frame),
                 Received::NeedsInput => return Ok(false),
@@ -375,6 +506,9 @@ impl Run<'_> {
         let d = self.decoder;
         let Some(i) = d.demuxer.table().presentation_index(frame.pts) else { return };
         if d.demuxer.index().reference_start_ordinal(i) < self.origin {
+            if self.range.contains(&i) && self.wanted.contains(&i) {
+                self.origin_drops += 1;
+            }
             return;
         }
         let entry = d.demuxer.index().entries()[i];
@@ -400,6 +534,14 @@ impl Run<'_> {
     }
 }
 
+/// `SQ_PLAY_TRACE`: how long a request waited for the decoder lock behind a running decode (over 1 ms).
+fn lock_wait_trace(waited: std::time::Duration, range: &RangeInclusive<usize>) {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if *ON.get_or_init(|| std::env::var_os("SQ_PLAY_TRACE").is_some()) && waited.as_millis() >= 1 {
+        eprintln!("[play-trace] decoder lock wait {:.0} ms for frames {range:?}", waited.as_secs_f64() * 1e3);
+    }
+}
+
 impl VideoDecoding for FFmpegVideoDecoder {
     fn info(&self) -> &VideoTrackInfo {
         &self.info
@@ -408,6 +550,12 @@ impl VideoDecoding for FFmpegVideoDecoder {
     /// Never waits for a running decode.
     fn is_hardware(&self) -> bool {
         self.hardware_flag.load(Ordering::Relaxed)
+    }
+
+    fn report_download(&self, ok: bool) {
+        if self.hardware_flag.load(Ordering::Relaxed) && self.downloads.report(ok, DOWNLOAD_FAILURES_BEFORE_SOFTWARE) {
+            self.software_flag.store(true, Ordering::Relaxed);
+        }
     }
 
     // shortcut: the futures decode synchronously on first poll (no await point), so dropping one does not stop a
@@ -422,6 +570,16 @@ impl VideoDecoding for FFmpegVideoDecoder {
         deliver: FrameSink,
     ) -> BoxFuture<'_, Result<Vec<DecodedFrame>, MediaError>> {
         Box::pin(async move { self.decode_blocking(range, Some(&*deliver), None) })
+    }
+
+    fn decode_until(
+        &self,
+        range: RangeInclusive<usize>,
+        _needed_from: Option<usize>,
+        deliver: FrameSink,
+        stop: StopCheck,
+    ) -> BoxFuture<'_, Result<Vec<DecodedFrame>, MediaError>> {
+        Box::pin(async move { self.decode_blocking_until(range, Some(&*deliver), None, Some(&*stop)) })
     }
 
     fn invalidate(&self) {

@@ -42,10 +42,17 @@ impl DecodedFrame {
 /// Called with each frame as soon as it is decoded (decode order, on any thread).
 pub type FrameSink = Box<dyn Fn(DecodedFrame) + Send + Sync>;
 
+/// Asked between pictures of a running decode: true = the caller does not want the rest any more.
+pub type StopCheck = std::sync::Arc<dyn Fn() -> bool + Send + Sync>;
+
 /// A decoder of one video track. Cancelling a decode = dropping its future (Swift: `Task` cancellation).
 pub trait VideoDecoding: Send + Sync {
     fn info(&self) -> &VideoTrackInfo;
     fn is_hardware(&self) -> bool;
+
+    /// The caller turned one decoded picture into pixels (`ok`) or could not (a failed GPU download). A hardware decoder
+    /// that keeps failing reopens in software at its next decode. Default: ignored.
+    fn report_download(&self, _ok: bool) {}
 
     /// Decodes presentation frames `range` and returns them in PTS order (entries with zero duration, which the edit
     /// list does not show, are left out). Continues from the previous call without
@@ -74,6 +81,19 @@ pub trait VideoDecoding: Send + Sync {
         deliver: FrameSink,
     ) -> BoxFuture<'_, Result<Vec<DecodedFrame>, MediaError>> {
         self.decode_deliver(range, deliver)
+    }
+
+    /// As `decode_needed_from`, and a decoder that can asks `stop` between pictures: once it says yes the decode ends
+    /// early (Ok, with whatever was not delivered left out) and the decoder forgets its stream position, so the next
+    /// call seeks. Default: runs to the end (a decoder that cannot stop).
+    fn decode_until(
+        &self,
+        range: RangeInclusive<usize>,
+        needed_from: Option<usize>,
+        deliver: FrameSink,
+        _stop: StopCheck,
+    ) -> BoxFuture<'_, Result<Vec<DecodedFrame>, MediaError>> {
+        self.decode_needed_from(range, needed_from, deliver)
     }
 
     fn invalidate(&self);

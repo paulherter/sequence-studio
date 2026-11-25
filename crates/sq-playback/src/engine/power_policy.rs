@@ -111,6 +111,13 @@ pub(crate) fn prefetch_seconds(halved: bool) -> [f64; 5] {
     if halved { base.map(|s| s / 2.0) } else { base }
 }
 
+/// Where the paused warm-up looks for titles (seconds after the playhead): the first second of a play, in the pre-roll's reach.
+/// How far ahead of a resting playhead the paused warm-up opens the lanes of clips that cut in (the prefetch looks 3.5 s ahead
+/// once playing; the first seconds of a play are warmed before Play).
+pub(crate) const START_CUT_SECONDS: [f64; 4] = [0.5, 1.0, 2.0, 3.0];
+
+pub(crate) const START_WARM_SECONDS: [f64; 5] = [0.25, 0.5, 0.75, 1.0, 1.5];
+
 #[cfg(test)]
 mod tests {
     use super::*;

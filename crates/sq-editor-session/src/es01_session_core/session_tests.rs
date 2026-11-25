@@ -1081,3 +1081,14 @@ fn the_project_input_color_default_reaches_the_resolver_and_redraws() {
     s.perform("Rename", None, |p| p.name = "Film".into());
     assert_eq!(redraws(&s), settled, "an edit that leaves the rendered infos alone draws nothing extra");
 }
+
+#[test]
+fn session_keeps_the_longest_present_stall_until_taken() {
+    let s = session();
+    assert_eq!(s.take_present_stall(), None);
+    s.note_present_stall(std::time::Duration::from_millis(300));
+    s.note_present_stall(std::time::Duration::from_millis(900));
+    s.note_present_stall(std::time::Duration::from_millis(400));
+    assert_eq!(s.take_present_stall(), Some(std::time::Duration::from_millis(900)));
+    assert_eq!(s.take_present_stall(), None);
+}

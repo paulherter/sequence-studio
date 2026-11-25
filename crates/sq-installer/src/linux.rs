@@ -34,12 +34,13 @@ pub fn first_run(env: &DesktopEnv, state: &DesktopState, offers_allowed: bool) -
     let apps = di::default_apps_dir(env);
     let facts = Facts {
         version: version.clone(),
-        app_exe_name: di::INTEGRATED_NAME,
+        app_exe_name: env.integrated_name(),
         start_folder: env.home.clone(),
         payload_bytes: 0,
         appimage_dir: env.appimage.parent().map(Path::to_path_buf),
         home: Some(env.home.clone()),
         system_line: format!("Sequence Studio {version} ({}) on Linux", std::env::consts::ARCH),
+        data_shared_with: None,
     };
     let screen = match state {
         DesktopState::Offer => Machine::welcome(Job::LinuxAdd, apps, LocationCheck::Ok { free: u64::MAX }),
@@ -142,6 +143,7 @@ mod tests {
             data_home: PathBuf::from("/home/paul/.local/share"),
             home: PathBuf::from("/home/paul"),
             version: "0.2.0".into(),
+            identity: sq_platform::desktop_integration::Identity::STABLE,
         }
     }
 

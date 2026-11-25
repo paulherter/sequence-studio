@@ -4,6 +4,7 @@
 #   - appimagetool 1.9.1                       -> $SQ_DEPS/appimagetool-x86_64.AppImage (what SQ_APPIMAGETOOL names)
 # $SQ_DEPS defaults to ~/.cache/sequence-studio/deps. Prints the two exports at the end. Safe to run again.
 set -euo pipefail
+. "$(dirname "$0")/lib-safe-delete.sh"
 deps="${SQ_DEPS:-$HOME/.cache/sequence-studio/deps}"
 mkdir -p "$deps"
 
@@ -21,7 +22,7 @@ fetch() { # url sha dest
 
 fetch "$FFMPEG_URL" "$FFMPEG_SHA" "$deps/ffmpeg-linux.tar.xz"
 if [ ! -d "$deps/ffmpeg-linux/lib" ]; then
-  rm -rf "$deps/ffmpeg-linux" "$deps/.ffmpeg-extract"
+  safe_delete "$deps/ffmpeg-linux" "$deps"; safe_delete "$deps/.ffmpeg-extract" "$deps"
   mkdir "$deps/.ffmpeg-extract"
   tar -xf "$deps/ffmpeg-linux.tar.xz" -C "$deps/.ffmpeg-extract" --strip-components=1
   mv "$deps/.ffmpeg-extract" "$deps/ffmpeg-linux"

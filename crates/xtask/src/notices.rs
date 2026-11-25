@@ -112,7 +112,11 @@ fn read_license_files(dir: &Path) -> Vec<String> {
         .map(|e| e.file_name().to_string_lossy().into_owned())
         .collect();
     names.sort();
-    names.iter().filter_map(|n| std::fs::read(dir.join(n)).ok()).map(|b| String::from_utf8_lossy(&b).into_owned()).collect()
+    names
+        .iter()
+        .filter_map(|n| std::fs::read(dir.join(n)).ok())
+        .map(|b| String::from_utf8_lossy(&b).into_owned())
+        .collect()
 }
 
 const MIT_TEMPLATE: &str = "MIT License\n\nCopyright (c) @AUTHORS@\n\nPermission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.\n";
@@ -155,13 +159,7 @@ pub fn crate_entries(crates: &[CrateInfo]) -> (Vec<Entry>, Vec<String>) {
                     missing.push(format!("{} {} ({})", c.name, c.version, c.license));
                 }
             }
-            Entry {
-                name: c.name.clone(),
-                version: c.version.clone(),
-                license,
-                copyright: c.authors.clone(),
-                texts,
-            }
+            Entry { name: c.name.clone(), version: c.version.clone(), license, copyright: c.authors.clone(), texts }
         })
         .collect();
     (entries, missing)
@@ -175,28 +173,63 @@ fn read(root: &Path, rel: &str) -> Result<String, String> {
 pub fn extra_entries(root: &Path) -> Result<Vec<Entry>, String> {
     let e = |name: &str, version: &str, license: &str, copyright: &str, files: &[&str]| -> Result<Entry, String> {
         let texts = files.iter().map(|f| read(root, f)).collect::<Result<Vec<_>, _>>()?;
-        Ok(Entry { name: name.into(), version: version.into(), license: license.into(), copyright: copyright.into(), texts })
+        Ok(Entry {
+            name: name.into(),
+            version: version.into(),
+            license: license.into(),
+            copyright: copyright.into(),
+            texts,
+        })
     };
     let mut out = vec![
-        e("FFmpeg (shared libraries, replaceable)", "LGPL build", "LGPL-3.0-or-later", "the FFmpeg developers", &[
-            "packaging/licenses/FFMPEG-LICENSE.txt",
-        ])?,
+        e(
+            "FFmpeg (shared libraries, replaceable)",
+            "LGPL build",
+            "LGPL-3.0-or-later",
+            "the FFmpeg developers",
+            &["packaging/licenses/FFMPEG-LICENSE.txt"],
+        )?,
         e("ONNX Runtime", "1.24.4", "MIT", "Microsoft Corporation", &["crates/sq-onnx/vendor/ORT-LICENSE-MIT.txt"])?,
-        e("whisper.cpp (speech to text, loaded at run time)", "b5454", "MIT", "2023-2026 The ggml authors", &[
-            "packaging/licenses/WHISPER-CPP-MIT.txt",
-        ])?,
-        e("EdgeTAM models (subject masks)", "", "Apache-2.0", "Meta Platforms, Inc. and affiliates", &[
-            "packaging/licenses/APACHE-2.0.txt",
-        ])?,
-        e("Lucide icons", "1.65.0", "ISC", "Lucide Contributors; portions Cole Bemis (Feather, MIT)", &["packaging/licenses/LUCIDE-ISC.txt"])?,
-        e("RNNoise (vendored C code)", "0.1.1", "BSD-3-Clause", "Mozilla, Jean-Marc Valin, Xiph.Org Foundation, Mark Borgerding", &[
-            "crates/sq-audiofx/vendor/rnnoise/COPYING",
-        ])?,
-        e("LZFSE (vendored C code)", "", "BSD-3-Clause", "2015-2016 Apple Inc.", &["crates/sq-analysis/vendor/lzfse/LICENSE"])?,
+        e(
+            "whisper.cpp (speech to text, loaded at run time)",
+            "b5454",
+            "MIT",
+            "2023-2026 The ggml authors",
+            &["packaging/licenses/WHISPER-CPP-MIT.txt"],
+        )?,
+        e(
+            "EdgeTAM models (subject masks)",
+            "",
+            "Apache-2.0",
+            "Meta Platforms, Inc. and affiliates",
+            &["packaging/licenses/APACHE-2.0.txt"],
+        )?,
+        e(
+            "Lucide icons",
+            "1.65.0",
+            "ISC",
+            "Lucide Contributors; portions Cole Bemis (Feather, MIT)",
+            &["packaging/licenses/LUCIDE-ISC.txt"],
+        )?,
+        e(
+            "RNNoise (vendored C code)",
+            "0.1.1",
+            "BSD-3-Clause",
+            "Mozilla, Jean-Marc Valin, Xiph.Org Foundation, Mark Borgerding",
+            &["crates/sq-audiofx/vendor/rnnoise/COPYING"],
+        )?,
+        e(
+            "LZFSE (vendored C code)",
+            "",
+            "BSD-3-Clause",
+            "2015-2016 Apple Inc.",
+            &["crates/sq-analysis/vendor/lzfse/LICENSE"],
+        )?,
     ];
     let fonts = root.join("Packages/SQText/Sources/SQText/Resources/Fonts");
     let mut ofl = vec![("Inter".to_string(), fonts.join("OFL.txt"))];
-    let mut families: Vec<_> = std::fs::read_dir(fonts.join("Families")).map_err(|e| e.to_string())?.flatten().collect();
+    let mut families: Vec<_> =
+        std::fs::read_dir(fonts.join("Families")).map_err(|e| e.to_string())?.flatten().collect();
     families.sort_by_key(|f| f.file_name());
     for f in families {
         ofl.push((f.file_name().to_string_lossy().into_owned(), f.path().join("OFL.txt")));
@@ -205,7 +238,13 @@ pub fn extra_entries(root: &Path) -> Result<Vec<Entry>, String> {
         let text = std::fs::read(&path).map_err(|e| format!("{}: {e}", path.display()))?;
         let text = String::from_utf8_lossy(&text).into_owned();
         let copyright = text.lines().next().unwrap_or("").trim().to_string();
-        out.push(Entry { name: format!("Font: {family}"), version: String::new(), license: "SIL OFL 1.1".into(), copyright, texts: vec![text] });
+        out.push(Entry {
+            name: format!("Font: {family}"),
+            version: String::new(),
+            license: "SIL OFL 1.1".into(),
+            copyright,
+            texts: vec![text],
+        });
     }
     Ok(out)
 }
@@ -293,12 +332,23 @@ mod tests {
     }
 
     fn entry(name: &str, texts: &[&str]) -> Entry {
-        Entry { name: name.into(), version: "1.0".into(), license: "MIT".into(), copyright: "A".into(), texts: texts.iter().map(|t| t.to_string()).collect() }
+        Entry {
+            name: name.into(),
+            version: "1.0".into(),
+            license: "MIT".into(),
+            copyright: "A".into(),
+            texts: texts.iter().map(|t| t.to_string()).collect(),
+        }
     }
 
     #[test]
     fn identical_texts_print_once() {
-        let out = render(&[entry("a", &["MIT text\r\n"]), entry("b", &["  MIT text"]), entry("c", &["Other"]), entry("d", &[])]);
+        let out = render(&[
+            entry("a", &["MIT text\r\n"]),
+            entry("b", &["  MIT text"]),
+            entry("c", &["Other"]),
+            entry("d", &[]),
+        ]);
         assert_eq!(out.matches("MIT text").count(), 1);
         assert!(out.contains("== a 1.0\nLicense: MIT\nCopyright / authors: A\nLicense text: [1]\n"));
         assert!(out.contains("== b 1.0\nLicense: MIT\nCopyright / authors: A\nLicense text: [1]\n"));
@@ -332,6 +382,9 @@ mod tests {
         .unwrap();
         let c = crates_from_metadata(&meta).unwrap();
         assert_eq!(c.len(), 1);
-        assert_eq!((c[0].name.as_str(), c[0].authors.as_str(), c[0].dir.as_path()), ("norm", "X, Y", Path::new("/reg/norm")));
+        assert_eq!(
+            (c[0].name.as_str(), c[0].authors.as_str(), c[0].dir.as_path()),
+            ("norm", "X, Y", Path::new("/reg/norm"))
+        );
     }
 }

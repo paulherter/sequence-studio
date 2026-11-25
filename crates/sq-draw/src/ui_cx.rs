@@ -702,7 +702,10 @@ mod tests {
         crate::motion::begin_frame(1.5);
         let mut c = Canvas::with_size(400.0, 300.0, None, 2.0);
         h.draw_tooltip(&mut c, &DrawTheme::default(), 1.5);
-        assert_eq!(c.list.quads().first().map(|q| q.color), Some(DrawTheme::default().token(sq_uikit::redesign_tokens::color::TOOLTIP)));
+        assert_eq!(
+            c.list.quads().first().map(|q| q.color),
+            Some(DrawTheme::default().token(sq_uikit::redesign_tokens::color::TOOLTIP))
+        );
         assert!(!crate::motion::needs_frame());
     }
 

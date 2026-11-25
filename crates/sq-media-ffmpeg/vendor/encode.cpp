@@ -2,6 +2,17 @@
 // Windows; VA-API on Linux; then software: x264 / x265 where the build has them, else OpenH264 / Kvazaar) or ProRes
 // (prores_videotoolbox on the Mac, else prores_ks, 10-bit 4:2:2 / 4:4:4:4), and AAC or integer PCM audio, muxed into MP4/MOV by the file extension; audio-only
 // M4A / WAV / FLAC files; animated GIF (one palette per frame).
+#include <chrono>
+#ifdef _WIN32
+#define NOMINMAX
+#define WIN32_LEAN_AND_MEAN
+#include <windows.h>
+#else
+#include <dlfcn.h>
+#endif
+#include <map>
+#include <mutex>
+#include <set>
 #include "common.h"
 #include <cmath>
 #include <string.h>
@@ -337,10 +348,57 @@ static bool probeEncoder(AVCodecContext *c) {
     return ok;
 }
 
+// Whether the driver library behind a hardware encoder family is on this machine. Without it every try of the encoder logs an
+// error ("Cannot load nvcuda.dll") and cannot work, so such an encoder is never a candidate. Checked once per process and family.
+static bool driverPresent(const char *name) {
+    const char *lib = nullptr;
+#ifdef _WIN32
+    if (strstr(name, "_nvenc")) lib = "nvcuda.dll";
+    else if (strstr(name, "_amf")) lib = "amfrt64.dll";
+#else
+    if (strstr(name, "_nvenc")) lib = "libcuda.so.1";
+    else if (strstr(name, "_amf")) lib = "libamfrt64.so.1";
+#endif
+    if (!lib) return true;
+    static std::mutex lock;
+    static std::map<std::string, bool> known;
+    std::lock_guard<std::mutex> g(lock);
+    auto it = known.find(lib);
+    if (it != known.end()) return it->second;
+#ifdef _WIN32
+    HMODULE h = LoadLibraryA(lib);
+    bool ok = h != nullptr;
+    if (h) FreeLibrary(h);
+#else
+    void *h = dlopen(lib, RTLD_LAZY | RTLD_LOCAL);
+    bool ok = h != nullptr;
+    if (h) dlclose(h);
+#endif
+    if (!ok) av_log(nullptr, AV_LOG_INFO, "encoder %s skipped: %s is not installed\n", name, lib);
+    known[lib] = ok;
+    return ok;
+}
+
 // The encoder `name` with the layouts, bit depths, B-frame counts and options worth trying, most ambitious first:
 // NV12 / P010 before planar; the wanted depth before 8-bit; the wanted B-frames before none; the Rust-chosen private
 // options before the encoder's defaults (an encoder that refuses one option still runs, with its own rate control).
 static AVCodecContext *openVideoAny(const SQFFEncodeConfig *cfg, const char *name, bool globalHeader, bool probe, const EncOptions &options) {
+    if (probe && !driverPresent(name)) return nullptr;
+    // An encoder that failed every try for this kind of video (a driver such as nvcuda.dll missing) is not tried again in this process:
+    // each try logs an error and an export asks several times. The key holds what can change the answer.
+    static std::mutex failedLock;
+    // The entry expires after 60 s: a transient failure (session limit, device busy) must not exclude the encoder for a later export.
+    static std::map<std::string, std::chrono::steady_clock::time_point> failed;
+    std::string failKey = std::string(name) + "|" + (cfg->tenBit ? "10" : "8") + "|" + std::to_string(cfg->width) + "x" + std::to_string(cfg->height)
+        + "|" + (cfg->hevc ? "hevc" : "h264") + "|p" + std::to_string(cfg->h264Profile);
+    {
+        std::lock_guard<std::mutex> g(failedLock);
+        auto it = failed.find(failKey);
+        if (it != failed.end()) {
+            if (std::chrono::steady_clock::now() - it->second < std::chrono::seconds(60)) return nullptr;
+            failed.erase(it);
+        }
+    }
     bool plain = cfg->prores == 0 && !cfg->gif;
     // shortcut: VideoToolbox gets no B-frames; its B-frame timestamps broke the MP4 muxer (pts < dts) in a 128x72 test.
     // Upgrade with a measurement against AVFoundation's file size.
@@ -363,6 +421,11 @@ static AVCodecContext *openVideoAny(const SQFFEncodeConfig *cfg, const char *nam
                 if (c) return c;
             }
         }
+    }
+    // Only hardware candidates (`probe`) are remembered: a software encoder's refusal belongs to its options, not to the machine.
+    if (probe) {
+        std::lock_guard<std::mutex> g(failedLock);
+        failed[failKey] = std::chrono::steady_clock::now();
     }
     return nullptr;
 }

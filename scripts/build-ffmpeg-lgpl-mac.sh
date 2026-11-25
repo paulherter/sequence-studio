@@ -22,8 +22,9 @@ fi
 free_gb=$(df -g "$HOME" | awk 'NR==2{print $4}')
 [ "$free_gb" -ge 12 ] || { echo "only ${free_gb} GB free, need 12" >&2; exit 1; }
 
-WORK="$(mktemp -d "${TMPDIR:-/tmp}/sq-ffmpeg.XXXXXX")"
-trap 'find "$WORK" -mindepth 1 -delete 2>/dev/null; rmdir "$WORK" 2>/dev/null || true' EXIT
+. "$(dirname "$0")/lib-safe-delete.sh" || exit 1
+WORK="$(safe_tmpdir sq-ffmpeg)"
+trap 'safe_delete "$WORK" "${TMPDIR:-/tmp}" 2>/dev/null || true' EXIT
 
 curl -fsSL -o "$WORK/ffmpeg.tgz" "$URL"
 got=$(shasum -a 256 "$WORK/ffmpeg.tgz" | awk '{print $1}')

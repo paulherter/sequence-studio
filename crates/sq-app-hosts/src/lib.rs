@@ -4,10 +4,10 @@ mod analysis_links;
 mod animation_keystones;
 mod audio_extraction;
 pub mod audio_notice;
-mod chrome;
-mod color_page_host;
 #[cfg(test)]
 mod catalogue_shots;
+mod chrome;
+mod color_page_host;
 mod color_popover;
 mod popover_guard;
 pub use color_popover::PickerAids;
@@ -92,8 +92,8 @@ pub use marker_list_host::MarkerListHost;
 pub use monitor_host::{MonitorDeferred, MonitorHost, pick_clip, route_monitor};
 pub use paste_clipboard::{ClipboardSource, MediaClipboard};
 pub use persist::{
-    apply_session_settings, apply_session_settings_from, mark_welcome_seen, store_appearance, store_start_quality, stored_settings,
-    use_projects_folder, watch_library_folder,
+    apply_session_settings, apply_session_settings_from, mark_welcome_seen, store_appearance, store_start_quality,
+    stored_settings, use_projects_folder, watch_library_folder,
 };
 pub use picture::{LinearImage, LinearReader, MonitorPicture};
 pub use poster_pump::{PosterPump, SharedAtlas, ThumbAtlas};

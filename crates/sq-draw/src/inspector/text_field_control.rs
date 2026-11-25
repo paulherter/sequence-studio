@@ -264,7 +264,17 @@ impl InspectorDraw {
         height: f64,
         t: &DrawTheme,
     ) {
-        Self::button_kind(c, title, rect, hovering, pressed, enabled, if accent { ButtonKind::Accent } else { ButtonKind::Raised }, height, t);
+        Self::button_kind(
+            c,
+            title,
+            rect,
+            hovering,
+            pressed,
+            enabled,
+            if accent { ButtonKind::Accent } else { ButtonKind::Raised },
+            height,
+            t,
+        );
     }
 
     /// `button` with an explicit stone kind (`OnViewer` for a button on the black viewer).

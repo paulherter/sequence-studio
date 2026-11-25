@@ -1,6 +1,8 @@
 [workspace]
 resolver = "3"
 members = ["crates/*", "workspace-hack"]
+# The Swift app's gyro library builds on its own (scripts/check.sh); it is not part of this workspace.
+exclude = ["Vendor/sqgyro"]
 
 [workspace.package]
 version = "0.2.1"
@@ -66,6 +68,9 @@ sq-timeline-ui = { path = "crates/sq-timeline-ui" }
 # Licenses: serde, serde_json, uuid, unicode-segmentation are MIT OR Apache-2.0 (GPL-3.0-or-later compatible).
 serde = { version = "1.0.229", features = ["derive"] }
 serde_json = { version = "1", features = ["float_roundtrip"] }
+# Update verification: SHA-256 of the downloaded installer and the ed25519 signature over it; both MIT OR Apache-2.0.
+sha2 = "0.10"
+ed25519-dalek = { version = "2", default-features = false, features = ["std"] }
 notify = { version = "8", default-features = false, features = ["macos_fsevent"] } # event-based folder watching, FSEvents / inotify / ReadDirectoryChangesW (CC0-1.0)
 # PNG decoding of preset thumbnails; MIT OR Apache-2.0.
 png = "0.18"
@@ -125,6 +130,8 @@ ctrlc = { version = "3", features = ["termination"] }
 muda = "0.21"
 # C library calls of the macOS fault handler; MIT OR Apache-2.0.
 libc = "0.2"
+# Zero-copy f32 -> bytes for texture uploads (already built through wgpu); MIT/Apache-2.0/Zlib.
+bytemuck = { version = "1", default-features = false }
 # Win32 calls of the Windows window chrome; MIT OR Apache-2.0.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging", "Win32_UI_Shell", "Win32_Graphics_Gdi", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_System_Diagnostics_Debug", "Win32_System_Kernel", "Win32_System_LibraryLoader", "Win32_Storage_FileSystem", "Win32_System_Threading", "Win32_System_IO", "Win32_Security", "Win32_System_SystemInformation", "Win32_Globalization", "Win32_System_Ioctl", "Win32_System_Com", "Win32_System_Power"] }
 

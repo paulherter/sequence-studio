@@ -5,10 +5,11 @@
 
 use crate::error::{ErrorCode, SetupError, describe_io};
 use crate::host::Host;
+use crate::identity::Identity;
 use crate::job::{Job, Step};
 use crate::log::Log;
 use crate::payload::{self, UnpackEnd};
-use crate::plan::{self, Action, EXE_NAME, INNO_UNINSTALL_KEY, Options, PlanEnv, UNINSTALLER_NAME};
+use crate::plan::{self, Action, EXE_NAME, Options, PlanEnv};
 use crate::version::Version;
 use crate::{SpaceFacts, format_size};
 use std::io;
@@ -30,6 +31,8 @@ pub struct JobSpec {
     pub payload_exe: PathBuf,
     /// The app's folders under the data and cache directories, given by the caller (`sq_os::Platform`).
     pub data_dirs: Vec<PathBuf>,
+    /// The channel the job installs or removes.
+    pub identity: Identity,
 }
 
 /// How a job ended without an error.
@@ -89,6 +92,31 @@ fn sibling(location: &Path, suffix: &str) -> PathBuf {
 /// How often a folder that survives a removal is removed again, and the pause between the tries.
 const REMOVE_TRIES: u32 = 4;
 const REMOVE_PAUSE: Duration = Duration::from_millis(150);
+
+/// How often the swap of the old folder is tried again, and the pause between the tries (about 10 s in all).
+const SWAP_TRIES: u32 = 50;
+const SWAP_PAUSE: Duration = Duration::from_millis(200);
+
+/// Renames `from` to `to`. Windows refuses a folder rename with os error 32/5 while a process that has just ended still
+/// holds a file inside, or a scanner reads one of the new files; both pass within moments, so the rename is tried again.
+/// `pause` sleeps between the tries.
+pub(crate) fn rename_with_retry(
+    mut rename: impl FnMut() -> io::Result<()>,
+    tries: u32,
+    mut pause: impl FnMut(),
+) -> io::Result<()> {
+    let mut attempt = 1;
+    loop {
+        match rename() {
+            Ok(()) => return Ok(()),
+            Err(e) if attempt >= tries || e.kind() == io::ErrorKind::NotFound => return Err(e),
+            Err(_) => {
+                attempt += 1;
+                pause();
+            }
+        }
+    }
+}
 
 /// Removes a folder; files that stay (locked) are scheduled for the next restart. Returns what could not even be
 /// scheduled. A program that is still shutting down can write into the folder while it goes (and Windows keeps a folder
@@ -228,6 +256,22 @@ impl Run<'_> {
                 host.reg_set_string(key, name.as_deref(), value)
                     .map_err(|e| fail(ErrorCode::Registry, "writing the registry", None, &e))
             }
+            Action::RegSetStringIfUnset { key, name, value } => {
+                let current = host.reg_get_string(key, name.as_deref());
+                if current.as_deref().is_none_or(|c| c.is_empty() || c == value) {
+                    self.log.line(&format!("set HKCU\\{key} {} = {value}", name.as_deref().unwrap_or("(default)")));
+                    host.reg_set_string(key, name.as_deref(), value)
+                        .map_err(|e| fail(ErrorCode::Registry, "writing the registry", None, &e))
+                } else {
+                    self.log.line(&format!("keep HKCU\\{key}: another program owns it"));
+                    Ok(())
+                }
+            }
+            Action::RegDeleteValue { key, name } => {
+                self.log.line(&format!("delete value HKCU\\{key} {}", name.as_deref().unwrap_or("(default)")));
+                host.reg_delete_value(key, name.as_deref())
+                    .map_err(|e| fail(ErrorCode::Registry, "cleaning the registry", None, &e))
+            }
             Action::RegSetDword { key, name, value } => {
                 self.log.line(&format!("set HKCU\\{key} {name} = {value}"));
                 host.reg_set_dword(key, name, *value)
@@ -359,14 +403,17 @@ impl Run<'_> {
             }
         }
         // The uninstaller copy goes in before the swap, so a failure here still only deletes `.new`.
-        if let Err(e) = payload::copy_stub(&spec.payload_exe, &new.join(UNINSTALLER_NAME)) {
+        if let Err(e) = payload::copy_stub(&spec.payload_exe, &new.join(spec.identity.uninstaller_name())) {
             self.log.line(&format!("{e}"));
             let _ = std::fs::remove_dir_all(&new);
             return Err(e);
         }
         self.report(Step::Copying, 0.90, "");
         let had_old = location.exists();
-        if had_old && let Err(e) = std::fs::rename(location, &old) {
+        if had_old
+            && let Err(e) =
+                rename_with_retry(|| std::fs::rename(location, &old), SWAP_TRIES, || std::thread::sleep(SWAP_PAUSE))
+        {
             let _ = std::fs::remove_dir_all(&new);
             return Err(self.io("replacing the old version", location, &e));
         }
@@ -387,6 +434,7 @@ impl Run<'_> {
             desktop: folders.desktop,
             temp: folders.temp,
             data_dirs: spec.data_dirs.clone(),
+            identity: spec.identity,
         };
         let opts = Options { desktop_shortcut: spec.desktop_shortcut, delete_data: false };
         let size_kb = u32::try_from(need / 1024).unwrap_or(u32::MAX);
@@ -402,7 +450,7 @@ impl Run<'_> {
 
         // 4. Finishing.
         self.report(Step::Finishing, 0.97, Step::Finishing.detail());
-        let _ = self.host.reg_delete_key(INNO_UNINSTALL_KEY);
+        let _ = self.host.reg_delete_key(spec.identity.inno_uninstall_key());
         for leftover in ["unins000.exe", "unins000.dat"] {
             let _ = std::fs::remove_file(location.join(leftover));
         }
@@ -419,7 +467,7 @@ impl Run<'_> {
     fn roll_back(&mut self, done: &[Action], location: &Path, old: &Path, had_old: bool) {
         self.log.line("rolling back");
         if matches!(self.spec.job, Job::Install) {
-            for undo in plan::inverse(done) {
+            for undo in plan::inverse(done, self.spec.identity) {
                 let _ = self.apply(&undo);
             }
         }
@@ -441,8 +489,14 @@ impl Run<'_> {
             desktop: folders.desktop,
             temp: folders.temp,
             data_dirs: spec.data_dirs.clone(),
+            identity: spec.identity,
         };
-        let opts = Options { desktop_shortcut: false, delete_data: spec.delete_data };
+        // The data folders are shared by both channels: while the other one is installed they stay.
+        let shared_with = crate::detect::other_channel_installed(self.host, spec.identity);
+        if let (true, Some(name)) = (spec.delete_data, shared_with) {
+            self.log.line(&format!("settings and caches stay: {name} is installed and uses them"));
+        }
+        let opts = Options { desktop_shortcut: false, delete_data: spec.delete_data && shared_with.is_none() };
         let actions = plan::plan(&Job::Uninstall, &spec.location, &opts, &env, &spec.version, 0);
         let files = actions.iter().take_while(|a| matches!(a, Action::RemoveDirAll(_))).count();
         for (i, action) in actions.iter().enumerate() {

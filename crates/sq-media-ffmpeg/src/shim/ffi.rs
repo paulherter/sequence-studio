@@ -124,6 +124,7 @@ unsafe extern "C" {
         tb_den: c_int,
         hardware: c_int,
         extra_hw_frames: c_int,
+        sw_threads: c_int,
         out: *mut *mut Decoder,
         err: *mut c_char,
         err_len: c_int,
@@ -149,6 +150,7 @@ unsafe extern "C" {
     pub fn sq_frame_has_alpha(f: *const Frame) -> c_int;
     pub fn sq_frame_download_rgba(f: *const Frame, buf: *mut u8, cap: c_int) -> c_int;
     pub fn sq_frame_download_reduced_size(f: *const Frame, divisor: c_int, w: *mut c_int, h: *mut c_int) -> c_int;
+    pub fn sq_frame_reduced_422(f: *const Frame) -> c_int;
     pub fn sq_frame_download_reduced(
         f: *const Frame,
         divisor: c_int,
@@ -191,7 +193,7 @@ unsafe extern "C" {
 #[cfg(not(sq_ffmpeg))]
 mod stub {
     use super::*;
-    const ENOSYS: c_int = -38;
+    pub const ENOSYS: c_int = -38;
 
     pub unsafe fn sq_version_mismatch(_: *mut c_char, _: c_int) -> c_int {
         0
@@ -201,19 +203,6 @@ mod stub {
         _: *const c_char,
         _: c_int,
         _: *mut *mut Demux,
-        _: *mut c_char,
-        _: c_int,
-    ) -> c_int {
-        ENOSYS
-    }
-    pub unsafe fn sq_seek_probe(
-        _: *const c_char,
-        _: c_int,
-        _: i64,
-        _: *mut c_char,
-        _: c_int,
-        _: *mut u8,
-        _: *mut c_int,
         _: *mut c_char,
         _: c_int,
     ) -> c_int {
@@ -245,6 +234,7 @@ mod stub {
         _: c_int,
         _: c_int,
         _: u32,
+        _: c_int,
         _: c_int,
         _: c_int,
         _: c_int,
@@ -283,6 +273,9 @@ mod stub {
     pub unsafe fn sq_frame_download_reduced_size(_: *const Frame, _: c_int, _: *mut c_int, _: *mut c_int) -> c_int {
         0
     }
+    pub unsafe fn sq_frame_reduced_422(_: *const Frame) -> c_int {
+        0
+    }
     pub unsafe fn sq_frame_download_reduced(_: *const Frame, _: c_int, _: c_int, _: *mut u8, _: c_int) -> c_int {
         ENOSYS
     }
@@ -305,18 +298,6 @@ mod stub {
         ENOSYS
     }
     pub unsafe fn sq_audio_free(_: *mut Audio) {}
-    pub unsafe fn sq_audio_reader_open(
-        _: *const c_char,
-        _: c_int,
-        _: c_int,
-        _: c_int,
-        _: *mut i64,
-        _: *mut c_int,
-        _: *mut c_char,
-        _: c_int,
-    ) -> *mut AudioReader {
-        std::ptr::null_mut()
-    }
     pub unsafe fn sq_audio_reader_read(_: *mut AudioReader, _: i64, _: *mut f32, _: c_int) -> c_int {
         ENOSYS
     }
@@ -337,3 +318,66 @@ mod stub {
 
 #[cfg(not(sq_ffmpeg))]
 pub use stub::*;
+
+/// Arguments of `sq_seek_probe`, grouped so the Rust entry point takes one value (the C function keeps its flat list).
+pub struct SeekProbeArgs {
+    pub path: *const c_char,
+    pub max_packets: c_int,
+    pub max_bytes: i64,
+    pub codec: *mut c_char,
+    pub codec_len: c_int,
+    pub keys: *mut u8,
+    pub count: *mut c_int,
+    pub err: *mut c_char,
+    pub err_len: c_int,
+}
+
+/// Arguments of `sq_audio_reader_open`.
+pub struct AudioReaderOpenArgs {
+    pub path: *const c_char,
+    pub rate: c_int,
+    pub channels: c_int,
+    pub ordinal: c_int,
+    pub estimated: *mut i64,
+    pub source_channels: *mut c_int,
+    pub err: *mut c_char,
+    pub err_len: c_int,
+}
+
+/// # Safety
+/// Same contract as the C `sq_seek_probe`. Without FFmpeg it fails with `ENOSYS`.
+#[cfg(sq_ffmpeg)]
+pub unsafe fn seek_probe(a: SeekProbeArgs) -> c_int {
+    // SAFETY: forwarded under the caller's contract.
+    unsafe {
+        sq_seek_probe(a.path, a.max_packets, a.max_bytes, a.codec, a.codec_len, a.keys, a.count, a.err, a.err_len)
+    }
+}
+
+/// # Safety
+/// Same contract as the C `sq_seek_probe`. Without FFmpeg it fails with `ENOSYS`.
+#[cfg(not(sq_ffmpeg))]
+pub unsafe fn seek_probe(a: SeekProbeArgs) -> c_int {
+    // The stub touches nothing; reading the fields keeps them from being dead code in a build without FFmpeg.
+    let _ = (a.path, a.max_packets, a.max_bytes, a.codec, a.codec_len, a.keys, a.count, a.err, a.err_len);
+    stub::ENOSYS
+}
+
+/// # Safety
+/// Same contract as the C `sq_audio_reader_open`. Without FFmpeg it returns null.
+#[cfg(sq_ffmpeg)]
+pub unsafe fn audio_reader_open(a: AudioReaderOpenArgs) -> *mut AudioReader {
+    // SAFETY: forwarded under the caller's contract.
+    unsafe {
+        sq_audio_reader_open(a.path, a.rate, a.channels, a.ordinal, a.estimated, a.source_channels, a.err, a.err_len)
+    }
+}
+
+/// # Safety
+/// Same contract as the C `sq_audio_reader_open`. Without FFmpeg it returns null.
+#[cfg(not(sq_ffmpeg))]
+pub unsafe fn audio_reader_open(a: AudioReaderOpenArgs) -> *mut AudioReader {
+    // See `seek_probe`: the stub reads the fields only to keep them live.
+    let _ = (a.path, a.rate, a.channels, a.ordinal, a.estimated, a.source_channels, a.err, a.err_len);
+    std::ptr::null_mut()
+}

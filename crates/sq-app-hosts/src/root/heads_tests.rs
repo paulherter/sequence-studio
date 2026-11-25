@@ -309,8 +309,10 @@ fn the_export_sheet_and_settings_fit_at_the_smallest_window_on_every_system() {
                     // (The sheet shows it home-relative, so match on its last folder name.)
                     let temp = std::env::temp_dir();
                     let leaf = temp.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-                    let added: Vec<_> =
-                        added.into_iter().filter(|r| leaf.is_empty() || !r.asked.ends_with(&format!("/{leaf}"))).collect();
+                    let added: Vec<_> = added
+                        .into_iter()
+                        .filter(|r| leaf.is_empty() || !r.asked.ends_with(&format!("/{leaf}")))
+                        .collect();
                     for mark in marks {
                         assert!(
                             added.iter().any(|r| r.asked == mark),

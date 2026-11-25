@@ -391,11 +391,8 @@ impl ExportQueuePopover {
         c.draw_text_in(&SQL10n::string("Export Queue"), head, body, t.label(), TextAlign::Left, Self::PAD, semibold);
         let count = self.jobs.len() + self.background.len();
         if count > 0 {
-            let text = if count == 1 {
-                SQL10n::string("1 job")
-            } else {
-                SQL10n::format("%@ jobs", &[&count.to_string()])
-            };
+            let text =
+                if count == 1 { SQL10n::string("1 job") } else { SQL10n::format("%@ jobs", &[&count.to_string()]) };
             let area = CGRect::new(head.min_x(), head.min_y(), head.width - 12.0 - 16.0 - 8.0, head.height);
             c.draw_text_in(&text, area, caption, t.label3(), TextAlign::Right, 0.0, 0);
         }
@@ -480,15 +477,7 @@ impl ExportQueuePopover {
             if let Some(tip) = cut.tip() {
                 self.cut_tips.push((title_rect, tip.to_string()));
             }
-            c.draw_text_in(
-                &cut.shown,
-                title_rect,
-                body,
-                t.label(),
-                TextAlign::Left,
-                0.0,
-                0,
-            );
+            c.draw_text_in(&cut.shown, title_rect, body, t.label(), TextAlign::Left, 0.0, 0);
             let line_y = if bar.is_some() { r.min_y() + 38.0 } else { r.min_y() + 26.0 };
             if let Some(p) = bar {
                 let fill = if why.is_some() { t.red() } else { t.accent() };
@@ -500,15 +489,7 @@ impl ExportQueuePopover {
             if let Some(full) = why.filter(|_| shown != line) {
                 self.cut_tips.push((line_rect, full));
             }
-            c.draw_text_in(
-                &shown,
-                line_rect,
-                caption,
-                line_color,
-                TextAlign::Left,
-                0.0,
-                0,
-            );
+            c.draw_text_in(&shown, line_rect, caption, line_color, TextAlign::Left, 0.0, 0);
             if act {
                 let a = Self::action_rect(r);
                 let glyph = match entry {
@@ -837,7 +818,12 @@ mod tests {
     fn a_failed_row_has_a_bar_and_names_stay_distinct() {
         let failed = ExportJobState::Failed("disk full".into());
         let mut p = make();
-        let row = QueueJob { id: Id::from_u128(7), name: "Interview final export for the festival screening in the main hall v12".into(), state: failed, progress: 0.3 };
+        let row = QueueJob {
+            id: Id::from_u128(7),
+            name: "Interview final export for the festival screening in the main hall v12".into(),
+            state: failed,
+            progress: 0.3,
+        };
         p.update(&[row], None);
         assert_eq!(p.entry_height(Entry::Job(0)), ExportQueuePopover::BAR_ROW_HEIGHT);
         let t = DrawTheme::default();

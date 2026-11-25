@@ -140,7 +140,7 @@ impl AudioClockHandle {
         self.clock.now()
     }
 
-    /// Running, but no audio was consumed for 250 ms (2 s while priming): the engine should fall back to the host clock.
+    /// Running, but no audio was consumed for 250 ms (5 s while priming): the engine should fall back to the host clock.
     pub fn stalled(&self) -> bool {
         self.clock.sample().1
     }
@@ -261,6 +261,12 @@ impl AudioOut {
     /// Device presentation latency (`playback - callback`), refreshed on every callback.
     pub fn latency(&self) -> Duration {
         self.player.latency()
+    }
+
+    /// A probe for the per-frame bench trace: the smallest ring fill (frames) since its last call (`None` when idle).
+    pub fn interval_fill_probe(&self) -> Arc<dyn Fn() -> Option<u64> + Send + Sync> {
+        let player = Arc::clone(&self.player);
+        Arc::new(move || player.take_interval_min_fill())
     }
 
     pub fn stats(&self) -> OutputStats {

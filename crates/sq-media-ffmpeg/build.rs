@@ -116,7 +116,16 @@ fn make_short_import_libs(lib_dirs: &[PathBuf], out: &std::path::Path) -> Result
 
 fn main() {
     println!("cargo:rerun-if-changed=vendor");
+    println!("cargo:rerun-if-env-changed=SQ_ALLOW_STUB_SHIM");
     let Some(found) = locate() else {
+        let target_os = std::env::var("CARGO_CFG_TARGET_OS").ok();
+        if build_def::stub_shim_refused(target_os.as_deref(), std::env::var("SQ_ALLOW_STUB_SHIM").ok().as_deref()) {
+            eprintln!(
+                "error: sq-media-ffmpeg: no FFmpeg found for a Windows build (SQ_FFMPEG must name the folder with include and lib); \
+                 the stub shim would fail every decode with -38. SQ_ALLOW_STUB_SHIM=1 builds it anyway (compile checks only)."
+            );
+            std::process::exit(1);
+        }
         println!("cargo:warning=sq-media-ffmpeg: FFmpeg not found (set SQ_FFMPEG); building the stub shim");
         return;
     };

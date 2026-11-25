@@ -1,9 +1,12 @@
 //! Engine tests: real temp folders, a `FakeHost` for the registry and shortcuts.
 
 use crate::detect::{InstallSource, detect_installed};
-use crate::engine::{JobEnd, JobSpec, Progress, finish_uninstall_copy, run_job, uninstall_copy_name};
+use crate::engine::{
+    JobEnd, JobSpec, Progress, finish_uninstall_copy, rename_with_retry, run_job, uninstall_copy_name,
+};
 use crate::error::ErrorCode;
 use crate::host::{FakeHost, Host};
+use crate::identity::Identity;
 use crate::job::{Job, Step};
 use crate::log::Log;
 use crate::payload;
@@ -65,6 +68,7 @@ impl Env {
             version: Version::new(0, 3, 0),
             payload_exe: self.setup_exe.clone(),
             data_dirs: vec![self.dir.join("data")],
+            identity: Identity::STABLE,
         }
     }
 
@@ -108,7 +112,7 @@ fn an_install_copies_registers_and_reports_a_rising_bar() {
     env.no_temp_folders();
     assert!(env.menu_link().exists());
     assert!(env.host.folders.desktop.join("Sequence Studio.lnk").exists());
-    let installed = detect_installed(&env.host).expect("our key");
+    let installed = detect_installed(&env.host, Identity::STABLE).expect("our key");
     assert_eq!((installed.source, installed.version), (InstallSource::Ours, Version::new(0, 3, 0)));
     assert_eq!(env.host.get_dword(UNINSTALL_KEY, "NoModify"), Some(1));
     assert_eq!(env.host.with(|s| s.assoc_changes), 1);
@@ -132,14 +136,14 @@ fn an_update_replaces_the_folder_and_removes_the_inno_leftovers() {
     let _ = env.host.reg_set_string(INNO_UNINSTALL_KEY, Some("DisplayVersion"), "0.2");
     let _ =
         env.host.reg_set_string(INNO_UNINSTALL_KEY, Some("InstallLocation"), &format!("{}\\", env.location.display()));
-    assert_eq!(detect_installed(&env.host).map(|i| i.source), Some(InstallSource::Inno));
+    assert_eq!(detect_installed(&env.host, Identity::STABLE).map(|i| i.source), Some(InstallSource::Inno));
     let (result, _, _) = env.run(&env.spec(old_version()), None);
     assert!(matches!(result, Ok(JobEnd::Done)));
     assert!(!env.location.join("old-only.txt").exists());
     assert!(!env.location.join("unins000.exe").exists() && !env.location.join("unins000.dat").exists());
     assert_eq!(std::fs::read(env.location.join("SequenceStudio.exe")).map(|b| b.len()).ok(), Some(3000));
     assert_eq!(env.host.get_string(INNO_UNINSTALL_KEY, Some("DisplayVersion")), None, "the Inno key is gone");
-    assert_eq!(detect_installed(&env.host).map(|i| i.source), Some(InstallSource::Ours));
+    assert_eq!(detect_installed(&env.host, Identity::STABLE).map(|i| i.source), Some(InstallSource::Ours));
     env.no_temp_folders();
 }
 
@@ -287,7 +291,7 @@ fn an_uninstall_with_a_running_app_that_stays_is_sqi_201() {
     });
     let (result, _, _) = env.run(&env.spec(Job::Uninstall), None);
     assert_eq!(result.expect_err("open").code, ErrorCode::UninstallInUse);
-    assert!(env.location.exists() && detect_installed(&env.host).is_some());
+    assert!(env.location.exists() && detect_installed(&env.host, Identity::STABLE).is_some());
 }
 
 #[test]
@@ -365,4 +369,86 @@ fn the_uninstaller_copies_in_temp_are_swept_and_its_own_goes_when_it_has_ended()
     let elsewhere = env.dir.join(uninstall_copy_name(333));
     finish_uninstall_copy(&env.host, &elsewhere);
     assert_eq!(env.host.with(|s| s.exit_deletes.len()), 1, "nor a copy outside the temp folder");
+}
+
+#[test]
+fn a_nightly_install_uses_its_own_names_and_leaves_a_stable_install_alone() {
+    let env = Env::new("nightly");
+    let stable = env.run(&env.spec(Job::Install), None).0;
+    assert!(matches!(stable, Ok(JobEnd::Done)));
+    let nightly_dir = env.dir.join("Apps").join("Sequence Studio Nightly");
+    let mut spec = env.spec(Job::Install);
+    spec.identity = Identity::NIGHTLY;
+    spec.location = nightly_dir.clone();
+    spec.version = Version::new(0, 3, 0);
+    let (result, _, _) = env.run(&spec, None);
+    assert!(matches!(result, Ok(JobEnd::Done)));
+    assert!(nightly_dir.join("Uninstall Sequence Studio Nightly.exe").exists());
+    assert!(env.host.folders.desktop.join("Sequence Studio Nightly.lnk").exists());
+    let found = detect_installed(&env.host, Identity::NIGHTLY).expect("nightly record");
+    assert_eq!(found.location, nightly_dir);
+    assert_eq!(detect_installed(&env.host, Identity::STABLE).map(|i| i.location), Some(env.location.clone()));
+    // Removing the Nightly leaves the Stable install and its record.
+    let mut gone = spec.clone();
+    gone.job = Job::Uninstall;
+    gone.payload_exe = nightly_dir.join("Uninstall Sequence Studio Nightly.exe");
+    assert!(matches!(env.run(&gone, None).0, Ok(JobEnd::Done)));
+    assert!(detect_installed(&env.host, Identity::NIGHTLY).is_none());
+    assert!(
+        detect_installed(&env.host, Identity::STABLE).is_some() && env.location.join("SequenceStudio.exe").exists()
+    );
+}
+
+/// Installs `identity` at its own folder and returns the spec that removes it again with "delete data".
+fn installed_as(env: &Env, identity: Identity, folder: &str) -> JobSpec {
+    let mut spec = env.spec(Job::Install);
+    spec.identity = identity;
+    spec.location = env.dir.join("Apps").join(folder);
+    assert!(matches!(env.run(&spec, None).0, Ok(JobEnd::Done)));
+    spec.job = Job::Uninstall;
+    spec.delete_data = true;
+    spec.payload_exe = spec.location.join(identity.uninstaller_name());
+    spec
+}
+
+#[test]
+fn removing_one_channel_never_deletes_the_data_the_other_channel_uses() {
+    for (removed, kept) in [(Identity::NIGHTLY, Identity::STABLE), (Identity::STABLE, Identity::NIGHTLY)] {
+        let env = Env::new(&format!("shared-{}", removed.is_nightly()));
+        let data = env.dir.join("data");
+        let _ = std::fs::create_dir_all(&data);
+        let _ = std::fs::write(data.join("settings.json"), b"{}");
+        let gone = installed_as(&env, removed, removed.app_name());
+        let stays = installed_as(&env, kept, kept.app_name());
+        assert!(matches!(env.run(&gone, None).0, Ok(JobEnd::Done)));
+        assert!(data.join("settings.json").exists(), "{} removal kept the shared data", removed.app_name());
+        assert!(stays.location.join("SequenceStudio.exe").exists());
+        // Once it is the only one left, "delete data" removes the data.
+        let mut last = stays.clone();
+        last.payload_exe = stays.location.join(kept.uninstaller_name());
+        assert!(matches!(env.run(&last, None).0, Ok(JobEnd::Done)));
+        assert!(!data.exists(), "the last install takes the data with it");
+    }
+}
+
+#[test]
+fn a_folder_rename_that_is_locked_for_a_moment_is_tried_again() {
+    let (mut calls, mut pauses) = (0, 0);
+    let locked = || {
+        calls += 1;
+        if calls < 4 { Err(std::io::Error::from_raw_os_error(32)) } else { Ok(()) }
+    };
+    assert!(rename_with_retry(locked, 10, || pauses += 1).is_ok());
+    assert_eq!((calls, pauses), (4, 3));
+}
+
+#[test]
+fn a_folder_rename_that_stays_locked_gives_up_after_the_last_try() {
+    let (mut calls, mut pauses) = (0, 0);
+    let locked = || {
+        calls += 1;
+        Err(std::io::Error::from_raw_os_error(32))
+    };
+    assert!(rename_with_retry(locked, 5, || pauses += 1).is_err());
+    assert_eq!((calls, pauses), (5, 4));
 }

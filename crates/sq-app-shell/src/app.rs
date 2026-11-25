@@ -27,7 +27,13 @@ const DISPATCH_ROUNDS: usize = 16;
 
 /// The platform's implementations of the seams (`app_platform`, `shell_file_picker`), owned by the app and lent to
 /// hosts through [`HostCx::services`]. `None`: the platform has none (Windows has no Magic segmenter yet).
+/// Lines for the status bar posted from any thread.
+pub type NoticeQueue = Arc<std::sync::Mutex<Vec<String>>>;
+
 pub struct AppServices {
+    /// Status lines from threads without window access (the audio output); this app's own queue, so two apps in one
+    /// process never show each other's lines. The engine's wake link (`WakeSlot`) shares it.
+    pub audio_notices: NoticeQueue,
     pub files: Box<dyn ShellFilePicker>,
     pub panel_files: Box<dyn PanelFileChooser>,
     pub monitor: Option<Box<dyn AppMonitorBackend>>,
@@ -325,7 +331,11 @@ impl App {
     /// A new appearance or display scale (`theme.scale` is the display's); the interface size of Preferences comes on top.
     pub fn set_theme(&mut self, theme: DrawTheme) {
         self.device_scale = theme.scale;
-        self.theme = DrawTheme { scale: self.device_scale * self.ui_scale, window_inactive: self.theme.window_inactive, ..theme };
+        self.theme = DrawTheme {
+            scale: self.device_scale * self.ui_scale,
+            window_inactive: self.theme.window_inactive,
+            ..theme
+        };
         self.atlas.iter().for_each(|a| a.set_point_scale(self.theme.scale));
         for slot in &mut self.hosts {
             slot.host.theme_changed(&self.theme);

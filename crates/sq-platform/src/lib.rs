@@ -4,6 +4,7 @@
 //! `SetThreadExecutionState`). Linux gets the shared unix free-space probe and no-ops for the rest. The menu bar and window chrome stay in the backends (they differ
 //! in kind: the Mac has a system menu bar, Windows draws its own). See docs/rust/PLATFORM-MATRIX.md.
 
+pub mod app_update;
 pub mod app_window;
 mod backend;
 pub mod desktop_integration;
@@ -20,6 +21,7 @@ mod linux_power;
 pub mod linux_settings;
 pub mod notify;
 pub mod owned_window;
+pub mod process;
 
 pub use backend::{
     add_recent_document, free_bytes, install_fault_report, install_open_handler, physical_memory, volume_bytes,

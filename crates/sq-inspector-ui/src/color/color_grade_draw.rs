@@ -583,8 +583,7 @@ impl ColorGradeDraw {
         let cap = f64::from(sq_draw::theme::metrics::CAPSULE);
         // A narrow panel (240 pt) moves the slider left so the track keeps `MIN_TRACK`; the labels get what is left of the 110.
         let slider_x = (mx1 - Mac::VALUE_TRAILING - Mac::VALUE_COLUMN - Mac::MIN_TRACK)
-            .min(Mac::CONTROL_X)
-            .max(Mac::LABEL_X + Mac::MIN_LABEL);
+            .clamp(Mac::LABEL_X + Mac::MIN_LABEL, Mac::CONTROL_X);
         let slider = box_rect(slider_x, mx1 - slider_x - Mac::VALUE_TRAILING, Mac::SLIDER, Mac::ROW);
         // A narrow panel lets the popup grow toward its star (up to 96 wide) so "Automatic" is not cut to "Autom…".
         let star_gap = mx1 - Mac::ICON - 6.0 - Mac::CONTROL_X;

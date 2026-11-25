@@ -64,6 +64,10 @@ impl DevicePlayer {
         }
     }
 
+    pub(super) fn take_interval_min_fill(&self) -> Option<u64> {
+        self.render.take_interval_min_fill()
+    }
+
     pub(super) fn underruns(&self) -> u64 {
         self.render.underrun_count()
     }

@@ -272,7 +272,14 @@ impl TemplateSlotsDraw {
             (self.width - boxed.max_x() - 6.0 - ControlsGrid::TRAILING).max(0.0),
             h,
         );
-        crate::ec_draw::effect_controls_draw_panel::EffectControlsDrawPanel::draw_label_lines(c, &title, rect, h, fs, t.label());
+        crate::ec_draw::effect_controls_draw_panel::EffectControlsDrawPanel::draw_label_lines(
+            c,
+            &title,
+            rect,
+            h,
+            fs,
+            t.label(),
+        );
         let Some(z) = &self.zones else { return };
         self.label(c, "Middle", Self::row_y(self.slots.len() + 1));
         for (i, name) in ["Hold", "Stretch"].into_iter().enumerate() {

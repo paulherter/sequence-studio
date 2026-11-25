@@ -218,7 +218,8 @@ pub fn run_package(root: &Path, args: &[String], channel: Channel, date: &str) -
             .replace("StartupWMClass=sequence-studio", &format!("StartupWMClass={id}"));
     }
     std::fs::write(app_dir.join(format!("{id}.desktop")), &desktop).map_err(|e| e.to_string())?;
-    std::fs::write(app_dir.join(format!("usr/share/applications/{id}.desktop")), &desktop).map_err(|e| e.to_string())?;
+    std::fs::write(app_dir.join(format!("usr/share/applications/{id}.desktop")), &desktop)
+        .map_err(|e| e.to_string())?;
     copy_to(
         &pk.join("de.paulherter.sequencestudio.xml"),
         &app_dir.join("usr/share/mime/packages/de.paulherter.sequencestudio.xml"),
@@ -287,14 +288,22 @@ mod tests {
 0000000000000000 g    DF .text\t0000000000000010 (GLIBC_2.99) defined_here_is_fine";
         assert_eq!(
             versions_too_new(dump),
-            ["GLIBC_2.43 fmod", "GLIBC_2.38 strlcpy", "GLIBCXX_3.4.32 _ZNSt6thread6_StateD2Ev", "CXXABI_1.3.15 __cxa_foo"]
+            [
+                "GLIBC_2.43 fmod",
+                "GLIBC_2.38 strlcpy",
+                "GLIBCXX_3.4.32 _ZNSt6thread6_StateD2Ev",
+                "CXXABI_1.3.15 __cxa_foo"
+            ]
         );
         assert!(versions_too_new("0 DF *UND*\t0 (GLIBC_2.3.4) a\n0 DF *UND*\t0 (GLIBC_2.9) b").is_empty());
     }
 
     #[test]
     fn the_image_name_carries_version_and_build_minute() {
-        assert_eq!(image_name(Channel::Stable, "0.1.2", "20261112-2202"), "SequenceStudio-0.1.2-20261112-2202-x86_64.AppImage");
+        assert_eq!(
+            image_name(Channel::Stable, "0.1.2", "20261112-2202"),
+            "SequenceStudio-0.1.2-20261112-2202-x86_64.AppImage"
+        );
         assert_eq!(
             image_name(Channel::Nightly, "0.1.2-nightly.20261112", "20261112-2202"),
             "SequenceStudioNightly-0.1.2-nightly.20261112-20261112-2202-x86_64.AppImage"

@@ -1,6 +1,7 @@
 //! The install plan: every shortcut and registry value of spec section 10.1 step 3 as data, and its inverse. Pure; the
 //! engine runs the actions through a [`Host`](crate::host::Host).
 
+use crate::identity::Identity;
 use crate::job::Job;
 use crate::version::Version;
 use std::path::{Path, PathBuf};
@@ -20,9 +21,8 @@ pub const UNINSTALL_KEY: &str = r"Software\Microsoft\Windows\CurrentVersion\Unin
 /// The key the old Inno installer wrote (its AppId plus `_is1`).
 pub const INNO_UNINSTALL_KEY: &str =
     r"Software\Microsoft\Windows\CurrentVersion\Uninstall\{6C1E2A57-3B0D-4F52-9A0E-5E51A7C0D2B4}_is1";
-const AUMID_KEY: &str = r"Software\Classes\AppUserModelId\SequenceStudio.App";
 const SQPROJ_KEY: &str = r"Software\Classes\.sqproj";
-const CLASS_KEY: &str = r"Software\Classes\SequenceStudio.Project";
+const SQPROJ_PROGIDS_KEY: &str = r"Software\Classes\.sqproj\OpenWithProgids";
 
 /// What the user chose.
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -40,6 +40,8 @@ pub struct PlanEnv {
     pub temp: PathBuf,
     /// The app's folders under the data and cache directories; removed only on request.
     pub data_dirs: Vec<PathBuf>,
+    /// The channel's names for shortcuts and registry records.
+    pub identity: Identity,
 }
 
 /// A `.lnk` file to create.
@@ -62,6 +64,18 @@ pub enum Action {
         key: String,
         name: Option<String>,
         value: String,
+    },
+    /// Like `RegSetString`, but only while the value is empty or already `value`: the `.sqproj` default stays with the
+    /// channel that owns it.
+    RegSetStringIfUnset {
+        key: String,
+        name: Option<String>,
+        value: String,
+    },
+    /// Deletes one value; a missing value is fine.
+    RegDeleteValue {
+        key: String,
+        name: Option<String>,
     },
     RegSetDword {
         key: String,
@@ -98,11 +112,13 @@ fn dword(key: &str, name: &str, value: u32) -> Action {
 
 /// The shortcut paths of an install: Start menu, then the desktop one.
 fn links(env: &PlanEnv) -> [PathBuf; 2] {
-    let file = format!("{APP_NAME}.lnk");
+    let file = format!("{}.lnk", env.identity.app_name());
     [env.start_menu_programs.join(&file), env.desktop.join(file)]
 }
 
 fn install_actions(location: &Path, opts: &Options, env: &PlanEnv, version: &Version, size_kb: u32) -> Vec<Action> {
+    let id = env.identity;
+    let (uninstall_key, class_key) = (id.uninstall_key(), id.class_key());
     let exe = location.join(EXE_NAME);
     let ico = location.join(ICO_NAME);
     let shortcut = |link: PathBuf| {
@@ -111,7 +127,7 @@ fn install_actions(location: &Path, opts: &Options, env: &PlanEnv, version: &Ver
             target: exe.clone(),
             working_dir: location.to_path_buf(),
             icon: ico.clone(),
-            aumid: s(AUMID),
+            aumid: s(id.aumid()),
         })
     };
     let [menu, desktop] = links(env);
@@ -119,26 +135,28 @@ fn install_actions(location: &Path, opts: &Options, env: &PlanEnv, version: &Ver
     if opts.desktop_shortcut {
         out.push(shortcut(desktop));
     }
-    let uninstaller = location.join(UNINSTALLER_NAME);
+    let uninstaller = location.join(id.uninstaller_name());
     let uninstall = format!("\"{}\" --uninstall", uninstaller.display());
     out.extend([
-        string(AUMID_KEY, Some("DisplayName"), APP_NAME),
-        string(SQPROJ_KEY, None, PROJECT_CLASS),
-        string(CLASS_KEY, None, "Sequence Studio project"),
-        string(&format!(r"{CLASS_KEY}\DefaultIcon"), None, ico.display().to_string()),
-        string(&format!(r"{CLASS_KEY}\shell\open\command"), None, format!("\"{}\" \"%1\"", exe.display())),
-        string(UNINSTALL_KEY, Some("DisplayName"), APP_NAME),
-        string(UNINSTALL_KEY, Some("DisplayVersion"), version.to_string()),
-        string(UNINSTALL_KEY, Some("Publisher"), "Paul Herter"),
-        string(UNINSTALL_KEY, Some("DisplayIcon"), format!("{},0", exe.display())),
-        string(UNINSTALL_KEY, Some("InstallLocation"), location.display().to_string()),
-        dword(UNINSTALL_KEY, "EstimatedSize", size_kb),
-        string(UNINSTALL_KEY, Some("URLInfoAbout"), "https://getsequencestudio.com"),
-        string(UNINSTALL_KEY, Some("HelpLink"), "https://github.com/paulherter/sequence-studio/issues"),
-        dword(UNINSTALL_KEY, "NoModify", 1),
-        dword(UNINSTALL_KEY, "NoRepair", 1),
-        string(UNINSTALL_KEY, Some("UninstallString"), uninstall.clone()),
-        string(UNINSTALL_KEY, Some("QuietUninstallString"), format!("{uninstall} --quiet")),
+        string(id.aumid_key(), Some("DisplayName"), id.app_name()),
+        // The default (what a double click opens) goes to the first channel; every channel is also listed as a choice.
+        Action::RegSetStringIfUnset { key: s(SQPROJ_KEY), name: None, value: s(id.project_class()) },
+        string(SQPROJ_PROGIDS_KEY, Some(id.project_class()), ""),
+        string(class_key, None, id.project_class_label()),
+        string(&format!(r"{class_key}\DefaultIcon"), None, ico.display().to_string()),
+        string(&format!(r"{class_key}\shell\open\command"), None, format!("\"{}\" \"%1\"", exe.display())),
+        string(uninstall_key, Some("DisplayName"), id.app_name()),
+        string(uninstall_key, Some("DisplayVersion"), version.to_string()),
+        string(uninstall_key, Some("Publisher"), "Paul Herter"),
+        string(uninstall_key, Some("DisplayIcon"), format!("{},0", exe.display())),
+        string(uninstall_key, Some("InstallLocation"), location.display().to_string()),
+        dword(uninstall_key, "EstimatedSize", size_kb),
+        string(uninstall_key, Some("URLInfoAbout"), "https://getsequencestudio.com"),
+        string(uninstall_key, Some("HelpLink"), "https://github.com/paulherter/sequence-studio/issues"),
+        dword(uninstall_key, "NoModify", 1),
+        dword(uninstall_key, "NoRepair", 1),
+        string(uninstall_key, Some("UninstallString"), uninstall.clone()),
+        string(uninstall_key, Some("QuietUninstallString"), format!("{uninstall} --quiet")),
         Action::AssocChanged,
     ]);
     out
@@ -159,7 +177,7 @@ pub fn plan(job: &Job, location: &Path, opts: &Options, env: &PlanEnv, version: 
                 out.extend(env.data_dirs.iter().cloned().map(Action::RemoveDirAll));
             }
             out.push(Action::RemoveDirAll(location.to_path_buf()));
-            out.extend(inverse(&install_actions(location, &all, env, version, size_kb)));
+            out.extend(inverse(&install_actions(location, &all, env, version, size_kb), env.identity));
             out
         }
         Job::LinuxAdd | Job::LinuxUpdate { .. } | Job::LinuxRemove => Vec::new(),
@@ -168,13 +186,17 @@ pub fn plan(job: &Job, location: &Path, opts: &Options, env: &PlanEnv, version: 
 
 /// What undoes `actions`: reversed, each action replaced by its opposite. Only what the actions add is removed; a
 /// `RegDelete*`, `Remove*` or `AssocChanged` has no opposite beyond the notification.
-pub fn inverse(actions: &[Action]) -> Vec<Action> {
+pub fn inverse(actions: &[Action], identity: Identity) -> Vec<Action> {
     let mut out: Vec<Action> = Vec::new();
     let mut assoc = false;
     for action in actions.iter().rev() {
         match action {
             Action::Shortcut(spec) => out.push(Action::RemoveFile(spec.link.clone())),
-            Action::RegSetString { key, name, value } if key == SQPROJ_KEY => {
+            Action::RegSetString { key, name: Some(name), .. } if key == SQPROJ_PROGIDS_KEY => {
+                out.push(Action::RegDeleteValue { key: key.clone(), name: Some(name.clone()) });
+                out.push(Action::RegDeleteKeyIfEmpty(key.clone()));
+            }
+            Action::RegSetStringIfUnset { key, name, value } => {
                 out.push(Action::RegDeleteValueIfEquals {
                     key: key.clone(),
                     name: name.clone(),
@@ -185,7 +207,7 @@ pub fn inverse(actions: &[Action]) -> Vec<Action> {
             }
             Action::RegSetString { key, .. } | Action::RegSetDword { key, .. } => {
                 // One key-delete per top-level key of ours: the sub keys (DefaultIcon, shell) go with their class.
-                let top = [UNINSTALL_KEY, AUMID_KEY, CLASS_KEY]
+                let top = [identity.uninstall_key(), identity.aumid_key(), identity.class_key()]
                     .into_iter()
                     .find(|t| key == t || key.starts_with(&format!("{t}\\")));
                 if let Some(top) = top {
@@ -198,6 +220,7 @@ pub fn inverse(actions: &[Action]) -> Vec<Action> {
             Action::AssocChanged => assoc = true,
             Action::RegDeleteKey(_)
             | Action::RegDeleteValueIfEquals { .. }
+            | Action::RegDeleteValue { .. }
             | Action::RegDeleteKeyIfEmpty(_)
             | Action::RemoveFile(_)
             | Action::RemoveDirAll(_) => {}
@@ -211,6 +234,8 @@ pub fn inverse(actions: &[Action]) -> Vec<Action> {
 
 #[cfg(test)]
 mod tests {
+    const AUMID_KEY: &str = r"Software\Classes\AppUserModelId\SequenceStudio.App";
+    const CLASS_KEY: &str = r"Software\Classes\SequenceStudio.Project";
     use super::*;
 
     fn env() -> PlanEnv {
@@ -219,6 +244,7 @@ mod tests {
             desktop: PathBuf::from("/desk"),
             temp: PathBuf::from("/tmp"),
             data_dirs: vec![PathBuf::from("/data/SequenceStudio"), PathBuf::from("/cache/SequenceStudio")],
+            identity: Identity::STABLE,
         }
     }
 
@@ -229,7 +255,12 @@ mod tests {
 
     fn value(actions: &[Action], key: &str, name: Option<&str>) -> Option<String> {
         actions.iter().find_map(|a| match a {
-            Action::RegSetString { key: k, name: n, value } if k == key && n.as_deref() == name => Some(value.clone()),
+            Action::RegSetString { key: k, name: n, value }
+            | Action::RegSetStringIfUnset { key: k, name: n, value }
+                if k == key && n.as_deref() == name =>
+            {
+                Some(value.clone())
+            }
             _ => None,
         })
     }
@@ -280,7 +311,7 @@ mod tests {
     #[test]
     fn the_inverse_removes_only_what_the_plan_adds() {
         let actions = make(&Job::Install, true, false);
-        let undo = inverse(&actions);
+        let undo = inverse(&actions, Identity::STABLE);
         assert!(undo.contains(&Action::RemoveFile(PathBuf::from("/menu/Sequence Studio.lnk"))));
         assert!(undo.contains(&Action::RemoveFile(PathBuf::from("/desk/Sequence Studio.lnk"))));
         assert!(undo.contains(&Action::RegDeleteKey(s(UNINSTALL_KEY))));
@@ -300,9 +331,10 @@ mod tests {
             match a {
                 Action::RegDeleteKey(k)
                 | Action::RegDeleteKeyIfEmpty(k)
+                | Action::RegDeleteValue { key: k, .. }
                 | Action::RegDeleteValueIfEquals { key: k, .. } => {
                     assert!(
-                        k.starts_with("Software\\") && (k.contains("SequenceStudio") || k.ends_with(".sqproj")),
+                        k.starts_with("Software\\") && (k.contains("SequenceStudio") || k.contains(".sqproj")),
                         "{k}"
                     );
                 }
@@ -317,7 +349,64 @@ mod tests {
             Some(&Action::RegDeleteKeyIfEmpty(s(SQPROJ_KEY))),
             "the empty .sqproj key goes right after our value"
         );
-        assert_eq!(undo.len(), 8, "2 links, 3 keys, the .sqproj value and its empty key, the notification");
+        assert_eq!(
+            undo.len(),
+            10,
+            "2 links, 3 keys, the .sqproj value and its empty key, the progid value and its empty key, the notification"
+        );
+    }
+
+    /// Applies the registry actions of a plan to a map the way the engine does (set-if-unset, delete-if-equals).
+    fn run(reg: &mut std::collections::BTreeMap<(String, Option<String>), String>, actions: &[Action]) {
+        for a in actions {
+            match a {
+                Action::RegSetString { key, name, value } => {
+                    reg.insert((key.clone(), name.clone()), value.clone());
+                }
+                Action::RegSetStringIfUnset { key, name, value } => {
+                    let cur = reg.get(&(key.clone(), name.clone()));
+                    if cur.is_none_or(|c| c.is_empty() || c == value) {
+                        reg.insert((key.clone(), name.clone()), value.clone());
+                    }
+                }
+                Action::RegDeleteValueIfEquals { key, name, equals } => {
+                    if reg.get(&(key.clone(), name.clone())) == Some(equals) {
+                        reg.remove(&(key.clone(), name.clone()));
+                    }
+                }
+                Action::RegDeleteValue { key, name } => {
+                    reg.remove(&(key.clone(), name.clone()));
+                }
+                _ => {}
+            }
+        }
+    }
+
+    #[test]
+    fn the_second_channel_does_not_take_the_sqproj_default_and_its_removal_keeps_it() {
+        let nightly_env = PlanEnv { identity: Identity::NIGHTLY, ..env() };
+        let loc = Path::new("/apps/Sequence Studio");
+        let nloc = Path::new("/apps/Sequence Studio Nightly");
+        let opts = Options::default();
+        let v = Version::new(0, 3, 0);
+        let mut reg = Default::default();
+        run(&mut reg, &plan(&Job::Install, loc, &opts, &env(), &v, 1));
+        run(&mut reg, &plan(&Job::Install, nloc, &opts, &nightly_env, &v, 1));
+        let default = (s(SQPROJ_KEY), None);
+        assert_eq!(reg.get(&default).map(String::as_str), Some("SequenceStudio.Project"));
+        for class in ["SequenceStudio.Project", "SequenceStudio.Nightly.Project"] {
+            assert!(reg.contains_key(&(s(SQPROJ_PROGIDS_KEY), Some(s(class)))), "{class} is offered");
+        }
+        run(&mut reg, &plan(&Job::Uninstall, nloc, &opts, &nightly_env, &v, 1));
+        assert_eq!(reg.get(&default).map(String::as_str), Some("SequenceStudio.Project"), "Stable keeps it");
+        assert!(reg.contains_key(&(s(SQPROJ_PROGIDS_KEY), Some(s("SequenceStudio.Project")))));
+        assert!(!reg.contains_key(&(s(SQPROJ_PROGIDS_KEY), Some(s("SequenceStudio.Nightly.Project")))));
+        // Nightly alone owns the default, and its removal takes it away.
+        let mut solo = Default::default();
+        run(&mut solo, &plan(&Job::Install, nloc, &opts, &nightly_env, &v, 1));
+        assert_eq!(solo.get(&default).map(String::as_str), Some("SequenceStudio.Nightly.Project"));
+        run(&mut solo, &plan(&Job::Uninstall, nloc, &opts, &nightly_env, &v, 1));
+        assert!(!solo.contains_key(&default));
     }
 
     #[test]

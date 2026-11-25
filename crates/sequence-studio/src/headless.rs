@@ -144,7 +144,7 @@ pub fn a11y_lines(nodes: &[(accesskit::NodeId, accesskit::Node)]) -> String {
 /// A project with media shows its first frame and its poster frames only after the workers decoded them: turn the loop
 /// (drawing frames, so the panels collect their pictures) until the first frame is there and no poster arrived for a
 /// while (a 3 GB clip takes about a second per poster, and the timeline tiles come after the first one).
-fn wait_for_picture(app: &Headless, picture: &MonitorPicture, slots: &mut ImageSlots, w: i64, h: i64) {
+pub(crate) fn wait_for_picture(app: &Headless, picture: &MonitorPicture, slots: &mut ImageSlots, w: i64, h: i64) {
     const QUIET: Duration = Duration::from_millis(2500);
     let has_media = app.with(|a| !a.session().project().media.is_empty()).unwrap_or(false);
     // A playhead in a gap (a first clip that starts after zero) leaves the monitor black on purpose and nothing opens: do not
@@ -543,7 +543,8 @@ fn shoot(
         std::fs::copy(&recents, support.join("recents.json")).map_err(|e| format!("SQ_SHOT_RECENTS: {e}"))?;
     }
     let page = if pose.color_page { WorkspacePage::Color } else { WorkspacePage::Edit };
-    let (app, picture) = build_on(&support, w as u32, h as u32, scale, project, fonts, page, pose.tour, pose.theme_light);
+    let (app, picture) =
+        build_on(&support, w as u32, h as u32, scale, project, fonts, page, pose.tour, pose.theme_light);
     if let Some(which) = &pose.select {
         app.with(|a| select_clip(a.session_mut(), which));
     }
@@ -741,7 +742,9 @@ fn play_bench(
             crate::bench_report::BenchQuality::Quarter => Some(sq_editor_session::MonitorQuality::Quarter),
         },
     );
+    let rss_before_open = crate::play_bench::rss_mb().unwrap_or(0.0);
     let (app, picture) = build_in(&support, width, height, 2.0, project, fonts);
+    let rss_after_build = crate::play_bench::rss_mb().unwrap_or(0.0);
     let mut slots = ImageSlots::default();
     let first_by = opened + Duration::from_secs(30);
     // The generation also moves for a cleared monitor: wait for a picture with pixels.
@@ -769,7 +772,8 @@ fn play_bench(
         let target = Time::new(bench.from_ms, 1000);
         app.with(|a| a.session_mut().seek(target));
         let end = Instant::now() + Duration::from_secs(20);
-        let near = |p: Time| (p.value() as f64 / p.timescale().max(1) as f64 - bench.from_ms as f64 / 1000.0).abs() < 1.0;
+        let near =
+            |p: Time| (p.value() as f64 / p.timescale().max(1) as f64 - bench.from_ms as f64 / 1000.0).abs() < 1.0;
         while Instant::now() < end {
             app.turn();
             app.with(|a| a.frame(w, h));
@@ -797,6 +801,12 @@ fn play_bench(
         .unwrap_or("full")
     };
     let mut quality = crate::bench_report::QualityTrace::new(bench.quality.name(), engine_quality(&app));
+    let frame_csv = crate::bench_frames::start();
+    let mut verify = bench.verify.then(crate::bench_frames::Verify::default);
+    let mut dump = crate::bench_frames::Dump::from_env();
+    let at_play = crate::play_bench::memory_breakdown(
+        app.with(|a| crate::playback::bench_cache_bytes(a.session().engine())).flatten().unwrap_or(0),
+    );
     app.with(|a| a.session_mut().play_pause());
     let began = Instant::now();
     let (mut next_ui, mut changed) = (began, began);
@@ -804,11 +814,25 @@ fn play_bench(
     // grows without bound shows as a line that keeps climbing past the frame cache's budget.
     let mut rss: Vec<f64> = crate::play_bench::rss_mb().into_iter().collect();
     let mut next_rss = began + Duration::from_secs(1);
+    let mut mem_lines: Vec<String> = Vec::new();
+    let mut next_mem = 2.0_f64;
+    let mem_trace = std::env::var_os("SQ_BENCH_MEM").is_some();
     sq_gpu::gpu::timing::reset();
     while began.elapsed().as_secs_f64() < secs {
         if Instant::now() >= next_rss {
             next_rss += Duration::from_secs(1);
             rss.extend(crate::play_bench::rss_mb());
+            let at = began.elapsed().as_secs_f64();
+            // The smaps read stalls this loop 50-90 ms (the "gaps" at 2, 6, 10 s of the first A/B), so it is opt-in.
+            if at >= next_mem && mem_trace {
+                next_mem += 4.0;
+                let cache =
+                    app.with(|a| crate::playback::bench_cache_bytes(a.session().engine())).flatten().unwrap_or(0);
+                mem_lines.extend(
+                    crate::play_bench::memory_breakdown(cache)
+                        .map(|l| l.replacen("MEM ", &format!("MEM2 at Play+{at:.0}s "), 1)),
+                );
+            }
         }
         // The window loop at 60 Hz: one UI frame per tick; between ticks the loop only watches the composites, so the
         // gap between two new frame positions is measured to about a millisecond.
@@ -839,6 +863,12 @@ fn play_bench(
             && Some(at_position) != position
         {
             position = Some(at_position);
+            if let Some(v) = verify.as_mut() {
+                app.with(|a| v.sample(a.session().engine(), fps));
+            }
+            if let Some(d) = dump.as_mut() {
+                app.with(|a| d.sample(a.session().engine(), fps));
+            }
             let at = Instant::now();
             if let Some((clock, device)) = app.with(|a| crate::playback::bench_clock(a.session().engine())).flatten() {
                 real_audio = device;
@@ -862,9 +892,26 @@ fn play_bench(
         }
         std::thread::sleep(Duration::from_micros(500));
     }
+    let frame_csv_note = crate::bench_frames::finish(frame_csv);
     let played = began.elapsed().as_secs_f64();
     // Read before anything else touches the engine: a Play at the end of the sequence starts over and resets the counters.
     let engine = app.with(|a| crate::playback::bench_numbers(a.session().engine())).flatten();
+    // Measurement only (SQ_BENCH_DUMP): the same positions paused, composed at full size, for the pixel comparison.
+    if let Some(d) = dump.as_ref() {
+        app.with(|a| a.session_mut().stop_playback());
+        for &(frame, at) in &d.taken {
+            app.with(|a| a.session_mut().seek(at));
+            let end = Instant::now() + Duration::from_secs(10);
+            while Instant::now() < end {
+                std::thread::sleep(Duration::from_millis(20));
+                app.turn();
+                app.with(|a| a.frame(w, h));
+                if app.with(|a| d.store_full(a.session().engine(), frame, at)).unwrap_or(false) {
+                    break;
+                }
+            }
+        }
+    }
     let expected = if length > 0.0 { played.min(length) } else { played } * fps;
     let gap_stats = crate::bench_report::GapStats::of(&mut gaps, 1e3 / fps.max(1.0));
     let (over50, over100) = (gaps.iter().filter(|g| **g > 50.0).count(), gaps.iter().filter(|g| **g > 100.0).count());
@@ -872,6 +919,12 @@ fn play_bench(
     let (shown, dropped, stale, max_lag) =
         engine.as_ref().map_or((0, 0, 0, 0), |(s, _)| (s.shown_frames, s.skipped_frames, s.late_frames, s.max_lag));
     let late = dropped + stale;
+    // Composites while playing = the count of the `compose` stage line ("compose x ms mean, y max, N").
+    let composites: u64 = engine
+        .as_ref()
+        .and_then(|(_, stages)| stages.iter().find(|l| l.starts_with("compose ")))
+        .and_then(|l| l.rsplit(", ").next()?.parse().ok())
+        .unwrap_or(0);
     // Where it happens (the first stand-in frames in seconds on the timeline, and the gaps over 50 ms): what a hitch is looked up by.
     let first_late: Vec<String> = engine
         .as_ref()
@@ -892,6 +945,10 @@ fn play_bench(
         to_first.unwrap_or(f64::NAN)
     );
     out += &quality.line();
+    out += &frame_csv_note;
+    if let Some(v) = &verify {
+        out += &v.line();
+    }
     if let Some((status, stages)) = &engine {
         out += &format!(
             "play {played:.1} s at 1x: {shown} frames shown of {expected:.0} expected ({fps:.0} fps), {dropped} dropped, {stale} with a stand-in, final lag {}\n",
@@ -911,6 +968,13 @@ fn play_bench(
     out += &format!(
         "GPU back-pressure: {gpu_busy} frames dropped because the GPU still ran two earlier ones; process memory {rss_first:.0} MB at Play, {rss_max:.0} MB at most, {rss_last:.0} MB at the end\n"
     );
+    out += &format!(
+        "MEM0 process {rss_before_open:.0} MB before the app is built, {rss_after_build:.0} MB after it (window, GPU, project load)\n"
+    );
+    out += &at_play.map(|l| l.replacen("MEM ", "MEM1 at Play ", 1)).unwrap_or_default();
+    for l in &mem_lines {
+        out += l;
+    }
     let (reused, allocated) = sq_frame::buffer_pool::BufferPool::shared().counts();
     out += &format!("picture buffers: {reused} reused from the pool, {allocated} allocated fresh\n");
     // Per-pass GPU time (SQ_GPU_TIMING=1, adapters with timestamp queries): which effect's shader costs how much.
@@ -972,6 +1036,8 @@ fn play_bench(
             gpu_busy,
             machine: crate::bench_report::Machine::here(&gpu),
             quality,
+            composites_per_shown: composites as f64 / shown.max(1) as f64,
+            verify: verify.clone(),
         };
         let text = serde_json::to_string_pretty(&report.to_json()).unwrap_or_default();
         if let Err(e) = std::fs::write(json_path, text) {
@@ -1040,6 +1106,543 @@ fn play_start(project: Option<&Path>, fonts: &Path) -> String {
         app.with(|a| a.session_mut().play_pause());
     }
     out
+}
+
+/// A fingerprint of every clip (id, start, length) of the active sequence: it changes when an edit really happened.
+fn timeline_signature(app: &Headless) -> Vec<String> {
+    app.with(|a| {
+        a.session()
+            .active_timeline()
+            .map(|t| {
+                t.tracks
+                    .iter()
+                    .flat_map(|tr| tr.clips())
+                    .map(|c| format!("{}{:?}{:?}", c.id, c.start, c.source))
+                    .collect()
+            })
+            .unwrap_or_default()
+    })
+    .unwrap_or_default()
+}
+
+/// The first video clip under the playhead of the active sequence.
+/// `SQ_WF_REAL_ANALYSIS=1`: the REAL analysis of the clip runs on a background thread while the phase plays (the planned result
+/// still lands in the project, so the picture is the same): `stab` = Stabilizer analysis, otherwise EdgeTAM tracking with
+/// the models in `SQ_SUBJECT_MASK_MODELS`. The times go to stderr (`real-analysis ...`).
+fn spawn_real_analysis(app: &Headless, clip: sq_core_time::Id, stab: bool) {
+    if std::env::var_os("SQ_WF_REAL_ANALYSIS").is_none() {
+        return;
+    }
+    let Some((path, source)) = app
+        .with(|a| {
+            let c =
+                a.session().active_timeline()?.tracks.iter().flat_map(|t| t.clips()).find(|c| c.id == clip)?.clone();
+            Some((std::path::PathBuf::from(a.session().project().media(c.media)?.path.clone()), c.source))
+        })
+        .flatten()
+    else {
+        eprintln!("real-analysis: clip or media not found");
+        return;
+    };
+    eprintln!("real-analysis start {} stab={stab}", path.display());
+    std::thread::spawn(move || {
+        let t = Instant::now();
+        let secs = source.duration.value() as f64 / source.duration.timescale().max(1) as f64;
+        if stab {
+            let r = <sq_app_hosts::FfmpegStabilizationAnalyzer as sq_analysis::stabilization_analyzing::StabilizationAnalyzing>::analyze(
+                &sq_app_hosts::FfmpegStabilizationAnalyzer::new(&path), source, 3840, 2160, None,
+                &sq_analysis::analysis_turn::CancelToken::new());
+            eprintln!(
+                "real-analysis stabilizer ok={} {:.1}s for {secs:.1}s of video",
+                r.is_ok(),
+                t.elapsed().as_secs_f64()
+            );
+        } else {
+            let Ok(models) = std::env::var("SQ_SUBJECT_MASK_MODELS") else {
+                return eprintln!("real-analysis: no SQ_SUBJECT_MASK_MODELS");
+            };
+            let mut tracker = match sq_app_hosts::EdgeTamTracker::load(std::path::Path::new(&models)) {
+                Ok(t) => t,
+                Err(e) => return eprintln!("real-analysis: model: {e}"),
+            };
+            let mut frames = match sq_app_hosts::FfmpegTrackFrames::open(&path, source.start, source.end()) {
+                Ok(f) => f,
+                Err(e) => return eprintln!("real-analysis: frames: {e}"),
+            };
+            let store = sq_analysis::frame_matte_store::FrameMatteStore::new(None);
+            let out = sq_app_hosts::run_track(
+                &mut frames,
+                &mut tracker,
+                &store,
+                "wf-real",
+                &[(sq_core_time::Vec2::new(0.5, 0.5), false)],
+                &sq_analysis::analysis_turn::CancelToken::new(),
+                &mut |_| {},
+            );
+            eprintln!(
+                "real-analysis subjectmask frames={} err={:?} {:.1}s for {secs:.1}s of video",
+                out.frames,
+                out.error,
+                t.elapsed().as_secs_f64()
+            );
+        }
+    });
+}
+
+fn clip_under_playhead(app: &Headless) -> Option<sq_core_time::Id> {
+    app.with(|a| {
+        let at = a.session().playhead();
+        a.session()
+            .active_timeline()?
+            .tracks
+            .iter()
+            .filter(|t| t.kind == sq_core_model::TrackKind::Video)
+            .flat_map(|t| t.clips())
+            .find(|c| c.timeline().contains(at))
+            .map(|c| c.id)
+    })
+    .flatten()
+}
+
+/// The editing-feel benchmark (`--edit-bench`): the fixed plan of `edit_bench::plan` over the project, each edit through the
+/// session's own command (what the keys and the timeline call), then a 2 s Play. Per operation: the call, the time to the
+/// next new monitor picture, Play to its first new picture, gaps over 300 ms, dropped and late frames and the quality.
+fn edit_bench(width: u32, height: u32, project: Option<&Path>, fonts: &Path) -> Result<String, String> {
+    use crate::edit_bench::{Op, OpResult};
+    let cycles: usize = std::env::var("SQ_EDIT_BENCH_OPS").ok().and_then(|v| v.parse().ok()).unwrap_or(25);
+    let (w, h) = (i64::from(width), i64::from(height));
+    let support = std::env::temp_dir().join("sequence-studio-edit-bench");
+    let (app, picture) = build_in(&support, width, height, 2.0, project, fonts);
+    let mut slots = ImageSlots::default();
+    wait_for_picture(&app, &picture, &mut slots, w, h);
+    let length_ms = app
+        .with(|a| a.session().active_timeline().map(|t| t.duration()).map(|d| d.value() * 1000 / d.timescale().max(1)))
+        .flatten()
+        .ok_or("the project has no sequence")?;
+    let frame = |app: &Headless| {
+        app.turn();
+        app.with(|a| {
+            a.set_needs_redraw();
+            a.frame(w, h);
+        });
+    };
+    let shown = |app: &Headless| app.with(|a| crate::playback::bench_shown(a.session().engine())).flatten();
+    let quality = |app: &Headless| {
+        app.with(|a| match a.session().engine().quality() {
+            sq_media::video_decoding::DecodeScale::Full => "full",
+            sq_media::video_decoding::DecodeScale::Half => "half",
+            sq_media::video_decoding::DecodeScale::Quarter => "quarter",
+        })
+        .unwrap_or("full")
+    };
+    // Turns the loop until the picture of the playhead is on screen and quiet (untimed set-up between the timed steps).
+    let settle = |app: &Headless, ms: u64| {
+        let end = Instant::now() + Duration::from_millis(ms);
+        while Instant::now() < end {
+            frame(app);
+            std::thread::sleep(Duration::from_millis(4));
+        }
+    };
+    // A jump, then turns until the picture of the new position is on screen (at most 6 s) and a moment more, so the next
+    // timed step does not pick up the arrival of this one.
+    let go = |app: &Headless, ms: i64| {
+        let target = ms as f64 / 1000.0;
+        app.with(|a| a.session_mut().seek(Time::new(ms, 1000)));
+        let end = Instant::now() + Duration::from_secs(6);
+        while Instant::now() < end {
+            frame(app);
+            if shown(app).is_some_and(|p| (p.value() as f64 / p.timescale().max(1) as f64 - target).abs() < 0.1) {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        settle(app, 300);
+    };
+    let mut results = Vec::new();
+    for (op, at_ms) in crate::edit_bench::plan(cycles, length_ms) {
+        go(&app, at_ms);
+        if op == Op::RippleDelete {
+            app.with(|a| a.session_mut().add_edit_at_playhead(true));
+            go(&app, at_ms + 500);
+            app.with(|a| a.session_mut().add_edit_at_playhead(true));
+            go(&app, at_ms + 250);
+        }
+        let before = timeline_signature(&app);
+        let (gen_before, pos_before) = (picture.generation(), shown(&app));
+        let t0 = Instant::now();
+        match op {
+            Op::Blade => {
+                let _ = app.with(|a| a.session_mut().add_edit_at_playhead(true));
+            }
+            Op::RippleDelete => {
+                let _ = app.with(|a| {
+                    // The piece between the two edits is selected by the second one; if not, select the clip under the playhead.
+                    a.session_mut().delete_selection(true, None);
+                });
+            }
+            Op::Trim | Op::Move => {
+                if let Some(clip) = clip_under_playhead(&app) {
+                    let _ = app.with(|a| {
+                        if op == Op::Trim {
+                            let sel = sq_editor_session::EdgeSelection::new(
+                                vec![sq_editor_session::EdgeRef { clip, edge: sq_core_model::ClipEdge::Tail }],
+                                true,
+                                true,
+                            );
+                            a.session_mut().trim_edges(&sel, -6);
+                        } else {
+                            a.session_mut().select(BTreeSet::from([clip]), BTreeSet::new());
+                            a.session_mut().nudge_selection(5);
+                        }
+                    });
+                }
+            }
+            Op::Seek => {
+                let _ = app.with(|a| a.session_mut().seek(Time::new((at_ms + 7_000) % length_ms.max(1), 1000)));
+            }
+        }
+        let call_ms = t0.elapsed().as_secs_f64() * 1e3;
+        let mut to_frame_ms = None;
+        while t0.elapsed() < Duration::from_millis(3000) && to_frame_ms.is_none() {
+            frame(&app);
+            if picture.generation() != gen_before || shown(&app) != pos_before {
+                to_frame_ms = Some(t0.elapsed().as_secs_f64() * 1e3);
+            }
+            std::thread::sleep(Duration::from_micros(500));
+        }
+        let applied = op == Op::Seek || timeline_signature(&app) != before;
+        settle(&app, 400);
+        // Play 2 s the way play_bench measures it.
+        let mut position = shown(&app);
+        let (mut last_change, mut gaps_over_300, mut max_gap, mut play_first) = (Instant::now(), 0u32, 0.0f64, None);
+        app.with(|a| a.session_mut().play_pause());
+        let began = Instant::now();
+        last_change = last_change.max(began);
+        while began.elapsed() < Duration::from_secs(2) {
+            frame(&app);
+            if let Some(p) = shown(&app)
+                && Some(p) != position
+            {
+                position = Some(p);
+                let now = Instant::now();
+                if play_first.is_none() {
+                    play_first = Some(now.duration_since(began).as_secs_f64() * 1e3);
+                } else {
+                    let gap = now.duration_since(last_change).as_secs_f64() * 1e3;
+                    max_gap = max_gap.max(gap);
+                    gaps_over_300 += u32::from(gap > 300.0);
+                }
+                last_change = now;
+            }
+            std::thread::sleep(Duration::from_micros(500));
+        }
+        let (shown_n, dropped, late) = app
+            .with(|a| crate::playback::bench_numbers(a.session().engine()))
+            .flatten()
+            .map_or((0, 0, 0), |(s, _)| (s.shown_frames as u32, s.skipped_frames as u32, s.late_frames as u32));
+        app.with(|a| a.session_mut().play_pause());
+        results.push(OpResult {
+            op: op.name(),
+            at_ms,
+            applied,
+            call_ms,
+            to_frame_ms,
+            play_first_ms: play_first,
+            gaps_over_300,
+            max_gap_ms: max_gap,
+            shown: shown_n,
+            dropped,
+            late,
+            quality: quality(&app).to_string(),
+        });
+        settle(&app, 200);
+    }
+    drop(app);
+    let _ = std::fs::remove_dir_all(&support);
+    serde_json::to_string_pretty(&crate::edit_bench::report(&results)).map_err(|e| e.to_string())
+}
+
+/// The workflow benchmark (`--workflow-bench <out> --script <name>`, `workflow_bench.rs`): the phases of the script run while
+/// the Program monitor plays, each action through the session's own command (what the timeline, the library and the
+/// Effect Controls call). Per phase one JSON line (frames shown of expected, stand-ins, gaps over 50 ms, Play to the first
+/// picture, CPU, peak memory), then a summary line.
+fn workflow_bench(
+    width: u32,
+    height: u32,
+    project: Option<&Path>,
+    fonts: &Path,
+    script_name: &str,
+) -> Result<String, String> {
+    use crate::workflow_bench::{Action, PhaseResult};
+    use sq_core_masks::masks::ClipMasksExt as _;
+    use sq_core_model::{AnimatedProperty, ClipEffect};
+    let phases = crate::workflow_bench::script(script_name).ok_or(format!(
+        "no script {script_name} (all, play, drag, effect, stabilizer, subjectmask, undo, scrub, quick)"
+    ))?;
+    let (w, h) = (i64::from(width), i64::from(height));
+    let support = std::env::temp_dir().join("sequence-studio-workflow-bench");
+    let (app, picture) = build_in(&support, width, height, 2.0, project, fonts);
+    let mut slots = ImageSlots::default();
+    wait_for_picture(&app, &picture, &mut slots, w, h);
+    let mattes_folder = support.join("caches").join("MagicMattes");
+    let magic_keys =
+        app.with(|a| crate::workflow_synth::ensure_mattes(a.session().project(), &mattes_folder)).unwrap_or(0);
+    let (fps, length_ms) = app
+        .with(|a| {
+            let t = a.session().active_timeline();
+            let fd = t.map(|t| t.format.frame_duration).unwrap_or(Time::new(1, 30));
+            let len = t.map(|t| t.duration()).map_or(0, |d| d.value() * 1000 / d.timescale().max(1));
+            (fd.timescale() as f64 / fd.value().max(1) as f64, len)
+        })
+        .ok_or("the project has no sequence")?;
+    let frame = |app: &Headless| {
+        app.turn();
+        app.with(|a| {
+            a.set_needs_redraw();
+            a.frame(w, h);
+        });
+    };
+    let shown = |app: &Headless| app.with(|a| crate::playback::bench_shown(a.session().engine())).flatten();
+    let signature = |app: &Headless| -> Vec<String> {
+        app.with(|a| {
+            a.session()
+                .active_timeline()
+                .map(|t| {
+                    t.tracks
+                        .iter()
+                        .flat_map(|tr| tr.clips())
+                        .map(|c| {
+                            format!(
+                                "{}{:?}{}{}{:?}",
+                                c.id,
+                                c.start,
+                                c.effects.len(),
+                                c.masks().len(),
+                                c.effects.iter().map(|e| e.parameters.len()).sum::<usize>()
+                            )
+                        })
+                        .collect()
+                })
+                .unwrap_or_default()
+        })
+        .unwrap_or_default()
+    };
+    let clip_of = |app: &Headless, id: sq_core_time::Id| -> Option<sq_core_model::Clip> {
+        app.with(|a| a.session().active_timeline()?.tracks.iter().find_map(|t| t.clip(id)).cloned()).flatten()
+    };
+    let mut seed_ids = sq_core_time::RandomIds;
+    let mut lines = vec![
+        serde_json::json!({
+            "workflow_bench": script_name, "project": project.map(|p| p.display().to_string()), "fps": fps,
+            "length_ms": length_ms, "magic_matte_keys": magic_keys, "size": [width, height],
+        })
+        .to_string(),
+    ];
+    let mut results: Vec<PhaseResult> = Vec::new();
+    let usable = (length_ms - 7_000).max(1_000);
+    for (index, phase) in phases.iter().enumerate() {
+        // A fresh place in the sequence for each phase, paused and settled, with the clip under the playhead selected.
+        let start_ms = (1_500 + index as i64 * 1_900) % usable;
+        app.with(|a| {
+            a.session_mut().stop_playback();
+            a.session_mut().seek(Time::new(start_ms, 1000));
+        });
+        let end = Instant::now() + Duration::from_millis(900);
+        while Instant::now() < end {
+            frame(&app);
+            std::thread::sleep(Duration::from_millis(4));
+        }
+        let target = clip_under_playhead(&app);
+        if let Some(id) = target {
+            app.with(|a| a.session_mut().select(BTreeSet::from([id]), BTreeSet::new()));
+        }
+        let mut r = PhaseResult { phase: phase.name.to_string(), ..Default::default() };
+        let mut playing = false;
+        let mut position = shown(&app);
+        let (mut last_change, mut play_began) = (None::<Instant>, None::<Instant>);
+        let mut first_play_done = false;
+        let mut fx_clip = None;
+        let mut harvested = (0u64, 0u64, 0u64);
+        let mut playing_ms = 0.0;
+        let mut ui_next = Instant::now();
+        let cpu0 = crate::workflow_bench::cpu_seconds();
+        let began = Instant::now();
+        let mut todo: std::collections::VecDeque<(u64, Action)> = phase.actions.iter().copied().collect();
+        if phase.starts_playing {
+            todo.push_front((0, Action::Play));
+        }
+        let mut play_mark = Instant::now();
+        // Reads the engine's counters of the play that just ended (a Play starts them over).
+        let harvest = |app: &Headless, r: &mut PhaseResult, h: &mut (u64, u64, u64)| {
+            if let Some((s, stages)) = app.with(|a| crate::playback::bench_numbers(a.session().engine())).flatten() {
+                h.0 += s.shown_frames;
+                h.1 += s.skipped_frames;
+                h.2 += s.late_frames;
+                r.stages = stages
+                    .into_iter()
+                    .filter(|l| {
+                        ["decode", "compose", "upload", "effect", "present", "gpu"].iter().any(|p| l.starts_with(p))
+                    })
+                    .collect();
+            }
+        };
+        while began.elapsed() < Duration::from_millis(phase.total_ms) {
+            let at = began.elapsed().as_millis() as u64;
+            while todo.front().is_some_and(|(due, _)| *due <= at) {
+                let Some((_, action)) = todo.pop_front() else { break };
+                if matches!(action, Action::Pause | Action::BeginScrub) && playing {
+                    harvest(&app, &mut r, &mut harvested);
+                    playing_ms += play_mark.elapsed().as_secs_f64() * 1e3;
+                    playing = false;
+                    last_change = None;
+                }
+                let before = signature(&app);
+                let t = Instant::now();
+                match action {
+                    Action::Nudge(f) => app.with(|a| a.session_mut().nudge_selection(f)).unwrap_or(()),
+                    Action::EndGesture => app.with(|a| a.session_mut().end_gesture()).unwrap_or(()),
+                    Action::AddEffect => {
+                        fx_clip = clip_under_playhead(&app).or(target);
+                        if let Some(id) = fx_clip {
+                            app.with(|a| {
+                                a.session_mut().add_effect(ClipEffect::GAUSSIAN_BLUR_KIND, &BTreeSet::from([id]))
+                            });
+                        }
+                    }
+                    Action::SetParam(_) | Action::RemoveEffect
+                        if fx_clip.and_then(|id| clip_of(&app, id)).is_some() =>
+                    {
+                        if let Some(mut c) = fx_clip.and_then(|id| clip_of(&app, id)) {
+                            if matches!(action, Action::RemoveEffect) {
+                                c.effects.retain(|e| e.kind != ClipEffect::GAUSSIAN_BLUR_KIND);
+                                app.with(|a| a.session_mut().replace_displayed_clip(c, "Remove Effect", false));
+                            } else if let Action::SetParam(v) = action
+                                && let Some(e) = c.effects.iter_mut().find(|e| e.kind == ClipEffect::GAUSSIAN_BLUR_KIND)
+                            {
+                                e.parameters.insert(ClipEffect::BLURRINESS_KEY.to_string(), AnimatedProperty::new(v));
+                                app.with(|a| a.session_mut().replace_displayed_clip(c, "Change Blurriness", true));
+                            }
+                        }
+                    }
+                    Action::SetParam(_) | Action::RemoveEffect => {} // no effect was added: nothing to change
+                    Action::AddStabilizer => {
+                        if let Some(id) = clip_under_playhead(&app).or(target) {
+                            let ids = BTreeSet::from([id]);
+                            spawn_real_analysis(&app, id, true);
+                            app.with(|a| {
+                                a.session_mut().add_stabilizer(&ids);
+                                let analyzer = |_m: &sq_core_model::MediaRef| -> Option<sq_editor_session::BoxedStabilizationAnalyzer> {
+                                    Some(Box::new(crate::workflow_synth::SyntheticAnalyzer))
+                                };
+                                let _ = a.session_mut().stabilize(
+                                    None,
+                                    Some(&ids),
+                                    None,
+                                    None,
+                                    &sq_analysis::analysis_turn::CancelToken::new(),
+                                    &analyzer,
+                                );
+                            });
+                        }
+                    }
+                    Action::AddSubjectMask => {
+                        if let Some(c) = clip_under_playhead(&app).or(target).and_then(|id| clip_of(&app, id)) {
+                            spawn_real_analysis(&app, c.id, false);
+                            let id = sq_core_time::IdSource::next_id(&mut seed_ids);
+                            let point = sq_core_time::Vec2::new(0.5, 0.5);
+                            app.with(|a| {
+                                sq_app_hosts::add_magic_mask(a.session_mut(), &c, id, point, c.source.start);
+                                crate::workflow_synth::ensure_mattes(a.session().project(), &mattes_folder);
+                            });
+                        }
+                    }
+                    Action::Undo => {
+                        app.with(|a| a.session_mut().undo());
+                    }
+                    Action::ScrubTo(permille) => {
+                        let ms = length_ms * i64::from(permille) / 1000;
+                        app.with(|a| a.session_mut().seek(Time::new(ms, 1000)));
+                    }
+                    Action::BeginScrub => app.with(|a| a.session_mut().begin_scrub()).unwrap_or(()),
+                    Action::EndScrub => app.with(|a| a.session_mut().end_scrub()).unwrap_or(()),
+                    Action::Pause => app.with(|a| a.session_mut().stop_playback()).unwrap_or(()),
+                    Action::Play => {
+                        app.with(|a| a.session_mut().play_pause());
+                        playing = true;
+                        play_mark = Instant::now();
+                        play_began = Some(play_mark);
+                        last_change = None;
+                        position = shown(&app);
+                    }
+                }
+                let call = t.elapsed().as_secs_f64() * 1e3;
+                if call > r.max_call_ms {
+                    r.max_call_ms = call;
+                    r.call_of = format!("{action:?}");
+                }
+                if signature(&app) != before {
+                    r.applied += 1;
+                }
+            }
+            if Instant::now() >= ui_next {
+                let t = Instant::now();
+                frame(&app);
+                let took = t.elapsed().as_secs_f64() * 1e3;
+                r.max_ui_ms = r.max_ui_ms.max(took);
+                r.ui_over_25ms += u32::from(took > 25.0);
+                ui_next = (ui_next + Duration::from_micros(16_667)).max(Instant::now());
+            }
+            let now = shown(&app);
+            if let Some(p) = now
+                && Some(p) != position
+            {
+                position = Some(p);
+                if playing {
+                    let at = Instant::now();
+                    r.shown += 1;
+                    match (last_change, play_began.take()) {
+                        (_, Some(since)) => {
+                            let ms = at.duration_since(since).as_secs_f64() * 1e3;
+                            if first_play_done {
+                                r.replay_first_ms = Some(ms);
+                            } else {
+                                r.play_first_ms = Some(ms);
+                                first_play_done = true;
+                            }
+                        }
+                        (Some(prev), None) => {
+                            let gap = at.duration_since(prev).as_secs_f64() * 1e3;
+                            r.max_gap_ms = r.max_gap_ms.max(gap);
+                            r.gaps_over_50 += u32::from(gap > 50.0);
+                        }
+                        (None, None) => {}
+                    }
+                    last_change = Some(at);
+                }
+            }
+            std::thread::sleep(Duration::from_micros(500));
+        }
+        if playing {
+            harvest(&app, &mut r, &mut harvested);
+            playing_ms += play_mark.elapsed().as_secs_f64() * 1e3;
+        }
+        r.wall_ms = began.elapsed().as_secs_f64() * 1e3;
+        r.playing_ms = playing_ms;
+        r.expected = playing_ms / 1e3 * fps;
+        r.standins = harvested.2;
+        r.dropped = harvested.1;
+        r.cpu_pct = 100.0 * (crate::workflow_bench::cpu_seconds() - cpu0) / (r.wall_ms / 1e3).max(1e-3);
+        r.rss_peak_mb = crate::workflow_bench::peak_rss_mb();
+        let line = r.to_json().to_string();
+        eprintln!("{line}");
+        lines.push(line);
+        results.push(r);
+    }
+    lines.push(crate::workflow_bench::summary(&results).to_string());
+    app.with(|a| a.session_mut().stop_playback());
+    drop(app);
+    let _ = std::fs::remove_dir_all(&support);
+    Ok(lines.join("\n") + "\n")
 }
 
 /// The soak loop: three seconds of play, a scrub burst, then edits (marker, edit at the playhead) each undone, over and
@@ -1124,6 +1727,8 @@ pub fn run(mode: &Mode, project: Option<&Path>, fonts: &Path) -> Result<(), Stri
             | Mode::A11yDump { .. }
             | Mode::Soak { .. }
             | Mode::PlayBench { .. }
+            | Mode::EditBench { .. }
+            | Mode::WorkflowBench { .. }
             | Mode::PlayStart { .. }
     );
     if !offscreen {
@@ -1153,6 +1758,14 @@ fn run_mode(mode: &Mode, project: Option<&Path>, fonts: &Path) -> Result<(), Str
             let text = play_bench(*width, *height, project, fonts, bench);
             std::fs::write(out, text).map_err(|e| format!("{}: {e}", out.display()))
         }
+        Mode::WorkflowBench { out, width, height, script } => {
+            let text = workflow_bench(*width, *height, project, fonts, script)?;
+            std::fs::write(out, text).map_err(|e| format!("{}: {e}", out.display()))
+        }
+        Mode::EditBench { out, width, height } => {
+            let text = edit_bench(*width, *height, project, fonts)?;
+            std::fs::write(out, text).map_err(|e| format!("{}: {e}", out.display()))
+        }
         Mode::PlayStart { out } => {
             let text = play_start(project, fonts);
             std::fs::write(out, text).map_err(|e| format!("{}: {e}", out.display()))
@@ -1169,8 +1782,11 @@ fn run_mode(mode: &Mode, project: Option<&Path>, fonts: &Path) -> Result<(), Str
             print!("{text}");
             Ok(())
         }
-        Mode::PerfProject { out, media } => {
-            let written = crate::perf_project::write_all(out, media)?;
+        Mode::PerfProject { out, media, case } => {
+            let written = match case {
+                Some(spec) => crate::perf_project::write_case(out, media, spec)?,
+                None => crate::perf_project::write_all(out, media)?,
+            };
             let text: String = written.iter().map(|p| format!("{}\n", p.display())).collect();
             print!("{text}");
             Ok(())

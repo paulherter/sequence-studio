@@ -11,9 +11,9 @@ use sq_core_time::{Timestamp, local_time::local_civil};
 use sq_draw::GlyphAtlas;
 use sq_setup_engine::plan::EXE_NAME;
 use sq_setup_engine::{
-    Host, Job, JobEnd, JobSpec, Log, Progress, SetupError, Step, Version, WindowsHost, check_location,
-    default_location, describe_io, detect_installed, finish_uninstall_copy, log, measure_data, payload, run_job,
-    uninstall_copy_name, update_kind,
+    Host, Identity, Job, JobEnd, JobSpec, Log, Progress, SetupError, Step, Version, WindowsHost, check_location,
+    default_location, describe_io, detect_installed, finish_uninstall_copy, log, measure_data, other_channel_installed,
+    payload, quiet_location, run_job, uninstall_copy_name, update_kind,
 };
 use std::path::{Path, PathBuf};
 use std::process::{Command, ExitCode};
@@ -22,9 +22,9 @@ use std::sync::atomic::{AtomicBool, Ordering};
 
 const APP_NAME: &str = "Sequence Studio";
 
-/// The program's own version: the workspace version the app has too.
+/// The program's own version: the version the app has too (the packager's build version on a Nightly).
 fn own_version() -> Version {
-    Version::parse(env!("CARGO_PKG_VERSION")).unwrap_or_else(|| Version::new(0, 0, 0))
+    crate::build_version()
 }
 
 fn env_dirs(host: &dyn Host) -> Vec<PathBuf> {
@@ -69,6 +69,7 @@ impl Services for WindowsServices {
             version: self.version.clone(),
             payload_exe: self.exe.clone(),
             data_dirs: env_dirs(&*host),
+            identity: Identity::build(),
         };
         std::thread::spawn(move || {
             let mut log = Log::new(&host.folders().temp, &stamp());
@@ -81,8 +82,11 @@ impl Services for WindowsServices {
 
     fn measure_data(&mut self, tx: EventTx) {
         let dirs = env_dirs(&*self.host);
+        let shared = other_channel_installed(&*self.host, Identity::build()).is_some();
         std::thread::spawn(move || {
-            let measure = measure_data(&dirs).map_or(Measure::Empty, Measure::Bytes);
+            // Nothing to offer for deletion while the other channel uses the folders.
+            let measure =
+                if shared { Measure::Empty } else { measure_data(&dirs).map_or(Measure::Empty, Measure::Bytes) };
             let _ = tx.send(Event::DataMeasured(measure));
         });
     }
@@ -160,12 +164,16 @@ impl Progress for Silent {
 }
 
 fn quiet(spec: &JobSpec, host: &WindowsHost) -> ExitCode {
+    quiet_result(spec, host).map_or_else(|code| code, |()| ExitCode::SUCCESS)
+}
+
+fn quiet_result(spec: &JobSpec, host: &WindowsHost) -> Result<(), ExitCode> {
     let mut log = Log::new(&host.folders().temp, &stamp());
     match run_job(spec, host, &mut Silent, &mut log) {
-        Ok(_) => ExitCode::SUCCESS,
+        Ok(_) => Ok(()),
         Err(e) => {
             eprintln!("{e}");
-            ExitCode::from(u8::try_from(e.code.number() % 256).unwrap_or(1))
+            Err(ExitCode::from(u8::try_from(e.code.number() % 256).unwrap_or(1)))
         }
     }
 }
@@ -201,7 +209,8 @@ pub fn run(args: &Args, atlas: GlyphAtlas) -> ExitCode {
     let folders = host.folders();
     let version = own_version();
     let system_line = |v: &Version| format!("Sequence Studio Setup {v} (x64) on {}", host.windows_version());
-    let installed = detect_installed(&*host);
+    let identity = Identity::build();
+    let installed = detect_installed(&*host, identity);
     let mut services =
         WindowsServices { host: Arc::clone(&host), exe: exe.clone(), version: version.clone(), payload_bytes: 0 };
     let machine = if args.uninstall {
@@ -223,12 +232,14 @@ pub fn run(args: &Args, atlas: GlyphAtlas) -> ExitCode {
             version: version.clone(),
             payload_exe: exe.clone(),
             data_dirs: env_dirs(&*host),
+            identity: Identity::build(),
         };
         if args.quiet {
             let code = quiet(&spec, &host);
             finish_uninstall_copy(&*host, &exe);
             return code;
         }
+        let shared = other_channel_installed(&*host, identity);
         let facts = Facts {
             version: installed.as_ref().map_or_else(|| version.clone(), |i| i.version.clone()),
             app_exe_name: EXE_NAME,
@@ -237,13 +248,15 @@ pub fn run(args: &Args, atlas: GlyphAtlas) -> ExitCode {
             appimage_dir: None,
             home: None,
             system_line: system_line(&version),
+            data_shared_with: shared,
         };
         Machine::new(
             InstallerScreen::UninstallConfirm {
                 job: Job::Uninstall,
                 location: from,
                 delete_data: args.delete_data,
-                data_size: Measure::Loading,
+                // No "delete settings" choice while the other channel needs them.
+                data_size: if shared.is_some() { Measure::Empty } else { Measure::Loading },
             },
             facts,
         )
@@ -269,12 +282,29 @@ pub fn run(args: &Args, atlas: GlyphAtlas) -> ExitCode {
             appimage_dir: None,
             home: None,
             system_line: system_line(&payload.version),
+            data_shared_with: None,
         };
         let (job, location) = match &installed {
             Some(i) => (Job::Update { from: i.version.clone() }, i.location.clone()),
-            None => (Job::Install, args.dir.clone().unwrap_or_else(|| default_location(&folders.local_app_data))),
+            None => (
+                Job::Install,
+                args.dir.as_deref().map_or_else(|| default_location(&folders.local_app_data), quiet_location),
+            ),
         };
         if args.quiet {
+            if let Some(pid) = args.wait_pid {
+                let exe = location.join(EXE_NAME);
+                let gone = crate::wait::wait_until_gone(
+                    pid,
+                    || host.running_instances(&exe),
+                    crate::wait::TRIES,
+                    || std::thread::sleep(crate::wait::POLL),
+                );
+                if !gone {
+                    eprintln!("sq-installer: the app did not end in time");
+                    return ExitCode::FAILURE;
+                }
+            }
             let spec = JobSpec {
                 job,
                 location,
@@ -283,8 +313,23 @@ pub fn run(args: &Args, atlas: GlyphAtlas) -> ExitCode {
                 version: payload.version.clone(),
                 payload_exe: exe.clone(),
                 data_dirs: env_dirs(&*host),
+                identity: Identity::build(),
             };
-            return quiet(&spec, &host);
+            if let Err(code) = quiet_result(&spec, &host) {
+                return code;
+            }
+            if args.cleanup {
+                // The updater's downloaded copy: the file is locked while this program runs, so it goes once it has ended.
+                let _ = host.delete_after_exit(&exe);
+            }
+            if args.launch {
+                let app = spec.location.join(EXE_NAME);
+                if let Err(error) = Command::new(&app).current_dir(&spec.location).spawn() {
+                    eprintln!("sq-installer: the app could not start: {}", describe_io(&error));
+                    return ExitCode::FAILURE;
+                }
+            }
+            return ExitCode::SUCCESS;
         }
         match &installed {
             Some(i) => {

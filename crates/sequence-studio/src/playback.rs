@@ -97,6 +97,29 @@ pub(crate) fn bench_shown(engine: &dyn ProgramEngine) -> Option<Time> {
     Some(e.handle.latest_shown()?.position)
 }
 
+/// Bytes in the engine's frame cache now (the bench's memory line).
+pub(crate) fn bench_cache_bytes(engine: &dyn ProgramEngine) -> Option<usize> {
+    let e = engine.as_any().downcast_ref::<SessionEngine>()?;
+    Some(e.handle.status().cache_bytes)
+}
+
+/// The newest shown composite read back to the CPU for `--bench-verify`: its position, the engine's own exact flag and the
+/// RGBA8 pixels (`None` while nothing is shown or when the readback fails).
+pub(crate) struct ShownPixels {
+    pub position: Time,
+    pub exact: bool,
+    pub size: (u32, u32),
+    pub rgba: Vec<u8>,
+}
+
+pub(crate) fn bench_shown_pixels(engine: &dyn ProgramEngine) -> Option<ShownPixels> {
+    let e = engine.as_any().downcast_ref::<SessionEngine>()?;
+    let shown = e.handle.latest_shown()?;
+    let frame = shown.frame.as_ref()?;
+    let rgba = e.gpu.as_ref()?.read_texture(frame.planes.first()?).ok()?;
+    Some(ShownPixels { position: shown.position, exact: shown.exact, size: frame.size, rgba })
+}
+
 /// Why a clip's sound is silent. A file that is gone is offline, like other missing media, not "unreadable".
 fn silent_sound_message(path: &std::path::Path, e: &MediaError) -> String {
     if path.exists() {
@@ -120,11 +143,37 @@ pub fn display_timing() -> Arc<sq_playback::engine::DisplayTiming> {
     Arc::clone(TIMING.get_or_init(Arc::default))
 }
 
-pub type WakeSlot = Arc<OnceLock<Arc<dyn Fn() + Send + Sync>>>;
+/// What an app and its engines share: the wake-up (filled once the window exists) and the app's own queue of audio
+/// status lines. `Deref`s to the wake cell, so `slot.get()` / `slot.set(..)` work on it.
+#[derive(Default)]
+pub struct WakeLink {
+    wake: OnceLock<Arc<dyn Fn() + Send + Sync>>,
+    /// The queue lines go to: its own until `connect_wake` swaps in the app's (one queue per app, shared by all its slots).
+    notices: std::sync::Mutex<sq_app_shell::NoticeQueue>,
+}
+
+impl std::ops::Deref for WakeLink {
+    type Target = OnceLock<Arc<dyn Fn() + Send + Sync>>;
+    fn deref(&self) -> &Self::Target {
+        &self.wake
+    }
+}
+
+pub type WakeSlot = Arc<WakeLink>;
 
 /// Lets the engines holding `slot` wake `app`'s window loop (a no-op post marks the frame dirty). A composite the engine
 /// published before the slot was filled found nobody to wake, so the loop is woken once now.
 pub fn connect_wake(slot: &WakeSlot, app: &sq_app_shell::Headless) {
+    app.with(|a| {
+        let app_queue = Arc::clone(&a.services_mut().audio_notices);
+        let mut own = slot.notices.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if !Arc::ptr_eq(&own, &app_queue) {
+            // Lines posted before the window existed move over; later ones go straight to the app's queue.
+            let early = sq_app_hosts::audio_notice::take(&own);
+            app_queue.lock().unwrap_or_else(std::sync::PoisonError::into_inner).extend(early);
+            *own = app_queue;
+        }
+    });
     if let Some(tx) = app.with(|a| a.sender())
         && slot
             .set(Arc::new({
@@ -158,7 +207,8 @@ fn audio_event_line(event: &OutputEvent) -> Option<String> {
 fn report_audio(line: &str, wake: &WakeSlot) {
     crate::applog::error(line);
     eprintln!("{line}");
-    sq_app_hosts::audio_notice::post(line);
+    let queue = Arc::clone(&wake.notices.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
+    sq_app_hosts::audio_notice::post(&queue, line);
     if let Some(f) = wake.get() {
         f();
     }
@@ -239,6 +289,11 @@ pub fn engine(
         })));
     let mut deps = EngineDeps::new(crate::proxy::monitor_opener(opener), clock);
     deps.gpu = gpu.clone();
+    deps.idle_decoders = sq_playback::engine::memory_budget::MemoryBudget::current(
+        |k| std::env::var(k).ok(),
+        sq_platform::physical_memory().unwrap_or(16 << 30),
+    )
+    .idle_decoders();
     deps.display = Some(display_timing());
     deps.on_shown = Some(Arc::new(move || {
         if let Some(f) = wake.get() {
@@ -265,6 +320,8 @@ pub fn engine(
     deps.color =
         Some(Arc::new(LayerColorResolver::new(Some(Arc::new(luts)), Arc::new(move |id| lookup_media.info(id)))));
     let display = gpu.as_ref().and_then(|g| DisplayPath::new(Arc::clone(g)));
+    // The per-frame bench trace reads the ring fill through this probe (only called while `SQ_BENCH_CSV` is on).
+    sq_playback::engine::frame_trace::set_audio_probe(audio.as_ref().map(AudioOut::interval_fill_probe));
     Box::new(SessionEngine {
         display,
         handle: RenderEngine::spawn(deps),
@@ -489,7 +546,13 @@ impl SessionEngine {
 impl ProgramEngine for SessionEngine {
     fn play_counts(&self) -> sq_editor_session::PlayCounts {
         let s = self.handle.status();
-        sq_editor_session::PlayCounts { shown: s.shown_frames, skipped: s.skipped_frames, late: s.late_frames, run: s.run, clock_running: s.clock_running }
+        sq_editor_session::PlayCounts {
+            shown: s.shown_frames,
+            skipped: s.skipped_frames,
+            late: s.late_frames,
+            run: s.run,
+            clock_running: s.clock_running,
+        }
     }
     fn set_timeline(&mut self, timeline: &Timeline, sequences: &BTreeMap<Id, Timeline>) {
         let refs = media_refs(self.media.as_ref(), std::iter::once(timeline).chain(sequences.values()));
@@ -669,6 +732,10 @@ impl ProgramEngine for SessionEngine {
         self.handle.set_quality(self.power_policy.viewer_scale(quality));
     }
 
+    fn set_view_size(&mut self, width: u32, height: u32) {
+        self.handle.set_view_size(width, height);
+    }
+
     fn power_policy(&self) -> sq_playback::engine::power_policy::PowerPolicy {
         self.power_policy
     }
@@ -750,6 +817,30 @@ mod tests {
     }
 
     use super::read_is_safe;
+
+    /// The program and the Source engine each have a slot (`add_root_with`); both connect to one app and a notice from
+    /// either reaches that app's queue, also one posted before its slot was connected.
+    #[test]
+    fn notices_from_both_engines_of_one_app_reach_the_app() {
+        use super::{WakeSlot, connect_wake, report_audio};
+        use sq_app_shell::{AppDeps, Headless};
+        use sq_runtime::{Clock, SystemClock};
+        use std::sync::Arc;
+        let deps = AppDeps::headless(Arc::new(SystemClock::new()) as Arc<dyn Clock>);
+        let (session, _) =
+            crate::untitled_session(&std::env::temp_dir().join(format!("sq-notices-{}", std::process::id())));
+        let app = Headless::new(session, deps, 800, 600);
+        let (program, source) = (WakeSlot::default(), WakeSlot::default());
+        report_audio("early", &source);
+        connect_wake(&program, &app);
+        connect_wake(&source, &app);
+        report_audio("program lost", &program);
+        report_audio("source lost", &source);
+        let queue = app.with(|a| Arc::clone(&a.services_mut().audio_notices)).expect("app");
+        let mut got = sq_app_hosts::audio_notice::take(&queue);
+        got.sort();
+        assert_eq!(got, ["early", "program lost", "source lost"]);
+    }
 
     /// The engine starts before the window exists: a composite it published while the wake slot was still empty reaches no
     /// one, so filling the slot wakes the loop once and the first turn takes the picture.

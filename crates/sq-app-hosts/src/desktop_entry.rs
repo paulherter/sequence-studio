@@ -129,6 +129,7 @@ mod tests {
             data_home: root.join("home/.local/share"),
             home: root.join("home"),
             version: "0.2.0".into(),
+            identity: sq_platform::desktop_integration::Identity::STABLE,
         };
         (root, env)
     }

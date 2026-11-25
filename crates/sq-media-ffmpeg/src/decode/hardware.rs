@@ -59,15 +59,21 @@ pub const DEFAULT_MAX_HARDWARE_SESSIONS: usize = 8;
 pub struct HardwareSessions {
     max: usize,
     open: std::sync::atomic::AtomicUsize,
+    /// Pixels per second the open sessions decode (width x height x frame rate): the load on the one decode engine.
+    load: std::sync::atomic::AtomicU64,
 }
 
 /// One open hardware session; dropping it frees the slot.
 #[derive(Debug)]
-pub struct SessionGuard<'a>(&'a HardwareSessions);
+pub struct SessionGuard<'a>(&'a HardwareSessions, u64);
 
 impl HardwareSessions {
     pub const fn new(max: usize) -> HardwareSessions {
-        HardwareSessions { max, open: std::sync::atomic::AtomicUsize::new(0) }
+        HardwareSessions {
+            max,
+            open: std::sync::atomic::AtomicUsize::new(0),
+            load: std::sync::atomic::AtomicU64::new(0),
+        }
     }
 
     /// A slot, or `None` when `max` sessions are open.
@@ -80,7 +86,31 @@ impl HardwareSessions {
         use std::sync::atomic::Ordering::AcqRel;
         let taken =
             self.open.try_update(AcqRel, std::sync::atomic::Ordering::Acquire, |n| (n < limit).then_some(n + 1));
-        taken.ok().map(|_| SessionGuard(self))
+        taken.ok().map(|_| SessionGuard(self, 0))
+    }
+
+    /// A slot for a stream of `rate` pixels per second, or `None` when the session limit is reached or the engine's
+    /// `budget` is used up. The first stream of the engine always gets it (a lone 4K60 clip stays on the GPU).
+    pub fn acquire_loaded(&self, limit: usize, rate: u64, budget: u64) -> Option<SessionGuard<'_>> {
+        use std::sync::atomic::Ordering::{AcqRel, Acquire};
+        self.load
+            .try_update(AcqRel, Acquire, |l| (l == 0 || l.saturating_add(rate) <= budget).then_some(l + rate))
+            .ok()?;
+        match self.acquire_up_to(limit) {
+            Some(mut g) => {
+                g.1 = rate;
+                Some(g)
+            }
+            None => {
+                self.load.fetch_sub(rate, AcqRel);
+                None
+            }
+        }
+    }
+
+    /// Pixels per second of the open sessions.
+    pub fn load(&self) -> u64 {
+        self.load.load(std::sync::atomic::Ordering::Relaxed)
     }
 
     /// Sessions open right now.
@@ -92,6 +122,28 @@ impl HardwareSessions {
 impl Drop for SessionGuard<'_> {
     fn drop(&mut self) {
         self.0.open.fetch_sub(1, std::sync::atomic::Ordering::AcqRel);
+        self.0.load.fetch_sub(self.1, std::sync::atomic::Ordering::AcqRel);
+    }
+}
+
+/// Consecutive failed downloads of a hardware decoder's pictures before the stream moves to software.
+pub const DOWNLOAD_FAILURES_BEFORE_SOFTWARE: usize = 3;
+
+/// Counts the failed downloads of one stream in a row (`report` returns true once the limit is reached).
+#[derive(Debug, Default)]
+pub struct DownloadWatch(std::sync::atomic::AtomicUsize);
+
+impl DownloadWatch {
+    /// `ok`: a picture came out; a success resets the run. True when this failure is the `limit`-th in a row.
+    pub fn report(&self, ok: bool, limit: usize) -> bool {
+        use std::sync::atomic::Ordering::Relaxed;
+        if ok {
+            if self.0.load(Relaxed) != 0 {
+                self.0.store(0, Relaxed);
+            }
+            return false;
+        }
+        self.0.fetch_add(1, Relaxed) + 1 == limit
     }
 }
 
@@ -113,6 +165,33 @@ pub fn session_limit(text: Option<&str>) -> usize {
 /// A slot in the process-wide limit (`SQ_MAX_HW_DECODERS` lowers or raises it, see [`session_limit`]).
 pub fn acquire_hardware_session() -> Option<SessionGuard<'static>> {
     SESSIONS.acquire_up_to(session_limit(std::env::var("SQ_MAX_HW_DECODERS").ok().as_deref()))
+}
+
+/// Pixels per second the one GPU decode engine carries before more big streams go to the CPU. Measured on an RX 9070 XT
+/// (VA-API, 4K H.264 at 100 Mbit/s): the engine decodes one picture at a time at 11 ms (3 streams in parallel take 33 ms
+/// each, `ffmpeg -hwaccel vaapi`), so three 4K30 layers (747 Mpixel/s) never fit and dropped 26 % of the frames, while
+/// one engine stream plus two software decoders played all 569. 400 Mpixel/s lets one 4K30 stream (249) in and sends the
+/// second (498 together) to software. Windows keeps every stream on the GPU: measured on a Radeon 610M (D3D11VA) the engine carried 4 parallel 4K
+/// H.264 streams at 99 % shown, and a 400 budget dropped it to 64 % (notes/tempo/winbudget-2026-11-24.md).
+/// `SQ_HW_BUDGET_MPIX` overrides (0 = no budget).
+pub const DEFAULT_ENGINE_BUDGET: u64 = if cfg!(windows) { u64::MAX } else { 400_000_000 };
+
+/// The engine budget in pixels per second for the `SQ_HW_BUDGET_MPIX` value `text`.
+pub fn engine_budget(text: Option<&str>) -> u64 {
+    match text.and_then(|v| v.trim().parse::<u64>().ok()) {
+        Some(0) => u64::MAX,
+        Some(m) => m.saturating_mul(1_000_000),
+        None => DEFAULT_ENGINE_BUDGET,
+    }
+}
+
+/// A slot for a stream of `rate` pixels per second inside the engine budget.
+pub fn acquire_hardware_session_for(rate: u64) -> Option<SessionGuard<'static>> {
+    SESSIONS.acquire_loaded(
+        session_limit(std::env::var("SQ_MAX_HW_DECODERS").ok().as_deref()),
+        rate,
+        engine_budget(std::env::var("SQ_HW_BUDGET_MPIX").ok().as_deref()),
+    )
 }
 
 /// Hardware frames a call may hold at once: the decoder's texture pool has its own reference pictures plus
@@ -141,6 +220,42 @@ pub fn decode_path(hardware: bool, delivering: bool, range_len: usize, hold_limi
 mod tests {
     use super::supports_hardware_decode as supports;
     use super::*;
+
+    #[test]
+    fn the_engine_budget_sends_the_streams_past_it_to_software_and_frees_on_drop() {
+        let s = HardwareSessions::new(8);
+        let k30 = 249_000_000;
+        let a = s.acquire_loaded(8, k30, 400_000_000);
+        assert!(a.is_some(), "the first stream always gets the engine");
+        assert!(s.acquire_loaded(8, k30, 400_000_000).is_none(), "498 Mpixel/s is over the budget");
+        assert_eq!(s.open(), 1);
+        assert_eq!(s.load(), k30);
+        let small = s.acquire_loaded(8, 62_000_000, 400_000_000);
+        assert!(small.is_some(), "a small stream still fits");
+        drop(a);
+        assert_eq!(s.load(), 62_000_000);
+        let lone = HardwareSessions::new(8);
+        assert!(lone.acquire_loaded(8, 498_000_000, 400_000_000).is_some(), "a lone 4K60 stays on the GPU");
+    }
+
+    #[test]
+    fn a_run_of_failed_downloads_asks_for_software_once_and_a_success_resets_the_run() {
+        let w = DownloadWatch::default();
+        let n = DOWNLOAD_FAILURES_BEFORE_SOFTWARE;
+        assert!((0..n - 1).all(|_| !w.report(false, n)));
+        assert!(!w.report(true, n));
+        assert!((0..n - 1).all(|_| !w.report(false, n)), "the success restarted the run");
+        assert!(w.report(false, n), "the n-th failure in a row asks for software");
+        assert!(!w.report(false, n), "and only once");
+    }
+
+    #[test]
+    fn engine_budget_reads_the_override() {
+        assert_eq!(engine_budget(Some("0")), u64::MAX);
+        assert_eq!(engine_budget(Some("600")), 600_000_000);
+        assert_eq!(engine_budget(Some("x")), DEFAULT_ENGINE_BUDGET);
+        assert_eq!(engine_budget(None), DEFAULT_ENGINE_BUDGET);
+    }
 
     #[test]
     fn sessions_stop_at_the_limit_and_free_a_slot_on_drop() {

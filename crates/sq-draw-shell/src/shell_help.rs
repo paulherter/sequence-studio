@@ -88,16 +88,17 @@ impl ShellHost {
                     "The update information could not be read. Check your connection and try again later.".into();
             }
             UpdateOutcome::Available(r) => {
+                d.slot = Some(crate::shell_dialog::SlotIcon::Info);
                 d.message_text = SQL10n::format("Version %@ is available", &[&r.version]);
                 d.informative_text = format!(
                     "{}{}",
-                    r.notes.map(|n| format!("{n}\n\n")).unwrap_or_default(),
+                    r.notes.clone().map(|n| format!("{n}\n\n")).unwrap_or_default(),
                     SQL10n::format("You have %@.", &[&AppVersion::display()])
                 );
                 d.add_button("Download", SQDialogRole::Default, false);
                 d.add_button("Later", SQDialogRole::Normal, true);
                 if Self::ask(&h, d).await == Some(SQDialogResponse::FIRST) {
-                    let _ = h.with(|root| root.shell_parts().shell.emit(ShellEvent::OpenUrl(r.url)));
+                    Self::download_and_install_update(h, r).await;
                 }
                 return;
             }

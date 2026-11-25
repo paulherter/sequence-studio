@@ -2,7 +2,8 @@
 //! What the About window says besides the version: the one-line description, the credits and the Acknowledgments list
 //! (windows plan section 3). Pure data, so tests can check it and the window only lays it out.
 
-pub const TAGLINE: &str = "A fast, uncluttered video editor for macOS, Windows and Linux. Free software, made in the open.";
+pub const TAGLINE: &str =
+    "A fast, uncluttered video editor for macOS, Windows and Linux. Free software, made in the open.";
 pub const LICENSE: &str = "GNU General Public License 3.0";
 pub const CREDITS: &str = "Made by Paul Herter and contributors.\n© 2026 Paul Herter. Comes with no warranty.";
 pub const LICENSE_NOTE: &str =
@@ -40,7 +41,12 @@ pub const ACKNOWLEDGMENTS: [Acknowledgment; 11] = [
         "GPL-3.0 compatible",
         "Stabilization and lens profiles",
     ),
-    ack("tiny-skia and Rust crates", "see the notices file", "MIT / Apache-2.0 / BSD / Zlib", "Lottie rendering and the rest of the app"),
+    ack(
+        "tiny-skia and Rust crates",
+        "see the notices file",
+        "MIT / Apache-2.0 / BSD / Zlib",
+        "Lottie rendering and the rest of the app",
+    ),
     ack("EdgeTAM", "model by Meta", "Apache-2.0", "Subject masks"),
     ack("Whisper", "models by OpenAI, ONNX export by Xenova", "MIT", "Speech recognition"),
     ack("OPUS-MT", "Helsinki-NLP, ONNX export by Xenova", "CC-BY-4.0", "Caption translation"),

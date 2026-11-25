@@ -1919,118 +1919,189 @@ float4 convertTexel_0(texture2d<float, access::sample> _S67, texture2d<float, ac
 float4 convertTexelScaled_0(texture2d<float, access::sample> _S83, texture2d<float, access::sample> _S84, uint _S85, uint2 _S86, uint2 _S87, KernelContext_0 thread* kernelContext_10)
 {
 
-#line 20
-    int _S88;
-
-#line 108 "crates/sq-gpu/shaders-src/Parts/Convert.slang"
-    float2 _S89 = float2(_S87);
-    float2 _S90 = float2(texSize_0(_S83));
-
-#line 109
-    float2 _S91 = float2(0.5f) ;
-    float2 _S92 = (float2(_S86) + _S91) / _S89;
-    float2 ratio_0 = _S90 / _S89;
-    int2 n_0 = clamp(int2(ceil(ratio_0 - float2(0.0099999997764825821f) )), int2(int(1)) , int2(int(4)) );
-    float2 _S93 = float2(n_0);
+#line 110 "crates/sq-gpu/shaders-src/Parts/Convert.slang"
+    float2 _S88 = float2(texSize_0(_S83));
+    float2 ratio_0 = _S88 / float2(_S87);
+    float2 lo_0 = float2(_S86) * ratio_0;
+    float2 hi_0 = lo_0 + ratio_0;
 
 #line 113
-    float2 _S94 = ratio_0 / _S93 / _S90;
-    float3 _S95 = float3(0.0f) ;
+    float2 _S89 = float2(0.0010000000474974513f) ;
+    int2 _S90 = int2(floor(lo_0 + _S89));
+    int2 _S91 = max(int2(ceil(hi_0 - _S89)), _S90 + int2(int(1)) );
 
-#line 114
-    int j_0 = int(0);
+    int2 _S92 = (_S91 - _S90 + int2(int(15)) ) / int2(int(16)) ;
 
-#line 114
-    float3 acc_2 = _S95;
+#line 117
+    int2 _S93 = max(_S92, int2(int(1)) );
+    float3 _S94 = float3(0.0f) ;
 
-#line 114
+#line 118
+    int j_0 = _S90.y;
+
+#line 118
+    float3 acc_2 = _S94;
+
+#line 118
     float a_4 = 0.0f;
+
+#line 118
+    float wsum_0 = 0.0f;
+
 
     for(;;)
     {
 
-#line 116
-        int _S96 = n_0.y;
-
-#line 116
-        _S88 = _S96;
-
-#line 116
-        if(j_0 < _S96)
+#line 121
+        if(j_0 < (_S91.y))
         {
         }
         else
         {
 
-#line 116
+#line 121
             break;
         }
 
-#line 116
-        int i_0 = int(0);
+#line 122
+        float _S95 = max(0.0f, min(float(j_0 + int(1)), hi_0.y) - max(float(j_0), lo_0.y));
+        int _S96 = _S93.y;
+
+#line 123
+        float wy_0;
+
+#line 123
+        if(_S96 > int(1))
+        {
+
+#line 123
+            wy_0 = 1.0f;
+
+#line 123
+        }
+        else
+        {
+
+#line 123
+            wy_0 = _S95;
+
+#line 123
+        }
+
+#line 123
+        int i_0 = _S90.x;
         for(;;)
         {
 
-#line 117
-            if(i_0 < (n_0.x))
+#line 124
+            if(i_0 < (_S91.x))
             {
             }
             else
             {
 
-#line 117
+#line 124
                 break;
             }
 
-#line 117
-            float4 _S97 = straightPoint_0(_S83, _S84, _S92 + (float2(float(i_0), float(j_0)) + _S91 - _S93 * _S91) * _S94, kernelContext_10);
+#line 125
+            float _S97 = max(0.0f, min(float(i_0 + int(1)), hi_0.x) - max(float(i_0), lo_0.x));
+            int _S98 = _S93.x;
+
+#line 126
+            float wx_0;
+
+#line 126
+            if(_S98 > int(1))
+            {
+
+#line 126
+                wx_0 = 1.0f;
+
+#line 126
+            }
+            else
+            {
+
+#line 126
+                wx_0 = _S97;
+
+#line 126
+            }
+            float w_2 = wx_0 * wy_0;
+
+#line 127
+            float4 _S99 = straightPoint_0(_S83, _S84, (float2(float(min(i_0, int(_S88.x) - int(1))), float(min(j_0, int(_S88.y) - int(1)))) + float2(0.5f) ) / _S88, kernelContext_10);
 
 
-            float _S98 = _S97.w;
 
-#line 120
-            float3 acc_3 = acc_2 + decodeCurve_0(_S97.xyz, _S85) * float3(_S98) ;
-            float a_5 = a_4 + _S98;
+            float _S100 = _S99.w * w_2;
 
-#line 117
-            i_0 = i_0 + int(1);
-
-#line 117
-            acc_2 = acc_3;
-
-#line 117
-            a_4 = a_5;
-
-#line 117
-        }
-
-#line 116
-        j_0 = j_0 + int(1);
-
-#line 116
-    }
-
-#line 116
-    float3 m_2;
+#line 131
+            float3 acc_3 = acc_2 + clamp(_S99.xyz, _S94, float3(1.0f) ) * float3(_S100) ;
+            float a_5 = a_4 + _S100;
+            float wsum_1 = wsum_0 + w_2;
 
 #line 124
+            i_0 = i_0 + _S98;
+
+#line 124
+            acc_2 = acc_3;
+
+#line 124
+            a_4 = a_5;
+
+#line 124
+            wsum_0 = wsum_1;
+
+#line 124
+        }
+
+#line 121
+        j_0 = j_0 + _S96;
+
+#line 121
+    }
+
+#line 121
+    float3 m_2;
+
+#line 136
     if(a_4 > 0.0f)
     {
 
-#line 124
+#line 136
         m_2 = acc_2 / float3(a_4) ;
 
-#line 124
+#line 136
     }
     else
     {
 
-#line 124
-        m_2 = _S95;
+#line 136
+        m_2 = _S94;
 
-#line 124
+#line 136
     }
-    return float4(encodeCurve_0(m_2, _S85), a_4 / float(n_0.x * _S88));
+    if(wsum_0 > 0.0f)
+    {
+
+#line 137
+        a_4 = a_4 / wsum_0;
+
+#line 137
+    }
+    else
+    {
+
+#line 137
+        a_4 = 0.0f;
+
+#line 137
+    }
+
+#line 137
+    return float4(m_2, a_4);
 }
 
 
@@ -2062,16 +2133,16 @@ float4 convertTexelScaled_0(texture2d<float, access::sample> _S83, texture2d<flo
     uint2 gid_1 = tid_1.xy + vu_2->origin_0;
 
 #line 25
-    uint2 _S99 = outSize_0(&kernelContext_11);
+    uint2 _S101 = outSize_0(&kernelContext_11);
 
 #line 25
-    bool _S100;
+    bool _S102;
 
-    if((gid_1.x) >= (_S99.x))
+    if((gid_1.x) >= (_S101.x))
     {
 
 #line 27
-        _S100 = true;
+        _S102 = true;
 
 #line 27
     }
@@ -2079,13 +2150,13 @@ float4 convertTexelScaled_0(texture2d<float, access::sample> _S83, texture2d<flo
     {
 
 #line 27
-        _S100 = (gid_1.y) >= (_S99.y);
+        _S102 = (gid_1.y) >= (_S101.y);
 
 #line 27
     }
 
 #line 27
-    if(_S100)
+    if(_S102)
     {
 
 #line 27
@@ -2093,8 +2164,8 @@ float4 convertTexelScaled_0(texture2d<float, access::sample> _S83, texture2d<flo
     }
 
 #line 27
-    float4 _S101 = convertTexelScaled_0((&kernelContext_11)->in0_0, (&kernelContext_11)->in1_0, (&kernelContext_11)->vu_0->transfer_0, gid_1, _S99, &kernelContext_11);
-    (&kernelContext_11)->out0_0.write(_S101,gid_1);
+    float4 _S103 = convertTexelScaled_0((&kernelContext_11)->in0_0, (&kernelContext_11)->in1_0, (&kernelContext_11)->vu_0->transfer_0, gid_1, _S101, &kernelContext_11);
+    (&kernelContext_11)->out0_0.write(_S103,gid_1);
     return;
 }
 

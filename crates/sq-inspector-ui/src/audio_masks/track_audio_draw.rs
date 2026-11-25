@@ -867,11 +867,8 @@ impl TrackAudioDraw {
                 let face = if r.header { c.semibold() } else { 0 };
                 let x = ControlsGrid::LABEL_X;
                 // The header title ends before the On/Off note and its switch, whatever the width.
-                let header_right = r
-                    .controls
-                    .iter()
-                    .map(|(_, f)| f.min_x() - Self::ON_NOTE_WIDTH - 6.0)
-                    .fold(self.width, f64::min);
+                let header_right =
+                    r.controls.iter().map(|(_, f)| f.min_x() - Self::ON_NOTE_WIDTH - 6.0).fold(self.width, f64::min);
                 let room = if r.header {
                     (header_right - x - ControlsGrid::GAP).max(0.0)
                 } else {

@@ -192,6 +192,10 @@ impl GpuCommands {
             timestamp_writes,
             ..Default::default()
         });
+        let mut name = slots.and(self.timing.as_mut()).and_then(timing::Recorder::label_mut);
+        if let Some(n) = name.as_deref_mut() {
+            timing::name_pass(n, &format!("{}x{}", target.width(), target.height()));
+        }
         RenderEncoder {
             gpu: &self.gpu,
             pass,
@@ -199,7 +203,7 @@ impl GpuCommands {
             binds: Bindings::default(),
             pipeline: None,
             group: None,
-            name: slots.and(self.timing.as_mut()).and_then(timing::Recorder::label_mut),
+            name,
         }
     }
 
@@ -261,6 +265,9 @@ impl ComputeEncoder<'_> {
     /// The texture `out0` writes; its format must be the one the pipeline was built for.
     pub fn set_output(&mut self, texture: &GpuTexture) {
         self.group = None;
+        if let Some(n) = self.name.as_deref_mut() {
+            timing::name_pass(n, &format!("{}x{}", texture.width(), texture.height()));
+        }
         self.binds.output = Some((texture.view().clone(), texture.format()));
     }
 

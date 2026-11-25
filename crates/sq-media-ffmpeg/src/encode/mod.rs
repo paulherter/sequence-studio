@@ -9,7 +9,9 @@ mod options;
 mod raw;
 
 pub use candidates::{Candidates, Platform, candidates, first_available};
-pub use caps::{EncoderCaps, Missing, Probe, ProbeKind, ProbeState, Wish, cached, caps_of, finish_warm_up, missing, probe, warm_up};
+pub use caps::{
+    EncoderCaps, Missing, Probe, ProbeKind, ProbeState, Wish, cached, caps_of, finish_warm_up, missing, probe, warm_up,
+};
 pub use encoder::{ENCODER_NOT_FOUND, EncodeConfig, Encoder, PixelLayout, StillCodec, Tags, VideoFacts, write_still};
 pub use options::{H264Profile, VideoRequest, option_lines, private_options, quantizer};
 

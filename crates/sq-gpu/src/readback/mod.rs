@@ -70,12 +70,29 @@ impl ReadbackTicket {
 
     /// Blocks until the copy finished and returns the tightly packed bytes (rows without padding).
     pub fn wait(self, gpu: &Gpu) -> Result<Vec<u8>, GpuError> {
+        self.wait_with(gpu, None)
+    }
+
+    /// Like [`ReadbackTicket::wait`], but waits only for the submission `index` that holds the copy: work submitted after
+    /// it keeps running (a pipelined export has the next frame in flight).
+    pub fn wait_after(self, gpu: &Gpu, index: &wgpu::SubmissionIndex) -> Result<Vec<u8>, GpuError> {
+        self.wait_with(gpu, Some(index))
+    }
+
+    fn wait_with(self, gpu: &Gpu, index: Option<&wgpu::SubmissionIndex>) -> Result<Vec<u8>, GpuError> {
         let (sender, receiver) = mpsc::channel();
         self.staging.slice(..).map_async(wgpu::MapMode::Read, move |result| {
             // The receiver outlives the poll below.
             let _ = sender.send(result);
         });
-        gpu.wait()?;
+        match index {
+            None => gpu.wait()?,
+            Some(i) => {
+                gpu.device()
+                    .poll(wgpu::PollType::Wait { submission_index: Some(i.clone()), timeout: None })
+                    .map_err(|e| GpuError::Readback(e.to_string()))?;
+            }
+        }
         receiver
             .recv()
             .map_err(|e| GpuError::Readback(e.to_string()))?

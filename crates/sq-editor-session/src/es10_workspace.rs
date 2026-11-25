@@ -14,6 +14,7 @@ mod settings;
 mod storage;
 mod store;
 mod update;
+mod update_flow;
 
 #[cfg(test)]
 mod tests;
@@ -27,6 +28,7 @@ pub use settings::*;
 pub use storage::*;
 pub use store::*;
 pub use update::*;
+pub use update_flow::*;
 
 /// Pretty JSON with sorted keys at every level (Swift `.prettyPrinted, .sortedKeys`).
 pub(crate) fn encode_sorted_pretty<T: serde::Serialize>(value: &T) -> Result<Vec<u8>, serde_json::Error> {

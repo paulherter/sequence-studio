@@ -53,6 +53,13 @@ impl DropIndicator {
         self.was_playing = is_playing;
     }
 
+    /// Auto quality stepped down while playing: the dot lights like for a drop (the count is untouched).
+    pub fn note_quality_step(&mut self, is_playing: bool, now: f64) {
+        if is_playing {
+            self.amber_until = Some(now + Self::HOLD_SECONDS);
+        }
+    }
+
     /// The last (or current) play run dropped at least `REALTIME_THRESHOLD` frames.
     pub fn realtime_not_achieved(&self) -> bool {
         self.has_run && self.last_run_drops >= Self::REALTIME_THRESHOLD

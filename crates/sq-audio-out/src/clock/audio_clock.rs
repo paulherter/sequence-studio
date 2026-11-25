@@ -24,6 +24,10 @@ use sq_core_edit::playback::PlaybackRate;
 use sq_core_time::Time;
 use std::sync::{Arc, Mutex, Weak};
 
+fn ms(t: Time) -> i64 {
+    i64::try_from(i128::from(t.value()) * 1000 / i128::from(t.timescale())).unwrap_or(0)
+}
+
 /// Generation sentinel while a restart is in flight.
 const IN_FLIGHT: i64 = i64::MAX;
 
@@ -46,6 +50,24 @@ struct State {
     last_returned: Option<Time>,
     /// Reverse: host time at which the audio down to the timeline start was all consumed.
     exhaust_nanos: Option<i64>,
+    /// Free run: while the output has not acknowledged the flush, the position follows the host time from
+    /// `free_origin`, starting `free_lead` ns after the restart (see `AudioClock::PRIMING_BUDGET_NANOS`).
+    free_origin: Time,
+    free_lead: i64,
+    /// The picture already moved on host time before the audio was acknowledged: the audio must be re-seeked.
+    free_ran: bool,
+    /// The audio was re-seeked once after a free run (never twice per restart).
+    resynced: bool,
+    resync_pending: bool,
+    /// Counts restarts: a re-seek decided for an older restart is dropped.
+    restart_count: u64,
+    /// Feeder latency M (frames) seen at the first flush of the restart, to aim the re-seek.
+    latency_hint: i64,
+    /// After a re-seek: the audio clock took over; the picture is slewed onto it (`slew0` = picture ahead of audio in
+    /// the direction of travel at the takeover, shrinking by 1/5 of the audio time elapsed since `slew_e0`).
+    took_over: bool,
+    slew0: Time,
+    slew_e0: Time,
 }
 
 pub struct AudioClock {
@@ -58,8 +80,17 @@ pub struct AudioClock {
 impl AudioClock {
     pub const STALL_TIMEOUT_NANOS: i64 = 250_000_000;
     /// Before the first audio of a restart was consumed the feeder may still be opening a cold or network file and the
-    /// output is priming with silence: that is not a stall yet.
-    pub const PRIMING_TIMEOUT_NANOS: i64 = 2_000_000_000;
+    /// output is priming with silence (a Bluetooth or HDMI device can need seconds): that is not a stall yet. It no
+    /// longer holds the picture (`PRIMING_BUDGET_NANOS`), it only decides when the audio is given up for this Play.
+    pub const PRIMING_TIMEOUT_NANOS: i64 = 5_000_000_000;
+    /// How long the picture waits for the first audio block of a restart before it runs on the host time instead
+    /// (rule: pre-roll up to 0.5 s, then instant). Normal outputs acknowledge a flush in 10-100 ms (WASAPI
+    /// shared, CoreAudio, ALSA/Pulse with a 10-20 ms period), so they never reach it; 250 ms leaves the other half of
+    /// the 0.5 s for the first decode. A slow device (Bluetooth or HDMI waking up, a virtual sink) then is re-seeked
+    /// to the picture position once it consumes (`resync`), so picture and sound end up together.
+    pub const PRIMING_BUDGET_NANOS: i64 = 250_000_000;
+    /// Guess for the delay between a re-seek and the first block the awake device consumes (one callback period).
+    const ACK_GUESS_NANOS: i64 = 20_000_000;
 
     pub fn new(audio: Arc<dyn AudioPlaying>) -> Arc<AudioClock> {
         let sample_rate = audio.sample_rate();
@@ -83,6 +114,16 @@ impl AudioClock {
                     progress_nanos: 0,
                     last_returned: None,
                     exhaust_nanos: None,
+                    free_origin: Time::ZERO,
+                    free_lead: Self::PRIMING_BUDGET_NANOS,
+                    free_ran: false,
+                    resynced: false,
+                    resync_pending: false,
+                    restart_count: 0,
+                    latency_hint: 0,
+                    took_over: false,
+                    slew0: Time::ZERO,
+                    slew_e0: Time::ZERO,
                 }),
                 control: Mutex::new(()),
                 audio,
@@ -95,18 +136,64 @@ impl AudioClock {
         &self.audio
     }
 
+    #[cfg(test)]
+    pub(super) fn restart_count(&self) -> u64 {
+        lock(&self.state).restart_count
+    }
+
     /// Position plus the watchdog verdict, from one reading.
     pub fn sample(&self) -> (Time, bool) {
         let ns = self.audio.host_nanoseconds();
         let mut s = lock(&self.state);
         let p = self.position(&mut s, ns);
+        let pending = std::mem::take(&mut s.resync_pending).then_some(s.restart_count);
         let limit = if s.base.is_none() { Self::PRIMING_TIMEOUT_NANOS } else { Self::STALL_TIMEOUT_NANOS };
         // Reverse play that consumed everything down to frame 0 has nothing left to render: that is the end, not a stall.
         let stalled = !s.rate.is_paused()
             && s.generation != IN_FLIGHT
             && s.exhaust_nanos.is_none()
             && ns - s.progress_nanos > limit;
+        drop(s);
+        if let Some(count) = pending {
+            self.resync(count);
+        }
         (p, stalled)
+    }
+
+    /// The output started consuming after the picture had run on host time: restart the audio at the picture position
+    /// (plus the output latency, so it is heard where the picture is by then). The picture keeps running on its host
+    /// line meanwhile; the audio clock takes over at its acknowledgement. Skipped when a control call is busy (the
+    /// render thread never waits for one) and retried by the next sample.
+    pub(super) fn resync(&self, count: u64) {
+        let Ok(_control) = self.control.try_lock() else {
+            let mut s = lock(&self.state);
+            if s.restart_count == count {
+                s.resync_pending = true;
+            }
+            return;
+        };
+        let (p, r, hint) = {
+            let s = lock(&self.state);
+            // `restart_count` drops a decision that a start/seek/rate change/stop overtook between `sample` and here.
+            if s.restart_count != count
+                || !s.free_ran
+                || s.rate.is_paused()
+                || s.generation == IN_FLIGHT
+                || s.resynced
+                || s.base.is_some()
+            {
+                return;
+            }
+            (s.last_returned.unwrap_or(s.anchor), s.rate, s.latency_hint)
+        };
+        // Aim the audio at where the picture will be when it is heard: output latency, feeder latency and a guess for
+        // the first block of the awake device. The remaining error is slewed out after the takeover.
+        let mag = r.magnitude();
+        let lead = scaled(self.audio.output_latency(), mag)
+            + Time::new(hint, self.sample_rate)
+            + scaled(Time::new(Self::ACK_GUESS_NANOS, 1_000_000_000), mag);
+        let at = if r.is_reverse() { (p - lead).max(Time::ZERO) } else { p + lead };
+        self.restart_at(at, r, Some(p));
     }
 
     /// Output restarted underneath (device change): re-seek at the current position, keeping the rate.
@@ -121,14 +208,26 @@ impl AudioClock {
 
     /// Under `control`. The audio calls run outside `state`; meanwhile the clock holds at the new anchor.
     fn restart(&self, position: Time, rate: PlaybackRate) {
+        self.restart_at(position, rate, None);
+    }
+
+    /// `resync_from` = the picture position of a re-seek after a free run (the picture keeps running from there).
+    fn restart_at(&self, position: Time, rate: PlaybackRate, resync_from: Option<Time>) {
         let was_running = {
             let mut s = lock(&self.state);
             let running = !s.rate.is_paused();
             s.anchor = position;
             s.rate = rate;
             s.base = None;
-            s.last_returned = None;
+            s.last_returned = resync_from;
             s.exhaust_nanos = None;
+            s.free_origin = resync_from.unwrap_or(position);
+            s.free_lead = if resync_from.is_some() { 0 } else { Self::PRIMING_BUDGET_NANOS };
+            s.free_ran = false;
+            s.resynced = resync_from.is_some();
+            s.resync_pending = false;
+            s.took_over = false;
+            s.restart_count += 1;
             s.generation = IN_FLIGHT;
             running
         };
@@ -153,9 +252,39 @@ impl AudioClock {
         s.seen_frames = stamp.frames;
     }
 
+    /// Position while the audio is not acknowledged: held at the origin for the priming budget, then running on the
+    /// host time (never backwards).
+    fn free_line(s: &mut State, nanos: i64) -> Time {
+        let d = nanos - s.restart_nanos - s.free_lead;
+        if d <= 0 {
+            return s.last_returned.unwrap_or(s.anchor);
+        }
+        if !s.resynced {
+            if !s.free_ran {
+                eprintln!(
+                    "sq-audio: audio not consuming after {} ms, picture runs on the host clock",
+                    s.free_lead / 1_000_000
+                );
+            }
+            s.free_ran = true;
+        }
+        let mag = s.rate.magnitude();
+        let elapsed = scaled(Time::new(d, 1_000_000_000), mag);
+        let mut p =
+            if s.rate.is_reverse() { (s.free_origin - elapsed).max(Time::ZERO) } else { s.free_origin + elapsed };
+        if let Some(last) = s.last_returned {
+            p = if s.rate.is_reverse() { p.min(last) } else { p.max(last) };
+        }
+        s.last_returned = Some(p);
+        p
+    }
+
     fn position(&self, s: &mut State, nanos: i64) -> Time {
-        if s.rate.is_paused() || s.generation == IN_FLIGHT {
+        if s.rate.is_paused() {
             return s.anchor;
+        }
+        if s.generation == IN_FLIGHT {
+            return s.last_returned.unwrap_or(s.anchor);
         }
         let stamp = self.audio.last_render();
         if stamp.frames != s.seen_frames {
@@ -167,11 +296,16 @@ impl AudioClock {
             None => {
                 let f = self.audio.flushed();
                 if f.generation < s.generation {
-                    return s.anchor; // feeder has not flushed yet
+                    return Self::free_line(s, nanos); // feeder has not flushed yet
                 }
                 let (ack_epoch, ack_frames) = self.audio.consumed_at_epoch();
                 if ack_epoch < f.epoch {
-                    return s.anchor; // consumer has not applied the flush
+                    return Self::free_line(s, nanos); // consumer has not applied the flush
+                }
+                if s.free_ran && !s.resynced {
+                    s.latency_hint = f.latency;
+                    s.resync_pending = true;
+                    return Self::free_line(s, nanos);
                 }
                 s.base = Some(ack_frames);
                 s.latency = f.latency;
@@ -208,12 +342,37 @@ impl AudioClock {
             }
         }
         let elapsed = Time::new(heard - base - s.latency, self.sample_rate) - scaled(s.output_latency, mag) + extra;
-        if elapsed <= Time::ZERO {
-            return s.anchor;
+        // After a re-seek the audio line may still be behind the picture (elapsed < 0); the takeover happens now and
+        // the difference is slewed out, so the picture neither stands still nor jumps.
+        if elapsed <= Time::ZERO && !s.resynced {
+            return s.last_returned.unwrap_or(s.anchor);
         }
-        let mut p = if s.rate.is_reverse() { (s.anchor - elapsed).max(Time::ZERO) } else { s.anchor + elapsed };
+        let rev = s.rate.is_reverse();
+        let raw = if rev { (s.anchor - elapsed).max(Time::ZERO) } else { s.anchor + elapsed };
+        let mut p = raw;
+        if s.resynced {
+            if !s.took_over {
+                s.took_over = true;
+                // Continue on the host line of this very call, so the takeover sample moves like the ones before it.
+                let d = (nanos - s.restart_nanos - s.free_lead).max(0);
+                let el = scaled(Time::new(d, 1_000_000_000), mag);
+                let host_line = if rev { (s.free_origin - el).max(Time::ZERO) } else { s.free_origin + el };
+                let last = s.last_returned.map_or(host_line, |l| if rev { l.min(host_line) } else { l.max(host_line) });
+                s.slew0 = if rev { raw - last } else { last - raw };
+                s.slew_e0 = elapsed;
+                eprintln!(
+                    "sq-audio: clock host -> audio takeover at {} ms host time, picture {:+} ms vs audio",
+                    nanos / 1_000_000,
+                    ms(s.slew0)
+                );
+            }
+            let since = (elapsed - s.slew_e0).max(Time::ZERO);
+            let c = Time::new(since.value(), since.timescale().saturating_mul(5));
+            let d = if s.slew0 > Time::ZERO { (s.slew0 - c).max(Time::ZERO) } else { (s.slew0 + c).min(Time::ZERO) };
+            p = if rev { (raw - d).max(Time::ZERO) } else { raw + d };
+        }
         if let Some(last) = s.last_returned {
-            p = if s.rate.is_reverse() { p.min(last) } else { p.max(last) };
+            p = if rev { p.min(last) } else { p.max(last) };
         }
         s.last_returned = Some(p);
         p
@@ -246,6 +405,7 @@ impl PlaybackClock for AudioClock {
             s.base = None;
             s.last_returned = None;
             s.exhaust_nanos = None;
+            s.resync_pending = false;
             (p, running)
         };
         if was_running {

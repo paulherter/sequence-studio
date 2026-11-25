@@ -28,15 +28,32 @@ pub(super) fn pump(
                 }
             }
         });
+        // SQ_EXPORT_TRACE=1: how long the encoding side waited for a frame (render-bound) and how long it consumed them.
+        let trace = std::env::var_os("SQ_EXPORT_TRACE").is_some();
+        let (mut waited, mut consumed) = (std::time::Duration::ZERO, std::time::Duration::ZERO);
         for i in 0..n {
             cancel.check()?;
-            match rx.recv() {
-                Ok(frame) => consume(i, frame?)?,
+            let t0 = std::time::Instant::now();
+            let got = rx.recv();
+            waited += t0.elapsed();
+            match got {
+                Ok(frame) => {
+                    let t1 = std::time::Instant::now();
+                    consume(i, frame?)?;
+                    consumed += t1.elapsed();
+                }
                 Err(_) => {
                     cancel.check()?;
                     return Err(ExportError::Other("the render thread stopped".to_string()));
                 }
             }
+        }
+        if trace {
+            eprintln!(
+                "export-trace encode side: {n} frames, waited for a frame {:.0} ms, consumed (convert+encode+audio) {:.0} ms",
+                waited.as_secs_f64() * 1e3,
+                consumed.as_secs_f64() * 1e3
+            );
         }
         Ok(())
     })

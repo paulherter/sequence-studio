@@ -58,3 +58,29 @@ fn a_compositor_that_cannot_be_created_is_reported_once_and_stays_failed() {
         Some("no adapter")
     );
 }
+
+#[test]
+fn only_a_coarser_scrub_decode_is_a_scrub_preview_job() {
+    use super::core::is_scrub_preview_job;
+    assert!(is_scrub_preview_job(true, 4, 1), "quarter-size scrub read of a big file");
+    assert!(!is_scrub_preview_job(true, 1, 1), "scrub picture equal to the paused one");
+    assert!(!is_scrub_preview_job(false, 4, 1), "a warm-up or playing decode is never a scrub job");
+}
+
+#[test]
+fn scrubbing_again_right_after_a_scrub_recovers_and_leaves_the_ordinary_token_alone() {
+    let rig = Rig::new(|_| {});
+    rig.opener.add("a.mov", 500, std::time::Duration::from_millis(5));
+    rig.media(&[(id(100), "a.mov")]);
+    rig.handle.set_timeline(timeline(vec![vec![clip(10, id(100), 0, 0, 20)]]), HashMap::new());
+    for round in 0..3i64 {
+        rig.handle.begin_scrub();
+        for n in 1..=10i64 {
+            rig.handle.scrub(sq_core_time::Time::new(round * 40 + n * 3, 25));
+        }
+        rig.handle.end_scrub();
+        let end = sq_core_time::Time::new(round * 40 + 30, 25);
+        rig.wait("the exact frame after the scrub", move |e| e.position() == end && e.is_frame_settled());
+        assert_eq!(rig.handle.query(move |e| e.normal_token_cancelled(id(100))), Some(false));
+    }
+}

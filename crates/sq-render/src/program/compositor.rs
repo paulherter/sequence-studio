@@ -137,6 +137,9 @@ pub struct Inputs<'a> {
 /// Per-frame choices.
 #[derive(Default)]
 pub struct RenderOptions {
+    /// Playback preview at a canvas smaller than the sequence: graded layers convert and grade at their shown size. Export,
+    /// paused pictures and stills leave it false (the exact path).
+    pub preview: bool,
     /// Present resamples the sequence-sized composite to this size (export scaling); `None` = the sequence size.
     pub output_size: Option<(u32, u32)>,
     /// Transparency grid: the composite starts transparent and Present lays it over the checkerboard.
@@ -169,6 +172,11 @@ pub struct RenderedFrame {
     pub milliseconds: f64,
     /// Milliseconds spent waiting for the GPU to finish an earlier frame (back-pressure), not part of `milliseconds`.
     pub gpu_wait_ms: f64,
+    /// Where `milliseconds` went: layers and uploads, drawing the nodes, submit, poll (the play log's compose columns).
+    pub phase_ms: [f64; 4],
+    /// CPU ms the render thread itself used (play log only, else 0): the layers phase, the whole render, then the system
+    /// (kernel) part of each. Far below the wall time of the same part = the thread was not running (preempted, parked).
+    pub cpu_ms: [f64; 4],
 }
 
 /// Which uploaded picture a layer's frame stands for.
@@ -237,6 +245,7 @@ impl ProgramCompositor {
         options: &RenderOptions,
         inputs: &Inputs<'_>,
     ) -> Result<RenderedFrame, ProgramError> {
+        let _frame_span = sq_os::trace::span("render", "compose frame");
         let waited = Instant::now();
         let bound = options.gpu_wait.unwrap_or(GPU_WAIT_LIMIT);
         let gpu = &self.gpu;
@@ -258,17 +267,24 @@ impl ProgramCompositor {
             });
         }
         let gpu_wait_ms = waited.elapsed().as_secs_f64() * 1e3;
+        sq_os::trace::since("render", "gpu in-flight wait", waited, String::new);
         let start = Instant::now();
+        let cpu_start = sq_gpu::gpu::timing::thread_cpu_now();
         let mut cmds = self.gpu.commands();
         let mut pictures: Vec<Picture> = Vec::new();
         let mut kept: Vec<Arc<GpuFrame>> = Vec::new();
         let mut layers = Vec::with_capacity(requests.len());
+        let layers_scope = sq_gpu::gpu::timing::layers_scope();
         for l in requests {
+            let _layer_span = sq_os::trace::span_args("render", "layer prepare", || format!("clip={:?}", l.clip));
             let mut r = self.layer_for(l, inputs.source, &mut pictures, &mut kept)?;
             let loading_placeholder = matches!(r.content, Content::Placeholder(PlaceholderKind::Loading));
             let adjustment = l.generator.as_ref().is_some_and(|g| g.kind == ADJUSTMENT_KIND);
             if !loading_placeholder || adjustment {
+                let t = sq_gpu::gpu::timing::sub_start();
+                let _grade_span = sq_os::trace::span("render", "layer grade lookup");
                 r.color_pipeline = (inputs.grade)(l);
+                sq_gpu::gpu::timing::sub_add(sq_gpu::gpu::timing::Sub::Grade, t);
             }
             if let Some(mattes) = inputs.mattes
                 && l.effects.masks.iter().any(|m| m.source == MaskSource::Magic)
@@ -281,15 +297,28 @@ impl ProgramCompositor {
         for c in &options.captions {
             caption_nodes.push(RenderNode::Layer(self.raster_layer(c, &mut pictures)?));
         }
+        let layers_done = Instant::now();
+        let cpu_layers = sq_gpu::gpu::timing::thread_cpu_now();
+        drop(layers_scope);
+        let _prep = sq_os::trace::span("render", "canvas alloc");
         let (w, h) = (format.width as u32, format.height as u32);
         let (ow, oh) = options.output_size.unwrap_or((w, h));
         let working = self.canvas(w, h, PixelFormat::Rgba16Float, |s| &mut s.working);
         let output = self.next_output_canvas(ow, oh);
 
+        drop(_prep);
+        let tree_span = sq_os::trace::span("render", "node tree");
         let mut nodes = RenderNode::tree(requests, &layers);
         nodes.extend(caption_nodes.iter().cloned());
+        drop(tree_span);
+        let draw_span =
+            sq_os::trace::span_args("render", "draw (record passes)", || format!("layers={}", layers.len()));
+        self.compositor.preview_reduce = options.preview;
         self.draw(&nodes, format, &working, &mut cmds, options.transparent, &pictures, &mut kept)?;
+        drop(draw_span);
+        let present_span = sq_os::trace::span("render", "present pass");
         self.present(&mut cmds, &working, &output, None)?;
+        drop(present_span);
         if let Some((grade, columns)) = &inputs.split {
             let regraded: Vec<RenderLayer> = requests
                 .iter()
@@ -313,15 +342,41 @@ impl ProgramCompositor {
             // A second canvas is only kept while Split is showing.
             self.split_working = None;
         }
+        let drawn = Instant::now();
+        let readback_span = sq_os::trace::span("render", "readback record");
         let readback = if options.readback { Some(cmds.read_texture(&output)?) } else { None };
+        drop(readback_span);
         for f in kept {
             cmds.keep(f);
         }
+        let submit_span = sq_os::trace::span("render", "gpu submit");
         let submission = self.gpu.submit(cmds);
         self.in_flight.submitted(submission);
+        drop(submit_span);
+        let submitted = Instant::now();
+        let poll_span = sq_os::trace::span("render", "gpu poll");
         self.gpu.poll();
+        drop(poll_span);
+        let _end = sq_os::trace::span("render", "planes end_frame");
         self.planes.end_frame();
-        Ok(RenderedFrame { working, output, readback, milliseconds: start.elapsed().as_secs_f64() * 1e3, gpu_wait_ms })
+        let ms = |a: Instant, b: Instant| b.saturating_duration_since(a).as_secs_f64() * 1e3;
+        let phase_ms =
+            [ms(start, layers_done), ms(layers_done, drawn), ms(drawn, submitted), ms(submitted, Instant::now())];
+        let cpu_end = sq_gpu::gpu::timing::thread_cpu_now();
+        let (layers_cpu, total_cpu) = (
+            sq_gpu::gpu::timing::cpu_ms_between(cpu_start, cpu_layers),
+            sq_gpu::gpu::timing::cpu_ms_between(cpu_start, cpu_end),
+        );
+        let cpu_ms = [layers_cpu[0], total_cpu[0], layers_cpu[1], total_cpu[1]];
+        Ok(RenderedFrame {
+            working,
+            output,
+            readback,
+            milliseconds: start.elapsed().as_secs_f64() * 1e3,
+            gpu_wait_ms,
+            phase_ms,
+            cpu_ms,
+        })
     }
 
     /// The RGBA8 bytes of a presented frame (rows top down, stride = width * 4).
@@ -429,10 +484,16 @@ impl ProgramCompositor {
             primitive: Primitive::Triangles,
         };
         let pipeline = self.gpu.render_pipeline(key)?;
-        let mut pass = cmds.render(output, None);
+        // A different shape than the canvas (export preset): the picture is fitted unstretched, centered, on opaque black.
+        let (src, dst) = ((canvas.width(), canvas.height()), (output.width(), output.height()));
+        let fit = Some(fit_rect(src, dst)).filter(|r| *r != (0, 0, dst.0, dst.1));
+        let mut pass = cmds.render(output, fit.map(|_| [0.0, 0.0, 0.0, 1.0]));
         pass.set_pipeline(&pipeline);
         pass.set_input(canvas, 0)?;
         pass.set_constants(&present_uniforms(), 0)?;
+        if let Some((x, y, w, h)) = fit {
+            pass.set_viewport(x as f32, y as f32, w as f32, h as f32);
+        }
         if let Some(columns) = scissor {
             pass.set_scissor(0, 0, columns.min(output.width()), output.height());
         }
@@ -458,14 +519,22 @@ impl ProgramCompositor {
             return Ok(match g.kind.as_str() {
                 SOLID_KIND => RenderLayer::solid(&g.payload, l.transform, None, l.corner_radius).applying(l),
                 ADJUSTMENT_KIND => RenderLayer::adjustment(l.transform, None).applying(l),
-                _ => match source(l) {
-                    LayerSource::Raster(r) => self.raster_layer(&r, pictures)?.applying(l),
-                    LayerSource::Offline => offline(l),
-                    _ => hidden_layer(),
-                },
+                _ => {
+                    let t = sq_gpu::gpu::timing::sub_start();
+                    let picked = source(l);
+                    sq_gpu::gpu::timing::sub_add(sq_gpu::gpu::timing::Sub::Source, t);
+                    match picked {
+                        LayerSource::Raster(r) => self.raster_layer(&r, pictures)?.applying(l),
+                        LayerSource::Offline => offline(l),
+                        _ => hidden_layer(),
+                    }
+                }
             });
         }
-        Ok(match source(l) {
+        let t = sq_gpu::gpu::timing::sub_start();
+        let picked = source(l);
+        sq_gpu::gpu::timing::sub_add(sq_gpu::gpu::timing::Sub::Source, t);
+        Ok(match picked {
             LayerSource::Offline => offline(l),
             LayerSource::Hidden => hidden_layer(),
             LayerSource::Raster(r) => self.raster_layer(&r, pictures)?.applying(l),
@@ -473,11 +542,12 @@ impl ProgramCompositor {
                 let picture = match self.planes.still(media) {
                     Some(p) => p,
                     None => {
+                        let timer = sq_gpu::gpu::timing::sub_start();
                         let t = self.gpu.texture(width, height, PixelFormat::Rgba8Unorm);
-                        let bytes: Vec<u8> = rgba.as_ref().clone();
-                        self.gpu.upload_texture(&t, &bytes, width * 4);
+                        self.gpu.upload_texture(&t, &rgba, width * 4);
                         let p = Picture::rgba(t, 1);
                         self.planes.put_still(media, p.clone());
+                        sq_gpu::gpu::timing::sub_add(sq_gpu::gpu::timing::Sub::RasterUpload, timer);
                         p
                     }
                 };
@@ -491,10 +561,12 @@ impl ProgramCompositor {
             }
             LayerSource::Media(s) => {
                 let key = PlaneKey { media: s.media, index: s.index, proxy: s.proxy, divisor: s.divisor };
+                let t = sq_gpu::gpu::timing::sub_start();
                 let mut picture = to_gpu(&self.gpu, &s.frame, Some(key), &mut self.planes, kept)?;
                 if let Some(map) = &s.gyro {
                     picture = super::gyro_warp::warp_picture(&self.gpu, &picture, map).unwrap_or(picture);
                 }
+                sq_gpu::gpu::timing::sub_add(sq_gpu::gpu::timing::Sub::ToGpu, t);
                 pictures.push(picture);
                 let frame = slot_frame(s.frame.width, s.frame.height, s.frame.pixel_format, pictures.len() - 1);
                 let mut r = RenderLayer::new(Content::Frame { frame, color_hint: s.info.clone() });
@@ -511,11 +583,12 @@ impl ProgramCompositor {
         let picture = match self.planes.raster(r.key) {
             Some(p) => p,
             None => {
+                let timer = sq_gpu::gpu::timing::sub_start();
                 let t = self.gpu.texture(r.width, r.height, PixelFormat::Rgba32Float);
-                let bytes: Vec<u8> = r.pixels.iter().flat_map(|v| v.to_le_bytes()).collect();
-                self.gpu.upload_texture(&t, &bytes, r.width * 16);
+                self.gpu.upload_texture(&t, &float_bytes(&r.pixels), r.width * 16);
                 let p = Picture::rgba(t, 0);
                 self.planes.put_raster(r.key, p.clone());
+                sq_gpu::gpu::timing::sub_add(sq_gpu::gpu::timing::Sub::RasterUpload, timer);
                 p
             }
         };
@@ -531,11 +604,63 @@ impl ProgramCompositor {
     }
 }
 
+/// The little-endian bytes of `v` for `write_texture`. On a little-endian system (every system the app ships on) a borrowed
+/// view of the floats themselves: no allocation, no per-byte loop (a 4K raster is 133 MB; the old `flat_map(to_le_bytes)
+/// .collect()` built a fresh Vec of that size on every cache miss, page faults and free included, on the render thread).
+fn float_bytes(v: &[f32]) -> std::borrow::Cow<'_, [u8]> {
+    #[cfg(target_endian = "little")]
+    {
+        std::borrow::Cow::Borrowed(bytemuck::cast_slice(v))
+    }
+    #[cfg(target_endian = "big")]
+    {
+        std::borrow::Cow::Owned(v.iter().flat_map(|x| x.to_le_bytes()).collect())
+    }
+}
+
 fn offline(l: &LayerRequest) -> RenderLayer {
     let mut r = RenderLayer::new(Content::Placeholder(PlaceholderKind::Offline));
     r.transform = l.transform;
     r.corner_radius = l.corner_radius;
     r.applying(l)
+}
+
+/// The rectangle `(x, y, w, h)` a `src`-shaped picture fills in a `dst` frame: the largest unstretched fit, centered
+/// ("Scale to Fit"). Size and offset are even where the frame allows it, so 4:2:0 chroma lines up. The GPU Present pass and
+/// the CPU export scale (`export_scale.rs`) both use it, so they cut the same rectangle.
+pub fn fit_rect((sw, sh): (u32, u32), (dw, dh): (u32, u32)) -> (u32, u32, u32, u32) {
+    if sw == 0 || sh == 0 || dw == 0 || dh == 0 || u64::from(sw) * u64::from(dh) == u64::from(sh) * u64::from(dw) {
+        return (0, 0, dw, dh);
+    }
+    let even = |v: u64, max: u32| -> u32 { ((v.max(2) & !1).min(u64::from(max) & !1).max(1)) as u32 };
+    let (w, h) = if u64::from(sw) * u64::from(dh) > u64::from(sh) * u64::from(dw) {
+        // Wider than the frame: full width, bars above and below.
+        (dw, even((u64::from(dw) * u64::from(sh) + u64::from(sw) / 2) / u64::from(sw), dh))
+    } else {
+        (even((u64::from(dh) * u64::from(sw) + u64::from(sh) / 2) / u64::from(sh), dw), dh)
+    };
+    (((dw - w) / 2) & !1, ((dh - h) / 2) & !1, w, h)
+}
+
+#[cfg(test)]
+mod fit_rect_tests {
+    use super::fit_rect;
+
+    #[test]
+    fn portrait_in_landscape_is_pillarboxed_centered_and_even() {
+        assert_eq!(fit_rect((1080, 1920), (1920, 1080)), (656, 0, 608, 1080));
+    }
+
+    #[test]
+    fn landscape_in_portrait_is_letterboxed() {
+        assert_eq!(fit_rect((1920, 1080), (1080, 1920)), (0, 656, 1080, 608));
+    }
+
+    #[test]
+    fn the_same_aspect_fills_the_frame() {
+        assert_eq!(fit_rect((3840, 2160), (1920, 1080)), (0, 0, 1920, 1080));
+        assert_eq!(fit_rect((1920, 1080), (1920, 1080)), (0, 0, 1920, 1080));
+    }
 }
 
 /// `PresentU` of Present.slang (80 bytes): SDR, unchanged gamma, linear sampling.
@@ -548,4 +673,33 @@ fn present_uniforms() -> Vec<u8> {
     b.extend(f([0.0, 1.0, 1.0, 1.0])); // mode, peak, knee, exponent
     b.extend([0u8; 16]); // nearest + padding
     b
+}
+
+#[cfg(test)]
+mod float_bytes_tests {
+    use super::float_bytes;
+
+    /// The path the cache miss used before (a fresh Vec, one `to_le_bytes` per float).
+    fn old_bytes(v: &[f32]) -> Vec<u8> {
+        v.iter().flat_map(|x| x.to_le_bytes()).collect()
+    }
+
+    #[test]
+    fn the_zero_copy_bytes_equal_the_old_per_float_bytes() {
+        let mut v: Vec<f32> = (0..4096).map(|i| (i as f32 * 0.37).sin() * 3.0 - 0.5).collect();
+        v.extend([0.0, -0.0, 1.0, f32::MIN_POSITIVE, f32::MAX, f32::INFINITY, f32::NEG_INFINITY, f32::NAN, 1e-40]);
+        assert_eq!(&*float_bytes(&v), old_bytes(&v).as_slice());
+        assert_eq!(float_bytes(&[]).len(), 0);
+        assert_eq!(&*float_bytes(&[1.0]), &1.0f32.to_le_bytes());
+    }
+
+    #[cfg(target_endian = "little")]
+    #[test]
+    fn on_little_endian_the_bytes_are_a_view_of_the_floats_not_a_copy() {
+        let v = vec![0.5f32; 1024];
+        let b = float_bytes(&v);
+        assert!(matches!(b, std::borrow::Cow::Borrowed(_)));
+        assert_eq!(b.as_ptr(), v.as_ptr().cast::<u8>());
+        assert_eq!(b.len(), v.len() * 4);
+    }
 }

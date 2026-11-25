@@ -41,20 +41,14 @@ const SUBTITLE_EXTENSIONS: [&str; 4] = ["srt", "vtt", "ass", "ssa"];
 
 /// An HTTPS GET with the system `curl` (Windows 10+ and macOS ship it; the app has no HTTP library, as the model download).
 /// `None` on any failure; the answer is capped at 1 MB (a release feed is a few KB).
-fn http_get(url: &str) -> Option<Vec<u8>> {
+pub(crate) fn http_get(url: &str) -> Option<Vec<u8>> {
     let mut cmd = std::process::Command::new("curl");
-    cmd.args([
-        "-fsSL",
-        "--max-time",
-        "15",
-        "--max-filesize",
-        "1000000",
-        "-H",
-        "Accept: application/vnd.github+json",
-        url,
-    ])
-    .stdin(std::process::Stdio::null())
-    .stderr(std::process::Stdio::null());
+    cmd.args(["-fsS", "--max-time", "15", "--max-filesize", "1000000", "-H", "Accept: application/vnd.github+json"])
+        .args(curl_protocol_args(url)?)
+        .arg("--")
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
     #[cfg(windows)]
     {
         use std::os::windows::process::CommandExt;
@@ -62,6 +56,64 @@ fn http_get(url: &str) -> Option<Vec<u8>> {
     }
     let out = cmd.output().ok()?;
     out.status.success().then_some(out.stdout)
+}
+
+/// The curl switches that pin the protocol of an allowed address (`UpdateCheck::url_allowed`): https with https-only
+/// redirects, or, for the local test feed, plain http without following redirects. `None` for any other address.
+fn curl_protocol_args(url: &str) -> Option<[&'static str; 5]> {
+    if !sq_editor_session::UpdateCheck::url_allowed(url) {
+        return None;
+    }
+    Some(if url.starts_with("https://") {
+        ["-L", "--proto", "=https", "--proto-redir", "=https"]
+    } else {
+        ["--max-redirs", "0", "--proto", "=http", "--no-keepalive"]
+    })
+}
+
+/// Streams `url` into `file` with the system `curl`, reporting the size on disk; a cancel stops curl and removes the file.
+pub(crate) fn curl_download(
+    url: &str,
+    file: &Path,
+    progress: &sq_editor_session::DownloadProgress,
+) -> Result<(), String> {
+    let mut cmd = std::process::Command::new("curl");
+    let Some(protocol) = curl_protocol_args(url) else { return Err("the address is not allowed".into()) };
+    cmd.args(["-fsS", "--retry", "2", "--connect-timeout", "20", "--speed-limit", "1024", "--speed-time", "60", "-o"])
+        .arg(file)
+        .args(protocol)
+        .arg("--")
+        .arg(url)
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x0800_0000); // CREATE_NO_WINDOW
+    }
+    let mut child = cmd.spawn().map_err(|e| format!("cannot start curl: {e}"))?;
+    let total = progress.snapshot().1;
+    loop {
+        if progress.is_canceled() {
+            let _ = child.kill();
+            let _ = child.wait();
+            let _ = std::fs::remove_file(file);
+            return Err("canceled".into());
+        }
+        match child.try_wait() {
+            Ok(Some(status)) if status.success() => return Ok(()),
+            Ok(Some(status)) => {
+                let _ = std::fs::remove_file(file);
+                return Err(format!("curl ended with {status}"));
+            }
+            Ok(None) => {
+                progress.report(std::fs::metadata(file).map_or(0, |m| m.len()), total);
+                std::thread::sleep(std::time::Duration::from_millis(100));
+            }
+            Err(e) => return Err(e.to_string()),
+        }
+    }
 }
 
 /// Runs a dialog future as a task and hands back its answer as an ask. The dialog opens without blocking the event loop
@@ -216,6 +268,13 @@ impl ShellFilePicker for DesktopFiles {
                 }
             }
         })
+    }
+    fn download(&mut self, url: &str, file: &Path, progress: std::sync::Arc<sq_editor_session::DownloadProgress>) {
+        let (url, file) = (url.to_string(), file.to_path_buf());
+        std::thread::spawn(move || {
+            let result = curl_download(&url, &file, &progress);
+            progress.finish(result);
+        });
     }
     fn choose_export_location(
         &mut self,
@@ -379,5 +438,20 @@ mod tests {
         rt.run_until_stalled();
         rt.run_until_stalled();
         assert_eq!(*got.borrow(), Some(PathBuf::from("/a.sqproj")));
+    }
+}
+
+#[cfg(test)]
+mod update_address_tests {
+    use super::curl_protocol_args;
+
+    #[test]
+    fn curl_is_pinned_to_the_allowed_protocol() {
+        let https = curl_protocol_args("https://example.org/a").expect("https");
+        assert!(https.contains(&"=https") && !https.contains(&"=http"));
+        assert_eq!(curl_protocol_args("http://example.org/a"), None);
+        assert_eq!(curl_protocol_args("file:///etc/passwd"), None);
+        // The local test feed needs the switch, which the test run does not set.
+        assert_eq!(curl_protocol_args("http://127.0.0.1:8000/f.json"), None);
     }
 }

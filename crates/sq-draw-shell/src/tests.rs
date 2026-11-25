@@ -647,6 +647,30 @@ mod menus {
     }
 
     #[test]
+    fn a_cut_menu_shows_an_arrow_on_each_edge_that_hides_rows() {
+        let m = measure();
+        let items: Vec<SQMenuItem> = (0..20).map(|i| SQMenuItem::new(&format!("Item {i}"))).collect();
+        let mut v = MenuListView::new(items);
+        v.max_height = Some(120.0);
+        v.relayout(&m);
+        let quads = |v: &MenuListView| {
+            let mut c = Canvas::with_size(400.0, 300.0, None, 2.0);
+            v.draw(&mut c, &DrawTheme::default());
+            c.list.quads().len()
+        };
+        assert_eq!(v.scroll_hints(), (false, true));
+        let top = quads(&v);
+        v.scroll(50.0);
+        assert_eq!(v.scroll_hints(), (true, true));
+        assert!(quads(&v) > top, "the second hidden edge gets its own arrow strip");
+        v.scroll(10_000.0);
+        assert_eq!(v.scroll_hints(), (true, false));
+        let mut whole = MenuListView::new(vec![SQMenuItem::new("Cut")]);
+        whole.relayout(&m);
+        assert_eq!(whole.scroll_hints(), (false, false));
+    }
+
+    #[test]
     fn filter_row_pushes_rows_down() {
         let m = measure();
         let mut v = MenuListView::new(vec![SQMenuItem::new("Cut")]);
@@ -1143,6 +1167,15 @@ mod main_menu {
         s.modal_shown = true;
         let file = menu(&menus(&s, Platform::Mac, &Rc::default()), "File");
         assert!(file.iter().all(|i| !i.is_enabled || i.kind != SQMenuItemKind::Action || i.submenu.is_some()));
+    }
+
+    #[test]
+    fn the_start_window_can_check_for_updates() {
+        let s = ShellMenuState { chooser_shown: true, ..Default::default() };
+        let help = menu(&menus(&s, Platform::Mac, &Rc::default()), "Help");
+        let enabled = |t: &str| help.iter().find(|i| i.title == t).map(|i| i.is_enabled);
+        assert_eq!(enabled("Check for Updates\u{2026}"), Some(true));
+        assert_eq!(enabled("Welcome Tour\u{2026}"), Some(true));
     }
 
     #[test]

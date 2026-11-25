@@ -61,6 +61,9 @@ pub struct EngineDeps {
     pub display: Option<Arc<super::display_pacing::DisplayTiming>>,
     /// Decode threads (<= 4).
     pub workers: usize,
+    /// `Some(n)`: of the open files nothing needs right now the `n` most recent stay open and the older ones close
+    /// (`MemoryBudget::idle_decoders`, low-memory machines only); `None`: no file is ever closed before the project closes.
+    pub idle_decoders: Option<usize>,
 }
 
 /// The gyro engine and how it is asked: `wait` blocks a frame until the clip's analysis is done (export), otherwise a clip
@@ -86,6 +89,7 @@ impl EngineDeps {
             frame_cache_bytes: 1 << 30,
             display: None,
             workers: 4,
+            idle_decoders: None,
         }
     }
 }
@@ -241,7 +245,10 @@ impl Msg {
 
 /// The engine's verbs (the Swift `ProgramEngine` protocol and the setters around it).
 pub enum Command {
-    SetTimeline { timeline: Box<Timeline>, sequences: HashMap<Id, Timeline> },
+    SetTimeline {
+        timeline: Box<Timeline>,
+        sequences: HashMap<Id, Timeline>,
+    },
     SetMedia(Vec<MediaRef>),
     MediaChanged(HashSet<Id>),
     SetProxyUse(super::proxy_picture::ProxyUse),
@@ -254,11 +261,14 @@ pub enum Command {
     Scrub(Time),
     EndScrub,
     SetQuality(DecodeScale),
+    /// The monitor's picture size in pixels (width, height).
+    SetViewSize((u32, u32)),
     SetPrefetchHalved(bool),
     SetPlayRange(Option<TimeRange>),
     SetLoops(bool),
     SetShowsCaptions(bool),
     SetTransparencyGrid(bool),
+    SetOutputSize(Option<(u32, u32)>),
     SetColorBypass(Option<ColorBypass>),
     SetLookPreview(Option<Box<LookPreview>>),
     SetFrameCacheBytes(usize),
@@ -279,7 +289,11 @@ impl ProgramEngine {
         let (engine_tx, engine_shared) = (tx.clone(), Arc::clone(&shared));
         let thread = std::thread::Builder::new()
             .name("sq-render".into())
-            .spawn(move || ProgramEngine::new(deps, engine_tx, engine_shared).run(&rx))
+            .spawn(move || {
+                // The thread every shown picture waits for: compose, publish. Decoder lanes are `Role::Decode`.
+                sq_os::thread::set_current_thread_role(sq_os::thread::Role::Interactive);
+                ProgramEngine::new(deps, engine_tx, engine_shared).run(&rx)
+            })
             .ok();
         ProgramHandle { tx, shared, thread }
     }
@@ -341,6 +355,10 @@ impl ProgramHandle {
     pub fn set_quality(&self, q: DecodeScale) {
         self.command(Command::SetQuality(q));
     }
+    /// The Program monitor's picture size in pixels; playback composes at that size when it is smaller than the sequence.
+    pub fn set_view_size(&self, width: u32, height: u32) {
+        self.command(Command::SetViewSize((width, height)));
+    }
     /// The play range the host stops or wraps at (None: the whole sequence); the picture never leads out of it.
     pub fn set_play_range(&self, range: Option<TimeRange>) {
         self.command(Command::SetPlayRange(range));
@@ -355,6 +373,11 @@ impl ProgramHandle {
     }
     pub fn set_shows_captions(&self, on: bool) {
         self.command(Command::SetShowsCaptions(on));
+    }
+    /// Export scaling on the GPU: every picture is composed at the sequence size and presented at `size` (bilinear, in
+    /// linear light). `None` = the sequence size.
+    pub fn set_output_size(&self, size: Option<(u32, u32)>) {
+        self.command(Command::SetOutputSize(size));
     }
     pub fn set_transparency_grid(&self, on: bool) {
         self.command(Command::SetTransparencyGrid(on));

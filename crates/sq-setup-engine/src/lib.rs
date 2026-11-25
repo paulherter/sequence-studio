@@ -8,6 +8,7 @@ pub mod detect;
 pub mod engine;
 pub mod error;
 pub mod host;
+pub mod identity;
 pub mod job;
 pub mod log;
 pub mod payload;
@@ -24,11 +25,12 @@ mod engine_tests;
 
 pub use detect::{
     InstallSource, Installed, LocationCheck, UpdateKind, check_location, default_location, detect_installed,
-    measure_data, resolve_location, update_kind,
+    measure_data, other_channel_installed, quiet_location, resolve_location, update_kind,
 };
 pub use engine::{JobEnd, JobSpec, Progress, finish_uninstall_copy, run_job, uninstall_copy_name};
 pub use error::{ErrorCode, SetupError, SpaceFacts, describe_io};
 pub use host::{FakeHost, Host, KnownFolders};
+pub use identity::Identity;
 pub use job::{Job, Step};
 pub use log::Log;
 pub use payload::{Payload, UnpackEnd};

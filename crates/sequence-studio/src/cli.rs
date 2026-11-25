@@ -1,6 +1,6 @@
 //! Command-line test modes: headless runs of the app that need no window (the Swift `SQ_*` shot and dump modes).
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// The parsed command line: what to run and which project to open.
 #[derive(Debug, PartialEq)]
@@ -297,6 +297,21 @@ pub enum Mode {
         /// `--bench-from`, `--bench-secs`, `--bench-json`, `--bench-tag`, `--quality`.
         bench: crate::bench_report::BenchOpts,
     },
+    /// Edits the project the way a rough cut does (blade, ripple delete, trim, move, seek, each followed by Play) and writes
+    /// the JSON of the time to the next picture and from Play to the first one (`headless::edit_bench`).
+    EditBench {
+        out: PathBuf,
+        width: u32,
+        height: u32,
+    },
+    /// Edits while the monitor plays (drag a clip, add and change an effect, Stabilizer, subject mask, undo, pause, scrub, Play
+    /// again) and writes one JSON line per phase and a summary (`headless::workflow_bench`, `--script <name>`, default all).
+    WorkflowBench {
+        out: PathBuf,
+        width: u32,
+        height: u32,
+        script: String,
+    },
     /// First Play after the open and after a switch to a second sequence, through the real session and engine without a
     /// window: time from Play to the first new picture, with the engine's phase notes on stderr (`play_start`).
     PlayStart {
@@ -329,6 +344,8 @@ pub enum Mode {
     PerfProject {
         out: PathBuf,
         media: PathBuf,
+        /// `--case <spec.json>`: writes only that bench case (`bench/cases/*.json`) to `out` instead of the fixed project.
+        case: Option<PathBuf>,
     },
     /// Writes the benchmark case projects P1 and P2 into the folder `out` over `bench-main.mp4` and `bench-overlay.mp4` in
     /// `media` (`bench_project`).
@@ -349,6 +366,21 @@ pub enum Mode {
     ListPresets,
     /// Linux AppImage: `--desktop-entry add|remove|status` writes, deletes or reports the applications-menu entry.
     DesktopEntry(DesktopEntryCommand),
+}
+
+impl Mode {
+    /// The runs that produce timing numbers (`--play-bench`, `--engine-bench`, `--perf-project`): nothing may run in the
+    /// background beside them (the proxy service transcodes and skews the numbers).
+    pub fn is_bench(&self) -> bool {
+        matches!(
+            self,
+            Mode::PlayBench { .. }
+                | Mode::EditBench { .. }
+                | Mode::WorkflowBench { .. }
+                | Mode::EngineBench { .. }
+                | Mode::PerfProject { .. }
+        )
+    }
 }
 
 /// What `--desktop-entry` does.
@@ -397,6 +429,7 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
     let mut eval_click = (0.5_f64, 0.5_f64);
     let mut eval_disk: Option<String> = None;
     let mut media_folder: Option<PathBuf> = None;
+    let mut case_spec: Option<PathBuf> = None;
     let mut bench = crate::bench_report::BenchOpts::default();
     let mut export = ExportArgs::default();
     let mut list_presets = false;
@@ -406,15 +439,18 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
     let mut pitch = 6_u32;
     let mut states: Vec<String> = Vec::new();
     let mut known: Option<PathBuf> = None;
+    let mut script = String::from("all");
     let mut it = args.iter();
     while let Some(arg) = it.next() {
         let mut value = |what: &str| it.next().ok_or_else(|| format!("{arg} needs {what}"));
         match arg.as_str() {
-            "--ui-shot" | "--a11y-dump" | "--soak" | "--play-bench" | "--play-start" | "--engine-bench"
-            | "--present-check" | "--mask-eval" | "--perf-project" | "--bench-project" | "--start-error-shot" | "--use-pass" => {
+            "--ui-shot" | "--a11y-dump" | "--soak" | "--play-bench" | "--edit-bench" | "--workflow-bench"
+            | "--play-start" | "--engine-bench" | "--present-check" | "--mask-eval" | "--perf-project"
+            | "--bench-project" | "--start-error-shot" | "--use-pass" => {
                 mode = Some((arg.as_str(), PathBuf::from(value("an output path")?)))
             }
             "--pitch" => pitch = value("a number")?.parse::<u32>().ok().filter(|p| *p >= 2).ok_or("bad --pitch")?,
+            "--script" => script = value("a script name")?.clone(),
             "--known" => known = Some(PathBuf::from(value("a file")?)),
             "--states" => {
                 states = value("a comma list")?.split(',').filter(|n| !n.is_empty()).map(String::from).collect()
@@ -434,6 +470,7 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
                 bench.quality = crate::bench_report::BenchQuality::parse(value("auto|full|half|quarter")?)
                     .ok_or("--quality takes auto, full, half or quarter")?
             }
+            "--bench-verify" => bench.verify = true,
             "--bench-json" => bench.json = Some(PathBuf::from(value("a file")?)),
             "--bench-tag" => {
                 let text = value("key=value")?;
@@ -441,6 +478,7 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
                 bench.tags.push((k.to_string(), v.to_string()));
             }
             "--media" => media_folder = Some(PathBuf::from(value("a folder")?)),
+            "--case" => case_spec = Some(PathBuf::from(value("a case spec")?)),
             "--size" => {
                 size = parse_size(value("WxH")?)?;
                 size_given = Some(size);
@@ -534,6 +572,14 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
         }
     }
     export.size = size_given;
+    // Every option that writes a report, shot or media file refuses to land on a project (`--play-bench "<project>"`
+    // once overwrote a project with a report). `--perf-project` and `--bench-project` write projects on purpose.
+    if let Some((flag, out)) = mode.as_ref().filter(|(f, _)| !matches!(*f, "--perf-project" | "--bench-project")) {
+        refuse_project_overwrite(flag, out)?;
+    }
+    if let Some(json) = &bench.json {
+        refuse_project_overwrite("--bench-json", json)?;
+    }
     let mode = match mode {
         None if list_presets => Mode::ListPresets,
         None if desktop_entry.is_some() => Mode::DesktopEntry(desktop_entry.unwrap_or(DesktopEntryCommand::Status)),
@@ -543,6 +589,8 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
         Some(("--use-pass", out)) => Mode::UsePass { out, width: size.0, height: size.1, pitch, states, known },
         Some(("--soak", out)) => Mode::Soak { out, width: size.0, height: size.1 },
         Some(("--play-bench", out)) => Mode::PlayBench { out, width: size.0, height: size.1, bench },
+        Some(("--edit-bench", out)) => Mode::EditBench { out, width: size.0, height: size.1 },
+        Some(("--workflow-bench", out)) => Mode::WorkflowBench { out, width: size.0, height: size.1, script },
         Some(("--play-start", out)) => Mode::PlayStart { out },
         Some(("--engine-bench", out)) => Mode::EngineBench { out },
         Some(("--present-check", out)) => Mode::PresentCheck { out },
@@ -550,13 +598,45 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
         Some(("--bench-project", out)) => {
             Mode::BenchProject { out, media: media_folder.ok_or("--bench-project needs --media <folder>")? }
         }
-        Some(("--perf-project", out)) => {
-            Mode::PerfProject { out, media: media_folder.ok_or("--perf-project needs --media <folder>")? }
-        }
+        Some(("--perf-project", out)) => Mode::PerfProject {
+            out,
+            media: media_folder.ok_or("--perf-project needs --media <folder>")?,
+            case: case_spec,
+        },
         Some(("--mask-eval", out)) => Mode::MaskEval { out, click: eval_click, disk: eval_disk },
         Some((_, out)) => Mode::A11yDump { out, width: size.0, height: size.1 },
     };
     Ok(Cli { mode, project })
+}
+
+/// True when `path` exists and is a project: a `.sqproj`/`.ssproj` file or folder, a `project.json`, or a JSON file
+/// with the project envelope (`formatVersion` + `project`).
+fn is_existing_project(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    let ext = path.extension().and_then(|e| e.to_str()).map(str::to_ascii_lowercase);
+    if matches!(ext.as_deref(), Some("sqproj" | "ssproj")) {
+        return true;
+    }
+    if path.file_name().is_some_and(|n| n == "project.json") {
+        return true;
+    }
+    let Ok(text) = std::fs::read(path) else { return false };
+    matches!(serde_json::from_slice::<serde_json::Value>(&text),
+        Ok(serde_json::Value::Object(o)) if o.contains_key("formatVersion") && o.contains_key("project"))
+}
+
+/// Refuses an output path that is an existing project, naming the right usage.
+fn refuse_project_overwrite(flag: &str, out: &Path) -> Result<(), String> {
+    if is_existing_project(out) {
+        return Err(format!(
+            "{flag} takes the OUTPUT file, and {} is an existing project; refusing to overwrite it. \
+             The project is a plain argument: sequence-studio <project.sqproj> {flag} <output file>",
+            out.display()
+        ));
+    }
+    Ok(())
 }
 
 fn parse_size(text: &str) -> Result<(u32, u32), String> {
@@ -571,6 +651,33 @@ fn parse_size(text: &str) -> Result<(u32, u32), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn an_output_option_refuses_to_overwrite_a_project() {
+        let dir = std::env::temp_dir().join(format!("sq-cli-guard-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("dir");
+        let envelope = dir.join("renamed.txt");
+        std::fs::write(&envelope, r#"{"formatVersion":80,"project":{}}"#).expect("write");
+        let sqproj = dir.join("a.sqproj");
+        std::fs::write(&sqproj, "x").expect("write");
+        let bundle = dir.join("b.sqproj");
+        std::fs::create_dir_all(&bundle).expect("bundle");
+        let plain = dir.join("report.txt");
+        std::fs::write(&plain, "old report").expect("write");
+        let path = |p: &Path| p.to_str().expect("utf8").to_string();
+        for flag in
+            ["--play-bench", "--edit-bench", "--workflow-bench", "--soak", "--engine-bench", "--ui-shot", "--export"]
+        {
+            for target in [&envelope, &sqproj, &bundle] {
+                let err = parse(&[flag.to_string(), path(target)]).expect_err("refused");
+                assert!(err.contains("existing project") && err.contains("<project.sqproj>"), "{flag}: {err}");
+            }
+            assert!(parse(&[flag.to_string(), path(&plain)]).is_ok(), "{flag} may replace a plain report");
+        }
+        assert!(parse(&["--play-bench".into(), path(&plain), "--bench-json".into(), path(&sqproj)]).is_err());
+        assert!(parse(&["--perf-project".into(), path(&sqproj), "--media".into(), "m".into()]).is_ok());
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 
     fn args(list: &[&str]) -> Vec<String> {
         list.iter().map(|s| s.to_string()).collect()
@@ -670,15 +777,42 @@ mod tests {
     #[test]
     fn the_perf_project_mode_needs_its_media_folder() {
         let c = parse(&args(&["--perf-project", "out/perf-layers.sqproj", "--media", "m"])).expect("parses");
-        assert_eq!(c.mode, Mode::PerfProject { out: "out/perf-layers.sqproj".into(), media: "m".into() });
+        assert_eq!(c.mode, Mode::PerfProject { out: "out/perf-layers.sqproj".into(), media: "m".into(), case: None });
+        let c = parse(&args(&["--perf-project", "o.sqproj", "--media", "m", "--case", "bench/cases/x.json"]))
+            .expect("parses");
+        let expected =
+            Mode::PerfProject { out: "o.sqproj".into(), media: "m".into(), case: Some("bench/cases/x.json".into()) };
+        assert_eq!(c.mode, expected);
         assert!(parse(&args(&["--perf-project", "out.sqproj"])).is_err());
+        assert!(c.mode.is_bench());
+        assert!(!parse(&args(&["--soak", "o.txt"])).expect("parses").mode.is_bench());
+        assert!(!parse(&args(&[])).expect("parses").mode.is_bench());
+    }
+
+    #[test]
+    fn the_edit_bench_parses_as_a_bench_mode() {
+        let c = parse(&args(&["p.sqproj", "--edit-bench", "o.json"])).expect("parses");
+        assert!(matches!(c.mode, Mode::EditBench { .. }));
+        let c = parse(&args(&["p.sqproj", "--workflow-bench", "o.json", "--script", "drag"])).expect("parses");
+        assert!(matches!(&c.mode, Mode::WorkflowBench { script, .. } if script == "drag"));
+        assert!(c.mode.is_bench());
+        assert!(c.mode.is_bench());
     }
 
     #[test]
     fn the_play_bench_options_parse() {
         let c = parse(&args(&[
-            "p.sqproj", "--play-bench", "o.txt", "--bench-from", "2.5", "--bench-secs", "30", "--bench-json", "o.json",
-            "--bench-tag", "case=P1",
+            "p.sqproj",
+            "--play-bench",
+            "o.txt",
+            "--bench-from",
+            "2.5",
+            "--bench-secs",
+            "30",
+            "--bench-json",
+            "o.json",
+            "--bench-tag",
+            "case=P1",
         ]))
         .expect("parses");
         let Mode::PlayBench { bench, .. } = c.mode else { panic!("mode") };

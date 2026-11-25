@@ -152,6 +152,7 @@ fn decode(path: &Path) -> (Vec<Vec<u8>>, Vec<i64>) {
         tb_den: info.tb_den,
         hardware: false,
         extra_hw_frames: 0,
+        sw_threads: 0,
     })
     .unwrap();
     let mut frames: Vec<(i64, Vec<u8>)> = Vec::new();

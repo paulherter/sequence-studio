@@ -825,7 +825,8 @@ impl LibraryDrawPanel {
     pub(crate) fn sidebar_row_rect(&self, i: usize) -> CGRect {
         CGRect::new(
             6.0,
-            self.sidebar_rect().min_y() + Self::SIDEBAR_INSET + i as f64 * Self::ROW_HEIGHT - self.sidebar_scroll_clamped(),
+            self.sidebar_rect().min_y() + Self::SIDEBAR_INSET + i as f64 * Self::ROW_HEIGHT
+                - self.sidebar_scroll_clamped(),
             (self.sidebar_w() - 11.0).max(0.0),
             Self::ROW_HEIGHT,
         )
@@ -2026,7 +2027,8 @@ impl LibraryDrawPanel {
             return;
         }
         let mut right = r.max_x() - Self::PAD;
-        let titles: Vec<&str> = if self.model.is_showing_presets() { vec!["Kind", "Created"] } else { vec!["Kind", "Size", "Created"] };
+        let titles: Vec<&str> =
+            if self.model.is_showing_presets() { vec!["Kind", "Created"] } else { vec!["Kind", "Size", "Created"] };
         for (i, (w, s)) in
             self.list_col_widths().into_iter().zip(titles).enumerate().collect::<Vec<_>>().into_iter().rev()
         {
@@ -2088,7 +2090,9 @@ impl LibraryDrawPanel {
                 right -= 16.0;
             }
             let name_cell = CGRect::new(x + 18.0, rr.min_y(), (right - x - 22.0).max(0.0), rr.height);
-            let cut = sq_draw::middle_fit::truncate_name(&name, |s| c.size_of(s, Self::LIST_FONT, 0).width <= name_cell.width);
+            let cut = sq_draw::middle_fit::truncate_name(&name, |s| {
+                c.size_of(s, Self::LIST_FONT, 0).width <= name_cell.width
+            });
             c.draw_text_in(&cut.shown, name_cell, Self::LIST_FONT, t.label(), TextAlign::Left, 0.0, 0);
             if let Some(full) = cut.full {
                 self.cut_tips.push((name_cell, full));

@@ -12,7 +12,7 @@ use sq_gpu::gpu::Gpu;
 use sq_media::demuxing::BoxFuture;
 use sq_media::media_error::MediaError;
 use sq_media::media_opener::{MediaOpener, OpenedMedia};
-use sq_media::video_decoding::{DecodedFrame, FrameSink, VideoDecoding};
+use sq_media::video_decoding::{DecodedFrame, FrameSink, StopCheck, VideoDecoding};
 use sq_playback::engine::core::ProgramEngine;
 use sq_playback::engine::handle::{EngineDeps, ProgramHandle};
 use sq_playback::engine::media_source::DefaultOpener;
@@ -38,7 +38,7 @@ fn spread(v: &mut [f64]) -> String {
 }
 
 /// Process CPU time (user + system) in seconds, from `ps`; `None` where `ps` is missing (Windows).
-fn cpu_seconds() -> Option<f64> {
+pub(crate) fn cpu_seconds() -> Option<f64> {
     let out = std::process::Command::new("ps").args(["-o", "time=", "-p", &std::process::id().to_string()]).output();
     let text = String::from_utf8(out.ok()?.stdout).ok()?;
     // "M:SS.cc" or "H:MM:SS"
@@ -58,6 +58,77 @@ pub(crate) fn rss_mb() -> Option<f64> {
     let out = std::process::Command::new("ps").args(["-o", "rss=", "-p", &std::process::id().to_string()]).output();
     let kb = String::from_utf8(out.ok()?.stdout).ok()?.trim().parse::<f64>().ok()?;
     Some(kb / 1024.0)
+}
+
+/// One line that splits the resident memory by owner (Linux; `None` elsewhere): frame cache bytes and free picture buffers
+/// (counted by the engine), then the kernel's view from `/proc/self/smaps` summed by mapping kind, and the thread count.
+/// Written once at Play + 2 s into the bench text as `MEM ...` so a peak can be assigned to an owner without a profiler.
+pub(crate) fn memory_breakdown(cache_bytes: usize) -> Option<String> {
+    #[cfg(target_os = "linux")]
+    {
+        let smaps = std::fs::read_to_string("/proc/self/smaps").ok()?;
+        let mut kinds: std::collections::BTreeMap<String, u64> = std::collections::BTreeMap::new();
+        let mut current = String::new();
+        let mut anon_total = 0u64;
+        // Resident anonymous mappings of 4 MB and up, counted by size in MB: a picture buffer shows as many regions of one size.
+        let mut big: std::collections::BTreeMap<u64, (u64, u64)> = std::collections::BTreeMap::new();
+        for line in smaps.lines() {
+            let mut parts = line.split_whitespace();
+            let first = parts.next().unwrap_or("");
+            if first.contains('-') && !first.ends_with(':') {
+                // "start-end perms offset dev inode [path]"
+                let path = parts.nth(4).unwrap_or("");
+                current = if path.is_empty() {
+                    "anon".into()
+                } else if path.starts_with("/dev/dri") || path.starts_with("/dev/nvidia") || path.contains("/dev/kfd") {
+                    "gpu-device".into()
+                } else if path.starts_with("/memfd") || path.starts_with("/dev/shm") {
+                    "shm".into()
+                } else if path.starts_with('[') {
+                    path.into()
+                } else if path.ends_with(".so") || path.contains(".so.") {
+                    "libs".into()
+                } else {
+                    "file".into()
+                };
+            } else if first == "Rss:" {
+                let kb: u64 = parts.next().and_then(|v| v.parse().ok()).unwrap_or(0);
+                *kinds.entry(current.clone()).or_default() += kb;
+                if current == "anon" && kb >= 4096 {
+                    let e = big.entry(kb >> 10).or_default();
+                    e.0 += 1;
+                    e.1 += kb >> 10;
+                }
+            } else if first == "Anonymous:" {
+                anon_total += parts.next().and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
+            }
+        }
+        let threads = std::fs::read_to_string("/proc/self/status")
+            .ok()
+            .and_then(|t| t.lines().find_map(|l| l.strip_prefix("Threads:").map(|v| v.trim().to_string())))
+            .unwrap_or_default();
+        let (open_sw, big_threads) = sq_media_ffmpeg::shim::open_software_decoders();
+        let pool = sq_frame::buffer_pool::BufferPool::shared();
+        let (reused, fresh) = pool.counts();
+        let mut sizes: Vec<(u64, u64, u64)> = big.into_iter().map(|(mb, (n, total))| (total, mb, n)).collect();
+        sizes.sort_unstable_by(|a, b| b.cmp(a));
+        let sizes_text: Vec<String> =
+            sizes.iter().take(8).map(|(total, mb, n)| format!("{n}x{mb} MB={total}")).collect();
+        let kinds_text: Vec<String> = kinds.iter().map(|(k, kb)| format!("{k} {} MB", kb >> 10)).collect();
+        Some(format!(
+            "MEM frame_cache {} MB; free_picture_buffers {} MB (reused {reused}, fresh {fresh}); anonymous {} MB; by mapping: {}; big anonymous regions (resident, top 8): {}; threads {threads}; open software decoders {open_sw} (big frame threads {big_threads})\n",
+            cache_bytes >> 20,
+            pool.free_bytes() >> 20,
+            anon_total >> 10,
+            kinds_text.join(", "),
+            sizes_text.join(", "),
+        ))
+    }
+    #[cfg(not(target_os = "linux"))]
+    {
+        let _ = cache_bytes;
+        None
+    }
 }
 
 pub(crate) fn wait(handle: &ProgramHandle, what: &str, cond: impl Fn(&ProgramHandle) -> bool) -> Result<(), String> {
@@ -111,6 +182,16 @@ impl VideoDecoding for SlowDecoder {
     ) -> BoxFuture<'_, Result<Vec<DecodedFrame>, MediaError>> {
         std::thread::sleep(self.delay);
         self.inner.decode_needed_from(range, needed_from, deliver)
+    }
+    fn decode_until(
+        &self,
+        range: RangeInclusive<usize>,
+        needed_from: Option<usize>,
+        deliver: FrameSink,
+        stop: StopCheck,
+    ) -> BoxFuture<'_, Result<Vec<DecodedFrame>, MediaError>> {
+        std::thread::sleep(self.delay);
+        self.inner.decode_until(range, needed_from, deliver, stop)
     }
     fn invalidate(&self) {
         self.inner.invalidate();

@@ -11,8 +11,16 @@
 
 use std::process::{Child, Command, Stdio};
 
-/// The desktop file of the app, the id the launcher entry signal addresses.
-pub const DESKTOP_ID: &str = "sequence-studio.desktop";
+use sq_setup_engine::Identity;
+
+/// The desktop file of this build's channel, the id the launcher entry signal addresses (Nightly has its own entry).
+pub fn desktop_id() -> String {
+    desktop_id_of(Identity::build())
+}
+
+fn desktop_id_of(identity: Identity) -> String {
+    format!("{}.desktop", identity.linux_id())
+}
 
 /// Arguments of the sleep inhibitor held for the process `pid`.
 pub fn inhibit_args(pid: u32) -> Vec<String> {
@@ -33,11 +41,15 @@ pub fn inhibit_args(pid: u32) -> Vec<String> {
 
 /// Arguments of `gdbus` for the launcher progress: `None` clears it.
 pub fn badge_args(percent: Option<u8>) -> Vec<String> {
+    badge_args_for(&desktop_id(), percent)
+}
+
+fn badge_args_for(desktop_id: &str, percent: Option<u8>) -> Vec<String> {
     let props = match percent {
         Some(p) => format!("{{'progress': <{:.2}>, 'progress-visible': <true>}}", f64::from(p.min(100)) / 100.0),
         None => "{'progress': <0.0>, 'progress-visible': <false>}".to_string(),
     };
-    let object = format!("/com/canonical/unity/launcherentry/{}", object_id(DESKTOP_ID));
+    let object = format!("/com/canonical/unity/launcherentry/{}", object_id(desktop_id));
     vec![
         "emit".into(),
         "--session".into(),
@@ -45,7 +57,7 @@ pub fn badge_args(percent: Option<u8>) -> Vec<String> {
         object,
         "--signal".into(),
         "com.canonical.Unity.LauncherEntry.Update".into(),
-        format!("application://{DESKTOP_ID}"),
+        format!("application://{desktop_id}"),
         props,
     ]
 }
@@ -114,6 +126,15 @@ mod tests {
         assert!(args.contains(&"--pid=42".to_string()));
         assert!(args.contains(&"--mode=block".to_string()));
         assert!(args.contains(&"--what=idle:sleep".to_string()));
+    }
+
+    #[test]
+    fn the_badge_goes_to_the_channels_own_entry() {
+        assert_eq!(desktop_id_of(Identity::STABLE), "sequence-studio.desktop");
+        assert_eq!(desktop_id_of(Identity::NIGHTLY), "sequence-studio-nightly.desktop");
+        let nightly = badge_args_for(&desktop_id_of(Identity::NIGHTLY), Some(10));
+        assert!(nightly.contains(&"application://sequence-studio-nightly.desktop".to_string()));
+        assert_eq!(desktop_id(), desktop_id_of(Identity::build()));
     }
 
     #[test]

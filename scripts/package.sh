@@ -7,7 +7,8 @@
 #        SQ_SIGN_ID="-" scripts/package.sh   force ad-hoc
 #        SQ_NOTARY_PROFILE=name              notarytool keychain profile (default sq-notary)
 # Verify the result with: scripts/verify-package.sh "build/Sequence Studio.dmg"
-cd "$(dirname "$0")/.." || exit 1
+cd -- "$(dirname "$0")/.." || exit 1
+. scripts/lib-safe-delete.sh || exit 1
 DIST=0; NOTARIZE="${SQ_NOTARIZE:-1}"
 for a in "$@"; do
   case "$a" in
@@ -21,7 +22,7 @@ scripts/build.sh Release || exit 1
 APP="build/DerivedData-Release/Build/Products/Release/Sequence Studio.app"
 [ -d "$APP" ] || { echo "FAILED: $APP missing"; exit 1; }
 OUT=build/package
-rm -rf "$OUT"
+safe_delete "$PWD/$OUT" "$PWD/build" || exit 1
 mkdir -p "$OUT"
 ditto "$APP" "$OUT/Sequence Studio.app"
 APP="$OUT/Sequence Studio.app"
@@ -118,12 +119,12 @@ ditto -c -k --keepParent "$APP" "build/Sequence Studio.zip" || exit 1
 # DMG with an Applications shortcut (drag to install), made from the signed (and stapled) app.
 DMGDIR=build/dmg
 DMG="build/Sequence Studio.dmg"
-rm -rf "$DMGDIR" "$DMG"
+safe_delete "$PWD/$DMGDIR" "$PWD/build" || exit 1; safe_delete "$PWD/$DMG" "$PWD/build" || exit 1
 mkdir -p "$DMGDIR"
 ditto "$APP" "$DMGDIR/Sequence Studio.app"
 ln -s /Applications "$DMGDIR/Applications"
 scripts/make-dmg.sh "$DMGDIR" "$DMG" "Sequence Studio" || { echo "FAILED: hdiutil"; exit 1; }
-rm -rf "$DMGDIR"
+safe_delete "$PWD/$DMGDIR" "$PWD/build"
 if [ "$ID" != "-" ]; then
   codesign --force --timestamp -s "$ID" "$DMG" || { echo "FAILED: codesign dmg"; exit 1; }
 fi

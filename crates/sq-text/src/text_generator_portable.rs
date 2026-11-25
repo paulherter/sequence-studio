@@ -14,12 +14,13 @@ use sq_core_graphics::text_animator_model::{AnimationSetTextExt, TextCharacterSt
 use sq_core_model::anchored_animation::{AnimationSample, AnimationSet};
 use sq_core_model::{ClipTransform, GeneratorRef, SequenceFormat};
 use sq_core_time::{Time, Vec2};
+use std::sync::Arc;
 
 /// One text frame on the portable raster.
 #[derive(Clone, Debug)]
 pub struct PortableTextFrame {
-    /// The picture.
-    pub picture: Picture,
+    /// The picture (shared: a kept frame is cloned every frame, its pixels are not).
+    pub picture: Arc<Picture>,
     /// Left of the block in sequence pixels.
     pub x: f64,
     /// Top of the block in sequence pixels.
@@ -174,7 +175,7 @@ impl TextGenerator {
             footage_fill: template.style.footage_fill,
             character_states: states,
             units,
-            picture: raster.picture,
+            picture: Arc::new(raster.picture),
         }))
     }
 

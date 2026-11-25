@@ -2,10 +2,10 @@
 //! optional button, centered in the pane, top-aligned when the pane is shorter than the block.
 
 use crate::stone::{ButtonKind, Touch};
-use sq_uikit::tokens::{space as spacing, type_size};
 use crate::{Canvas, DrawTheme, TextAlign};
 use sq_uikit::controls_grid::{CGPoint, CGRect};
 use sq_uikit::sqicon::SQIcon;
+use sq_uikit::tokens::{space as spacing, type_size};
 
 /// What one empty state says.
 pub struct EmptyPane<'a> {
@@ -64,11 +64,7 @@ pub fn draw_empty_pane(
     let w = (pane.width - 2.0 * spacing::LG as f64).max(0.0);
     let x = pane.min_x() + spacing::LG as f64;
     let semibold = c.semibold();
-    let title: Vec<String> = c
-        .wrap(e.title, w, body)
-        .into_iter()
-        .take(2)
-        .collect::<Vec<_>>();
+    let title: Vec<String> = c.wrap(e.title, w, body).into_iter().take(2).collect::<Vec<_>>();
     let title = if title.is_empty() { vec![String::new()] } else { title };
     let hint = wrapped(c, e.hint, body, w, 3);
     let block = ICON

@@ -649,7 +649,12 @@ impl ShellStartScreen {
         if w <= 0.0 && self.search.is_editing() {
             w = m::SEARCH_MIN; // Find in a window too narrow for the field shows it while it has the focus
         }
-        CGRect::new(bar.max_x() - START_BAR_EDGE - w, (bar.mid_y() - m::CONTROL_SMALL / 2.0).round(), w, m::CONTROL_SMALL)
+        CGRect::new(
+            bar.max_x() - START_BAR_EDGE - w,
+            (bar.mid_y() - m::CONTROL_SMALL / 2.0).round(),
+            w,
+            m::CONTROL_SMALL,
+        )
     }
 
     /// The width the bar's search field gets and the room its menu titles keep (`None`: no limit) when the bar is
@@ -978,7 +983,10 @@ impl ShellStartScreen {
                     let body = "Open a project and save its sequence as a template. It shows up here.";
                     let lines = env.measure.lines(body, w - 32.0, m::F_CAP).len().max(1) as f64;
                     let button_y = 76.0 + 16.0 * lines + 10.0;
-                    out.push(Element::Section(String::new(), CGRect::new(x0 - 16.0, y, w + 32.0, button_y + 22.0 + 26.0)));
+                    out.push(Element::Section(
+                        String::new(),
+                        CGRect::new(x0 - 16.0, y, w + 32.0, button_y + 22.0 + 26.0),
+                    ));
                     let mx = x0 + w / 2.0;
                     out.push(Element::Glyph(
                         SQIcon::Layout,
@@ -1401,11 +1409,13 @@ impl ShellStartScreen {
                         .iter()
                         .find(|e| &e.path == path)
                         .map(|e| format!("{} \u{b7} {}", e.name, ShellPlatformText::abbreviating_home(path))),
-                    Some(h @ (StartHit::NewProject
-                    | StartHit::OpenOther
-                    | StartHit::EmptyOpen
-                    | StartHit::ContinueOpen
-                    | StartHit::Search)) => crate::shell_start_draw::key_tip(h),
+                    Some(
+                        h @ (StartHit::NewProject
+                        | StartHit::OpenOther
+                        | StartHit::EmptyOpen
+                        | StartHit::ContinueOpen
+                        | StartHit::Search),
+                    ) => crate::shell_start_draw::key_tip(h),
                     _ => None,
                 };
                 ui.hover.offer_tip(tip.as_deref());

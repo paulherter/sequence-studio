@@ -523,7 +523,10 @@ impl AudioMeter {
             let label = labels.get(i).copied().unwrap_or(MeterChannelLabel::Normal);
             c.draw_text(
                 name,
-                CGPoint { x: r.min_x() + self.bar_x(i) + (self.bar_metrics().0 - size.width) / 2.0, y: meter_top + h + 4.0 },
+                CGPoint {
+                    x: r.min_x() + self.bar_x(i) + (self.bar_metrics().0 - size.width) / 2.0,
+                    y: meter_top + h + 4.0,
+                },
                 font,
                 Self::label_color(label, t),
                 f64::INFINITY,
@@ -573,10 +576,7 @@ impl AudioMeter {
             if ch.hold_db > MeterBallistics::FLOOR_DB {
                 // r8 peak hold: 4 x 1 in `text-secondary`, drawn only while there is signal.
                 let hy = y(ch.hold_db).max(meter_top).min(meter_top + h - 1.0);
-                c.fill(
-                    CGRect::new(x + (self.bar_metrics().0 - 4.0) / 2.0, hy, 4.0, 1.0),
-                    t.label2(),
-                );
+                c.fill(CGRect::new(x + (self.bar_metrics().0 - 4.0) / 2.0, hy, 4.0, 1.0), t.label2());
             }
         }
     }

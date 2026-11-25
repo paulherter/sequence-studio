@@ -48,6 +48,11 @@ pub trait ShellFilePicker {
     fn fetch(&mut self, _url: &str) -> ModalAsk<Option<Vec<u8>>> {
         answered(None)
     }
+    /// The update download: writes the body of `url` to `file` on its own thread, reporting through `progress` and ending
+    /// with `progress.finish`. Default: a platform without one fails at once.
+    fn download(&mut self, _url: &str, _file: &Path, progress: std::sync::Arc<sq_editor_session::DownloadProgress>) {
+        progress.finish(Err("this platform cannot download".into()));
+    }
     fn choose_export_location(
         &mut self,
         _suggested_name: &str,

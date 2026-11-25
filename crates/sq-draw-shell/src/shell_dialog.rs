@@ -457,12 +457,7 @@ impl ShellDialog {
     fn label_column(title: &str) -> Option<f64> {
         Some(match title {
             "Rename Workspace" | "Save as New Workspace" | "Track Volume and Pan" | "Sequence Volume" => 56.0,
-            "Marker"
-            | "Clip Marker"
-            | "Go to Timecode"
-            | "New Color Matte"
-            | "Punch In Cuts"
-            | "Anonymize" => 64.0,
+            "Marker" | "Clip Marker" | "Go to Timecode" | "New Color Matte" | "Punch In Cuts" | "Anonymize" => 64.0,
             "Tone Settings" | "Speed" => 72.0,
             "Change Format" | "Duplicate as Format" | "Create Captions" | "Remove Silences" | "New Sequence" => 96.0,
             "Create Angles Clip" | "Check Cuts" => 80.0,
@@ -911,7 +906,8 @@ impl ShellDialog {
             Some(Tone::Info) => return SlotIcon::Info,
             None => {}
         }
-        let asks = self.model.buttons.iter().any(|b| matches!(b.role, SQDialogRole::Destructive | SQDialogRole::Cancel));
+        let asks =
+            self.model.buttons.iter().any(|b| matches!(b.role, SQDialogRole::Destructive | SQDialogRole::Cancel));
         if asks { SlotIcon::Warn } else { SlotIcon::App }
     }
 
@@ -1319,9 +1315,12 @@ impl ShellDialog {
 
     fn button_width_padded(&self, i: usize, tm: &TextMeasure, pad: f64) -> f64 {
         // The Mac SQButton has no minimum width (`OK` is 46 pt). A set width is a minimum: a longer (German) title grows it.
-        let icon = if self.button_icons.contains_key(&i) || self.button_busy.contains(&i) { m::BUTTON_ICON + m::BUTTON_ICON_GAP } else { 0.0 };
-        let measured =
-            tm.width(&self.button_title(i), m::BUTTON_FONT, tm.medium()).ceil() + icon + 2.0 * pad;
+        let icon = if self.button_icons.contains_key(&i) || self.button_busy.contains(&i) {
+            m::BUTTON_ICON + m::BUTTON_ICON_GAP
+        } else {
+            0.0
+        };
+        let measured = tm.width(&self.button_title(i), m::BUTTON_FONT, tm.medium()).ceil() + icon + 2.0 * pad;
         self.button_widths.get(&i).map_or(measured, |w| w.max(measured))
     }
 
@@ -1869,7 +1868,11 @@ impl ShellDialog {
         self.draw_buttons(c, t);
         if self.close_frame.width > 0.0 {
             // The kit's close X (`Form/IconButton/Close`): a hairline X, the 28 pt frame is the pointer target.
-            let state = sq_draw::close_x::CloseXState { hovered: self.close_hovered, pressed: self.close_pressed, focused: self.close_focused };
+            let state = sq_draw::close_x::CloseXState {
+                hovered: self.close_hovered,
+                pressed: self.close_pressed,
+                focused: self.close_focused,
+            };
             c.close_x(self.close_frame, state, t);
         }
         self.menu.draw(c, t);
@@ -1945,8 +1948,12 @@ impl ShellDialog {
             // Busy: the spinner takes the icon's slot (or the lead of a button without one), so the width never changes.
             let icon = if busy { Some(SQIcon::LoaderCircle) } else { self.button_icons.get(&i).copied() };
             let lead = icon.map_or(0.0, |_| m::BUTTON_ICON + m::BUTTON_ICON_GAP);
-            let title =
-                c.ellipsized(&self.button_title(i), m::BUTTON_FONT, medium, r.width - 2.0 * m::BUTTON_PADDING_MIN - lead);
+            let title = c.ellipsized(
+                &self.button_title(i),
+                m::BUTTON_FONT,
+                medium,
+                r.width - 2.0 * m::BUTTON_PADDING_MIN - lead,
+            );
             let mut label = CGRect::new(body.x, body.y + 1.0, body.width, body.height);
             if let Some(icon) = icon {
                 // Icon and title sit together, centered in the button.
@@ -2233,7 +2240,12 @@ mod escape_tests {
         d.layout(CGRect::new(0.0, 0.0, 300.0, 400.0), &tm);
         for (&i, f) in &d.button_frames {
             let text = tm.width(&d.button_title(i), m::BUTTON_FONT, tm.medium()).ceil();
-            assert!(f.width + 0.5 >= text + 2.0 * m::BUTTON_PADDING_MIN, "{} is cut: {} for {text}", d.button_title(i), f.width);
+            assert!(
+                f.width + 0.5 >= text + 2.0 * m::BUTTON_PADDING_MIN,
+                "{} is cut: {} for {text}",
+                d.button_title(i),
+                f.width
+            );
             assert!(f.min_x() >= d.card.min_x() && f.max_x() <= d.card.max_x(), "button {i} leaves the card");
         }
     }

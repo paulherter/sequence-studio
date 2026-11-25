@@ -187,7 +187,7 @@ impl SetupSession {
         {
             use winit::platform::wayland::WindowAttributesExtWayland;
             use winit::platform::x11::WindowAttributesExtX11;
-            let id = sq_platform::desktop_integration::APP_ID;
+            let id = sq_platform::desktop_integration::app_id();
             attrs = WindowAttributesExtWayland::with_name(attrs, id, id);
             attrs = WindowAttributesExtX11::with_name(attrs, id, id);
         }

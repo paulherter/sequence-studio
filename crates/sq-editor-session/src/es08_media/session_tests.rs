@@ -425,6 +425,8 @@ struct ProxyFixture {
     service: AutoProxyService<MemoryDefaults>,
     busy: Rc<Cell<bool>>,
     now: Rc<Cell<f64>>,
+    /// Free bytes the fixture's disk reader reports; -1 = unknown.
+    free: Arc<std::sync::atomic::AtomicI64>,
     dir: TempDir,
 }
 
@@ -439,6 +441,8 @@ fn proxy_fixture_on(mode: Option<ProxyMode>, machine: MachineProfile) -> ProxyFi
     settings.set_mode(mode, None);
     let (busy, now) = (Rc::new(Cell::new(false)), Rc::new(Cell::new(1000.0)));
     let (b, n) = (Rc::clone(&busy), Rc::clone(&now));
+    let free = Arc::new(std::sync::atomic::AtomicI64::new(-1));
+    let fr = Arc::clone(&free);
     let deps = AutoProxyDeps {
         resolver: resolver(),
         prober: Arc::new(FailingProber),
@@ -446,11 +450,14 @@ fn proxy_fixture_on(mode: Option<ProxyMode>, machine: MachineProfile) -> ProxyFi
         concurrency: 1,
         is_busy: Box::new(move || b.get()),
         busy_resume: 2.0,
-        disk_space: Arc::new(|_| DiskSpace { free: None, total: None }),
+        disk_space: Arc::new(move |_| {
+            let f = fr.load(Ordering::SeqCst);
+            DiskSpace { free: (f >= 0).then_some(f), total: (f >= 0).then_some(100 << 30) }
+        }),
         clock: Box::new(move || Timestamp::from_unix_seconds(n.get())),
         ids: Box::new(SequentialIds::default()),
     };
-    ProxyFixture { service: AutoProxyService::new(cache, settings, deps), busy, now, dir }
+    ProxyFixture { service: AutoProxyService::new(cache, settings, deps), busy, now, free, dir }
 }
 
 fn video_media(n: u128, path: &Path) -> MediaRef {
@@ -550,6 +557,55 @@ fn the_disk_reserve_refuses_a_job_until_refresh() {
     assert!(f.service.pending_media().is_empty());
     f.service.refresh();
     assert_eq!(f.service.take_decision_work().len(), 1, "refresh decides refused media again");
+}
+
+#[test]
+fn the_disk_notice_shows_once_stays_while_refused_and_ends_when_space_is_freed() {
+    let mut f = proxy_fixture(Some(ProxyMode::Always));
+    let file = f.dir.file("a.mov", 100);
+    f.service.sync(&[video_media(1, &file)], Some(id(9)), None);
+    let work = f.service.take_decision_work();
+    let tight = DiskSpace { free: Some(11 << 30), total: Some(100 << 30) };
+    f.free.store(11 << 30, Ordering::SeqCst);
+    f.service.decision_finished(
+        &work[0],
+        ProxyOutcome::NeedsJob { kind: ProxyKind::ProxyHalf, software: false, estimate: 12 << 30, disk: tight },
+    );
+    assert_eq!(
+        f.service.take_disk_notice().as_deref(),
+        Some("Not enough disk space for preview files: 11 GB free, 17 GB needed. Playback may stutter.")
+    );
+    assert!(f.service.disk_notice_active() && f.service.wants_tick());
+    assert_eq!(f.service.take_disk_notice(), None, "once");
+    // Still no room after the re-check interval: nothing changes, no second line.
+    f.now.set(f.now.get() + 31.0);
+    f.service.tick();
+    assert!(f.service.disk_notice_active());
+    assert_eq!(f.service.take_disk_notice(), None);
+    // Space is freed: the re-check decides the media again, and the notice goes once nothing is refused.
+    f.free.store(60 << 30, Ordering::SeqCst);
+    f.now.set(f.now.get() + 31.0);
+    f.service.tick();
+    assert!(f.service.disk_refused_media().is_empty());
+    let again = f.service.take_decision_work();
+    assert_eq!(again.len(), 1);
+    f.service.tick();
+    assert!(f.service.disk_notice_active(), "the new decision is out: the notice waits for its answer");
+    f.service.decision_finished(&again[0], ProxyOutcome::Skipped);
+    f.service.tick();
+    assert!(!f.service.disk_notice_active());
+}
+
+#[test]
+fn a_disk_refusal_says_why_in_the_app_log() {
+    let tight = DiskSpace { free: Some(11 << 30), total: Some(100 << 30) };
+    use crate::es08_media::auto_proxy::disk_refusal_line;
+    let line = disk_refusal_line(5 << 30, 1 << 30, tight);
+    assert_eq!(
+        line,
+        "proxy refused: disk reserve, needs 5.0 GB (+1.0 GB queued), 11.0 GB free; the volume keeps at least 5.0 GB free"
+    );
+    assert!(disk_refusal_line(1, 0, DiskSpace { free: None, total: None }).contains("unknown free"));
 }
 
 #[test]
@@ -676,4 +732,88 @@ fn proxy_effects_reach_the_program_engine() {
     s.set_auto_proxy(Some(Box::new(Fake(vec![ProxyEffect::UseChanged(ProxyUse::DEFAULT)]))));
     let seen = s.engine().as_any().downcast_ref::<crate::StubProgramEngine>().map(|e| e.proxy_use);
     assert_eq!(seen, Some(Some(ProxyUse::DEFAULT)));
+}
+
+#[test]
+fn a_skipped_proxy_decision_gives_no_notice() {
+    let mut f = proxy_fixture(Some(ProxyMode::Always));
+    let file = f.dir.file("a.mov", 100);
+    f.service.sync(&[video_media(1, &file)], Some(id(9)), None);
+    let work = f.service.take_decision_work();
+    f.service.decision_finished(&work[0], ProxyOutcome::Skipped);
+    assert_eq!(f.service.take_disk_notice(), None, "skipped: log only");
+}
+
+// MARK: Proxy queue follows the playhead
+
+/// Media 1 sits at 0..10 s, media 2 at 1000..1010 s of the active timeline.
+fn two_clip_timeline() -> sq_core_model::Timeline {
+    use sq_core_model::{Clip, SequenceFormat, Timeline, Track, TrackKind};
+    use sq_core_time::TimeRange;
+    let clip = |n: u128, at: i64| {
+        let source = TimeRange::new(Time::ZERO, Time::new(10, 1));
+        Clip::new(id(900 + n), "c", id(n), TrackKind::Video, source, Time::new(at, 1))
+    };
+    let mut track = Track::new(id(70), TrackKind::Video);
+    track.set_clips(vec![clip(1, 0), clip(2, 1000)]);
+    Timeline::new(id(71), "T", SequenceFormat::new(Time::new(1, 30)), vec![track])
+}
+
+fn needs_job() -> ProxyOutcome {
+    let roomy = DiskSpace { free: Some(500 << 30), total: Some(1000 << 30) };
+    ProxyOutcome::NeedsJob { kind: ProxyKind::ProxyHalf, software: false, estimate: 1 << 30, disk: roomy }
+}
+
+#[test]
+fn the_source_under_the_playhead_is_transcoded_first_and_moving_the_playhead_reorders_the_queue() {
+    let timeline = two_clip_timeline();
+    // The playhead is known before the sync: B (import order second) goes first.
+    let mut f = proxy_fixture(Some(ProxyMode::Always));
+    let (a, b) = (f.dir.file("a.mov", 100), f.dir.file("b.mov", 200));
+    let media = [video_media(1, &a), video_media(2, &b)];
+    f.service.set_held(true);
+    f.service.set_playhead(Time::new(1005, 1));
+    f.service.sync(&media, None, Some(&timeline));
+    for w in f.service.take_decision_work() {
+        f.service.decision_finished(&w, needs_job());
+    }
+    f.service.set_held(false);
+    let started = f.service.take_started_jobs();
+    assert_eq!(started.len(), 1);
+    assert!(started[0].source.ends_with("b.mov"), "the clip under the playhead goes first, not the import order");
+
+    // The playhead moves while both wait: the queue is re-ranked.
+    let mut g = proxy_fixture(Some(ProxyMode::Always));
+    let (a, b) = (g.dir.file("a.mov", 100), g.dir.file("b.mov", 200));
+    let media = [video_media(1, &a), video_media(2, &b)];
+    g.service.set_held(true);
+    g.service.sync(&media, None, Some(&timeline)); // playhead 0: A first
+    for w in g.service.take_decision_work() {
+        g.service.decision_finished(&w, needs_job());
+    }
+    g.now.set(g.now.get() + 1.0);
+    g.service.set_playhead(Time::new(1005, 1));
+    g.service.set_held(false);
+    let started = g.service.take_started_jobs();
+    assert!(started[0].source.ends_with("b.mov"), "the re-rank moved B ahead of the queued A");
+}
+
+#[test]
+fn a_far_unfinished_running_job_makes_way_for_a_near_one_but_a_near_one_never_does() {
+    let timeline = two_clip_timeline();
+    let run = |playhead_s: i64| {
+        let mut f = proxy_fixture(Some(ProxyMode::Always));
+        let (a, b) = (f.dir.file("a.mov", 100), f.dir.file("b.mov", 200));
+        let media = [video_media(1, &a), video_media(2, &b)];
+        f.service.sync(&media, None, Some(&timeline)); // playhead 0: decisions for A then B
+        let work = f.service.take_decision_work();
+        f.service.decision_finished(&work[0], needs_job()); // A starts (one slot)
+        f.service.decision_finished(&work[1], needs_job()); // B waits
+        assert_eq!(f.service.take_started_jobs().len(), 1);
+        f.now.set(f.now.get() + 1.0);
+        f.service.set_playhead(Time::new(playhead_s, 1));
+        f.service.take_decision_work().len() // a dropped job is decided again
+    };
+    assert_eq!(run(1005), 1, "A is 995 s away and B waits under the playhead: A is dropped and decided again");
+    assert_eq!(run(5), 0, "the running A is under the playhead: it keeps going");
 }

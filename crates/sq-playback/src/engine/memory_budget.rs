@@ -8,8 +8,12 @@
 
 use sq_core_project::work_limits::MachineResources;
 use sq_media::video_decoding::DecodeScale;
+use std::time::Duration;
 
 pub const GIB: u64 = 1 << 30;
+
+/// Largest Auto frame cache. 8 GB and smaller and machines up to 16 GB keep today's value (1/6, 1/4 = 4 GB); larger machines stop at 4 GB (was 8 GB).
+pub const AUTO_CACHE_CAP: u64 = 4 * GIB;
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct MemoryBudget {
@@ -50,7 +54,7 @@ impl MemoryBudget {
 
     /// Frame cache of both monitors together when the setting is Auto.
     pub fn auto_frame_cache_bytes(&self) -> usize {
-        usize::try_from(self.limits().frame_cache_bytes).unwrap_or(0)
+        usize::try_from(self.limits().frame_cache_bytes.min(AUTO_CACHE_CAP as i64)).unwrap_or(0)
     }
 
     /// Largest frame cache a user may choose: half the RAM.
@@ -102,11 +106,35 @@ impl MemoryBudget {
         usize::try_from(self.limits().intermediate_pool_bytes).unwrap_or(0)
     }
 
-    /// Decoder sessions kept for media not needed right now: 1 on low-memory machines, 2 elsewhere.
-    pub fn idle_decoders(&self) -> usize {
-        if self.is_low_memory() { 1 } else { 2 }
+    /// Decoder sessions kept for media not needed right now (the rest close): `Some(1)` on low-memory machines, `None`
+    /// elsewhere (closing gained nothing at default RAM, measured 2026-11-24: strong machines keep every decoder as before).
+    pub fn idle_decoders(&self) -> Option<usize> {
+        self.is_low_memory().then_some(1)
     }
+}
 
+/// A decoder of a file nothing has read for this long (playing time, wall clock) may be closed once more than
+/// `MemoryBudget::idle_decoders` unneeded files are open. Reopening a 4K file costs 0.2-0.4 s, so a recent one stays.
+pub const IDLE_MEDIA_MIN_AGE: Duration = Duration::from_secs(8);
+/// How often (playing time) the engine looks for files to close.
+pub const IDLE_MEDIA_CHECK_EVERY: Duration = Duration::from_secs(1);
+/// A file with a clip on screen within this many timeline seconds is never closed (the prefetch reopens 3.5 s ahead, which is
+/// too late for an open plus a seek; so a file with a cut in sight stays).
+pub const IDLE_MEDIA_LOOK_AHEAD: Duration = Duration::from_secs(8);
+
+/// Which open files to close: `idle` holds every open file nothing needs right now with the playing time since it was last
+/// needed. Files in `ahead` (a clip of them shows up soon) never close. Of the rest the `keep` most recently used stay (the
+/// next cut-in may come back to them); of the others, those idle for at least `min_age` close, oldest first. Pure, so the
+/// bound is tested without an engine.
+pub fn media_to_close<T: Copy + Eq + std::hash::Hash>(
+    idle: &[(T, Duration)],
+    ahead: &std::collections::HashSet<T>,
+    keep: usize,
+    min_age: Duration,
+) -> Vec<T> {
+    let mut by_age: Vec<(T, Duration)> = idle.iter().filter(|(m, _)| !ahead.contains(m)).copied().collect();
+    by_age.sort_by_key(|(_, age)| *age);
+    by_age.into_iter().skip(keep).filter(|(_, age)| *age >= min_age).rev().map(|(m, _)| m).collect()
 }
 
 /// The one place that decides where preview quality Auto starts: half on a weak machine (`is_weak_for_decode`: Intel, 8 GB
@@ -126,6 +154,38 @@ pub fn auto_start_scale_here(environment: impl Fn(&str) -> Option<String>, physi
 mod tests {
     use super::*;
 
+    #[test]
+    fn idle_files_beyond_the_keep_count_close_oldest_first_and_recent_ones_stay() {
+        let secs = |v: &[(i32, u64)]| v.iter().map(|(m, s)| (*m, Duration::from_secs(*s))).collect::<Vec<_>>();
+        let none = std::collections::HashSet::new();
+        let idle = secs(&[(1, 90), (2, 1), (3, 70), (4, 50), (5, 9)]);
+        // keep the 2 most recent (2: 1 s, 5: 9 s); 4, 3, 1 are over the bound and past the min age.
+        assert_eq!(media_to_close(&idle, &none, 2, IDLE_MEDIA_MIN_AGE), vec![1, 3, 4]);
+        // nothing over the keep count: nothing closes, however old
+        assert!(media_to_close(&idle[..2], &none, 2, IDLE_MEDIA_MIN_AGE).is_empty());
+        // over the keep count but too recent: stays open
+        assert!(media_to_close(&secs(&[(1, 7), (2, 5), (3, 2)]), &none, 1, IDLE_MEDIA_MIN_AGE).is_empty());
+    }
+
+    #[test]
+    fn a_file_with_a_cut_inside_the_look_ahead_is_never_closed() {
+        let idle: Vec<(i32, Duration)> =
+            [(1, 90), (2, 80), (3, 70)].iter().map(|(m, s)| (*m, Duration::from_secs(*s))).collect();
+        let ahead: std::collections::HashSet<i32> = [1, 3].into();
+        assert_eq!(media_to_close(&idle, &ahead, 0, IDLE_MEDIA_MIN_AGE), vec![2]);
+        // a file in sight does not use up a keep slot of the others either
+        assert_eq!(media_to_close(&idle, &ahead, 1, IDLE_MEDIA_MIN_AGE), Vec::<i32>::new());
+    }
+
+    #[test]
+    fn idle_age_is_playing_wall_clock_time_not_refreshes() {
+        // 450 refreshes in 7 s (several paths, 60 fps) are not 8 s: the rule compares a Duration.
+        let idle = [(1, Duration::from_secs(7)), (2, Duration::from_secs(1))];
+        assert!(media_to_close(&idle, &Default::default(), 1, IDLE_MEDIA_MIN_AGE).is_empty());
+        let idle = [(1, Duration::from_secs(8)), (2, Duration::from_secs(1))];
+        assert_eq!(media_to_close(&idle, &Default::default(), 1, IDLE_MEDIA_MIN_AGE), vec![1]);
+    }
+
     const GB: u64 = GIB;
 
     #[test]
@@ -138,8 +198,18 @@ mod tests {
     fn auto_frame_cache_scales_with_ram() {
         assert_eq!(MemoryBudget::new(8 * GB).auto_frame_cache_bytes(), (8 * GB / 6) as usize);
         assert_eq!(MemoryBudget::new(16 * GB).auto_frame_cache_bytes(), (4 * GB) as usize);
-        assert_eq!(MemoryBudget::new(32 * GB).auto_frame_cache_bytes(), (8 * GB) as usize);
-        assert_eq!(MemoryBudget::new(128 * GB).auto_frame_cache_bytes(), (8 * GB) as usize);
+        assert_eq!(MemoryBudget::new(30 * GB).auto_frame_cache_bytes(), (4 * GB) as usize);
+        assert_eq!(MemoryBudget::new(32 * GB).auto_frame_cache_bytes(), (4 * GB) as usize);
+        assert_eq!(MemoryBudget::new(64 * GB).auto_frame_cache_bytes(), (4 * GB) as usize);
+        assert_eq!(MemoryBudget::new(128 * GB).auto_frame_cache_bytes(), (4 * GB) as usize);
+    }
+
+    #[test]
+    fn auto_frame_cache_never_passes_a_quarter_of_ram_or_8_gb() {
+        for gb in [2, 3, 4, 6, 8, 12, 16, 24, 30, 32, 64, 256] {
+            let cache = MemoryBudget::new(gb * GB).auto_frame_cache_bytes() as u64;
+            assert!(cache <= gb * GB / 4 && cache <= AUTO_CACHE_CAP, "{gb} GB RAM: cache {cache}");
+        }
     }
 
     #[test]
@@ -179,9 +249,9 @@ mod tests {
 
     #[test]
     fn idle_decoders() {
-        assert_eq!(MemoryBudget::new(8 * GB).idle_decoders(), 1);
-        assert_eq!(MemoryBudget::new(4 * GB).idle_decoders(), 1);
-        assert_eq!(MemoryBudget::new(16 * GB).idle_decoders(), 2);
+        assert_eq!(MemoryBudget::new(8 * GB).idle_decoders(), Some(1));
+        assert_eq!(MemoryBudget::new(4 * GB).idle_decoders(), Some(1));
+        assert_eq!(MemoryBudget::new(16 * GB).idle_decoders(), None);
     }
 
     #[test]

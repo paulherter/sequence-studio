@@ -756,8 +756,10 @@ mod start {
                             && r.min_y() >= outer.min_y() - 0.5
                             && r.max_y() <= outer.max_y() + 0.5
                     };
-                    let tiles: Vec<CGRect> =
-                        els.iter().filter_map(|e| if let Element::Section(_, r) = e { Some(*r) } else { None }).collect();
+                    let tiles: Vec<CGRect> = els
+                        .iter()
+                        .filter_map(|e| if let Element::Section(_, r) = e { Some(*r) } else { None })
+                        .collect();
                     for e in &els {
                         let Some(r) = bounds_of(e) else { continue };
                         checked += 1;
@@ -1146,7 +1148,9 @@ mod start {
         screen(&rig, |s, env| {
             s.set_tab(StartTab::Home);
             let els = s.pane_layout(env).0;
-            assert!(els.iter().any(|e| matches!(e, Element::Lane(r) if r.width == s.content_rect().width - 48.0 && r.height == 186.0)));
+            assert!(els.iter().any(
+                |e| matches!(e, Element::Lane(r) if r.width == s.content_rect().width - 48.0 && r.height == 186.0)
+            ));
             let quick: Vec<CGRect> =
                 els.iter().filter_map(|e| if let Element::Quick(_, r) = e { Some(*r) } else { None }).collect();
             assert_eq!(quick.len(), 4);

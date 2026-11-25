@@ -375,7 +375,8 @@ fn bench_decode() {
     let hardware = std::env::var("SQ_BENCH_HW").is_ok_and(|v| v == "1");
     let download = std::env::var("SQ_BENCH_DOWNLOAD").is_ok_and(|v| v == "1");
     let (demuxer, dec) = open_decoder(&clip, hardware);
-    let n = demuxer.index().count();
+    let limit = std::env::var("SQ_BENCH_FRAMES").ok().and_then(|v| v.parse::<usize>().ok());
+    let n = limit.map_or(demuxer.index().count(), |l| l.min(demuxer.index().count()));
     let start = std::time::Instant::now();
     let mut done = 0;
     for from in (0..n).step_by(4) {
@@ -389,7 +390,7 @@ fn bench_decode() {
     }
     let secs = start.elapsed().as_secs_f64();
     println!(
-        "BENCH {} hw={} frames={done} wall={secs:.2}s fps={:.1}",
+        "test result: BENCH {} hw={} frames={done} wall={secs:.2}s fps={:.1}",
         dec.decoder_name(),
         dec.is_hardware(),
         done as f64 / secs
@@ -650,6 +651,7 @@ fn prores_4444_carries_its_fourcc_to_the_decoder() {
         tb_den: info.tb_den,
         hardware: false,
         extra_hw_frames: 0,
+        sw_threads: 0,
     })
     .unwrap();
     let data = demux.read(0).unwrap();

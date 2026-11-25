@@ -73,6 +73,8 @@ pub trait ProgramEngine {
     fn end_scrub(&mut self);
     fn quality(&self) -> DecodeScale;
     fn set_quality(&mut self, quality: DecodeScale);
+    /// The Program monitor's picture size in pixels: playback may compose at that size when it is smaller than the sequence.
+    fn set_view_size(&mut self, _width: u32, _height: u32) {}
     /// The position the engine moved to since the last call (Swift `onPositionChange`), if any.
     fn take_position_change(&mut self) -> Option<Time>;
     /// For downcasts in tests and adapters (`StubProgramEngine`).
@@ -421,6 +423,8 @@ pub trait SessionProxyServing {
     /// What the monitors must be told since the last call (Swift held weak references to the engines and told them
     /// itself): the session applies it to the Program engine and every alive auxiliary engine.
     fn take_effects(&mut self) -> Vec<crate::ProxyEffect>;
+    /// The playhead's timeline position, every frame: sources near it are transcoded first. The default does nothing.
+    fn set_playhead(&mut self, _playhead: Time) {}
     /// `PowerPolicy::pauses_background_jobs`: no new proxy transcode starts while held. The default does nothing.
     fn set_held(&mut self, _held: bool) {}
     /// Takes what the workers finished and hands them new work (the app calls it every frame). The default does nothing.
@@ -428,6 +432,10 @@ pub trait SessionProxyServing {
     /// The unfinished transcodes, for the export queue's background list. The default has none.
     fn background_jobs(&self) -> Vec<BackgroundProxyJob> {
         Vec::new()
+    }
+    /// The line "no room for preview files" the first time proxies are refused in this project (shown once). Default none.
+    fn take_disk_notice(&mut self) -> Option<String> {
+        None
     }
     /// Cancel of a background job's row (`BackgroundProxyJob::id`).
     fn cancel_job(&mut self, _id: &str) {}

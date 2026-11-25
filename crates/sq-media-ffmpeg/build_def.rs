@@ -14,6 +14,13 @@ pub fn delay_load_required(value: Option<&str>) -> bool {
     value == Some("1")
 }
 
+/// A Windows build without FFmpeg is refused unless `SQ_ALLOW_STUB_SHIM=1`: the stub shim fails every open with `-38`, so
+/// an exe built that way starts fine and then shows "decode failed (-38)" on every clip (2026-11-21, `--perf-project` in
+/// the Windows VM: the shared ffmpeg dependency folder was gone and the cross build only warned).
+pub fn stub_shim_refused(target_os: Option<&str>, allow: Option<&str>) -> bool {
+    target_os == Some("windows") && allow != Some("1")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -46,5 +53,15 @@ mod tests {
         for no in [None, Some("0"), Some(""), Some("true")] {
             assert!(!delay_load_required(no), "{no:?}");
         }
+    }
+
+    #[test]
+    fn a_windows_build_without_ffmpeg_is_refused_unless_allowed() {
+        assert!(stub_shim_refused(Some("windows"), None));
+        assert!(stub_shim_refused(Some("windows"), Some("0")));
+        assert!(!stub_shim_refused(Some("windows"), Some("1")));
+        assert!(!stub_shim_refused(Some("linux"), None));
+        assert!(!stub_shim_refused(Some("macos"), None));
+        assert!(!stub_shim_refused(None, None));
     }
 }

@@ -88,10 +88,11 @@ typedef struct {
     int64_t pts;                  // stream ticks (best effort)
 } SQFFFrameInfo;
 
+// `swThreads` > 0 is the thread count of a software decoder (the caller shares the cores between its open decoders); 0 = built-in default.
 // `hardware` != 0 decodes with the platform's hardware decoder: D3D11VA (Windows, frames stay D3D11 textures) or VA-API (Linux,
 // frames are copied to memory as they come out). Fails when the GPU cannot decode the stream: the caller falls back.
 int sq_dec_open(const char *codec, const uint8_t *extradata, int extradataSize, int width, int height, int bitsPerCodedSample,
-                uint32_t codecTag, int tbNum, int tbDen, int hardware, int extraHWFrames, SQFFDecoder **out, char *err, int errLen);
+                uint32_t codecTag, int tbNum, int tbDen, int hardware, int extraHWFrames, int swThreads, SQFFDecoder **out, char *err, int errLen);
 void sq_dec_close(SQFFDecoder *dec);
 const char *sq_dec_name(const SQFFDecoder *dec);
 // Sends one packet (data NULL = end of stream). Returns 1 when the decoder is full (receive first, then send again).
@@ -114,6 +115,8 @@ int sq_frame_download_rgba(const SQFFFrame *f, uint8_t *buf, int cap);
 // The same layout box-reduced by `divisor` (1, 2, 4) in one pass, on `threads` threads: 4:2:0 / 4:2:2 / 4:4:4 at 8 or
 // 10 bits, planar or NV12 / P010 (hardware frames after transfer). Size 0 / result 1: not this frame (use the plain one).
 int sq_frame_download_reduced_size(const SQFFFrame *f, int divisor, int *outWidth, int *outHeight);
+/// 1 when the reduced download keeps 4:2:2 chroma (P210 / NV16 layout: interleaved CbCr, full height).
+int sq_frame_reduced_422(const SQFFFrame *f);
 int sq_frame_download_reduced(const SQFFFrame *f, int divisor, int threads, uint8_t *buf, int cap);
 void sq_frame_free(SQFFFrame *f);
 

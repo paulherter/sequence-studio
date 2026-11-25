@@ -13,7 +13,7 @@ use sq_media::demuxing::{BoxFuture, DemuxedFormat, DemuxedSample, Demuxing};
 use sq_media::media_error::MediaError;
 use sq_media::media_opener::{MediaOpener, OpenedMedia};
 use sq_media::sample_index::{Entry, SampleIndex};
-use sq_media::video_decoding::{DecodedFrame, VideoDecoding};
+use sq_media::video_decoding::{DecodedFrame, FrameSink, StopCheck, VideoDecoding};
 use sq_render::program::CpuPlanes;
 use std::collections::HashMap;
 use std::ops::RangeInclusive;
@@ -55,6 +55,10 @@ pub struct FileLog {
     pub opens: AtomicUsize,
     /// The decoder answers every request with no picture at all (a decoder that is stuck or has nothing new to give).
     pub silent: AtomicBool,
+    /// The decoder takes `delay` per picture, hands each over as it is done and honors the stop check (a real decoder).
+    pub streaming: AtomicBool,
+    /// Pictures decoded in streaming mode (the work a stop saves).
+    pub streamed: AtomicUsize,
 }
 
 impl FileLog {
@@ -68,6 +72,24 @@ struct FakeDecoder {
     media: Id,
     delay: Duration,
     log: Arc<FileLog>,
+}
+
+impl FakeDecoder {
+    fn picture(&self, i: usize) -> DecodedFrame {
+        // The whole luma plane holds the index (a composite of two frames differs).
+        let mut bytes = vec![128u8; PICTURE_BYTES];
+        bytes[..PIXELS * PIXELS].fill(u8::try_from(i % 256).unwrap_or(0));
+        let pts = Time::new(i as i64, FPS);
+        let frame = SQFrame::new(
+            PIXELS,
+            PIXELS,
+            SQFramePixelFormat::Nv12,
+            SQFrameColorSpace::Rec709,
+            pts,
+            Arc::new(CpuPlanes { bytes: bytes.into() }),
+        );
+        DecodedFrame::new(self.media, Time::new(1, FPS), frame)
+    }
 }
 
 impl VideoDecoding for FakeDecoder {
@@ -84,23 +106,30 @@ impl VideoDecoding for FakeDecoder {
             if self.log.silent.load(Ordering::SeqCst) {
                 return Ok(Vec::new());
             }
-            Ok(range
-                .map(|i| {
-                    // The whole luma plane holds the index (a composite of two frames differs).
-                    let mut bytes = vec![128u8; PICTURE_BYTES];
-                    bytes[..PIXELS * PIXELS].fill(u8::try_from(i % 256).unwrap_or(0));
-                    let pts = Time::new(i as i64, FPS);
-                    let frame = SQFrame::new(
-                        PIXELS,
-                        PIXELS,
-                        SQFramePixelFormat::Nv12,
-                        SQFrameColorSpace::Rec709,
-                        pts,
-                        Arc::new(CpuPlanes { bytes: bytes.into() }),
-                    );
-                    DecodedFrame::new(self.media, Time::new(1, FPS), frame)
-                })
-                .collect())
+            Ok(range.map(|i| self.picture(i)).collect())
+        })
+    }
+    fn decode_until(
+        &self,
+        range: RangeInclusive<usize>,
+        needed_from: Option<usize>,
+        deliver: FrameSink,
+        stop: StopCheck,
+    ) -> BoxFuture<'_, Result<Vec<DecodedFrame>, MediaError>> {
+        if !self.log.streaming.load(Ordering::SeqCst) {
+            return self.decode_needed_from(range, needed_from, deliver);
+        }
+        Box::pin(async move {
+            self.log.ranges.lock().unwrap_or_else(PoisonError::into_inner).push((*range.start(), *range.end()));
+            for i in range {
+                if stop() {
+                    break;
+                }
+                std::thread::sleep(self.delay);
+                self.log.streamed.fetch_add(1, Ordering::SeqCst);
+                deliver(self.picture(i));
+            }
+            Ok(Vec::new())
         })
     }
     fn invalidate(&self) {}
@@ -148,6 +177,13 @@ impl FakeOpener {
 }
 
 impl FakeOpener {
+    /// A file whose decoder takes `delay` per picture, delivers each as it is done and stops between pictures.
+    pub fn add_streaming(&self, path: &str, frames: i64, delay: Duration) -> Arc<FileLog> {
+        let log = self.add(path, frames, delay);
+        log.streaming.store(true, Ordering::SeqCst);
+        log
+    }
+
     /// A file whose decoder never delivers a picture (every decode answers with none, and no error).
     pub fn add_silent(&self, path: &str, frames: i64) -> Arc<FileLog> {
         let log = self.add(path, frames, Duration::ZERO);

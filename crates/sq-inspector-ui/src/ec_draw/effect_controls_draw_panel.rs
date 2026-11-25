@@ -1241,7 +1241,7 @@ impl EffectControlsDrawPanel {
                 );
             }
         }
-        if self.reset_shown(Some(&rr), resettable, *hover == Target::Reset(rr.clone())) {
+        if self.reset_shown(Some(rr), resettable, *hover == Target::Reset(rr.clone())) {
             let tint = self.button_tint(None, *hover == Target::Reset(rr.clone()), resettable, 1.0);
             self.icon(c, SQIcon::Reset, g.reset_frame(h), 10.0, tint);
         }

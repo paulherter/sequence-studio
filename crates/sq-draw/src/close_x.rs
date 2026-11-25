@@ -5,8 +5,8 @@
 use crate::stone::{hover_level, press_level};
 use crate::{Canvas, DrawTheme};
 use sq_uikit::controls_grid::{CGPoint, CGRect};
-use sq_uikit::tokens::radius;
 use sq_uikit::sqicon::SQIcon;
+use sq_uikit::tokens::radius;
 
 /// The kit's icon button: the box that lights up on hover.
 pub const BUTTON: f64 = 22.0;

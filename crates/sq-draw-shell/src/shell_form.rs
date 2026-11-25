@@ -1888,14 +1888,16 @@ impl ShellForm {
                         control.width = w.min(if label.is_empty() { inner + self.popup_bleed() } else { cw });
                     }
                     // r8 `.frm-popup` (flex: none): a labeled dialog pop-up is as wide as its widest option, never wider than its column.
-                    if !sidebar && !label.is_empty() && !self.control_widths.contains_key(id) {
-                        if let Row::Popup { options, .. } = &r {
-                            let widest = options
-                                .iter()
-                                .map(|o| tm.width(&SQL10n::string(o), type_size::BODY as f64, 0))
-                                .fold(0.0, f64::max);
-                            control.width = control.width.min((10.0 + widest + 8.0 + 7.0 + 7.0).ceil().max(m::MIN_BUTTON));
-                        }
+                    if !sidebar
+                        && !label.is_empty()
+                        && !self.control_widths.contains_key(id)
+                        && let Row::Popup { options, .. } = &r
+                    {
+                        let widest = options
+                            .iter()
+                            .map(|o| tm.width(&SQL10n::string(o), type_size::BODY as f64, 0))
+                            .fold(0.0, f64::max);
+                        control.width = control.width.min((10.0 + widest + 8.0 + 7.0 + 7.0).ceil().max(m::MIN_BUTTON));
                     }
                     // A settings page's `NSPopUpButton` frame bleeds 5 pt left of the control column.
                     if (sidebar || self.labeled_popup_bleed) && !label.is_empty() {
@@ -2789,7 +2791,12 @@ impl ShellForm {
         }
         let i = (0..self.row_frames.len()).find(|&i| self.row_frames[i].contains(p))?;
         let label_w = self.label_width - self.label_inset;
-        let column = CGRect::new(self.row_frames[i].min_x() + self.side_pad, self.row_frames[i].min_y(), label_w, self.row_frames[i].height);
+        let column = CGRect::new(
+            self.row_frames[i].min_x() + self.side_pad,
+            self.row_frames[i].min_y(),
+            label_w,
+            self.row_frames[i].height,
+        );
         let label = match &self.rows[i] {
             Row::Field { label, .. }
             | Row::Popup { label, .. }
@@ -3849,7 +3856,11 @@ impl ShellForm {
                 c.stroke_rounded(pic.inset_by(-1.0, -1.0), 7.0, 2.0, t.accent());
             } else {
                 // Hover: the stronger line and the caption lifts, so a card reads as a button before the click.
-                let line = if over { sq_uikit::redesign_tokens::color::LINE3 } else { sq_uikit::redesign_tokens::color::LINE2 };
+                let line = if over {
+                    sq_uikit::redesign_tokens::color::LINE3
+                } else {
+                    sq_uikit::redesign_tokens::color::LINE2
+                };
                 c.stroke_rounded(pic.inset_by(-0.5, -0.5), 6.5, 1.0, t.token(line));
             }
             Self::draw_radio(c, on, true, CGPoint::new(pic.min_x(), pic.max_y() + 9.0), t);
@@ -4718,7 +4729,12 @@ impl ShellForm {
                         if on {
                             c.stroke_rounded(f.inset_by(1.0, 1.0), radius::SMALL as f64 + 1.0, 2.0, t.accent());
                         } else if over {
-                            c.stroke_rounded(f.inset_by(0.5, 0.5), radius::SMALL as f64 + 1.5, 1.0, t.field_edge_hover());
+                            c.stroke_rounded(
+                                f.inset_by(0.5, 0.5),
+                                radius::SMALL as f64 + 1.5,
+                                1.0,
+                                t.field_edge_hover(),
+                            );
                         }
                         let (pw, ph) = card.picture();
                         let pic = CGRect::new(

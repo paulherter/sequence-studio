@@ -42,6 +42,7 @@ fn facts(linux: bool) -> Facts {
         appimage_dir: linux.then(|| PathBuf::from("/home/paul/Downloads")),
         home: linux.then(|| PathBuf::from("/home/paul")),
         system_line: "Sequence Studio Setup 0.2.0 (x64) on Windows 11 26100".into(),
+        data_shared_with: None,
     }
 }
 

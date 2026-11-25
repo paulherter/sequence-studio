@@ -92,6 +92,7 @@ impl AppServices {
             monitor: None,
             sampler: None,
             magic: None,
+            audio_notices: Default::default(),
         }
     }
 }

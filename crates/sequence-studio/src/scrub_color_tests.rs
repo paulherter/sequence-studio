@@ -81,6 +81,14 @@ const DEEP_420: Kind = Kind {
     encode: &["-c:v", "ffv1", "-pix_fmt", "yuv420p10le", "-color_range", "tv"],
 };
 
+/// 10-bit 4:2:2 limited range (a camera's XAVC / ProRes pixel layout, software decoded).
+const DEEP_422: Kind = Kind {
+    name: "deep-422",
+    ext: "mkv",
+    size: (640, 360),
+    encode: &["-c:v", "ffv1", "-pix_fmt", "yuv422p10le", "-color_range", "tv"],
+};
+
 /// H.264 High 4:2:2 10-bit with the full range flag and no colour tags (a Sony XAVC clip like the user's C2177): on the Mac
 /// VideoToolbox decodes it, on other systems FFmpeg.
 const XAVC: Kind = Kind {
@@ -389,6 +397,40 @@ fn every_download_route_hands_out_the_same_codes() {
     }
 }
 
+/// A deep 4:2:2 clip keeps its chroma height on the playing route (P210: the GPU samples it, no CPU merge to 4:2:0): the
+/// luma plane equals the paused (swscale) picture exactly, the chroma plane holds full-height rows, and a reduced download
+/// is the 2 x 2 box of the full one.
+#[test]
+fn a_deep_422_frame_keeps_its_chroma_height_on_the_playing_route() {
+    use sq_frame::sqframe::SQFramePixelFormat::{P010, P210};
+    let Some(tool) = ffmpeg_tool() else {
+        eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+        return;
+    };
+    let dir = std::env::temp_dir().join(format!("sq-422-routes-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).expect("temp folder");
+    let clip = make_clip(&tool, &dir, &DEEP_422).expect("a test clip");
+    let opened = DefaultOpener::new(None).open(&clip, Id::from_u128(1)).expect("open the clip");
+    let (paused_format, pixels, paused) = picture(&opened, 1, false);
+    let (format, _, full) = picture(&opened, 1, true);
+    assert_eq!(paused_format, P010);
+    assert_eq!(format, P210);
+    let (w, h) = (DEEP_422.size.0 as usize, DEEP_422.size.1 as usize);
+    assert_eq!(full.len(), w * h * 4, "luma plus full-height chroma, 16 bit");
+    assert_eq!(full[..pixels * 2], paused[..pixels * 2], "luma codes are the paused picture's");
+    let (reduced_format, reduced_pixels, reduced) = picture(&opened, 2, true);
+    assert_eq!(reduced_format, P210);
+    assert_eq!(reduced.len(), reduced_pixels * 4);
+    let word = |b: &[u8], i: usize| i32::from(u16::from_le_bytes([b[2 * i], b[2 * i + 1]]));
+    for (x, y) in [(0, 0), (10, 7), (319, 179), (100, 150)] {
+        let at = |dx: usize, dy: usize| word(&full, (2 * y + dy) * w + 2 * x + dx) >> 6;
+        let box_avg = (at(0, 0) + at(1, 0) + at(0, 1) + at(1, 1) + 2) / 4;
+        assert_eq!(word(&reduced, y * (w / 2) + x) >> 6, box_avg, "luma box at {x},{y}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The opener-level rule behind the pixel tests (needs no GPU): a proxy file cannot say full range, so it is read the way its
 /// original is.
 #[test]
@@ -415,5 +457,26 @@ fn a_proxy_is_read_with_the_range_of_its_original() {
         let expected = if full { [Nv12FullRange, P010FullRange] } else { [Nv12, P010] };
         assert!(expected.contains(&format), "{}: the proxy's pictures are labeled {format:?}", kind.name);
         let _ = std::fs::remove_dir_all(&dir);
+    }
+}
+
+/// Not a check: with `SQ_DUMP_CLIP=<file> SQ_DUMP_FRAMES=<i,j,..> SQ_DUMP_OUT=<folder>` it writes the playing route's pictures
+/// (Full size, as the compositor receives them) of a real clip as `<frame>.<w>x<h>.p210` for the sq-render comparison test.
+#[test]
+fn dump_playing_pictures_of_a_clip() {
+    let (Ok(clip), Ok(frames), Ok(out)) =
+        (std::env::var("SQ_DUMP_CLIP"), std::env::var("SQ_DUMP_FRAMES"), std::env::var("SQ_DUMP_OUT"))
+    else {
+        return;
+    };
+    let opened = DefaultOpener::new(None).open(std::path::Path::new(&clip), Id::from_u128(1)).expect("open the clip");
+    for i in frames.split(',').filter_map(|v| v.trim().parse::<usize>().ok()) {
+        let f = sq_playback::engine::media_source::block_on(opened.decoder.decode(i..=i)).expect("decode");
+        let frame = f.into_iter().next().expect("one frame");
+        let stats = sq_playback::engine::stats::PlayStats::default();
+        let p = sq_playback::engine::media_source::picture_of(frame, 1, true, &stats).expect("a picture");
+        let cpu = p.frame.storage_as::<sq_render::program::CpuPlanes>().expect("cpu planes");
+        let name = format!("{out}/{i}.{}x{}.{:?}", p.frame.width, p.frame.height, p.frame.pixel_format);
+        std::fs::write(name, &cpu.bytes[..]).expect("write");
     }
 }

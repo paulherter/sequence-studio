@@ -277,7 +277,13 @@ impl ShellHost {
             }
             let problems = model.borrow().validation_messages();
             if !problems.is_empty() {
-                let _ = h.with(|r| r.shell_parts().shell.present_message("Cannot export", &problems.join("\n"), Some(crate::shell_dialog::Tone::Error)));
+                let _ = h.with(|r| {
+                    r.shell_parts().shell.present_message(
+                        "Cannot export",
+                        &problems.join("\n"),
+                        Some(crate::shell_dialog::Tone::Error),
+                    )
+                });
                 continue;
             }
             // shortcut: the model stays borrowed across the await; the sheet is closed here and nothing else reads this model

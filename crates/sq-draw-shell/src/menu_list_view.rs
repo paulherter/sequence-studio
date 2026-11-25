@@ -110,6 +110,15 @@ impl MenuListView {
         (self.content_size().height - self.visible_size().height).max(0.0)
     }
 
+    /// Height of the strip with the scroll arrow at a cut edge.
+    pub const SCROLL_HINT_HEIGHT: f64 = 16.0;
+
+    /// Which edges cut rows off: (rows hidden above, rows hidden below). The list draws an arrow on each such edge.
+    pub fn scroll_hints(&self) -> (bool, bool) {
+        let max = self.max_scroll();
+        (max > 0.0 && self.scroll_offset > 0.5, max > 0.0 && self.scroll_offset < max - 0.5)
+    }
+
     /// Scrolls by `delta`.
     pub fn scroll(&mut self, delta: f64) {
         self.set_scroll(self.scroll_offset + delta);
@@ -360,6 +369,27 @@ impl MenuListView {
             let h = (track * bounds.height / self.content_size().height).max(20.0);
             let y = SQMenuLayout::INSET + (track - h) * self.scroll_offset / self.max_scroll();
             c.fill_rounded(CGRect::new(bounds.max_x() - 5.0, y, 3.0, h), f64::from(radius::SMALL), t.label4());
+        }
+        // An arrow on each edge that cuts rows off, so a short window never looks like a menu that just ends.
+        let (above, below) = self.scroll_hints();
+        let menu = t.token(sq_uikit::redesign_tokens::color::MENU);
+        let hint = Self::SCROLL_HINT_HEIGHT;
+        let side = f64::from(radius::MENU) * 0.5;
+        for (show, y, icon) in
+            [(above, 1.0, SQIcon::ChevronUp), (below, bounds.height - hint - 1.0, SQIcon::ChevronDown)]
+        {
+            if !show {
+                continue;
+            }
+            c.fill(CGRect::new(side, y, bounds.width - 2.0 * side, hint), menu.with_alpha(0.96));
+            let size = 12.0;
+            c.draw_icon(
+                icon,
+                CGPoint::new(bounds.mid_x() - size / 2.0, y + (hint - size) / 2.0),
+                size,
+                t.label2(),
+                None,
+            );
         }
         c.restore_gstate();
     }

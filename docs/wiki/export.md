@@ -19,7 +19,7 @@ Render your sequence to a file: presets, the export queue, smart rendering, capt
 
 ![The export sheet: preview and result on the left, settings on the right, Export at the bottom right.](img/export.webp)
 
-The sheet opens at the size and shape of your sequence. If the preset it starts with (your last one, or the one that belongs to the sequence's delivery target) is made for another shape, such as YouTube 1080p on a vertical sequence or TikTok on a horizontal one, the size stays the sequence's own and the picture is not letterboxed. When you pick a preset yourself in the sheet, you get that preset's own size.
+The sheet opens at the size and shape of your sequence. If the preset it starts with (your last one, or the one that belongs to the sequence's delivery target) is made for another shape, such as YouTube 1080p on a vertical sequence or TikTok on a horizontal one, the size stays the sequence's own and the picture is not letterboxed. When you pick a preset yourself in the sheet, you get that preset's own size. When you choose a shape that differs from the sequence's (for example 1920x1080 for a vertical sequence), the picture is fitted without stretching, centered, with black bars.
 
 For a fast export with no dialog, use Quick Export (Option-Command-M, Windows and Linux Ctrl+Alt+M). It uses the sequence's platform preset and the last export folder (or the Movies folder on the Mac, the Videos folder on Windows and Linux, if there is none).
 

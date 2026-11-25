@@ -312,8 +312,24 @@ impl Drop for Session {
 
 /// What must outlive the GPU's reads of an imported frame: the pixel buffer and its Metal textures.
 pub struct Keep {
-    _buffer: PixelBuffer,
-    _textures: Vec<CFRetained<CVMetalTexture>>,
+    // Order matters (fields drop top to bottom): the textures release their usage of the buffer's backing through the
+    // cache, so they go first and the cache last. A pixel buffer recycled by VideoToolbox keeps a backing that points at
+    // the cache of its earlier import; that cache must never be freed while any frame is alive.
+    textures: Vec<CFRetained<CVMetalTexture>>,
+    buffer: Option<PixelBuffer>,
+    _cache: CFRetained<CVMetalTextureCache>,
+}
+
+/// Serializes every call that touches the shared texture cache's bookkeeping (create, flush, texture release): Apple does
+/// not document concurrent use of one cache from several decoder threads and the graveyard thread as safe.
+static CACHE_LOCK: Mutex<()> = Mutex::new(());
+
+impl Drop for Keep {
+    fn drop(&mut self) {
+        let _guard = CACHE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
+        self.textures.clear();
+        self.buffer = None;
+    }
 }
 
 // SAFETY: held only to be released later; CoreVideo objects are thread-safe reference-counted objects.
@@ -328,6 +344,13 @@ pub struct Imported {
     pub kind: PixelKind,
     pub keep: Keep,
 }
+
+struct SharedCache(CFRetained<CVMetalTextureCache>);
+// SAFETY: CVMetalTextureCache is documented thread-safe.
+unsafe impl Send for SharedCache {}
+
+/// The caches made so far, keyed by MTLDevice address; entries are never removed (the device lives as long as the app).
+static SHARED_CACHES: Mutex<Vec<(usize, SharedCache)>> = Mutex::new(Vec::new());
 
 /// A CVMetalTextureCache on the wgpu device's MTLDevice.
 pub struct Importer {
@@ -349,12 +372,19 @@ impl Importer {
                 .ok_or(Failure::Unsupported("the wgpu device is not a Metal device".to_string()))?;
             hal_device.raw_device().clone()
         };
+        let key = Retained::as_ptr(&mtl) as usize;
+        let mut shared = SHARED_CACHES.lock().unwrap_or_else(PoisonError::into_inner);
+        if let Some((_, cache)) = shared.iter().find(|(k, _)| *k == key) {
+            return Ok(Importer { device: device.clone(), cache: cache.0.clone() });
+        }
         let mut raw: *mut CVMetalTextureCache = null_mut();
         // SAFETY: plain CoreVideo create call with a valid out pointer.
         let rc = unsafe { CVMetalTextureCache::create(None, None, &mtl, None, NonNull::from(&mut raw)) };
         let cache = NonNull::new(raw).filter(|_| rc == 0).ok_or(status(rc))?;
         // SAFETY: create returned +1 ownership.
         let cache = unsafe { CFRetained::from_raw(cache) };
+        // One cache per Metal device for the life of the process (a handful of bytes): see `Keep`.
+        shared.push((key, SharedCache(cache.clone())));
         Ok(Importer { device: device.clone(), cache })
     }
 
@@ -370,7 +400,7 @@ impl Importer {
         }
         let size =
             (CVPixelBufferGetWidthOfPlane(&buffer.0, 0) as u32, CVPixelBufferGetHeightOfPlane(&buffer.0, 0) as u32);
-        Ok(Imported { planes, size, kind, keep: Keep { _buffer: buffer, _textures: textures } })
+        Ok(Imported { planes, size, kind, keep: Keep { textures, buffer: Some(buffer), _cache: self.cache.clone() } })
     }
 
     fn import_plane(
@@ -388,6 +418,7 @@ impl Importer {
             (_, true) => (MTLPixelFormat::RG16Unorm, wgpu::TextureFormat::Rg16Unorm),
         };
         let mut out: *mut CVMetalTexture = null_mut();
+        let guard = CACHE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
         // SAFETY: valid cache and pixel buffer, out pointer valid for the call.
         let rc = unsafe {
             CVMetalTextureCache::create_texture_from_image(
@@ -402,6 +433,7 @@ impl Importer {
                 NonNull::from(&mut out),
             )
         };
+        drop(guard);
         let cv = NonNull::new(out).filter(|_| rc == 0).ok_or(status(rc))?;
         // SAFETY: +1 from the create call.
         let cv = unsafe { CFRetained::from_raw(cv) };
@@ -442,6 +474,7 @@ impl Importer {
 
     /// Releases textures the cache still holds (call now and then while decoding).
     pub fn flush(&self) {
+        let _guard = CACHE_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
         self.cache.flush(0);
     }
 }

@@ -18,6 +18,7 @@ pub mod keystone;
 pub mod motion_effects;
 pub mod motion_presets;
 pub mod motion_recipes;
+pub mod preview_scale;
 pub mod sequence_conform;
 pub mod speed_ramp_preset;
 pub mod style_effects;

@@ -776,17 +776,6 @@ mod tests {
     #[test]
     fn only_the_listed_icons_are_filled() {
         let filled: Vec<&str> = SQIcon::ALL.iter().filter(|i| i.is_filled()).map(|i| i.raw_value()).collect();
-        assert_eq!(
-            filled,
-            [
-                "play",
-                "pause",
-                "stop",
-                "heart",
-                "folderFilled",
-                "starFilled",
-                "bookmarkFilled"
-            ]
-        );
+        assert_eq!(filled, ["play", "pause", "stop", "heart", "folderFilled", "starFilled", "bookmarkFilled"]);
     }
 }

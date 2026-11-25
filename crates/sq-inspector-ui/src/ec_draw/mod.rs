@@ -219,7 +219,15 @@ pub(crate) fn group_header(
         bold,
     );
     if !summary.is_empty() {
-        c.draw_text_in(summary, CGRect::new(sx, f.min_y(), sw, f.height), fs, t.label3(), sq_draw::TextAlign::Right, 0.0, 0);
+        c.draw_text_in(
+            summary,
+            CGRect::new(sx, f.min_y(), sw, f.height),
+            fs,
+            t.label3(),
+            sq_draw::TextAlign::Right,
+            0.0,
+            0,
+        );
     }
     c.fill(CGRect::new(0.0, f.max_y() - 1.0, width, 1.0), t.separator());
 }

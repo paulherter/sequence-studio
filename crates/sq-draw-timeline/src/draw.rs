@@ -525,7 +525,7 @@ impl TimelinePanel {
         let flat = c.generator.is_some() || c.sequence.is_some() || offline;
         let tall = !flat && drawn.height >= ClipBodyMetrics::BODY_MIN_HEIGHT;
         let thumbs = if tall && track.kind == TrackKind::Video {
-            self.draw_thumbnails(cv, c, &ClipFrame { rect, body, drawn, radius, selected, visible })
+            self.draw_thumbnails(cv, c, &ClipFrame { rect, body, drawn, radius, visible })
         } else {
             (0.0, 0.0)
         };
@@ -990,7 +990,12 @@ mod select_hover_tests {
             std::fs::write(dir.join(format!("{name}.ppm")), ppm).unwrap();
         }
         // The name region inside the ring (3 pt = 6 px in from the clip edge), in pixels.
-        let (x0, x1, y0, y1) = (((10.0 + 8.0) * scale) as usize, ((410.0 - 8.0) * scale) as usize, ((6.0 + 4.0) * scale) as usize, ((6.0 + 20.0) * scale) as usize);
+        let (x0, x1, y0, y1) = (
+            ((10.0 + 8.0) * scale) as usize,
+            ((410.0 - 8.0) * scale) as usize,
+            ((6.0 + 4.0) * scale) as usize,
+            ((6.0 + 20.0) * scale) as usize,
+        );
         let mut differ = 0;
         for y in y0..y1 {
             for x in x0..x1 {
@@ -1000,6 +1005,10 @@ mod select_hover_tests {
                 }
             }
         }
-        std::fs::write(dir.join("text-region-diff.txt"), format!("region x {x0}..{x1} y {y0}..{y1} (px): {differ} differing pixels of {}\n", (x1 - x0) * (y1 - y0))).unwrap();
+        std::fs::write(
+            dir.join("text-region-diff.txt"),
+            format!("region x {x0}..{x1} y {y0}..{y1} (px): {differ} differing pixels of {}\n", (x1 - x0) * (y1 - y0)),
+        )
+        .unwrap();
     }
 }

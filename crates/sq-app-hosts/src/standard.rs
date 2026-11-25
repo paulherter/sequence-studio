@@ -210,6 +210,9 @@ fn build_root(
     let mut shell = ShellHost::new(DrawShell::new(keymap, recents, clock, Box::new(wall_clock)), Some(Box::new(hooks)));
     // Help > Check for Updates: `SQ_UPDATE_URL`, else the stored feed, else the GitHub releases feed (Swift `UpdateCheck.feedURL`).
     shell.shell().update_feed = UpdateCheck::feed_url(&FileView(Rc::clone(&defaults)));
+    // The in-app update: installs in place where the platform can, else Download opens the link.
+    shell.shell().update_install = sq_platform::app_update::supported();
+    shell.shell().update_cache = Some(support.join("caches").join("Updates"));
     // Saved sequence templates: without this folder Save Sequence as Template had nowhere to write (it is made on first save).
     shell.shell().template_folder = Some(sq_editor_session::standard_template_folder(support));
     // Linux AppImage: the Settings row for the menu entry (an entry whose file is gone is refreshed here).

@@ -2872,3 +2872,5 @@
 "%@ is empty" = "%@ ist leer";
 "Drag Clips Here" = "Clips hierher ziehen";
 "Drop media from the Library or Project on a track, or import new files." = "Ziehe Medien aus der Bibliothek oder dem Projekt auf eine Spur oder importiere neue Dateien.";
+"Restart to Update" = "Neu starten und aktualisieren";
+"The update did not finish" = "Das Update wurde nicht abgeschlossen";

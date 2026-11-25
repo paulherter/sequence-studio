@@ -848,11 +848,7 @@ impl EffectsDrawPanel {
     fn draw_empty(&self, c: &mut Canvas, t: &DrawTheme) {
         let q = trim_ws(&self.query).to_string();
         // r8: the shared empty state (icon, title, hint) centered in the list column, top-aligned when it is short.
-        let hint = if q.is_empty() {
-            String::new()
-        } else {
-            format!("Nothing here matches \u{201C}{q}\u{201D}.")
-        };
+        let hint = if q.is_empty() { String::new() } else { format!("Nothing here matches \u{201C}{q}\u{201D}.") };
         let empty = EmptyPane {
             icon: if q.is_empty() { SQIcon::Folder } else { SQIcon::Search },
             title: if q.is_empty() { "Nothing here yet" } else { "No results" },

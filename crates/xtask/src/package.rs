@@ -271,12 +271,8 @@ pub fn run_package(args: &[String]) -> Result<(), String> {
         cmd.args(args.iter().filter(|a| *a == "--sign").map(|_| "-Sign"));
         // The exe must delay-load the FFmpeg DLLs (sq-media-ffmpeg/build.rs): a missing tool fails the build.
         cmd.env("SQ_REQUIRE_DELAYLOAD", "1");
-        // shortcut: the new setup program (sq-setup-engine) has the Stable names built in (plan.rs consts), so a Nightly
-        // installer is the Inno one until the engine reads the channel; upgrade when the Windows installer takes a channel.
+        // The setup program takes the channel at build time (SQ_CHANNEL, below): Nightly gets its own names and records.
         cmd.args(args.iter().filter(|a| *a == "--inno").map(|_| "-Inno"));
-        if channel != Channel::Stable && !args.iter().any(|a| a == "--inno") {
-            cmd.arg("-Inno");
-        }
         cmd.env("SQ_CHANNEL", channel.id()).env("SQ_BUILD_VERSION", channel.version(&workspace_version(&root), &date));
         // `--release`: file names without the build stamp (SequenceStudio-Setup-<version>.exe).
         cmd.args(args.iter().filter(|a| *a == "--release").map(|_| "-Release"));
@@ -326,7 +322,7 @@ pub fn run_package(args: &[String]) -> Result<(), String> {
         .replace("@VERSION@", &channel.version(&workspace_version(&root), &date))
         .replace("@BUNDLE_ID@", channel.bundle_id())
         .replace("@NAME@", channel.display_name())
-        .replace("@BUILD@", "1");
+        .replace("@BUILD@", &channel.bundle_build(&workspace_version(&root), &date));
     std::fs::write(app.join("Contents/Info.plist"), plist).map_err(|e| e.to_string())?;
     std::fs::copy(pk.join(channel.mac_icon()), resources.join("AppIcon.icns")).map_err(|e| e.to_string())?;
     std::fs::write(app.join("Contents/PkgInfo"), "APPL????").map_err(|e| e.to_string())?;
@@ -446,7 +442,8 @@ fn make_dmg(
 ) -> Result<(), String> {
     // Every DMG gets its own name (version + local date and time), so a stale copy in Downloads is never mistaken for it.
     let stamp = run(Command::new("date").arg("+%Y%m%d-%H%M"))?.trim().to_string();
-    let dmg = out.join(format!("{} {} {stamp}.dmg", channel.display_name(), channel.version(&workspace_version(root), date)));
+    let dmg =
+        out.join(format!("{} {} {stamp}.dmg", channel.display_name(), channel.version(&workspace_version(root), date)));
     let stage = out.join("dmg");
     let _ = std::fs::remove_dir_all(&stage);
     std::fs::create_dir_all(&stage).map_err(|e| e.to_string())?;

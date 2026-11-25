@@ -5,24 +5,24 @@
 //! Render: `SQ_CATALOGUE_DIR=<dir> cargo test -p sq-app-hosts catalogue_shots -- --ignored`. The shots use the bundled Inter,
 //! while the Mac app draws with SF, so glyph shapes differ from the app.
 
+use crate::chrome::test_access::{Mouse, StatusBarContent, TitleRow, status_bar};
 use sq_draw::stone::{ButtonKind, Touch};
 use sq_draw::ui_cx::UiCx;
 use sq_draw::{Canvas, DrawTheme, GlyphAtlas, SoftwareRenderer, Sources, TextMeasure};
-use crate::chrome::test_access::{Mouse, StatusBarContent, TitleRow, status_bar};
 use sq_draw::{InputEvent, InputModifiers};
 use sq_draw_shell::{FormRow, MenuListView, ShellDialog, ShellDock, ShellForm, Sidebar};
 use sq_draw_timeline::tool_strip::ToolStrip;
 use sq_editor_session::{MonitorQuality, SaveStatus, TimelineTool, ToolState};
+use sq_uikit::appearance_palette::{AppearanceMode, AppearanceSettings};
 use sq_uikit::command_map::CommandMap;
+use sq_uikit::controls_grid::CGPoint;
+use sq_uikit::controls_grid::CGRect;
 use sq_uikit::panel_id::PanelID;
-use std::time::{Duration, SystemTime};
 use sq_uikit::sqdialog_model::SQDialogRole;
 use sq_uikit::sqicon::SQIcon;
 use sq_uikit::sqmenu_model::SQMenuItem;
-use sq_uikit::appearance_palette::{AppearanceMode, AppearanceSettings};
-use sq_uikit::controls_grid::CGRect;
-use sq_uikit::controls_grid::CGPoint;
 use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
 
 const SCALE: f32 = 2.0;
 
@@ -38,7 +38,8 @@ enum State {
 }
 
 impl State {
-    const ALL: [State; 6] = [State::Default, State::Hover, State::Pressed, State::Focus, State::Disabled, State::Selected];
+    const ALL: [State; 6] =
+        [State::Default, State::Hover, State::Pressed, State::Focus, State::Disabled, State::Selected];
     fn name(self) -> &'static str {
         match self {
             State::Default => "default",
@@ -106,7 +107,10 @@ fn render_transparent(list: &sq_draw::DrawList, side: usize, src: &Sources) -> V
 
 fn matte_rgba(black: &[u8], white: &[u8]) -> Vec<u8> {
     let mut out = vec![0u8; black.len()];
-    for ((o, b), w) in out.chunks_exact_mut(4).zip(black.chunks_exact(4)).zip(white.chunks_exact(4)) {
+    let (out_px, _) = out.as_chunks_mut::<4>();
+    let (black_px, _) = black.as_chunks::<4>();
+    let (white_px, _) = white.as_chunks::<4>();
+    for ((o, b), w) in out_px.iter_mut().zip(black_px).zip(white_px) {
         let diff = (0..3).map(|k| i32::from(w[k]) - i32::from(b[k])).sum::<i32>() as f32 / 3.0;
         let a = (1.0 - diff / 255.0).clamp(0.0, 1.0);
         if a > 0.0 {
@@ -131,7 +135,13 @@ fn render(dir: &Path, atlas: &GlyphAtlas, entries: &[Entry]) -> usize {
                 let (w, h) = ((e.size.0 * SCALE) as usize, (e.size.1 * SCALE) as usize);
                 let mut c = Canvas::with_size(w as f32, h as f32, Some(atlas), SCALE);
                 (e.draw)(&mut Cx { c: &mut c, t: &t, state, touch: state.touch() });
-                let img = SoftwareRenderer::render(&c.list, w, h, t.panel(), &Sources { atlas: Some(atlas), ..Sources::default() });
+                let img = SoftwareRenderer::render(
+                    &c.list,
+                    w,
+                    h,
+                    t.panel(),
+                    &Sources { atlas: Some(atlas), ..Sources::default() },
+                );
                 write_png(&dir.join(format!("{}-{}-{mode_name}@2x.png", e.id, state.name())), w, h, &img.pixels);
                 written += 1;
             }
@@ -167,9 +177,24 @@ fn on(cx: &Cx) -> bool {
 /// Buttons, fields, switch, checkbox, radio, segmented control, slider, chips.
 fn controls() -> Vec<Entry> {
     vec![
-        Entry { id: "button-raised", size: (100.0, 42.0), states: NO_SELECTED, draw: |cx| button(cx, ButtonKind::Raised, "Button", 59.0) },
-        Entry { id: "button-primary", size: (120.0, 42.0), states: NO_SELECTED, draw: |cx| button(cx, ButtonKind::Accent, "Export", 84.0) },
-        Entry { id: "button-destructive", size: (120.0, 42.0), states: NO_SELECTED, draw: |cx| button(cx, ButtonKind::Destructive, "Delete", 84.0) },
+        Entry {
+            id: "button-raised",
+            size: (100.0, 42.0),
+            states: NO_SELECTED,
+            draw: |cx| button(cx, ButtonKind::Raised, "Button", 59.0),
+        },
+        Entry {
+            id: "button-primary",
+            size: (120.0, 42.0),
+            states: NO_SELECTED,
+            draw: |cx| button(cx, ButtonKind::Accent, "Export", 84.0),
+        },
+        Entry {
+            id: "button-destructive",
+            size: (120.0, 42.0),
+            states: NO_SELECTED,
+            draw: |cx| button(cx, ButtonKind::Destructive, "Delete", 84.0),
+        },
         Entry {
             id: "field-number",
             size: (90.0, 40.0),
@@ -361,30 +386,20 @@ fn overlays() -> Vec<Entry> {
                 v.draw(cx.c, cx.t);
             },
         },
-        Entry {
-            id: "tooltip",
-            size: (150.0, 56.0),
-            states: &[State::Default],
-            draw: |cx| tip(cx, "Selection (V)"),
-        },
+        Entry { id: "tooltip", size: (150.0, 56.0), states: &[State::Default], draw: |cx| tip(cx, "Selection (V)") },
         Entry {
             id: "tooltip-long",
             size: (360.0, 90.0),
             states: &[State::Default],
-            draw: |cx| tip(cx, "Ripples the timeline: every clip after the cut moves left to close the gap, on all unlocked tracks (Q)"),
+            draw: |cx| {
+                tip(
+                    cx,
+                    "Ripples the timeline: every clip after the cut moves left to close the gap, on all unlocked tracks (Q)",
+                )
+            },
         },
-        Entry {
-            id: "settings-row",
-            size: (640.0, 150.0),
-            states: &[State::Default],
-            draw: |cx| settings(cx, 2),
-        },
-        Entry {
-            id: "card",
-            size: (640.0, 300.0),
-            states: &[State::Default],
-            draw: |cx| settings(cx, 4),
-        },
+        Entry { id: "settings-row", size: (640.0, 150.0), states: &[State::Default], draw: |cx| settings(cx, 2) },
+        Entry { id: "card", size: (640.0, 300.0), states: &[State::Default], draw: |cx| settings(cx, 4) },
         Entry {
             id: "dialog-shell",
             size: (480.0, 240.0),
@@ -433,7 +448,12 @@ fn tip(cx: &mut Cx, text: &str) {
 /// A settings page: a card of rows with a title, help and a control each, `n` rows.
 fn settings(cx: &mut Cx, n: usize) {
     let rows = [
-        ("labels", "Show experimental labels", "Marks features that are still being built, so you know they can change.", true),
+        (
+            "labels",
+            "Show experimental labels",
+            "Marks features that are still being built, so you know they can change.",
+            true,
+        ),
         ("autosave", "Autosave", "Saves a backup of your project every few minutes.", true),
         ("reopen", "Reopen last project", "Opens the project you worked on when the app starts.", false),
         ("tips", "Show tips", "Shows a short hint when you hover a control.", true),
@@ -520,8 +540,7 @@ fn tools_panel(cx: &mut Cx, tool: TimelineTool, hover: Option<usize>) {
         let e = InputEvent::MouseMoved { x: (r.mid_x() * k) as f32, y: (r.mid_y() * k) as f32 };
         strip.handle(&e, &ToolState::default(), &mut UiCx::new(), &CommandMap::premiere_default());
     }
-    let mut state = ToolState::default();
-    state.tool = tool;
+    let state = ToolState { tool, ..Default::default() };
     strip.draw(cx.c, &state);
 }
 
@@ -534,10 +553,14 @@ fn shell() -> Vec<Entry> {
             states: &[State::Default, State::Hover, State::Selected],
             // Default = Edit shown; Selected = Color shown; Hover = the pointer over the other segment (Color).
             draw: |cx| match cx.state {
-                State::Hover => title_row(cx, false, Some(|r| {
-                    let f = r.controls()[2];
-                    CGPoint::new(f.min_x() + f.width * 0.75, f.mid_y())
-                })),
+                State::Hover => title_row(
+                    cx,
+                    false,
+                    Some(|r| {
+                        let f = r.controls()[2];
+                        CGPoint::new(f.min_x() + f.width * 0.75, f.mid_y())
+                    }),
+                ),
                 s => title_row(cx, s == State::Selected, None),
             },
         },
@@ -682,7 +705,16 @@ struct Scene {
 
 impl Scene {
     fn new(tracks: Vec<sq_core_model::Track>) -> Scene {
-        Scene { tracks, view: (640.0, 196.0), pps: 40.0, selected: Vec::new(), offline: Vec::new(), playhead_s: 0, in_out: None, marker_s: None }
+        Scene {
+            tracks,
+            view: (640.0, 196.0),
+            pps: 40.0,
+            selected: Vec::new(),
+            offline: Vec::new(),
+            playhead_s: 0,
+            in_out: None,
+            marker_s: None,
+        }
     }
 }
 
@@ -697,7 +729,12 @@ fn moved(h: &mut sq_draw_timeline::TimelineAppHost, ui: &mut UiCx, x: f64, y: f6
 }
 
 /// Builds the scene, lets `drive` move the pointer, then draws the `crop` rect of the panel into the canvas.
-fn draw_scene(cx: &mut Cx, sc: &Scene, crop: CGRect, drive: &dyn Fn(&mut sq_draw_timeline::TimelineAppHost, &mut UiCx)) {
+fn draw_scene(
+    cx: &mut Cx,
+    sc: &Scene,
+    crop: CGRect,
+    drive: &dyn Fn(&mut sq_draw_timeline::TimelineAppHost, &mut UiCx),
+) {
     use sq_app_shell::{AppHost as _, AppServices, HostCx};
     use sq_core_model::{LabelResolver, Marker, MarkerColor, Project, SequenceFormat, Timeline};
     use sq_core_time::{Time, TimeRange};
@@ -716,7 +753,8 @@ fn draw_scene(cx: &mut Cx, sc: &Scene, crop: CGRect, drive: &dyn Fn(&mut sq_draw
     let mut host = sq_draw_timeline::TimelineAppHost::new(*cx.t);
     host.panel.layout_px(sq_draw::Rect::new(0.0, 0.0, sc.view.0 as f32 * SCALE, sc.view.1 as f32 * SCALE), SCALE);
     if !sc.offline.is_empty() {
-        host.panel.media = Some(std::rc::Rc::new(Missing(sc.offline.iter().map(|c| tid(c.as_u128() - (1 << 80) + 500)).collect())));
+        host.panel.media =
+            Some(std::rc::Rc::new(Missing(sc.offline.iter().map(|c| tid(c.as_u128() - (1 << 80) + 500)).collect())));
     }
     host.panel.cached_ranges = vec![TimeRange::new(Time::new(1, 1), Time::new(3, 1))];
     let sel: std::collections::BTreeSet<_> = sc.selected.iter().copied().collect();
@@ -738,7 +776,14 @@ fn draw_scene(cx: &mut Cx, sc: &Scene, crop: CGRect, drive: &dyn Fn(&mut sq_draw
         sq_editor_session::SessionDeps::headless(std::env::temp_dir().join("sq-catalogue-session")),
     );
     let (mut services, mut events) = (AppServices::headless(), Vec::new());
-    let mut hcx = HostCx { session: &mut session, ui: &mut ui, services: &mut services, events: &mut events, atlas: None, scale: SCALE };
+    let mut hcx = HostCx {
+        session: &mut session,
+        ui: &mut ui,
+        services: &mut services,
+        events: &mut events,
+        atlas: None,
+        scale: SCALE,
+    };
     cx.c.save_gstate();
     cx.c.translate_by(-crop.x, -crop.y);
     host.draw(cx.c, cx.t, &mut hcx);
@@ -769,8 +814,11 @@ const TOOLS: f64 = sq_timeline_ui::TimelineGeometry::TOOL_COLUMN_WIDTH;
 const HEADER: f64 = sq_timeline_ui::TimelineGeometry::HEADER_WIDTH;
 const RULER: f64 = sq_timeline_ui::TimelineGeometry::RULER_HEIGHT;
 
+/// What drives the Timeline host after layout (presses, drags).
+type SceneDrive = Box<dyn Fn(&mut sq_draw_timeline::TimelineAppHost, &mut UiCx)>;
+
 /// The one video clip scene (V2 empty above, A1 below), the clip at 2 s, 3 s long (120 pt at 40 pt/s).
-fn clip_scene(clip: sq_core_model::Clip, audio: bool, st: State, offline: bool) -> (Scene, CGRect, Box<dyn Fn(&mut sq_draw_timeline::TimelineAppHost, &mut UiCx)>) {
+fn clip_scene(clip: sq_core_model::Clip, audio: bool, st: State, offline: bool) -> (Scene, CGRect, SceneDrive) {
     use sq_core_model::TrackKind::{Audio, Video};
     let id = clip.id;
     let mut clip = clip;
@@ -786,7 +834,7 @@ fn clip_scene(clip: sq_core_model::Clip, audio: bool, st: State, offline: bool) 
     let (top, h) = row_of(&sc, if audio { 1 } else { 0 });
     let x = ORIGIN + 2.0 * sc.pps;
     let crop = CGRect::new(x - 12.0, top - 8.0, 144.0, h + 16.0);
-    let drive: Box<dyn Fn(&mut sq_draw_timeline::TimelineAppHost, &mut UiCx)> = Box::new(move |h2, ui| {
+    let drive: SceneDrive = Box::new(move |h2, ui| {
         if st == State::Pressed {
             // Trimming: press the clip's right edge and drag it 14 pt to the left.
             let y = top + h / 2.0;
@@ -863,7 +911,8 @@ fn stress_scene() -> Scene {
 /// A project far zoomed out: `pps` = 1.5 pt/s over 5 minutes of clips and 100 tracks' worth of rows is `many`.
 fn many_tracks_scene(n: u128) -> Scene {
     use sq_core_model::TrackKind::{Audio, Video};
-    let mut tracks: Vec<_> = (0..n).map(|i| tl_track(100 + i, Video, vec![tl_clip(200 + i, "Clip", Video, (i % 5) as i64, 100)])).collect();
+    let mut tracks: Vec<_> =
+        (0..n).map(|i| tl_track(100 + i, Video, vec![tl_clip(200 + i, "Clip", Video, (i % 5) as i64, 100)])).collect();
     tracks.push(tl_track(1, Audio, Vec::new()));
     let mut sc = Scene::new(tracks);
     sc.view = (640.0, 260.0);
@@ -874,10 +923,12 @@ fn many_tracks_scene(n: u128) -> Scene {
 fn timecode_cell(cx: &mut Cx, snapping: bool, hover_snap: bool) {
     use sq_draw_timeline::header::{TimelineHeaderState, TimelineHeaderStrip};
     let mut strip = TimelineHeaderStrip::new(*cx.t);
-    let mut st = TimelineHeaderState::default();
-    st.timecode = "00:00:04:12".into();
-    st.snapping = snapping;
-    st.linked_selection = snapping;
+    let st = TimelineHeaderState {
+        timecode: "00:00:04:12".into(),
+        snapping,
+        linked_selection: snapping,
+        ..Default::default()
+    };
     strip.compact = true;
     strip.layout(sq_draw::Rect::new(0.0, 0.0, 190.0 * SCALE, 26.0 * SCALE), SCALE, st);
     strip.set_cell_origin(0.0, 0.0);
@@ -925,7 +976,10 @@ fn timeline() -> Vec<Entry> {
             states: &[State::Default, State::Pressed],
             // The head in the ruler and the line down over the lanes; Pressed = the pointer dragging the ruler.
             draw: |cx| {
-                let mut sc = Scene::new(vec![tl_track(1, Video, vec![tl_clip(10, "Clip", Video, 0, 250)]), tl_track(2, Audio, Vec::new())]);
+                let mut sc = Scene::new(vec![
+                    tl_track(1, Video, vec![tl_clip(10, "Clip", Video, 0, 250)]),
+                    tl_track(2, Audio, Vec::new()),
+                ]);
                 sc.playhead_s = 3;
                 sc.view = (640.0, 160.0);
                 let x = ORIGIN + 3.0 * sc.pps;
@@ -933,7 +987,10 @@ fn timeline() -> Vec<Entry> {
                 draw_scene(cx, &sc, CGRect::new(x - 50.0, 0.0, 100.0, 120.0), &move |h, ui| {
                     if pressed {
                         let (px0, py0) = px(x, RULER / 2.0);
-                        h.panel.handle(&InputEvent::MouseDown { x: px0, y: py0, modifiers: sq_draw::InputModifiers::NONE }, ui);
+                        h.panel.handle(
+                            &InputEvent::MouseDown { x: px0, y: py0, modifiers: sq_draw::InputModifiers::NONE },
+                            ui,
+                        );
                     }
                 });
             },
@@ -998,7 +1055,8 @@ fn timeline() -> Vec<Entry> {
                     State::Hover => moved(h, ui, bar_x, y),
                     State::Pressed => {
                         let (x, yy) = px(bar_x, y);
-                        h.panel.handle(&InputEvent::MouseDown { x, y: yy, modifiers: sq_draw::InputModifiers::NONE }, ui);
+                        h.panel
+                            .handle(&InputEvent::MouseDown { x, y: yy, modifiers: sq_draw::InputModifiers::NONE }, ui);
                     }
                     _ => {}
                 });
@@ -1029,7 +1087,8 @@ fn timeline() -> Vec<Entry> {
             states: CLIP_STATES,
             draw: |cx| {
                 let mut c = tl_clip(10, "Title", Video, 2, 75);
-                c.generator = Some(sq_core_model::GeneratorRef { kind: "text".into(), payload: Vec::new(), payload_version: 1 });
+                c.generator =
+                    Some(sq_core_model::GeneratorRef { kind: "text".into(), payload: Vec::new(), payload_version: 1 });
                 clip_entry(cx, c, false, false)
             },
         },
@@ -1229,7 +1288,11 @@ fn ins_effect_off(c: &mut Clip) {
 }
 
 fn ins_sharpen_amount() -> EffectProperty {
-    EffectProperty::Fx { id: tid(2001), kind: ClipEffect::SHARPEN_KIND.to_string(), key: ClipEffect::SHARPEN_AMOUNT_KEY.to_string() }
+    EffectProperty::Fx {
+        id: tid(2001),
+        kind: ClipEffect::SHARPEN_KIND.to_string(),
+        key: ClipEffect::SHARPEN_AMOUNT_KEY.to_string(),
+    }
 }
 
 /// The section header `which` (Transform = `Motion`, or the disabled sharpen effect) in view points, hover on its eye.
@@ -1238,7 +1301,11 @@ fn ins_header_shot(cx: &mut Cx, closed: bool, off: bool) {
     if off {
         ins_effect_off(&mut c);
     }
-    let section = if off { EffectSection::Effect { id: tid(2001), kind: ClipEffect::SHARPEN_KIND.to_string() } } else { EffectSection::Motion };
+    let section = if off {
+        EffectSection::Effect { id: tid(2001), kind: ClipEffect::SHARPEN_KIND.to_string() }
+    } else {
+        EffectSection::Motion
+    };
     let s2 = section.clone();
     let mut v = ins_view(cx.t, c, Vec::new(), (INS_W, 600.0), &move |m| {
         if closed {
@@ -1266,7 +1333,8 @@ fn ins_lane_shot(cx: &mut Cx, pick: &dyn Fn(&EffectRowKind) -> bool, keyed: bool
     let row = ins_row(&v, pick);
     let lane = v.lane_x();
     let hover = if cx.state == State::Hover {
-        let x = if hover_key { lane + v.model.lane_geometry(v.lanes_size().width).x(ins_secs(2)) } else { lane + 150.0 };
+        let x =
+            if hover_key { lane + v.model.lane_geometry(v.lanes_size().width).x(ins_secs(2)) } else { lane + 150.0 };
         Some(CGPoint::new(x, row.mid_y()))
     } else {
         None
@@ -1338,33 +1406,67 @@ fn inspector() -> Vec<Entry> {
             id: "inspector-property-row",
             size: (614.0, 24.0),
             states: INS_PROP_STATES,
-            draw: |cx| ins_row_shot(cx, &ins_prop(EffectProperty::Rotation), &ins_rot, Vec::new(), &[], Some(&is_field), false),
+            draw: |cx| {
+                ins_row_shot(cx, &ins_prop(EffectProperty::Rotation), &ins_rot, Vec::new(), &[], Some(&is_field), false)
+            },
         },
         Entry {
             id: "inspector-reset-hidden",
             size: (614.0, 24.0),
             states: &[State::Default],
             // An unchanged row at rest: no reset arrow.
-            draw: |cx| ins_row_shot(cx, &ins_prop(EffectProperty::Rotation), &ins_rot, Vec::new(), &[], Some(&is_field), false),
+            draw: |cx| {
+                ins_row_shot(cx, &ins_prop(EffectProperty::Rotation), &ins_rot, Vec::new(), &[], Some(&is_field), false)
+            },
         },
         Entry {
             id: "inspector-reset-shown",
             size: (614.0, 24.0),
             states: &[State::Default],
             // A changed row at rest: the reset arrow shows without the pointer.
-            draw: |cx| ins_row_shot(cx, &ins_prop(EffectProperty::Opacity), &ins_opacity_60, Vec::new(), &[], Some(&is_field), false),
+            draw: |cx| {
+                ins_row_shot(
+                    cx,
+                    &ins_prop(EffectProperty::Opacity),
+                    &ins_opacity_60,
+                    Vec::new(),
+                    &[],
+                    Some(&is_field),
+                    false,
+                )
+            },
         },
         Entry {
             id: "inspector-property-row-changed",
             size: (614.0, 24.0),
             states: &[State::Default, State::Hover],
-            draw: |cx| ins_row_shot(cx, &ins_prop(EffectProperty::Opacity), &ins_opacity_60, Vec::new(), &[], Some(&is_field), false),
+            draw: |cx| {
+                ins_row_shot(
+                    cx,
+                    &ins_prop(EffectProperty::Opacity),
+                    &ins_opacity_60,
+                    Vec::new(),
+                    &[],
+                    Some(&is_field),
+                    false,
+                )
+            },
         },
         Entry {
             id: "inspector-property-row-two",
             size: (614.0, 24.0),
             states: &[State::Default, State::Hover, State::Focus],
-            draw: |cx| ins_row_shot(cx, &ins_prop(EffectProperty::Position), &ins_position, Vec::new(), &[], Some(&is_field), false),
+            draw: |cx| {
+                ins_row_shot(
+                    cx,
+                    &ins_prop(EffectProperty::Position),
+                    &ins_position,
+                    Vec::new(),
+                    &[],
+                    Some(&is_field),
+                    false,
+                )
+            },
         },
         Entry {
             id: "inspector-property-row-keyed",
@@ -1374,7 +1476,15 @@ fn inspector() -> Vec<Entry> {
             draw: |cx| {
                 let p = ins_prop(EffectProperty::Scale);
                 if cx.state == State::Selected {
-                    ins_row_shot(cx, &p, &ins_keyed, Vec::new(), &[EffectProperty::Scale], Some(&|t| matches!(t, Target::Key(_))), false);
+                    ins_row_shot(
+                        cx,
+                        &p,
+                        &ins_keyed,
+                        Vec::new(),
+                        &[EffectProperty::Scale],
+                        Some(&|t| matches!(t, Target::Key(_))),
+                        false,
+                    );
                 } else {
                     ins_row_shot(cx, &p, &ins_keyed, Vec::new(), &[EffectProperty::Scale], Some(&is_field), false);
                 }
@@ -1476,15 +1586,25 @@ fn ls_project(long: bool) -> (sq_core_model::Project, Vec<sq_core_model::BinItem
 
 /// Draws the Project list (`w` wide, rows below the 54 pt chrome) into the canvas, shifted by `crop`.
 /// `select` = an item to mark selected, `hover` = a row index the pointer is on.
-fn ls_project_draw(cx: &mut Cx, long: bool, w: f64, rows: f64, crop: CGRect, select: Option<sq_core_model::BinItemRef>, hover: Option<usize>) {
+fn ls_project_draw(
+    cx: &mut Cx,
+    long: bool,
+    w: f64,
+    rows: f64,
+    crop: CGRect,
+    select: Option<sq_core_model::BinItemRef>,
+    hover: Option<usize>,
+) {
     use sq_core_model::MediaStatus;
     use sq_draw_shell::{ProjectListCx, ProjectListSettings, ProjectListView};
     use sq_editor_session::{EditorSession, ProjectPanelDeps, ProjectPanelModel, SessionDeps};
     let (mut project, children, open) = ls_project(long);
     project.root_bin.children = children;
-    let mut session = EditorSession::new(project.clone(), SessionDeps::headless(std::env::temp_dir().join("sq-catalogue-session")));
+    let mut session =
+        EditorSession::new(project.clone(), SessionDeps::headless(std::env::temp_dir().join("sq-catalogue-session")));
     let mut deps = ProjectPanelDeps::headless();
-    deps.status = std::sync::Arc::new(|m| if m.name.starts_with("Drone") { MediaStatus::Missing } else { MediaStatus::Ok });
+    deps.status =
+        std::sync::Arc::new(|m| if m.name.starts_with("Drone") { MediaStatus::Missing } else { MediaStatus::Ok });
     let mut model = ProjectPanelModel::new(project, deps);
     let mut v = ProjectListView::new(ProjectListSettings::default());
     // Room under the rows for the info card and the health line, which the panel pins below the last row.
@@ -1531,7 +1651,10 @@ fn ls_rows(cx: &mut Cx, long: bool, w: f64, rows: usize) {
 }
 
 /// A Library panel over a scratch folder: `setup` shapes it, `size` is the panel in points.
-fn ls_library(size: (f64, f64), setup: &dyn Fn(&mut sq_draw_library::library::library_draw_panel::LibraryDrawPanel, &Path)) -> sq_draw_library::library::library_draw_panel::LibraryDrawPanel {
+fn ls_library(
+    size: (f64, f64),
+    setup: &dyn Fn(&mut sq_draw_library::library::library_draw_panel::LibraryDrawPanel, &Path),
+) -> sq_draw_library::library::library_draw_panel::LibraryDrawPanel {
     let root = std::env::temp_dir().join(format!("sq-catalogue-library-{}", std::process::id()));
     let media = root.join("Footage");
     std::fs::create_dir_all(&media).expect("scratch folder");
@@ -1544,7 +1667,12 @@ fn ls_library(size: (f64, f64), setup: &dyn Fn(&mut sq_draw_library::library::li
 }
 
 /// Draws the panel twice (the first draw measures the chips and places the buttons the pointer then finds), shifted by `crop`.
-fn ls_library_draw(cx: &mut Cx, panel: &mut sq_draw_library::library::library_draw_panel::LibraryDrawPanel, hover: &dyn Fn(&sq_draw_library::library::library_draw_panel::LibraryDrawPanel) -> Option<CGPoint>, crop: CGRect) {
+fn ls_library_draw(
+    cx: &mut Cx,
+    panel: &mut sq_draw_library::library::library_draw_panel::LibraryDrawPanel,
+    hover: &dyn Fn(&sq_draw_library::library::library_draw_panel::LibraryDrawPanel) -> Option<CGPoint>,
+    crop: CGRect,
+) {
     let mut ui = UiCx::new();
     for pass in 0..2 {
         if pass == 1 {
@@ -1584,7 +1712,11 @@ fn ls_chips_shot(cx: &mut Cx, width: f64, rows: usize) {
     use sq_library::preset_store::PresetKind;
     let (selected, hovering) = (cx.state == State::Selected, cx.state == State::Hover);
     let mut panel = ls_library((width, 300.0), &|p, _| {
-        p.model.set_selection(if selected { LibrarySection::Presets(Some(PresetKind::Effect)) } else { LibrarySection::Presets(None) });
+        p.model.set_selection(if selected {
+            LibrarySection::Presets(Some(PresetKind::Effect))
+        } else {
+            LibrarySection::Presets(None)
+        });
     });
     let hover = |p: &sq_draw_library::library::library_draw_panel::LibraryDrawPanel| {
         hovering.then(|| p.chip_frames().get(2).map(|f| centre(f.2))).flatten()
@@ -1623,9 +1755,17 @@ fn ls_empty_shot(cx: &mut Cx, width: f64, query: &str, favorites: bool) {
 
 /// The meter card: `peaks` are two linear readings fed one after the other (the second below the first leaves the hold
 /// line), `loud` the loudness columns, `solo_mute` a solo on bar 0 and a mute on bar 1.
-fn ls_meter_shot(cx: &mut Cx, (w, h): (f64, f64), peaks: &[[f32; 2]], loud: Option<sq_draw::monitor::loudness_meter::LoudnessReading>, solo_mute: bool) {
+fn ls_meter_shot(
+    cx: &mut Cx,
+    (w, h): (f64, f64),
+    peaks: &[[f32; 2]],
+    loud: Option<sq_draw::monitor::loudness_meter::LoudnessReading>,
+    solo_mute: bool,
+) {
     use sq_draw::monitor::audio_meter::MeterReading;
-    let mut panel = sq_draw_monitor::meter_panel::MeterPanel::new(Box::new(sq_draw_monitor::memory_defaults::MemoryDefaults::default()));
+    let mut panel = sq_draw_monitor::meter_panel::MeterPanel::new(Box::new(
+        sq_draw_monitor::memory_defaults::MemoryDefaults::default(),
+    ));
     panel.layout_frame(CGRect::new(0.0, 0.0, w, h));
     for (i, p) in peaks.iter().enumerate() {
         panel.reading = Some(MeterReading { source: 1, sequence: i as i64 + 1, peaks: p.to_vec() });
@@ -1643,8 +1783,18 @@ fn ls_meter_shot(cx: &mut Cx, (w, h): (f64, f64), peaks: &[[f32; 2]], loud: Opti
 fn lists() -> Vec<Entry> {
     use sq_draw::monitor::loudness_meter::LoudnessReading;
     vec![
-        Entry { id: "project-row", size: (330.0, 144.0), states: &[State::Default, State::Hover, State::Selected], draw: |cx| ls_rows(cx, false, 330.0, 6) },
-        Entry { id: "project-row-stress", size: (220.0, 168.0), states: &[State::Default], draw: |cx| ls_rows(cx, true, 220.0, 7) },
+        Entry {
+            id: "project-row",
+            size: (330.0, 144.0),
+            states: &[State::Default, State::Hover, State::Selected],
+            draw: |cx| ls_rows(cx, false, 330.0, 6),
+        },
+        Entry {
+            id: "project-row-stress",
+            size: (220.0, 168.0),
+            states: &[State::Default],
+            draw: |cx| ls_rows(cx, true, 220.0, 7),
+        },
         Entry {
             id: "list-header",
             size: (330.0, 25.0),
@@ -1657,21 +1807,66 @@ fn lists() -> Vec<Entry> {
             states: &[State::Default],
             draw: |cx| ls_project_draw(cx, false, 180.0, 3.0, CGRect::new(0.0, 30.0, 180.0, 25.0), None, None),
         },
-        Entry { id: "library-tree-row", size: (132.0, 104.0), states: &[State::Default, State::Hover, State::Selected], draw: ls_sidebar_shot },
-        Entry { id: "filter-row", size: (540.0, 36.0), states: &[State::Default, State::Hover, State::Selected], draw: |cx| ls_chips_shot(cx, 540.0, 1) },
-        Entry { id: "filter-row-narrow", size: (200.0, 84.0), states: &[State::Default], draw: |cx| ls_chips_shot(cx, 200.0, 3) },
+        Entry {
+            id: "library-tree-row",
+            size: (132.0, 104.0),
+            states: &[State::Default, State::Hover, State::Selected],
+            draw: ls_sidebar_shot,
+        },
+        Entry {
+            id: "filter-row",
+            size: (540.0, 36.0),
+            states: &[State::Default, State::Hover, State::Selected],
+            draw: |cx| ls_chips_shot(cx, 540.0, 1),
+        },
+        Entry {
+            id: "filter-row-narrow",
+            size: (200.0, 84.0),
+            states: &[State::Default],
+            draw: |cx| ls_chips_shot(cx, 200.0, 3),
+        },
         Entry { id: "library-items", size: (420.0, 220.0), states: &[State::Default], draw: ls_items_shot },
-        Entry { id: "empty-state", size: (330.0, 222.0), states: &[State::Default, State::Hover], draw: |cx| ls_empty_shot(cx, 330.0, "", false) },
-        Entry { id: "empty-state-favorites", size: (330.0, 222.0), states: &[State::Default], draw: |cx| ls_empty_shot(cx, 330.0, "", true) },
-        Entry { id: "empty-state-no-results", size: (330.0, 222.0), states: &[State::Default], draw: |cx| ls_empty_shot(cx, 330.0, "zzz", false) },
-        Entry { id: "empty-state-narrow", size: (150.0, 222.0), states: &[State::Default], draw: |cx| ls_empty_shot(cx, 150.0, "", false) },
-        Entry { id: "meter", size: (110.0, 300.0), states: &[State::Default], draw: |cx| ls_meter_shot(cx, (110.0, 300.0), &[], None, false) },
+        Entry {
+            id: "empty-state",
+            size: (330.0, 222.0),
+            states: &[State::Default, State::Hover],
+            draw: |cx| ls_empty_shot(cx, 330.0, "", false),
+        },
+        Entry {
+            id: "empty-state-favorites",
+            size: (330.0, 222.0),
+            states: &[State::Default],
+            draw: |cx| ls_empty_shot(cx, 330.0, "", true),
+        },
+        Entry {
+            id: "empty-state-no-results",
+            size: (330.0, 222.0),
+            states: &[State::Default],
+            draw: |cx| ls_empty_shot(cx, 330.0, "zzz", false),
+        },
+        Entry {
+            id: "empty-state-narrow",
+            size: (150.0, 222.0),
+            states: &[State::Default],
+            draw: |cx| ls_empty_shot(cx, 150.0, "", false),
+        },
+        Entry {
+            id: "meter",
+            size: (110.0, 300.0),
+            states: &[State::Default],
+            draw: |cx| ls_meter_shot(cx, (110.0, 300.0), &[], None, false),
+        },
         Entry {
             id: "meter-level",
             size: (110.0, 300.0),
             states: &[State::Default],
             draw: |cx| {
-                let l = LoudnessReading { momentary_lufs: Some(-16.0), short_term_lufs: Some(-15.0), integrated_lufs: Some(-14.5), true_peak_db: -2.0 };
+                let l = LoudnessReading {
+                    momentary_lufs: Some(-16.0),
+                    short_term_lufs: Some(-15.0),
+                    integrated_lufs: Some(-14.5),
+                    true_peak_db: -2.0,
+                };
                 ls_meter_shot(cx, (110.0, 300.0), &[[0.5, 0.35], [0.2, 0.1]], Some(l), false);
             },
         },
@@ -1680,13 +1875,33 @@ fn lists() -> Vec<Entry> {
             size: (110.0, 300.0),
             states: &[State::Default],
             draw: |cx| {
-                let l = LoudnessReading { momentary_lufs: Some(-8.0), short_term_lufs: Some(-9.0), integrated_lufs: Some(-10.0), true_peak_db: 1.5 };
+                let l = LoudnessReading {
+                    momentary_lufs: Some(-8.0),
+                    short_term_lufs: Some(-9.0),
+                    integrated_lufs: Some(-10.0),
+                    true_peak_db: 1.5,
+                };
                 ls_meter_shot(cx, (110.0, 300.0), &[[1.4, 0.7]], Some(l), false);
             },
         },
-        Entry { id: "meter-solo-mute", size: (110.0, 300.0), states: &[State::Default], draw: |cx| ls_meter_shot(cx, (110.0, 300.0), &[[0.5, 0.5]], None, true) },
-        Entry { id: "meter-narrow", size: (60.0, 300.0), states: &[State::Default], draw: |cx| ls_meter_shot(cx, (60.0, 300.0), &[[0.5, 0.35]], None, false) },
-        Entry { id: "meter-short", size: (110.0, 90.0), states: &[State::Default], draw: |cx| ls_meter_shot(cx, (110.0, 90.0), &[[0.9, 0.5]], None, false) },
+        Entry {
+            id: "meter-solo-mute",
+            size: (110.0, 300.0),
+            states: &[State::Default],
+            draw: |cx| ls_meter_shot(cx, (110.0, 300.0), &[[0.5, 0.5]], None, true),
+        },
+        Entry {
+            id: "meter-narrow",
+            size: (60.0, 300.0),
+            states: &[State::Default],
+            draw: |cx| ls_meter_shot(cx, (60.0, 300.0), &[[0.5, 0.35]], None, false),
+        },
+        Entry {
+            id: "meter-short",
+            size: (110.0, 90.0),
+            states: &[State::Default],
+            draw: |cx| ls_meter_shot(cx, (110.0, 90.0), &[[0.9, 0.5]], None, false),
+        },
     ]
 }
 
@@ -1716,7 +1931,17 @@ impl StartScene {
         StartScene { list: true, ..StartScene::new(tab) }
     }
     fn new(tab: sq_draw_shell::StartTab) -> StartScene {
-        StartScene { tab, list: false, recents: 6, long: false, missing: None, size: ST_WINDOW, hover: None, selected: None, checked: false }
+        StartScene {
+            tab,
+            list: false,
+            recents: 6,
+            long: false,
+            missing: None,
+            size: ST_WINDOW,
+            hover: None,
+            selected: None,
+            checked: false,
+        }
     }
 }
 
@@ -1732,13 +1957,19 @@ fn st_recents(sc: &StartScene) -> Vec<sq_editor_session::RecentEntry> {
         .map(|i| {
             let base = NAMES[i % 6];
             let name = if sc.long {
-                format!("{base} - the very long working title of a documentary about the harbor in winter, final cut {i}")
+                format!(
+                    "{base} - the very long working title of a documentary about the harbor in winter, final cut {i}"
+                )
             } else if i >= 6 {
                 format!("{base} {}", i + 1)
             } else {
                 base.to_string()
             };
-            sq_editor_session::RecentEntry::new(st_path(i), name, sq_core_time::Timestamp::from_unix_seconds(now - 600.0 - i as f64 * 86_400.0))
+            sq_editor_session::RecentEntry::new(
+                st_path(i),
+                name,
+                sq_core_time::Timestamp::from_unix_seconds(now - 600.0 - i as f64 * 86_400.0),
+            )
         })
         .collect()
 }
@@ -1747,7 +1978,12 @@ fn st_recents(sc: &StartScene) -> Vec<sq_editor_session::RecentEntry> {
 fn st_draw(cx: &mut Cx, sc: &StartScene, crop: CGRect) {
     use sq_draw_shell::{LocalCalendar, ShellStartScreen, StartEnv, StartSettings};
     let recents = st_recents(sc);
-    let mut screen = ShellStartScreen::new(&StartSettings { tab: Some(sc.tab.raw().into()), list_layout: sc.list, reopen_last: cx.state == State::Selected && sc.checked, ..StartSettings::default() });
+    let mut screen = ShellStartScreen::new(&StartSettings {
+        tab: Some(sc.tab.raw().into()),
+        list_layout: sc.list,
+        reopen_last: cx.state == State::Selected && sc.checked,
+        ..StartSettings::default()
+    });
     screen.frame = CGRect::new(0.0, 0.0, sc.size.0, sc.size.1);
     for (i, e) in recents.iter().enumerate() {
         if sc.missing == Some(i) {
@@ -1802,32 +2038,146 @@ fn start() -> Vec<Entry> {
     const D: &[State] = &[State::Default];
     vec![
         // Controls
-        st!("start-button-primary", (8.0, 50.0, 238.0, 36.0), HD, StartScene { hover: Some(|_| StartHit::NewProject), ..StartScene::new(StartTab::Home) }),
-        st!("start-button-raised", (8.0, 82.0, 238.0, 36.0), HD, StartScene { hover: Some(|_| StartHit::OpenOther), ..StartScene::new(StartTab::Home) }),
-        st!("start-button-open", (660.0, 290.0, 110.0, 44.0), HD, StartScene { hover: Some(|_| StartHit::ContinueOpen), ..StartScene::new(StartTab::Home) }),
-        st!("start-button-small", (1110.0, 50.0, 150.0, 36.0), HD, StartScene { hover: Some(|_| StartHit::Sort), ..StartScene::new(StartTab::Recent) }),
-        st!("start-button-compact", (22.0, 648.0, 120.0, 38.0), HD, StartScene { hover: Some(|_| StartHit::Support(SupportEntry::Support)), ..StartScene::new(StartTab::Home) }),
-        st!("start-search", (980.0, 4.0, 290.0, 32.0), HD, StartScene { hover: Some(|_| StartHit::Search), ..StartScene::new(StartTab::Recent) }),
-        st!("start-view-toggle", (1030.0, 52.0, 80.0, 36.0), HD, StartScene { hover: Some(|_| StartHit::Layout(true)), ..StartScene::new(StartTab::Recent) }),
+        st!(
+            "start-button-primary",
+            (8.0, 50.0, 238.0, 36.0),
+            HD,
+            StartScene { hover: Some(|_| StartHit::NewProject), ..StartScene::new(StartTab::Home) }
+        ),
+        st!(
+            "start-button-raised",
+            (8.0, 82.0, 238.0, 36.0),
+            HD,
+            StartScene { hover: Some(|_| StartHit::OpenOther), ..StartScene::new(StartTab::Home) }
+        ),
+        st!(
+            "start-button-open",
+            (660.0, 290.0, 110.0, 44.0),
+            HD,
+            StartScene { hover: Some(|_| StartHit::ContinueOpen), ..StartScene::new(StartTab::Home) }
+        ),
+        st!(
+            "start-button-small",
+            (1110.0, 50.0, 150.0, 36.0),
+            HD,
+            StartScene { hover: Some(|_| StartHit::Sort), ..StartScene::new(StartTab::Recent) }
+        ),
+        st!(
+            "start-button-compact",
+            (22.0, 648.0, 120.0, 38.0),
+            HD,
+            StartScene { hover: Some(|_| StartHit::Support(SupportEntry::Support)), ..StartScene::new(StartTab::Home) }
+        ),
+        st!(
+            "start-search",
+            (980.0, 4.0, 290.0, 32.0),
+            HD,
+            StartScene { hover: Some(|_| StartHit::Search), ..StartScene::new(StartTab::Recent) }
+        ),
+        st!(
+            "start-view-toggle",
+            (1030.0, 52.0, 80.0, 36.0),
+            HD,
+            StartScene { hover: Some(|_| StartHit::Layout(true)), ..StartScene::new(StartTab::Recent) }
+        ),
         st!("start-view-toggle-list", (1030.0, 52.0, 80.0, 36.0), D, StartScene::listed(StartTab::Recent)),
-        st!("start-checkbox", (8.0, 706.0, 250.0, 28.0), HDS, StartScene { hover: Some(|_| StartHit::ReopenLast), checked: true, ..StartScene::new(StartTab::Home) }),
+        st!(
+            "start-checkbox",
+            (8.0, 706.0, 250.0, 28.0),
+            HDS,
+            StartScene { hover: Some(|_| StartHit::ReopenLast), checked: true, ..StartScene::new(StartTab::Home) }
+        ),
         // Cards and rows
-        st!("start-nav-item", (8.0, 150.0, 240.0, 150.0), HD, StartScene { hover: Some(|_| StartHit::Tab(StartTab::Templates)), ..StartScene::new(StartTab::Home) }),
+        st!(
+            "start-nav-item",
+            (8.0, 150.0, 240.0, 150.0),
+            HD,
+            StartScene { hover: Some(|_| StartHit::Tab(StartTab::Templates)), ..StartScene::new(StartTab::Home) }
+        ),
         st!("start-nav-item-recent", (8.0, 150.0, 240.0, 150.0), D, StartScene::new(StartTab::Recent)),
         st!("start-support-card", (8.0, 552.0, 240.0, 152.0), D, StartScene::new(StartTab::Home)),
-        st!("start-card", (272.0, 100.0, 570.0, 290.0), HDS, StartScene { hover: Some(|_| StartHit::Card(st_path(1))), selected: Some(1), ..StartScene::new(StartTab::Recent) }),
-        st!("start-card-missing", (272.0, 100.0, 570.0, 290.0), HD, StartScene { missing: Some(0), hover: Some(|_| StartHit::Card(st_path(0))), ..StartScene::new(StartTab::Recent) }),
-        st!("start-card-stress", (272.0, 100.0, 570.0, 290.0), D, StartScene { long: true, ..StartScene::new(StartTab::Recent) }),
-        st!("start-list-row", (272.0, 100.0, 1000.0, 190.0), HDS, StartScene { hover: Some(|_| StartHit::Card(st_path(2))), selected: Some(2), ..StartScene::listed(StartTab::Recent) }),
-        st!("start-list-row-missing", (272.0, 100.0, 1000.0, 190.0), D, StartScene { missing: Some(1), ..StartScene::listed(StartTab::Recent) }),
-        st!("start-list-row-stress", (272.0, 100.0, 1000.0, 190.0), D, StartScene { long: true, ..StartScene::listed(StartTab::Recent) }),
-        st!("start-size-tile", (280.0, 400.0, 980.0, 150.0), HD, StartScene { hover: Some(|_| StartHit::QuickSize("builtin-horizontal-16x9".into())), ..StartScene::new(StartTab::Home) }),
+        st!(
+            "start-card",
+            (272.0, 100.0, 570.0, 290.0),
+            HDS,
+            StartScene {
+                hover: Some(|_| StartHit::Card(st_path(1))),
+                selected: Some(1),
+                ..StartScene::new(StartTab::Recent)
+            }
+        ),
+        st!(
+            "start-card-missing",
+            (272.0, 100.0, 570.0, 290.0),
+            HD,
+            StartScene {
+                missing: Some(0),
+                hover: Some(|_| StartHit::Card(st_path(0))),
+                ..StartScene::new(StartTab::Recent)
+            }
+        ),
+        st!(
+            "start-card-stress",
+            (272.0, 100.0, 570.0, 290.0),
+            D,
+            StartScene { long: true, ..StartScene::new(StartTab::Recent) }
+        ),
+        st!(
+            "start-list-row",
+            (272.0, 100.0, 1000.0, 190.0),
+            HDS,
+            StartScene {
+                hover: Some(|_| StartHit::Card(st_path(2))),
+                selected: Some(2),
+                ..StartScene::listed(StartTab::Recent)
+            }
+        ),
+        st!(
+            "start-list-row-missing",
+            (272.0, 100.0, 1000.0, 190.0),
+            D,
+            StartScene { missing: Some(1), ..StartScene::listed(StartTab::Recent) }
+        ),
+        st!(
+            "start-list-row-stress",
+            (272.0, 100.0, 1000.0, 190.0),
+            D,
+            StartScene { long: true, ..StartScene::listed(StartTab::Recent) }
+        ),
+        st!(
+            "start-size-tile",
+            (280.0, 400.0, 980.0, 150.0),
+            HD,
+            StartScene {
+                hover: Some(|_| StartHit::QuickSize("builtin-horizontal-16x9".into())),
+                ..StartScene::new(StartTab::Home)
+            }
+        ),
         // The window
-        st!("start-top-bar", (0.0, 0.0, 1280.0, 40.0), HD, StartScene { hover: Some(|_| StartHit::Search), ..StartScene::new(StartTab::Recent) }),
+        st!(
+            "start-top-bar",
+            (0.0, 0.0, 1280.0, 40.0),
+            HD,
+            StartScene { hover: Some(|_| StartHit::Search), ..StartScene::new(StartTab::Recent) }
+        ),
         st!("start-status-bar", (0.0, 776.0, 1280.0, 24.0), D, StartScene::new(StartTab::Recent)),
-        st!("start-rail", (0.0, 40.0, 256.0, 760.0), HD, StartScene { hover: Some(|_| StartHit::Tab(StartTab::Learn)), ..StartScene::new(StartTab::Home) }),
+        st!(
+            "start-rail",
+            (0.0, 40.0, 256.0, 760.0),
+            HD,
+            StartScene { hover: Some(|_| StartHit::Tab(StartTab::Learn)), ..StartScene::new(StartTab::Home) }
+        ),
         st!("start-window-home", WIN, D, StartScene::new(StartTab::Home)),
-        st!("start-window-recent", WIN, HDS, StartScene { hover: Some(|_| StartHit::Card(st_path(3))), selected: Some(3), ..StartScene::new(StartTab::Recent) }),
+        st!(
+            "start-window-recent",
+            WIN,
+            HDS,
+            StartScene {
+                hover: Some(|_| StartHit::Card(st_path(3))),
+                selected: Some(3),
+                ..StartScene::new(StartTab::Recent)
+            }
+        ),
         st!("start-window-recent-list", WIN, D, StartScene::listed(StartTab::Recent)),
         st!("start-window-templates", WIN, D, StartScene::new(StartTab::Templates)),
         st!("start-window-learn", WIN, D, StartScene::new(StartTab::Learn)),
@@ -1838,8 +2188,18 @@ fn start() -> Vec<Entry> {
         st!("start-window-many", WIN, D, StartScene { recents: 100, ..StartScene::new(StartTab::Recent) }),
         st!("start-window-many-list", WIN, D, StartScene { recents: 100, ..StartScene::listed(StartTab::Recent) }),
         st!("start-window-long-names", WIN, D, StartScene { long: true, ..StartScene::new(StartTab::Recent) }),
-        st!("start-window-small", (0.0, 0.0, 720.0, 480.0), D, StartScene { size: (720.0, 480.0), ..StartScene::new(StartTab::Recent) }),
-        st!("start-window-small-home", (0.0, 0.0, 720.0, 480.0), D, StartScene { size: (720.0, 480.0), ..StartScene::new(StartTab::Home) }),
+        st!(
+            "start-window-small",
+            (0.0, 0.0, 720.0, 480.0),
+            D,
+            StartScene { size: (720.0, 480.0), ..StartScene::new(StartTab::Recent) }
+        ),
+        st!(
+            "start-window-small-home",
+            (0.0, 0.0, 720.0, 480.0),
+            D,
+            StartScene { size: (720.0, 480.0), ..StartScene::new(StartTab::Home) }
+        ),
     ]
 }
 
@@ -1935,14 +2295,25 @@ fn cm_point(ctrl: CGRect, frac: f64) -> CGPoint {
 }
 
 /// Draws `crop` of the grade panel (`w` wide) after `act` on the control `pick` finds.
-fn cm_paint(cx: &mut Cx, sc: &mut CmScene, w: f64, pick: &dyn Fn(&Control) -> bool, crop: &dyn Fn(CGRect, CGRect) -> CGRect, act: CmAct) {
+fn cm_paint(
+    cx: &mut Cx,
+    sc: &mut CmScene,
+    w: f64,
+    pick: &dyn Fn(&Control) -> bool,
+    crop: &dyn Fn(CGRect, CGRect) -> CGRect,
+    act: CmAct,
+) {
     let mut d = cm_grade(w);
     let mut ui = UiCx::new();
     let rows = match sc.ctl.model() {
         Some(m) => d.rows(m, false),
         None => Vec::new(),
     };
-    let (ctrl, row) = if rows.is_empty() { (CGRect::new(0.0, 0.0, w, 20.0), CGRect::new(0.0, 0.0, 0.0, 20.0)) } else { cm_find(&rows, pick) };
+    let (ctrl, row) = if rows.is_empty() {
+        (CGRect::new(0.0, 0.0, w, 20.0), CGRect::new(0.0, 0.0, 0.0, 20.0))
+    } else {
+        cm_find(&rows, pick)
+    };
     {
         let mut host = cm_host(sc);
         match act {
@@ -1995,7 +2366,11 @@ fn cm_lut(cx: &mut Cx, slot: sq_inspector_ui::color::color_inspector_model::Colo
     // The star acts only on a LUT file, so the star shots load one (a dim star would look the same hovered).
     let file = move |m: &mut ColorInspectorModel, e: i64, _: State| {
         if star {
-            m.set_lut(e, slot, Some(&sq_inspector_ui::color::color_inspector_model::LUTChoice::file("/LUTs/Warm Film.cube")));
+            m.set_lut(
+                e,
+                slot,
+                Some(&sq_inspector_ui::color::color_inspector_model::LUTChoice::file("/LUTs/Warm Film.cube")),
+            );
         }
     };
     let mut sc = cm_scene(true, &file, cx.state);
@@ -2021,7 +2396,9 @@ fn cm_header(cx: &mut Cx, closed: bool) {
     );
     sc.ctl.can_pick_screen_color = true;
     let hover = cx.state == State::Hover;
-    let pick = move |k: &Control| if hover { matches!(k, Control::Eyedropper(_)) } else { matches!(k, Control::Section(_, BasicCorrection)) };
+    let pick = move |k: &Control| {
+        if hover { matches!(k, Control::Eyedropper(_)) } else { matches!(k, Control::Section(_, BasicCorrection)) }
+    };
     let w = CM_W;
     let mut d = cm_grade(w);
     let mut ui = UiCx::new();
@@ -2081,7 +2458,14 @@ fn cm_extreme(m: &mut ColorInspectorModel, e: i64, _: State) {
 }
 
 /// The Steps panel with `steps` boxes; `crop` names the part to show (panel points, from the layout after the first frame).
-fn cm_steps(cx: &mut Cx, size: (f64, f64), steps: usize, select_last: bool, crop: &dyn Fn(&ColorStepsDraw) -> CGRect, hover: bool) {
+fn cm_steps(
+    cx: &mut Cx,
+    size: (f64, f64),
+    steps: usize,
+    select_last: bool,
+    crop: &dyn Fn(&ColorStepsDraw) -> CGRect,
+    hover: bool,
+) {
     use sq_core_model::StepKind;
     let mut sc = cm_scene(true, &cm_none, cx.state);
     if let Some(m) = sc.ctl.model_mut() {
@@ -2131,10 +2515,11 @@ fn cm_slot(d: &ColorStepsDraw, input: bool) -> CGRect {
 }
 
 fn cm_strip(cx: &mut Cx, mode: bool) {
-    let mut sc = cm_scene(true, &cm_none, cx.state);
+    let sc = cm_scene(true, &cm_none, cx.state);
     let strip = CGRect::new(0.0, 0.0, 400.0, 31.0);
     let want = if mode { StripButton::Mode } else { StripButton::Fit };
-    let Some((_, r)) = ColorStripToolsDraw::frames(StripPanel::Timeline, strip).into_iter().find(|(b, _)| *b == want) else {
+    let Some((_, r)) = ColorStripToolsDraw::frames(StripPanel::Timeline, strip).into_iter().find(|(b, _)| *b == want)
+    else {
         panic!("no {want:?} button in the Timeline strip")
     };
     let mut tools = ColorStripToolsDraw::default();
@@ -2162,29 +2547,126 @@ fn color() -> Vec<Entry> {
     vec![
         Entry { id: "color-flat-dropdown", size: (60.0, 31.0), states: HD, draw: |cx| cm_strip(cx, false) },
         Entry { id: "color-flat-dropdown-icon", size: (96.0, 31.0), states: HD, draw: |cx| cm_strip(cx, true) },
-        Entry { id: "color-group-header", size: (340.0, 26.0), states: &[State::Default, State::Hover, State::Selected, State::Disabled], draw: |cx| cm_header(cx, cx.state == State::Selected) },
-        Entry { id: "color-slider-row", size: (340.0, 24.0), states: CM_PANEL, draw: |cx| cm_slider(cx, ColorParam::Exposure, 1.2, CM_W) },
-        Entry { id: "color-slider-row-neutral", size: (340.0, 24.0), states: D, draw: |cx| cm_slider(cx, ColorParam::Exposure, 0.0, CM_W) },
-        Entry { id: "color-slider-row-temp", size: (340.0, 24.0), states: HD, draw: |cx| cm_slider(cx, ColorParam::Temperature, 35.0, CM_W) },
-        Entry { id: "color-slider-row-tint", size: (340.0, 24.0), states: HD, draw: |cx| cm_slider(cx, ColorParam::Tint, -30.0, CM_W) },
-        Entry { id: "color-slider-row-sat", size: (340.0, 24.0), states: HD, draw: |cx| cm_slider(cx, ColorParam::Saturation, 130.0, CM_W) },
-        Entry { id: "color-lut-row", size: (340.0, 24.0), states: &[State::Default, State::Hover, State::Disabled], draw: |cx| cm_lut(cx, ColorLUTSlot::Input, false) },
-        Entry { id: "color-lut-row-star", size: (340.0, 24.0), states: HD, draw: |cx| cm_lut(cx, ColorLUTSlot::Input, true) },
-        Entry { id: "color-wheel-block", size: (128.0, 108.0), states: CM_PANEL, draw: |cx| cm_wheel(cx, 220.0, 0.5, CM_W) },
-        Entry { id: "color-wheel-block-neutral", size: (128.0, 108.0), states: D, draw: |cx| cm_wheel(cx, 0.0, 0.0, CM_W) },
-        Entry { id: "color-node-slot", size: (120.0, 36.0), states: D, draw: |cx| cm_steps(cx, (900.0, 300.0), 3, true, &|d| cm_slot(d, true), false) },
-        Entry { id: "color-node", size: (140.0, 48.0), states: &[State::Default, State::Hover, State::Selected], draw: |cx| {
-            // The last Step is selected: Selected shows it, Default and Hover show the first Step, which is not selected.
-            let sel = cx.state == State::Selected;
-            cm_steps(cx, (900.0, 300.0), 3, true, &move |d| cm_box(d, if sel { 2 } else { 0 }), cx.state == State::Hover)
-        } },
-        Entry { id: "color-node-ghost", size: (90.0, 36.0), states: D, draw: |cx| cm_steps(cx, (900.0, 300.0), 3, true, &|d| cm_slot(d, false), false) },
+        Entry {
+            id: "color-group-header",
+            size: (340.0, 26.0),
+            states: &[State::Default, State::Hover, State::Selected, State::Disabled],
+            draw: |cx| cm_header(cx, cx.state == State::Selected),
+        },
+        Entry {
+            id: "color-slider-row",
+            size: (340.0, 24.0),
+            states: CM_PANEL,
+            draw: |cx| cm_slider(cx, ColorParam::Exposure, 1.2, CM_W),
+        },
+        Entry {
+            id: "color-slider-row-neutral",
+            size: (340.0, 24.0),
+            states: D,
+            draw: |cx| cm_slider(cx, ColorParam::Exposure, 0.0, CM_W),
+        },
+        Entry {
+            id: "color-slider-row-temp",
+            size: (340.0, 24.0),
+            states: HD,
+            draw: |cx| cm_slider(cx, ColorParam::Temperature, 35.0, CM_W),
+        },
+        Entry {
+            id: "color-slider-row-tint",
+            size: (340.0, 24.0),
+            states: HD,
+            draw: |cx| cm_slider(cx, ColorParam::Tint, -30.0, CM_W),
+        },
+        Entry {
+            id: "color-slider-row-sat",
+            size: (340.0, 24.0),
+            states: HD,
+            draw: |cx| cm_slider(cx, ColorParam::Saturation, 130.0, CM_W),
+        },
+        Entry {
+            id: "color-lut-row",
+            size: (340.0, 24.0),
+            states: &[State::Default, State::Hover, State::Disabled],
+            draw: |cx| cm_lut(cx, ColorLUTSlot::Input, false),
+        },
+        Entry {
+            id: "color-lut-row-star",
+            size: (340.0, 24.0),
+            states: HD,
+            draw: |cx| cm_lut(cx, ColorLUTSlot::Input, true),
+        },
+        Entry {
+            id: "color-wheel-block",
+            size: (128.0, 108.0),
+            states: CM_PANEL,
+            draw: |cx| cm_wheel(cx, 220.0, 0.5, CM_W),
+        },
+        Entry {
+            id: "color-wheel-block-neutral",
+            size: (128.0, 108.0),
+            states: D,
+            draw: |cx| cm_wheel(cx, 0.0, 0.0, CM_W),
+        },
+        Entry {
+            id: "color-node-slot",
+            size: (120.0, 36.0),
+            states: D,
+            draw: |cx| cm_steps(cx, (900.0, 300.0), 3, true, &|d| cm_slot(d, true), false),
+        },
+        Entry {
+            id: "color-node",
+            size: (140.0, 48.0),
+            states: &[State::Default, State::Hover, State::Selected],
+            draw: |cx| {
+                // The last Step is selected: Selected shows it, Default and Hover show the first Step, which is not selected.
+                let sel = cx.state == State::Selected;
+                cm_steps(
+                    cx,
+                    (900.0, 300.0),
+                    3,
+                    true,
+                    &move |d| cm_box(d, if sel { 2 } else { 0 }),
+                    cx.state == State::Hover,
+                )
+            },
+        },
+        Entry {
+            id: "color-node-ghost",
+            size: (90.0, 36.0),
+            states: D,
+            draw: |cx| cm_steps(cx, (900.0, 300.0), 3, true, &|d| cm_slot(d, false), false),
+        },
         // Stress
-        Entry { id: "color-stress-narrow", size: (240.0, 620.0), states: D, draw: |cx| cm_page(cx, true, 240.0, &cm_none) },
-        Entry { id: "color-stress-extreme", size: (340.0, 620.0), states: D, draw: |cx| cm_page(cx, true, 340.0, &cm_extreme) },
-        Entry { id: "color-stress-many", size: (340.0, 320.0), states: D, draw: |cx| cm_page(cx, true, 340.0, &cm_many) },
-        Entry { id: "color-stress-steps-many", size: (480.0, 300.0), states: D, draw: |cx| cm_steps(cx, (480.0, 300.0), 30, true, &|_| CGRect::new(0.0, 0.0, 480.0, 300.0), false) },
-        Entry { id: "color-stress-steps-narrow", size: (240.0, 300.0), states: D, draw: |cx| cm_steps(cx, (240.0, 300.0), 6, true, &|_| CGRect::new(0.0, 0.0, 240.0, 300.0), false) },
+        Entry {
+            id: "color-stress-narrow",
+            size: (240.0, 620.0),
+            states: D,
+            draw: |cx| cm_page(cx, true, 240.0, &cm_none),
+        },
+        Entry {
+            id: "color-stress-extreme",
+            size: (340.0, 620.0),
+            states: D,
+            draw: |cx| cm_page(cx, true, 340.0, &cm_extreme),
+        },
+        Entry {
+            id: "color-stress-many",
+            size: (340.0, 320.0),
+            states: D,
+            draw: |cx| cm_page(cx, true, 340.0, &cm_many),
+        },
+        Entry {
+            id: "color-stress-steps-many",
+            size: (480.0, 300.0),
+            states: D,
+            draw: |cx| cm_steps(cx, (480.0, 300.0), 30, true, &|_| CGRect::new(0.0, 0.0, 480.0, 300.0), false),
+        },
+        Entry {
+            id: "color-stress-steps-narrow",
+            size: (240.0, 300.0),
+            states: D,
+            draw: |cx| cm_steps(cx, (240.0, 300.0), 6, true, &|_| CGRect::new(0.0, 0.0, 240.0, 300.0), false),
+        },
         Entry { id: "color-stress-steps-empty", size: (480.0, 300.0), states: D, draw: cm_steps_empty },
     ]
 }
@@ -2200,7 +2682,13 @@ struct Fm {
 
 impl Default for Fm {
     fn default() -> Fm {
-        Fm { width: 623.0, name: "Untitled Project".into(), rate_label: "Frame rate", path: "~/Movies".into(), select: 1 }
+        Fm {
+            width: 623.0,
+            name: "Untitled Project".into(),
+            rate_label: "Frame rate",
+            path: "~/Movies".into(),
+            select: 1,
+        }
     }
 }
 
@@ -2225,7 +2713,11 @@ fn fm_form(o: &Fm) -> ShellForm {
         FormRow::check("more", "More options", false),
     ]);
     let cards = [("9:16", 9, 16), ("16:9", 16, 9), ("1:1", 1, 1), ("4:5", 4, 5), ("Custom", 0, 0)];
-    f.shape_cards = [("shape".to_string(), cards.iter().map(|c| ShapeCard { title: c.0.into(), width: c.1, height: c.2 }).collect())].into();
+    f.shape_cards = [(
+        "shape".to_string(),
+        cards.iter().map(|c| ShapeCard { title: c.0.into(), width: c.1, height: c.2 }).collect(),
+    )]
+    .into();
     f.disclosures.insert("more".into());
     f.pill_hints.insert("width".into());
     f.hints.insert("width".into(), "16:9".into());
@@ -2265,11 +2757,15 @@ fn fm_draw(cx: &mut Cx, o: &Fm, disabled: &[&str], events: &[Ev], hover: Option<
         match *e {
             Ev::Click(x, y) => {
                 let (x, y) = at(x, y);
-                for ev in [InputEvent::MouseDown { x, y, modifiers: InputModifiers::NONE }, InputEvent::MouseUp { x, y }] {
+                for ev in
+                    [InputEvent::MouseDown { x, y, modifiers: InputModifiers::NONE }, InputEvent::MouseUp { x, y }]
+                {
                     with_measure(|m| d.handle(&ev, 1.0, m, &mut ui));
                 }
             }
-            Ev::Key(key) => with_measure(|m| d.handle(&InputEvent::KeyDown { key, modifiers: InputModifiers::NONE }, 1.0, m, &mut ui)),
+            Ev::Key(key) => with_measure(|m| {
+                d.handle(&InputEvent::KeyDown { key, modifiers: InputModifiers::NONE }, 1.0, m, &mut ui)
+            }),
         }
     }
     if let Some((x, y)) = hover {
@@ -2312,25 +2808,107 @@ fn forms() -> Vec<Entry> {
     const D: &[State] = &[State::Default];
     const HD: &[State] = &[State::Default, State::Hover];
     vec![
-        Entry { id: "form-sheet", size: (623.0, 436.0), states: D, draw: |cx| fm_draw(cx, &Fm::default(), &[], &[FM_BLUR], None, CGRect::new(0.0, 0.0, 623.0, 436.0)) },
-        Entry { id: "form-field-name", size: (580.0, 34.0), states: &[State::Default, State::Hover, State::Focus, State::Selected], draw: fm_name },
-        Entry { id: "form-field-path", size: (580.0, 34.0), states: HD, draw: |cx| fm_crop(cx, CGRect::new(30.0, 289.0, 580.0, 34.0), (553.0, 306.0)) },
-        Entry { id: "form-shape-card", size: (580.0, 70.0), states: HD, draw: |cx| fm_crop(cx, CGRect::new(30.0, 110.0, 580.0, 70.0), (350.0, 125.0)) },
-        Entry { id: "form-aspect-tag", size: (150.0, 30.0), states: D, draw: |cx| fm_crop(cx, CGRect::new(255.0, 207.0, 150.0, 30.0), (0.0, 0.0)) },
-        Entry { id: "form-icon-swap", size: (50.0, 30.0), states: HD, draw: |cx| fm_crop(cx, CGRect::new(182.0, 207.0, 50.0, 30.0), (207.0, 222.0)) },
-        Entry { id: "form-icon-close", size: (50.0, 36.0), states: HD, draw: |cx| fm_crop(cx, CGRect::new(573.0, 9.0, 50.0, 36.0), (597.0, 27.0)) },
-        Entry { id: "form-popup", size: (330.0, 30.0), states: HD, draw: |cx| fm_crop(cx, CGRect::new(30.0, 250.0, 330.0, 30.0), (160.0, 265.0)) },
-        Entry { id: "form-check-more", size: (180.0, 30.0), states: HD, draw: |cx| fm_crop(cx, CGRect::new(90.0, 330.0, 180.0, 30.0), (140.0, 344.0)) },
-        Entry { id: "form-chip", size: (70.0, 36.0), states: ALL, draw: |cx| {
-            let on = on(cx);
-            let w = with_measure(|m| m.width("9:16", 12.0, 0)).ceil() + 20.0;
-            cx.c.stone_chip(CGRect::new(PAD, 7.0, w, 22.0), on, true, cx.touch, cx.t);
-            label(cx, "9:16", CGPoint::new(PAD + 10.0, 11.0));
-        } },
+        Entry {
+            id: "form-sheet",
+            size: (623.0, 436.0),
+            states: D,
+            draw: |cx| fm_draw(cx, &Fm::default(), &[], &[FM_BLUR], None, CGRect::new(0.0, 0.0, 623.0, 436.0)),
+        },
+        Entry {
+            id: "form-field-name",
+            size: (580.0, 34.0),
+            states: &[State::Default, State::Hover, State::Focus, State::Selected],
+            draw: fm_name,
+        },
+        Entry {
+            id: "form-field-path",
+            size: (580.0, 34.0),
+            states: HD,
+            draw: |cx| fm_crop(cx, CGRect::new(30.0, 289.0, 580.0, 34.0), (553.0, 306.0)),
+        },
+        Entry {
+            id: "form-shape-card",
+            size: (580.0, 70.0),
+            states: HD,
+            draw: |cx| fm_crop(cx, CGRect::new(30.0, 110.0, 580.0, 70.0), (350.0, 125.0)),
+        },
+        Entry {
+            id: "form-aspect-tag",
+            size: (150.0, 30.0),
+            states: D,
+            draw: |cx| fm_crop(cx, CGRect::new(255.0, 207.0, 150.0, 30.0), (0.0, 0.0)),
+        },
+        Entry {
+            id: "form-icon-swap",
+            size: (50.0, 30.0),
+            states: HD,
+            draw: |cx| fm_crop(cx, CGRect::new(182.0, 207.0, 50.0, 30.0), (207.0, 222.0)),
+        },
+        Entry {
+            id: "form-icon-close",
+            size: (50.0, 36.0),
+            states: HD,
+            draw: |cx| fm_crop(cx, CGRect::new(573.0, 9.0, 50.0, 36.0), (597.0, 27.0)),
+        },
+        Entry {
+            id: "form-popup",
+            size: (330.0, 30.0),
+            states: HD,
+            draw: |cx| fm_crop(cx, CGRect::new(30.0, 250.0, 330.0, 30.0), (160.0, 265.0)),
+        },
+        Entry {
+            id: "form-check-more",
+            size: (180.0, 30.0),
+            states: HD,
+            draw: |cx| fm_crop(cx, CGRect::new(90.0, 330.0, 180.0, 30.0), (140.0, 344.0)),
+        },
+        Entry {
+            id: "form-chip",
+            size: (70.0, 36.0),
+            states: ALL,
+            draw: |cx| {
+                let on = on(cx);
+                let w = with_measure(|m| m.width("9:16", 12.0, 0)).ceil() + 20.0;
+                cx.c.stone_chip(CGRect::new(PAD, 7.0, w, 22.0), on, true, cx.touch, cx.t);
+                label(cx, "9:16", CGPoint::new(PAD + 10.0, 11.0));
+            },
+        },
         // Stress
         Entry { id: "form-stress-name", size: (580.0, 34.0), states: D, draw: fm_stress_name },
-        Entry { id: "form-stress-narrow", size: (380.0, 436.0), states: D, draw: |cx| fm_draw(cx, &Fm { width: 360.0, ..Fm::default() }, &[], &[FM_BLUR], None, CGRect::new(0.0, 0.0, 360.0, 436.0)) },
-        Entry { id: "form-stress-german", size: (623.0, 436.0), states: D, draw: |cx| fm_draw(cx, &Fm { rate_label: "Bildwiederholfrequenz der Zeitleiste", path: "~/Filme/Familienarchiv/Urlaube/2026/Nordkap/Rohmaterial/Kamera A/Projekte".into(), ..Fm::default() }, &[], &[FM_BLUR], None, CGRect::new(0.0, 0.0, 623.0, 436.0)) },
+        Entry {
+            id: "form-stress-narrow",
+            size: (380.0, 436.0),
+            states: D,
+            draw: |cx| {
+                fm_draw(
+                    cx,
+                    &Fm { width: 360.0, ..Fm::default() },
+                    &[],
+                    &[FM_BLUR],
+                    None,
+                    CGRect::new(0.0, 0.0, 360.0, 436.0),
+                )
+            },
+        },
+        Entry {
+            id: "form-stress-german",
+            size: (623.0, 436.0),
+            states: D,
+            draw: |cx| {
+                fm_draw(
+                    cx,
+                    &Fm {
+                        rate_label: "Bildwiederholfrequenz der Zeitleiste",
+                        path: "~/Filme/Familienarchiv/Urlaube/2026/Nordkap/Rohmaterial/Kamera A/Projekte".into(),
+                        ..Fm::default()
+                    },
+                    &[],
+                    &[FM_BLUR],
+                    None,
+                    CGRect::new(0.0, 0.0, 623.0, 436.0),
+                )
+            },
+        },
     ]
 }
 
@@ -2347,7 +2925,15 @@ struct Se {
 
 impl Default for Se {
     fn default() -> Se {
-        Se { page: sq_draw_shell::PreferencesPage::General, search: "", window: (1000.0, 760.0), hover: None, sidebar_focus: false, counts: false, extra: None }
+        Se {
+            page: sq_draw_shell::PreferencesPage::General,
+            search: "",
+            window: (1000.0, 760.0),
+            hover: None,
+            sidebar_focus: false,
+            counts: false,
+            extra: None,
+        }
     }
 }
 
@@ -2361,7 +2947,11 @@ fn se_draw(cx: &mut Cx, o: &Se, crop: CGRect) {
     if let Some(f) = o.extra {
         f(&mut s, &mut x);
     }
-    let host = PreferencesHost { edit_api: Some((false, sq_draw_shell::EditApiState::new("Off", sq_draw_shell::StatusTone::Idle))), cache_used: Some("1.2 GB".into()), ..PreferencesHost::default() };
+    let host = PreferencesHost {
+        edit_api: Some((false, sq_draw_shell::EditApiState::new("Off", sq_draw_shell::StatusTone::Idle))),
+        cache_used: Some("1.2 GB".into()),
+        ..PreferencesHost::default()
+    };
     let mut f = if o.search.is_empty() {
         let mut f = ShellPreferences::form(o.page, &s, &x, &host, &defaults, "");
         f.page_header = Some((o.page.title().to_string(), o.page.subtitle().to_string()));
@@ -2384,14 +2974,20 @@ fn se_draw(cx: &mut Cx, o: &Se, crop: CGRect) {
     d.add_button("Reset to Defaults", SQDialogRole::Normal, true);
     d.button_widths.insert(0, 70.0);
     d.keep_open = vec![1];
-    d.footer_hint = Some(if o.counts { "3 changes \u{B7} apply right away".to_string() } else { "Changes apply right away.".to_string() });
+    d.footer_hint = Some(if o.counts {
+        "3 changes \u{B7} apply right away".to_string()
+    } else {
+        "Changes apply right away.".to_string()
+    });
     d.form = Some(Box::new(f));
     let window = CGRect::new(0.0, 0.0, o.window.0, o.window.1);
     let mut ui = UiCx::new();
     with_measure(|m| d.layout(window, m));
     let card = d.card();
     if let Some((px, py)) = o.hover {
-        with_measure(|m| d.handle(&InputEvent::MouseMoved { x: (card.x + px) as f32, y: (card.y + py) as f32 }, 1.0, m, &mut ui));
+        with_measure(|m| {
+            d.handle(&InputEvent::MouseMoved { x: (card.x + px) as f32, y: (card.y + py) as f32 }, 1.0, m, &mut ui)
+        });
     }
     cx.c.save_gstate();
     cx.c.translate_by(-(card.x + crop.x), -(card.y + crop.y));
@@ -2406,11 +3002,20 @@ fn se_page(cx: &mut Cx, page: sq_draw_shell::PreferencesPage) {
 }
 
 /// The shortcuts editor over a default key map; `setup` puts it in a state; the whole window is 900 x 640 in a `window` frame.
-fn se_keys(cx: &mut Cx, window: (f64, f64), crop: Option<CGRect>, setup: &dyn Fn(&mut sq_draw_shell::ShellShortcutsEditor)) {
-    let mut e = sq_draw_shell::ShellShortcutsEditor::new(&sq_draw_shell::ShellDefaults::default(), sq_os::Platform::Mac);
+fn se_keys(
+    cx: &mut Cx,
+    window: (f64, f64),
+    crop: Option<CGRect>,
+    setup: &dyn Fn(&mut sq_draw_shell::ShellShortcutsEditor),
+) {
+    let mut e =
+        sq_draw_shell::ShellShortcutsEditor::new(&sq_draw_shell::ShellDefaults::default(), sq_os::Platform::Mac);
     e.frame = CGRect::new(0.0, 0.0, window.0, window.1);
     setup(&mut e);
-    let card_origin = CGPoint::new(((window.0 - 900.0) / 2.0).round().max(24.0).min(window.0), ((window.1 - 640.0) / 2.0).floor().max(24.0));
+    let card_origin = CGPoint::new(
+        ((window.0 - 900.0) / 2.0).round().max(24.0).min(window.0),
+        ((window.1 - 640.0) / 2.0).floor().max(24.0),
+    );
     let at = crop.unwrap_or(CGRect::new(0.0, 0.0, 900.0, 640.0));
     cx.c.save_gstate();
     cx.c.translate_by(-(card_origin.x + at.x), -(card_origin.y + at.y));
@@ -2427,9 +3032,17 @@ fn se_conflict(cx: &mut Cx) {
     use sq_uikit::key_binding::{Key, KeyBinding, KeyModifiers};
     let map = sq_uikit::keymap_store::KeymapStore::load(&sq_draw_shell::ShellDefaults::default()).map();
     let b = KeyBinding::new(Key::Char('z'), KeyModifiers::COMMAND | KeyModifiers::SHIFT);
-    let c = sq_uikit::keymap_store::Keymap::conflicts(&sq_uikit::editor_command::EditorCommand::Undo, &b, sq_uikit::editor_command::CommandScope::Global, &map);
+    let c = sq_uikit::keymap_store::Keymap::conflicts(
+        &sq_uikit::editor_command::EditorCommand::Undo,
+        &b,
+        sq_uikit::editor_command::CommandScope::Global,
+        &map,
+    );
     let lines: Vec<String> = c.iter().map(|c| c.message(&b, sq_os::Platform::Mac)).collect();
-    let mut d = ShellDialog::new("Replace the existing shortcut?", &(lines.join("\n") + "\n\nThe other command loses this key."));
+    let mut d = ShellDialog::new(
+        "Replace the existing shortcut?",
+        &(lines.join("\n") + "\n\nThe other command loses this key."),
+    );
     d.add_button("Replace", SQDialogRole::Default, false);
     d.add_button("Cancel", SQDialogRole::Cancel, false);
     dialog_cx(cx, d, CGRect::new(0.0, 0.0, 440.0, 220.0));
@@ -2443,65 +3056,193 @@ fn settings_group() -> Vec<Entry> {
     const HD: &[State] = &[State::Default, State::Hover];
     vec![
         // 01-nav
-        Entry { id: "settings-nav-item", size: (212.0, 40.0), states: NAV, draw: |cx| {
-            let (page, hover) = if cx.state == State::Selected { (P::General, None) } else { (P::General, (cx.state == State::Hover).then_some((100.0, 98.0))) };
-            let o = Se { page, hover, sidebar_focus: cx.state == State::Focus, ..Se::default() };
-            // Selected and Focus show the General row (the open page; the focus line only goes on it); the others show the Playback row beneath it.
-            let y = if matches!(cx.state, State::Selected | State::Focus) { 47.0 } else { 82.0 };
-            se_draw(cx, &o, CGRect::new(0.0, y, 212.0, 40.0));
-        } },
-        Entry { id: "settings-nav-counts", size: (212.0, 330.0), states: D, draw: |cx| se_draw(cx, &Se { counts: true, ..Se::default() }, CGRect::new(0.0, 50.0, 212.0, 330.0)) },
-        Entry { id: "settings-nav-search", size: (212.0, 60.0), states: D, draw: |cx| se_draw(cx, &Se::default(), CGRect::new(0.0, 0.0, 212.0, 60.0)) },
+        Entry {
+            id: "settings-nav-item",
+            size: (212.0, 40.0),
+            states: NAV,
+            draw: |cx| {
+                let (page, hover) = if cx.state == State::Selected {
+                    (P::General, None)
+                } else {
+                    (P::General, (cx.state == State::Hover).then_some((100.0, 98.0)))
+                };
+                let o = Se { page, hover, sidebar_focus: cx.state == State::Focus, ..Se::default() };
+                // Selected and Focus show the General row (the open page; the focus line only goes on it); the others show the Playback row beneath it.
+                let y = if matches!(cx.state, State::Selected | State::Focus) { 47.0 } else { 82.0 };
+                se_draw(cx, &o, CGRect::new(0.0, y, 212.0, 40.0));
+            },
+        },
+        Entry {
+            id: "settings-nav-counts",
+            size: (212.0, 330.0),
+            states: D,
+            draw: |cx| se_draw(cx, &Se { counts: true, ..Se::default() }, CGRect::new(0.0, 50.0, 212.0, 330.0)),
+        },
+        Entry {
+            id: "settings-nav-search",
+            size: (212.0, 60.0),
+            states: D,
+            draw: |cx| se_draw(cx, &Se::default(), CGRect::new(0.0, 0.0, 212.0, 60.0)),
+        },
         Entry { id: "settings-window-general", size: (900.0, 640.0), states: D, draw: |cx| se_page(cx, P::General) },
         Entry { id: "settings-window-playback", size: (900.0, 640.0), states: D, draw: |cx| se_page(cx, P::Playback) },
         Entry { id: "settings-window-editing", size: (900.0, 640.0), states: D, draw: |cx| se_page(cx, P::Editing) },
         Entry { id: "settings-window-audio", size: (900.0, 640.0), states: D, draw: |cx| se_page(cx, P::Audio) },
         Entry { id: "settings-window-media", size: (900.0, 640.0), states: D, draw: |cx| se_page(cx, P::Media) },
         Entry { id: "settings-window-advanced", size: (900.0, 640.0), states: D, draw: |cx| se_page(cx, P::Advanced) },
-        Entry { id: "settings-window-shortcuts", size: (900.0, 640.0), states: D, draw: |cx| se_keys(cx, (1000.0, 760.0), None, &|_| {}) },
+        Entry {
+            id: "settings-window-shortcuts",
+            size: (900.0, 640.0),
+            states: D,
+            draw: |cx| se_keys(cx, (1000.0, 760.0), None, &|_| {}),
+        },
         // 02-choices
-        Entry { id: "settings-choice", size: (620.0, 180.0), states: HD, draw: |cx| {
-            let hover = (cx.state == State::Hover).then_some((553.0, 234.0));
-            se_draw(cx, &Se { hover, ..Se::default() }, CGRect::new(250.0, 138.0, 620.0, 180.0));
-        } },
-        Entry { id: "settings-choice-light", size: (620.0, 180.0), states: D, draw: |cx| {
-            se_draw(cx, &Se { extra: Some(|_, x| x.appearance = sq_uikit::appearance_palette::AppearanceSettings::new(sq_uikit::appearance_palette::AppearanceMode::Light, 0, 50)), ..Se::default() }, CGRect::new(250.0, 138.0, 620.0, 180.0));
-        } },
+        Entry {
+            id: "settings-choice",
+            size: (620.0, 180.0),
+            states: HD,
+            draw: |cx| {
+                let hover = (cx.state == State::Hover).then_some((553.0, 234.0));
+                se_draw(cx, &Se { hover, ..Se::default() }, CGRect::new(250.0, 138.0, 620.0, 180.0));
+            },
+        },
+        Entry {
+            id: "settings-choice-light",
+            size: (620.0, 180.0),
+            states: D,
+            draw: |cx| {
+                se_draw(
+                    cx,
+                    &Se {
+                        extra: Some(|_, x| {
+                            x.appearance = sq_uikit::appearance_palette::AppearanceSettings::new(
+                                sq_uikit::appearance_palette::AppearanceMode::Light,
+                                0,
+                                50,
+                            )
+                        }),
+                        ..Se::default()
+                    },
+                    CGRect::new(250.0, 138.0, 620.0, 180.0),
+                );
+            },
+        },
         // 03-fields
-        Entry { id: "settings-slider-row", size: (620.0, 48.0), states: HD, draw: |cx| {
-            let hover = (cx.state == State::Hover).then_some((700.0, 338.0));
-            se_draw(cx, &Se { hover, ..Se::default() }, CGRect::new(250.0, 312.0, 620.0, 48.0));
-        } },
-        Entry { id: "settings-field-path", size: (620.0, 100.0), states: HD, draw: |cx| {
-            let hover = (cx.state == State::Hover).then_some((715.0, 426.0));
-            se_draw(cx, &Se { page: P::Media, hover, ..Se::default() }, CGRect::new(250.0, 396.0, 620.0, 100.0));
-        } },
-        Entry { id: "settings-stress-path", size: (620.0, 100.0), states: D, draw: |cx| {
-            let o = Se { page: P::Media, extra: Some(|s, _| s.cache_folder = Some(PathBuf::from("/home/alex/Filme/Familienarchiv/Urlaube/2026/Nordkap/Rohmaterial/Kamera A/Zwischenspeicher f\u{FC}r Proxys"))), ..Se::default() };
-            se_draw(cx, &o, CGRect::new(250.0, 396.0, 620.0, 100.0));
-        } },
+        Entry {
+            id: "settings-slider-row",
+            size: (620.0, 48.0),
+            states: HD,
+            draw: |cx| {
+                let hover = (cx.state == State::Hover).then_some((700.0, 338.0));
+                se_draw(cx, &Se { hover, ..Se::default() }, CGRect::new(250.0, 312.0, 620.0, 48.0));
+            },
+        },
+        Entry {
+            id: "settings-field-path",
+            size: (620.0, 100.0),
+            states: HD,
+            draw: |cx| {
+                let hover = (cx.state == State::Hover).then_some((715.0, 426.0));
+                se_draw(cx, &Se { page: P::Media, hover, ..Se::default() }, CGRect::new(250.0, 396.0, 620.0, 100.0));
+            },
+        },
+        Entry {
+            id: "settings-stress-path",
+            size: (620.0, 100.0),
+            states: D,
+            draw: |cx| {
+                let o = Se {
+                    page: P::Media,
+                    extra: Some(|s, _| {
+                        s.cache_folder = Some(PathBuf::from(
+                            "/home/alex/Filme/Familienarchiv/Urlaube/2026/Nordkap/Rohmaterial/Kamera A/Zwischenspeicher f\u{FC}r Proxys",
+                        ))
+                    }),
+                    ..Se::default()
+                };
+                se_draw(cx, &o, CGRect::new(250.0, 396.0, 620.0, 100.0));
+            },
+        },
         // 04-keys
-        Entry { id: "settings-key", size: (340.0, 90.0), states: &[State::Default, State::Selected, State::Focus], draw: |cx| {
-            let sel = cx.state;
-            se_keys(cx, (1000.0, 760.0), Some(CGRect::new(270.0, 232.0, 340.0, 90.0)), &move |e| match sel {
-                State::Selected => e.select_key(Some(sq_uikit::key_binding::Key::Char('z'))),
-                State::Focus => e.set_query("Undo"),
-                _ => {}
-            });
-        } },
-        Entry { id: "settings-key-modifier", size: (340.0, 48.0), states: &[State::Default, State::Selected], draw: |cx| {
-            let on = cx.state == State::Selected;
-            se_keys(cx, (1000.0, 760.0), Some(CGRect::new(270.0, 324.0, 340.0, 48.0)), &move |e| if on { e.toggle_modifier(sq_uikit::key_binding::KeyModifiers::COMMAND) });
-        } },
-        Entry { id: "settings-keyboard", size: (900.0, 640.0), states: D, draw: |cx| se_keys(cx, (1000.0, 760.0), None, &|e| e.select_key(Some(sq_uikit::key_binding::Key::Char('z')))) },
-        Entry { id: "settings-keys-recording", size: (900.0, 640.0), states: D, draw: |cx| se_keys(cx, (1000.0, 760.0), None, &|e| { se_select_undo(e); e.begin_capture(); }) },
+        Entry {
+            id: "settings-key",
+            size: (340.0, 90.0),
+            states: &[State::Default, State::Selected, State::Focus],
+            draw: |cx| {
+                let sel = cx.state;
+                se_keys(cx, (1000.0, 760.0), Some(CGRect::new(270.0, 232.0, 340.0, 90.0)), &move |e| match sel {
+                    State::Selected => e.select_key(Some(sq_uikit::key_binding::Key::Char('z'))),
+                    State::Focus => e.set_query("Undo"),
+                    _ => {}
+                });
+            },
+        },
+        Entry {
+            id: "settings-key-modifier",
+            size: (340.0, 48.0),
+            states: &[State::Default, State::Selected],
+            draw: |cx| {
+                let on = cx.state == State::Selected;
+                se_keys(cx, (1000.0, 760.0), Some(CGRect::new(270.0, 324.0, 340.0, 48.0)), &move |e| {
+                    if on {
+                        e.toggle_modifier(sq_uikit::key_binding::KeyModifiers::COMMAND)
+                    }
+                });
+            },
+        },
+        Entry {
+            id: "settings-keyboard",
+            size: (900.0, 640.0),
+            states: D,
+            draw: |cx| {
+                se_keys(cx, (1000.0, 760.0), None, &|e| e.select_key(Some(sq_uikit::key_binding::Key::Char('z'))))
+            },
+        },
+        Entry {
+            id: "settings-keys-recording",
+            size: (900.0, 640.0),
+            states: D,
+            draw: |cx| {
+                se_keys(cx, (1000.0, 760.0), None, &|e| {
+                    se_select_undo(e);
+                    e.begin_capture();
+                })
+            },
+        },
         Entry { id: "settings-keys-conflict", size: (440.0, 220.0), states: D, draw: se_conflict },
         // Stress
-        Entry { id: "settings-stress-small", size: (640.0, 400.0), states: D, draw: |cx| se_draw(cx, &Se { window: (640.0, 400.0), ..Se::default() }, CGRect::new(-24.0, -24.0, 640.0, 400.0)) },
-        Entry { id: "settings-stress-nomatch", size: (900.0, 640.0), states: D, draw: |cx| se_draw(cx, &Se { search: "Zeitleistenbildwiederholfrequenz", ..Se::default() }, SE_FULL) },
-        Entry { id: "settings-stress-search", size: (900.0, 640.0), states: D, draw: |cx| se_draw(cx, &Se { search: "autosave", ..Se::default() }, SE_FULL) },
-        Entry { id: "settings-stress-keys-nomatch", size: (900.0, 640.0), states: D, draw: |cx| se_keys(cx, (1000.0, 760.0), None, &|e| e.set_query("zzzxq")) },
-        Entry { id: "settings-stress-keys-small", size: (640.0, 400.0), states: D, draw: |cx| se_keys(cx, (640.0, 400.0), Some(CGRect::new(-0.0, 0.0, 640.0, 400.0)), &|_| {}) },
+        Entry {
+            id: "settings-stress-small",
+            size: (640.0, 400.0),
+            states: D,
+            draw: |cx| {
+                se_draw(cx, &Se { window: (640.0, 400.0), ..Se::default() }, CGRect::new(-24.0, -24.0, 640.0, 400.0))
+            },
+        },
+        Entry {
+            id: "settings-stress-nomatch",
+            size: (900.0, 640.0),
+            states: D,
+            draw: |cx| se_draw(cx, &Se { search: "Zeitleistenbildwiederholfrequenz", ..Se::default() }, SE_FULL),
+        },
+        Entry {
+            id: "settings-stress-search",
+            size: (900.0, 640.0),
+            states: D,
+            draw: |cx| se_draw(cx, &Se { search: "autosave", ..Se::default() }, SE_FULL),
+        },
+        Entry {
+            id: "settings-stress-keys-nomatch",
+            size: (900.0, 640.0),
+            states: D,
+            draw: |cx| se_keys(cx, (1000.0, 760.0), None, &|e| e.set_query("zzzxq")),
+        },
+        Entry {
+            id: "settings-stress-keys-small",
+            size: (640.0, 400.0),
+            states: D,
+            draw: |cx| se_keys(cx, (640.0, 400.0), Some(CGRect::new(-0.0, 0.0, 640.0, 400.0)), &|_| {}),
+        },
     ]
 }
 
@@ -2567,7 +3308,9 @@ fn dg_show(cx: &mut Cx, d: &mut ShellDialog, window: CGRect, act: Dg, crop: &dyn
                 with_measure(|m| d.handle(&InputEvent::MouseDown { x, y, modifiers: M::NONE }, 1.0, m, &mut ui));
             }
         }
-        Dg::Tab => with_measure(|m| d.handle(&InputEvent::KeyDown { key: InputKey::Character('\t'), modifiers: M::NONE }, 1.0, m, &mut ui)),
+        Dg::Tab => with_measure(|m| {
+            d.handle(&InputEvent::KeyDown { key: InputKey::Character('\t'), modifiers: M::NONE }, 1.0, m, &mut ui)
+        }),
     }
     let r = crop(card);
     cx.c.save_gstate();
@@ -2588,7 +3331,8 @@ fn dg_sample(cx: &mut Cx, name: &str, size: (f64, f64), act: Dg, crop: &dyn Fn(C
 }
 
 fn dg_save() -> ShellDialog {
-    let mut d = ShellDialog::new("Save changes to \u{201c}T2\u{201d}?", "Your changes will be lost if you do not save them.");
+    let mut d =
+        ShellDialog::new("Save changes to \u{201c}T2\u{201d}?", "Your changes will be lost if you do not save them.");
     d.asks_to_save = true;
     d.add_button("Don't Save", SQDialogRole::DontSave, true);
     d.add_button("Cancel", SQDialogRole::Cancel, false);
@@ -2611,12 +3355,15 @@ fn dg_slot(cx: &mut Cx, title: &str, kind: fn(&mut ShellDialog)) {
     let mut d = ShellDialog::new(title, "Sequence Studio could not finish the last step.");
     d.add_button("OK", SQDialogRole::Default, false);
     kind(&mut d);
-    dg_show(cx, &mut d, CGRect::new(0.0, 0.0, 480.0, 200.0), Dg::Rest, &|c| CGRect::new(c.x + 8.0, c.y + 8.0, 64.0, 64.0));
+    dg_show(cx, &mut d, CGRect::new(0.0, 0.0, 480.0, 200.0), Dg::Rest, &|c| {
+        CGRect::new(c.x + 8.0, c.y + 8.0, 64.0, 64.0)
+    });
 }
 
 fn dg_report_rows(n: usize, long: bool) -> Vec<sq_draw_shell::ReportRow> {
     use sq_draw_shell::{ReportRow, ReportTone};
-    let names = ["Cut A.mov", "Interview B-Roll.mov", "Nordkap Rohmaterial Kamera A Zwischenspeicher f\u{FC}r Proxys 2026.mov"];
+    let names =
+        ["Cut A.mov", "Interview B-Roll.mov", "Nordkap Rohmaterial Kamera A Zwischenspeicher f\u{FC}r Proxys 2026.mov"];
     (0..n)
         .map(|i| ReportRow {
             tone: [ReportTone::Green, ReportTone::Orange, ReportTone::Red][i % 3],
@@ -2650,7 +3397,14 @@ const Q_HEAD: f64 = ExportQueuePopover::HEADER_HEIGHT;
 
 /// Draws the popover over `window` (anchored at its bottom right corner, like the status bar ring); `hover` is a point
 /// relative to the popover frame; `crop(frame)` is the part of the window that becomes the shot.
-fn qp(cx: &mut Cx, jobs: &[QueueJob], bg: Vec<BackgroundJob>, window: (f64, f64), hover: Option<(f64, f64)>, crop: &dyn Fn(CGRect) -> CGRect) {
+fn qp(
+    cx: &mut Cx,
+    jobs: &[QueueJob],
+    bg: Vec<BackgroundJob>,
+    window: (f64, f64),
+    hover: Option<(f64, f64)>,
+    crop: &dyn Fn(CGRect) -> CGRect,
+) {
     use sq_draw::InputModifiers as M;
     let win = CGRect::new(0.0, 0.0, window.0, window.1);
     let mut p = ExportQueuePopover::new(CGPoint::new(window.0 - 30.0, window.1 - 10.0));
@@ -2670,10 +3424,11 @@ fn qp(cx: &mut Cx, jobs: &[QueueJob], bg: Vec<BackgroundJob>, window: (f64, f64)
 
 /// One row: the list part of a popover with only this job (a section label on top where the popover draws one).
 fn qrow(cx: &mut Cx, job: QueueJob, bg: Vec<BackgroundJob>, section: bool, hover: bool) {
-    let rows = if section { 25.0 } else { 0.0 } + match (&job.state, bg.is_empty()) {
-        (JobState::Running, true) => 58.0,
-        _ => 46.0,
-    };
+    let rows = if section { 25.0 } else { 0.0 }
+        + match (&job.state, bg.is_empty()) {
+            (JobState::Running, true) => 58.0,
+            _ => 46.0,
+        };
     let jobs = if job.name.is_empty() { Vec::new() } else { vec![job] };
     let at = (100.0, Q_HEAD + if section { 25.0 } else { 0.0 } + 23.0);
     qp(cx, &jobs, bg, (500.0, 400.0), hover.then_some(at), &|f| CGRect::new(f.x, f.y + Q_HEAD, 340.0, rows));
@@ -2717,57 +3472,276 @@ fn dialogs() -> Vec<Entry> {
     const BTN: &[State] = &[State::Default, State::Hover, State::Pressed, State::Focus];
     vec![
         // 01-parts: icon slots (the title picks the slot)
-        Entry { id: "dialog-icon-slot-warn", size: (64.0, 64.0), states: D, draw: |cx| dg_slot(cx, "Replace the file?", |d| d.add_button("Cancel", SQDialogRole::Cancel, false)) },
-        Entry { id: "dialog-icon-slot-err", size: (64.0, 64.0), states: D, draw: |cx| dg_slot(cx, "Export failed", |d| d.header_icon = Some(sq_draw_shell::Tone::Error)) },
-        Entry { id: "dialog-icon-slot-ok", size: (64.0, 64.0), states: D, draw: |cx| dg_slot(cx, "Export finished", |_| {}) },
-        Entry { id: "dialog-icon-slot-app", size: (64.0, 64.0), states: D, draw: |cx| dg_slot(cx, "Sequence Studio", |_| {}) },
+        Entry {
+            id: "dialog-icon-slot-warn",
+            size: (64.0, 64.0),
+            states: D,
+            draw: |cx| dg_slot(cx, "Replace the file?", |d| d.add_button("Cancel", SQDialogRole::Cancel, false)),
+        },
+        Entry {
+            id: "dialog-icon-slot-err",
+            size: (64.0, 64.0),
+            states: D,
+            draw: |cx| dg_slot(cx, "Export failed", |d| d.header_icon = Some(sq_draw_shell::Tone::Error)),
+        },
+        Entry {
+            id: "dialog-icon-slot-ok",
+            size: (64.0, 64.0),
+            states: D,
+            draw: |cx| dg_slot(cx, "Export finished", |_| {}),
+        },
+        Entry {
+            id: "dialog-icon-slot-app",
+            size: (64.0, 64.0),
+            states: D,
+            draw: |cx| dg_slot(cx, "Sequence Studio", |_| {}),
+        },
         // 01-parts: list row, key chip, welcome tile
-        Entry { id: "dialog-list-row", size: (480.0, 130.0), states: D, draw: |cx| dg_report(cx, dg_report_rows(3, false), (520.0, 330.0), &|c| CGRect::new(c.x, c.y + 70.0, 480.0, 130.0)) },
-        Entry { id: "dialog-key-chip", size: (480.0, 102.0), states: D, draw: |cx| dg_sample(cx, "welcome", (520.0, 560.0), Dg::Rest, &|c| CGRect::new(c.x, c.y + 100.0, 480.0, 102.0)) },
-        Entry { id: "dialog-welcome-tile", size: (200.0, 150.0), states: D, draw: |cx| dg_sample(cx, "welcome", (520.0, 560.0), Dg::Rest, &|c| CGRect::new(c.x + 16.0, c.y + 100.0, 200.0, 150.0)) },
+        Entry {
+            id: "dialog-list-row",
+            size: (480.0, 130.0),
+            states: D,
+            draw: |cx| {
+                dg_report(cx, dg_report_rows(3, false), (520.0, 330.0), &|c| CGRect::new(c.x, c.y + 70.0, 480.0, 130.0))
+            },
+        },
+        Entry {
+            id: "dialog-key-chip",
+            size: (480.0, 102.0),
+            states: D,
+            draw: |cx| {
+                dg_sample(cx, "welcome", (520.0, 560.0), Dg::Rest, &|c| CGRect::new(c.x, c.y + 100.0, 480.0, 102.0))
+            },
+        },
+        Entry {
+            id: "dialog-welcome-tile",
+            size: (200.0, 150.0),
+            states: D,
+            draw: |cx| {
+                dg_sample(cx, "welcome", (520.0, 560.0), Dg::Rest, &|c| {
+                    CGRect::new(c.x + 16.0, c.y + 100.0, 200.0, 150.0)
+                })
+            },
+        },
         // Whole dialogs
-        Entry { id: "dialog-welcome", size: (520.0, 560.0), states: D, draw: |cx| dg_sample(cx, "welcome", (520.0, 560.0), Dg::Rest, &|_| CGRect::new(0.0, 0.0, 520.0, 560.0)) },
-        Entry { id: "dialog-recovery", size: (520.0, 260.0), states: D, draw: |cx| dg_sample(cx, "recovery", (520.0, 260.0), Dg::Rest, &|_| CGRect::new(0.0, 0.0, 520.0, 260.0)) },
-        Entry { id: "dialog-relink", size: (620.0, 440.0), states: D, draw: |cx| dg_sample(cx, "relink", (620.0, 440.0), Dg::Rest, &|_| CGRect::new(0.0, 0.0, 620.0, 440.0)) },
-        Entry { id: "dialog-pack-clash", size: (520.0, 280.0), states: D, draw: |cx| dg_sample(cx, "library-import", (520.0, 280.0), Dg::Rest, &|_| CGRect::new(0.0, 0.0, 520.0, 280.0)) },
-        Entry { id: "dialog-import-report", size: (520.0, 330.0), states: D, draw: |cx| dg_report(cx, dg_report_rows(3, false), (520.0, 330.0), &|_| CGRect::new(0.0, 0.0, 520.0, 330.0)) },
-        Entry { id: "dialog-about", size: (520.0, 460.0), states: D, draw: |cx| dg_sample(cx, "about", (520.0, 460.0), Dg::Rest, &|_| CGRect::new(0.0, 0.0, 520.0, 460.0)) },
+        Entry {
+            id: "dialog-welcome",
+            size: (520.0, 560.0),
+            states: D,
+            draw: |cx| dg_sample(cx, "welcome", (520.0, 560.0), Dg::Rest, &|_| CGRect::new(0.0, 0.0, 520.0, 560.0)),
+        },
+        Entry {
+            id: "dialog-recovery",
+            size: (520.0, 260.0),
+            states: D,
+            draw: |cx| dg_sample(cx, "recovery", (520.0, 260.0), Dg::Rest, &|_| CGRect::new(0.0, 0.0, 520.0, 260.0)),
+        },
+        Entry {
+            id: "dialog-relink",
+            size: (620.0, 440.0),
+            states: D,
+            draw: |cx| dg_sample(cx, "relink", (620.0, 440.0), Dg::Rest, &|_| CGRect::new(0.0, 0.0, 620.0, 440.0)),
+        },
+        Entry {
+            id: "dialog-pack-clash",
+            size: (520.0, 280.0),
+            states: D,
+            draw: |cx| {
+                dg_sample(cx, "library-import", (520.0, 280.0), Dg::Rest, &|_| CGRect::new(0.0, 0.0, 520.0, 280.0))
+            },
+        },
+        Entry {
+            id: "dialog-import-report",
+            size: (520.0, 330.0),
+            states: D,
+            draw: |cx| {
+                dg_report(cx, dg_report_rows(3, false), (520.0, 330.0), &|_| CGRect::new(0.0, 0.0, 520.0, 330.0))
+            },
+        },
+        Entry {
+            id: "dialog-about",
+            size: (520.0, 460.0),
+            states: D,
+            draw: |cx| dg_sample(cx, "about", (520.0, 460.0), Dg::Rest, &|_| CGRect::new(0.0, 0.0, 520.0, 460.0)),
+        },
         // Buttons of an alert and of a destructive alert
-        Entry { id: "dialog-alert", size: (480.0, 240.0), states: BTN, draw: |cx| { let mut d = dg_save(); dg_whole(cx, &mut d, (480.0, 240.0), dg_for(cx.state, 1)) } },
-        Entry { id: "dialog-alert-default", size: (480.0, 240.0), states: &[State::Hover, State::Pressed], draw: |cx| { let mut d = dg_save(); dg_whole(cx, &mut d, (480.0, 240.0), dg_for(cx.state, 2)) } },
-        Entry { id: "dialog-destructive", size: (480.0, 220.0), states: BTN, draw: |cx| {
-            let mut d = dg_delete("Delete 3 clips?", "They leave the timeline. You can bring them back with Undo.", ("Delete Clips", "Cancel"));
-            dg_whole(cx, &mut d, (480.0, 220.0), dg_for(cx.state, 0));
-        } },
+        Entry {
+            id: "dialog-alert",
+            size: (480.0, 240.0),
+            states: BTN,
+            draw: |cx| {
+                let mut d = dg_save();
+                dg_whole(cx, &mut d, (480.0, 240.0), dg_for(cx.state, 1))
+            },
+        },
+        Entry {
+            id: "dialog-alert-default",
+            size: (480.0, 240.0),
+            states: &[State::Hover, State::Pressed],
+            draw: |cx| {
+                let mut d = dg_save();
+                dg_whole(cx, &mut d, (480.0, 240.0), dg_for(cx.state, 2))
+            },
+        },
+        Entry {
+            id: "dialog-destructive",
+            size: (480.0, 220.0),
+            states: BTN,
+            draw: |cx| {
+                let mut d = dg_delete(
+                    "Delete 3 clips?",
+                    "They leave the timeline. You can bring them back with Undo.",
+                    ("Delete Clips", "Cancel"),
+                );
+                dg_whole(cx, &mut d, (480.0, 220.0), dg_for(cx.state, 0));
+            },
+        },
         // 02-queue rows
-        Entry { id: "queue-row-running", size: (340.0, 83.0), states: HD, draw: |cx| qrow(cx, qj(1, "Rough cut.mp4", JobState::Running, 0.42), vec![], true, cx.state == State::Hover) },
-        Entry { id: "queue-row-waiting", size: (340.0, 71.0), states: HD, draw: |cx| qrow(cx, qj(1, "Rough cut 9x16.mp4", JobState::Waiting, 0.0), vec![], true, cx.state == State::Hover) },
-        Entry { id: "queue-row-cancelling", size: (340.0, 71.0), states: D, draw: |cx| qrow(cx, qj(1, "Rough cut.mp4", JobState::Cancelling, 0.5), vec![], true, false) },
-        Entry { id: "queue-row-done", size: (340.0, 46.0), states: HD, draw: |cx| qrow(cx, qj(1, "Cut A.mp4", JobState::Done("/Volumes/Footage/Cut A.mp4".into()), 1.0), vec![], false, cx.state == State::Hover) },
-        Entry { id: "queue-row-failed", size: (340.0, 46.0), states: D, draw: |cx| qrow(cx, qj(1, "Cut A.mp4", JobState::Failed("disk full".into()), 0.3), vec![], false, false) },
-        Entry { id: "queue-row-canceled", size: (340.0, 46.0), states: D, draw: |cx| qrow(cx, qj(1, "Cut A.mp4", JobState::Cancelled, 0.3), vec![], false, false) },
-        Entry { id: "queue-row-stack", size: (340.0, 83.0), states: D, draw: |cx| qrow(cx, qj(0, "", JobState::Waiting, 0.0), vec![qbg("Analyzing scenes", Some(0.35))], true, false) },
-        Entry { id: "queue-row-subtitles", size: (340.0, 71.0), states: D, draw: |cx| qrow(cx, qj(0, "", JobState::Waiting, 0.0), vec![qbg("Transcribing Interview.mov", None)], true, false) },
+        Entry {
+            id: "queue-row-running",
+            size: (340.0, 83.0),
+            states: HD,
+            draw: |cx| {
+                qrow(cx, qj(1, "Rough cut.mp4", JobState::Running, 0.42), vec![], true, cx.state == State::Hover)
+            },
+        },
+        Entry {
+            id: "queue-row-waiting",
+            size: (340.0, 71.0),
+            states: HD,
+            draw: |cx| {
+                qrow(cx, qj(1, "Rough cut 9x16.mp4", JobState::Waiting, 0.0), vec![], true, cx.state == State::Hover)
+            },
+        },
+        Entry {
+            id: "queue-row-cancelling",
+            size: (340.0, 71.0),
+            states: D,
+            draw: |cx| qrow(cx, qj(1, "Rough cut.mp4", JobState::Cancelling, 0.5), vec![], true, false),
+        },
+        Entry {
+            id: "queue-row-done",
+            size: (340.0, 46.0),
+            states: HD,
+            draw: |cx| {
+                qrow(
+                    cx,
+                    qj(1, "Cut A.mp4", JobState::Done("/Volumes/Footage/Cut A.mp4".into()), 1.0),
+                    vec![],
+                    false,
+                    cx.state == State::Hover,
+                )
+            },
+        },
+        Entry {
+            id: "queue-row-failed",
+            size: (340.0, 46.0),
+            states: D,
+            draw: |cx| qrow(cx, qj(1, "Cut A.mp4", JobState::Failed("disk full".into()), 0.3), vec![], false, false),
+        },
+        Entry {
+            id: "queue-row-canceled",
+            size: (340.0, 46.0),
+            states: D,
+            draw: |cx| qrow(cx, qj(1, "Cut A.mp4", JobState::Cancelled, 0.3), vec![], false, false),
+        },
+        Entry {
+            id: "queue-row-stack",
+            size: (340.0, 83.0),
+            states: D,
+            draw: |cx| {
+                qrow(cx, qj(0, "", JobState::Waiting, 0.0), vec![qbg("Analyzing scenes", Some(0.35))], true, false)
+            },
+        },
+        Entry {
+            id: "queue-row-subtitles",
+            size: (340.0, 71.0),
+            states: D,
+            draw: |cx| {
+                qrow(cx, qj(0, "", JobState::Waiting, 0.0), vec![qbg("Transcribing Interview.mov", None)], true, false)
+            },
+        },
         // Whole popover
-        Entry { id: "queue-popover", size: (364.0, 466.0), states: D, draw: |cx| q_whole(cx, &q_mixed(), vec![qbg("Transcribing Interview.mov", Some(0.6))], (800.0, 600.0), (364.0, 466.0)) },
-        Entry { id: "queue-popover-empty", size: (364.0, 144.0), states: D, draw: |cx| q_whole(cx, &[], vec![], (800.0, 600.0), (364.0, 144.0)) },
+        Entry {
+            id: "queue-popover",
+            size: (364.0, 466.0),
+            states: D,
+            draw: |cx| {
+                q_whole(
+                    cx,
+                    &q_mixed(),
+                    vec![qbg("Transcribing Interview.mov", Some(0.6))],
+                    (800.0, 600.0),
+                    (364.0, 466.0),
+                )
+            },
+        },
+        Entry {
+            id: "queue-popover-empty",
+            size: (364.0, 144.0),
+            states: D,
+            draw: |cx| q_whole(cx, &[], vec![], (800.0, 600.0), (364.0, 144.0)),
+        },
         // Stress
-        Entry { id: "queue-stress-fifty", size: (364.0, 466.0), states: D, draw: |cx| q_whole(cx, &q_fifty(), vec![], (800.0, 700.0), (364.0, 466.0)) },
-        Entry { id: "queue-stress-error", size: (364.0, 152.0), states: D, draw: |cx| q_whole(cx, &[qj(1, "Rough cut.mp4", JobState::Failed(LONG_ERROR.into()), 0.3)], vec![], (800.0, 600.0), (364.0, 152.0)) },
-        Entry { id: "queue-stress-small", size: (640.0, 400.0), states: D, draw: |cx| qp(cx, &q_fifty(), vec![], (640.0, 400.0), None, &|_| CGRect::new(0.0, 0.0, 640.0, 400.0)) },
-        Entry { id: "dialog-stress-german", size: (520.0, 320.0), states: D, draw: |cx| {
-            let mut d = ShellDialog::new(
-                "M\u{F6}chten Sie die \u{C4}nderungen am Projekt \u{201e}Familienurlaub Nordkap Rohmaterial Kamera A Zwischenspeicher f\u{FC}r Proxys\u{201c} sichern?",
-                "Ihre \u{C4}nderungen gehen verloren, wenn Sie sie nicht sichern. Der letzte automatische Stand ist vom 20. November 2026, 21:41 Uhr.",
-            );
-            d.asks_to_save = true;
-            d.add_button("Nicht sichern", SQDialogRole::DontSave, true);
-            d.add_button("Abbrechen", SQDialogRole::Cancel, false);
-            d.add_button("Sichern", SQDialogRole::Default, false);
-            dg_whole(cx, &mut d, (520.0, 320.0), Dg::Rest);
-        } },
-        Entry { id: "dialog-stress-small", size: (300.0, 200.0), states: D, draw: |cx| { let mut d = dg_save(); dg_whole(cx, &mut d, (300.0, 200.0), Dg::Rest) } },
-        Entry { id: "dialog-stress-list", size: (520.0, 400.0), states: D, draw: |cx| dg_report(cx, dg_report_rows(40, true), (520.0, 400.0), &|_| CGRect::new(0.0, 0.0, 520.0, 400.0)) },
+        Entry {
+            id: "queue-stress-fifty",
+            size: (364.0, 466.0),
+            states: D,
+            draw: |cx| q_whole(cx, &q_fifty(), vec![], (800.0, 700.0), (364.0, 466.0)),
+        },
+        Entry {
+            id: "queue-stress-error",
+            size: (364.0, 152.0),
+            states: D,
+            draw: |cx| {
+                q_whole(
+                    cx,
+                    &[qj(1, "Rough cut.mp4", JobState::Failed(LONG_ERROR.into()), 0.3)],
+                    vec![],
+                    (800.0, 600.0),
+                    (364.0, 152.0),
+                )
+            },
+        },
+        Entry {
+            id: "queue-stress-small",
+            size: (640.0, 400.0),
+            states: D,
+            draw: |cx| qp(cx, &q_fifty(), vec![], (640.0, 400.0), None, &|_| CGRect::new(0.0, 0.0, 640.0, 400.0)),
+        },
+        Entry {
+            id: "dialog-stress-german",
+            size: (520.0, 320.0),
+            states: D,
+            draw: |cx| {
+                let mut d = ShellDialog::new(
+                    "M\u{F6}chten Sie die \u{C4}nderungen am Projekt \u{201e}Familienurlaub Nordkap Rohmaterial Kamera A Zwischenspeicher f\u{FC}r Proxys\u{201c} sichern?",
+                    "Ihre \u{C4}nderungen gehen verloren, wenn Sie sie nicht sichern. Der letzte automatische Stand ist vom 20. November 2026, 21:41 Uhr.",
+                );
+                d.asks_to_save = true;
+                d.add_button("Nicht sichern", SQDialogRole::DontSave, true);
+                d.add_button("Abbrechen", SQDialogRole::Cancel, false);
+                d.add_button("Sichern", SQDialogRole::Default, false);
+                dg_whole(cx, &mut d, (520.0, 320.0), Dg::Rest);
+            },
+        },
+        Entry {
+            id: "dialog-stress-small",
+            size: (300.0, 200.0),
+            states: D,
+            draw: |cx| {
+                let mut d = dg_save();
+                dg_whole(cx, &mut d, (300.0, 200.0), Dg::Rest)
+            },
+        },
+        Entry {
+            id: "dialog-stress-list",
+            size: (520.0, 400.0),
+            states: D,
+            draw: |cx| {
+                dg_report(cx, dg_report_rows(40, true), (520.0, 400.0), &|_| CGRect::new(0.0, 0.0, 520.0, 400.0))
+            },
+        },
     ]
 }
 
@@ -2823,18 +3797,30 @@ fn pn_curve(cx: &mut Cx, on: bool) {
     cx.c.restore_gstate();
 }
 
-fn pn_transition(width: f64, pick: Option<usize>) -> sq_inspector_ui::audio_masks::transition_controls_draw::TransitionControlsDraw {
+fn pn_transition(
+    width: f64,
+    pick: Option<usize>,
+) -> sq_inspector_ui::audio_masks::transition_controls_draw::TransitionControlsDraw {
     use sq_core_effects::transition::NewTransition;
-    use sq_core_model::{Clip, Project, SequenceFormat, Timeline, Track, TrackKind, TransitionAlignment, TransitionKind};
+    use sq_core_effects::transition::TimelineTransitions;
+    use sq_core_model::{
+        Clip, Project, SequenceFormat, Timeline, Track, TrackKind, TransitionAlignment, TransitionKind,
+    };
     use sq_core_time::TimeRange;
     use sq_inspector_ui::audio_masks::transition_controls_draw::{Control, TransitionControlsDraw};
     use sq_inspector_ui::audio_masks::transition_controls_model::{Row, TransitionControlsActions};
-    use sq_core_effects::transition::TimelineTransitions;
     let f = |n: i64| Time::new(1, 30) * n;
     let mut ids = SequentialIds::default();
     let mut v = Track::new(Id::from_u128(100), TrackKind::Video);
     let clip = |n: u128, at: i64, src: i64| {
-        let mut c = Clip::new(Id::from_u128(n), "A", Id::from_u128(900 + n), TrackKind::Video, TimeRange::new(f(at), f(120)), f(src));
+        let mut c = Clip::new(
+            Id::from_u128(n),
+            "A",
+            Id::from_u128(900 + n),
+            TrackKind::Video,
+            TimeRange::new(f(at), f(120)),
+            f(src),
+        );
         c.media_duration = Some(f(240));
         c
     };
@@ -2930,20 +3916,56 @@ fn panels() -> Vec<Entry> {
     const HD: &[State] = &[State::Default, State::Hover];
     vec![
         // 02-section-headers: the Compressor header (title, On note, stone switch)
-        Entry { id: "panel-section-header", size: (320.0, 26.0), states: HD, draw: |cx| pn_header(cx, cx.state == State::Hover, true) },
-        Entry { id: "panel-section-header-off", size: (320.0, 26.0), states: HD, draw: |cx| pn_header(cx, cx.state == State::Hover, false) },
+        Entry {
+            id: "panel-section-header",
+            size: (320.0, 26.0),
+            states: HD,
+            draw: |cx| pn_header(cx, cx.state == State::Hover, true),
+        },
+        Entry {
+            id: "panel-section-header-off",
+            size: (320.0, 26.0),
+            states: HD,
+            draw: |cx| pn_header(cx, cx.state == State::Hover, false),
+        },
         // 01-panel-parts
         Entry { id: "panel-graph-compressor", size: (136.0, 96.0), states: D, draw: |cx| pn_curve(cx, true) },
         Entry { id: "panel-graph-compressor-off", size: (136.0, 96.0), states: D, draw: |cx| pn_curve(cx, false) },
-        Entry { id: "panel-ease-chip", size: (760.0, 32.0), states: &[State::Default, State::Selected], draw: |cx| pn_ease(cx, 760.0, (cx.state == State::Selected).then_some(2), 32.0) },
-        Entry { id: "panel-ease-chip-custom", size: (760.0, 32.0), states: D, draw: |cx| pn_ease(cx, 760.0, Some(4), 32.0) },
-        Entry { id: "panel-ease-chip-narrow", size: (420.0, 32.0), states: D, draw: |cx| pn_ease(cx, 420.0, None, 32.0) },
-        Entry { id: "panel-layer-row", size: (300.0, 132.0), states: HD, draw: |cx| pn_layers(cx, (cx.state == State::Hover).then_some(2), 3) },
+        Entry {
+            id: "panel-ease-chip",
+            size: (760.0, 32.0),
+            states: &[State::Default, State::Selected],
+            draw: |cx| pn_ease(cx, 760.0, (cx.state == State::Selected).then_some(2), 32.0),
+        },
+        Entry {
+            id: "panel-ease-chip-custom",
+            size: (760.0, 32.0),
+            states: D,
+            draw: |cx| pn_ease(cx, 760.0, Some(4), 32.0),
+        },
+        Entry {
+            id: "panel-ease-chip-narrow",
+            size: (420.0, 32.0),
+            states: D,
+            draw: |cx| pn_ease(cx, 420.0, None, 32.0),
+        },
+        Entry {
+            id: "panel-layer-row",
+            size: (300.0, 132.0),
+            states: HD,
+            draw: |cx| pn_layers(cx, (cx.state == State::Hover).then_some(2), 3),
+        },
         Entry { id: "panel-layer-row-many", size: (300.0, 300.0), states: D, draw: |cx| pn_layers(cx, None, 12) },
     ]
 }
 
-fn mb_bar(cx: &mut Cx, titles: &[&str], max: Option<f64>, act: &dyn Fn(&mut sq_draw_shell::MenuBar, &TextMeasure), open_menu: bool) {
+fn mb_bar(
+    cx: &mut Cx,
+    titles: &[&str],
+    max: Option<f64>,
+    act: &dyn Fn(&mut sq_draw_shell::MenuBar, &TextMeasure),
+    open_menu: bool,
+) {
     use sq_draw_shell::{MenuBar, ShellMenu};
     let mut bar = MenuBar::new();
     let width = 330.0;
@@ -2965,32 +3987,85 @@ const MB_EN: [&str; 6] = ["File", "Edit", "Clip", "Sequence", "View", "Help"];
 fn menus() -> Vec<Entry> {
     const D: &[State] = &[State::Default];
     vec![
-        Entry { id: "menu-bar-title", size: (330.0, 40.0), states: &[State::Default, State::Hover, State::Focus], draw: |cx| {
-            let st = cx.state;
-            mb_bar(cx, &MB_EN, None, &|b, m| match st {
-                State::Hover => {
-                    let p = centre(b.title_frames()[1]);
-                    b.handle(&InputEvent::MouseMoved { x: p.x as f32, y: p.y as f32 }, 1.0, m, &mut None);
-                }
-                State::Focus => b.alt_tapped(m, &mut None),
-                _ => {}
-            }, false);
-        } },
-        Entry { id: "menu-bar-title-open", size: (330.0, 240.0), states: D, draw: |cx| {
-            mb_bar(cx, &MB_EN, None, &|b, m| b.open_menu(1, None, false, m, &mut None), true);
-        } },
-        Entry { id: "menu-bar-title-overflow", size: (330.0, 40.0), states: D, draw: |cx| {
-            mb_bar(cx, &["File", "Edit", "Clip", "Sequence", "Markers", "Graphics", "View", "Window", "Help"], Some(250.0), &|_, _| {}, false);
-        } },
-        Entry { id: "menu-bar-title-german", size: (330.0, 40.0), states: D, draw: |cx| {
-            mb_bar(cx, &["Datei", "Bearbeiten", "Clip", "Sequenz", "Markierungen", "Grafiken", "Ansicht", "Fenster", "Hilfe"], Some(330.0), &|_, _| {}, false);
-        } },
-        Entry { id: "menu-item-disabled-destructive", size: (224.0, 48.0), states: D, draw: |cx| {
-            let mut i = row("Delete", "\u{2318}\u{232B}");
-            i.is_destructive = true;
-            i.is_enabled = false;
-            menu(cx, vec![i], None);
-        } },
+        Entry {
+            id: "menu-bar-title",
+            size: (330.0, 40.0),
+            states: &[State::Default, State::Hover, State::Focus],
+            draw: |cx| {
+                let st = cx.state;
+                mb_bar(
+                    cx,
+                    &MB_EN,
+                    None,
+                    &|b, m| match st {
+                        State::Hover => {
+                            let p = centre(b.title_frames()[1]);
+                            b.handle(&InputEvent::MouseMoved { x: p.x as f32, y: p.y as f32 }, 1.0, m, &mut None);
+                        }
+                        State::Focus => b.alt_tapped(m, &mut None),
+                        _ => {}
+                    },
+                    false,
+                );
+            },
+        },
+        Entry {
+            id: "menu-bar-title-open",
+            size: (330.0, 240.0),
+            states: D,
+            draw: |cx| {
+                mb_bar(cx, &MB_EN, None, &|b, m| b.open_menu(1, None, false, m, &mut None), true);
+            },
+        },
+        Entry {
+            id: "menu-bar-title-overflow",
+            size: (330.0, 40.0),
+            states: D,
+            draw: |cx| {
+                mb_bar(
+                    cx,
+                    &["File", "Edit", "Clip", "Sequence", "Markers", "Graphics", "View", "Window", "Help"],
+                    Some(250.0),
+                    &|_, _| {},
+                    false,
+                );
+            },
+        },
+        Entry {
+            id: "menu-bar-title-german",
+            size: (330.0, 40.0),
+            states: D,
+            draw: |cx| {
+                mb_bar(
+                    cx,
+                    &[
+                        "Datei",
+                        "Bearbeiten",
+                        "Clip",
+                        "Sequenz",
+                        "Markierungen",
+                        "Grafiken",
+                        "Ansicht",
+                        "Fenster",
+                        "Hilfe",
+                    ],
+                    Some(330.0),
+                    &|_, _| {},
+                    false,
+                );
+            },
+        },
+        Entry {
+            id: "menu-item-disabled-destructive",
+            size: (224.0, 48.0),
+            states: D,
+            draw: |cx| {
+                let mut i = row("Delete", "\u{2318}\u{232B}");
+                i.is_destructive = true;
+                i.is_enabled = false;
+                menu(cx, vec![i], None);
+            },
+        },
     ]
 }
 
@@ -3001,7 +4076,21 @@ fn catalogue_shots() {
     let fonts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Packages/SQText/Sources/SQText/Resources/Fonts");
     let Some(atlas) = GlyphAtlas::inter(&fonts) else { panic!("bundled Inter loads") };
     let mut n = 0;
-    for group in [controls(), overlays(), shell(), timeline(), inspector(), lists(), start(), color(), forms(), settings_group(), dialogs(), panels(), menus()] {
+    for group in [
+        controls(),
+        overlays(),
+        shell(),
+        timeline(),
+        inspector(),
+        lists(),
+        start(),
+        color(),
+        forms(),
+        settings_group(),
+        dialogs(),
+        panels(),
+        menus(),
+    ] {
         n += render(&dir, &atlas, &group);
     }
     assert!(n >= 2 * 5, "button-raised alone is 5 states x 2 modes, wrote {n}");

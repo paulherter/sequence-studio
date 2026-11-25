@@ -244,30 +244,46 @@ impl MaskOps {
             (-radius..=radius).map(|j| (-((j * j) as f64) / (2.0 * sigma * sigma)).exp() as f32).collect();
         let total = k.iter().fold(0.0f32, |s, v| s + v);
         k = k.iter().map(|v| v / total).collect();
+        let r = radius as usize;
+        // Text masks are mostly empty: only the span between the first and last non-zero value of a row can contribute, and
+        // a zero term adds exactly nothing, so skipping the rest gives the very same floats as the full sum.
         let mut tmp = vec![0.0f32; w * h];
-        let mut out = tmp.clone();
+        let (mut col_lo, mut col_hi) = (w, 0usize);
+        let mut row_span: Vec<Option<(usize, usize)>> = vec![None; h];
         for y in 0..h {
-            for x in 0..w {
+            let row = &m[y * w..(y + 1) * w];
+            let Some(first) = row.iter().position(|v| *v != 0.0) else { continue };
+            let last = row.iter().rposition(|v| *v != 0.0).unwrap_or(first);
+            let (lo, hi) = (first.saturating_sub(r), (last + r).min(w - 1));
+            for x in lo..=hi {
+                let from = x.saturating_sub(r).max(first);
+                let to = (x + r).min(last);
                 let mut s = 0.0f32;
-                for j in -radius..=radius {
-                    let xx = x as i64 + j;
-                    if xx >= 0 && xx < w as i64 {
-                        s += m[y * w + xx as usize] * k[(j + radius) as usize];
-                    }
+                for xx in from..=to {
+                    s += row[xx] * k[xx + r - x];
                 }
                 tmp[y * w + x] = s;
             }
+            row_span[y] = Some((lo, hi));
+            col_lo = col_lo.min(lo);
+            col_hi = col_hi.max(hi);
         }
-        for y in 0..h {
-            for x in 0..w {
-                let mut s = 0.0f32;
-                for j in -radius..=radius {
-                    let yy = y as i64 + j;
-                    if yy >= 0 && yy < h as i64 {
-                        s += tmp[yy as usize * w + x] * k[(j + radius) as usize];
-                    }
+        let mut out = vec![0.0f32; w * h];
+        let Some(first_row) = row_span.iter().position(Option::is_some) else { return out };
+        let last_row = row_span.iter().rposition(Option::is_some).unwrap_or(first_row);
+        // Row-wise accumulation: per output value the terms are added in the same order as a column walk, but the inner
+        // loop runs over contiguous memory.
+        for y in first_row.saturating_sub(r)..=(last_row + r).min(h - 1) {
+            let out_row = &mut out[y * w + col_lo..y * w + col_hi + 1];
+            for yy in y.saturating_sub(r).max(first_row)..=(y + r).min(last_row) {
+                if row_span[yy].is_none() {
+                    continue;
                 }
-                out[y * w + x] = s;
+                let kv = k[yy + r - y];
+                let src = &tmp[yy * w + col_lo..yy * w + col_hi + 1];
+                for (o, t) in out_row.iter_mut().zip(src) {
+                    *o += t * kv;
+                }
             }
         }
         out
@@ -305,6 +321,96 @@ impl MaskOps {
 mod tests {
     use super::*;
     use std::collections::BTreeMap;
+
+    /// The blur as it was before the sparse-span version: the full window at every pixel.
+    fn blur_reference(m: &[f32], w: usize, h: usize, sigma: f64) -> Vec<f32> {
+        let radius = (sigma * 3.0).ceil() as i64;
+        let mut k: Vec<f32> =
+            (-radius..=radius).map(|j| (-((j * j) as f64) / (2.0 * sigma * sigma)).exp() as f32).collect();
+        let total = k.iter().fold(0.0f32, |s, v| s + v);
+        k = k.iter().map(|v| v / total).collect();
+        let mut tmp = vec![0.0f32; w * h];
+        let mut out = tmp.clone();
+        for y in 0..h {
+            for x in 0..w {
+                let mut s = 0.0f32;
+                for j in -radius..=radius {
+                    let xx = x as i64 + j;
+                    if xx >= 0 && xx < w as i64 {
+                        s += m[y * w + xx as usize] * k[(j + radius) as usize];
+                    }
+                }
+                tmp[y * w + x] = s;
+            }
+        }
+        for y in 0..h {
+            for x in 0..w {
+                let mut s = 0.0f32;
+                for j in -radius..=radius {
+                    let yy = y as i64 + j;
+                    if yy >= 0 && yy < h as i64 {
+                        s += tmp[yy as usize * w + x] * k[(j + radius) as usize];
+                    }
+                }
+                out[y * w + x] = s;
+            }
+        }
+        out
+    }
+
+    /// `cargo test -p sq-text --release -- --ignored --nocapture blur_speed`: a text-like mask (a few glyph-sized blocks).
+    #[test]
+    #[ignore]
+    fn blur_speed() {
+        let (w, h) = (1000usize, 600usize);
+        let mut m = vec![0.0f32; w * h];
+        for b in 0..8 {
+            for y in 250..330 {
+                for x in (60 + b * 110)..(130 + b * 110) {
+                    m[y * w + x] = if (x + y) % 3 == 0 { 1.0 } else { 0.4 };
+                }
+            }
+        }
+        let t = std::time::Instant::now();
+        let old = blur_reference(&m, w, h, 12.0);
+        let old_ms = t.elapsed().as_secs_f64() * 1e3;
+        let t = std::time::Instant::now();
+        let new = MaskOps::blur(&m, w, h, 12.0);
+        let new_ms = t.elapsed().as_secs_f64() * 1e3;
+        assert!(old.iter().zip(&new).all(|(a, b)| a.to_bits() == b.to_bits()));
+        eprintln!("blur {w}x{h} sigma 12: old {old_ms:.1} ms, new {new_ms:.1} ms");
+    }
+
+    #[test]
+    fn sparse_blur_is_bit_identical_to_the_full_window_blur() {
+        let (w, h) = (53usize, 41usize);
+        let mut seed = 12345u32;
+        let mut next = move || {
+            seed = seed.wrapping_mul(1664525).wrapping_add(1013904223);
+            (seed >> 8) as f32 / (1u32 << 24) as f32
+        };
+        let mut cases: Vec<Vec<f32>> = vec![vec![0.0; w * h], vec![1.0; w * h]];
+        // dense noise, sparse specks, a block touching the border, a single pixel
+        cases.push((0..w * h).map(|_| next()).collect());
+        cases.push((0..w * h).map(|_| if next() > 0.97 { next() } else { 0.0 }).collect());
+        let mut block = vec![0.0; w * h];
+        for y in 0..7 {
+            for x in 40..w {
+                block[y * w + x] = next();
+            }
+        }
+        cases.push(block);
+        let mut one = vec![0.0; w * h];
+        one[20 * w + 30] = 1.0;
+        cases.push(one);
+        for m in &cases {
+            for sigma in [0.0, 0.5, 1.0, 2.7, 6.0, 30.0] {
+                let a = MaskOps::blur(m, w, h, sigma);
+                let b = if sigma <= 0.05 { m.clone() } else { blur_reference(m, w, h, sigma) };
+                assert!(a.iter().zip(&b).all(|(x, y)| x.to_bits() == y.to_bits()), "sigma {sigma}");
+            }
+        }
+    }
 
     const W: usize = 24;
     const H: usize = 20;

@@ -14,13 +14,14 @@
 
 use super::activity::{PlayActivity, PlayMark};
 use super::caption_plan;
+use super::clock_hold::{ClockHold, FIRST_PICTURE_LIMIT, HoldStep, ahead_indices};
 use super::display_pacing::{DisplayPacer, PlayStart, PlayStep, loop_wrap, wrapped};
 use super::handle::{Command, EngineDeps, Msg, Shared, Shown, Status};
 use super::lanes::{CancelToken, LanePool};
-use super::late_frames::LateFrames;
+use super::late_frames::{CUT_GRACE, LateFrames};
 use super::look_preview::LookPreview;
 use super::media_source::MediaSource;
-use super::proxy_picture::ProxyUse;
+use super::proxy_picture::{ProxyUse, proxy_read_allowed};
 use super::state::{CompositorSlot, EngineState, Event};
 use super::stats::{PlayStats, Stage};
 use super::types::{Key, MediaRef, Picture, WantGate, Wanted};
@@ -32,14 +33,15 @@ use sq_core_model::{ClipTransform, Timeline};
 use sq_core_time::{Id, Time, TimeRange};
 use sq_frame::sqframe::SQFrameColorSpace;
 use sq_gpu::frames::{GpuFrame, PlaneLayout};
+use sq_gpu::gpu::timing;
 use sq_media::media_opener::MonitorUse;
 use sq_media::video_decoding::DecodeScale;
 use sq_render::program::{Inputs, LayerSource, ProgramCompositor, ProgramError, RenderOptions, Source};
 use std::collections::{HashMap, HashSet};
 use std::ops::RangeInclusive;
-use std::sync::Arc;
-use super::clock_hold::{ClockHold, FIRST_PICTURE_LIMIT, HoldStep, ahead_indices};
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, Sender};
+use std::sync::{Arc, Mutex, PoisonError};
 use std::time::{Duration, Instant};
 
 /// How long the render thread waits for the GPU to finish an earlier frame while playing before it drops the frame. Short, so
@@ -64,9 +66,62 @@ const FILL_CHUNK: i64 = 8;
 /// A lane reads toward a picture that is at most this far past what it decodes.
 const LANE_REACH: i64 = 45;
 const MAX_LANES: usize = 3;
+/// Paused cut-in warm-up passes per resting playhead (open a lane, position it, keep it).
+const WARM_CUT_PASSES: u8 = 4;
+/// Frames a prefetch decodes past the first visible frame of a clip that is about to cut in. Four (3 ahead) left a cold lane
+/// 4 frames of lead: a 4K software decoder needs ~25 ms a frame, so right after the cut the lane could not build a lead and the
+/// picture stalled 50-120 ms (a real project, cuts at 9.97 s and 13.4 s). `SQ_PREFETCH_AHEAD=3` restores the old value.
+const PREFETCH_AHEAD: i64 = 12;
+
+/// The prefetch lead in frames: `SQ_PREFETCH_AHEAD` (0..=60) or `PREFETCH_AHEAD`.
+pub(crate) fn prefetch_ahead() -> i64 {
+    static N: std::sync::OnceLock<i64> = std::sync::OnceLock::new();
+    *N.get_or_init(|| prefetch_ahead_from(std::env::var("SQ_PREFETCH_AHEAD").ok().as_deref()))
+}
+
+/// `SQ_RASTER_WARM=0` turns the title / shape picture warm-up off (A/B).
+fn raster_warm_enabled() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("SQ_RASTER_WARM").is_none_or(|v| v != "0"))
+}
+
+/// How far a cached picture is from what the cache must keep (the trim drops the farthest first): the frames on screen, and the
+/// frames of a clip about to cut in (`ahead`, the first visible frame of each plus the `lead` decoded after it). Only the first
+/// frame counted before: the lead of a cut-in decoded 3 s ahead was the first to go in a full cache, and the cut met a cold
+/// lane (real project, Produktfilm at 21.2 s: 661..672 gone, 800 ms decode, 400 ms gap).
+pub(crate) fn trim_distance(wanted: &[Key], ahead: &[Key], lead: i64, k: &Key) -> i64 {
+    let near = wanted.iter().filter(|w| w.media == k.media).map(|w| (w.index - k.index).abs());
+    let cut_in = ahead
+        .iter()
+        .filter(|w| w.media == k.media)
+        .map(|w| if k.index >= w.index && k.index <= w.index + lead { 0 } else { (w.index - k.index).abs() });
+    near.chain(cut_in).min().unwrap_or(i64::MAX / 2)
+}
+
+/// A prefetch seeks a lane of its file that is not its own only when playing, when no layer has read it for
+/// `STALE_LANE_REFRESHES` refreshes (the playhead's lanes are touched every frame, a warmed lane at every prefetch pass, 10
+/// refreshes apart) and when no cut-in the prefetch looks at is reached by it.
+pub(crate) fn prefetch_may_take_lane(idle_refreshes: u64, playing: bool, reaches_a_cut_in: bool) -> bool {
+    playing && !reaches_a_cut_in && idle_refreshes > STALE_LANE_REFRESHES
+}
+
+const STALE_LANE_REFRESHES: u64 = 30;
+
+pub(crate) fn prefetch_ahead_from(env: Option<&str>) -> i64 {
+    env.and_then(|v| v.trim().parse::<i64>().ok()).map_or(PREFETCH_AHEAD, |n| n.clamp(0, 60))
+}
 
 /// 1, 2 or 4: the divisor a layer's picture needs while playing or scrubbing (`PlaybackLayerDetail`): a layer drawn at half
 /// its native size or less on its sequence's canvas is decoded at half, a quarter or less at a quarter. Tilted layers keep
+/// Whether `next` shows another clip or a far other place of a file than `prev`: a cut (or a transition start), where the
+/// decoders of the new pictures open or seek cold. A same-file jump of more than `CUT_GRACE` frames is a cut too: playback
+/// moves a frame or a few per composite, and a longer jump seeks cold (its stand-ins are not a machine too slow).
+pub(crate) fn is_cut(prev: &Wanted, next: &Wanted) -> bool {
+    next.keys.iter().any(|k| {
+        !prev.keys.iter().any(|p| p.media == k.media && p.proxy == k.proxy && (p.index - k.index).abs() <= CUT_GRACE)
+    })
+}
+
 /// The frame a stand-in shows for `wanted` among the decoded `cached` frames of the file. Scrubbing: the nearest either way.
 /// Playing: the nearest frame the playhead has already passed and not older than `floor` (the newest frame of the file drawn
 /// since play started), never one ahead of it: frames from before a click or a stand-in older than the picture on screen
@@ -118,11 +173,14 @@ struct Lane {
     /// The last one it decodes.
     to: i64,
     used: u64,
+    /// The timeline time of the cut-in this lane was warmed for (the latest one a prefetch key reached it for): the lane is
+    /// nobody's to take until the playhead has passed it, also while the sampled look-ahead points skip a short clip.
+    hold_until: Option<Time>,
 }
 
 impl Lane {
     fn new(source: Arc<MediaSource>, used: u64) -> Lane {
-        Lane { source, at: None, to: -1, used }
+        Lane { source, at: None, to: -1, used, hold_until: None }
     }
     fn reaches(&self, index: i64) -> bool {
         self.at.is_some_and(|at| index >= at && index <= at.max(self.to) + LANE_REACH)
@@ -151,6 +209,8 @@ pub struct ProgramEngine {
     loops: bool,
     shows_captions: bool,
     shows_transparency_grid: bool,
+    /// Export: the compositor's Present pass writes the picture at this size (GPU scaling), `None` = the sequence size.
+    output_size: Option<(u32, u32)>,
     color_bypass: Option<ColorBypass>,
     look_preview: Option<LookPreview>,
     media_paths: HashMap<Id, String>,
@@ -168,6 +228,9 @@ pub struct ProgramEngine {
     opening: HashSet<Id>,
     open_failed: HashMap<Id, String>,
     cancel: HashMap<Id, CancelToken>,
+    /// Tokens of the scrub's own preview jobs (a coarser picture than the paused one): `end_scrub` cancels only these, so the
+    /// proxy decodes and cut-in warm-ups of the same file go on.
+    scrub_cancel: HashMap<Id, CancelToken>,
     lanes: HashMap<Id, Vec<Lane>>,
     lane_opening: HashSet<Id>,
     intra_files: HashMap<Id, bool>,
@@ -180,22 +243,35 @@ pub struct ProgramEngine {
     cache_generation: u64,
     frame_cache_bytes: usize,
     in_flight: HashSet<Key>,
+    /// The refresh each file was last needed at (wanted, prefetched, in flight or held for a cut-in): `close_idle_media`.
+    needed_at: HashMap<Id, Duration>,
+    /// Playback time that has passed (wall clock while playing, paused time not counted) and the last tick of it: the clock of `needed_at`.
+    idle_clock: (Duration, Option<Instant>),
+    idle_checked: Duration,
     failed_keys: HashMap<Key, Instant>,
     preview_keys: HashSet<Key>,
     play_divisors: HashMap<Id, u32>,
     prefetch_countdown: i32,
     prefetch_keys: Vec<Key>,
+    /// Where on the timeline each key of the last `cut_in_keys` call shows up (a sample time at or after its cut).
+    cut_in_times: HashMap<Key, Time>,
+    /// The keys of this refresh whose source frames fall while the timeline plays on (a reversed clip).
+    reads_backward: HashSet<Key>,
 
     wanted: Option<Wanted>,
     shown: Option<Wanted>,
     shown_exact: bool,
+    /// The Program monitor's picture size in pixels (the host sends it); playing composes at this size when smaller.
+    view_px: Option<(u32, u32)>,
+    /// The shown picture was composed below the sequence size (a paused picture must be drawn again at full size).
+    shown_scaled: bool,
     shown_lag: i64,
     wanted_requests: Vec<LayerRequest>,
     picture_present: bool,
     picture_generation: u64,
     compositor: CompositorSlot<ProgramCompositor>,
     /// Playing: the newest frame of each file drawn since play started (a stand-in never goes back behind it).
-    played_through: HashMap<Id, i64>,
+    played_through: super::played_through::PlayedThrough,
 
     compose_pending: bool,
     /// The last composite was dropped because the GPU was busy: the wanted frame is composited again on the next loop.
@@ -219,10 +295,15 @@ pub struct ProgramEngine {
     played_span: Option<(i64, i64)>,
     compose_sum: f64,
     compose_count: u64,
+    compose_calls: u64,
 
     warm_position: Option<Time>,
+    /// Clips whose title / shape / Lottie picture the prefetch has drawn ahead (`warm_generator`); cleared with the timeline.
+    rasters_warmed: HashSet<Id>,
     warm_since: Option<Instant>,
     warm_queue: Vec<Key>,
+    /// Passes of the paused cut-in warm-up at this playhead (`warm_cut_ins`): one opens a lane, the next positions it.
+    warm_cut_passes: u8,
     warm_last: Instant,
     pacer: DisplayPacer,
     /// +1 / -1: the way the paused playhead moved last.
@@ -265,6 +346,7 @@ impl ProgramEngine {
             loops: false,
             shows_captions: true,
             shows_transparency_grid: false,
+            output_size: None,
             color_bypass: None,
             look_preview: None,
             media_paths: HashMap::new(),
@@ -278,6 +360,7 @@ impl ProgramEngine {
             opening: HashSet::new(),
             open_failed: HashMap::new(),
             cancel: HashMap::new(),
+            scrub_cancel: HashMap::new(),
             lanes: HashMap::new(),
             lane_opening: HashSet::new(),
             intra_files: HashMap::new(),
@@ -287,20 +370,27 @@ impl ProgramEngine {
             cache_bytes: 0,
             cache_generation: 0,
             in_flight: HashSet::new(),
+            needed_at: HashMap::new(),
+            idle_clock: (Duration::ZERO, None),
+            idle_checked: Duration::ZERO,
             failed_keys: HashMap::new(),
             preview_keys: HashSet::new(),
             play_divisors: HashMap::new(),
             prefetch_countdown: 0,
             prefetch_keys: Vec::new(),
+            cut_in_times: HashMap::new(),
+            reads_backward: HashSet::new(),
             wanted: None,
             shown: None,
             shown_exact: true,
+            view_px: None,
+            shown_scaled: false,
             shown_lag: 0,
             wanted_requests: Vec::new(),
             picture_present: false,
             picture_generation: 0,
             compositor: CompositorSlot::NotCreated,
-            played_through: HashMap::new(),
+            played_through: super::played_through::PlayedThrough::default(),
             compose_pending: false,
             compose_retry: false,
             activity: PlayMark::new(PlayActivity::shared()),
@@ -316,9 +406,12 @@ impl ProgramEngine {
             played_span: None,
             compose_sum: 0.0,
             compose_count: 0,
+            compose_calls: 0,
             warm_position: None,
+            rasters_warmed: HashSet::new(),
             warm_since: None,
             warm_queue: Vec::new(),
+            warm_cut_passes: 0,
             warm_last: now,
             pacer: DisplayPacer::default(),
             scrub_direction: 1,
@@ -334,7 +427,12 @@ impl ProgramEngine {
         loop {
             let busy = !self.state.rate().is_paused() || self.state.is_scrubbing();
             let wait = Duration::from_millis(if busy { 2 } else { 10 });
-            match rx.recv_timeout(wait) {
+            let waited = super::frame_trace::enabled().then(Instant::now);
+            let got = rx.recv_timeout(wait);
+            if let Some(t) = waited {
+                super::frame_trace::note_idle(t.elapsed().as_secs_f64() * 1e3);
+            }
+            match got {
                 Ok(Msg::Stop) | Err(RecvTimeoutError::Disconnected) => return,
                 Ok(m) => {
                     self.shared.taken(&m);
@@ -351,10 +449,32 @@ impl ProgramEngine {
             }
             self.tick();
             self.activity.set(!self.state.rate().is_paused() || self.state.is_scrubbing());
-            if self.compose_retry {
-                self.compose();
-            }
+            self.compose_after_tick();
         }
+    }
+
+    /// The one compose of a loop pass: pictures that arrived during it (while playing) only marked the frame, so a burst of
+    /// arrivals draws once, right after the tick, with no wait for the next one. A GPU retry draws too.
+    pub(crate) fn compose_after_tick(&mut self) {
+        if self.compose_retry || (self.compose_pending && !self.state.is_scrubbing()) {
+            self.compose();
+        }
+    }
+
+    /// A useful picture arrived: paused, it shows at once (a seek); playing or scrubbing it only marks the frame, and the
+    /// loop composes once per pass (`compose_after_tick`; while scrubbing, `tick`).
+    pub(crate) fn compose_for_arrival(&mut self) {
+        if self.state.is_scrubbing() || !self.state.rate().is_paused() {
+            self.compose_pending = true;
+        } else {
+            self.compose();
+        }
+    }
+
+    /// How many times `compose` was entered (tests).
+    #[cfg(test)]
+    pub(crate) fn compose_calls(&self) -> u64 {
+        self.compose_calls
     }
 
     pub(crate) fn handle(&mut self, m: Msg) {
@@ -391,6 +511,7 @@ impl ProgramEngine {
             Command::Scrub(t) => self.move_to(t),
             Command::EndScrub => self.end_scrub(),
             Command::SetQuality(q) => self.set_quality(q),
+            Command::SetViewSize(size) => self.view_px = Some(size),
             Command::SetPlayRange(r) => {
                 self.play_range = r;
                 self.pacer.set_bounds(r, self.loops);
@@ -409,6 +530,13 @@ impl ProgramEngine {
             Command::SetShowsCaptions(on) => {
                 if on != self.shows_captions {
                     self.shows_captions = on;
+                    self.shown = None;
+                    self.refresh();
+                }
+            }
+            Command::SetOutputSize(size) => {
+                if size != self.output_size {
+                    self.output_size = size;
                     self.shown = None;
                     self.refresh();
                 }
@@ -505,6 +633,46 @@ impl ProgramEngine {
     pub fn cache_len(&self) -> usize {
         self.cache.len()
     }
+    /// A frame is on the monitor (not blanked).
+    pub fn has_shown(&self) -> bool {
+        self.shown.is_some()
+    }
+    /// Cached pictures decoded at `divisor` (1, 2, 4).
+    pub fn cache_len_at(&self, divisor: u32) -> usize {
+        self.cache.keys().filter(|k| k.divisor == divisor).count()
+    }
+    /// Test hook: whether the ordinary decode token of `media` is cancelled (the scrub's end must leave it alone).
+    pub fn normal_token_cancelled(&self, media: Id) -> bool {
+        self.cancel.get(&media).is_some_and(CancelToken::is_cancelled)
+    }
+
+    /// Whether the clock still waits after Play (first picture or pre-roll), for tests.
+    pub fn clock_is_held(&self) -> bool {
+        self.clock_hold.is_held()
+    }
+    /// The highest frame index cached at `divisor` (`None` = none), for tests.
+    pub fn cache_last_index_at(&self, divisor: u32) -> Option<i64> {
+        self.cache.keys().filter(|k| k.divisor == divisor).map(|k| k.index).max()
+    }
+    /// Where each decoder lane of `media` last read (`None` = unused), for tests.
+    #[cfg(test)]
+    pub(super) fn lane_positions(&self, media: Id) -> Vec<Option<i64>> {
+        self.lanes.get(&media).map(|a| a.iter().map(|l| l.at).collect()).unwrap_or_default()
+    }
+    /// Test hook: where the lane of `media` reads (`at`..`to`), as after a scrub back inside a GOP.
+    #[cfg(test)]
+    pub(super) fn set_lane_for_test(&mut self, media: Id, at: i64, to: i64) {
+        if let Some(l) = self.lanes.get_mut(&media).and_then(|a| a.first_mut()) {
+            l.at = Some(at);
+            l.to = to;
+        }
+    }
+    /// Test hook: one pass of the paused cut-in warm-up at the playhead.
+    #[cfg(test)]
+    pub(super) fn warm_cut_ins_for_test(&mut self) {
+        let keys: Vec<Key> = self.layers_at(self.position).iter().filter_map(|l| self.key_for(l)).collect();
+        self.warm_cut_ins(&keys);
+    }
     pub fn cache_bytes(&self) -> usize {
         self.cache_bytes
     }
@@ -555,6 +723,7 @@ impl ProgramEngine {
         self.timeline = timeline;
         self.sequences = sequences;
         self.warm_position = None;
+        self.rasters_warmed.clear();
         self.wanted = None;
         self.shown = None;
         self.refresh();
@@ -592,6 +761,9 @@ impl ProgramEngine {
             if let Some(t) = self.cancel.insert(*id, CancelToken::new()) {
                 t.cancel();
             }
+            if let Some(t) = self.scrub_cancel.remove(id) {
+                t.cancel();
+            }
         }
         self.cache.retain(|k, _| !ids.contains(&k.media));
         self.in_flight.retain(|k| !ids.contains(&k.media));
@@ -604,9 +776,24 @@ impl ProgramEngine {
             return;
         }
         self.quality = q;
+        // Decodes queued or running for the old quality stop between pictures; a fresh token serves the new quality, so
+        // its jobs do not wait behind the old backlog of the same decoder.
+        for token in self.cancel.values_mut() {
+            std::mem::replace(token, CancelToken::new()).cancel();
+        }
+        for (_, token) in self.scrub_cancel.drain() {
+            token.cancel();
+        }
+        self.play_divisors.clear();
+        if !self.state.rate().is_paused() {
+            // Playing: the pictures of the old quality stay and stand in (the compositor scales them) until the first
+            // picture of the new quality for the position arrives, so the step leaves no hole. The cache budget
+            // evicts them as the new ones fill it.
+            self.refresh();
+            return;
+        }
         self.cache.clear();
         self.recount_cache();
-        self.play_divisors.clear();
         if let Some(c) = self.compositor.ready_mut() {
             c.drop_planes();
         }
@@ -653,6 +840,8 @@ impl ProgramEngine {
         }
         self.pacer.reset();
         self.play_start = None;
+        // The look-ahead (titles of the first seconds included) runs on the first refresh of the run, not up to 10 later.
+        self.prefetch_countdown = 0;
         self.played_through.clear();
         // From the frame on screen: frames that never showed before the first new one count as dropped.
         self.shown_frames = 0;
@@ -721,7 +910,7 @@ impl ProgramEngine {
             let end = l.source_end.map(|t| src.frame_index(t));
             ahead_indices(k.index, forward, count, start, end).into_iter().all(|i| {
                 let key = Key { index: i, ..k };
-                self.cache.contains_key(&key) || self.has_failed(&key)
+                self.has_picture_at_least(&key) || self.has_failed(&key)
             })
         })
     }
@@ -748,6 +937,9 @@ impl ProgramEngine {
         self.play_start = None;
         self.deps.clock.stop();
         self.notify_position();
+        if std::mem::take(&mut self.shown_scaled) {
+            self.shown = None; // the picture shown was composed at the monitor size: draw it again at full size
+        }
         self.refresh(); // the paused frame from the original at full detail (a no-op when the keys did not change)
     }
 
@@ -780,6 +972,16 @@ impl ProgramEngine {
             return;
         }
         self.transition(Event::EndScrub);
+        if play_trace() {
+            eprintln!("[play-trace] {:.3}s end scrub at {:?}", trace_clock(), self.position);
+        }
+        // The scrub's own preview decodes (a coarser picture than the paused one) still queued or running: the exact pictures
+        // replace them, and the decoder is busy with them first. Real project, 4K 140 Mb/s H.264: the last scrub job (a
+        // 23-frame GOP, 430 ms) ran on after the scrub, then the exact decode restarted the same GOP (600 ms), so Play 1.1 s
+        // later still waited 450 ms for its first picture. Other jobs of the file (proxy, cut-in warm-ups) keep their token.
+        for (_, token) in self.scrub_cancel.drain() {
+            token.cancel();
+        }
         // Preview pictures (software decoders without the loop filter) leave the cache; the exact ones decode again.
         for s in self.sources.values() {
             s.set_preview(false);
@@ -813,7 +1015,19 @@ impl ProgramEngine {
                 Some(w) => self.shown.as_ref() == Some(w),
                 None => false,
             };
-            let step = ClockHold::step(waited, first_picture, first_picture && self.frames_ahead_ready());
+            let ahead = first_picture && self.frames_ahead_ready();
+            if play_trace() {
+                static SEEN: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+                let now = u8::from(first_picture) | (u8::from(ahead) << 1);
+                if SEEN.swap(now, std::sync::atomic::Ordering::Relaxed) != now {
+                    eprintln!(
+                        "[play-trace] {:.3}s hold {:.0} ms: first picture {first_picture}, frames ahead ready {ahead}",
+                        trace_clock(),
+                        waited.as_secs_f64() * 1e3
+                    );
+                }
+            }
+            let step = ClockHold::step(waited, first_picture, ahead);
             let release = step == HoldStep::Release;
             let waited_out = waited > FIRST_PICTURE_LIMIT;
             if release && (waited_out || !self.awaiting_display_start()) {
@@ -886,7 +1100,17 @@ impl ProgramEngine {
         let Some(display) = self.deps.display.clone() else { return t };
         let fd = self.timeline.frame_duration();
         let host_now = display.micros(Instant::now());
-        let p = self.pacer.position(display.read(), host_now, now, self.state.rate(), fd);
+        let tick = display.read_paced();
+        let p = self.pacer.position(tick, host_now, now, self.state.rate(), fd);
+        if super::frame_trace::enabled() {
+            let us = |t: Time| t.value() * 1_000_000 / t.timescale().max(1);
+            super::frame_trace::note_pacing(
+                host_now,
+                us(now),
+                p.frame_index(fd),
+                tick.and_then(|t| t.present_us).unwrap_or(0),
+            );
+        }
         if let Some(r) = region {
             // Looping: the picture, ahead of the clock, is past the wrap before the clock is.
             return if r.contains(now) { wrapped(p, r) } else { t };
@@ -953,11 +1177,22 @@ impl ProgramEngine {
         let stats = Arc::clone(&self.stats);
         let requests = stats.time(Stage::VideoLayers, || self.layers_at(self.position));
         let keys: Vec<Key> = requests.iter().filter_map(|l| self.key_for(l)).collect();
+        self.reads_backward.clear();
+        for l in &requests {
+            if l.reversed
+                && let Some(k) = self.peek_key(l)
+            {
+                self.reads_backward.insert(k);
+            }
+        }
         self.wanted = Some(Wanted { position: self.position, keys: keys.clone() });
         self.wanted_requests = requests;
         let playing = !self.state.rate().is_paused();
         self.want_gate.set(&keys, playing);
-        let ahead = if playing { 8 } else { 0 };
+        self.want_gate.set_forward(playing && self.state.rate().is_forward() && self.reads_backward.is_empty());
+        // Parked (not scrubbing) the lead-in of every layer decodes too, each on its own lane, so Play starts with the
+        // frames ahead ready instead of waiting out the pre-roll for a lane that first seeks.
+        let ahead = if playing || !self.state.is_scrubbing() { 8 } else { 0 };
         self.refresh_count += 1;
         let mut claimed: HashMap<Id, HashSet<usize>> = HashMap::new();
         // Lowest index first: of two layers of one file, the earlier one keeps the lane that is reading toward it.
@@ -972,6 +1207,7 @@ impl ProgramEngine {
             self.prefetch_keys.clear();
         }
         self.drop_idle_lanes();
+        self.close_idle_media(&keys);
         self.failed_keys.retain(|_, t| t.elapsed() <= FAILED_RETRY);
         self.trim_cache(&keys);
         if playing {
@@ -988,13 +1224,12 @@ impl ProgramEngine {
         if total <= self.frame_cache_bytes {
             return;
         }
-        let keep: Vec<Key> = keys.iter().chain(self.prefetch_keys.iter()).copied().collect();
-        let distance = |k: &Key| {
-            keep.iter().filter(|w| w.media == k.media).map(|w| (w.index - k.index).abs()).min().unwrap_or(i64::MAX / 2)
-        };
+        let (wanted, ahead, lead) = (keys, &self.prefetch_keys, prefetch_ahead());
+        let distance = |k: &Key| trim_distance(wanted, ahead, lead, k);
         // Each picture's distance once (not inside the sort's comparator).
         let mut ranked: Vec<(Key, i64)> = self.cache.keys().map(|k| (*k, distance(k))).collect();
-        ranked.sort_by_key(|r| std::cmp::Reverse(r.1));
+        // Equal distance (an on-screen frame and a cut-in lead frame are both 0): the picture on screen goes last.
+        ranked.sort_by_key(|r| (std::cmp::Reverse(r.1), wanted.contains(&r.0)));
         let mut doomed = Vec::new();
         for (k, _) in ranked {
             if total <= self.frame_cache_bytes / 4 * 3 {
@@ -1006,8 +1241,17 @@ impl ProgramEngine {
             }
         }
         self.recount_cache();
+        sq_core_time::milestones::note(&format!(
+            "cache trim: {} pictures dropped, {} MB left of a {} MB budget",
+            doomed.len(),
+            self.cache_bytes >> 20,
+            self.frame_cache_bytes >> 20
+        ));
         // Freeing a few hundred MB of pictures is not for the render thread either.
-        let _ = std::thread::Builder::new().name("sq-graveyard".into()).spawn(move || drop(doomed));
+        let _ = std::thread::Builder::new().name("sq-graveyard".into()).spawn(move || {
+            sq_os::thread::set_current_thread_role(sq_os::thread::Role::Background);
+            drop(doomed);
+        });
     }
 
     // MARK: Keys
@@ -1090,12 +1334,11 @@ impl ProgramEngine {
         ));
     }
 
-    /// Scrubbing or playing, the state allows proxies and the media's proxy is open (paused and warming: the original).
+    /// Scrubbing or playing, the state allows proxies, playback is not at Full, and the media's proxy is open (paused and warming: the original).
     fn reads_proxy(&self, media: Id) -> bool {
         let scrubbing = self.state.is_scrubbing();
         let playing = !scrubbing && !self.state.is_warming() && !self.state.rate().is_paused();
-        ((scrubbing && self.proxy_use.scrubbing) || (playing && self.proxy_use.playback))
-            && self.proxy_sources.contains_key(&media)
+        proxy_read_allowed(scrubbing, playing, self.proxy_use, self.quality) && self.proxy_sources.contains_key(&media)
     }
 
     fn source_of(&self, k: &Key) -> Option<Arc<MediaSource>> {
@@ -1139,6 +1382,8 @@ impl ProgramEngine {
         self.proxy_opening.insert(media);
         let (opener, tx, stats) = (Arc::clone(&self.deps.opener), self.tx.clone(), Arc::clone(&self.stats));
         let _ = std::thread::Builder::new().name("sq-open-proxy".into()).spawn(move || {
+            // The decoder opened here makes its ffmpeg frame threads, which inherit this class on macOS.
+            sq_os::thread::set_current_thread_role(sq_os::thread::Role::Decode);
             let result = opener
                 .open_for(std::path::Path::new(&path), media, MonitorUse::Playing)
                 .map(|r| r.map(|o| Box::new(MediaSource::from_opened(o, &stats))).map_err(|e| e.to_string()));
@@ -1185,6 +1430,8 @@ impl ProgramEngine {
     fn spawn_open(&self, media: Id, path: String, lane: bool) {
         let (opener, tx, stats) = (Arc::clone(&self.deps.opener), self.tx.clone(), Arc::clone(&self.stats));
         let _ = std::thread::Builder::new().name("sq-open".into()).spawn(move || {
+            // The decoder opened here makes its ffmpeg frame threads, which inherit this class on macOS.
+            sq_os::thread::set_current_thread_role(sq_os::thread::Role::Decode);
             let name =
                 std::path::Path::new(&path).file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
             sq_core_time::milestones::mark(&format!("media open started {name}"));
@@ -1239,13 +1486,83 @@ impl ProgramEngine {
     /// Decodes `k` and up to `ahead` frames after it that are neither cached nor on their way, on the lane of its file that
     /// reads toward it.
     fn request(&mut self, k: Key, ahead: i64, claimed: &mut HashMap<Id, HashSet<usize>>, prefetching: bool) {
-        if !prefetching && !self.state.rate().is_paused() && !self.state.rate().is_forward() {
+        // The reverse window decodes once per GOP what a backward read needs. Playing only (a paused step or scrub keeps
+        // the forward fill): the source falls when the timeline plays backwards or the clip is reversed, not both.
+        // shortcut: only `Clip::reversed`; a speed ramp that runs backwards in places reads forward. Upgrade with
+        // evaluation.rs head_back/tail_back when a project shows it.
+        let playing = !self.state.rate().is_paused();
+        let rate_back = playing && !self.state.rate().is_forward();
+        let clip_back = self.reads_backward.contains(&k);
+        if if prefetching { playing && clip_back && !rate_back } else { playing && clip_back != rate_back } {
             self.request_reverse(k, claimed);
             return;
         }
-        let Some(src) = self.lane_for(&k, ahead, claimed, prefetching) else { return };
+        // Scrubbing: a step that lands in a GOP decodes the GOP from its sync sample up to the frame once and keeps every
+        // picture, so the next steps in it (either way) read the cache instead of restarting the decoder at the key frame.
+        // The frames are the exact ones (no skipped references); only the cache keeps what the decoder had to make anyway.
+        if self.state.is_scrubbing()
+            && !prefetching
+            && !self.cache.contains_key(&k)
+            && !self.in_flight.contains(&k)
+            && let Some(base) = self.source_of(&k)
+        {
+            let lo = Self::gop_window_start(&base, k.index);
+            if lo < k.index {
+                if let Some(src) = self.lane_for(&Key { index: lo, ..k }, k.index - lo + ahead, claimed, false) {
+                    self.decode_missing(&src, &k, lo, k.index + ahead);
+                }
+                return;
+            }
+        }
+        let Some(src) = self.lane_for(&k, ahead, claimed, prefetching) else {
+            if play_trace() {
+                eprintln!(
+                    "[play-trace] {:.3}s pos {:?} request frame {} no lane (prefetch {prefetching})",
+                    trace_clock(),
+                    self.position,
+                    k.index
+                );
+            }
+            return;
+        };
         let last = (src.frame_count() as i64 - 1).min(k.index + ahead);
+        if play_trace() {
+            eprintln!(
+                "[play-trace] {:.3}s pos {:?} request frame {}..{} lane {} (prefetch {prefetching}) div {} scrubbing {} playing {}",
+                trace_clock(),
+                self.position,
+                k.index,
+                last,
+                src.id,
+                k.divisor,
+                self.state.is_scrubbing(),
+                !self.state.rate().is_paused()
+            );
+        }
         self.decode_missing(&src, &k, k.index, last);
+    }
+
+    /// Playing: a frame already decoded at another quality (the pictures a quality step leaves behind) is shown scaled by the
+    /// compositor, so it is not decoded again at the new quality. The new quality starts after the last such frame, and the
+    /// step leaves no hole while it catches up (night 2026-11-23: the 4K H.264 step to Half re-decoded the whole read-ahead at
+    /// full cost and the cache ran dry 0.6 s later, a 236 ms gap).
+    fn stands_in_while_playing(&self, k: &Key) -> bool {
+        !self.state.rate().is_paused()
+            // Only a picture of the same or a finer size stands in (a Half picture never replaces a Full one: an up-step
+            // must decode Full again).
+            && self.cache.keys().any(|c| c.media == k.media && c.index == k.index && c.proxy == k.proxy && c.divisor <= k.divisor)
+    }
+
+    /// Whether the picture for `k` is on hand at its size or a finer one of the same frame (a picture the paused frame or a
+    /// divisor change left behind). The compositor draws it as the exact picture, so the pre-roll, the exactness of a shown frame
+    /// and the stand-in count all use this, not the strict key: `decode_missing` never decodes such a frame again while playing,
+    /// so a strict check waited for a picture that never came (the pre-roll ran out its whole half second).
+    fn has_picture_at_least(&self, k: &Key) -> bool {
+        self.cache.contains_key(k)
+            || self
+                .cache
+                .keys()
+                .any(|c| c.media == k.media && c.index == k.index && c.proxy == k.proxy && c.divisor <= k.divisor)
     }
 
     /// Decodes the frames of `lo..=hi` that are neither cached, in flight nor failed (one call, first to last missing).
@@ -1253,7 +1570,10 @@ impl ProgramEngine {
         let missing: Vec<i64> = (lo..=lo.max(hi))
             .filter(|i| {
                 let key = Key { index: *i, ..*k };
-                !self.cache.contains_key(&key) && !self.in_flight.contains(&key) && !self.has_failed(&key)
+                !self.cache.contains_key(&key)
+                    && !self.stands_in_while_playing(&key)
+                    && !self.in_flight.contains(&key)
+                    && !self.has_failed(&key)
             })
             .collect();
         if let (Some(first), Some(last)) = (missing.first(), missing.last()) {
@@ -1266,14 +1586,17 @@ impl ProgramEngine {
     /// up to the playhead decodes forward once and plays backwards out of the cache; once the playhead is within
     /// `REVERSE_LEAD` frames of the window's start, the window before it is asked for too (Swift: `Prefetch` reverse
     /// window, one GOP per decode).
+    /// The first frame of the window that serves frame `i`: its GOP's sync sample.
+    // shortcut: a GOP longer than REVERSE_WINDOW decodes from its sync sample again for each window (bounded memory, more
+    // decoding); a per-GOP decode that keeps every picture would need the budget to allow it.
+    fn gop_window_start(base: &MediaSource, i: i64) -> i64 {
+        let start = usize::try_from(i).map_or(0, |u| base.demuxer.index().decode_start_index(u)) as i64;
+        start.max(i - REVERSE_WINDOW).max(0)
+    }
+
     fn request_reverse(&mut self, k: Key, claimed: &mut HashMap<Id, HashSet<usize>>) {
         let Some(base) = self.source_of(&k) else { return };
-        let window = |i: i64| -> i64 {
-            let start = usize::try_from(i).map_or(0, |u| base.demuxer.index().decode_start_index(u)) as i64;
-            // shortcut: a GOP longer than REVERSE_WINDOW decodes from its sync sample again for each window (bounded
-            // memory, more decoding); a per-GOP decode that keeps every picture would need the budget to allow it.
-            start.max(i - REVERSE_WINDOW).max(0)
-        };
+        let window = |i: i64| Self::gop_window_start(&base, i);
         let lo = window(k.index);
         let Some(src) = self.lane_for(&Key { index: lo, ..k }, k.index - lo, claimed, false) else { return };
         self.decode_missing(&src, &k, lo, k.index);
@@ -1291,10 +1614,21 @@ impl ProgramEngine {
             return;
         }
         self.prefetch_countdown = 10;
-        let fd = self.timeline.frame_duration();
         let speed = f64::from(self.state.rate().num()) / f64::from(self.state.rate().den());
+        let keys = self.cut_in_keys(&super::power_policy::prefetch_seconds(self.prefetch_halved), speed);
+        self.prefetch_keys.clone_from(&keys);
+        for k in keys {
+            self.request(k, prefetch_ahead(), claimed, true);
+        }
+    }
+
+    /// The first visible picture of every video clip that shows up within `seconds` (timeline seconds at `speed`) of the
+    /// playhead and is not on screen now. Titles, shapes and Lottie clips are drawn ahead on the way (`warm_generator`).
+    fn cut_in_keys(&mut self, seconds_ahead: &[f64], speed: f64) -> Vec<Key> {
+        let fd = self.timeline.frame_duration();
         let mut keys: Vec<Key> = Vec::new();
-        for seconds in super::power_policy::prefetch_seconds(self.prefetch_halved) {
+        self.cut_in_times.clear();
+        for seconds in seconds_ahead.iter().copied() {
             let frames = (seconds * speed * fd.timescale() as f64 / fd.value() as f64).round() as i64;
             let mut t = self.position + fd * frames;
             // Looping: what lies past the wrap is decoded before the clock gets there.
@@ -1306,7 +1640,11 @@ impl ProgramEngine {
             if t < Time::ZERO {
                 continue;
             }
-            for l in self.layers_at(t).into_iter().filter(|l| l.generator.is_none()) {
+            for l in self.layers_at(t) {
+                if l.generator.is_some() {
+                    self.warm_generator(&l, t);
+                    continue;
+                }
                 // Deviation from the Swift engine: a clip already on screen keeps reading on its own lane (the Swift loop
                 // opened a lane for every far-ahead index of the clip it was playing: 4 decoders for one clip in 5 s).
                 if self.wanted_requests.iter().any(|w| w.clip == l.clip) {
@@ -1318,14 +1656,74 @@ impl ProgramEngine {
                 if let Some(k) = self.key_for(&first)
                     && !keys.contains(&k)
                 {
+                    if first.reversed
+                        && let Some(pk) = self.peek_key(&first)
+                    {
+                        self.reads_backward.insert(pk);
+                    }
+                    self.cut_in_times.insert(k, t);
                     keys.push(k);
                 }
             }
         }
-        self.prefetch_keys.clone_from(&keys);
-        for k in keys {
-            self.request(k, 3, claimed, true);
+        keys
+    }
+
+    /// Paused: opens and positions the lanes of the clips that cut in within the first seconds of a play, so the cut does not
+    /// meet a decoder that is still opening or reads from its sync sample (real project, second video layer at 2.5 s: three
+    /// stand-in frames, a 66 ms gap). The lanes of what is on screen are claimed first, so the warm-up never seeks them away.
+    fn warm_cut_ins(&mut self, playhead_keys: &[Key]) {
+        let mut claimed: HashMap<Id, HashSet<usize>> = HashMap::new();
+        // Read-only: `lane_for` would move the lane (seek, reach), and a later scrub or step reads from where it stands.
+        // A playhead picture served from the cache leaves its lane ahead of it (`at` > index after a scrub back inside a
+        // GOP), so no lane "reaches" it: the lane nearest to it is still the playhead's and stays claimed.
+        for k in playhead_keys {
+            let Some(all) = self.lanes.get(&k.media) else { continue };
+            let pick = all.iter().position(|l| l.reaches(k.index)).or_else(|| {
+                (0..all.len())
+                    .filter(|i| all[*i].at.is_some())
+                    .min_by_key(|i| all[*i].at.map_or(i64::MAX, |at| (at - k.index).abs()))
+            });
+            if let Some(i) = pick {
+                claimed.entry(k.media).or_default().insert(i);
+            }
         }
+        let keys = self.cut_in_keys(&super::power_policy::START_CUT_SECONDS, 1.0);
+        // The paused gate drops a decode nothing at the playhead wants: the cut-in pictures are wanted for this warm-up.
+        self.want_gate.extend(&keys);
+        self.transition(Event::BeginWarm);
+        for k in keys {
+            self.request(k, prefetch_ahead(), &mut claimed, true);
+        }
+        self.transition(Event::EndWarm);
+    }
+
+    /// A title, shape or Lottie clip that shows up before `t`: draws its first visible picture on a short-lived thread now, so
+    /// the composite of that frame finds it kept (`LayerRasters` keeps the last picture per reference). Drawn inside the
+    /// composite it cost 16-22 ms on the render thread: the frame after a title's start came 50-100 ms late (real project,
+    /// 9.97 s, 10.47 s, 13.43 s). Once per clip until the timeline changes. `SQ_RASTER_WARM=0` switches it off.
+    fn warm_generator(&mut self, l: &LayerRequest, t: Time) {
+        if !raster_warm_enabled()
+            || self.wanted_requests.iter().any(|w| w.clip == l.clip)
+            || self.rasters_warmed.contains(&l.clip)
+        {
+            return;
+        }
+        let Some(rasters) = self.deps.rasters.clone() else { return };
+        let first = self.first_visible(l.clip, self.position, t).unwrap_or_else(|| l.clone());
+        self.rasters_warmed.insert(l.clip);
+        let format = self.timeline.format.clone();
+        let trace = play_trace().then(|| (trace_clock(), l.clip, first.local_time));
+        let _ = std::thread::Builder::new().name("sq-raster-warm".into()).spawn(move || {
+            let started = Instant::now();
+            let _ = rasters.layer(&first, &format);
+            if let Some((t, clip, local)) = trace {
+                eprintln!(
+                    "[play-trace] {t:.3}s warm title clip {clip:?} local {local:?} took {:.0} ms",
+                    started.elapsed().as_secs_f64() * 1e3
+                );
+            }
+        });
     }
 
     /// The layer of `clip` at the first frame in (`from`, `to`] where it shows, `to` being a frame where it does and `from` one
@@ -1365,11 +1763,25 @@ impl ProgramEngine {
             src.set_preview(preview);
         }
         let threaded = !self.state.rate().is_paused();
-        let token = self.cancel.entry(media).or_default().clone();
+        let token = if is_scrub_preview_job(self.state.is_scrubbing(), key.divisor, self.quality.divisor() as u32) {
+            self.scrub_cancel.entry(media).or_default().clone()
+        } else {
+            self.cancel.entry(media).or_default().clone()
+        };
+        let token_c = token.clone();
         let (gate, tx, stats, src) =
             (Arc::clone(&self.want_gate), self.tx.clone(), Arc::clone(&self.stats), Arc::clone(src));
         let proxy = key.proxy;
-        self.pool.submit(src.id, move || {
+        // Trace only: when the job was queued, so the start line shows the queue wait apart from the decode time.
+        let submitted = play_trace().then(trace_clock);
+        let queued_at = Instant::now();
+        // Urgent: the frame on screen wants a picture of this range; anything else (a cut-in ahead, a fill) is background.
+        // Decided once at submit: a job gone stale after a scrub keeps the flag, harmless (it returns at once when its turn comes).
+        let urgent = self
+            .wanted
+            .as_ref()
+            .is_some_and(|w| w.keys.iter().any(|wk| wk.media == media && range.contains(&wk.index)));
+        self.pool.submit_with(src.id, urgent, move || {
             // The finish message goes out even when the job panics or is dropped as stale.
             struct Finish {
                 tx: Sender<Msg>,
@@ -1383,20 +1795,91 @@ impl ProgramEngine {
                 }
             }
             let mut finish = Finish { tx: tx.clone(), keys, error: None };
+            // SQ_TRACE_JSON: the time in the pool queue, then the run (the span ends when the job returns).
+            sq_os::trace::since("decode", "queue wait", queued_at, || {
+                format!("clip={} lane={} urgent={urgent}", name.replace(' ', "_"), src.id)
+            });
+            let _run = sq_os::trace::span_args("decode", "job", || {
+                format!(
+                    "clip={} frames={}..{} lane={} urgent={urgent} q={scale:?} div={reduce} proxy={proxy}",
+                    name.replace(' ', "_"),
+                    range.start(),
+                    range.end(),
+                    src.id
+                )
+            });
+            let traced = play_trace().then(|| (trace_clock(), name.clone(), range.clone(), src.id));
+            if let Some((t, n, r, id)) = &traced {
+                let wait = submitted.map_or(0.0, |q| (t - q) * 1e3);
+                eprintln!("[play-trace] {t:.3}s job start {n} {r:?} lane {id} queued {wait:.0} ms");
+            }
+            struct TraceEnd(Option<(f64, String, RangeInclusive<i64>, u64)>);
+            impl Drop for TraceEnd {
+                fn drop(&mut self) {
+                    if let Some((t, n, r, id)) = self.0.take() {
+                        eprintln!(
+                            "[play-trace] {:.3}s job end {n} {r:?} lane {id} took {:.0} ms",
+                            trace_clock(),
+                            (trace_clock() - t) * 1e3
+                        );
+                    }
+                }
+            }
+            let _trace_end = TraceEnd(traced);
             // The decoder is free now: a scrub moved on if nothing in the range is wanted any more.
-            if token.is_cancelled() || gate.is_stale(media, &range) {
+            // Playing forward, an urgent job that the playhead already passed is skipped: the decoder reads on forward.
+            let skip = if token.is_cancelled() {
+                Some("token cancelled")
+            } else if gate.is_stale(media, &range) {
+                Some("stale")
+            } else if urgent && gate.is_late(media, &range) {
+                Some("late (playhead passed)")
+            } else {
+                None
+            };
+            if let Some(why) = skip {
+                sq_core_time::milestones::note(&format!("job skipped before decode: media {media} frames {range:?} urgent {urgent} reason {why}"));
                 return;
             }
+            // Trace only: pictures the decoder handed over vs pictures sent on (a cancelled token drops them silently).
+            let (calls, sent) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
             let deliver: Arc<dyn Fn(i64, Picture) + Send + Sync> = {
                 let (tx, token) = (tx.clone(), token.clone());
+                let (calls, sent) = (Arc::clone(&calls), Arc::clone(&sent));
+                // Per-frame trace: the time between two deliveries is one picture's decode and conversion.
+                let lap = super::frame_trace::enabled().then(|| Mutex::new(Instant::now()));
                 Arc::new(move |i, picture| {
+                    if play_trace() {
+                        eprintln!("[play-trace] {:.3}s delivered frame {i} of {media}", trace_clock());
+                    }
+                    if let Some(lap) = &lap {
+                        let mut t = lap.lock().unwrap_or_else(PoisonError::into_inner);
+                        super::frame_trace::note_decode(media, t.elapsed().as_secs_f64() * 1e3);
+                        *t = Instant::now();
+                    }
+                    calls.fetch_add(1, Ordering::Relaxed);
                     if !token.is_cancelled() {
+                        sent.fetch_add(1, Ordering::Relaxed);
                         let key = Key { media, index: i, proxy, divisor: reduce };
                         let _ = tx.send(Msg::Decoded { key, picture, scale, preview });
                     }
                 })
             };
-            if let Err(e) = src.stream_pictures(range.clone(), reduce, threaded, &stats, deliver) {
+            let stop: sq_media::video_decoding::StopCheck = {
+                let token = token.clone();
+                Arc::new(move || token.is_cancelled())
+            };
+            let result = src.stream_pictures(range.clone(), reduce, threaded, &stats, deliver, stop);
+            let (calls, sent) = (calls.load(Ordering::Relaxed), sent.load(Ordering::Relaxed));
+            let wanted_n = (range.end() - range.start() + 1) as usize;
+            if calls != wanted_n || sent != calls {
+                sq_core_time::milestones::note(&format!(
+                    "job ended short: media {media} frames {range:?} handed over {calls} sent {sent} of {wanted_n} cancelled {} result {}",
+                    token_c.is_cancelled(),
+                    result.as_ref().map_or_else(|e| e.to_string(), |_| "ok".into())
+                ));
+            }
+            if let Err(e) = result {
                 finish.error = Some(format!("decode {name} {range:?}: {e}"));
             }
         });
@@ -1452,12 +1935,9 @@ impl ProgramEngine {
             return;
         }
         // Scrubbing: the playhead moves every frame and composes then; an arrival only marks the picture (tick draws it
-        // when the playhead stood still), so one frame never uploads and composes a 4K picture twice.
-        if self.state.is_scrubbing() {
-            self.compose_pending = true;
-        } else {
-            self.compose();
-        }
+        // when the playhead stood still), so one frame never uploads and composes a 4K picture twice. Playing: the same,
+        // the loop composes once per pass.
+        self.compose_for_arrival();
     }
 
     /// A decode ended: keys it did not deliver are free to ask for again.
@@ -1467,6 +1947,19 @@ impl ProgramEngine {
             self.in_flight.remove(k);
         }
         let failed = error.is_some();
+        if !left.is_empty() {
+            let k = left[0];
+            sq_core_time::milestones::note(&format!(
+                "finished with {} key(s) undelivered ({}): first media {} frame {} divisor {} proxy {}{}",
+                left.len(),
+                if failed { "marked failed for 3 s" } else { "no error, free to ask again" },
+                k.media,
+                k.index,
+                k.divisor,
+                k.proxy,
+                error.as_deref().map_or(String::new(), |e| format!(", error {e}"))
+            ));
+        }
         if let Some(e) = error {
             self.last_error = Some(e);
             let now = Instant::now();
@@ -1517,7 +2010,17 @@ impl ProgramEngine {
         let taken = claimed.get(&k.media).cloned().unwrap_or_default();
         let refresh_count = self.refresh_count;
         let all = self.lanes.get_mut(&k.media)?;
-        if prefetching && all.iter().any(|l| l.reaches(k.index)) {
+        if prefetching && let Some(l) = all.iter_mut().find(|l| l.reaches(k.index)) {
+            // The lane warmed for a far cut stays open until the cut: unrefreshed it was closed as idle after ~90
+            // refreshes, and the cut then seeked a cold decoder back to the sync sample (0.3-1.5 s on a 4K long-GOP file).
+            l.used = refresh_count;
+            if let Some(t) = self.cut_in_times.get(k) {
+                l.hold_until = l.hold_until.max(Some(*t));
+            }
+            // Claimed, so a farther cut's prefetch of this frame cannot pick it as "free" and seek it away from this cut.
+            if let Some(i) = all.iter().position(|l| l.reaches(k.index)) {
+                claimed.entry(k.media).or_default().insert(i);
+            }
             return None;
         }
         let free: Vec<usize> = (0..all.len()).filter(|i| !taken.contains(i)).collect();
@@ -1526,8 +2029,39 @@ impl ProgramEngine {
             .copied()
             .find(|i| all[*i].reaches(k.index))
             .or_else(|| free.iter().copied().find(|i| all[*i].at.is_none()))
-            .or_else(|| free.first().copied());
+            // A prefetch never seeks a lane that is not its own (it would send the playhead's next miss back to the sync
+            // sample): it opens a lane or waits.
+            // ... except a lane nothing has read for a while while playing (a clip that ended): that one is nobody's, and
+            // keeping it out left a second layer of the same file without a lane until `drop_idle_lanes` (lane 0 never).
+            .or_else(|| {
+                if !prefetching {
+                    return free.first().copied();
+                }
+                let playing = !self.state.rate().is_paused();
+                free.iter()
+                    .copied()
+                    .filter(|i| {
+                        let l = &all[*i];
+                        let wanted = self.prefetch_keys.iter().any(|w| w.media == k.media && l.reaches(w.index))
+                            // shortcut: a hold past a loop wrap or a seek ends at the next 4 s window; the sampled keys cover those.
+                            || l.hold_until.is_some_and(|h| h > self.position && h - self.position <= Time::seconds(4));
+                        prefetch_may_take_lane(refresh_count - l.used, playing, wanted)
+                    })
+                    .max_by_key(|i| refresh_count - all[*i].used)
+            });
         let Some(i) = pick else {
+            if play_trace() && prefetching {
+                let st: Vec<String> = all
+                    .iter()
+                    .map(|l| format!("(at {:?} to {} used {})", l.at, l.to, refresh_count - l.used))
+                    .collect();
+                eprintln!(
+                    "[play-trace] {:.3}s prefetch of {} finds no lane: taken {taken:?}, lanes {}",
+                    trace_clock(),
+                    k.index,
+                    st.join(" ")
+                );
+            }
             // Every lane serves another picture of this frame: open one more; past the limit (or for a prefetch while one
             // opens) a current picture shares lane 0, which seeks but keeps the frame coming.
             if all.len() < MAX_LANES {
@@ -1586,8 +2120,98 @@ impl ProgramEngine {
         }
         if !graveyard.is_empty() {
             // Closing a decoder takes 15-30 ms: not on the render thread.
-            let _ = std::thread::Builder::new().name("sq-graveyard".into()).spawn(move || drop(graveyard));
+            let _ = std::thread::Builder::new().name("sq-graveyard".into()).spawn(move || {
+                sq_os::thread::set_current_thread_role(sq_os::thread::Role::Background);
+                drop(graveyard);
+            });
         }
+    }
+
+    /// Closes the decoders of files nothing needs, only where `deps.idle_decoders` is set (low-memory machines): every opened
+    /// file kept its decoder (4K software: threads, references and pictures in flight, about 250 MB) until the project closed,
+    /// so a project played through grew with each clip (real project at 8 GB: 3 open decoders at Play, 11 after 22 s, 2 GB
+    /// more). A file is needed while a layer wants it, a prefetch or a decode reaches it, a lane is held for a cut-in, or a
+    /// clip of it shows up within `IDLE_MEDIA_LOOK_AHEAD` (a file with a cut ahead is never closed). Of the unneeded ones the
+    /// `idle_decoders` most recent stay, the others close after `IDLE_MEDIA_MIN_AGE` of playing time (wall clock: `refresh`
+    /// runs from several paths, so a count of refreshes is no time). A closed file opens again through `source`.
+    fn close_idle_media(&mut self, wanted: &[Key]) {
+        let Some(keep) = self.deps.idle_decoders else { return };
+        let tick = Instant::now();
+        if self.state.rate().is_paused() {
+            self.idle_clock.1 = None;
+            return;
+        }
+        if let Some(last) = self.idle_clock.1 {
+            self.idle_clock.0 += tick.saturating_duration_since(last).min(Duration::from_secs(1));
+        }
+        self.idle_clock.1 = Some(tick);
+        let now = self.idle_clock.0;
+        for k in wanted.iter().chain(&self.prefetch_keys).chain(self.in_flight.iter()).chain(self.cut_in_times.keys()) {
+            self.needed_at.insert(k.media, now);
+        }
+        for (media, all) in &self.lanes {
+            if all.iter().any(|l| l.hold_until.is_some_and(|h| h > self.position)) {
+                self.needed_at.insert(*media, now);
+            }
+        }
+        if now.saturating_sub(self.idle_checked) < super::memory_budget::IDLE_MEDIA_CHECK_EVERY {
+            return;
+        }
+        self.idle_checked = now;
+        let idle: Vec<(Id, Duration)> = self
+            .sources
+            .keys()
+            .filter(|m| !self.opening.contains(m) && !self.lane_opening.contains(m))
+            .map(|m| (*m, now.saturating_sub(*self.needed_at.entry(*m).or_insert(now))))
+            .filter(|(_, age)| !age.is_zero())
+            .collect();
+        if idle.is_empty() {
+            return;
+        }
+        let ahead = self.media_ahead(super::memory_budget::IDLE_MEDIA_LOOK_AHEAD.as_secs());
+        let doomed =
+            super::memory_budget::media_to_close(&idle, &ahead, keep, super::memory_budget::IDLE_MEDIA_MIN_AGE);
+        if doomed.is_empty() {
+            return;
+        }
+        let mut graveyard = Vec::new();
+        for m in doomed {
+            graveyard.extend(self.sources.remove(&m));
+            graveyard.extend(self.lanes.remove(&m).into_iter().flatten().map(|l| l.source));
+            self.needed_at.remove(&m);
+        }
+        let _ = std::thread::Builder::new().name("sq-graveyard".into()).spawn(move || {
+            sq_os::thread::set_current_thread_role(sq_os::thread::Role::Background);
+            drop(graveyard);
+        });
+    }
+
+    /// The files of the video clips on screen in each of the next `seconds` timeline seconds (at the playing speed, past a
+    /// loop's end wrapped to its start): what must not be closed.
+    fn media_ahead(&mut self, seconds: u64) -> HashSet<Id> {
+        let fd = self.timeline.frame_duration();
+        let speed = f64::from(self.state.rate().num()) / f64::from(self.state.rate().den());
+        let mut media = HashSet::new();
+        for s in 0..=seconds {
+            let frames = (s as f64 * speed.abs() * fd.timescale() as f64 / fd.value() as f64).round() as i64;
+            let mut t = if speed < 0.0 { self.position - fd * frames } else { self.position + fd * frames };
+            if let Some(r) = self.loop_region()
+                && r.contains(self.position)
+            {
+                t = wrapped(t, r);
+            }
+            if t < Time::ZERO {
+                continue;
+            }
+            for l in self.layers_at(t) {
+                if l.generator.is_none()
+                    && let Some(k) = self.peek_key(&l)
+                {
+                    media.insert(k.media);
+                }
+            }
+        }
+        media
     }
 
     // MARK: Scrub fill
@@ -1668,6 +2292,7 @@ impl ProgramEngine {
             self.warm_position = Some(self.position);
             self.warm_since = Some(now);
             self.warm_queue.clear();
+            self.warm_cut_passes = 0;
             return;
         }
         if self.warm_since.is_some_and(|s| now - s >= Duration::from_millis(100)) {
@@ -1676,6 +2301,18 @@ impl ProgramEngine {
             let layers = self.layers_at(self.position);
             let keys: Vec<Key> = layers.iter().filter_map(|l| self.key_for(l)).collect();
             self.transition(Event::EndWarm);
+            // The titles, shapes and Lottie clips of the first second of a play are drawn now (off the render thread), so
+            // the first frames of a play do not draw them inside the composite (22-46 ms at 0.57 s and 4.4 s, perf/night).
+            let fd = self.timeline.frame_duration();
+            for seconds in super::power_policy::START_WARM_SECONDS {
+                let t = (self.position + fd * (seconds * fd.timescale() as f64 / fd.value() as f64).round() as i64)
+                    .snapped(fd);
+                for l in self.layers_at(t) {
+                    if l.generator.is_some() {
+                        self.warm_generator(&l, t);
+                    }
+                }
+            }
             // The grades of these layers (LUT files read, first-use setup) are assembled off the render thread now, so the
             // first play frame finds them served. The clips of the next 12 s too: a cut during play must not stall.
             if let Some(resolver) = self.deps.color.clone() {
@@ -1697,6 +2334,17 @@ impl ProgramEngine {
             }
             let mut seen = HashSet::new();
             self.warm_queue = keys.into_iter().filter(|k| seen.insert(*k)).collect();
+        }
+        if self.warm_queue.is_empty()
+            && self.warm_cut_passes < WARM_CUT_PASSES
+            && now - self.warm_last >= Duration::from_millis(80)
+        {
+            self.warm_last = now;
+            self.warm_cut_passes += 1;
+            let layers = self.layers_at(self.position);
+            let keys: Vec<Key> = layers.iter().filter_map(|l| self.key_for(l)).collect();
+            self.warm_cut_ins(&keys);
+            return;
         }
         if self.warm_queue.is_empty() || now - self.warm_last < Duration::from_millis(80) {
             return;
@@ -1741,8 +2389,11 @@ impl ProgramEngine {
         if let Some(p) = self.cache.get(k) {
             return Some((*k, p.clone()));
         }
-        if let Some((c, p)) =
-            self.cache.iter().find(|(c, _)| c.media == k.media && c.index == k.index && c.proxy == k.proxy)
+        if let Some((c, p)) = self
+            .cache
+            .iter()
+            .filter(|(c, _)| c.media == k.media && c.index == k.index && c.proxy == k.proxy)
+            .min_by_key(|(c, _)| c.divisor)
         {
             return Some((*c, p.clone()));
         }
@@ -1755,28 +2406,33 @@ impl ProgramEngine {
             .filter(|(c, _)| c.media == k.media && c.proxy == k.proxy && (c.index - k.index).abs() <= STAND_IN_REACH)
             .collect();
         let forward = self.state.rate().num() >= 0;
-        let floor = self.played_through.get(&k.media).copied();
+        let floor = self.played_through.floor(k.media, k.index);
         let index =
             stand_in_index(near.iter().map(|(c, _)| c.index), k.index, self.state.is_scrubbing(), forward, floor)?;
         near.into_iter().filter(|(c, _)| c.index == index).min_by_key(|(c, _)| c.divisor).map(|(c, p)| (*c, p.clone()))
     }
 
     fn caption_layers(&self) -> Vec<caption_plan::CaptionLayerRequest> {
+        self.caption_layers_at(self.position)
+    }
+
+    fn caption_layers_at(&self, position: Time) -> Vec<caption_plan::CaptionLayerRequest> {
         let Some(planner) = &self.deps.planner else { return Vec::new() };
         if !self.shows_captions || self.timeline.caption_tracks.is_empty() {
             return Vec::new();
         }
-        let slots = self.captions.slots(self.position);
+        let slots = self.captions.slots(position);
         if slots.is_empty() {
             return Vec::new();
         }
         let previewed = self.look_preview.as_ref().and_then(|p| planner.previewed(p));
         let planner = previewed.as_ref().unwrap_or(planner);
-        caption_plan::layers(&self.timeline, &slots, self.position, planner.as_ref(), self.state.rate().num() >= 0)
+        caption_plan::layers(&self.timeline, &slots, position, planner.as_ref(), self.state.rate().num() >= 0)
     }
 
     /// Draws the wanted frame once all its pictures are decoded (and no file it needs is still opening).
     fn compose(&mut self) {
+        self.compose_calls += 1;
         self.compose_pending = false;
         self.compose_retry = false;
         let Some(want) = self.wanted.clone() else { return };
@@ -1805,10 +2461,16 @@ impl ProgramEngine {
             self.display(None, None, &want);
             return;
         };
+        let traced = super::frame_trace::enabled().then(Instant::now);
         let result = self.render_with(&mut comp, &captions);
+        super::frame_trace::note_wanted(want.keys.len());
+        if let Some(t) = traced {
+            super::frame_trace::note_compose(t.elapsed().as_secs_f64() * 1e3);
+        }
         self.compositor.give_back(comp);
         match result {
-            Ok((frame, linear, ms)) => {
+            Ok((frame, linear, ms, scaled)) => {
+                self.shown_scaled = scaled;
                 sq_core_time::milestones::mark("first composite done");
                 if !self.state.rate().is_paused() {
                     self.compose_sum += ms;
@@ -1819,12 +2481,12 @@ impl ProgramEngine {
                     let forward = self.state.rate().num() >= 0;
                     for k in &want.keys {
                         if let Some((drawn, _)) = self.picture_for(k, true) {
-                            let f = self.played_through.entry(k.media).or_insert(drawn.index);
-                            *f = if forward { (*f).max(drawn.index) } else { (*f).min(drawn.index) };
+                            self.played_through.note(k.media, drawn.index, forward);
                         }
                     }
                 }
                 self.display(Some(frame), Some(linear), &want);
+                self.draw_next_captions_ahead();
             }
             // Dropped, not failed: the GPU still runs two earlier frames. The frame position that never shows counts as
             // skipped, and the wanted frame is composited again on the next loop.
@@ -1838,12 +2500,53 @@ impl ProgramEngine {
         }
     }
 
+    /// Playing forward: draws the caption rasters of the NEXT frame now, in the idle time after this composite, so the
+    /// composite of that frame finds them kept (`LayerRasters::text` keeps the last picture per caption). A caption that
+    /// changes (a new word, an animation step) costs ~9 ms to draw; inside the composite that is longer than the lead
+    /// the display pacer allows, and the frame arrived one display tick late (perf/cadence, run17/18).
+    fn draw_next_captions_ahead(&self) {
+        // Only at exactly 1x: the next composited time is then position + one frame. At another rate the step is the
+        // pacer's choice and a guessed time would overwrite the one kept picture per caption (the composite would miss).
+        if self.state.rate() != PlaybackRate::FORWARD {
+            return;
+        }
+        let Some(rasters) = self.deps.rasters.as_ref() else { return };
+        let next = self.position + self.timeline.frame_duration();
+        // Nothing past the end of the timeline, the play range or the loop-out point (a wrap shows another time).
+        let bounds = self.loop_region().or(self.play_range);
+        if next >= self.timeline.duration() || bounds.is_some_and(|r| !r.contains(next)) {
+            return;
+        }
+        let layers = self.caption_layers_at(next);
+        for layer in &layers {
+            let _ = rasters.caption(layer, &self.timeline.format);
+        }
+    }
+
     fn render_with(
         &self,
         comp: &mut ProgramCompositor,
         captions: &[caption_plan::CaptionLayerRequest],
-    ) -> Result<(sq_gpu::frames::GpuTexture, sq_gpu::frames::GpuTexture, f64), sq_render::program::ProgramError> {
+    ) -> Result<(sq_gpu::frames::GpuTexture, sq_gpu::frames::GpuTexture, f64, bool), sq_render::program::ProgramError>
+    {
+        // `cp_pre_render_ms` (SQ_BENCH_CSV): everything from here to the start of `render`, caption rasters and layer sources included.
+        let traced = super::frame_trace::enabled().then(Instant::now);
+        let preview_playing = !self.state.rate().is_paused() && !self.state.is_scrubbing();
+        // Playing: compose at the monitor's pixel size when it is smaller (preview_size); everything else at full size.
+        let preview = super::preview_size::plan(
+            &self.wanted_requests,
+            &self.timeline.format,
+            self.view_px,
+            self.quality,
+            preview_playing,
+        );
+        // `format`: what the rasters are drawn for (always the sequence size); `canvas`: what the compositor draws at.
         let format = self.timeline.format.clone();
+        let (canvas, requests, factor) = match &preview {
+            Some(p) => (p.format.clone(), p.requests.as_slice(), p.factor),
+            None => (format.clone(), self.wanted_requests.as_slice(), 1.0),
+        };
+        let originals = self.wanted_requests.as_slice();
         let resolver = self.deps.color.clone();
         let graded =
             |l: &LayerRequest| resolver.as_ref().and_then(|r| r.pipeline_blocking(&l.color, l.media, Some(l.clip)));
@@ -1856,10 +2559,17 @@ impl ProgramEngine {
         let split = bypass.as_ref().is_some_and(ColorBypass::is_split);
         let grade: &dyn Fn(&LayerRequest) -> Option<Arc<sq_render::color::pipeline::ColorPipeline>> =
             if bypass.is_none() || split { &graded } else { &ungraded };
-        let columns = u32::try_from(ColorBypass::split_width(format.width)).unwrap_or(0);
+        let columns = u32::try_from(ColorBypass::split_width(canvas.width)).unwrap_or(0); // of the composed canvas
         let rasters = self.deps.rasters.clone();
         let source = |l: &LayerRequest| -> LayerSource {
             if l.generator.is_some() {
+                // A scaled preview draws the raster for the sequence-size request (text layout and size are in sequence
+                // px) and scales the finished picture's placement (`preview_size::scale_raster`).
+                let l = if factor < 1.0 {
+                    originals.iter().find(|o| o.clip == l.clip && o.local_time == l.local_time).unwrap_or(l)
+                } else {
+                    l
+                };
                 // A plain text clip's animations need its length (the out phase); only graphics layers carry it.
                 let mut sized;
                 let l = if l.clip_duration.is_none() {
@@ -1886,8 +2596,11 @@ impl ProgramEngine {
                     _ => l,
                 };
                 let Some(p) = rasters.as_ref() else { return LayerSource::Hidden };
-                return match p.layer(l, &format) {
-                    Some(r) => LayerSource::Raster(r),
+                let t = timing::sub_start();
+                let raster = p.layer(l, &format);
+                timing::sub_add(timing::Sub::Raster, t);
+                return match raster {
+                    Some(r) => LayerSource::Raster(super::preview_size::scale_raster(r, factor)),
                     None if p.is_offline(l, &format) => LayerSource::Offline,
                     None => LayerSource::Hidden,
                 };
@@ -1899,18 +2612,23 @@ impl ProgramEngine {
                     LayerSource::Hidden
                 }
             };
+            let t = timing::sub_start();
             let Some(k) = self.peek_key(l) else { return missing() };
-            let (Some((shown, pic)), Some(src)) = (self.picture_for(&k, true), self.sources.get(&k.media)) else {
+            let found = self.picture_for(&k, true);
+            timing::sub_add(timing::Sub::Picture, t);
+            let (Some((shown, pic)), Some(src)) = (found, self.sources.get(&k.media)) else {
                 return missing();
             };
             // Gyroflow Stabilizer: the decoded frame is warped by the camera's gyro data before anything else (the same call
             // for export; a proxy frame is warped with the original's gyro data, the map is normalized).
+            let t = timing::sub_start();
             let gyro = l.gyro.as_ref().and_then(|o| {
                 let hook = self.deps.gyro.as_ref()?;
                 let path = self.media_paths.get(&l.media)?;
                 let ts = sq_core_masks::GyroflowOptions::timestamp_microseconds(pic.frame.presentation_time);
                 hook.maps.map(path, o, ts, hook.wait)
             });
+            timing::sub_add(timing::Sub::Gyro, t);
             LayerSource::Media(Source {
                 media: shown.media,
                 index: shown.index,
@@ -1923,8 +2641,17 @@ impl ProgramEngine {
         };
         let caption_rasters: Vec<_> = rasters
             .as_ref()
-            .map(|p| captions.iter().filter_map(|c| p.caption(c, &format)).collect())
+            .map(|p| {
+                captions
+                    .iter()
+                    .filter_map(|c| p.caption(c, &format))
+                    .map(|r| super::preview_size::scale_raster(r, factor))
+                    .collect()
+            })
             .unwrap_or_default();
+        if let Some(t) = traced {
+            super::frame_trace::note_pre_render(t.elapsed().as_secs_f64() * 1e3);
+        }
         // Playing drops a frame the GPU cannot take yet; a paused picture and every export frame wait for it.
         let playing = !self.state.rate().is_paused();
         // A paused picture on a GPU that stopped answering waits up to 30 s: a Stop or Seek queued meanwhile ends that wait
@@ -1933,7 +2660,9 @@ impl ProgramEngine {
         let abandon_wait: Option<Arc<dyn Fn() -> bool + Send + Sync>> =
             (!playing).then(|| Arc::new(move || shared.command_waiting()) as _);
         let options = RenderOptions {
+            preview: preview.is_some(),
             transparent: self.shows_transparency_grid,
+            output_size: self.output_size,
             captions: caption_rasters,
             gpu_wait: playing.then_some(GPU_WAIT_PLAYING),
             abandon_wait,
@@ -1941,11 +2670,13 @@ impl ProgramEngine {
         };
         let inputs =
             Inputs { grade, split: split.then_some((&ungraded as &_, columns)), mattes: None, source: &source };
-        let frame = comp.render(&self.wanted_requests, &format, &options, &inputs)?;
+        let frame = comp.render(requests, &canvas, &options, &inputs)?;
+        super::frame_trace::note_gpu_wait(frame.gpu_wait_ms);
+        super::frame_trace::note_compose_phases(frame.phase_ms, frame.cpu_ms);
         if playing {
             self.stats.add(Stage::GpuWait, frame.gpu_wait_ms, 1);
         }
-        Ok((frame.output, frame.working, frame.milliseconds))
+        Ok((frame.output, frame.working, frame.milliseconds, preview.is_some()))
     }
 
     /// Length of a clip of the top sequence on the timeline.
@@ -1968,12 +2699,14 @@ impl ProgramEngine {
         linear: Option<sq_gpu::frames::GpuTexture>,
         want: &Wanted,
     ) {
+        let traced = super::frame_trace::enabled().then(Instant::now);
+        let cut = self.shown.as_ref().is_some_and(|prev| is_cut(prev, want));
         self.shown = Some(want.clone());
         self.shown_lag = want
             .keys
             .iter()
             .map(|k| {
-                if self.cache.contains_key(k) {
+                if self.has_picture_at_least(k) {
                     0
                 } else {
                     self.cache
@@ -1986,7 +2719,7 @@ impl ProgramEngine {
             })
             .max()
             .unwrap_or(0);
-        self.shown_exact = want.keys.iter().all(|k| self.cache.contains_key(k));
+        self.shown_exact = want.keys.iter().all(|k| self.has_picture_at_least(k));
         self.picture_present = output.is_some();
         self.picture_generation += 1;
         let frame = output.map(|t| {
@@ -2034,11 +2767,44 @@ impl ProgramEngine {
                 self.shown_frames += 1; // not again when the exact picture replaces a stand-in
             }
             self.last_shown_frame = Some(frame);
-            self.late.shown(frame, self.shown_exact, self.shown_lag);
+            self.late.shown(frame, self.shown_exact, self.shown_lag, cut);
             if let Some(s) = self.played_span.as_mut() {
                 s.1 = frame;
             }
+            if let Some(t) = traced {
+                self.trace_frame(want, frame, t);
+            }
         }
+    }
+
+    /// Books the frame just published in the per-frame trace (`SQ_BENCH_CSV`); `since` is when `display` started.
+    fn trace_frame(&self, want: &Wanted, frame: i64, since: Instant) {
+        let layers: Vec<_> = want
+            .keys
+            .iter()
+            .map(|k| {
+                let exact = self.has_picture_at_least(k);
+                let lag = if exact {
+                    0
+                } else {
+                    self.cache
+                        .keys()
+                        .filter(|c| c.media == k.media && c.proxy == k.proxy)
+                        .map(|c| (c.index - k.index).abs())
+                        .min()
+                        .unwrap_or_else(|| self.frames_without_picture())
+                };
+                super::frame_trace::LayerIn { media: k.media, standin: !exact, lag }
+            })
+            .collect();
+        let pts = self.position.value() as f64 / self.position.timescale().max(1) as f64;
+        let quality = match self.quality {
+            DecodeScale::Full => "full",
+            DecodeScale::Half => "half",
+            DecodeScale::Quarter => "quarter",
+        };
+        let host_us = self.deps.display.as_ref().map_or(0, |d| d.micros(Instant::now()));
+        super::frame_trace::note_frame(frame, pts, &layers, since.elapsed().as_secs_f64() * 1e3, quality, host_us);
     }
 
     // MARK: Cache strip
@@ -2087,4 +2853,22 @@ pub(super) fn skipped_in_run(last: Option<i64>, frame: i64, forward: bool) -> u6
     let Some(last) = last else { return 0 };
     let step = if forward { frame - last } else { last - frame };
     u64::try_from(step - 1).unwrap_or(0)
+}
+
+/// `SQ_PLAY_TRACE=1`: decode requests and jobs (lane, frame range, start and end) on stderr; off by default.
+pub(super) fn play_trace() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("SQ_PLAY_TRACE").is_some())
+}
+
+/// A decode of the scrub whose picture is coarser than the paused one (the quarter-size scrub read): the paused frame decodes
+/// again, so the scrub's own job may stop when the scrub ends. At the paused size the scrub's picture is the exact one.
+pub(super) fn is_scrub_preview_job(scrubbing: bool, key_divisor: u32, paused_divisor: u32) -> bool {
+    scrubbing && key_divisor > paused_divisor
+}
+
+/// Seconds since the first trace line.
+pub(super) fn trace_clock() -> f64 {
+    static T0: std::sync::OnceLock<Instant> = std::sync::OnceLock::new();
+    T0.get_or_init(Instant::now).elapsed().as_secs_f64()
 }

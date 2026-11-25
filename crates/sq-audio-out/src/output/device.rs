@@ -68,6 +68,9 @@ fn build(s: &DeviceSetup) -> Result<cpal::Stream, AudioOutError> {
         .build_output_stream(
             config,
             move |data: &mut [f32], info: &cpal::OutputCallbackInfo| {
+                let _cb = sq_os::trace::span_args("audio", "audio callback", || {
+                    format!("frames={}", data.len() / channels.max(1))
+                });
                 let raw = host_nanos_now();
                 let ts = info.timestamp();
                 let lat = ts.playback.saturating_duration_since(ts.callback).as_nanos();

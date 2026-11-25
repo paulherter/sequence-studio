@@ -12,6 +12,7 @@ use std::ffi::{CStr, CString, c_char, c_int};
 use std::fmt;
 use std::path::Path;
 use std::ptr::{self, NonNull};
+use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
 
 /// FFmpeg was found at build time and the shim is linked.
 pub const AVAILABLE: bool = cfg!(sq_ffmpeg);
@@ -129,17 +130,17 @@ pub fn seek_probe(path: &Path, max_packets: usize, max_bytes: i64) -> Result<See
     // SAFETY: `c` is NUL-terminated; `codec` and `err` are valid for their stated lengths, `keys` holds `cap` bytes and the
     // shim writes at most that many; `count` is valid for the call.
     let r = unsafe {
-        ffi::sq_seek_probe(
-            c.as_ptr(),
-            cap,
+        ffi::seek_probe(ffi::SeekProbeArgs {
+            path: c.as_ptr(),
+            max_packets: cap,
             max_bytes,
-            codec.as_mut_ptr(),
-            codec.len() as c_int,
-            keys.as_mut_ptr(),
-            &mut count,
-            err.as_mut_ptr(),
-            ERR_LEN as c_int,
-        )
+            codec: codec.as_mut_ptr(),
+            codec_len: codec.len() as c_int,
+            keys: keys.as_mut_ptr(),
+            count: &mut count,
+            err: err.as_mut_ptr(),
+            err_len: ERR_LEN as c_int,
+        })
     };
     if r != 0 {
         return Err(ShimError::new("seek probe", r, &err));
@@ -170,6 +171,9 @@ impl Demux {
     }
 
     fn open_probing(path: &Path, full_probe: bool) -> Result<Demux, ShimError> {
+        let _span = sq_os::trace::span_args("open", "demux open+index", || {
+            format!("file={} full_probe={full_probe}", path.display())
+        });
         let c = c_path(path)?;
         let mut raw = ptr::null_mut();
         let mut err = [0 as c_char; ERR_LEN];
@@ -290,6 +294,9 @@ pub struct DecoderConfig<'a> {
     pub hardware: bool,
     /// Pool textures beyond the decoder's own references (hardware only).
     pub extra_hw_frames: i32,
+    /// Threads of a software decoder; 0 = the share of the cores left by the software decoders already open
+    /// (`software_thread_budget`).
+    pub sw_threads: i32,
 }
 
 /// One compressed picture to send, timing in stream ticks.
@@ -319,6 +326,107 @@ pub enum Received {
 /// One video decoder (software, or D3D11VA).
 pub struct Decoder {
     raw: NonNull<ffi::Decoder>,
+    /// A software decoder: it counts in `OPEN_SOFTWARE` until dropped.
+    software: bool,
+    /// Threads this big software decoder adds to `OPEN_BIG_THREADS` (0 = not counted).
+    big_threads: usize,
+}
+
+/// Threads of all open big software decoders. Frame threading keeps about `threads - 1` extra 4K pictures per decoder
+/// (33 MB each for 4:2:2 10-bit); a project holds ~17 decoders, most of them parked.
+static OPEN_BIG_THREADS: AtomicUsize = AtomicUsize::new(0);
+
+/// Frame threads all open big decoders may hold together; a decoder opened past it gets the floor of 2.
+const BIG_THREAD_POOL: usize = 12;
+
+/// `threads` for a big decoder opening while `open_total` threads of big decoders are open: the pool's rest, never below 2.
+pub fn cap_big_threads(threads: i32, open_total: usize) -> i32 {
+    cap_big_threads_with(threads, open_total, big_floor())
+}
+
+fn cap_big_threads_with(threads: i32, open_total: usize, floor: i32) -> i32 {
+    let rest = BIG_THREAD_POOL.saturating_sub(open_total) as i32;
+    // The floor may exceed the pool, but not without end: past twice the pool a decoder gets 2 (20 open 4K decoders at 4
+    // threads were ~2.6 GB of frame threads).
+    let floor = if open_total >= BIG_THREAD_POOL * 2 { floor.min(2) } else { floor };
+    threads.min(rest.max(floor))
+}
+
+/// Frame threads a big software decoder keeps at least, however many decoders are open: 4 on a machine that is not weak,
+/// 2 on a weak one (`set_weak_machine`). Cause of the load drops (night 2026-11-23): the budget follows the OPEN order, so the
+/// 4K H.264 clip that plays got 2 threads because 6 others were open, and a 30 ms/frame decode on 2 threads cannot hold 30 fps
+/// once SMT siblings are busy. Memory: a frame thread holds one picture in flight (4K 4:2:2 10-bit about 33 MB), so 4 threads
+/// cost about 130 MB per big decoder. `SQ_BIG_THREAD_FLOOR=2` (or 3, 4) overrides the rule for A/B.
+/// shortcut: the floor is given to every big decoder at open, idle ones keep their threads (ffmpeg cannot change the count
+/// of an open decoder); upgrade when an idle decoder can be re-opened small once its layer is not playing for a while.
+fn big_floor() -> i32 {
+    floor_for(
+        std::env::var("SQ_BIG_THREAD_FLOOR").ok().and_then(|v| v.parse().ok()),
+        WEAK_MACHINE.load(Ordering::Relaxed),
+    )
+}
+
+fn floor_for(env: Option<i32>, weak: bool) -> i32 {
+    env.map_or(if weak { 2 } else { 4 }, |v| v.clamp(2, 4))
+}
+
+/// The floor never asks for more threads than a third of the cores: three 4K layers play at once (a 6-core machine gets
+/// 2 each, not 4 x 3 threads on 6 cores); 12 cores and up keep 4.
+fn floor_for_cores(floor: i32, cores: usize) -> i32 {
+    floor.min((cores / 3) as i32).max(2)
+}
+
+/// Set by the app at start from `MachineResources::is_weak_for_decode` (Intel, 8 GB or less, 4 cores or fewer).
+static WEAK_MACHINE: AtomicBool = AtomicBool::new(false);
+
+pub fn set_weak_machine(weak: bool) {
+    WEAK_MACHINE.store(weak, Ordering::Relaxed);
+}
+
+/// Open software decoders (they share the machine's cores). Counted from open to drop, not only while inside a decode call:
+/// decoders open at project load, when none decodes yet, so a count of running calls is always empty at open time.
+static OPEN_SOFTWARE: AtomicUsize = AtomicUsize::new(0);
+
+/// Open software decoders and the frame threads the big ones hold (for the memory trace).
+pub fn open_software_decoders() -> (usize, usize) {
+    (OPEN_SOFTWARE.load(Ordering::Relaxed), OPEN_BIG_THREADS.load(Ordering::Relaxed))
+}
+
+/// Takes `want` frame threads (capped by `cap_big_threads`) from `pool` in one step; two parallel opens never overshoot it.
+fn reserve_big_threads(pool: &AtomicUsize, want: i32) -> i32 {
+    let mut cur = pool.load(Ordering::Relaxed);
+    loop {
+        let t = cap_big_threads(want, cur);
+        match pool.compare_exchange_weak(cur, cur + t.max(0) as usize, Ordering::Relaxed, Ordering::Relaxed) {
+            Ok(_) => return t,
+            Err(now) => cur = now,
+        }
+    }
+}
+
+/// Pictures of this many pixels and up (4K, also portrait) get frame threads on top of slice threads.
+const BIG_PIXELS: i64 = 3_500_000;
+
+/// Threads for one software decoder: the logical cores divided by the open software decoders (this one included), so a
+/// layered project does not start 4 x 4 frame threads on 6 cores. A big picture keeps 2 to 4 (a jump stalls on 1), a small one
+/// 1 to 2 slice threads.
+/// shortcut: decoders opened earlier keep the count they got (a falling sequence in open order); upgrade when a decoder can be re-opened with a new budget.
+pub fn software_thread_budget(width: i32, height: i32, cores: usize, open_software: usize) -> i32 {
+    budget_with_floor(width, height, cores, open_software, big_floor())
+}
+
+fn budget_with_floor(width: i32, height: i32, cores: usize, open_software: usize, floor: i32) -> i32 {
+    let share = (cores.max(1) / open_software.max(1)) as i32;
+    // Never above the core count.
+    if i64::from(width) * i64::from(height) >= BIG_PIXELS {
+        share.clamp(floor_for_cores(floor, cores).min(cores.max(2) as i32), 4)
+    } else {
+        share.clamp(1, 2)
+    }
+}
+
+fn logical_cores() -> usize {
+    std::thread::available_parallelism().map_or(2, |n| n.get())
 }
 
 // SAFETY: a decoder is used by one thread at a time (all methods take &mut self or run under the owner's lock).
@@ -330,6 +438,25 @@ impl Decoder {
         let extra_len = c_int::try_from(cfg.extradata.len()).map_err(|_| ShimError::failed("extradata", EINVAL))?;
         let mut raw = ptr::null_mut();
         let mut err = [0 as c_char; ERR_LEN];
+        let budgeted = !cfg.hardware && cfg.sw_threads <= 0;
+        let big = i64::from(cfg.width) * i64::from(cfg.height) >= BIG_PIXELS;
+        // Both counters are reserved before the open, so two parallel opens see each other; a failed open gives them back.
+        let open_software = if cfg.hardware { 0 } else { OPEN_SOFTWARE.fetch_add(1, Ordering::Relaxed) + 1 };
+        let threads = if cfg.hardware {
+            0
+        } else if budgeted {
+            let t = software_thread_budget(cfg.width, cfg.height, logical_cores(), open_software);
+            if big { reserve_big_threads(&OPEN_BIG_THREADS, t) } else { t }
+        } else {
+            cfg.sw_threads
+        };
+        let big_threads = if budgeted && big { threads.max(0) as usize } else { 0 };
+        let give_back = || {
+            OPEN_BIG_THREADS.fetch_sub(big_threads, Ordering::Relaxed);
+            if !cfg.hardware {
+                OPEN_SOFTWARE.fetch_sub(1, Ordering::Relaxed);
+            }
+        };
         // SAFETY: all pointers are valid for the call; the shim copies the extradata and keeps no borrowed pointer.
         let r = unsafe {
             ffi::sq_dec_open(
@@ -344,14 +471,18 @@ impl Decoder {
                 cfg.tb_den,
                 c_int::from(cfg.hardware),
                 cfg.extra_hw_frames,
+                threads,
                 &mut raw,
                 err.as_mut_ptr(),
                 ERR_LEN as c_int,
             )
         };
         match NonNull::new(raw) {
-            Some(raw) if r == 0 => Ok(Decoder { raw }),
-            _ => Err(ShimError::new("decoder", if r == 0 { -1 } else { r }, &err)),
+            Some(raw) if r == 0 => Ok(Decoder { raw, software: !cfg.hardware, big_threads }),
+            _ => {
+                give_back();
+                Err(ShimError::new("decoder", if r == 0 { -1 } else { r }, &err))
+            }
         }
     }
 
@@ -415,13 +546,19 @@ impl Decoder {
 
 impl Drop for Decoder {
     fn drop(&mut self) {
+        OPEN_BIG_THREADS.fetch_sub(self.big_threads, Ordering::Relaxed);
+        if self.software {
+            OPEN_SOFTWARE.fetch_sub(1, Ordering::Relaxed);
+        }
         // SAFETY: the handle came from `sq_dec_open` and is closed once. Frames hold their own references.
         unsafe { ffi::sq_dec_close(self.raw.as_ptr()) }
     }
 }
 
-/// A reduced download: planes packed in the NV12 / P010 layout at the reduced size.
+/// A reduced download: planes packed in the NV12 / P010 layout at the reduced size; `chroma_422` when the chroma plane keeps
+/// the full height (P210 layout: a deep 4:2:2 source is not merged vertically, the GPU samples it as it is).
 pub struct Reduced {
+    pub chroma_422: bool,
     pub bytes: PooledBytes,
     pub width: i32,
     pub height: i32,
@@ -501,6 +638,9 @@ impl Frame {
     }
 
     fn download_stored(&self) -> Result<PooledBytes, ShimError> {
+        let _span = sq_os::trace::span_args("xfer", "frame download", || {
+            format!("{}x{} hw={}", self.width, self.height, self.texture != 0)
+        });
         // SAFETY: handle live.
         let size = unsafe { ffi::sq_frame_download_size(self.raw.as_ptr()) };
         let len = usize::try_from(size).ok().filter(|n| *n > 0).ok_or_else(|| ShimError::failed("frame size", size))?;
@@ -543,11 +683,18 @@ impl Frame {
         // SAFETY: handle live, `w` and `h` valid for writes.
         let size = unsafe { ffi::sq_frame_download_reduced_size(self.raw.as_ptr(), divisor, &mut w, &mut h) };
         let Some(len) = usize::try_from(size).ok().filter(|n| *n > 0) else { return Ok(None) };
+        let _span = sq_os::trace::span_args("xfer", "frame download reduced", || {
+            format!("{}x{} div={divisor}", self.width, self.height)
+        });
         let mut out = BufferPool::shared().take(len);
         // SAFETY: `out` holds `size` bytes, passed as the capacity.
         let r = unsafe { ffi::sq_frame_download_reduced(self.raw.as_ptr(), divisor, threads, out.as_mut_ptr(), size) };
         match r {
-            0 => Ok(Some(Reduced { bytes: out, width: w, height: h })),
+            0 => {
+                // SAFETY: handle live.
+                let chroma_422 = unsafe { ffi::sq_frame_reduced_422(self.raw.as_ptr()) } != 0;
+                Ok(Some(Reduced { bytes: out, width: w, height: h, chroma_422 }))
+            }
             1 => Ok(None),
             _ => Err(ShimError::failed("frame download", r)),
         }
@@ -671,16 +818,16 @@ impl AudioReader {
         let mut err = [0 as c_char; ERR_LEN];
         // SAFETY: valid pointers for the call; the handle is owned by the result and freed in `Drop`.
         let raw = unsafe {
-            ffi::sq_audio_reader_open(
-                c.as_ptr(),
+            ffi::audio_reader_open(ffi::AudioReaderOpenArgs {
+                path: c.as_ptr(),
                 rate,
                 channels,
                 ordinal,
-                &mut estimated,
-                &mut source,
-                err.as_mut_ptr(),
-                ERR_LEN as c_int,
-            )
+                estimated: &mut estimated,
+                source_channels: &mut source,
+                err: err.as_mut_ptr(),
+                err_len: ERR_LEN as c_int,
+            })
         };
         let name = path.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
         let raw = ptr::NonNull::new(raw).ok_or_else(|| ShimError::new(&format!("audio {name}"), -1, &err))?;
@@ -746,5 +893,112 @@ mod version_tests {
     fn the_loaded_libraries_are_the_ones_the_headers_describe() {
         // Built and run against one FFmpeg install: nothing differs. With no FFmpeg linked the check is vacuous.
         assert_eq!(super::version_mismatch(), None);
+    }
+}
+
+#[cfg(test)]
+mod thread_budget_tests {
+    /// The share rule with the old floor of 2 (the floor itself is tested below).
+    fn b(w: i32, h: i32, cores: usize, open: usize) -> i32 {
+        super::budget_with_floor(w, h, cores, open, 2)
+    }
+
+    #[test]
+    fn layered_4k_project_on_six_cores_stays_under_the_cores() {
+        // 4 4K decoders decoding at once: each sees the ones before it, the total stays near the 6 cores, never 4 x 4.
+        let threads: Vec<i32> = (1..=4).map(|open| b(3840, 2160, 6, open)).collect();
+        assert_eq!(threads, vec![4, 3, 2, 2]);
+        assert!(threads.iter().sum::<i32>() < 16);
+    }
+
+    #[test]
+    fn single_big_decoder_gets_up_to_four() {
+        assert_eq!(b(3840, 2160, 16, 1), 4);
+        assert_eq!(b(3840, 2160, 32, 1), 4);
+        assert_eq!(b(2160, 3840, 8, 1), 4);
+    }
+
+    #[test]
+    fn big_decoder_never_below_two_small_never_below_one() {
+        assert_eq!(b(3840, 2160, 6, 12), 2);
+        assert_eq!(b(1920, 1080, 6, 12), 1);
+        assert_eq!(b(1920, 1080, 16, 1), 2);
+        assert_eq!(b(1920, 1080, 0, 0), 1);
+    }
+
+    #[test]
+    fn many_open_big_decoders_share_a_thread_pool() {
+        let c = |t, o| super::cap_big_threads_with(t, o, 2);
+        assert_eq!(c(4, 0), 4);
+        assert_eq!(c(4, 10), 2);
+        assert_eq!(c(4, 11), 2);
+        assert_eq!(c(4, 40), 2);
+        // 17 decoders opening one after another stay near the pool plus the floor, not 17 x 4.
+        let mut open = 0;
+        for _ in 0..17 {
+            open += c(4, open) as usize;
+        }
+        assert!(open <= 12 + 2 * 17, "{open}");
+        assert!(open < 17 * 4);
+    }
+
+    #[test]
+    fn a_floor_keeps_the_playing_big_decoder_at_four_threads_with_many_open() {
+        use super::{budget_with_floor as f, cap_big_threads_with as c};
+        assert_eq!(f(3840, 2160, 16, 7, 2), 2);
+        assert_eq!(f(3840, 2160, 16, 7, 4), 4);
+        assert_eq!(f(1920, 1080, 16, 7, 4), 2, "small pictures are not raised");
+        assert_eq!(c(4, 40, 2), 2);
+        assert_eq!(c(4, 20, 4), 4, "the pool is spent but the floor still gives 4");
+    }
+
+    #[test]
+    fn the_floor_is_four_by_default_two_on_a_weak_machine_and_the_switch_wins() {
+        use super::{budget_with_floor as f, floor_for};
+        assert_eq!(floor_for(None, false), 4);
+        assert_eq!(floor_for(None, true), 2, "4 cores / 8 GB: 7 open 4K decoders must not hold 4 threads each");
+        assert_eq!(floor_for(Some(2), false), 2, "the switch turns the rule off");
+        assert_eq!(floor_for(Some(9), true), 4);
+        // 4-core machine: 7 open 4K decoders stay at the weak floor, never above the cores.
+        assert_eq!(f(3840, 2160, 4, 7, floor_for(None, true)), 2);
+        assert_eq!(f(3840, 2160, 3, 7, 4), 2, "a third of the cores, at least 2");
+        // 16-core machine, 7 open: the playing decoder keeps 4.
+        assert_eq!(f(3840, 2160, 16, 7, floor_for(None, false)), 4);
+        // 6 cores, 3 playing 4K layers: 2 threads each (6 on 6 cores), not 4 each.
+        assert_eq!(f(3840, 2160, 6, 7, floor_for(None, false)), 2);
+        assert_eq!(f(3840, 2160, 8, 7, 4), 2);
+        assert_eq!(f(3840, 2160, 12, 7, 4), 4);
+        assert_eq!(super::cap_big_threads_with(4, 24, 4), 2, "past twice the pool the floor drops to 2");
+        assert_eq!(super::cap_big_threads_with(4, 23, 4), 4);
+    }
+
+    #[test]
+    fn open_order_without_any_send_gives_a_falling_sequence() {
+        // Opening at project load: nothing decodes yet, the budget still falls with the number of open decoders.
+        let threads: Vec<i32> = (1..=6).map(|open| b(3840, 2160, 6, open)).collect();
+        assert_eq!(threads, vec![4, 3, 2, 2, 2, 2]);
+    }
+
+    #[test]
+    fn parallel_big_opens_never_overshoot_the_pool() {
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let pool = AtomicUsize::new(0);
+        let granted: i32 = std::thread::scope(|s| {
+            let hs: Vec<_> = (0..8).map(|_| s.spawn(|| super::reserve_big_threads(&pool, 4))).collect();
+            hs.into_iter().map(|h| h.join().unwrap()).sum()
+        });
+        // 3 x 4 fill the pool of 12, the rest get the floor (2 once twice the pool is spent): the same in any order.
+        let mut open = 12;
+        for _ in 0..5 {
+            open += super::cap_big_threads(4, open) as usize;
+        }
+        assert_eq!(granted as usize, open);
+        assert_eq!(pool.load(Ordering::Relaxed), granted as usize);
+    }
+
+    #[test]
+    fn portrait_4k_counts_as_big() {
+        assert_eq!(b(2160, 3840, 16, 4), 4);
+        assert_eq!(b(1080, 1920, 16, 4), 2);
     }
 }

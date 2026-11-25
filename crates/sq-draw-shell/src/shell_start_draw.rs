@@ -26,7 +26,6 @@ use sq_uikit::sqmascot_model::SQMascotAnim;
 struct Colors {
     seam: Color,
     chrome: Color,
-    panel: Color,
     content: Color,
     group: Color,
     lane: Color,
@@ -45,7 +44,6 @@ impl Colors {
         Colors {
             seam: t.token(tk::SEAM),
             chrome: t.token(tk::CHROME),
-            panel: t.token(tk::PANEL),
             content: t.token(sq_uikit::tokens::color::surface::CONTENT),
             group: t.token(tk::GROUP),
             lane: t.token(tk::LANE),
@@ -117,10 +115,6 @@ impl<'a> Btn<'a> {
     }
     fn icon(mut self, icon: SQIcon) -> Btn<'a> {
         self.icon = Some(icon);
-        self
-    }
-    fn hint(mut self, hint: &'a str) -> Btn<'a> {
-        self.hint = Some(hint);
         self
     }
 }
@@ -978,13 +972,7 @@ impl ShellStartScreen {
         let thumb = CGRect::new(r.min_x() + m::S2, r.mid_y() - ts.height / 2.0, ts.width, ts.height);
         c.fill_rounded(thumb, m::R_INNER, k.lane);
         if gone {
-            c.draw_icon(
-                SQIcon::Warning,
-                CGPoint::new(thumb.mid_x() - 5.5, thumb.mid_y() - 5.5),
-                m::F_CAP,
-                k.red,
-                None,
-            );
+            c.draw_icon(SQIcon::Warning, CGPoint::new(thumb.mid_x() - 5.5, thumb.mid_y() - 5.5), m::F_CAP, k.red, None);
         } else {
             let b = thumb.inset_by(m::S2 / 2.0, m::S2 / 2.0);
             let ar = info.map_or(16.0 / 9.0, |i| i.width as f64 / i.height.max(1) as f64);
@@ -1063,12 +1051,23 @@ impl ShellStartScreen {
                 // Template: the 20 pt warning mark sits top-left, 12 pt in.
                 c.draw_icon(SQIcon::Warning, CGPoint::new(r.min_x() + 12.0, r.min_y() + 12.0), 20.0, t.label4(), None);
             } else {
-                c.draw_icon(SQIcon::Warning, CGPoint::new(r.mid_x() - 11.0, r.mid_y() - 11.0 - up), 22.0, t.label4(), None);
+                c.draw_icon(
+                    SQIcon::Warning,
+                    CGPoint::new(r.mid_x() - 11.0, r.mid_y() - 11.0 - up),
+                    22.0,
+                    t.label4(),
+                    None,
+                );
             }
             if tile {
                 // A missing project tile carries the same raised Locate… button as the list row (a click on the tile locates too).
                 // Same row as the File missing pill (template): pill left, Locate… right.
-                let b = CGRect::new(r.max_x() - 8.0 - Self::LOCATE_W, r.max_y() - 4.0 - m::CONTROL_SMALL, Self::LOCATE_W, m::CONTROL_SMALL);
+                let b = CGRect::new(
+                    r.max_x() - 8.0 - Self::LOCATE_W,
+                    r.max_y() - 4.0 - m::CONTROL_SMALL,
+                    Self::LOCATE_W,
+                    m::CONTROL_SMALL,
+                );
                 Self::button(c, t, k, &Btn::new("Locate…", false, false), b);
             }
             // The design's pill: a 11 pt warning mark, 4 pt gap, the label, 6 pt padding each side.
@@ -1177,7 +1176,9 @@ mod hint_tests {
 
     #[test]
     fn the_start_controls_without_a_hint_on_their_face_have_tooltips() {
-        for h in [StartHit::NewProject, StartHit::OpenOther, StartHit::EmptyOpen, StartHit::ContinueOpen, StartHit::Search] {
+        for h in
+            [StartHit::NewProject, StartHit::OpenOther, StartHit::EmptyOpen, StartHit::ContinueOpen, StartHit::Search]
+        {
             let tip = key_tip(&h).expect("a tooltip");
             assert!(tip.contains('(') && tip.ends_with(')'), "{tip}");
         }

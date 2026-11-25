@@ -48,6 +48,10 @@ pub struct RenderShared {
     underruns: AtomicU64,
     callbacks: AtomicU64,
     min_fill: AtomicU64,
+    /// Like `min_fill`, but read and restarted by [`RenderShared::take_interval_min_fill`] (the per-frame bench trace).
+    interval_min_fill: AtomicU64,
+    /// Set by the first [`RenderShared::take_interval_min_fill`]: the callback tracks the interval minimum only once a reader exists.
+    interval_trace: AtomicBool,
     // Stamp seqlock (odd = render thread writing).
     stamp_seq: AtomicU64,
     stamp_frames: AtomicI64,
@@ -66,6 +70,8 @@ impl RenderShared {
             underruns: AtomicU64::new(0),
             callbacks: AtomicU64::new(0),
             min_fill: AtomicU64::new(u64::MAX),
+            interval_min_fill: AtomicU64::new(u64::MAX),
+            interval_trace: AtomicBool::new(false),
             stamp_seq: AtomicU64::new(0),
             stamp_frames: AtomicI64::new(0),
             stamp_quantum: AtomicI64::new(0),
@@ -86,6 +92,12 @@ impl RenderShared {
     /// Smallest ring fill (frames) seen at the start of a playing call; `None` before the first.
     pub fn min_fill(&self) -> Option<u64> {
         Some(self.min_fill.load(Relaxed)).filter(|&v| v != u64::MAX)
+    }
+
+    /// Smallest ring fill (frames) since the last call, then starts over; `None` when no playing callback ran meanwhile.
+    pub fn take_interval_min_fill(&self) -> Option<u64> {
+        self.interval_trace.store(true, Relaxed);
+        Some(self.interval_min_fill.swap(u64::MAX, Relaxed)).filter(|&v| v != u64::MAX)
     }
 
     /// Speed (|rate|, 1 = straight) the callback plays the ring at. A change drops the stretch's buffered audio.
@@ -350,7 +362,11 @@ impl RenderCore {
         }
         self.was_playing = true;
         self.fade_out_pos = self.fade_frames;
-        self.shared.min_fill.fetch_min(self.ring_shared.available_to_read() as u64, Relaxed);
+        let fill = self.ring_shared.available_to_read() as u64;
+        self.shared.min_fill.fetch_min(fill, Relaxed);
+        if self.shared.interval_trace.load(Relaxed) {
+            self.shared.interval_min_fill.fetch_min(fill, Relaxed);
+        }
         let got = self.ring.pop(&mut l[..count], &mut r[..count]);
         if got < count {
             self.shared.underruns.fetch_add(1, Relaxed);

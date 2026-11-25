@@ -7,17 +7,44 @@ use std::process::Command;
 
 /// The pinned release.
 pub const VERSION: &str = "1.24.4";
-/// macOS arm64 archive of that release (Microsoft's GitHub release).
-pub const MAC_URL: &str =
-    "https://github.com/microsoft/onnxruntime/releases/download/v1.24.4/onnxruntime-osx-arm64-1.24.4.tgz";
+/// The official `Microsoft.ML.OnnxRuntime` NuGet package of that release (Microsoft's GitHub release downloads are gone).
+/// It carries the same CPU builds under `runtimes/<rid>/native/`.
+pub const NUPKG_URL: &str =
+    "https://api.nuget.org/v3-flatcontainer/microsoft.ml.onnxruntime/1.24.4/microsoft.ml.onnxruntime.1.24.4.nupkg";
 /// Its sha256.
-pub const MAC_SHA256: &str = "93787795f47e1eee369182e43ed51b9e5da0878ab0346aecf4258979b8bba989";
+pub const NUPKG_SHA256: &str = "4b978d5065b85e7004b6c6f60ca494bd978fbe6836cbf0a0b52d82b61ab99638";
 
-/// Linux x86_64 archive of that release.
-pub const LINUX_URL: &str =
-    "https://github.com/microsoft/onnxruntime/releases/download/v1.24.4/onnxruntime-linux-x64-1.24.4.tgz";
-/// Its sha256.
-pub const LINUX_SHA256: &str = "3a211fbea252c1e66290658f1b735b772056149f28321e71c308942cdb54b747";
+/// One native library inside the package: its path in the zip, its file name in the cache and its sha256.
+pub struct Lib {
+    pub entry: &'static str,
+    pub name: &'static str,
+    pub sha256: &'static str,
+    pub required: bool,
+}
+
+/// macOS arm64.
+pub const MAC_LIBS: &[Lib] = &[Lib {
+    entry: "runtimes/osx-arm64/native/libonnxruntime.dylib",
+    name: "libonnxruntime.dylib",
+    sha256: "0db33e160224e480c17932799d1dfaea59853b8e722b57bf61932c87e03586f0",
+    required: true,
+}];
+
+/// Linux x86_64.
+pub const LINUX_LIBS: &[Lib] = &[
+    Lib {
+        entry: "runtimes/linux-x64/native/libonnxruntime.so",
+        name: "libonnxruntime.so",
+        sha256: "d132535d051344ff5c64c9c200004150559049a81ed330eb4422c1962fb6b7e4",
+        required: true,
+    },
+    Lib {
+        entry: "runtimes/linux-x64/native/libonnxruntime_providers_shared.so",
+        name: "libonnxruntime_providers_shared.so",
+        sha256: "086ec1d5388f64153d9c63470d126693db9a182c8ce236d3a1119068471b8a0d",
+        required: false,
+    },
+];
 
 /// `shasum -a 256` of a file (`sha256sum` where `shasum` is missing).
 pub fn sha256(file: &Path) -> Result<String, String> {
@@ -44,44 +71,67 @@ fn cache_dir() -> Result<PathBuf, String> {
     Ok(base.join("onnxruntime").join(VERSION))
 }
 
-/// The macOS arm64 `libonnxruntime.dylib` of the pinned release: from the cache, downloaded and verified the first time.
-pub fn fetch_macos() -> Result<PathBuf, String> {
-    let dir = cache_dir()?;
-    let dylib = dir.join(format!("onnxruntime-osx-arm64-{VERSION}/lib/libonnxruntime.{VERSION}.dylib"));
-    if dylib.exists() {
-        return Ok(dylib);
-    }
-    std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let archive = dir.join("onnxruntime-osx-arm64.tgz");
-    println!("== onnx: downloading ONNX Runtime {VERSION} (MIT) to {}", dir.display());
-    crate::package::run(Command::new("curl").args(["-fsSL", "-o"]).arg(&archive).arg(MAC_URL))?;
-    let got = sha256(&archive)?;
-    if got != MAC_SHA256 {
-        let _ = std::fs::remove_file(&archive);
-        return Err(format!("ONNX Runtime archive sha256 {got} is not the pinned {MAC_SHA256}"));
-    }
-    crate::package::run(Command::new("tar").arg("xzf").arg(&archive).arg("-C").arg(&dir))?;
-    if dylib.exists() { Ok(dylib) } else { Err(format!("{} missing after unpacking", dylib.display())) }
+/// True when every library of `libs` is in `dir` with its pinned sha256 (a stub or a half download does not count).
+fn cached(dir: &Path, libs: &[Lib]) -> bool {
+    libs.iter().all(|l| !l.required || sha256(&dir.join(l.name)).is_ok_and(|h| h == l.sha256))
 }
 
-/// The Linux x86_64 `libonnxruntime.so` of the pinned release: from the cache, downloaded and verified the first time.
-pub fn fetch_linux() -> Result<PathBuf, String> {
-    let dir = cache_dir()?;
-    let lib = dir.join(format!("onnxruntime-linux-x64-{VERSION}/lib/libonnxruntime.so.{VERSION}"));
-    if lib.exists() {
-        return Ok(lib);
+/// The libraries of `libs` from the cache folder `<cache>/<rid>`, downloaded (nupkg, sha256-checked) and unpacked the first time.
+/// Every unpacked file is checked against its own pin too. Returns the folder.
+fn fetch(rid: &str, libs: &[Lib]) -> Result<PathBuf, String> {
+    let dir = cache_dir()?.join(rid);
+    if cached(&dir, libs) {
+        return Ok(dir);
     }
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
-    let archive = dir.join("onnxruntime-linux-x64.tgz");
-    println!("== onnx: downloading ONNX Runtime {VERSION} (MIT) to {}", dir.display());
-    crate::package::run(Command::new("curl").args(["-fsSL", "-o"]).arg(&archive).arg(LINUX_URL))?;
+    let archive = dir.join("onnxruntime.nupkg");
+    println!("== onnx: downloading ONNX Runtime {VERSION} (MIT, NuGet package) to {}", dir.display());
+    crate::package::run(Command::new("curl").args(["-fsSL", "-o"]).arg(&archive).arg(NUPKG_URL))?;
     let got = sha256(&archive)?;
-    if got != LINUX_SHA256 {
+    if got != NUPKG_SHA256 {
         let _ = std::fs::remove_file(&archive);
-        return Err(format!("ONNX Runtime archive sha256 {got} is not the pinned {LINUX_SHA256}"));
+        return Err(format!("ONNX Runtime package sha256 {got} is not the pinned {NUPKG_SHA256}"));
     }
-    crate::package::run(Command::new("tar").arg("xzf").arg(&archive).arg("-C").arg(&dir))?;
-    if lib.exists() { Ok(lib) } else { Err(format!("{} missing after unpacking", lib.display())) }
+    for l in libs {
+        let _ = std::fs::remove_file(dir.join(l.name));
+        let out =
+            Command::new("unzip").arg("-p").arg(&archive).arg(l.entry).output().map_err(|e| format!("unzip: {e}"))?;
+        if !out.status.success() || out.stdout.is_empty() {
+            if l.required {
+                return Err(format!("{} missing in the ONNX Runtime package", l.entry));
+            }
+            continue;
+        }
+        std::fs::write(dir.join(l.name), &out.stdout).map_err(|e| e.to_string())?;
+        let h = sha256(&dir.join(l.name))?;
+        if h != l.sha256 {
+            let _ = std::fs::remove_file(dir.join(l.name));
+            return Err(format!("{} sha256 {h} is not the pinned {}", l.entry, l.sha256));
+        }
+    }
+    let _ = std::fs::remove_file(&archive);
+    Ok(dir)
+}
+
+/// The macOS arm64 `libonnxruntime.dylib` of the pinned release (cached, verified).
+pub fn fetch_macos() -> Result<PathBuf, String> {
+    Ok(fetch("osx-arm64", MAC_LIBS)?.join("libonnxruntime.dylib"))
+}
+
+/// The Linux x86_64 `libonnxruntime.so` of the pinned release (cached, verified); `libonnxruntime_providers_shared.so` sits beside it.
+pub fn fetch_linux() -> Result<PathBuf, String> {
+    Ok(fetch("linux-x64", LINUX_LIBS)?.join("libonnxruntime.so"))
+}
+
+/// `cargo xtask fetch-onnxruntime <mac|linux>`: fetch only (what the package steps do first), print the library path.
+pub fn run_fetch(args: &[String]) -> Result<(), String> {
+    let p = match args.first().map(String::as_str) {
+        Some("mac") => fetch_macos()?,
+        Some("linux") => fetch_linux()?,
+        _ => return Err("usage: cargo xtask fetch-onnxruntime <mac|linux>".into()),
+    };
+    println!("onnx: {} sha256 {}", p.display(), sha256(&p)?);
+    Ok(())
 }
 
 #[cfg(test)]
@@ -89,12 +139,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn the_pin_is_a_sha256_and_names_its_version() {
-        assert_eq!(MAC_SHA256.len(), 64);
-        assert!(MAC_SHA256.chars().all(|c| c.is_ascii_hexdigit()));
-        assert!(MAC_URL.contains(VERSION));
-        assert_eq!(LINUX_SHA256.len(), 64);
-        assert!(LINUX_URL.contains(VERSION));
+    fn the_pins_are_sha256_and_name_their_version() {
+        assert!(NUPKG_URL.contains(VERSION));
+        for h in std::iter::once(NUPKG_SHA256).chain(MAC_LIBS.iter().chain(LINUX_LIBS).map(|l| l.sha256)) {
+            assert_eq!(h.len(), 64);
+            assert!(h.chars().all(|c| c.is_ascii_hexdigit()));
+        }
+    }
+
+    #[test]
+    fn a_stub_in_the_cache_is_not_a_cache_hit() {
+        let d = std::env::temp_dir().join(format!("sq-xtask-ort-{}", std::process::id()));
+        std::fs::create_dir_all(&d).expect("mkdir");
+        std::fs::write(d.join("libonnxruntime.so"), "stub").expect("write");
+        let hit = cached(&d, &LINUX_LIBS[..1]);
+        let _ = std::fs::remove_dir_all(&d);
+        assert!(!hit);
     }
 
     #[test]

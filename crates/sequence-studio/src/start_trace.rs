@@ -30,6 +30,7 @@ fn since_begin() -> f64 {
 
 /// One line: `name` happened now.
 pub fn mark(name: &str) {
+    sq_os::trace::mark_dyn("start", name);
     if enabled() {
         applog::info(&format!("start trace +{:.0} ms: {name}", since_begin()));
     }

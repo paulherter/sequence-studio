@@ -1770,8 +1770,7 @@ impl ProjectListView {
     fn health_layout(&self, model: &ProjectPanelModel, m: &TextMeasure) -> Vec<(HealthPart, CGRect)> {
         let Some(r) = self.health_rect(model) else { return Vec::new() };
         let (fs, g) = (type_size::CAPTION as f64, spacing::SM as f64);
-        let fix_w =
-            m.width(&Self::fix_label(), type_size::BODY as f64, 0).ceil() + 2.0 * spacing::MD as f64;
+        let fix_w = m.width(&Self::fix_label(), type_size::BODY as f64, 0).ceil() + 2.0 * spacing::MD as f64;
         let fix = CGRect::new(r.max_x() - g - fix_w, r.min_y() + 2.0, fix_w, r.height - spacing::XS as f64);
         let mut out = Vec::new();
         let mut x = r.min_x() + g;
@@ -2172,8 +2171,11 @@ impl ProjectListView {
                     f.name,
                     sq_core_effects::sequence_conform::SequenceConform::aspect_label(f.width, f.height)
                 );
-                let cell = CGRect::new(chip.max_x() + 10.0, rr.min_y(), (name_end - chip.max_x() - 14.0).max(0.0), rr.height);
-                let cut = sq_draw::middle_fit::truncate_name(&label, |s| c.size_of(s, Self::LIST_FONT, 0).width <= cell.width);
+                let cell =
+                    CGRect::new(chip.max_x() + 10.0, rr.min_y(), (name_end - chip.max_x() - 14.0).max(0.0), rr.height);
+                let cut = sq_draw::middle_fit::truncate_name(&label, |s| {
+                    c.size_of(s, Self::LIST_FONT, 0).width <= cell.width
+                });
                 c.draw_text_in(&cut.shown, cell, Self::LIST_FONT, t.label(), TextAlign::Left, 0.0, 0);
                 if let Some(full) = cut.full {
                     self.row_tips.push((cell, full));
@@ -2364,9 +2366,22 @@ impl ProjectListView {
             match part {
                 HealthPart::Missing => {
                     // "· " then the red alert triangle, then "N missing".
-                    c.draw_text("·", CGPoint::new(rect.min_x(), rect.mid_y() - fs * 0.6), fs, t.label3(), f64::INFINITY, 0);
+                    c.draw_text(
+                        "·",
+                        CGPoint::new(rect.min_x(), rect.mid_y() - fs * 0.6),
+                        fs,
+                        t.label3(),
+                        f64::INFINITY,
+                        0,
+                    );
                     let d = Self::OFFLINE_ICON;
-                    c.draw_icon(SQIcon::Warning, CGPoint::new(rect.min_x() + lead - d, rect.mid_y() - d / 2.0), d, t.err_text(), None);
+                    c.draw_icon(
+                        SQIcon::Warning,
+                        CGPoint::new(rect.min_x() + lead - d, rect.mid_y() - d / 2.0),
+                        d,
+                        t.err_text(),
+                        None,
+                    );
                 }
                 HealthPart::Outside => {
                     c.fill_ellipse(CGRect::new(rect.min_x(), rect.mid_y() - 3.0, 6.0, 6.0), dot);

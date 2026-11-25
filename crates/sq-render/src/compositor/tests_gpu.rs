@@ -459,3 +459,103 @@ fn the_reference_tree_renders_the_same_on_every_backend() {
 fn lin_to_8(v: f32) -> i32 {
     (v.clamp(0.0, 1.0) * 255.0).round() as i32
 }
+
+/// Not a check unless `SQ_P210_DUMP=<folder>` holds `<frame>.<w>x<h>.P210` files (the playing route's pictures of a real
+/// 4:2:2 clip): renders each once with its true 4:2:2 chroma (the new route) and once with the chroma merged vertically
+/// to 4:2:0 (the old route), and prints the PSNR per Y / Cb / Cr and the largest code difference of the two frames.
+/// With `SQ_P210_PNG=<folder>` the two renders are also written as raw rgb24 for a glance.
+#[test]
+fn p210_chroma_versus_the_merged_420_chroma_of_real_frames() {
+    let Ok(dir) = std::env::var("SQ_P210_DUMP") else { return };
+    let Some(gpu) = gpu() else { return };
+    let mut files: Vec<_> = std::fs::read_dir(&dir).expect("dump folder").flatten().map(|e| e.path()).collect();
+    files.sort();
+    for path in files.iter().filter(|p| p.extension().is_some_and(|e| e.to_string_lossy().starts_with("P210"))) {
+        let stem = path.file_stem().unwrap().to_string_lossy().into_owned();
+        let full_range = path.extension().is_some_and(|e| e == "P210FullRange");
+        let (tag, dims) = stem.split_once('.').expect("name");
+        let (w, h) =
+            dims.split_once('x').map(|(a, b)| (a.parse::<usize>().unwrap(), b.parse::<usize>().unwrap())).unwrap();
+        let bytes = std::fs::read(path).expect("read");
+        let (cw, luma_bytes) = (w / 2, w * h * 2);
+        // The old route: pairs of chroma rows averaged (what the 4:2:0 reduction produced).
+        let mut merged = bytes[..luma_bytes].to_vec();
+        let word = |b: &[u8], i: usize| u32::from(u16::from_le_bytes([b[2 * i], b[2 * i + 1]]));
+        for cy in 0..h / 2 {
+            for k in 0..cw * 2 {
+                let a = word(&bytes[luma_bytes..], (2 * cy) * cw * 2 + k);
+                let b = word(&bytes[luma_bytes..], (2 * cy + 1) * cw * 2 + k);
+                // codes are MSB-aligned 10 bit: average the 10-bit values, as the reduction did
+                let v = ((a >> 6) + (b >> 6)).div_ceil(2) << 6;
+                merged.extend_from_slice(&(v as u16).to_le_bytes());
+            }
+        }
+        let mk = |fmt: SQFramePixelFormat, data: Vec<u8>| {
+            SQFrame::new(
+                w,
+                h,
+                fmt,
+                SQFrameColorSpace::Rec709,
+                Time::new(0, 1),
+                Arc::new(crate::program::CpuPlanes { bytes: data.into() }),
+            )
+        };
+        let mut cache = crate::program::PlaneCache::new();
+        let mut kept = Vec::new();
+        let new_pic = crate::program::to_gpu(
+            &gpu,
+            &mk(if full_range { SQFramePixelFormat::P210FullRange } else { SQFramePixelFormat::P210 }, bytes.clone()),
+            None,
+            &mut cache,
+            &mut kept,
+        )
+        .expect("p210");
+        let old_pic = crate::program::to_gpu(
+            &gpu,
+            &mk(if full_range { SQFramePixelFormat::P010FullRange } else { SQFramePixelFormat::P010 }, merged),
+            None,
+            &mut cache,
+            &mut kept,
+        )
+        .expect("p010");
+        let layer = || RenderLayer::new(Content::Frame { frame: frame(0, w, h), color_hint: hint(w as i64, h as i64) });
+        let fmt = canvas(w as i64, h as i64);
+        let a = render(&gpu, &fmt, &[RenderNode::Layer(layer())], &[old_pic]);
+        let b = render(&gpu, &fmt, &[RenderNode::Layer(layer())], &[new_pic]);
+        // Linear light back to encoded BT.709 R'G'B', then Y'CbCr (full-range floats): PSNR per plane against peak 1.
+        let enc = |l: f32| if l < 0.018_053_97 { l * 4.5 } else { 1.099_296_8 * l.powf(0.45) - 0.099_296_8 };
+        let ycc = |px: &[f32], i: usize| {
+            let (r, g, bl) = (enc(px[i * 4].max(0.0)), enc(px[i * 4 + 1].max(0.0)), enc(px[i * 4 + 2].max(0.0)));
+            let y = 0.2126 * r + 0.7152 * g + 0.0722 * bl;
+            [y, (bl - y) / 1.8556, (r - y) / 1.5748]
+        };
+        let (mut se, mut worst) = ([0f64; 3], [0f32; 3]);
+        for i in 0..w * h {
+            let (p, q) = (ycc(&a.px, i), ycc(&b.px, i));
+            for c in 0..3 {
+                let d = (p[c] - q[c]).abs();
+                se[c] += f64::from(d * d);
+                worst[c] = worst[c].max(d);
+            }
+        }
+        let psnr = |s: f64| if s == 0.0 { f64::INFINITY } else { -10.0 * (s / (w * h) as f64).log10() };
+        println!(
+            "P210CMP {tag} {w}x{h}: PSNR Y {:.2} Cb {:.2} Cr {:.2} dB; max abs diff (of 1.0) Y {:.4} Cb {:.4} Cr {:.4}",
+            psnr(se[0]),
+            psnr(se[1]),
+            psnr(se[2]),
+            worst[0],
+            worst[1],
+            worst[2]
+        );
+        if let Ok(out) = std::env::var("SQ_P210_PNG") {
+            for (name, r) in [("A", &a), ("B", &b)] {
+                let rgb: Vec<u8> = (0..w * h)
+                    .flat_map(|i| (0..3).map(move |c| (enc(r.px[i * 4 + c].clamp(0.0, 1.0)) * 255.0 + 0.5) as u8))
+                    .collect();
+                std::fs::write(format!("{out}/{tag}.{name}.{w}x{h}.rgb"), rgb).expect("write");
+            }
+        }
+        cache.end_frame();
+    }
+}

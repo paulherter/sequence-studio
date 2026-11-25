@@ -4,7 +4,7 @@ FROM docker.io/library/ubuntu:22.04
 ARG RUST_TOOLCHAIN=1.99.0
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update && apt-get install -y --no-install-recommends \
-      build-essential clang libclang-dev cmake pkg-config patchelf file curl ca-certificates git xz-utils \
+      build-essential clang libclang-dev cmake pkg-config patchelf file curl ca-certificates git xz-utils unzip \
       libasound2-dev libudev-dev libxkbcommon-dev libwayland-dev libx11-dev libxcb1-dev libxi-dev libxcursor-dev \
       libxrandr-dev libvulkan-dev libssl-dev libfontconfig1-dev libdbus-1-dev squashfs-tools zsync \
       mesa-vulkan-drivers libvulkan1 espeak-ng \

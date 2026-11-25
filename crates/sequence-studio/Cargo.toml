@@ -9,6 +9,9 @@ publish.workspace = true
 
 [dependencies]
 sq-core-time.workspace = true
+sq-analysis.workspace = true
+sq-core-masks.workspace = true
+sq-core-effects.workspace = true
 sq-os.workspace = true
 sq-draw.workspace = true
 sq-gpu.workspace = true

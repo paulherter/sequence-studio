@@ -475,6 +475,7 @@ fn outcomes() {
         version: v.to_string(),
         url: "https://example.org/dl".to_string(),
         notes: n.map(String::from),
+        install: None,
     };
     assert_eq!(
         UpdateCheck::outcome(&release_json("1.0.1", "https://example.org/dl"), "1.0.0"),
@@ -501,7 +502,8 @@ fn github_release_uses_installer_asset_of_this_system() {
         Some(UpdateRelease {
             version: "v1.4.0".into(),
             url: "https://example.org/Setup.exe".into(),
-            notes: Some("Fixes".into())
+            notes: Some("Fixes".into()),
+            install: None,
         })
     );
     assert_eq!(
@@ -544,7 +546,8 @@ fn each_system_downloads_its_own_installer_asset() {
         UpdateOutcome::Available(UpdateRelease {
             version: "v1.4.0".into(),
             url: expected.into(),
-            notes: Some("Fixes".into())
+            notes: Some("Fixes".into()),
+            install: None,
         })
     );
 }
@@ -713,4 +716,45 @@ fn a_nightly_build_is_offered_a_newer_nightly_of_the_same_number() {
         "0.2.0 Alpha"
     );
     assert_eq!(ReleaseChannel::local_version_of(ReleaseChannel::Nightly, None, "0.2.0 Alpha"), "0.2.0 Alpha");
+}
+
+#[test]
+fn github_assets_give_install_data_only_with_digest_and_signature() {
+    let feed = |assets: &str| {
+        format!(r#"{{"tag_name":"v2.0.0","html_url":"https://example.org/r","assets":[{assets}]}}"#).into_bytes()
+    };
+    let app = r#"{"name":"S.AppImage","browser_download_url":"https://example.org/S.AppImage","digest":"sha256:ABCD","size":42}"#;
+    let sig = r#"{"name":"S.AppImage.sig","browser_download_url":"https://example.org/S.AppImage.sig"}"#;
+    let full = UpdateCheck::github_release(&feed(&format!("{app},{sig}")), ".AppImage").expect("release");
+    let install = full.install.expect("install data");
+    assert_eq!(
+        (install.sha256.as_str(), install.sig_url.as_str(), install.size),
+        ("abcd", "https://example.org/S.AppImage.sig", Some(42))
+    );
+    assert_eq!(full.url, "https://example.org/S.AppImage");
+    // No signature asset, no digest, or no asset: link only.
+    assert!(UpdateCheck::github_release(&feed(app), ".AppImage").expect("release").install.is_none());
+    let bare = r#"{"name":"S.AppImage","browser_download_url":"https://example.org/S.AppImage"}"#;
+    let no_digest = format!("{bare},{sig}");
+    assert!(UpdateCheck::github_release(&feed(&no_digest), ".AppImage").expect("release").install.is_none());
+    let none = UpdateCheck::github_release(&feed(sig), ".AppImage").expect("release");
+    assert!((none.install.is_none(), none.url.as_str()) == (true, "https://example.org/r"));
+}
+
+#[test]
+fn update_addresses_are_https_or_the_local_test_feed() {
+    let ok = |u: &str, local: bool| UpdateCheck::url_allowed_with(u, local);
+    for local in [false, true] {
+        assert!(ok("https://example.org/a", local));
+        assert!(!ok("https://", local) && !ok("ftp://example.org/a", local) && !ok("file:///etc/passwd", local));
+        assert!(!ok("http://example.org/a", local), "other hosts are never allowed over http");
+        assert!(!ok("http://127.0.0.1%40other.example/", local) && !ok("http://127.0.0.1.evil.example:80/", local));
+        assert!(!ok("http://localhost:8000/", local) && !ok("http://127.0.0.2:8000/", local));
+        assert!(!ok("http://127.0.0.1:80%40other.example/", local) && !ok("http://127.0.0.1:/x", local));
+    }
+    assert!(!ok("http://127.0.0.1:8000/feed.json", false), "the switch is off by default");
+    assert!(ok("http://127.0.0.1:8000/feed.json", true) && ok("http://127.0.0.1:8000", true));
+    // Without the switch a local feed is not asked at all.
+    let o = block_on(UpdateCheck::check("1.0", "http://127.0.0.1:8000/f.json", |_| async { None }));
+    assert_eq!(o, UpdateOutcome::NotConfigured);
 }

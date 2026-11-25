@@ -48,12 +48,14 @@ pub fn mark(name: &str) {
 
 /// One log line through the sink, every time (no clock, no repeat filter): state changes that are not part of an open.
 pub fn note(line: &str) {
+    sq_os::trace::mark_dyn("note", line);
     if let Some(f) = SINK.get() {
         f(line);
     }
 }
 
 fn emit(ms: f64, name: &str) {
+    sq_os::trace::mark_dyn("open", name);
     if let Some(f) = SINK.get() {
         f(&format!("open +{ms:.0} ms {name}"));
     }

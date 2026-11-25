@@ -95,7 +95,9 @@ impl EditorSession {
     /// One turn of the proxy service: worker results in, new work out, then the monitors hear what changed. Returns the
     /// transcodes still to do for the queue popover.
     pub fn pump_proxies(&mut self) -> Vec<crate::BackgroundProxyJob> {
+        let playhead = self.playhead;
         let Some(p) = self.auto_proxy.as_mut() else { return Vec::new() };
+        p.set_playhead(playhead);
         p.pump();
         let jobs = p.background_jobs();
         self.apply_proxy_effects();
@@ -116,6 +118,11 @@ impl EditorSession {
         if let Some(r) = self.render_cache.as_mut() {
             r.set_held(policy.pauses_background_jobs);
         }
+    }
+
+    /// The "no room for preview files" line, once per project open; the app shows it in the status bar.
+    pub fn take_proxy_disk_notice(&mut self) -> Option<String> {
+        self.auto_proxy.as_mut().and_then(|p| p.take_disk_notice())
     }
 
     /// Cancel on a background job's row of the queue popover.

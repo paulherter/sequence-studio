@@ -364,3 +364,75 @@ fn b_frame_clip_end_frames_decode_every_time() {
         }
     }
 }
+
+/// Regression (graveyard SIGSEGV in CVMetalTexture::finalize, 2026-11-22): cached frames outlive the decoder that made
+/// them (a quality step or clip change drops the decoder and its texture cache first); dropping the frames afterwards
+/// on another thread must not touch a freed CVMetalTextureCache.
+#[test]
+fn frames_dropped_after_their_decoder_do_not_crash() {
+    let Some(gpu) = ready() else { return };
+    let Some(clip) = make_clip("outlive.mp4", "640x360", 1, &["-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "10"])
+    else {
+        return;
+    };
+    for _ in 0..20 {
+        let (_demuxer, dec) = open(&gpu, &clip);
+        let frames = block_on(dec.decode(0..=9)).unwrap();
+        drop(dec);
+        std::thread::spawn(move || drop(frames)).join().unwrap();
+    }
+}
+
+/// Frames dropped on another thread while the decoder keeps importing (and flushing its texture cache every 64 imports).
+#[test]
+fn frames_dropped_on_another_thread_while_decoding_do_not_crash() {
+    let Some(gpu) = ready() else { return };
+    let Some(clip) = make_clip("race.mp4", "640x360", 10, &["-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "10"])
+    else {
+        return;
+    };
+    let (demuxer, dec) = open(&gpu, &clip);
+    let n = demuxer.index().count();
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<DecodedFrame>>();
+    let graveyard = std::thread::spawn(move || rx.into_iter().for_each(drop));
+    for _ in 0..6 {
+        for start in (0..n).step_by(70) {
+            let end = (start + 69).min(n - 1);
+            tx.send(block_on(dec.decode(start..=end)).unwrap()).unwrap();
+        }
+    }
+    drop(tx);
+    graveyard.join().unwrap();
+}
+
+/// Two decoders (two Importers on the one shared cache) import on their own threads while a third thread drops the frames.
+#[test]
+fn two_decoders_import_while_a_third_thread_drops_frames() {
+    let Some(gpu) = ready() else { return };
+    let Some(clip) = make_clip("two.mp4", "640x360", 10, &["-c:v", "libx264", "-pix_fmt", "yuv420p", "-g", "10"])
+    else {
+        return;
+    };
+    let (tx, rx) = std::sync::mpsc::channel::<Vec<DecodedFrame>>();
+    let graveyard = std::thread::spawn(move || rx.into_iter().for_each(drop));
+    let workers: Vec<_> = (0..2)
+        .map(|_| {
+            let (tx, gpu, clip) = (tx.clone(), Arc::clone(&gpu), clip.clone());
+            std::thread::spawn(move || {
+                let (demuxer, dec) = open(&gpu, &clip);
+                let n = demuxer.index().count();
+                for _ in 0..4 {
+                    for start in (0..n).step_by(70) {
+                        let end = (start + 69).min(n - 1);
+                        tx.send(block_on(dec.decode(start..=end)).unwrap()).unwrap();
+                    }
+                }
+            })
+        })
+        .collect();
+    drop(tx);
+    for w in workers {
+        w.join().unwrap();
+    }
+    graveyard.join().unwrap();
+}

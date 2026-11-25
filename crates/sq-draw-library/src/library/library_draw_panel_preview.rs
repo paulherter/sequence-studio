@@ -35,7 +35,10 @@ impl LibraryDrawPanel {
 
     /// The sidebar width in points: stored (or default), within the limits for this panel width.
     pub fn sidebar_w(&self) -> f64 {
-        let w = library_preview_math::sidebar_width(Some(self.stored_sidebar_width.unwrap_or(Self::SIDEBAR_WIDTH)), self.size.width);
+        let w = library_preview_math::sidebar_width(
+            Some(self.stored_sidebar_width.unwrap_or(Self::SIDEBAR_WIDTH)),
+            self.size.width,
+        );
         let room = self.size.width - Self::CONTENT_MIN_WIDTH;
         if room >= library_preview_math::MIN_SIDEBAR_WIDTH { w.min(room) } else { w }
     }

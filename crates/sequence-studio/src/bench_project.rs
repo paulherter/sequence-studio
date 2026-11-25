@@ -3,7 +3,9 @@
 //! P1: one 4K 10-bit 4:2:2 layer with its sound. P2 (the reported stutter): the same clip plus a 4K clip above it at 50 %,
 //! both graded. Media: `bench-main.mp4` and `bench-overlay.mp4`, made or copied by `scripts/sq-bench.sh`.
 
-use sq_core_model::{AnimatedProperty, Clip, ClipEffect, MediaRef, Project, SequenceFormat, Timeline, Track, TrackKind};
+use sq_core_model::{
+    AnimatedProperty, Clip, ClipEffect, MediaRef, Project, SequenceFormat, Timeline, Track, TrackKind,
+};
 use sq_core_time::{Id, Time, TimeRange, Vec2};
 use sq_editor_session::ImportBackend;
 use std::path::{Path, PathBuf};
@@ -100,7 +102,8 @@ mod tests {
 
     fn media() -> [MediaRef; 2] {
         std::array::from_fn(|n| {
-            let mut m = MediaRef::new(id(101 + n as u128), MEDIA[n], &format!("/m/{}", MEDIA[n]), MediaFingerprint::new(1));
+            let mut m =
+                MediaRef::new(id(101 + n as u128), MEDIA[n], &format!("/m/{}", MEDIA[n]), MediaFingerprint::new(1));
             m.duration = Some(Time::seconds(40));
             m
         })

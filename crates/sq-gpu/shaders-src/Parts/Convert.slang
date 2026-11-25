@@ -102,25 +102,37 @@ float4 convertTexel(CompositeU u, Texture2D<float4> ty, Texture2D<float4> tc, ui
     return straightPoint(u, ty, tc, uv);
 }
 
-// Preview only (Compositor.gradesAtDisplaySize): converts to the size the layer is shown at, any ratio; n x n samples
-// per output texel (n = ceil(ratio), 1...4 per axis), averaged in light like the half-size path.
+// Preview only (Compositor.gradesAtDisplaySize): converts to the size the layer is shown at, any ratio. An area (box) average
+// of the source texels the output texel covers, edge texels weighted by their overlap, averaged in the encoded values (what the
+// paused full frame's minification does; `transfer` is not used). At most 16 texels per axis are read (a bigger footprint is stepped evenly).
 float4 convertTexelScaled(CompositeU u, Texture2D<float4> ty, Texture2D<float4> tc, uint transfer, uint2 gid, uint2 outPixels) {
     float2 outSz = float2(outPixels);
     float2 ts = float2(texSize(ty));
-    float2 uv = (float2(gid) + 0.5f) / outSz;
     float2 ratio = ts / outSz;
-    int2 n = clamp(int2(ceil(ratio - 0.01f)), int2(1), int2(4));
-    float2 stp = ratio / float2(n) / ts;
+    float2 lo = float2(gid) * ratio;
+    float2 hi = lo + ratio;
+    int2 k0 = int2(floor(lo + 0.001f));
+    int2 k1 = max(int2(ceil(hi - 0.001f)), k0 + 1);
+    int2 cnt = k1 - k0;
+    int2 stride = max((cnt + 15) / 16, int2(1));
     float3 acc = float3(0.0f);
     float a = 0.0f;
-    for (int j = 0; j < n.y; j++) {
-        for (int i = 0; i < n.x; i++) {
-            float2 q = uv + (float2(float(i), float(j)) + 0.5f - float2(n) * 0.5f) * stp;
+    float wsum = 0.0f;
+    for (int j = k0.y; j < k1.y; j += stride.y) {
+        float wy = max(0.0f, min(float(j + 1), hi.y) - max(float(j), lo.y));
+        if (stride.y > 1) { wy = 1.0f; }
+        for (int i = k0.x; i < k1.x; i += stride.x) {
+            float wx = max(0.0f, min(float(i + 1), hi.x) - max(float(i), lo.x));
+            if (stride.x > 1) { wx = 1.0f; }
+            float w = wx * wy;
+            float2 q = (float2(float(min(i, int(ts.x) - 1)), float(min(j, int(ts.y) - 1))) + 0.5f) / ts;
             float4 e = straightPoint(u, ty, tc, q);
-            acc += decodeCurve(e.rgb, transfer) * e.a;
-            a += e.a;
+            // Clamped per texel: the full path clips out-of-gamut texels (saturated chroma) before the box downscale; averaging unclipped values first lost 33 dB at 1/4.
+            acc += clamp(e.rgb, 0.0f, 1.0f) * (e.a * w);
+            a += e.a * w;
+            wsum += w;
         }
     }
     float3 m = a > 0.0f ? acc / a : float3(0.0f);
-    return float4(encodeCurve(m, transfer), a / float(n.x * n.y));
+    return float4(m, wsum > 0.0f ? a / wsum : 0.0f);
 }

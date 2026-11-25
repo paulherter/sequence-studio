@@ -236,6 +236,8 @@ pub struct Facts {
     pub home: Option<PathBuf>,
     /// The first line of `Copy details`: `Sequence Studio Setup 0.2.0 (x64) on Windows 11 26100`.
     pub system_line: String,
+    /// Windows: the other channel's app name when it is installed too and so keeps the shared settings and caches.
+    pub data_shared_with: Option<&'static str>,
 }
 
 /// The screen and everything the transitions need.
@@ -457,6 +459,8 @@ impl Machine {
                 self.start(JobRequest { job, location, desktop_shortcut: false, delete_data: false })
             }
             (Button::Uninstall, InstallerScreen::UninstallConfirm { job, location, delete_data, .. }) => {
+                // The engine keeps shared settings and caches; the end screen must say the same.
+                let delete_data = delete_data && self.facts.data_shared_with.is_none();
                 self.start(JobRequest { job, location, desktop_shortcut: false, delete_data })
             }
             (Button::Cancel, InstallerScreen::Progress { .. }) => {
@@ -672,6 +676,7 @@ mod tests {
             appimage_dir: Some(PathBuf::from("/home/paul/Downloads")),
             home: Some(PathBuf::from("/home/paul")),
             system_line: "Sequence Studio Setup 0.2.0 (x64) on Windows 11".into(),
+            data_shared_with: None,
         }
     }
 
@@ -969,6 +974,18 @@ mod tests {
         m.handle(Event::Tick, 1.3);
         assert_eq!(m.screen, InstallerScreen::Uninstalled { job: Job::Uninstall, deleted_data: true });
         assert_eq!(m.handle(Event::Enter, 2.0), vec![Effect::Exit(Exit::Closed)]);
+    }
+
+    #[test]
+    fn uninstall_with_the_other_channel_installed_never_reports_deleted_data() {
+        let mut m = uninstall();
+        m.facts.data_shared_with = Some("Sequence Studio Nightly");
+        m.handle(Event::Toggle(Check::DeleteData), 0.1);
+        let effects = m.handle(Event::Press(Button::Uninstall), 0.2);
+        assert!(matches!(&effects[0], Effect::StartJob(r) if !r.delete_data));
+        m.handle(Event::JobEnded(Ok(true)), 1.0);
+        m.handle(Event::Tick, 1.3);
+        assert_eq!(m.screen, InstallerScreen::Uninstalled { job: Job::Uninstall, deleted_data: false });
     }
 
     #[test]

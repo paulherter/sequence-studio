@@ -2506,7 +2506,8 @@ fn a_sequences_own_preview_quality_replaces_the_app_quality_and_is_not_remembere
     let dir = crate::test_rig::test_dir("sq-app-hosts-seq-quality");
     let mut r = root().with_prefs(&dir).with_source(source_host());
     let mut rig = crate::test_rig::Rig::new(edit_session());
-    let app = AppSettings { preview_quality_auto: false, default_quality: MonitorQuality::Half, ..AppSettings::standard() };
+    let app =
+        AppSettings { preview_quality_auto: false, default_quality: MonitorQuality::Half, ..AppSettings::standard() };
     app.save(&mut *r.persist.as_ref().expect("prefs").defaults().borrow_mut());
     r.apply_settings_changed(&app, &mut rig.session);
     let mut settings = rig.session.active_timeline().expect("timeline").settings();

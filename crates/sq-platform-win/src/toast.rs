@@ -14,8 +14,28 @@ use windows::Win32::System::Registry::{HKEY_CURRENT_USER, REG_SZ, RegSetKeyValue
 use windows::Win32::UI::Shell::SetCurrentProcessExplicitAppUserModelID;
 use windows::core::{HSTRING, IInspectable, PCWSTR};
 
-/// The id of the app for Windows notifications and the taskbar; the installer shortcut uses the same text.
-pub const APP_USER_MODEL_ID: &str = "SequenceStudio.App";
+/// Whether this build was packaged for the Nightly channel (`SQ_CHANNEL` at compile time).
+const fn nightly_build() -> bool {
+    match option_env!("SQ_CHANNEL") {
+        Some(c) => {
+            let (c, want) = (c.as_bytes(), b"nightly");
+            let mut i = 0;
+            let mut same = c.len() == want.len();
+            while same && i < c.len() {
+                same = c[i] == want[i];
+                i += 1;
+            }
+            same
+        }
+        None => false,
+    }
+}
+
+/// The id of the app for Windows notifications and the taskbar; the installer shortcut of the same channel uses the
+/// same text (`sq_setup_engine::Identity::aumid`).
+pub const APP_USER_MODEL_ID: &str = if nightly_build() { "SequenceStudio.Nightly.App" } else { "SequenceStudio.App" };
+
+const APP_DISPLAY_NAME: &str = if nightly_build() { "Sequence Studio Nightly" } else { "Sequence Studio" };
 
 /// Toasts still alive keep their click handler; older ones are dropped.
 const KEEP: usize = 8;
@@ -41,7 +61,7 @@ fn set_string(subkey: &str, name: &str, value: &str) -> bool {
 /// Makes the id known (display name and icon) and names it as this process's id. False when the registry refused.
 pub fn register_app_id(exe: &Path) -> bool {
     let key = format!("Software\\Classes\\AppUserModelId\\{APP_USER_MODEL_ID}");
-    let ok = set_string(&key, "DisplayName", "Sequence Studio") && set_string(&key, "IconUri", &exe.to_string_lossy());
+    let ok = set_string(&key, "DisplayName", APP_DISPLAY_NAME) && set_string(&key, "IconUri", &exe.to_string_lossy());
     // SAFETY: the id string is alive for the call.
     let named = unsafe { SetCurrentProcessExplicitAppUserModelID(&HSTRING::from(APP_USER_MODEL_ID)) }.is_ok();
     ok && named

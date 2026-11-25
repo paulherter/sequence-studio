@@ -1,6 +1,6 @@
 //! The command line of the setup program (spec §10.1, §10.2).
 //!
-//! `SequenceStudio-Setup.exe [--quiet] [--dir <folder>] [--desktop]` installs or updates;
+//! `SequenceStudio-Setup.exe [--quiet] [--dir <folder>] [--desktop] [--wait-pid <pid>] [--launch] [--cleanup]` installs or updates;
 //! `Uninstall Sequence Studio.exe --uninstall [--quiet] [--delete-data]` removes; the uninstaller starts a copy of itself
 //! as `--uninstall --from <folder>` so its own file can go too; `--pack <stage> --out <setup.exe>` makes a setup program.
 
@@ -16,6 +16,12 @@ pub struct Args {
     /// The install folder, for tests and scripts.
     pub dir: Option<PathBuf>,
     pub desktop: bool,
+    /// A quiet run first waits until this process has ended (the app that started the update).
+    pub wait_pid: Option<u32>,
+    /// A quiet run starts the installed app when it is done.
+    pub launch: bool,
+    /// A quiet run that succeeded deletes the setup file itself (the updater's downloaded copy).
+    pub cleanup: bool,
     pub delete_data: bool,
     /// `--pack <stage folder>` and `--out <file>`.
     pub pack: Option<PathBuf>,
@@ -32,6 +38,13 @@ impl Args {
                 "--quiet" => out.quiet = true,
                 "--uninstall" => out.uninstall = true,
                 "--desktop" => out.desktop = true,
+                "--launch" => out.launch = true,
+                "--cleanup" => out.cleanup = true,
+                "--wait-pid" => {
+                    let text = it.next().ok_or("--wait-pid needs a value")?;
+                    out.wait_pid =
+                        Some(text.parse().map_err(|_| format!("--wait-pid needs a process number, not {text}"))?);
+                }
                 "--delete-data" => out.delete_data = true,
                 "--from" => out.from = Some(value("--from")?),
                 "--dir" => out.dir = Some(value("--dir")?),
@@ -61,6 +74,15 @@ mod tests {
         assert!(u.uninstall && u.delete_data && !u.quiet);
         assert_eq!(u.from, Some(PathBuf::from("C:\\App")));
         assert_eq!(parse("").unwrap_or_default(), Args::default());
+    }
+
+    #[test]
+    fn the_update_options_wait_for_the_app_and_launch_it_again() {
+        let a = parse("--quiet --wait-pid 4242 --launch --cleanup").unwrap_or_default();
+        assert_eq!((a.wait_pid, a.launch, a.quiet, a.cleanup), (Some(4242), true, true, true));
+        assert_eq!(parse("--quiet").unwrap_or_default().wait_pid, None);
+        assert!(parse("--wait-pid").is_err());
+        assert!(parse("--wait-pid soon").is_err());
     }
 
     #[test]

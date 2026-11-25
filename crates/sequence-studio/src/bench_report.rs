@@ -18,6 +18,8 @@ pub struct BenchOpts {
     pub tags: Vec<(String, String)>,
     /// The Program monitor's playback quality at the start (`--quality`, default Auto like a fresh install).
     pub quality: BenchQuality,
+    /// `--bench-verify`: read every new picture's barcode back and compare it with the presenter's flag.
+    pub verify: bool,
 }
 
 /// `--quality auto|full|half|quarter`: what Preferences > Playback holds for the run.
@@ -98,8 +100,11 @@ impl QualityTrace {
 
     /// One text line for the run log.
     pub fn line(&self) -> String {
-        let steps: Vec<String> =
-            self.changes.iter().map(|c| format!("{} at {:.1}s play / {:.1}s timeline", c.to, c.at_play_s, c.timeline_s)).collect();
+        let steps: Vec<String> = self
+            .changes
+            .iter()
+            .map(|c| format!("{} at {:.1}s play / {:.1}s timeline", c.to, c.at_play_s, c.timeline_s))
+            .collect();
         format!(
             "quality: requested {}, start {}, {} change(s){}{}, final {}\n",
             self.requested,
@@ -180,6 +185,9 @@ pub struct BenchReport {
     pub gpu_busy: u64,
     pub machine: Machine,
     pub quality: QualityTrace,
+    /// Composites per shown frame (B2; 1.0 = one composite for each frame).
+    pub composites_per_shown: f64,
+    pub verify: Option<crate::bench_frames::Verify>,
 }
 
 /// Which machine and how loaded it was.
@@ -209,12 +217,13 @@ impl Machine {
         let cpu = if cfg!(target_os = "macos") {
             run("sysctl", &["-n", "machdep.cpu.brand_string"])
         } else {
-            std::fs::read_to_string("/proc/cpuinfo")
-                .ok()
-                .and_then(|t| t.lines().find(|l| l.starts_with("model name"))?.split_once(':').map(|(_, v)| v.trim().to_string()))
+            std::fs::read_to_string("/proc/cpuinfo").ok().and_then(|t| {
+                t.lines().find(|l| l.starts_with("model name"))?.split_once(':').map(|(_, v)| v.trim().to_string())
+            })
         };
         let load_1m = if cfg!(target_os = "macos") {
-            run("sysctl", &["-n", "vm.loadavg"]).and_then(|s| s.trim_matches(|c| c == '{' || c == '}' || c == ' ').split(' ').next()?.parse().ok())
+            run("sysctl", &["-n", "vm.loadavg"])
+                .and_then(|s| s.trim_matches(|c| c == '{' || c == '}' || c == ' ').split(' ').next()?.parse().ok())
         } else {
             std::fs::read_to_string("/proc/loadavg").ok().and_then(|t| t.split(' ').next()?.parse().ok())
         };
@@ -269,6 +278,11 @@ impl BenchReport {
                 "av_drift_max_abs_ms": self.drift_max_abs_ms, "av_drift_mean_ms": self.drift_mean_ms,
             },
             "quality": self.quality.to_json(),
+            "composites_per_shown": self.composites_per_shown,
+            "verify": self.verify.as_ref().map(|v| json!({
+                "checked": v.checked, "barcode_correct": v.barcode_correct, "presenter_correct": v.presenter_correct,
+                "disagree": v.disagree, "unreadable": v.unreadable,
+            })),
             "ui": { "frames_per_s": self.ui_frames_per_s, "avg_ms": self.ui_avg_ms },
             "rss_mb": { "start": self.rss_mb.0, "max": self.rss_mb.1, "end": self.rss_mb.2 },
         })
@@ -316,7 +330,7 @@ mod tests {
         assert_eq!(j["gap_ms"]["p95"], 40.0);
         assert_eq!(j["audio"]["underruns_per_min"], 6.0);
         assert!(j["picture"]["play_first_ms"].is_null());
-        for key in ["machine", "run", "picture", "gap_ms", "audio", "ui", "rss_mb", "quality"] {
+        for key in ["machine", "run", "picture", "gap_ms", "audio", "ui", "rss_mb", "quality", "composites_per_shown"] {
             assert!(j.get(key).is_some(), "{key}");
         }
     }
@@ -331,7 +345,10 @@ mod tests {
         assert_eq!(t.current(), "quarter");
         let r = BenchReport { quality: t, ..BenchReport::default() };
         let q = &r.to_json()["quality"];
-        assert_eq!((q["requested"].as_str(), q["start"].as_str(), q["final"].as_str()), (Some("auto"), Some("half"), Some("quarter")));
+        assert_eq!(
+            (q["requested"].as_str(), q["start"].as_str(), q["final"].as_str()),
+            (Some("auto"), Some("half"), Some("quarter"))
+        );
         assert_eq!(q["changes"][0]["to"], "quarter");
         assert_eq!(q["changes"][0]["timeline_s"], 13.5);
         assert!(QualityTrace::new("full", "full").to_json()["changes"].as_array().is_some_and(Vec::is_empty));

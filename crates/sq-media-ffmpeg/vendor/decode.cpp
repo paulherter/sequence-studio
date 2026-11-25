@@ -77,7 +77,7 @@ static int openHardwareDevice(AVBufferRef **device) {
 }
 
 int sq_dec_open(const char *codecName, const uint8_t *extradata, int extradataSize, int width, int height, int bitsPerCodedSample, uint32_t codecTag, int tbNum,
-                int tbDen, int hardware, int extraHWFrames, SQFFDecoder **out, char *err, int errLen) {
+                int tbDen, int hardware, int extraHWFrames, int swThreads, SQFFDecoder **out, char *err, int errLen) {
     *out = nullptr;
     const AVCodecDescriptor *desc = avcodec_descriptor_get_by_name(codecName);
     const AVCodec *codec = desc ? avcodec_find_decoder(desc->id) : nullptr;
@@ -114,8 +114,16 @@ int sq_dec_open(const char *codecName, const uint8_t *extradata, int extradataSi
         // a core in playback, two slice threads 339 % with no dropped frame. SQ_DEC_THREADS / SQ_DEC_THREAD_TYPE
         // (1 frame, 2 slice, 3 both) override it for experiments.
         const char *tc = getenv("SQ_DEC_THREADS"), *tt = getenv("SQ_DEC_THREAD_TYPE");
-        dec->ctx->thread_count = tc ? atoi(tc) : 2;
-        dec->ctx->thread_type = tt ? atoi(tt) : FF_THREAD_SLICE;
+        // A picture of 4K and up (the camera files the hardware cannot take, 4:2:2 10-bit) is where a jump or an edit
+        // stalls: the decode of the GOP up to the target frame ran 1-2 s on two slice threads and 0.3 s on four frame+slice
+        // threads (notes/LEARNINGS.md, edit bench). Smaller pictures keep the cheaper two slice threads.
+        // Pixel count, not width: a portrait 2160x3840 file is as heavy. Threads follow the cores (a layered project opens
+        // several such decoders at once): a quarter of the logical cores, 2 to 4.
+        const bool big = (long)width * height >= 3500000L;
+        const unsigned cores = std::thread::hardware_concurrency();
+        const int bigThreads = cores >= 16 ? 4 : (cores >= 8 ? 3 : 2);
+        dec->ctx->thread_count = tc ? atoi(tc) : (swThreads > 0 ? swThreads : (big ? bigThreads : 2));
+        dec->ctx->thread_type = tt ? atoi(tt) : (big ? (FF_THREAD_FRAME | FF_THREAD_SLICE) : FF_THREAD_SLICE);
     }
     if ((e = avcodec_open2(dec->ctx, codec, nullptr)) < 0) { sqSetError(err, errLen, "codec open", e); sq_dec_close(dec); return e; }
     snprintf(dec->name, sizeof dec->name, "%s (%s)", codec->name, hardware ? kHwName : "software");
@@ -305,10 +313,13 @@ template <int B> inline int rd(const uint8_t *row, int x) {
     if constexpr (B == 1) return row[x]; else return ((const uint16_t *)row)[x];
 }
 
-/// Output rows [y0, y1) (even) of the reduced picture: luma W x H, interleaved chroma (W/2) x (H/2) after it. `Deep`
-/// writes 16-bit samples MSB-aligned (P010), else 8 bits.
-template <int B, bool Deep>
-void reduceRows(const Planes &p, uint8_t *out, int W, int H, int d, int y0, int y1, int bits) {
+/// Output rows [y0, y1) (even) of the reduced picture: luma W x H, then interleaved chroma after it: (W/2) x (H/2) rows, or
+/// (W/2) x H when `v422` (a 4:2:2 source keeps its full chroma height: P210 layout, no vertical merge). `Deep` writes 16-bit
+/// samples MSB-aligned (P010 / P210), else 8 bits. `D` is the reduction when known at compile time (0: `dr`), so the box
+/// sums and their division fold into shifts the compiler vectorizes.
+template <int B, bool Deep, int D>
+void reduceRows(const Planes &p, uint8_t *out, int W, int H, int dr, int y0, int y1, int bits, bool v422) {
+    const int d = D ? D : dr;
     const int area = d * d, half = area / 2, up = 16 - bits;
     for (int y = y0; y < y1; y++) {
         for (int x = 0; x < W; x++) {
@@ -322,11 +333,12 @@ void reduceRows(const Planes &p, uint8_t *out, int W, int H, int d, int y0, int 
             else out[(size_t)y * W + x] = (uint8_t)v;
         }
     }
-    // Chroma pair (cx, cy) covers luma [2d cx, 2d cx + 2d) x [2d cy, ...): in source chroma samples bw x bh from (bx, by).
-    const int bw = 2 * d / p.sx, bh = 2 * d / p.sy, carea = bw * bh, chalf = carea / 2;
+    // Chroma pair (cx, cy) covers luma [2d cx, 2d cx + 2d) x [vo d cy, ...): in source chroma samples bw x bh from (bx, by).
+    const int vo = v422 ? 1 : 2;
+    const int bw = 2 * d / p.sx, bh = vo * d / p.sy, carea = bw * bh, chalf = carea / 2;
     const int CW = W / 2;
     uint8_t *cbase = out + (size_t)W * H * (Deep ? 2 : 1);
-    for (int cy = y0 / 2; cy < y1 / 2; cy++) {
+    for (int cy = y0 / vo; cy < y1 / vo; cy++) {
         for (int cx = 0; cx < CW; cx++) {
             int cb = 0, cr = 0;
             for (int dy = 0; dy < bh; dy++) {
@@ -346,6 +358,16 @@ void reduceRows(const Planes &p, uint8_t *out, int W, int H, int d, int y0, int 
             if constexpr (Deep) { ((uint16_t *)cbase)[o] = (uint16_t)(vb << up); ((uint16_t *)cbase)[o + 1] = (uint16_t)(vr << up); }
             else { cbase[o] = (uint8_t)vb; cbase[o + 1] = (uint8_t)vr; }
         }
+    }
+}
+
+template <int B, bool Deep>
+void reduceBand(const Planes &p, uint8_t *out, int W, int H, int d, int y0, int y1, int bits, bool v422) {
+    switch (d) {
+    case 1: reduceRows<B, Deep, 1>(p, out, W, H, d, y0, y1, bits, v422); break;
+    case 2: reduceRows<B, Deep, 2>(p, out, W, H, d, y0, y1, bits, v422); break;
+    case 4: reduceRows<B, Deep, 4>(p, out, W, H, d, y0, y1, bits, v422); break;
+    default: reduceRows<B, Deep, 0>(p, out, W, H, d, y0, y1, bits, v422); break;
     }
 }
 
@@ -377,7 +399,16 @@ int sq_frame_download_reduced_size(const SQFFFrame *f, int divisor, int *outWidt
     int w = f->frame->width, h = f->frame->height, d = divisor < 1 ? 1 : divisor;
     if (w % (2 * d) || h % (2 * d)) return 0;
     *outWidth = w / d; *outHeight = h / d;
+    if (sq_frame_reduced_422(f)) return (w / d) * (h / d) * 2 * (downloadFormat(f->frame) == AV_PIX_FMT_P010LE ? 2 : 1);
     return av_image_get_buffer_size(downloadFormat(f->frame), w / d, h / d, 1);
+}
+
+int sq_frame_reduced_422(const SQFFFrame *f) {
+    const AVFrame *s = f->frame;
+    if (s->format == kHwFormat) return 0;
+    const AVPixFmtDescriptor *d = av_pix_fmt_desc_get((AVPixelFormat)s->format);
+    return d && d->comp[0].depth > 8 && d->log2_chroma_w == 1 && d->log2_chroma_h == 0 && d->nb_components >= 3
+        && !(d->flags & (AV_PIX_FMT_FLAG_RGB | AV_PIX_FMT_FLAG_PAL | AV_PIX_FMT_FLAG_BE)) ? 1 : 0;
 }
 
 int sq_frame_download_reduced(const SQFFFrame *f, int divisor, int threads, uint8_t *buf, int cap) {
@@ -386,7 +417,9 @@ int sq_frame_download_reduced(const SQFFFrame *f, int divisor, int threads, uint
     if (w % (2 * d) || h % (2 * d)) return 1;
     bool deep = downloadFormat(src) == AV_PIX_FMT_P010LE;
     int W = w / d, H = h / d;
-    if (cap < av_image_get_buffer_size(deep ? AV_PIX_FMT_P010LE : AV_PIX_FMT_NV12, W, H, 1)) return AVERROR(ENOSPC);
+    bool v422 = sq_frame_reduced_422(f) != 0;
+    int need = v422 ? W * H * 2 * (deep ? 2 : 1) : av_image_get_buffer_size(deep ? AV_PIX_FMT_P010LE : AV_PIX_FMT_NV12, W, H, 1);
+    if (cap < need) return AVERROR(ENOSPC);
     AVFrame *sw = nullptr;
     int e = 0;
     if (src->format == kHwFormat) {
@@ -404,9 +437,9 @@ int sq_frame_download_reduced(const SQFFFrame *f, int divisor, int threads, uint
         int y0 = i * rows, y1 = y0 + rows < H ? y0 + rows : H;
         if (y0 >= y1) return;
         if (bits > 8) {
-            reduceRows<2, true>(p, buf, W, H, d, y0, y1, bits);
+            reduceBand<2, true>(p, buf, W, H, d, y0, y1, bits, v422);
         } else {
-            reduceRows<1, false>(p, buf, W, H, d, y0, y1, bits);
+            reduceBand<1, false>(p, buf, W, H, d, y0, y1, bits, v422);
         }
     };
     std::vector<std::thread> pool;

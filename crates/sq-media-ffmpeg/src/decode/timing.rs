@@ -156,6 +156,22 @@ impl DecodePlan {
         (fresh, true)
     }
 
+    /// Why `start` seeks (trace label): the decoder had no position, the range lies behind it, or it lies in a later GOP.
+    pub fn seek_reason(
+        range: &RangeInclusive<usize>,
+        index: &SampleIndex,
+        cursor: Option<DecodeCursor>,
+        flush: bool,
+    ) -> &'static str {
+        match cursor {
+            _ if !flush => "continue",
+            None => "no-position",
+            Some(c) if *range.start() <= c.last_presented => "behind",
+            Some(c) if index.reference_start_ordinal(*range.start()) > c.next_ordinal => "later-gop",
+            Some(_) => "same-gop-refs",
+        }
+    }
+
     /// The frames of `range` the caller expects back (zero-duration entries the edit list hides are left out).
     pub fn wanted(range: &RangeInclusive<usize>, index: &SampleIndex) -> HashSet<usize> {
         range.clone().filter(|i| index.entries()[*i].duration > Time::ZERO).collect()

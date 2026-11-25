@@ -94,6 +94,7 @@ mod shell_templates;
 mod shell_text_input;
 mod shell_timeline_ops;
 mod shell_trim;
+mod shell_update;
 mod shell_view_commands;
 mod shell_welcome;
 mod shell_whats_new;
@@ -166,7 +167,9 @@ pub use shell_preferences::{
 pub use shell_quick_apply::{QuickApplyEvent, QuickApplyPopup};
 pub use shell_settings::{BytesView, MemoryDefaults, NumbersView, SharedDefaults, SharedView};
 pub use shell_shortcuts::{ShellShortcutsEditor, ShortcutsFlow, TemplateChoice};
-pub use shell_start::{START_BAR_EDGE, LocalCalendar, ShellStartScreen, StartAction, StartEnv, StartHit, StartSort, StartTab};
+pub use shell_start::{
+    LocalCalendar, START_BAR_EDGE, ShellStartScreen, StartAction, StartEnv, StartHit, StartSort, StartTab,
+};
 pub use shell_start_windows::{ShellStartWindows, StartWindowState, StartWindowStep};
 pub use shell_text_input::{ShellTextInput, TextOutput};
 

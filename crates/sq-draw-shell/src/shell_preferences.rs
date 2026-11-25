@@ -2411,7 +2411,9 @@ mod tests {
         assert!(ShellPreferences::search_form("audio", &s, &x, &c, &d).rows().len() > 5);
         // nothing found: a line says so
         let none = ShellPreferences::search_form("qqqzzz", &s, &x, &c, &d);
-        assert!(matches!(none.rows(), [Row::Text(t), Row::Buttons { id, .. }] if t.contains("qqqzzz") && id == "clearSearch"));
+        assert!(
+            matches!(none.rows(), [Row::Text(t), Row::Buttons { id, .. }] if t.contains("qqqzzz") && id == "clearSearch")
+        );
     }
 
     #[test]
@@ -2423,7 +2425,9 @@ mod tests {
         assert!(captions(&f).contains(&"Shortcuts".to_string()), "{:?}", captions(&f));
         assert!(f.rows().iter().any(|r| matches!(r, Row::Text(t) if t.starts_with("Undo"))));
         let f = ShellPreferences::search_form("qqqzzz", &s, &x, &c, &d);
-        assert!(matches!(f.rows(), [Row::Text(t), Row::Buttons { id, .. }] if t.contains("qqqzzz") && id == "clearSearch"));
+        assert!(
+            matches!(f.rows(), [Row::Text(t), Row::Buttons { id, .. }] if t.contains("qqqzzz") && id == "clearSearch")
+        );
         // the sidebar counter of Shortcuts is the changed bindings
         let pages = ShellPreferences::visible_pages(&c);
         let at = pages.iter().position(|p| *p == Page::Shortcuts).unwrap();
@@ -2852,7 +2856,7 @@ mod tests {
         assert_eq!(ShellPreferences::button_action("libFolderAdd", 0, None), Some(ButtonAction::AddLibraryFolder));
         assert_eq!(ShellPreferences::button_action("cacheClear", 0, None), Some(ButtonAction::ClearCache));
         assert_eq!(ShellPreferences::button_action("clearSearch", 0, None), Some(ButtonAction::ClearSearch));
-        assert_eq!(ShellHost::folder_detail(std::path::Path::new("/nonexistent-sq-folder"), true).ends_with("(missing)"), true);
+        assert!(ShellHost::folder_detail(std::path::Path::new("/nonexistent-sq-folder"), true).ends_with("(missing)"));
         assert!(!ShellHost::folder_detail(std::path::Path::new("/nonexistent-sq-folder"), false).contains("missing"));
     }
 

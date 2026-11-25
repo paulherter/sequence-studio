@@ -1,7 +1,7 @@
 //! File > Export on the desktop: frames come from the same render thread as the Program monitor (a paused engine that
 //! seeks to each frame), the FFmpeg encoder writes the file.
 //!
-//! A preset size that differs from the sequence's is scaled with one bilinear tap as Swift (`export_scale.rs`). shortcut: the engine
+//! A preset shape that differs from the sequence's is fitted unstretched on black bars (`export_scale.rs`, `fit_rect`). shortcut: the engine
 //! renders one frame at a time; upgrade with a sized composite. The audio is the playback mixer run offline
 //! (`sq-app-hosts` `export_audio.rs`).
 
@@ -71,6 +71,9 @@ fn stem_audio(snapshot: &ExportSnapshot, stem: &Stem, range: TimeRange) -> Resul
 /// The RGBA pixels of a frame the engine rendered (`EngineFrames` wraps them in a `MemoryFrame`).
 fn frame_pixels(frame: &ExportFrame) -> Option<RgbaImage> {
     let memory = frame.storage_as::<MemoryFrame>()?;
+    if frame.pixel_format == SQFramePixelFormat::Nv12 {
+        return Some(crate::export_yuv::nv12_to_rgba(&memory.bytes, frame.width, frame.height));
+    }
     if frame.pixel_format != SQFramePixelFormat::Rgba8 {
         return None;
     }
@@ -86,6 +89,16 @@ pub(crate) fn sources(
     snapshot: &ExportSnapshot,
     id: Id,
     settings: &ExportSettings,
+) -> Result<ExportSources, ExportError> {
+    sources_in(snapshot, id, settings, true)
+}
+
+/// `gpu_yuv`: an 8-bit 4:2:0 delivery reads back NV12 made on the GPU; `false` keeps RGBA frames (tests that read the pixels).
+fn sources_in(
+    snapshot: &ExportSnapshot,
+    id: Id,
+    settings: &ExportSettings,
+    gpu_yuv: bool,
 ) -> Result<ExportSources, ExportError> {
     let timeline = snapshot
         .timelines
@@ -105,6 +118,7 @@ pub(crate) fn sources(
         (video.width, video.height),
         settings.captions == sq_export::core::settings::CaptionMode::BurnIn,
         settings.applied_hdr_delivery().is_some(),
+        gpu_yuv && settings.source_pixel_format() == sq_export::core::settings::ExportPixelFormat::Yuv420v,
         snapshot.use_proxies_for_export,
     )
     .inspect_err(|e| crate::applog::info(&format!("export source for {id:?} failed: {e}")))?;
@@ -150,6 +164,61 @@ struct EngineFrames {
     size: (usize, usize),
     /// HDR delivery: frames are the half-float working composite (`Shown::linear`), not the 8-bit Rec.709 picture.
     hdr: bool,
+    /// `SQ_EXPORT_TRACE=1`: summed ms of the render side (seek+compose wait, GPU readback, CPU resample).
+    trace: std::cell::Cell<[f64; 3]>,
+    /// RGB -> NV12 on the GPU (`export_yuv.rs`) for an 8-bit 4:2:0 delivery; `None` keeps the RGBA frames and the CPU swscale.
+    yuv: Option<crate::export_yuv::YuvConverter>,
+    /// The frame submitted ahead (index, readback in flight): two frames are in flight while the encoder works on the first.
+    pending: Option<(usize, Pending)>,
+    /// The index the next sequential call asks for; a jump (the export dialog's preview) does not prefetch.
+    expected: usize,
+}
+
+/// Whether an export decodes in software: the VA-API copy of a decoded 4K picture to memory ran 20 ms (about 55 pictures/s, three copy
+/// threads did not scale it), the software decoder 8 ms on 4 threads (2x the export speed, 8 cores+). Linux only: the Windows hardware decoder
+/// hands out textures (no copy) and was not measured; the Mac decodes through VideoToolbox.
+fn export_prefers_software() -> bool {
+    cfg!(target_os = "linux")
+        && std::env::var_os("SQ_EXPORT_HW_DECODE").is_none_or(|v| v != "1")
+        && std::thread::available_parallelism().is_ok_and(|n| n.get() >= 8)
+}
+
+/// A frame whose readback was submitted and not yet waited for.
+enum Pending {
+    Gpu {
+        ticket: sq_gpu::readback::ReadbackTicket,
+        submitted: wgpu::SubmissionIndex,
+        w: usize,
+        h: usize,
+        nv12: bool,
+    },
+    /// A gap on every video track: black at the export size.
+    Black,
+}
+
+impl Drop for EngineFrames {
+    fn drop(&mut self) {
+        if std::env::var_os("SQ_EXPORT_TRACE").is_some() {
+            let [w, r, s] = self.trace.get();
+            eprintln!(
+                "export-trace render side: {} frames, seek+compose {w:.0} ms, readback {r:.0} ms, resample {s:.0} ms",
+                self.count
+            );
+            eprintln!("export-trace stages: {:?}", self.handle.query(|e| e.stats().report()).unwrap_or_default());
+            // The engine's own timers (a paused engine books no rows): decode is summed over the lane threads, which overlap the render thread.
+            let (dec, comp, n, gw, ph, idle, up) = sq_playback::engine::frame_trace::unbooked();
+            let wanted = sq_playback::engine::frame_trace::wanted_pictures();
+            for (m, n, ms) in sq_playback::engine::frame_trace::decode_by_media().iter().take(8) {
+                eprintln!("export-trace lane media {m}: {n} pictures, {ms:.0} ms");
+            }
+            sq_playback::engine::frame_trace::set_enabled(false);
+            eprintln!("export-trace pictures wanted by the composites: {wanted}");
+            eprintln!(
+                "export-trace engine: decode {dec:.0} ms (lanes), compose {comp:.0} ms in {n} composites, gpu_wait {gw:.0} ms, phases layers/draw/submit/poll {:.0}/{:.0}/{:.0}/{:.0}, idle {idle:.0} ms, upload {up:.0} ms",
+                ph[0], ph[1], ph[2], ph[3]
+            );
+        }
+    }
 }
 
 impl EngineFrames {
@@ -162,6 +231,7 @@ impl EngineFrames {
         size: (i64, i64),
         burn_captions: bool,
         hdr: bool,
+        yuv420: bool,
         use_proxies: bool,
     ) -> Result<EngineFrames, ExportError> {
         let gpu = Gpu::new().map_err(|e| ExportError::Other(format!("No graphics device for the export: {e}")))?;
@@ -172,7 +242,9 @@ impl EngineFrames {
             .filter_map(|m| Some((m.id, m.info.as_ref()?.video.as_ref()?.deinterlace_field_order()?)))
             .collect();
         let opener: Arc<dyn MediaOpener> = Arc::new(
-            DefaultOpener::new(Some(Arc::clone(&gpu))).with_deinterlace(Arc::new(move |id| fields.get(&id).copied())),
+            DefaultOpener::new(Some(Arc::clone(&gpu)))
+                .with_software_ffmpeg(export_prefers_software())
+                .with_deinterlace(Arc::new(move |id| fields.get(&id).copied())),
         );
         let opener = crate::proxy::export_opener(opener, use_proxies);
         let clock: Arc<dyn PlaybackClock> = Arc::new(HostClock::new());
@@ -197,6 +269,10 @@ impl EngineFrames {
             Arc::new(move |id| infos.get(&id).cloned()),
             hdr,
         )));
+        if std::env::var_os("SQ_EXPORT_TRACE").is_some() {
+            sq_playback::engine::frame_trace::set_enabled(true);
+        }
+        // Software decoding beats the GPU decoder for an export on a machine with cores to spare (`SQ_EXPORT_HW_DECODE=1` keeps it).
         let handle = ProgramEngine::spawn(deps);
         let used: BTreeSet<Id> =
             snapshot.timelines.iter().flat_map(|t| &t.tracks).flat_map(|tr| tr.clips()).map(|c| c.media).collect();
@@ -207,9 +283,23 @@ impl EngineFrames {
             .map(|m| MediaRef { id: m.id, path: m.path.clone() })
             .collect();
         handle.set_media(refs);
+        // The preset's size is made by the compositor's Present pass (bilinear in linear light on the GPU), so the frame is
+        // read back once at its final size (`SQ_EXPORT_CPU_SCALE=1` keeps the old CPU path, for A/B runs). The half-float HDR picture still scales on the CPU (`export_scale.rs`).
+        let target = (u32::try_from(size.0).unwrap_or(0), u32::try_from(size.1).unwrap_or(0));
+        if !hdr
+            && std::env::var_os("SQ_EXPORT_CPU_SCALE").is_none()
+            && target.0 > 0
+            && target.1 > 0
+            && target != (timeline.format.width as u32, timeline.format.height as u32)
+        {
+            handle.set_output_size(Some(target));
+        }
         let sequences: HashMap<Id, Timeline> = snapshot.timelines.iter().map(|t| (t.id, t.clone())).collect();
         handle.set_timeline(timeline.clone(), sequences);
         let (w, h) = (usize::try_from(size.0).unwrap_or(0), usize::try_from(size.1).unwrap_or(0));
+        let yuv = (yuv420 && !hdr && std::env::var_os("SQ_EXPORT_CPU_YUV").is_none())
+            .then(|| crate::export_yuv::YuvConverter::new(&gpu))
+            .flatten();
         Ok(EngineFrames {
             handle,
             gpu,
@@ -218,6 +308,10 @@ impl EngineFrames {
             count: export_frame_count(range, frame_duration),
             size: (w, h),
             hdr,
+            trace: std::cell::Cell::new([0.0; 3]),
+            yuv,
+            pending: None,
+            expected: 0,
         })
     }
 
@@ -226,8 +320,9 @@ impl EngineFrames {
     }
 
     /// The composite at `t` (RGBA8 Rec.709 code values, or half-float linear light for an HDR delivery, 8 bytes a pixel),
-    /// once the engine shows the exact pictures of it.
-    fn composite(&self, t: Time) -> Result<(Vec<u8>, usize, usize), ExportError> {
+    /// once the engine shows the exact pictures of it; its readback is submitted, not waited for.
+    fn submit(&self, t: Time) -> Result<Pending, ExportError> {
+        let t_start = Instant::now();
         self.handle.seek(t);
         self.handle.sync();
         let end = Instant::now() + FRAME_TIMEOUT;
@@ -239,10 +334,13 @@ impl EngineFrames {
                 let (w, h) = (frame.1.0 as usize, frame.1.1 as usize);
                 // The working canvas is the compositor's one, so it holds this very composite like `frame` does.
                 let texture = if self.hdr { shown.linear.as_ref().unwrap_or(frame.0) } else { frame.0 };
-                let pixels = self.gpu.read_texture(texture).map_err(|e| ExportError::Other(e.to_string()))?;
-                if pixels.len() == w * h * self.bytes_per_pixel() {
-                    return Ok((pixels, w, h));
-                }
+                let t_read = Instant::now();
+                let pending = self.start_readback(texture, w, h)?;
+                let mut tr = self.trace.get();
+                tr[0] += (t_read - t_start).as_secs_f64() * 1e3;
+                tr[1] += t_read.elapsed().as_secs_f64() * 1e3;
+                self.trace.set(tr);
+                return Ok(pending);
             }
             // A gap on every video track: the engine publishes an exact shown frame with no picture; the export writes black.
             if let Some(shown) = self.handle.latest_shown()
@@ -252,13 +350,48 @@ impl EngineFrames {
                 && self.size.0 > 0
                 && self.size.1 > 0
             {
-                return Ok((black_frame(self.size, self.hdr), self.size.0, self.size.1));
+                return Ok(Pending::Black);
             }
             if Instant::now() > end {
                 let why = self.handle.status().last_error.unwrap_or_else(|| "a frame did not render in time".into());
                 return Err(ExportError::Other(why));
             }
             std::thread::sleep(Duration::from_millis(2));
+        }
+    }
+
+    /// Records and submits the readback of `texture`: the planes of NV12 when the GPU converts, else the RGBA texels.
+    fn start_readback(&self, texture: &sq_gpu::frames::GpuTexture, w: usize, h: usize) -> Result<Pending, ExportError> {
+        let other = |e: sq_gpu::gpu::GpuError| ExportError::Other(e.to_string());
+        let mut commands = self.gpu.commands();
+        let converted = self.yuv.as_ref().filter(|_| (w, h) == self.size).and_then(|c| c.convert(&self.gpu, texture));
+        let (ticket, nv12) = match converted {
+            Some((buffer, len)) => (commands.read_buffer(&buffer, len), true),
+            None => (commands.read_texture(texture).map_err(other)?, false),
+        };
+        let submitted = self.gpu.submit(commands);
+        Ok(Pending::Gpu { ticket, submitted, w, h, nv12 })
+    }
+
+    /// Waits for a submitted readback: (bytes, width, height, bytes are NV12).
+    fn finish(&self, pending: Pending) -> Result<(Vec<u8>, usize, usize, bool), ExportError> {
+        match pending {
+            Pending::Black => Ok((black_frame(self.size, self.hdr), self.size.0, self.size.1, false)),
+            Pending::Gpu { ticket, submitted, w, h, nv12 } => {
+                let t_wait = Instant::now();
+                let pixels = ticket.wait_after(&self.gpu, &submitted).map_err(|e| ExportError::Other(e.to_string()))?;
+                let mut tr = self.trace.get();
+                tr[1] += t_wait.elapsed().as_secs_f64() * 1e3;
+                self.trace.set(tr);
+                let expect = if nv12 { w * h * 3 / 2 } else { w * h * self.bytes_per_pixel() };
+                if pixels.len() != expect {
+                    return Err(ExportError::Other(format!(
+                        "a frame read back {} bytes, expected {expect}",
+                        pixels.len()
+                    )));
+                }
+                Ok((pixels, w, h, nv12))
+            }
         }
     }
 }
@@ -283,12 +416,34 @@ impl FrameSource for EngineFrames {
 
     fn frame(&mut self, index: usize) -> Result<ExportFrame, ExportError> {
         let t = self.start + self.frame_duration * index as i64;
-        let (pixels, w, h) = self.composite(t).inspect_err(|e| {
+        let at = |i: usize| self.start + self.frame_duration * i as i64;
+        let pending = match self.pending.take() {
+            Some((i, p)) if i == index => p,
+            _ => self.submit(t).inspect_err(|e| {
+                crate::applog::info(&format!("export frame {index} at {t:?} failed: {e}"));
+            })?,
+        };
+        // Submit the next frame before waiting for this one, so the readback wait hides behind its compose (same frames, same order).
+        // A failed look-ahead is dropped: the next call composes that frame again and reports the error itself.
+        if index == self.expected && index + 1 < self.count {
+            self.pending = self.submit(at(index + 1)).ok().map(|p| (index + 1, p));
+        }
+        self.expected = index + 1;
+        let (pixels, w, h, nv12) = self.finish(pending).inspect_err(|e| {
             crate::applog::info(&format!("export frame {index} at {t:?} failed: {e}"));
         })?;
+        if nv12 {
+            let storage = Arc::new(MemoryFrame { bytes: pixels, bytes_per_row: w });
+            return Ok(SQFrame::new(w, h, SQFramePixelFormat::Nv12, SQFrameColorSpace::Rec709, t, storage));
+        }
         let (tw, th) = if self.size.0 == 0 || self.size.1 == 0 { (w, h) } else { self.size };
         let bpp = self.bytes_per_pixel();
-        let bytes = crate::export_scale::resample(&pixels, bpp, (w, h), (tw, th));
+        let t_scale = Instant::now();
+        let bytes =
+            if (w, h) == (tw, th) { pixels } else { crate::export_scale::resample(&pixels, bpp, (w, h), (tw, th)) };
+        let mut tr = self.trace.get();
+        tr[2] += t_scale.elapsed().as_secs_f64() * 1e3;
+        self.trace.set(tr);
         let storage = Arc::new(MemoryFrame { bytes, bytes_per_row: tw * bpp });
         let (format, space) = if self.hdr {
             (SQFramePixelFormat::Rgba16f, SQFrameColorSpace::LinearRec709)
@@ -310,6 +465,14 @@ pub(crate) mod tests {
     }
 
     use super::*;
+
+    fn sources_rgba(
+        snapshot: &ExportSnapshot,
+        id: Id,
+        settings: &ExportSettings,
+    ) -> Result<ExportSources, ExportError> {
+        sources_in(snapshot, id, settings, false)
+    }
     use sq_core_model::{Clip, MediaFingerprint, SequenceFormat, Track, TrackKind};
     use sq_export::core::preset::ExportPreset;
     use sq_export::core::queue::{ExportJob, ExportJobState};
@@ -403,7 +566,7 @@ pub(crate) mod tests {
             "tiny",
             settings,
             dir.clone(),
-            Arc::new(move || sources(&snapshot, Id::from_u128(1), &for_job)),
+            Arc::new(move || sources_rgba(&snapshot, Id::from_u128(1), &for_job)),
         );
         let id = queue.enqueue(job);
         queue.run_all();
@@ -609,7 +772,7 @@ pub(crate) mod tests {
         };
         let reference_frame = {
             let s = video(false, false);
-            let mut frames = sources(&snapshot, timeline.id, &s).expect("sources");
+            let mut frames = sources_rgba(&snapshot, timeline.id, &s).expect("sources");
             let f = frames.video.frame(10).expect("program frame");
             let m = f.storage_as::<MemoryFrame>().expect("pixels").bytes.clone();
             m.chunks(4).flat_map(|p| [p[0], p[1], p[2]]).collect::<Vec<u8>>()
@@ -618,7 +781,7 @@ pub(crate) mod tests {
             let s = video(hardware, hevc);
             let file = dir.join(format!("{name}.mp4"));
             let encoder = FfmpegExportEncoder::new();
-            let mut src = sources(&snapshot, timeline.id, &s).expect("sources");
+            let mut src = sources_rgba(&snapshot, timeline.id, &s).expect("sources");
             let audio = src.audio.as_mut().map(|a| &mut **a as &mut dyn AudioSource);
             let done = encoder.export(src.video.as_mut(), audio, &s, &file, &CancelToken::new(), &mut |_| {});
             if let Err(e) = done {
@@ -769,7 +932,7 @@ pub(crate) mod tests {
             (s.video.width, s.video.height) = (320, 180);
             s.video.frame_duration = Time::new(1, 25);
             s.captions = mode;
-            let mut src = sources(&snapshot, timeline.id, &s).expect("sources");
+            let mut src = sources_rgba(&snapshot, timeline.id, &s).expect("sources");
             let f = src.video.frame(5).expect("frame");
             f.storage_as::<MemoryFrame>().expect("pixels").bytes.clone()
         };
@@ -850,7 +1013,7 @@ pub(crate) mod tests {
         s.video.frame_duration = Time::new(1, 25);
         s.audio.enabled = false;
         // SDR: an 8-bit Rec.709 picture, unchanged path.
-        let mut sdr_src = sources(&snapshot, timeline.id, &s).expect("sources");
+        let mut sdr_src = sources_rgba(&snapshot, timeline.id, &s).expect("sources");
         let sdr = sdr_src.video.frame(5).expect("frame");
         assert_eq!(sdr.pixel_format, SQFramePixelFormat::Rgba8);
         drop(sdr_src);
@@ -858,7 +1021,7 @@ pub(crate) mod tests {
         s.video.codec = sq_export::core::settings::VideoCodec::Hevc;
         s.video.hardware_encoding = true;
         s.hdr_delivery = Some(HdrDelivery::new(HdrTransfer::Pq, 1000.0, 400.0, 0.005));
-        let mut src = sources(&snapshot, timeline.id, &s).expect("sources");
+        let mut src = sources_rgba(&snapshot, timeline.id, &s).expect("sources");
         let hdr = src.video.frame(5).expect("frame");
         assert_eq!(hdr.pixel_format, SQFramePixelFormat::Rgba16f);
         // Light above SDR white is in the frame: PQ code 700 (signal 0.726) is about 786 nit = 3.87 x reference white (a half float).
@@ -1000,9 +1163,17 @@ pub(crate) mod tests {
     /// Three 1 s clips cut from one 3 s source, the middle one selected, the default transition applied (Shift+D); the frame
     /// at the middle of each cut as the export source renders it.
     fn dissolved_cut_frames() -> Option<[Vec<u8>; 2]> {
+        dissolved_cut_frames_in(false)
+    }
+
+    /// `gpu_yuv`: the frames come as GPU-made NV12 and are read through the preview conversion.
+    fn dissolved_cut_frames_in(gpu_yuv: bool) -> Option<[Vec<u8>; 2]> {
         use sq_core_model::Project;
         use sq_editor_session::{EditorSession, SessionDeps, TransitionDefaults, TransitionScope};
-        let dir = std::env::temp_dir().join(format!("sq-export-dissolve-{}", std::process::id()));
+        // One folder per call: this runs in two tests at once, and a shared name had one test delete the other's source.
+        static CALLS: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+        let call = CALLS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        let dir = std::env::temp_dir().join(format!("sq-export-dissolve-{}-{call}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let tool = ffmpeg_tool()?;
         Gpu::new().ok()?;
@@ -1046,9 +1217,15 @@ pub(crate) mod tests {
         (settings.video.width, settings.video.height) = (320, 180);
         settings.video.frame_duration = Time::new(1, 25);
         settings.audio.enabled = false;
-        let mut src = sources(&snapshot, Id::from_u128(1), &settings).expect("sources").video;
+        let mut src = sources_in(&snapshot, Id::from_u128(1), &settings, gpu_yuv).expect("sources").video;
         let mut at = |i: usize| {
             let f = src.frame(i).expect("frame");
+            if gpu_yuv {
+                assert_eq!(f.pixel_format, SQFramePixelFormat::Nv12, "the GPU delivers NV12");
+                let image = frame_pixels(&f).expect("a picture");
+                let o = (f.height / 2 * f.width + f.width / 2) * 4;
+                return image.pixels[o..o + 3].to_vec();
+            }
             let m = f.storage_as::<MemoryFrame>().expect("memory frame");
             let o = (f.height / 2 * f.width + f.width / 2) * 4;
             m.bytes[o..o + 3].to_vec()
@@ -1068,5 +1245,17 @@ pub(crate) mod tests {
         let mixed = |p: &[u8]| (20..235).contains(&p[1]) && p[1] != 109;
         assert!(mixed(&first), "first cut {first:?} is a hard cut");
         assert!(mixed(&second), "second cut {second:?} is a hard cut");
+    }
+
+    #[test]
+    fn the_gpu_nv12_frames_match_the_rgba_frames() {
+        let (Some(rgba), Some(nv12)) = (dissolved_cut_frames_in(false), dissolved_cut_frames_in(true)) else {
+            eprintln!("skipped: no ffmpeg or no graphics device");
+            return;
+        };
+        for (a, b) in rgba.iter().zip(&nv12) {
+            let worst = a.iter().zip(b).map(|(x, y)| x.abs_diff(*y)).max().unwrap_or(0);
+            assert!(worst <= 6, "RGBA {a:?} against NV12 {b:?}");
+        }
     }
 }

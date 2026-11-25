@@ -9,6 +9,7 @@ mod clock_hold;
 pub mod core;
 pub mod display_pacing;
 mod first_visible;
+pub mod frame_trace;
 pub mod handle;
 pub mod lanes;
 mod late_frames;
@@ -17,8 +18,10 @@ pub mod look_preview;
 pub mod matte_look_ahead;
 pub mod media_source;
 pub mod memory_budget;
+mod played_through;
 pub mod power_policy;
 pub mod preview_rate;
+pub mod preview_size;
 pub mod proxy_picture;
 pub mod state;
 pub mod stats;
@@ -28,7 +31,9 @@ pub mod types;
 
 pub use caption_preview::CaptionPreview;
 pub use core::{ProgramEngine, playback_layer_detail};
-pub use display_pacing::DisplayTiming;
+pub use display_pacing::{
+    DisplayTick, DisplayTiming, LOOP_PERIOD_PERCENT, LOOP_PERIOD_SATURATED_PERCENT, PresentSlots,
+};
 pub use handle::{Command, EngineDeps, ProgramHandle, RasterProvider, Shown, Status};
 pub use lanes::{CancelToken, LanePool};
 pub use layer_rasters::LayerRasters;
@@ -50,6 +55,9 @@ mod tests_loop;
 
 #[cfg(test)]
 mod tests_media;
+
+#[cfg(test)]
+mod tests_quality;
 
 #[cfg(test)]
 mod tests_shutter;

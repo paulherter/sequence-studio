@@ -89,6 +89,10 @@ pub struct Gpu {
     pub(crate) chunks: ChunkPool,
     pub(crate) staging: StagingPool,
     features: wgpu::Features,
+    /// Vulkan driver cache and its file (`pipelines/warm.rs`).
+    /// Pipelines being compiled right now (one build per pipeline).
+    pub(crate) building: (Mutex<std::collections::HashSet<String>>, std::sync::Condvar),
+    pub(crate) pipeline_cache: Option<(wgpu::PipelineCache, std::path::PathBuf)>,
 }
 
 /// The wgpu backend of this platform: D3D12, Metal or Vulkan.
@@ -121,7 +125,9 @@ impl Gpu {
             | wgpu::Features::ADDRESS_MODE_CLAMP_TO_BORDER
             | wgpu::Features::TEXTURE_ADAPTER_SPECIFIC_FORMAT_FEATURES;
         let adapter = Self::pick_adapter(instance, surface, required).await?;
-        let mut optional = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM | wgpu::Features::FLOAT32_FILTERABLE;
+        let mut optional = wgpu::Features::TEXTURE_FORMAT_16BIT_NORM
+            | wgpu::Features::FLOAT32_FILTERABLE
+            | wgpu::Features::PIPELINE_CACHE;
         if timing::requested() {
             optional |= wgpu::Features::TIMESTAMP_QUERY;
         }
@@ -198,6 +204,7 @@ impl Gpu {
 
     fn build(device: wgpu::Device, queue: wgpu::Queue, adapter: wgpu::Adapter, features: wgpu::Features) -> Gpu {
         let info = adapter.get_info();
+        let pipeline_cache = crate::pipelines::warm::open_cache(&device, &info, features);
         let pool = TexturePool::new(default_pool_bytes(info.device_type));
         let sampler = |label, address, filter, border| {
             device.create_sampler(&wgpu::SamplerDescriptor {
@@ -269,6 +276,8 @@ impl Gpu {
             pool,
             staging: StagingPool::default(),
             features,
+            building: Default::default(),
+            pipeline_cache,
         }
     }
 
@@ -459,6 +468,9 @@ impl Gpu {
     /// Rows of `bytes_per_row` into `texture` (2D, or the slices of a 3D table one after another).
     pub fn upload_texture(&self, texture: &GpuTexture, bytes: &[u8], bytes_per_row: u32) {
         let size = texture.texture().size();
+        let _span = sq_os::trace::span_args("xfer", "texture upload", || {
+            format!("{}x{} bytes={}", size.width, size.height, bytes.len())
+        });
         self.queue.write_texture(
             texture.texture().as_image_copy(),
             bytes,
