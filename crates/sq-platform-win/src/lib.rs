@@ -1,6 +1,7 @@
 //! Windows-only services of the app (see the README). Empty on other systems.
 #![cfg(windows)]
 
+mod clipboard;
 mod console;
 mod disk;
 mod display;
@@ -20,6 +21,7 @@ mod shell_open;
 mod taskbar;
 mod toast;
 
+pub use clipboard::clipboard_facts;
 pub use console::attach_parent_console;
 pub use disk::{free_bytes, physical_memory, volume_bytes};
 pub use display::{output_hdr_state, primary_work_area};

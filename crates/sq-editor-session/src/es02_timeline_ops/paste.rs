@@ -287,6 +287,23 @@ impl PasteContent {
     }
 }
 
+/// What the system clipboard offers, without reading it: cheap facts for the menu ("can Paste take something?"). The data
+/// itself is read only when the user pastes ([`PasteContent`]).
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct PasteOffer {
+    /// Files (a copied file in the file manager).
+    pub has_files: bool,
+    /// A picture.
+    pub has_image: bool,
+}
+
+impl PasteOffer {
+    /// What `content` already holds.
+    pub fn of(content: &PasteContent) -> PasteOffer {
+        PasteOffer { has_files: !content.file_urls.is_empty(), has_image: content.image_data.is_some() }
+    }
+}
+
 // Swift: PasteMedia.swift:6
 // `PasteMedia.read(from: NSPasteboard)` is the Mac pasteboard reader and stays in the app shell: it fills a
 // `PasteContent` from the system pasteboard.

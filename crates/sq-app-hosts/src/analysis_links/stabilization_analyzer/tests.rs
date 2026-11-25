@@ -319,3 +319,54 @@ fn the_vision_fallback_reads_the_shift_between_two_measuring_frames_on_the_mac_a
     // Different sizes never match.
     assert_eq!(vision_motion(&previous, &GrayFrame::new(8, 8, vec![0.0; 64])), None);
 }
+
+#[test]
+fn the_analysis_stands_still_while_playback_runs_and_goes_on_after() {
+    use sq_playback::engine::activity::PlayMark;
+    use std::sync::{Arc, Mutex};
+    let activity = Arc::new(PlayActivity::default());
+    let mut mark = PlayMark::new(Arc::clone(&activity));
+    mark.set(true);
+    let read_frames = Arc::new(AtomicUsize::new(0));
+    let holds = Arc::new(Mutex::new(Vec::new()));
+    let t = {
+        let (a, r, h) = (Arc::clone(&activity), Arc::clone(&read_frames), Arc::clone(&holds));
+        std::thread::spawn(move || {
+            let mut read = |i: usize| {
+                r.fetch_add(1, Ordering::SeqCst);
+                Some((at(i), shot(i as f64)))
+            };
+            let hold = move |held: bool| h.lock().unwrap().push(held);
+            analyze_frames_paced(3, &mut read, (256, 144), 0, None, &CancelToken::new(), &a, &hold)
+        })
+    };
+    std::thread::sleep(std::time::Duration::from_millis(450));
+    assert_eq!(read_frames.load(Ordering::SeqCst), 0, "no frame is read while playing");
+    assert_eq!(*holds.lock().unwrap(), vec![true]);
+    mark.set(false);
+    let a = t.join().unwrap().expect("analysis");
+    assert_eq!(a.motions.len(), 3);
+    assert_eq!(read_frames.load(Ordering::SeqCst), 3);
+    assert_eq!(*holds.lock().unwrap(), vec![true, false]);
+}
+
+#[test]
+fn a_cancel_while_the_analysis_waits_for_playback_ends_it_at_once() {
+    use sq_playback::engine::activity::PlayMark;
+    use std::sync::Arc;
+    let activity = Arc::new(PlayActivity::default());
+    let mut mark = PlayMark::new(Arc::clone(&activity));
+    mark.set(true);
+    let cancel = CancelToken::new();
+    let t = {
+        let (a, c) = (Arc::clone(&activity), cancel.clone());
+        std::thread::spawn(move || {
+            let mut read = |i: usize| Some((at(i), shot(0.0)));
+            analyze_frames_paced(3, &mut read, (256, 144), 0, None, &c, &a, &|_| {})
+        })
+    };
+    std::thread::sleep(std::time::Duration::from_millis(120));
+    cancel.cancel();
+    assert_eq!(t.join().unwrap(), Err(StabilizationError::Cancelled));
+    mark.set(false);
+}

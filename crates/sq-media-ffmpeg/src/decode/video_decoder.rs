@@ -23,8 +23,18 @@ use std::sync::{Arc, Mutex, MutexGuard, PoisonError, RwLock};
 // shortcut: a fixed pool headroom; upgrade to copying into the renderer's own textures when playback holds more.
 pub const DEFAULT_EXTRA_HW_FRAMES: i32 = 16;
 
+/// `DEFAULT_EXTRA_HW_FRAMES`, or `SQ_HW_EXTRA_FRAMES` (measurement knob: each pooled 4K surface is 12 MB of shared memory).
+pub fn extra_hw_frames() -> i32 {
+    std::env::var("SQ_HW_EXTRA_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| super::hardware::default_extra_hw_frames(super::hardware::tier_memory(), DEFAULT_EXTRA_HW_FRAMES))
+}
+
 /// Pictures decoded past the previous range (reorder delay) kept for the next call.
 const MAX_CARRY: usize = 8;
+/// Carry cap of a decoder state: a hardware pool shares its extra surfaces between the carry and the frames a call holds,
+/// so a small pool (small machines) carries less ([`super::hardware::carry_limit`]); software decoders have no pool.
+fn carry_cap(s: &State) -> usize {
+    if s.hardware && HOLDS_POOL { super::hardware::carry_limit(s.extra_hw_frames, MAX_CARRY) } else { MAX_CARRY }
+}
 /// Threads of the throw-away software decoder (a one-off range, outside the shared thread budget).
 const ONE_SHOT_THREADS: i32 = 2;
 
@@ -286,7 +296,7 @@ impl FFmpegVideoDecoder {
             self.reopen_software(&mut s)?;
         }
         // A list wider than the hardware texture pool holds comes from a throw-away software decoder.
-        let limit = hardware_hold_limit(s.extra_hw_frames, MAX_CARRY);
+        let limit = hardware_hold_limit(s.extra_hw_frames, carry_cap(&s));
         if decode_path(s.hardware && HOLDS_POOL, deliver.is_some(), range.end() - range.start() + 1, limit)
             == DecodePath::OneShotSoftware
         {
@@ -342,6 +352,7 @@ impl FFmpegVideoDecoder {
         deliver: Option<&dyn Fn(DecodedFrame)>,
         stop: Option<&dyn Fn() -> bool>,
     ) -> Result<Vec<DecodedFrame>, MediaError> {
+        let carry_cap = carry_cap(s);
         let State { decoder, cursor, carry, .. } = s;
         let dec = decoder.as_mut().ok_or(MediaError::DecodeFailed(-1))?;
         let index = self.demuxer.index();
@@ -384,6 +395,7 @@ impl FFmpegVideoDecoder {
             wanted,
             results,
             carry,
+            carry_cap,
             deliver,
             origin,
             stop,
@@ -454,6 +466,8 @@ struct Run<'a> {
     wanted: HashSet<usize>,
     results: BTreeMap<usize, DecodedFrame>,
     carry: &'a mut HashMap<usize, DecodedFrame>,
+    /// Most pictures kept for the next call (see [`carry_cap`]).
+    carry_cap: usize,
     deliver: Option<&'a dyn Fn(DecodedFrame)>,
     /// Ordinal the decoder started at: pictures referencing frames before it (an open GOP's leading pictures; H.264 has
     /// no RASL flag, so FFmpeg hands them out) are built on missing references and are dropped.
@@ -528,7 +542,7 @@ impl Run<'_> {
                     self.results.insert(i, decoded);
                 }
             }
-        } else if i > *self.range.end() && self.carry.len() < MAX_CARRY {
+        } else if i > *self.range.end() && self.carry.len() < self.carry_cap {
             self.carry.insert(i, decoded);
         }
     }

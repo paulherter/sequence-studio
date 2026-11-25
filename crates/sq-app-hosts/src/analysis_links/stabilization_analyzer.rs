@@ -6,18 +6,20 @@
 
 use super::ffmpeg_frames::{DecodedPicture, FfmpegFrameReader};
 use super::magic_job::WakeFn;
+use super::pacing::yield_to_playback;
 use super::stabilization_store::StabilizationStore;
 use sq_analysis::analysis_turn::{CancelToken, Cancelled};
 use sq_analysis::feature_tracker::{FeaturePyramid, FeatureTracker};
 use sq_analysis::registration_math::Registration;
 use sq_analysis::rolling_shutter_measure::RollingShutterMeasure;
-use sq_analysis::stabilization_analyzing::{Progress, StabilizationAnalyzing, StabilizationError};
+use sq_analysis::stabilization_analyzing::{HoldFn, Progress, StabilizationAnalyzing, StabilizationError};
 use sq_analysis::stabilization_check::{GrayFrame, PhotometricRegistration};
 use sq_core_masks::rolling_shutter::RollingShutterSample;
 use sq_core_masks::stabilization_cuts::StabilizationCuts;
 use sq_core_masks::stabilizer::{CameraMotion, StabilizationAnalysis};
 use sq_core_masks::stabilizer_perspective::PerspectiveResidual;
 use sq_core_time::{Time, TimeRange};
+use sq_playback::engine::activity::PlayActivity;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::mpsc::{Receiver, channel};
@@ -97,6 +99,7 @@ pub fn analyze_frames(
 
 /// [`analyze_frames`] for pictures already turned upright by `quarter_turns` (Swift `pass.quarterTurns`): the rolling
 /// shutter scans along x for an odd count, and the analysis keeps the count for the plan.
+#[cfg(test)]
 pub fn analyze_frames_turned(
     count: usize,
     picture: &mut dyn FnMut(usize) -> Option<(Time, GrayFrame)>,
@@ -104,6 +107,23 @@ pub fn analyze_frames_turned(
     quarter_turns: i64,
     progress: Progress<'_>,
     cancel: &CancelToken,
+) -> Result<StabilizationAnalysis, StabilizationError> {
+    let idle = PlayActivity::default();
+    analyze_frames_paced(count, picture, picture_size, quarter_turns, progress, cancel, &idle, &|_| {})
+}
+
+/// [`analyze_frames_turned`] that stands still between frames while `playback` is busy (a cancel ends the wait at once);
+/// `hold` hears of a wait over 300 ms. The frame is the smallest safe point: nothing is half measured between two.
+#[allow(clippy::too_many_arguments)]
+pub fn analyze_frames_paced(
+    count: usize,
+    picture: &mut dyn FnMut(usize) -> Option<(Time, GrayFrame)>,
+    picture_size: (i64, i64),
+    quarter_turns: i64,
+    progress: Progress<'_>,
+    cancel: &CancelToken,
+    playback: &PlayActivity,
+    hold: &dyn Fn(bool),
 ) -> Result<StabilizationAnalysis, StabilizationError> {
     let scans_along_x = quarter_turns.rem_euclid(4) % 2 != 0;
     let mut times = Vec::with_capacity(count);
@@ -117,6 +137,7 @@ pub fn analyze_frames_turned(
     let mut cuts = Vec::new();
     let mut previous: Option<(GrayFrame, FeaturePyramid, Vec<f32>)> = None;
     for i in 0..count {
+        yield_to_playback(playback, cancel, &mut |h| hold(h));
         cancel.check().map_err(|Cancelled| StabilizationError::Cancelled)?;
         let (t, g) = picture(i).ok_or(StabilizationError::Unreadable)?;
         times.push(t);
@@ -213,16 +234,21 @@ pub fn analyze_frames_turned(
 /// [`StabilizationAnalyzing`] over a video file.
 pub struct FfmpegStabilizationAnalyzer {
     path: PathBuf,
+    hold: HoldFn,
 }
 
 impl FfmpegStabilizationAnalyzer {
     /// An analyzer for the media file at `path`.
     pub fn new(path: &Path) -> FfmpegStabilizationAnalyzer {
-        FfmpegStabilizationAnalyzer { path: path.to_path_buf() }
+        FfmpegStabilizationAnalyzer { path: path.to_path_buf(), hold: Arc::new(|_| {}) }
     }
 }
 
 impl StabilizationAnalyzing for FfmpegStabilizationAnalyzer {
+    fn set_hold(&mut self, hold: HoldFn) {
+        self.hold = hold;
+    }
+
     fn analyze(
         &self,
         source_range: TimeRange,
@@ -231,6 +257,8 @@ impl StabilizationAnalyzing for FfmpegStabilizationAnalyzer {
         progress: Progress<'_>,
         cancel: &CancelToken,
     ) -> Result<StabilizationAnalysis, StabilizationError> {
+        // Opening indexes the file: that waits for playback too, so a run started mid-play costs it nothing.
+        yield_to_playback(&PlayActivity::shared(), cancel, &mut |h| (self.hold)(h));
         let reader = FfmpegFrameReader::open(&self.path).map_err(|_| StabilizationError::Unreadable)?;
         let first = reader.index_at(source_range.start).unwrap_or(0);
         let last = reader
@@ -245,7 +273,16 @@ impl StabilizationAnalyzing for FfmpegStabilizationAnalyzer {
         let turns = reader.rotation().div_euclid(90).rem_euclid(4);
         let mut read =
             |i: usize| reader.picture(first + i, MEASURE_SIDE).map(|p| (p.pts, rotate_gray(&gray(&p), turns)));
-        analyze_frames_turned(last - first + 1, &mut read, (picture_width, picture_height), turns, progress, cancel)
+        analyze_frames_paced(
+            last - first + 1,
+            &mut read,
+            (picture_width, picture_height),
+            turns,
+            progress,
+            cancel,
+            &PlayActivity::shared(),
+            &*self.hold,
+        )
     }
 }
 
@@ -379,6 +416,10 @@ fn read_analysis(file: &Path) -> Option<(TimeRange, StabilizationAnalysis)> {
 pub enum StabilizationMessage {
     /// 0...1.
     Progress(f64),
+    /// The run stands still because playback or an export runs (sent after a wait of 300 ms).
+    Paused,
+    /// Playback rests; the run goes on.
+    Resumed,
     /// The run ended: `Ok(frames)` or the status line to show.
     Done(Result<usize, String>),
 }
@@ -444,7 +485,7 @@ pub struct StabilizationJob {
 impl StabilizationJob {
     /// Starts the run; `analyzer` is built on the job's thread by the caller's closure (opening a file takes a moment).
     pub fn spawn(
-        analyzer: Box<dyn StabilizationAnalyzing + Send>,
+        mut analyzer: Box<dyn StabilizationAnalyzing + Send>,
         request: StabilizationRequest,
         store: StabilizationStore,
         cache_dir: Option<PathBuf>,
@@ -454,6 +495,13 @@ impl StabilizationJob {
         let cancel = CancelToken::new();
         let token = cancel.clone();
         std::thread::spawn(move || {
+            // Nobody waits on an analysis: it yields to playback and the UI.
+            sq_os::thread::set_current_thread_role(sq_os::thread::Role::Background);
+            let (hold_tx, hold_wake) = (tx.clone(), Arc::clone(&wake));
+            analyzer.set_hold(Arc::new(move |held| {
+                let _ = hold_tx.send(if held { StabilizationMessage::Paused } else { StabilizationMessage::Resumed });
+                hold_wake();
+            }));
             let (tell, tell_wake) = (tx.clone(), Arc::clone(&wake));
             let report = move |p: f64| {
                 // The receiver is gone when the app quits; nothing is left to tell.

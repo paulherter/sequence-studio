@@ -307,7 +307,10 @@ fn add_root_with(
                 let wake = tx.clone();
                 root.set_wake(Arc::new(move || wake.send(AppMessage::Post(Box::new(|_| {})))));
                 // The local Edit API (off until Preferences > Advanced turns it on) commits through the inbox.
-                root = root.with_edit_api(tx, support);
+                root = root.with_edit_api(tx, support).with_edit_api_perceive(sq_app_hosts::PerceiveBackend {
+                    render: Arc::new(export::render_still),
+                    probe: Arc::new(probe::FfmpegProbe::default()),
+                });
             }
             root.dock.set_page(page);
             root.shell.enable_export(export::setup());
@@ -2167,6 +2170,7 @@ fn run() -> Result<(), String> {
         sq_platform::free_bytes,
         sq_platform::physical_memory,
     );
+    sq_media_ffmpeg::decode::set_machine_memory(sq_platform::physical_memory().unwrap_or(0));
     language::install(&paths::app_support_dir());
     sq_draw_shell::set_log_sink(|is_error, line| if is_error { applog::error(line) } else { applog::info(line) });
     sq_core_time::milestones::set_sink(applog::debug);

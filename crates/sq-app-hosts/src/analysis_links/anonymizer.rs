@@ -148,10 +148,12 @@ pub fn find_everyone(
     anchor: f64,
     cancel: &CancelToken,
     progress: &mut dyn FnMut(f64),
+    hold: &mut dyn FnMut(bool),
 ) -> Result<Option<Vec<AnonymizeSighting>>, AnonymizeError> {
     let times = AnonymizeSearch::default_sample_times(first, last, anchor);
     let mut samples: Vec<(f64, Vec<AnonymizePerson>)> = Vec::new();
     for (i, t) in times.iter().enumerate() {
+        super::pacing::yield_shared(cancel, hold);
         if cancel.is_cancelled() {
             return Err(AnonymizeError::Canceled);
         }
@@ -230,6 +232,7 @@ fn follow_direction(
     store: &FrameMatteStore,
     cancel: &CancelToken,
     progress: &mut dyn FnMut(f64),
+    hold: &mut dyn FnMut(bool),
 ) -> Result<Direction, AnonymizeError> {
     let fail = AnonymizeError::Failed;
     let mut frames = src.frames(from, to).map_err(fail)?;
@@ -241,6 +244,7 @@ fn follow_direction(
     let total = frames.count();
     let mut out = Direction { frames: 0, flags: Vec::new(), lost_at: None };
     for i in 0..total {
+        super::pacing::yield_shared(cancel, hold);
         if cancel.is_cancelled() {
             return Err(AnonymizeError::Canceled);
         }
@@ -287,6 +291,7 @@ pub fn run(
     stage_id: &str,
     cancel: &CancelToken,
     progress: &mut dyn FnMut(f64),
+    hold: &mut dyn FnMut(bool),
 ) -> Result<Outcome, AnonymizeError> {
     let prefix = format!("{STAGED_PREFIX}{stage_id}-");
     let mut out = Outcome { checks: Vec::new(), frames: 0, staged: Vec::new() };
@@ -297,7 +302,7 @@ pub fn run(
             }
         }
     }
-    match follow(src, picks, media, (first, last, frame_gap), store, &prefix, cancel, progress, &mut out) {
+    match follow(src, picks, media, (first, last, frame_gap), store, &prefix, cancel, progress, hold, &mut out) {
         Ok(()) => {
             progress(1.0);
             Ok(out)
@@ -319,6 +324,7 @@ fn follow(
     prefix: &str,
     cancel: &CancelToken,
     progress: &mut dyn FnMut(f64),
+    hold: &mut dyn FnMut(bool),
     out: &mut Outcome,
 ) -> Result<(), AnonymizeError> {
     let (first, last, frame_gap) = span;
@@ -341,7 +347,7 @@ fn follow(
                 let done = if forward { p * forward_share } else { forward_share + p * (1.0 - forward_share) };
                 progress((i as f64 + done) / total);
             };
-            let d = follow_direction(src, pick, (&key, part_key.as_deref()), anchor, to, store, cancel, &mut report)?;
+            let d = follow_direction(src, pick, (&key, part_key.as_deref()), anchor, to, store, cancel, &mut report, hold)?;
             out.frames += d.frames;
             flags.extend(d.flags);
             if d.frames == 0 {

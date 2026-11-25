@@ -5,11 +5,13 @@ use crate::edit_diff::EditDiff;
 use crate::edit_operation::{EditOperation, check_strict_keys, optional, required};
 use crate::edit_transaction::{EditTransaction, HostCommit, TransactionError, TransactionErrorKind};
 use crate::http::{HTTPRequest, HTTPResponse, is_blank};
+use crate::perceive::{PerceiveError, PerceiveRequest};
 use crate::project_state::ProjectState;
+use crate::time_limits::{TimeLimits, WireTime};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 use sq_core_model::{EditError, Project};
-use sq_core_time::Id;
+use sq_core_time::{Id, Time};
 use sq_core_time::text::graphemes;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -27,6 +29,173 @@ pub trait EditAPIHost: Send + Sync {
     fn run(&self, request: &HostCommit, cancel: &AtomicBool) -> Result<(Project, Project), TransactionError>;
     /// Undoes the top step only when `accept(its undo name)` holds, checked and undone in one step on the host's thread.
     fn undo(&self, accept: &dyn Fn(&str) -> bool) -> bool;
+    /// The perceive family (capture, frames, transcript, levels, captions, Premiere import). Hosts that cannot answer
+    /// say 501. Runs on the connection's thread; it may block for a while but must watch `cancel`. Long work answers as a
+    /// job of `job`.
+    fn perceive(&self, _request: &PerceiveRequest, _cancel: &AtomicBool) -> Result<Value, PerceiveError> {
+        Err(PerceiveError::new(501, "not supported by this host"))
+    }
+    /// Redoes the next step only when `accept(its undo name)` holds (an agent never redoes the user's own step).
+    fn redo(&self, _accept: &dyn Fn(&str) -> bool) -> bool {
+        false
+    }
+    /// The playhead of the open sequence.
+    fn playhead(&self) -> Option<Time> {
+        None
+    }
+    /// The project file and whether it has unsaved changes.
+    fn document(&self) -> Option<DocumentInfo> {
+        None
+    }
+    /// Imports files the way a drop on the window does (absolute paths) and says per path which media item it became.
+    fn import(&self, _paths: Vec<String>, _cancel: &AtomicBool) -> Result<Vec<ImportedMedia>, HostError> {
+        Err(HostError::unsupported())
+    }
+    /// Saves the open project (`path` None) or saves it as `path` (a `.sqproj`); returns the file written.
+    /// Saves the project (to `path` when given: like Save As, the project is bound to that file from then on). An existing
+    /// file other than the project's own is only replaced with `overwrite`.
+    fn save(&self, _path: Option<String>, _overwrite: bool) -> Result<String, HostError> {
+        Err(HostError::unsupported())
+    }
+    /// Opens the project file at `path`. Refused (409) while the open project has unsaved changes unless `discard`.
+    fn open(&self, _path: String, _discard: bool) -> Result<(), HostError> {
+        Err(HostError::unsupported())
+    }
+    /// Moves the playhead of the open sequence (frame-snapped); returns where it went.
+    fn seek(&self, _at: Time) -> Result<Time, HostError> {
+        Err(HostError::unsupported())
+    }
+
+    /// Starts an export like the Export sheet's button and returns the job id at once.
+    fn export(&self, _request: ExportRequest) -> Result<String, HostError> {
+        Err(HostError::unsupported())
+    }
+
+    /// The state of a long job (export, or an import that took longer than the request deadline).
+    fn job(&self, _id: &str) -> Option<JobInfo> {
+        None
+    }
+
+    /// The export presets the app offers.
+    fn presets(&self) -> Vec<PresetInfo> {
+        Vec::new()
+    }
+}
+
+/// Which part of the sequence an export writes.
+#[derive(Clone, Debug, PartialEq)]
+pub enum ExportRange {
+    /// The whole sequence.
+    Entire,
+    /// The sequence's In to Out marks.
+    InOut,
+    /// From `start` to `end` (sequence time).
+    Custom { start: Time, end: Time },
+}
+
+/// `POST /v1/export`, already checked for shape.
+#[derive(Clone, Debug, PartialEq)]
+pub struct ExportRequest {
+    /// The sequence (None = the open one).
+    pub sequence: Option<Id>,
+    /// The file to write: absolute, with the extension of the preset's container.
+    pub path: String,
+    /// A preset id of `GET /v1/presets` (None = what the Export sheet would propose).
+    pub preset: Option<String>,
+    /// The part to export.
+    pub range: ExportRange,
+}
+
+/// State of a long job.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum JobState {
+    /// Waiting for its turn.
+    Queued,
+    /// Working.
+    Running,
+    /// Finished; `result` holds the answer.
+    Done,
+    /// Failed or canceled; `error` says why.
+    Failed,
+}
+
+/// One long job as `GET /v1/jobs/{id}` answers; the same shape for every kind of job.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct JobInfo {
+    /// The id (`export-1`, `import-2`, `transcript-3`, `captions-4`).
+    pub id: String,
+    /// "export", "import", "transcript" or "captions".
+    pub kind: &'static str,
+    /// State.
+    pub state: JobState,
+    /// 0...1.
+    pub progress: f64,
+    /// What the job made once it is done: export `{"output": path}`, import `{"media": [...]}`, transcript and captions
+    /// the same JSON their request answers with when it finishes at once.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub result: Option<Value>,
+    /// Why a job failed.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// An export preset.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct PresetInfo {
+    /// Stable id.
+    pub id: String,
+    /// Menu name.
+    pub name: String,
+}
+
+/// The open project file and its save state.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct DocumentInfo {
+    /// The file the project was opened from or last saved to.
+    pub path: Option<String>,
+    /// Unsaved changes.
+    pub dirty: bool,
+}
+
+/// What one imported path became.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize)]
+pub struct ImportedMedia {
+    /// The path as asked for.
+    pub path: String,
+    /// The media item (new, or the one the project already had for that file); None when the file was not imported.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub media: Option<Id>,
+    /// Why not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub error: Option<String>,
+}
+
+/// A refused request of the host, with the HTTP status it maps to.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HostError {
+    /// HTTP status.
+    pub status: u16,
+    /// Text for the agent.
+    pub message: String,
+    /// A job the work goes on as (status 202): read `GET /v1/jobs/{id}`.
+    pub job: Option<String>,
+}
+
+impl HostError {
+    /// An error with `status`.
+    pub fn new(status: u16, message: impl Into<String>) -> HostError {
+        HostError { status, message: message.into(), job: None }
+    }
+
+    /// 202: the work did not finish within the request deadline and goes on as job `id`.
+    pub fn running_as(id: String, message: impl Into<String>) -> HostError {
+        HostError { status: 202, message: message.into(), job: Some(id) }
+    }
+
+    fn unsupported() -> HostError {
+        HostError::new(501, "this host does not support the request")
+    }
 }
 
 /// Listener settings and request limits.
@@ -60,8 +229,10 @@ impl EditAPIConfig {
 #[serde(rename_all = "camelCase")]
 pub struct CommitRequest {
     /// The sequence the agent read (`activeSequence` of `/v1/state`). Required: the commit is refused (409) when it is no
-    /// longer the active sequence, so a sequence switch in between never redirects the edit.
-    pub sequence: Id,
+    /// longer the active sequence, so a sequence switch in between never redirects the edit. Only a project with no
+    /// open sequence takes a commit without it (the first `createSequence`).
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub sequence: Option<Id>,
     /// Undo name after "Agent: "; None = "Agent Edit".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
@@ -79,7 +250,7 @@ impl<'de> Deserialize<'de> for CommitRequest {
         let build = || -> Result<CommitRequest, String> {
             check_strict_keys(&map, &["sequence", "name", "dryRun", "operations"], "commit request")?;
             Ok(CommitRequest {
-                sequence: required(&map, "sequence")?,
+                sequence: optional(&map, "sequence")?,
                 name: optional(&map, "name")?,
                 dry_run: optional(&map, "dryRun")?,
                 operations: required(&map, "operations")?,
@@ -99,8 +270,14 @@ pub struct CommitResponse {
     pub sequence: Id,
     /// Undo name of the step.
     pub undo_name: String,
-    /// What changed.
+    /// What changed in `sequence`.
     pub diff: EditDiff,
+    /// Sequences the batch created.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub sequences_added: Vec<Id>,
+    /// The open sequence after the batch, when it is not `sequence`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_sequence: Option<Id>,
 }
 
 #[derive(Deserialize, Default)]
@@ -112,6 +289,8 @@ struct UndoRequest {
 /// Routes and guards requests. Pure apart from the host calls, so every security rule is unit-tested.
 ///
 /// - `GET  /v1/state`   project read model (`ProjectState`)
+/// - `GET  /v1/clip/{id}/params`  every inspector parameter, effect and text layer of a clip
+/// - `GET  /v1/effects` the Effects panel catalog (video and audio)
 /// - `POST /v1/commit`  `CommitRequest` -> `CommitResponse`; `dryRun` returns the diff without changing anything
 /// - `POST /v1/undo`    undoes the last step only if it is an "Agent: ..." step (`{"expectedName"?: "Agent: X"}`)
 pub struct EditAPIRouter {
@@ -139,17 +318,68 @@ impl EditAPIRouter {
                 if let Some(a) = self.host.active_sequence() {
                     s.active_sequence = Some(a);
                 }
+                s.playhead = self.host.playhead();
+                if let Some(d) = self.host.document() {
+                    s.file = d.path;
+                    s.dirty = Some(d.dirty);
+                }
                 HTTPResponse::json(200, &s)
             }
+            ("GET", "/v1/effects") => HTTPResponse::json(200, &crate::clip_params::effects_catalog_json()),
+            ("GET", p) if p.starts_with("/v1/clip/") => self.clip_params(p),
             ("POST", "/v1/commit") => self.commit(&r.body, cancel),
             ("POST", "/v1/undo") => self.undo(&r.body),
-            (_, "/v1/state" | "/v1/commit" | "/v1/undo") => HTTPResponse::error(405, "method not allowed", None),
+            ("POST", "/v1/redo") => self.redo(&r.body),
+            ("POST", "/v1/import") => self.import(&r.body, cancel),
+            ("POST", "/v1/export") => self.export(&r.body),
+            ("GET", "/v1/presets") => HTTPResponse::json(200, &serde_json::json!({ "presets": self.host.presets() })),
+            ("GET", p) if p.starts_with("/v1/jobs/") => match self.host.job(&p["/v1/jobs/".len()..]) {
+                Some(info) => HTTPResponse::json(200, &info),
+                None => HTTPResponse::error(404, "no such job", None),
+            },
+            ("POST", "/v1/save") => self.save(&r.body),
+            ("POST", "/v1/open") => self.open(&r.body),
+            ("POST", "/v1/playhead") => self.playhead(&r.body),
+            ("GET", "/v1/captionStyles") => self.perceive(Ok(PerceiveRequest::CaptionStyles), cancel),
+            ("POST", p) if PerceiveRequest::POST_PATHS.contains(&p) => self.perceive(PerceiveRequest::parse(p, &r.body), cancel),
+            (_, p) if PerceiveRequest::POST_PATHS.contains(&p) || p == "/v1/captionStyles" => {
+                HTTPResponse::error(405, "method not allowed", None)
+            }
+            (_, "/v1/state" | "/v1/commit" | "/v1/undo" | "/v1/redo" | "/v1/import" | "/v1/export" | "/v1/presets" | "/v1/save" | "/v1/open" | "/v1/playhead" | "/v1/effects") => {
+                HTTPResponse::error(405, "method not allowed", None)
+            }
             _ => HTTPResponse::error(404, "unknown endpoint", None),
+        }
+    }
+
+    fn perceive(&self, parsed: Result<PerceiveRequest, String>, cancel: &AtomicBool) -> HTTPResponse {
+        let request = match parsed {
+            Ok(r) => r,
+            Err(e) => return HTTPResponse::error(400, &e, None),
+        };
+        match self.host.perceive(&request, cancel) {
+            Ok(v) => HTTPResponse::json(200, &v),
+            Err(e) => HTTPResponse::error(e.status, &e.message, None),
         }
     }
 
     /// Host must name the loopback listener (DNS rebinding), a browser Origin must be loopback too, and the bearer token
     /// must match (constant-time compare).
+    /// `GET /v1/clip/{id}/params`: every inspector parameter, effect and layer of the clip.
+    fn clip_params(&self, path: &str) -> HTTPResponse {
+        let id = path
+            .strip_prefix("/v1/clip/")
+            .and_then(|r| r.strip_suffix("/params"))
+            .and_then(Id::parse);
+        let Some(id) = id else { return HTTPResponse::error(404, "unknown endpoint", None) };
+        let Some(p) = self.host.project() else { return HTTPResponse::error(503, "no project open", None) };
+        let found = p.timelines.iter().flat_map(|t| t.tracks.iter()).find_map(|tr| tr.clip(id));
+        match found {
+            Some(c) => HTTPResponse::json(200, &crate::clip_params::clip_params_json(c)),
+            None => HTTPResponse::error(404, "no such clip", None),
+        }
+    }
+
     fn guard_request(&self, r: &HTTPRequest) -> Option<HTTPResponse> {
         let port = self.config.port;
         let loopback = [format!("127.0.0.1:{port}"), format!("localhost:{port}")];
@@ -198,6 +428,13 @@ impl EditAPIRouter {
             .map(|n| n.trim_matches(|c: char| is_blank(c) || matches!(c as u32, 0x0A..=0x0D | 0x85 | 0x2028 | 0x2029)))
             .filter(|n| !n.is_empty())
             .map(|n| graphemes(n).take(80).collect::<String>());
+        if req.sequence.is_none() && self.host.active_sequence().is_some() {
+            return HTTPResponse::error(
+                400,
+                "sequence is required while a sequence is open (see activeSequence of /v1/state)",
+                None,
+            );
+        }
         let undo_name = format!("Agent: {}", label.as_deref().unwrap_or("Edit"));
         let dry = req.dry_run == Some(true);
         match self.run_commit(&req, &undo_name, dry, cancel) {
@@ -213,7 +450,11 @@ impl EditAPIRouter {
         dry: bool,
         cancel: &AtomicBool,
     ) -> Result<HTTPResponse, TransactionError> {
-        let seq = req.sequence;
+        let seq = match req.sequence {
+            Some(s) => s,
+            None if self.host.active_sequence().is_none() => HostCommit::NO_SEQUENCE,
+            None => return Err(TransactionError::new(TransactionErrorKind::SequenceChanged)),
+        };
         EditTransaction::validate(&req.operations)?; // before any Time arithmetic, dry run included
         if cancel.load(Ordering::SeqCst) {
             return Err(TransactionError::new(TransactionErrorKind::Cancelled));
@@ -221,24 +462,247 @@ impl EditAPIRouter {
         let commit =
             HostCommit { name: undo_name.to_string(), sequence: seq, operations: req.operations.clone(), dry_run: dry };
         let (before, after) = self.host.run(&commit, cancel)?;
-        let (Some(b), Some(a)) = (before.timeline(seq), after.timeline(seq)) else {
+        // A commit without a sequence created the first one: it is the open one now, and the "before" is empty.
+        let seq = if seq == HostCommit::NO_SEQUENCE {
+            self.host.active_sequence().or_else(|| after.timelines.last().map(|t| t.id)).unwrap_or(seq)
+        } else {
+            seq
+        };
+        let Some(a) = after.timeline(seq) else {
             return Ok(HTTPResponse::error(409, "sequence vanished", None));
+        };
+        let empty;
+        let b = match before.timeline(seq) {
+            Some(b) => b,
+            None if !dry => {
+                let mut e = a.clone();
+                e.tracks.iter_mut().for_each(|t| *t = sq_core_model::Track::new(t.id, t.kind));
+                empty = e;
+                &empty
+            }
+            None => return Ok(HTTPResponse::error(409, "sequence vanished", None)),
         };
         let mut diff = EditDiff::new(b, a);
         diff.note_media(&before, &after);
-        let applied = !dry && !diff.is_empty();
-        Ok(HTTPResponse::json(200, &CommitResponse { applied, sequence: seq, undo_name: undo_name.to_string(), diff }))
+        let applied = !dry && (!diff.is_empty() || before != after);
+        let sequences_added: Vec<Id> =
+            after.timelines.iter().map(|t| t.id).filter(|id| before.timeline(*id).is_none()).collect();
+        let active_sequence = self.host.active_sequence().filter(|a| *a != seq);
+        Ok(HTTPResponse::json(
+            200,
+            &CommitResponse { applied, sequence: seq, undo_name: undo_name.to_string(), diff, sequences_added, active_sequence },
+        ))
     }
 
     pub(crate) fn status(e: &TransactionError) -> u16 {
         match e.kind {
             TransactionErrorKind::Edit(EditError::TimelineNotFound) if e.operation_index.is_none() => 404,
-            TransactionErrorKind::Edit(_) | TransactionErrorKind::MediaNotFound | TransactionErrorKind::NoPicture => {
-                422
-            }
+            TransactionErrorKind::Edit(_)
+            | TransactionErrorKind::Invalid
+            | TransactionErrorKind::MediaNotFound
+            | TransactionErrorKind::NoPicture
+            | TransactionErrorKind::TrackNotFound
+            | TransactionErrorKind::InvalidValue(_)
+            | TransactionErrorKind::NeedsSession => 422,
             TransactionErrorKind::InvalidTime => 400,
             TransactionErrorKind::Busy | TransactionErrorKind::SequenceChanged => 409,
             TransactionErrorKind::Cancelled => 503,
+        }
+    }
+
+    /// Parses a strict JSON object body (`{}` when empty).
+    fn object(body: &[u8], allowed: &[&str], what: &str) -> Result<Map<String, Value>, HTTPResponse> {
+        let value: Value = if body.is_empty() {
+            Value::Object(Map::new())
+        } else {
+            serde_json::from_slice(body)
+                .map_err(|e| HTTPResponse::error(400, &format!("invalid request: {e}"), None))?
+        };
+        let Value::Object(map) = value else {
+            return Err(HTTPResponse::error(400, "invalid request: expected a JSON object", None));
+        };
+        check_strict_keys(&map, allowed, what).map_err(|e| HTTPResponse::error(400, &e, None))?;
+        Ok(map)
+    }
+
+    /// A path from a request: absolute, no control characters; `extension` (a project file) when given.
+    fn checked_path(path: &str, extension: Option<&str>) -> Result<(), HTTPResponse> {
+        let bad = |why: &str| Err(HTTPResponse::error(400, &format!("path '{path}': {why}"), None));
+        if path.is_empty() || path.chars().any(char::is_control) {
+            return bad("empty or has control characters");
+        }
+        if !std::path::Path::new(path).is_absolute() {
+            return bad("must be absolute");
+        }
+        if std::path::Path::new(path).components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            return bad("must not contain '..'");
+        }
+        if let Some(ext) = extension {
+            let ok = std::path::Path::new(path).extension().is_some_and(|e| e.eq_ignore_ascii_case(ext));
+            if !ok {
+                return bad(&format!("must end in .{ext}"));
+            }
+        }
+        Ok(())
+    }
+
+    fn host_error(e: &HostError) -> HTTPResponse {
+        match &e.job {
+            Some(job) => HTTPResponse::json(e.status, &serde_json::json!({ "job": job, "message": e.message })),
+            None => HTTPResponse::error(e.status, &e.message, None),
+        }
+    }
+
+    /// `POST /v1/export {sequence?, path, preset?, range?}`: starts the export, answers `{job}` at once.
+    fn export(&self, body: &[u8]) -> HTTPResponse {
+        let map = match Self::object(body, &["sequence", "path", "preset", "range"], "export request") {
+            Ok(m) => m,
+            Err(e) => return e,
+        };
+        let parsed = (|| -> Result<ExportRequest, String> {
+            let range = match map.get("range") {
+                None | Some(Value::Null) => ExportRange::Entire,
+                Some(Value::String(s)) if s == "entire" => ExportRange::Entire,
+                Some(Value::String(s)) if s == "inOut" => ExportRange::InOut,
+                Some(Value::Object(m)) => {
+                    check_strict_keys(m, &["start", "end"], "range")?;
+                    let (start, end) = (required::<WireTime>(m, "start")?.time, required::<WireTime>(m, "end")?.time);
+                    if !TimeLimits::is_valid_time(start) || !TimeLimits::is_valid_time(end) {
+                        return Err(TimeLimits::message());
+                    }
+                    if end <= start {
+                        return Err("range: end must be after start".into());
+                    }
+                    ExportRange::Custom { start, end }
+                }
+                Some(_) => return Err("range: use \"entire\", \"inOut\" or {start, end}".into()),
+            };
+            Ok(ExportRequest {
+                sequence: optional(&map, "sequence")?,
+                path: required(&map, "path")?,
+                preset: optional(&map, "preset")?,
+                range,
+            })
+        })();
+        let request = match parsed {
+            Ok(r) => r,
+            Err(e) => return HTTPResponse::error(400, &e, None),
+        };
+        if let Err(e) = Self::checked_path(&request.path, None) {
+            return e;
+        }
+        match self.host.export(request) {
+            Ok(job) => HTTPResponse::json(200, &serde_json::json!({ "job": job })),
+            Err(e) => Self::host_error(&e),
+        }
+    }
+
+    /// `POST /v1/redo`: redoes the next step only when it is an "Agent: ..." step.
+    fn redo(&self, body: &[u8]) -> HTTPResponse {
+        let parsed = Self::object(body, &["expectedName"], "redo request");
+        let map = match parsed {
+            Ok(m) => m,
+            Err(e) => return e,
+        };
+        let expected = match optional::<String>(&map, "expectedName") {
+            Ok(v) => v,
+            Err(e) => return HTTPResponse::error(400, &e, None),
+        };
+        let ok = self.host.redo(&|name| name.starts_with("Agent: ") && expected.as_deref().is_none_or(|e| name == e));
+        if ok {
+            HTTPResponse::json(200, &serde_json::json!({"redone": true}))
+        } else {
+            HTTPResponse::error(409, "the next step is not this agent's edit (or there is nothing to redo)", None)
+        }
+    }
+
+    /// `POST /v1/import {paths}`: the media become project items, as after a drop on the window.
+    fn import(&self, body: &[u8], cancel: &AtomicBool) -> HTTPResponse {
+        let map = match Self::object(body, &["paths"], "import request") {
+            Ok(m) => m,
+            Err(e) => return e,
+        };
+        let paths = match required::<Vec<String>>(&map, "paths") {
+            Ok(p) if !p.is_empty() && p.len() <= 1000 => p,
+            Ok(_) => return HTTPResponse::error(400, "paths: give 1 to 1000 files", None),
+            Err(e) => return HTTPResponse::error(400, &e, None),
+        };
+        for p in &paths {
+            if let Err(e) = Self::checked_path(p, None) {
+                return e;
+            }
+        }
+        match self.host.import(paths, cancel) {
+            Ok(media) => HTTPResponse::json(200, &serde_json::json!({ "media": media })),
+            Err(e) => Self::host_error(&e),
+        }
+    }
+
+    /// `POST /v1/save {path?, overwrite?}`: save the open project, or save it as `path` (like Save As: the project is bound
+    /// to that file afterwards). A `path` that exists and is not the project's own file needs `overwrite: true`.
+    fn save(&self, body: &[u8]) -> HTTPResponse {
+        let map = match Self::object(body, &["path", "overwrite"], "save request") {
+            Ok(m) => m,
+            Err(e) => return e,
+        };
+        let path = match optional::<String>(&map, "path") {
+            Ok(p) => p,
+            Err(e) => return HTTPResponse::error(400, &e, None),
+        };
+        if let Some(p) = &path
+            && let Err(e) = Self::checked_path(p, Some("sqproj"))
+        {
+            return e;
+        }
+        let overwrite = match optional::<bool>(&map, "overwrite") {
+            Ok(o) => o.unwrap_or(false),
+            Err(e) => return HTTPResponse::error(400, &e, None),
+        };
+        match self.host.save(path, overwrite) {
+            Ok(written) => HTTPResponse::json(200, &serde_json::json!({ "saved": written })),
+            Err(e) => Self::host_error(&e),
+        }
+    }
+
+    /// `POST /v1/open {path, discard?}`: opens a `.sqproj`; unsaved changes need `discard: true`.
+    fn open(&self, body: &[u8]) -> HTTPResponse {
+        let map = match Self::object(body, &["path", "discard"], "open request") {
+            Ok(m) => m,
+            Err(e) => return e,
+        };
+        let path = match required::<String>(&map, "path") {
+            Ok(p) => p,
+            Err(e) => return HTTPResponse::error(400, &e, None),
+        };
+        let discard = match optional::<bool>(&map, "discard") {
+            Ok(d) => d.unwrap_or(false),
+            Err(e) => return HTTPResponse::error(400, &e, None),
+        };
+        if let Err(e) = Self::checked_path(&path, Some("sqproj")) {
+            return e;
+        }
+        match self.host.open(path, discard) {
+            Ok(()) => HTTPResponse::json(200, &serde_json::json!({ "opened": true })),
+            Err(e) => Self::host_error(&e),
+        }
+    }
+
+    /// `POST /v1/playhead {at}`: moves the playhead.
+    fn playhead(&self, body: &[u8]) -> HTTPResponse {
+        let map = match Self::object(body, &["at"], "playhead request") {
+            Ok(m) => m,
+            Err(e) => return e,
+        };
+        let at = match required::<WireTime>(&map, "at") {
+            Ok(w) => w.time,
+            Err(e) => return HTTPResponse::error(400, &e, None),
+        };
+        if !TimeLimits::is_valid_time(at) {
+            return HTTPResponse::error(400, &TimeLimits::message(), None);
+        }
+        match self.host.seek(at) {
+            Ok(went) => HTTPResponse::json(200, &serde_json::json!({ "playhead": went })),
+            Err(e) => Self::host_error(&e),
         }
     }
 
@@ -391,6 +855,15 @@ pub(crate) mod tests {
     }
 
     #[test]
+    fn perceive_routes_check_the_body_before_the_host_and_a_plain_host_says_501() {
+        let router = EditAPIRouter::new(config(), FakeHost::new(&Fixture::new()));
+        assert_eq!(handle(&router, &req("POST", "/v1/capture", "{}")).status, 400);
+        assert_eq!(handle(&router, &req("POST", "/v1/capture", r#"{"at":{"value":1,"timescale":1}}"#)).status, 501);
+        assert_eq!(handle(&router, &req("GET", "/v1/jobs/abc", "")).status, 404);
+        assert_eq!(handle(&router, &req("GET", "/v1/capture", "")).status, 405);
+    }
+
+    #[test]
     fn state_returns_sequences() {
         let f = Fixture::new();
         let router = EditAPIRouter::new(config(), FakeHost::new(&f));
@@ -401,7 +874,7 @@ pub(crate) mod tests {
         assert_eq!(clips, vec![f.a, f.b]);
         assert_eq!(s.active_sequence, Some(f.seq));
         let text = String::from_utf8_lossy(&r.body).into_owned();
-        assert!(text.contains("\"timescale\"") && !text.contains("/x/m.mov")); // no file paths leave the app
+        assert!(text.contains("\"timescale\"") && text.contains("/x/m.mov")); // media file paths are part of the read model
     }
 
     #[test]
@@ -546,5 +1019,36 @@ pub(crate) mod tests {
         assert!(token.bytes().all(|b| b.is_ascii_hexdigit()));
         assert!(EditAPIRouter::constant_time_equal(&token, &token.clone()));
         assert!(!EditAPIRouter::constant_time_equal("abc", "abd") && !EditAPIRouter::constant_time_equal("ab", "abc"));
+    }
+
+    #[test]
+    fn params_and_effects_endpoints_and_the_param_diff() {
+        let f = Fixture::new();
+        let router = EditAPIRouter::new(config(), FakeHost::new(&f));
+        let r = handle(&router, &req("GET", &format!("/v1/clip/{}/params", f.a_audio), ""));
+        assert_eq!(r.status, 200);
+        let paths: Vec<String> = json(&r)["params"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|p| p["path"].as_str().map(str::to_string)).collect())
+            .unwrap_or_default();
+        assert!(paths.contains(&"audio.volumeDb".to_string()) && paths.contains(&"audio.gainDb".to_string()));
+        assert_eq!(handle(&router, &req("GET", &format!("/v1/clip/{}/params", Id::from_u128(31337)), "")).status, 404);
+        assert_eq!(handle(&router, &req("GET", "/v1/clip/nope/params", "")).status, 404);
+        let fx = json(&handle(&router, &req("GET", "/v1/effects", "")));
+        let scopes: Vec<&str> = fx["effects"].as_array().map(|a| a.iter().filter_map(|e| e["scope"].as_str()).collect()).unwrap_or_default();
+        assert!(scopes.contains(&"audio") && scopes.contains(&"video"));
+        assert!(fx["effects"].as_array().is_some_and(|a| a.iter().any(|e| e["kind"] == "color")));
+        // A parameter change is a diff the agent can read back; a dry run changes nothing.
+        let op = format!(r#"{{"op":"setParam","clip":"{}","param":"audio.gainDb","value":4}}"#, f.a_audio);
+        let dry = json(&handle(&router, &req("POST", "/v1/commit", &commit_body(&f, &op, "Gain", true, None))));
+        assert_eq!((dry["applied"].as_bool(), dry["diff"]["paramChanges"][0]["params"][0]["param"].as_str()), (Some(false), Some("audio.gainDb")));
+        let real = json(&handle(&router, &req("POST", "/v1/commit", &commit_body(&f, &op, "Gain", false, None))));
+        assert_eq!(real["applied"], serde_json::json!(true));
+        assert_eq!(real["diff"]["paramChanges"][0]["params"][0]["after"]["value"], serde_json::json!(4.0));
+        // A bad parameter is a 422 with the reason.
+        let bad = format!(r#"{{"op":"setParam","clip":"{}","param":"opacity","value":1}}"#, f.a_audio);
+        let r = handle(&router, &req("POST", "/v1/commit", &commit_body(&f, &bad, "Bad", false, None)));
+        assert_eq!(r.status, 422);
+        assert!(json(&r)["error"].as_str().is_some_and(|m| m.contains("not a parameter of this clip")));
     }
 }

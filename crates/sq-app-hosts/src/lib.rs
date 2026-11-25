@@ -14,6 +14,8 @@ pub use color_popover::PickerAids;
 mod conform_host;
 pub mod desktop_entry;
 mod edit_api_host;
+mod edit_api_perceive;
+pub use edit_api_perceive::{PerceiveBackend, StillRenderer};
 mod editor_dialogs;
 mod effects_host;
 pub mod export_audio;

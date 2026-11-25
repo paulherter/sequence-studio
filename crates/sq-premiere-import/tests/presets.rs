@@ -120,6 +120,7 @@ fn ignored_folders_and_unmappable_effects_are_skipped_with_a_reason() {
         display_name: "Lens Distortion".into(),
         params: Vec::new(),
         is_audio: false,
+        sub_components: Vec::new(),
     };
     let ignored = BTreeSet::from(["Skipped Folder".to_string()]);
     let r = PRPresetMapper::map(&[zoom, lens, blur], (1080, 1920), &ignored, &mut SequentialIds::default());

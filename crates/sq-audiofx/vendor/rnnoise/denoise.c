@@ -470,7 +470,11 @@ static void pitch_filter(kiss_fft_cpx *X, const kiss_fft_cpx *P, const float *Ex
   }
 }
 
-float rnnoise_process_frame(DenoiseState *st, float *out, const float *in) {
+/* SQ change: `floor_lo` / `floor_mid` / `floor_hi` (linear, 0 = RNNoise as shipped) lower-bound the band gains below 2 kHz (bands 0-8),
+   from 2 kHz to 4 kHz (bands 9-12) and from 4 kHz (band 13 on),
+   so the suppression is a bounded spectral reduction of the signal itself (no wet/dry mix of RNNoise's synthesis). */
+float rnnoise_process_frame_floor(DenoiseState *st, float *out, const float *in, const float *floors) {
+  float floor_lo = floors[0], floor_mid = floors[1], floor_hi = floors[2], relax = floors[3];
   int i;
   kiss_fft_cpx X[FREQ_SIZE];
   kiss_fft_cpx P[WINDOW_SIZE];
@@ -495,6 +499,11 @@ float rnnoise_process_frame(DenoiseState *st, float *out, const float *in) {
       g[i] = MAX16(g[i], alpha*st->lastg[i]);
       st->lastg[i] = g[i];
     }
+    for (i=0;i<NB_BANDS;i++) {
+      float fl = i >= 13 ? floor_hi : (i >= 9 ? floor_mid : floor_lo);
+      if (fl > 0.f && relax > 0.f) fl = powf(fl, 1.f - relax*vad_prob); /* speech frames keep more of the signal */
+      g[i] = MAX16(g[i], fl);
+    }
     interp_band_gain(gf, g);
 #if 1
     for (i=0;i<FREQ_SIZE;i++) {
@@ -506,6 +515,11 @@ float rnnoise_process_frame(DenoiseState *st, float *out, const float *in) {
 
   frame_synthesis(st, out, X);
   return vad_prob;
+}
+
+float rnnoise_process_frame(DenoiseState *st, float *out, const float *in) {
+  static const float none[4] = {0.f, 0.f, 0.f, 0.f};
+  return rnnoise_process_frame_floor(st, out, in, none);
 }
 
 #if TRAINING

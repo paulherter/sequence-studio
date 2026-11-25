@@ -196,7 +196,7 @@ impl ClipAudioFXChain {
                 }
                 let m0 = if step.enabled { amount.clamp(0.0, 1.0) as f32 } else { 0.0 };
                 let m1 = if step.enabled { amount_end.clamp(0.0, 1.0) as f32 } else { 0.0 };
-                d.process(buf, n, m0, m1);
+                d.process_strength(buf, n, m0, m1);
             }
             (Stage::Eq(e), AudioFXStage::Eq(v)) => {
                 if !step.enabled {
@@ -545,6 +545,58 @@ impl Denoise {
                 pos += 1;
                 if pos == f {
                     ch.state.process_frame(&mut ch.wet, &ch.in_frame);
+                    ch.dry.copy_from_slice(&ch.in_frame);
+                    pos = 0;
+                }
+            }
+            ch.pos = pos;
+        }
+    }
+}
+
+/// Noise Reduction at Strength 0...1: the lowest band gain RNNoise may apply, `[below 2 kHz, 2 to 4 kHz, from 4 kHz, relax]`.
+/// The first three are linear gains (`FLOOR_DB` at 100 %, linear in dB with Strength); `relax` (0...1) lets frames RNNoise
+/// takes for speech keep more of the signal (the floor's dB is scaled by `1 - relax * speech probability`), so the noise
+/// between words drops like in Premiere while the voice stays full.
+/// Calibrated against Premiere's own export of "Klingeltoene" (Strength 40 %, notes/proof/audio-premiere/result.md round 2).
+/// shortcut: one reference at 40 %; the 100 % depths (32 / 16 / 8 dB) are extrapolated linearly in dB, re-measure at 80 %.
+const FLOOR_DB: [f32; 3] = [32.0, 16.0, 8.0];
+const FLOOR_SPEECH_RELAX: f32 = 0.8;
+
+pub(crate) fn denoise_floors(strength: f32) -> [f32; 4] {
+    let s = strength.clamp(0.0, 1.0);
+    [
+        10f32.powf(-FLOOR_DB[0] * s / 20.0),
+        10f32.powf(-FLOOR_DB[1] * s / 20.0),
+        10f32.powf(-FLOOR_DB[2] * s / 20.0),
+        FLOOR_SPEECH_RELAX,
+    ]
+}
+
+impl Denoise {
+    /// The Noise Reduction effect: Strength `m0` at the first sample moving linearly towards `m1` one block later. Each
+    /// frame is RNNoise's own gain-shaped signal with the band gains bounded below by `denoise_floors` (no wet/dry mix of the
+    /// synthesis: the noise is reduced by a bounded amount instead of the voice being replaced by RNNoise's rebuild). A
+    /// strength of 0 passes the dry signal (the same one frame late).
+    pub(crate) fn process_strength(&mut self, buf: &mut [&mut [f32]], n: usize, m0: f32, m1: f32) {
+        let f = RNNoiseDenoiser::FRAME_SIZE;
+        let scale: f32 = 32768.0;
+        let inv: f32 = 1.0 / 32768.0;
+        let dm = (m1 - m0) / n as f32;
+        let chs = buf.len();
+        for (c, ch) in self.channels.iter_mut().enumerate().take(chs) {
+            let p = &mut buf[c];
+            let mut pos = ch.pos;
+            for i in 0..n {
+                let m = m0 + dm * i as f32;
+                ch.in_frame[pos] = p[i] * scale;
+                p[i] = ch.wet[pos] * inv;
+                pos += 1;
+                if pos == f {
+                    ch.state.process_frame_floor(&mut ch.wet, &ch.in_frame, denoise_floors(m));
+                    if m <= 0.0 {
+                        ch.wet.copy_from_slice(&ch.in_frame); // state stays warm, the sound is untouched
+                    }
                     ch.dry.copy_from_slice(&ch.in_frame);
                     pos = 0;
                 }
@@ -1045,6 +1097,67 @@ mod tests {
         let without = new_chain(&[slot(AUDIO_GAIN_KIND)], 2, 512);
         assert_eq!(with_nr.latency_samples, 480);
         assert_eq!(without.latency_samples, 0);
+    }
+
+    fn rms_db(x: &[f32]) -> f64 {
+        20.0 * sig::rms(x).max(1e-9).log10()
+    }
+
+    /// Strength 100 % is a bounded reduction (32 dB below 2 kHz, 16 dB to 4 kHz, 8 dB above), never RNNoise's full rebuild: the old wet/dry
+    /// mix went to -infinity at 100 % and muffled the voice.
+    #[test]
+    fn noise_reduction_at_full_strength_is_bounded() {
+        let n = 48_000 * 2;
+        let layout = [slot(AUDIO_NOISE_REDUCTION_KIND)];
+        let stage = [AudioFXStage::NoiseReduction { amount: 1.0 }];
+        let low = vec![sig::low_noise(0.05, n, 3)];
+        let high = vec![sig::noise(0.05, n, 4)];
+        for (x, floor_db) in [(low, -32.0), (high, -9.0)] {
+            let y = run_with(&layout, &stage, &x, None, 480);
+            let (i, o) = (rms_db(&x[0][48_000..n - 480]), rms_db(&y[0][48_000 + 480..n]));
+            assert!(o < i - 0.5, "reduces: in {i} out {o}");
+            assert!(o > i + floor_db - 1.5, "bounded: in {i} out {o}");
+        }
+    }
+
+    #[test]
+    fn noise_reduction_floors_follow_strength() {
+        let db = |g: f32| 20.0 * g.log10();
+        assert_eq!(denoise_floors(0.0)[..3], [1.0, 1.0, 1.0]);
+        let f = denoise_floors(1.0);
+        assert!((db(f[0]) + 32.0).abs() < 1e-3 && (db(f[1]) + 16.0).abs() < 1e-3 && (db(f[2]) + 8.0).abs() < 1e-3);
+        // Premiere's 40 % (calibration point): 12.8 dB below 2 kHz, 6.4 dB to 4 kHz, 3.2 dB above.
+        let f = denoise_floors(0.4);
+        assert!((db(f[0]) + 12.8).abs() < 1e-3 && (db(f[1]) + 6.4).abs() < 1e-3 && (db(f[2]) + 3.2).abs() < 1e-3);
+        // the default 5 % stays a whisper
+        let f5 = denoise_floors(0.05);
+        assert!(db(f5[0]) > -1.7 && db(f5[2]) > -0.5);
+    }
+
+    /// Speech frames keep more of the signal than pauses: a loud 200 Hz tone (RNNoise's speech detector) is not pushed to the
+    /// pause floor.
+    #[test]
+    fn noise_reduction_floor_relaxes_for_speech() {
+        let f = denoise_floors(1.0);
+        assert!(f[3] > 0.0 && f[3] <= 1.0);
+        // powf(floor, 1 - relax * vad) as in denoise.c
+        let speech = f[0].powf(1.0 - f[3]);
+        assert!(speech > f[0] && 20.0 * speech.log10() > -8.0);
+    }
+
+    #[test]
+    fn noise_reduction_at_zero_strength_is_the_delayed_dry_signal() {
+        let x = vec![sig::noise(0.1, 4800, 1), sig::noise(0.1, 4800, 2)];
+        let y = run_with(
+            &[slot(AUDIO_NOISE_REDUCTION_KIND)],
+            &[AudioFXStage::NoiseReduction { amount: 0.0 }],
+            &x,
+            None,
+            480,
+        );
+        for c in 0..2 {
+            assert_eq!(y[c][480..], x[c][..4800 - 480]);
+        }
     }
 
     #[test]

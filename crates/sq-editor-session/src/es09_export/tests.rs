@@ -263,8 +263,9 @@ fn loudness_follows_the_delivery_target_then_the_preset() {
     it.delivery_target =
         Some(DeliveryTarget { platform: DeliveryPlatform::Tiktok, target_lufs: -16.0, true_peak_db: -2.0 });
     let mut m = model_of(vec![it], None);
-    assert_eq!(m.settings().audio.loudness, Some(LoudnessNormalization::new(-16.0, -2.0)));
-    assert!(m.normalize_loudness());
+    assert_eq!(m.settings().audio.loudness, None);
+    assert!(!m.normalize_loudness());
+    m.set_normalize_loudness(true);
     assert_eq!(m.loudness_label(), "Normalize loudness to -16 LUFS, max -2 dBTP");
     let mut plain = make_model(1);
     assert!(!plain.normalize_loudness());
@@ -405,7 +406,7 @@ fn preferences_round_trip_through_apply() {
     let mut fresh = make_model(1);
     fresh.apply_preferences(&p);
     assert_eq!(fresh.captions(), sq_export::core::settings::CaptionMode::SidecarSrt);
-    assert!(fresh.normalize_loudness());
+    assert!(!fresh.normalize_loudness(), "loudness is never remembered");
     assert!(!fresh.export_all_formats()); // no variants
 }
 
@@ -485,7 +486,7 @@ fn target_sequence_keeps_its_platform_preset_and_others_use_the_last_one() {
     QuickExport::apply_preset(&mut m, Some(&ExportPreset::PRORES.id()));
     assert_eq!(m.preset_id(), own);
     assert_eq!(m.preset_id(), tiktok_h264().id());
-    assert!(m.normalize_loudness());
+    assert!(!m.normalize_loudness());
 
     let mut plain = model_of(vec![item(2, "S")], None);
     let before = plain.preset_id().to_string();

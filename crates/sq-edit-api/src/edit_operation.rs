@@ -5,7 +5,7 @@ use crate::time_limits::{WireRange, WireTime};
 use serde::de::DeserializeOwned;
 use serde::{Deserialize, Deserializer, Serialize, Serializer};
 use serde_json::{Map, Value, json};
-use sq_core_model::{ClipEdge, PixelAspect};
+use sq_core_model::{ClipEdge, ClipSpeed, PixelAspect, TrackKind};
 use sq_core_time::{Id, Time, TimeRange};
 use std::collections::BTreeSet;
 
@@ -43,6 +43,96 @@ pub enum EditOperation {
     /// Source settings > Pixel Aspect of a media item (all its clips; None = what the file says). One ratio num/den within
     /// 1:4 ... 4:1. A media setting, not a timeline edit: it shows in `pixelAspectChanges` of the diff.
     SetPixelAspect { media: Id, aspect: Option<PixelAspect> },
+    /// Delete clips (and their linked partners): `ripple` closes the gap (Ripple Delete), else it stays (Lift).
+    RemoveClip { clips: Vec<Id>, ripple: bool },
+    /// New empty track after the last one of its kind (what Sequence > Add Track does).
+    AddTrack { kind: TrackKind },
+    /// Constant clip speed (and its linked partners), `num/den` of normal speed; the clip's source range stays.
+    SetClipSpeed { clip: Id, speed: ClipSpeed },
+    /// Track header toggles; absent fields stay as they are.
+    SetTrackState { track: Id, mute: Option<bool>, solo: Option<bool>, lock: Option<bool>, visible: Option<bool> },
+    /// Sequence Settings of `sequence` (None = the one the commit names); absent fields stay as they are.
+    SetSequenceSettings { sequence: Option<Id>, width: Option<i64>, height: Option<i64>, fps: Option<Fps>, sample_rate: Option<i64> },
+    /// Session operation. Places an imported media item (video with its linked audio, or video only) like the Overwrite /
+    /// Insert commands; `source_in`/`source_out` pick the part of the media (default: all of it).
+    AddClip {
+        media: Id,
+        track: Option<Id>,
+        at: Time,
+        source_in: Option<Time>,
+        source_out: Option<Time>,
+        link_audio: bool,
+        insert: bool,
+    },
+    /// Session operation. A new empty sequence (4 video + 4 audio tracks) that becomes the active one.
+    CreateSequence { name: String, width: i64, height: i64, fps: Fps, sample_rate: Option<i64> },
+    /// Session operation. Opens `sequence` in the timeline; later operations of the batch act on it.
+    SetActiveSequence { sequence: Id },
+    /// Session operation. Sync Audio to Reference for one clip: lines `clip` (with its linked partners) up with the
+    /// reference clip `to` by start timecode, else by the shared sound (waveform fit), else by capture date, and with
+    /// `retime` (default true) corrects drift by a constant speed. Both clips must be in the active sequence.
+    SyncAudio { clip: Id, to: Id, retime: bool },
+    /// Sets the static value of an inspector parameter (path from `GET /v1/clip/{id}/params`).
+    SetParam { clip: Id, param: String, value: Value },
+    /// Adds a catalog effect (`GET /v1/effects`); `index` = its place in the effect list.
+    AddEffect { clip: Id, effect: String, index: Option<usize> },
+    /// Removes an effect by its id.
+    RemoveEffect { clip: Id, effect: Id },
+    /// Adds or replaces a key at clip-local time `at`.
+    SetKeyframe { clip: Id, param: String, at: Time, value: Value, interpolation: Option<String> },
+    /// Removes the key at clip-local time `at`.
+    RemoveKeyframe { clip: Id, param: String, at: Time },
+    /// Makes ONE graphics clip with text layers (bottom layer first).
+    AddGraphic { track: Id, at: Time, duration: Time, name: Option<String>, layers: Vec<Value> },
+    /// Changes one text layer; `fields` are the layer fields (text, font, size, color, ...).
+    SetTextLayer { clip: Id, layer: Id, fields: Value },
+    /// Adds a text layer on top (or at `index`) of a graphics clip.
+    AddTextLayer { clip: Id, index: Option<usize>, fields: Value },
+    /// Removes a text layer.
+    RemoveTextLayer { clip: Id, layer: Id },
+}
+
+/// A frame rate as a ratio (`num/den` frames per second; 30000/1001 = 29.97).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct Fps {
+    /// Frames ...
+    pub num: i64,
+    /// ... per this many seconds.
+    pub den: i64,
+}
+
+impl Fps {
+    /// Duration of one frame.
+    pub fn frame_duration(self) -> Time {
+        Time::new(self.den, self.num)
+    }
+
+    /// Reads a JSON number (24, 25, 30, 60 and the NTSC rates 23.976, 29.97, 59.94, 119.88) or `{"num", "den"}`.
+    fn from_value(v: &Value) -> Result<Fps, String> {
+        let (num, den) = if let Some(f) = v.as_f64() {
+            let ntsc = [(23.976, 24_000, 1001), (29.97, 30_000, 1001), (59.94, 60_000, 1001), (119.88, 120_000, 1001)];
+            if f.fract() == 0.0 && (1.0..=1000.0).contains(&f) {
+                (f as i64, 1)
+            } else if let Some((_, n, d)) = ntsc.iter().find(|(r, _, _)| (r - f).abs() < 0.006) {
+                (*n, *d)
+            } else {
+                return Err(format!("fps: {f} is not a whole rate or 23.976 / 29.97 / 59.94 / 119.88; pass {{\"num\", \"den\"}}"));
+            }
+        } else if let Some(o) = v.as_object() {
+            check_strict_keys(o, &["num", "den"], "fps")?;
+            (required::<i64>(o, "num")?, required::<i64>(o, "den")?)
+        } else {
+            return Err("fps: expected a number or {num, den}".to_string());
+        };
+        if !(1..=1_000_000).contains(&num) || !(1..=1_000_000).contains(&den) || num > 1000 * den {
+            return Err(format!("fps: {num}/{den} is out of range (up to 1000 fps)"));
+        }
+        Ok(Fps { num, den })
+    }
+
+    fn to_value(self) -> Value {
+        json!({"num": self.num, "den": self.den})
+    }
 }
 
 impl EditOperation {
@@ -63,7 +153,34 @@ impl EditOperation {
             Self::ToggleEnabled { .. } => "toggleEnabled",
             Self::AddMarker { .. } => "addMarker",
             Self::SetPixelAspect { .. } => "setPixelAspect",
+            Self::RemoveClip { .. } => "removeClip",
+            Self::AddTrack { .. } => "addTrack",
+            Self::SetClipSpeed { .. } => "setClipSpeed",
+            Self::SetTrackState { .. } => "setTrackState",
+            Self::SetSequenceSettings { .. } => "setSequenceSettings",
+            Self::AddClip { .. } => "addClip",
+            Self::CreateSequence { .. } => "createSequence",
+            Self::SetActiveSequence { .. } => "setActiveSequence",
+            Self::SyncAudio { .. } => "syncAudio",
+            Self::SetParam { .. } => "setParam",
+            Self::AddEffect { .. } => "addEffect",
+            Self::RemoveEffect { .. } => "removeEffect",
+            Self::SetKeyframe { .. } => "setKeyframe",
+            Self::RemoveKeyframe { .. } => "removeKeyframe",
+            Self::AddGraphic { .. } => "addGraphic",
+            Self::SetTextLayer { .. } => "setTextLayer",
+            Self::AddTextLayer { .. } => "addTextLayer",
+            Self::RemoveTextLayer { .. } => "removeTextLayer",
         }
+    }
+
+    /// Operations the session runs itself (they change the media placement, the sequence list or the open sequence, not
+    /// only one timeline): a batch with one of them runs operation by operation, still ONE undo step.
+    pub fn is_session_operation(&self) -> bool {
+        matches!(
+            self,
+            Self::AddClip { .. } | Self::CreateSequence { .. } | Self::SetActiveSequence { .. } | Self::SyncAudio { .. }
+        )
     }
 
     /// Every time the operation carries (validated before any arithmetic).
@@ -73,8 +190,27 @@ impl EditOperation {
             Self::RippleDelete { .. }
             | Self::Lift { .. }
             | Self::ToggleEnabled { .. }
-            | Self::SetPixelAspect { .. } => {
+            | Self::SetPixelAspect { .. }
+            | Self::RemoveClip { .. }
+            | Self::AddTrack { .. }
+            | Self::SetClipSpeed { .. }
+            | Self::SetTrackState { .. }
+            | Self::SetSequenceSettings { .. }
+            | Self::CreateSequence { .. }
+            | Self::SetActiveSequence { .. }
+            | Self::SetParam { .. }
+            | Self::AddEffect { .. }
+            | Self::RemoveEffect { .. }
+            | Self::SetTextLayer { .. }
+            | Self::AddTextLayer { .. }
+            | Self::RemoveTextLayer { .. } 
+            | Self::SyncAudio { .. } => {
                 vec![]
+            }
+            Self::SetKeyframe { at, .. } | Self::RemoveKeyframe { at, .. } => vec![*at],
+            Self::AddGraphic { at, duration, .. } => vec![*at, *duration],
+            Self::AddClip { at, source_in, source_out, .. } => {
+                std::iter::once(*at).chain(*source_in).chain(*source_out).collect()
             }
             Self::Extract { range, .. } | Self::LiftRange { range, .. } => vec![range.start, range.duration],
             Self::Trim { by, .. }
@@ -87,7 +223,7 @@ impl EditOperation {
     }
 
     /// Every wire name, in documentation order.
-    pub const ALL_NAMES: [&'static str; 14] = [
+    pub const ALL_NAMES: [&'static str; 32] = [
         "razor",
         "rippleDelete",
         "lift",
@@ -102,6 +238,24 @@ impl EditOperation {
         "toggleEnabled",
         "addMarker",
         "setPixelAspect",
+        "removeClip",
+        "addTrack",
+        "setClipSpeed",
+        "setTrackState",
+        "setSequenceSettings",
+        "addClip",
+        "createSequence",
+        "setActiveSequence",
+        "syncAudio",
+        "setParam",
+        "addEffect",
+        "removeEffect",
+        "setKeyframe",
+        "removeKeyframe",
+        "addGraphic",
+        "setTextLayer",
+        "addTextLayer",
+        "removeTextLayer",
     ];
 }
 
@@ -162,6 +316,22 @@ impl EditOperation {
             "slip" | "slide" | "roll" => Some(&["op", "clip", "by"]),
             "addMarker" => Some(&["op", "at", "name"]),
             "setPixelAspect" => Some(&["op", "media", "aspect"]),
+            "removeClip" => Some(&["op", "clips", "ripple"]),
+            "addTrack" => Some(&["op", "kind"]),
+            "setClipSpeed" => Some(&["op", "clip", "speed"]),
+            "setTrackState" => Some(&["op", "track", "mute", "solo", "lock", "visible"]),
+            "setSequenceSettings" => Some(&["op", "sequence", "width", "height", "fps", "sampleRate"]),
+            "addClip" => Some(&["op", "media", "track", "at", "sourceIn", "sourceOut", "linkAudio", "mode"]),
+            "createSequence" => Some(&["op", "name", "width", "height", "fps", "sampleRate"]),
+            "setActiveSequence" => Some(&["op", "sequence"]),
+            "syncAudio" => Some(&["op", "clip", "to", "retime"]),
+            "setParam" => Some(&["op", "clip", "param", "value"]),
+            "addEffect" => Some(&["op", "clip", "effect", "index"]),
+            "removeEffect" => Some(&["op", "clip", "effect"]),
+            "setKeyframe" => Some(&["op", "clip", "param", "at", "value", "interpolation"]),
+            "removeKeyframe" => Some(&["op", "clip", "param", "at"]),
+            "addGraphic" => Some(&["op", "track", "at", "duration", "name", "layers"]),
+            "removeTextLayer" => Some(&["op", "clip", "layer"]),
             _ => None,
         };
         if let Some(allowed) = allowed {
@@ -183,6 +353,108 @@ impl EditOperation {
             "toggleEnabled" => Self::ToggleEnabled { clips: required(c, "clips")? },
             "addMarker" => Self::AddMarker { at: time(c, "at")?, name: optional(c, "name")?.unwrap_or_default() },
             "setPixelAspect" => Self::SetPixelAspect { media: required(c, "media")?, aspect: optional(c, "aspect")? },
+            "removeClip" => {
+                Self::RemoveClip { clips: required(c, "clips")?, ripple: optional(c, "ripple")?.unwrap_or(false) }
+            }
+            "addTrack" => Self::AddTrack {
+                kind: match required::<String>(c, "kind")?.as_str() {
+                    "video" => TrackKind::Video,
+                    "audio" => TrackKind::Audio,
+                    other => return Err(format!("kind: unknown kind '{other}'; known: video, audio")),
+                },
+            },
+            "setClipSpeed" => {
+                let w = required::<SpeedWire>(c, "speed")?;
+                if w.num <= 0 || w.den <= 0 {
+                    return Err(format!("speed: must be positive, got {}/{}", w.num, w.den));
+                }
+                Self::SetClipSpeed { clip: required(c, "clip")?, speed: ClipSpeed::new(w.num, w.den) }
+            }
+            "setTrackState" => {
+                let (mute, solo, lock, visible) =
+                    (optional(c, "mute")?, optional(c, "solo")?, optional(c, "lock")?, optional(c, "visible")?);
+                if mute.is_none() && solo.is_none() && lock.is_none() && visible.is_none() {
+                    return Err("setTrackState: give at least one of mute, solo, lock, visible".to_string());
+                }
+                Self::SetTrackState { track: required(c, "track")?, mute, solo, lock, visible }
+            }
+            "setSequenceSettings" => Self::SetSequenceSettings {
+                sequence: optional(c, "sequence")?,
+                width: optional(c, "width")?,
+                height: optional(c, "height")?,
+                fps: c.get("fps").filter(|v| !v.is_null()).map(Fps::from_value).transpose()?,
+                sample_rate: optional(c, "sampleRate")?,
+            },
+            "addClip" => Self::AddClip {
+                media: required(c, "media")?,
+                track: optional(c, "track")?,
+                at: time(c, "at")?,
+                source_in: optional::<WireTime>(c, "sourceIn")?.map(|w| w.time),
+                source_out: optional::<WireTime>(c, "sourceOut")?.map(|w| w.time),
+                link_audio: optional(c, "linkAudio")?.unwrap_or(true),
+                insert: match optional::<String>(c, "mode")?.as_deref() {
+                    None | Some("overwrite") => false,
+                    Some("insert") => true,
+                    Some(other) => return Err(format!("mode: unknown mode '{other}'; known: overwrite, insert")),
+                },
+            },
+            "createSequence" => Self::CreateSequence {
+                name: required(c, "name")?,
+                width: required(c, "width")?,
+                height: required(c, "height")?,
+                fps: Fps::from_value(c.get("fps").ok_or("missing field `fps`")?)?,
+                sample_rate: optional(c, "sampleRate")?,
+            },
+            "setActiveSequence" => Self::SetActiveSequence { sequence: required(c, "sequence")? },
+            "syncAudio" => Self::SyncAudio {
+                clip: required(c, "clip")?,
+                to: required(c, "to")?,
+                retime: optional::<bool>(c, "retime")?.unwrap_or(true),
+            },
+            "setParam" => Self::SetParam { clip: required(c, "clip")?, param: required(c, "param")?, value: required(c, "value")? },
+            "addEffect" => Self::AddEffect { clip: required(c, "clip")?, effect: required(c, "effect")?, index: optional(c, "index")? },
+            "removeEffect" => Self::RemoveEffect { clip: required(c, "clip")?, effect: required(c, "effect")? },
+            "setKeyframe" => {
+                let interpolation: Option<String> = optional(c, "interpolation")?;
+                if let Some(i) = &interpolation {
+                    crate::clip_params::parse_interpolation(i)?;
+                }
+                Self::SetKeyframe {
+                    clip: required(c, "clip")?,
+                    param: required(c, "param")?,
+                    at: time(c, "at")?,
+                    value: required(c, "value")?,
+                    interpolation,
+                }
+            }
+            "removeKeyframe" => Self::RemoveKeyframe { clip: required(c, "clip")?, param: required(c, "param")?, at: time(c, "at")? },
+            "addGraphic" => {
+                let layers: Vec<Value> = required(c, "layers")?;
+                if layers.is_empty() || layers.len() > crate::text_layers::MAX_LAYERS {
+                    return Err(format!("layers: 1...{} text layers", crate::text_layers::MAX_LAYERS));
+                }
+                layers.iter().enumerate().try_for_each(|(i, l)| {
+                    crate::text_layers::check_spec(l).map_err(|e| format!("layers[{i}]: {e}"))
+                })?;
+                Self::AddGraphic {
+                    track: required(c, "track")?,
+                    at: time(c, "at")?,
+                    duration: time(c, "duration")?,
+                    name: optional(c, "name")?,
+                    layers,
+                }
+            }
+            "setTextLayer" | "addTextLayer" => {
+                let own: &[&str] = if op == "setTextLayer" { &["op", "clip", "layer"] } else { &["op", "clip", "index"] };
+                let fields = crate::text_layers::spec_from(c, own);
+                crate::text_layers::check_spec(&fields)?;
+                if op == "setTextLayer" {
+                    Self::SetTextLayer { clip: required(c, "clip")?, layer: required(c, "layer")?, fields }
+                } else {
+                    Self::AddTextLayer { clip: required(c, "clip")?, index: optional(c, "index")?, fields }
+                }
+            }
+            "removeTextLayer" => Self::RemoveTextLayer { clip: required(c, "clip")?, layer: required(c, "layer")? },
             _ => {
                 return Err(format!("op: unknown op '{op}'; known: {}", Self::ALL_NAMES.join(", ")));
             }
@@ -230,9 +502,110 @@ impl EditOperation {
                 put("media", json!(media));
                 aspect.iter().for_each(|a| put("aspect", json!(a)));
             }
+            Self::RemoveClip { clips, ripple } => {
+                put("clips", json!(clips));
+                put("ripple", json!(ripple));
+            }
+            Self::AddTrack { kind } => put("kind", json!(if *kind == TrackKind::Video { "video" } else { "audio" })),
+            Self::SetClipSpeed { clip, speed } => {
+                put("clip", json!(clip));
+                put("speed", json!({"num": speed.num(), "den": speed.den()}));
+            }
+            Self::SetTrackState { track, mute, solo, lock, visible } => {
+                put("track", json!(track));
+                for (k, v) in [("mute", mute), ("solo", solo), ("lock", lock), ("visible", visible)] {
+                    v.iter().for_each(|v| put(k, json!(v)));
+                }
+            }
+            Self::SetSequenceSettings { sequence, width, height, fps, sample_rate } => {
+                sequence.iter().for_each(|v| put("sequence", json!(v)));
+                width.iter().for_each(|v| put("width", json!(v)));
+                height.iter().for_each(|v| put("height", json!(v)));
+                fps.iter().for_each(|v| put("fps", v.to_value()));
+                sample_rate.iter().for_each(|v| put("sampleRate", json!(v)));
+            }
+            Self::AddClip { media, track, at, source_in, source_out, link_audio, insert } => {
+                put("media", json!(media));
+                track.iter().for_each(|v| put("track", json!(v)));
+                put("at", json!(at));
+                source_in.iter().for_each(|v| put("sourceIn", json!(v)));
+                source_out.iter().for_each(|v| put("sourceOut", json!(v)));
+                put("linkAudio", json!(link_audio));
+                put("mode", json!(if *insert { "insert" } else { "overwrite" }));
+            }
+            Self::CreateSequence { name, width, height, fps, sample_rate } => {
+                put("name", json!(name));
+                put("width", json!(width));
+                put("height", json!(height));
+                put("fps", fps.to_value());
+                sample_rate.iter().for_each(|v| put("sampleRate", json!(v)));
+            }
+            Self::SetActiveSequence { sequence } => put("sequence", json!(sequence)),
+            Self::SyncAudio { clip, to, retime } => {
+                put("clip", json!(clip));
+                put("to", json!(to));
+                put("retime", json!(retime));
+            }
+            Self::SetParam { clip, param, value } => {
+                put("clip", json!(clip));
+                put("param", json!(param));
+                put("value", value.clone());
+            }
+            Self::AddEffect { clip, effect, index } => {
+                put("clip", json!(clip));
+                put("effect", json!(effect));
+                index.iter().for_each(|i| put("index", json!(i)));
+            }
+            Self::RemoveEffect { clip, effect } => {
+                put("clip", json!(clip));
+                put("effect", json!(effect));
+            }
+            Self::SetKeyframe { clip, param, at, value, interpolation } => {
+                put("clip", json!(clip));
+                put("param", json!(param));
+                put("at", json!(at));
+                put("value", value.clone());
+                interpolation.iter().for_each(|i| put("interpolation", json!(i)));
+            }
+            Self::RemoveKeyframe { clip, param, at } => {
+                put("clip", json!(clip));
+                put("param", json!(param));
+                put("at", json!(at));
+            }
+            Self::AddGraphic { track, at, duration, name, layers } => {
+                put("track", json!(track));
+                put("at", json!(at));
+                put("duration", json!(duration));
+                name.iter().for_each(|n| put("name", json!(n)));
+                put("layers", json!(layers));
+            }
+            Self::SetTextLayer { clip, layer, fields } => {
+                put("clip", json!(clip));
+                put("layer", json!(layer));
+                if let Value::Object(f) = fields {
+                    f.iter().for_each(|(k, v)| put(k, v.clone()));
+                }
+            }
+            Self::AddTextLayer { clip, index, fields } => {
+                put("clip", json!(clip));
+                index.iter().for_each(|i| put("index", json!(i)));
+                if let Value::Object(f) = fields {
+                    f.iter().for_each(|(k, v)| put(k, v.clone()));
+                }
+            }
+            Self::RemoveTextLayer { clip, layer } => {
+                put("clip", json!(clip));
+                put("layer", json!(layer));
+            }
         }
         Value::Object(m)
     }
+}
+
+#[derive(Deserialize)]
+struct SpeedWire {
+    num: i64,
+    den: i64,
 }
 
 impl<'de> Deserialize<'de> for EditOperation {
@@ -329,5 +702,52 @@ mod tests {
         assert_eq!(again.ok(), Some(ops));
         let bad = format!(r#"[{{"op":"setPixelAspect","media":"{id}","aspect":{{"num":9,"den":1}}}}]"#);
         assert!(decode(&bad).is_err());
+    }
+
+    #[test]
+    fn timeline_building_operations_decode_and_round_trip() {
+        let (id, tr) = (Id::from_u128(5), Id::from_u128(6));
+        let json = format!(
+            r#"[{{"op":"addClip","media":"{id}","at":{{"value":1,"timescale":1}},"sourceIn":{{"value":2,"timescale":1}},"linkAudio":false,"mode":"insert"}},
+             {{"op":"addClip","media":"{id}","track":"{tr}","at":{{"value":0,"timescale":1}}}},
+             {{"op":"removeClip","clips":["{id}"],"ripple":true}},
+             {{"op":"addTrack","kind":"audio"}},
+             {{"op":"setClipSpeed","clip":"{id}","speed":{{"num":2,"den":1}}}},
+             {{"op":"setTrackState","track":"{tr}","mute":true,"lock":false}},
+             {{"op":"setSequenceSettings","width":1080,"height":1920,"fps":29.97,"sampleRate":44100}},
+             {{"op":"createSequence","name":"Reel","width":1080,"height":1920,"fps":60}},
+             {{"op":"setActiveSequence","sequence":"{id}"}},
+             {{"op":"syncAudio","clip":"{id}","to":"{tr}","retime":false}}]"#
+        );
+        let ops = decode(&json).unwrap_or_else(|e| panic!("decode: {e}"));
+        assert_eq!(ops.len(), 10);
+        assert_eq!(ops[9], EditOperation::SyncAudio { clip: id, to: tr, retime: false });
+        assert!(matches!(&ops[0], EditOperation::AddClip { link_audio: false, insert: true, track: None, .. }));
+        assert!(matches!(&ops[1], EditOperation::AddClip { link_audio: true, insert: false, track: Some(_), .. }));
+        let EditOperation::SetSequenceSettings { fps: Some(f), .. } = &ops[6] else { panic!("settings") };
+        assert_eq!((f.num, f.den), (30_000, 1001));
+        let EditOperation::CreateSequence { fps, .. } = &ops[7] else { panic!("create") };
+        assert_eq!(fps.frame_duration(), Time::new(1, 60));
+        assert_eq!(ops.iter().filter(|o| o.is_session_operation()).count(), 5);
+        let again = serde_json::to_string(&ops).and_then(|s| serde_json::from_str::<Vec<EditOperation>>(&s));
+        assert_eq!(again.ok(), Some(ops));
+        assert_eq!(EditOperation::ALL_NAMES.len(), 32);
+    }
+
+    #[test]
+    fn timeline_building_operations_refuse_bad_values() {
+        let id = Id::from_u128(5);
+        for bad in [
+            r#"[{"op":"addTrack","kind":"subtitle"}]"#.to_string(),
+            format!(r#"[{{"op":"setClipSpeed","clip":"{id}","speed":{{"num":0,"den":1}}}}]"#),
+            format!(r#"[{{"op":"setTrackState","track":"{id}"}}]"#),
+            r#"[{"op":"setSequenceSettings","fps":29.5}]"#.to_string(),
+            r#"[{"op":"createSequence","name":"x","width":1,"height":1,"fps":2000}]"#.to_string(),
+            r#"[{"op":"createSequence","name":"x","width":1,"height":1}]"#.to_string(),
+            format!(r#"[{{"op":"addClip","media":"{id}","at":{{"value":0,"timescale":1}},"mode":"replace"}}]"#),
+            format!(r#"[{{"op":"addClip","media":"{id}","at":{{"value":0,"timescale":1}},"zzz":1}}]"#),
+        ] {
+            assert!(decode(&bad).is_err(), "{bad}");
+        }
     }
 }

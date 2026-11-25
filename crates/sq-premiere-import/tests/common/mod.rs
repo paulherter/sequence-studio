@@ -176,6 +176,16 @@ impl PRFixture {
         id
     }
 
+    /// Renames the param object `id` (the Gyroflow plugin's params are found by name).
+    pub fn rename_last_param(&mut self, id: &str, name: &str) {
+        let key = format!("ObjectID=\"{id}\"");
+        for o in &mut self.objects {
+            if o.contains(&key) {
+                *o = o.replacen("<Name>P</Name>", &format!("<Name>{name}</Name>"), 1);
+            }
+        }
+    }
+
     /// A scalar video param.
     pub fn p(&mut self, pid: i64, value: &str) -> String {
         self.param(Some(pid), value, None, "VideoComponentParam")
@@ -195,6 +205,29 @@ impl PRFixture {
         let id = self.new_id();
         self.objects.push(format!(
             "<ArbVideoComponentParam ObjectID=\"{id}\" Version=\"3\"><ParameterID>{pid}</ParameterID><Name>Source Text</Name><StartKeyframeValue Encoding=\"base64\" BinaryHash=\"{hash}\">{base64}</StartKeyframeValue></ArbVideoComponentParam>"
+        ));
+        id
+    }
+
+    /// A component with `SubComponents` (the masks of Opacity or of an effect).
+    pub fn component_with_subs(&mut self, match_name: &str, params: &[String], subs: &[String]) -> String {
+        let id = self.new_id();
+        let ps: String =
+            params.iter().enumerate().map(|(i, p)| format!("<Param Index=\"{i}\" ObjectRef=\"{p}\"/>")).collect();
+        let sc: String =
+            subs.iter().enumerate().map(|(i, p)| format!("<SubComponent Index=\"{i}\" ObjectRef=\"{p}\"/>")).collect();
+        self.objects.push(format!(
+            "<VideoFilterComponent ObjectID=\"{id}\" Version=\"9\"><Component Version=\"7\"><Params Version=\"1\">{ps}</Params><DisplayName>{match_name}</DisplayName></Component><SubComponents Version=\"1\">{sc}</SubComponents><MatchName>{match_name}</MatchName></VideoFilterComponent>"
+        ));
+        id
+    }
+
+    /// A mask path param: the blob is `StartKeyframeValue`, `keys` the raw `Keyframes` ("ticks,base64;...").
+    pub fn path_param(&mut self, pid: i64, base64: &str, keys: Option<&str>) -> String {
+        let id = self.new_id();
+        let keys_xml = keys.map(|k| format!("<Keyframes>{k}</Keyframes>")).unwrap_or_default();
+        self.objects.push(format!(
+            "<ArbVideoComponentParam ObjectID=\"{id}\" Version=\"3\"><ParameterID>{pid}</ParameterID><Name>Path</Name>{keys_xml}<StartKeyframeValue Encoding=\"base64\" BinaryHash=\"\">{base64}</StartKeyframeValue></ArbVideoComponentParam>"
         ));
         id
     }

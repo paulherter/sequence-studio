@@ -19,7 +19,7 @@ use sq_media::media_error::MediaError;
 use sq_media::media_opener::{MediaOpener, OpenedMedia};
 use sq_media::video_decoding::{DecodedFrame, StopCheck, VideoDecoding};
 use sq_media_ffmpeg::decode::{
-    DEFAULT_EXTRA_HW_FRAMES, FFmpegDemuxer, FFmpegFrame, FFmpegVideoDecoder, flagged_full_range, frame_color,
+    FFmpegDemuxer, FFmpegFrame, FFmpegVideoDecoder, extra_hw_frames, flagged_full_range, frame_color,
     media_error,
 };
 use sq_render::program::CpuPlanes;
@@ -410,7 +410,7 @@ impl DefaultOpener {
             }
         }
         let decoder = Arc::new(
-            FFmpegVideoDecoder::new(Arc::clone(&demuxer), media, !self.software_ffmpeg, DEFAULT_EXTRA_HW_FRAMES)?
+            FFmpegVideoDecoder::new(Arc::clone(&demuxer), media, !self.software_ffmpeg, extra_hw_frames())?
                 .with_deinterlace(fields)
                 .with_full_range(range.read_full),
         );

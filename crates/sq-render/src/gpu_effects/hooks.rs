@@ -439,6 +439,7 @@ impl ClipEffectHooks {
         for seg in &segs[..segs.len() - 1] {
             let pl = plan(seg, cur_size);
             let (tw, th) = (pl.texture_width as u32, pl.texture_height as u32);
+            let (mark, previous) = (scratch.mark(), cur.tex0.clone());
             let mut a = scratch.image(tw, th);
             let pf = pl.factor as f32;
             let b =
@@ -540,6 +541,12 @@ impl ClipEffectHooks {
             next.u.size = cur_size;
             cur = next;
             first = false;
+            // This step's temporaries and the previous step's result are read by no later pass: back to the pool now
+            // (see `Scratch::release_since`), so a long chain on a 4K layer does not hold a few 4K textures per step.
+            scratch.release_since(mark, cur.tex0.as_ref());
+            if let Some(previous) = previous {
+                scratch.release(&previous);
+            }
         }
 
         let mut fin = cur;

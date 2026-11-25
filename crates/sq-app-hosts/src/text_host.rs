@@ -17,7 +17,7 @@ use std::cell::RefCell;
 use std::rc::Rc;
 
 mod look_host;
-mod speech_flow;
+pub(crate) mod speech_flow;
 mod srt_files;
 mod translate_job;
 use speech_flow::{Ask, Speech};

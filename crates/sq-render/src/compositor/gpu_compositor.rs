@@ -318,6 +318,16 @@ impl GpuCompositor {
         self.encode(nodes, format, target, cmds, [0.0, 0.0, 0.0, if transparent { 0.0 } else { 1.0 }], false, pictures)
     }
 
+    /// Hands the render's intermediates back to the texture pool. Call right after the commands of the last `render` were
+    /// submitted: the queue runs in order, so a reused texture is safe, and the pool's byte cap then frees what does not fit.
+    /// Without it every intermediate (a 4K half-float one is 63 MB) stayed borrowed until the next render, which on a machine
+    /// that shares RAM with the GPU held ~60 textures (3-6 GB) at Play.
+    pub fn release_scratch(&mut self) {
+        self.scratch.clear();
+        self.scratch_buffers.clear();
+        self.hooks.begin_render();
+    }
+
     /// A half-float picture stretched to `target`'s size, alpha kept: an image-sequence frame at another size than the
     /// sequence (one bilinear tap per output pixel, clamped to the edge). Drawn as the plain layer (mode 3).
     pub fn resample_linear(
@@ -332,6 +342,7 @@ impl GpuCompositor {
     }
 
     /// A pooled half-float texture that stays reserved until the next `render`.
+    #[track_caller]
     pub fn acquire(&mut self, w: i64, h: i64) -> GpuTexture {
         let t = self.gpu.acquire(w.max(1) as u32, h.max(1) as u32, F16);
         let tex = GpuTexture::clone(&t);

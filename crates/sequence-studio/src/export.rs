@@ -154,6 +154,29 @@ pub fn write_cache_segment(
     Ok(())
 }
 
+/// One picture of sequence `id` at `at`, rendered by the export's engine (all effects, text and captions, like the
+/// monitor and an export). `width` scales it (the height follows the sequence); the Edit API's capture and frame calls.
+pub(crate) fn render_still(
+    snapshot: &ExportSnapshot,
+    id: Id,
+    at: Time,
+    width: Option<usize>,
+) -> Result<RgbaImage, String> {
+    let timeline = snapshot.timelines.iter().find(|t| t.id == id).ok_or("The sequence is no longer in the project.")?;
+    let preset = sq_export::core::preset::ExportPreset::default_preset(Some(&timeline.format), None);
+    let mut settings = preset.settings_matching(Some(&timeline.format));
+    if let Some(w) = width.filter(|w| *w > 0) {
+        let (vw, vh) = (settings.video.width.max(1), settings.video.height.max(1));
+        let h = (w as i64 * vh / vw).max(1);
+        (settings.video.width, settings.video.height) = (w as i64, h);
+    }
+    settings.range = RangeSelection::InOut(TimeRange::new(at, timeline.format.frame_duration));
+    settings.captions = sq_export::core::settings::CaptionMode::BurnIn;
+    let mut source = sources_in(snapshot, id, &settings, false).map_err(|e| e.to_string())?;
+    let frame = source.video.frame(0).map_err(|e| e.to_string())?;
+    frame_pixels(&frame).ok_or_else(|| "the frame has no 8-bit picture (HDR sequence?)".to_string())
+}
+
 /// The frames of one sequence, rendered by a paused engine of their own.
 struct EngineFrames {
     handle: ProgramHandle,
@@ -529,6 +552,33 @@ pub(crate) mod tests {
         let timeline = Timeline::new(Id::from_u128(1), "tiny", format, vec![track, sound]);
 
         (timeline, reference)
+    }
+
+    #[test]
+    fn render_still_gives_one_scaled_non_black_picture_of_a_sequence() {
+        let dir = std::env::temp_dir().join(format!("sq-still-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp folder");
+        let Some(tool) = ffmpeg_tool() else {
+            eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+            return;
+        };
+        if Gpu::new().is_err() {
+            eprintln!("skipped: no graphics device");
+            return;
+        }
+        let (timeline, reference) = tiny_sequence(&tool, &dir);
+        let snapshot = ExportSnapshot {
+            timelines: vec![timeline].into(),
+            media: vec![reference].into(),
+            use_proxies_for_export: false,
+        };
+        let id = Id::from_u128(1);
+        let full = render_still(&snapshot, id, Time::new(1, 2), None).expect("a frame");
+        assert_eq!((full.width, full.height), (320, 180));
+        assert!(full.pixels.chunks(4).any(|p| p[0] > 40 || p[1] > 40 || p[2] > 40), "the frame is black");
+        let small = render_still(&snapshot, id, Time::new(1, 2), Some(160)).expect("a small frame");
+        assert_eq!((small.width, small.height), (160, 90));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]

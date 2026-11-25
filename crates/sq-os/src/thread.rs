@@ -9,7 +9,7 @@
 //! |---------------|----------------------|------------------|-------|
 //! | `Interactive` | `USER_INTERACTIVE`   | `ABOVE_NORMAL`   | none  |
 //! | `Decode`      | `USER_INITIATED`     | `NORMAL`         | none  |
-//! | `Background`  | `UTILITY`            | `BELOW_NORMAL`   | none  |
+//! | `Background`  | `UTILITY`            | `BELOW_NORMAL`   | nice 15 (own thread, inherited) |
 //!
 //! Linux: raising a thread's priority needs `RLIMIT_NICE` or root, which an app must not assume, and real-time classes are
 //! not wanted; so Linux does nothing (the call reports `false`). ffmpeg's internal frame threads are created by the thread
@@ -81,9 +81,74 @@ fn apply(role: Role) -> bool {
     unsafe { SetThreadPriority(GetCurrentThread(), priority(role)) != 0 }
 }
 
-#[cfg(not(any(target_os = "macos", windows)))]
+/// Linux nice value of a `Background` thread. Lowering a thread's own priority needs no privilege; new threads inherit it, so
+/// the worker threads a library starts afterwards (ONNX Runtime's pool, ffmpeg's frame threads) stay behind playback too.
+#[cfg(target_os = "linux")]
+const BACKGROUND_NICE: libc::c_int = 15;
+
+#[cfg(target_os = "linux")]
+fn apply(role: Role) -> bool {
+    if role != Role::Background {
+        return false;
+    }
+    // SAFETY: gettid has no arguments; setpriority(PRIO_PROCESS, tid) changes that one thread only (Linux semantics).
+    unsafe {
+        let tid = libc::syscall(libc::SYS_gettid) as libc::id_t;
+        // Already at least that nice (the whole process runs niced): raising it again would need privilege; nothing to do.
+        libc::getpriority(libc::PRIO_PROCESS, tid) >= BACKGROUND_NICE
+            || libc::setpriority(libc::PRIO_PROCESS, tid, BACKGROUND_NICE) == 0
+    }
+}
+
+#[cfg(not(any(target_os = "macos", windows, target_os = "linux")))]
 fn apply(_role: Role) -> bool {
     false
+}
+
+/// How many compute threads a long background job (EdgeTAM tracking, analysis) may use so that decode, render and the UI keep
+/// cores: half of the logical cores (about the physical cores), at least 1. `SQ_BACKGROUND_THREADS=<n>` overrides (A/B runs).
+pub fn background_threads() -> usize {
+    let cores = std::thread::available_parallelism().map_or(1, |n| n.get());
+    let forced = std::env::var("SQ_BACKGROUND_THREADS").ok().and_then(|v| v.trim().parse::<usize>().ok());
+    background_threads_for(cores, forced)
+}
+
+/// [`background_threads`] for `cores` logical cores and an optional override.
+pub fn background_threads_for(cores: usize, forced: Option<usize>) -> usize {
+    forced.filter(|n| *n > 0).unwrap_or((cores / 2).max(1))
+}
+
+#[cfg(test)]
+mod background_tests {
+    use super::*;
+
+    #[test]
+    fn half_the_cores_at_least_one() {
+        assert_eq!(background_threads_for(16, None), 8);
+        assert_eq!(background_threads_for(1, None), 1);
+        assert_eq!(background_threads_for(3, None), 1);
+        assert_eq!(background_threads_for(16, Some(3)), 3);
+        assert_eq!(background_threads_for(16, Some(0)), 8);
+    }
+
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn background_role_lowers_the_nice_of_this_thread_only() {
+        let before = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
+        let (changed, inside, child) = std::thread::spawn(|| {
+            let changed = apply(Role::Background);
+            let inside = unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) };
+            let child = std::thread::spawn(|| unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) }).join().unwrap();
+            (changed, inside, child)
+        })
+        .join()
+        .unwrap();
+        assert!(changed);
+        assert_eq!(inside, BACKGROUND_NICE.max(before));
+        assert_eq!(child, inside, "threads started later inherit it");
+        assert_eq!(unsafe { libc::getpriority(libc::PRIO_PROCESS, 0) }, before);
+        assert!(!apply(Role::Decode));
+    }
 }
 
 /// CPU time (user + system) the calling thread has used so far; `None` where the system does not say. Wall time minus this
@@ -323,7 +388,8 @@ mod tests {
             if cfg!(any(target_os = "macos", windows)) && roles_enabled() {
                 assert!(applied, "{role:?} should apply on this system");
             } else if cfg!(not(any(target_os = "macos", windows))) {
-                assert!(!applied, "Linux leaves the scheduler alone");
+                // Linux lowers only the Background thread (nice, no privilege needed); the rest is left alone.
+                assert_eq!(applied, cfg!(target_os = "linux") && role == Role::Background, "{role:?}");
             }
         }
     }

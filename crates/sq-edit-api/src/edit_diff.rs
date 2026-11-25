@@ -2,7 +2,8 @@
 //! What a commit changes in one sequence.
 
 use serde::{Deserialize, Serialize};
-use sq_core_model::{Project, Timeline};
+use serde_json::{Value, json};
+use sq_core_model::{Clip, Project, Timeline};
 use sq_core_time::{Id, Time, TimeRange};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -38,6 +39,30 @@ pub struct Change {
     pub after: ClipRef,
 }
 
+/// One inspector parameter that differs after the commit (`before` / `after` absent: the parameter did not exist).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ParamChange {
+    /// Param path (`GET /v1/clip/{id}/params`).
+    pub param: String,
+    /// Static value and keyframes before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub before: Option<Value>,
+    /// Static value and keyframes after.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<Value>,
+}
+
+/// The inspector parameters of one clip that differ.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct ClipParamChanges {
+    /// Clip id.
+    pub clip: Id,
+    /// The parameters.
+    pub params: Vec<ParamChange>,
+}
+
 /// What a commit changes in one sequence: clips added, removed and changed (position, length, source range, track,
 /// enabled), the sequence length before and after, and marker count changes. Sorted by start for stable output.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -60,6 +85,9 @@ pub struct EditDiff {
     /// Media items shown with another pixel aspect after the commit; absent when none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pixel_aspect_changes: Option<i64>,
+    /// Inspector parameters (motion, opacity, volume, effects, text layers) that differ, per clip; absent when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub param_changes: Vec<ClipParamChanges>,
 }
 
 fn order(a: &ClipRef, b: &ClipRef) -> std::cmp::Ordering {
@@ -87,6 +115,46 @@ fn refs(t: &Timeline) -> BTreeMap<Id, ClipRef> {
     out
 }
 
+fn clips_of(t: &Timeline) -> BTreeMap<Id, &Clip> {
+    t.tracks.iter().flat_map(|tr| tr.clips().iter()).map(|c| (c.id, c)).collect()
+}
+
+/// path -> {value, keyframes} of every parameter of the clip.
+fn param_values(c: &Clip) -> BTreeMap<String, Value> {
+    let listing = crate::clip_params::clip_params_json(c);
+    let list = listing.get("params").and_then(Value::as_array).cloned().unwrap_or_default();
+    list.into_iter()
+        .filter_map(|p| {
+            let path = p.get("path")?.as_str()?.to_string();
+            let mut v = json!({"value": p.get("value")});
+            if let Some(k) = p.get("keyframes") {
+                v["keyframes"] = k.clone();
+            }
+            Some((path, v))
+        })
+        .collect()
+}
+
+fn param_changes(before: &Timeline, after: &Timeline) -> Vec<ClipParamChanges> {
+    let (b, a) = (clips_of(before), clips_of(after));
+    let mut out = Vec::new();
+    for (id, old) in &b {
+        let Some(new) = a.get(id).filter(|n| *n != old) else { continue };
+        let (pb, pa) = (param_values(old), param_values(new));
+        let mut params = Vec::new();
+        for path in pb.keys().chain(pa.keys().filter(|k| !pb.contains_key(*k))) {
+            let (x, y) = (pb.get(path), pa.get(path));
+            if x != y {
+                params.push(ParamChange { param: path.clone(), before: x.cloned(), after: y.cloned() });
+            }
+        }
+        if !params.is_empty() {
+            out.push(ClipParamChanges { clip: *id, params });
+        }
+    }
+    out
+}
+
 impl EditDiff {
     /// Whether nothing changed.
     pub fn is_empty(&self) -> bool {
@@ -97,6 +165,7 @@ impl EditDiff {
             && self.markers_added == 0
             && self.markers_removed == 0
             && self.pixel_aspect_changes.is_none()
+            && self.param_changes.is_empty()
     }
 
     /// The diff from `before` to `after`.
@@ -125,6 +194,7 @@ impl EditDiff {
             markers_added: ma.difference(&mb).count() as i64,
             markers_removed: mb.difference(&ma).count() as i64,
             pixel_aspect_changes: None,
+            param_changes: param_changes(before, after),
         }
     }
 

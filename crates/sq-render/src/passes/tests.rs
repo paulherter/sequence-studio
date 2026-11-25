@@ -267,3 +267,17 @@ fn reference_graph_renders() -> R<()> {
     }
     Ok(())
 }
+
+#[test]
+fn a_released_scratch_texture_is_reused_by_the_next_one() {
+    let Some(gpu) = gpu() else { return };
+    let mut scratch = super::kernels::Scratch::new(&gpu);
+    let mark = scratch.mark();
+    let a = scratch.image(64, 32);
+    let kept = scratch.image(64, 32);
+    scratch.release_since(mark, Some(&kept));
+    assert_eq!(scratch.mark(), mark + 1, "only the kept texture is still held");
+    let again = scratch.image(64, 32);
+    assert!(again.texture() == a.texture(), "the released texture came back from the pool");
+    assert!(again.texture() != kept.texture());
+}

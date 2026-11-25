@@ -527,6 +527,14 @@ impl AppRoot {
         self
     }
 
+    /// Gives the Edit API its frame renderer and media probe (capture, source frames, Premiere import).
+    pub fn with_edit_api_perceive(mut self, backend: crate::PerceiveBackend) -> AppRoot {
+        if let Some(api) = &mut self.edit_api {
+            api.set_perceive(backend);
+        }
+        self
+    }
+
     /// [`AppRoot::with_prefs`] over a store the panels already share.
     pub fn with_prefs_store(
         mut self,
@@ -2805,6 +2813,7 @@ impl AppHost for AppRoot {
     fn wants_frames(&self) -> bool {
         self.timeline.needs_frames()
             || self.shell.start_mascot_animating()
+            || self.shell.paste_waits()
             // An idle window gets no other wake: the recovery debounce needs polls until the snapshot is written.
             || self.persist.as_ref().is_some_and(|p| p.snapshot_needs_poll())
     }

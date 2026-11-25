@@ -31,239 +31,368 @@ impl Mapping<'_> {
         let mut out: Vec<ClipEffect> = Vec::new();
         for comp in item.components.iter().filter(|c| !c.is_audio) {
             let name = comp.match_name.as_str();
-            match name {
-                "AE.ADBE Motion" => {
-                    // Motion's crop (params 8-11, %) as a Crop effect.
-                    let ids = [8, 9, 10, 11];
-                    let keys = [
-                        ClipEffect::CROP_LEFT_KEY,
-                        ClipEffect::CROP_TOP_KEY,
-                        ClipEffect::CROP_RIGHT_KEY,
-                        ClipEffect::CROP_BOTTOM_KEY,
-                    ];
-                    if !ids
-                        .iter()
-                        .any(|&i| PRParamValue::double(sv(comp, i)).unwrap_or(0.0) != 0.0 || animated(comp, i))
-                    {
-                        continue;
-                    }
-                    let mut e = self.make_effect(ClipEffect::CROP_KIND);
-                    for (id, key) in ids.iter().zip(keys) {
-                        e.parameters
-                            .insert(key.to_string(), self.anim(ctx, comp.param(*id), 0.0, PRParamValue::double, |v| v));
-                    }
-                    out.push(e);
-                    self.report.note("Motion crop", Mapped, "");
-                }
-                "AE.ADBE Opacity" | "AE.ADBE Text" | "AE.ADBE MPEG.SourceSettings" | "AE.ADBE Graphic Group" => {
-                    continue;
-                }
-                "AE.ADBE Shape" if item.is_adjustment_layer || self.map_shapes => continue, // layer of an adjustment graphic: not drawn; its area is judged in adjustment_clip
-                "AE.ADBE Geometry2" => {
-                    let e = self.transform_stage(comp, ctx, frame, text_offset);
-                    out.push(e);
-                }
-                "AE.ADBE Gaussian Blur 2" | "AE.ADBE Gaussian Blur" => {
-                    let mut e = self.make_effect(ClipEffect::GAUSSIAN_BLUR_KIND);
-                    // Blurriness 1:1: SQ's Gaussian Blur uses Premiere's units (ClipEffect.gaussianSigmaPerBlurriness).
-                    e.parameters.insert(
-                        ClipEffect::BLURRINESS_KEY.to_string(),
-                        self.anim(ctx, comp.param(1), 0.0, PRParamValue::double, |v| v),
-                    );
-                    // Repeat Edge Pixels (param 3): the edge stays opaque instead of fading into black.
-                    if PRParamValue::bool(sv(comp, 3)) == Some(true) {
-                        e.parameters.insert(ClipEffect::REPEAT_EDGE_PIXELS_KEY.to_string(), AnimatedProperty::new(1.0));
-                    }
-                    out.push(e);
-                    self.report.note(name, Mapped, "");
-                }
-                "AE.ADBE Drop Shadow" => {
-                    let mut e = self.make_effect(ClipEffect::DROP_SHADOW_KIND);
-                    if let Some(col) = PRParamValue::color(sv(comp, 1)) {
-                        e.colors.insert(ClipEffect::SHADOW_COLOR_KEY.to_string(), AnimatedProperty::new(rgb(&col)));
-                    }
-                    let mut p = |m: &mut Self, key: &str, id: i64, fallback: f64, f: fn(f64) -> f64| {
-                        e.parameters
-                            .insert(key.to_string(), m.anim(ctx, comp.param(id), fallback, PRParamValue::double, f));
-                    };
-                    p(self, ClipEffect::SHADOW_OPACITY_KEY, 2, 50.0, |v| v / 255.0 * 100.0);
-                    p(self, ClipEffect::SHADOW_DIRECTION_KEY, 3, 135.0, |v| v);
-                    p(self, ClipEffect::SHADOW_DISTANCE_KEY, 4, 5.0, |v| v);
-                    p(self, ClipEffect::SHADOW_SOFTNESS_KEY, 5, 5.0, |v| v);
-                    if PRParamValue::bool(sv(comp, 6)) == Some(true) {
-                        e.parameters.insert(ClipEffect::SHADOW_ONLY_KEY.to_string(), AnimatedProperty::new(1.0));
-                    }
-                    out.push(e);
-                    self.report.note(name, Mapped, "");
-                }
-                "AE.ADBE Lumetri" => {
-                    if let Some(e) = self.lumetri(comp) {
-                        out.push(e);
-                    }
-                    if let Some(e) = self.lumetri_sharpen(comp) {
-                        out.push(e);
-                    }
-                }
-                "AE.ADBE Mosaic" => {
-                    let mut e = self.make_effect(ClipEffect::MOSAIC_KIND);
-                    e.parameters.insert(
-                        ClipEffect::MOSAIC_COLUMNS_KEY.to_string(),
-                        self.anim(ctx, comp.param(1), 10.0, PRParamValue::double, |v| v),
-                    );
-                    e.parameters.insert(
-                        ClipEffect::MOSAIC_ROWS_KEY.to_string(),
-                        self.anim(ctx, comp.param(2), 10.0, PRParamValue::double, |v| v),
-                    );
-                    if PRParamValue::bool(sv(comp, 3)) == Some(true) {
-                        e.parameters.insert(ClipEffect::MOSAIC_SHARP_KEY.to_string(), AnimatedProperty::new(1.0));
-                    }
-                    out.push(e);
-                    self.report.note(name, Mapped, "");
-                }
-                "AE.ADBE Tint" => {
-                    let mut e = self.make_effect(ClipEffect::TINT_KIND);
-                    if let Some(c) = PRParamValue::color(sv(comp, 1)) {
-                        e.colors.insert(ClipEffect::TINT_BLACK_KEY.to_string(), AnimatedProperty::new(rgb(&c)));
-                    }
-                    if let Some(c) = PRParamValue::color(sv(comp, 2)) {
-                        e.colors.insert(ClipEffect::TINT_WHITE_KEY.to_string(), AnimatedProperty::new(rgb(&c)));
-                    }
-                    e.parameters.insert(
-                        ClipEffect::TINT_AMOUNT_KEY.to_string(),
-                        self.anim(ctx, comp.param(3), 100.0, PRParamValue::double, |v| v),
-                    );
-                    out.push(e);
-                    self.report.note(name, Mapped, "");
-                }
-                "AE.ADBE Horizontal Flip" => {
-                    let e = self.make_effect(ClipEffect::HORIZONTAL_FLIP_KIND);
-                    out.push(e);
-                    self.report.note(name, Mapped, "");
-                }
-                "AE.ADBE_Noise_FX" => {
-                    // Premiere's grain effect (Intensity 3, Saturation 8, Master 10): the closest SQ effect is Noise.
-                    let mut e = self.make_effect(ClipEffect::NOISE_KIND);
-                    let master = PRParamValue::double(sv(comp, 10)).unwrap_or(100.0) / 100.0;
-                    e.parameters.insert(
-                        ClipEffect::NOISE_AMOUNT_KEY.to_string(),
-                        self.anim(ctx, comp.param(3), 50.0, PRParamValue::double, |v| (v * master).min(100.0)),
-                    );
-                    let sat = PRParamValue::double(sv(comp, 8)).unwrap_or(50.0);
-                    e.parameters.insert(
-                        ClipEffect::NOISE_COLOR_KEY.to_string(),
-                        AnimatedProperty::new(if sat > 0.0 { 1.0 } else { 0.0 }),
-                    );
-                    out.push(e);
-                    self.report.note(name, Approximated, "film grain drawn as Noise (Intensity x Master); shadow/midtone/highlight split and blend mode dropped");
-                }
-                "AE.ADBE Motion Blur" | "AE.ADBE Directional Blur" => {
-                    // Directional Blur (legacy match name "Motion Blur"): direction 0 = vertical smear, length px.
-                    let mut e = self.make_effect(ClipEffect::DIRECTIONAL_BLUR_KIND);
-                    e.parameters.insert(
-                        ClipEffect::BLUR_DIRECTION_KEY.to_string(),
-                        self.anim(ctx, comp.param(1), 0.0, PRParamValue::double, |v| v),
-                    );
-                    e.parameters.insert(
-                        ClipEffect::BLUR_LENGTH_KEY.to_string(),
-                        self.anim(ctx, comp.param(2), 0.0, PRParamValue::double, |v| v),
-                    );
-                    out.push(e);
-                    self.report.note(name, Mapped, "");
-                }
-                "AE.ADBE Alpha Adjust"
-                    if PRParamValue::double(sv(comp, 1)).unwrap_or(100.0) == 100.0
-                        && !animated(comp, 1)
-                        && PRParamValue::bool(sv(comp, 3)) != Some(true)
-                        && PRParamValue::bool(sv(comp, 4)) != Some(true) =>
-                {
-                    self.report.note(name, Mapped, "neutral (100 %, no invert / mask only): no effect needed");
-                }
-                "AE.ADBE Mirror"
-                    if out.iter().any(|e| {
-                        e.kind == ClipEffect::TRANSFORM_KIND
-                            && e.parameters.get(ClipEffect::STAGE_SCALE_KEY).map(|p| p.value) != Some(100.0)
-                    }) =>
-                {
-                    // Measured on the "seamless slide" preset (Transform 200 % + Mirror + Transform 50 %): Premiere's
-                    // reflection line then lies outside the picture (it works in the enlarged layer's coordinates). SQ's
-                    // stage space differs, so the line would cut through the frame: dropped (fidelity 18.1 dB with it,
-                    // 24.0 dB without).
-                    self.report.note(
-                        name,
-                        Dropped,
-                        "after a scaled Transform (reflection line in Premiere's enlarged layer)",
-                    );
-                }
-                "AE.ADBE Mirror" => {
-                    let mut e = self.make_effect(ClipEffect::MIRROR_KIND);
-                    e.points.insert(
-                        ClipEffect::MIRROR_CENTER_KEY.to_string(),
-                        self.anim(ctx, comp.param(1), Vec2::ZERO, PRParamValue::point, |p| {
-                            Vec2::new((p.x - 0.5) * frame.x - text_offset.x, (p.y - 0.5) * frame.y - text_offset.y)
-                        }),
-                    );
-                    e.parameters.insert(
-                        ClipEffect::MIRROR_ANGLE_KEY.to_string(),
-                        self.anim(ctx, comp.param(2), 0.0, PRParamValue::double, |v| v),
-                    );
-                    out.push(e);
-                    self.report.note(name, Mapped, "");
-                }
-                "AE.Impact_Crop_FX" => {
-                    let fx = self.rounded_crop(comp, ctx, frame);
-                    out.extend(fx);
-                }
-                "AE.ADBE Ultra Key" => {
-                    if let Some(e) = self.ultra_key(comp, ctx) {
-                        out.push(e);
-                    }
-                }
-                "AE.ADBE Ramp" => {
-                    // Ramp (ids checked on the maintainer's instance): Start 1, Start Color 2, End 3, End Color 4, Shape 5
-                    // (0 linear, 1 radial), Scatter 6, Blend With Original 7. Points are 0...1 of the frame; SQ's are px from
-                    // its center.
-                    let mut e = self.make_effect(ClipEffect::GRADIENT_KIND);
-                    let point = |m: &mut Self, id: i64, fallback: Vec2| {
-                        m.anim(ctx, comp.param(id), fallback, PRParamValue::point, |p| {
-                            Vec2::new((p.x - 0.5) * frame.x - text_offset.x, (p.y - 0.5) * frame.y - text_offset.y)
-                        })
-                    };
-                    e.points.insert(
-                        ClipEffect::GRADIENT_START_KEY.to_string(),
-                        point(self, 1, Vec2::new(0.0, -frame.y / 2.0)),
-                    );
-                    e.points.insert(
-                        ClipEffect::GRADIENT_END_KEY.to_string(),
-                        point(self, 3, Vec2::new(0.0, frame.y / 2.0)),
-                    );
-                    for (id, key) in [(2, ClipEffect::GRADIENT_COLOR1_KEY), (4, ClipEffect::GRADIENT_COLOR2_KEY)] {
-                        // Colors keep their keys; alpha is dropped like before (the ramp covers the frame).
-                        if PRParamValue::color(sv(comp, id)).is_none() && !animated(comp, id) {
-                            continue;
+            let masks = self.masks_of(comp, ctx);
+            let before = out.len();
+            'arm: {
+                match name {
+                    "AE.ADBE Motion" => {
+                        // Motion's crop (params 8-11, %) as a Crop effect.
+                        let ids = [8, 9, 10, 11];
+                        let keys = [
+                            ClipEffect::CROP_LEFT_KEY,
+                            ClipEffect::CROP_TOP_KEY,
+                            ClipEffect::CROP_RIGHT_KEY,
+                            ClipEffect::CROP_BOTTOM_KEY,
+                        ];
+                        if !ids
+                            .iter()
+                            .any(|&i| PRParamValue::double(sv(comp, i)).unwrap_or(0.0) != 0.0 || animated(comp, i))
+                        {
+                            break 'arm;
                         }
-                        e.colors.insert(
-                            key.to_string(),
-                            self.anim(ctx, comp.param(id), EffectColor::BLACK, PRParamValue::color, |c| rgb(&c)),
+                        let mut e = self.make_effect(ClipEffect::CROP_KIND);
+                        for (id, key) in ids.iter().zip(keys) {
+                            e.parameters.insert(
+                                key.to_string(),
+                                self.anim(ctx, comp.param(*id), 0.0, PRParamValue::double, |v| v),
+                            );
+                        }
+                        out.push(e);
+                        self.report.note("Motion crop", Mapped, "");
+                    }
+                    "AE.ADBE Opacity"
+                    | "AE.ADBE Basic 3D"
+                    | "AE.ADBE Text"
+                    | "AE.ADBE MPEG.SourceSettings"
+                    | "AE.ADBE Graphic Group" => {
+                        break 'arm;
+                    }
+                    "AE.ADBE Shape" if item.is_adjustment_layer || self.map_shapes => break 'arm, // layer of an adjustment graphic: not drawn; its area is judged in adjustment_clip
+                    "AE.ADBE Geometry2" => {
+                        let e = self.transform_stage(comp, ctx, frame, text_offset);
+                        out.push(e);
+                    }
+                    "AE.ADBE Gaussian Blur 2" | "AE.ADBE Gaussian Blur" => {
+                        let mut e = self.make_effect(ClipEffect::GAUSSIAN_BLUR_KIND);
+                        // Blurriness 1:1: SQ's Gaussian Blur uses Premiere's units (ClipEffect.gaussianSigmaPerBlurriness).
+                        e.parameters.insert(
+                            ClipEffect::BLURRINESS_KEY.to_string(),
+                            self.anim(ctx, comp.param(1), 0.0, PRParamValue::double, |v| v),
+                        );
+                        // Repeat Edge Pixels (param 3): the edge stays opaque instead of fading into black.
+                        if PRParamValue::bool(sv(comp, 3)) == Some(true) {
+                            e.parameters
+                                .insert(ClipEffect::REPEAT_EDGE_PIXELS_KEY.to_string(), AnimatedProperty::new(1.0));
+                        }
+                        out.push(e);
+                        self.report.note(name, Mapped, "");
+                    }
+                    "AE.ADBE Drop Shadow" => {
+                        let mut e = self.make_effect(ClipEffect::DROP_SHADOW_KIND);
+                        if let Some(col) = PRParamValue::color(sv(comp, 1)) {
+                            e.colors.insert(ClipEffect::SHADOW_COLOR_KEY.to_string(), AnimatedProperty::new(rgb(&col)));
+                        }
+                        let mut p = |m: &mut Self, key: &str, id: i64, fallback: f64, f: fn(f64) -> f64| {
+                            e.parameters.insert(
+                                key.to_string(),
+                                m.anim(ctx, comp.param(id), fallback, PRParamValue::double, f),
+                            );
+                        };
+                        p(self, ClipEffect::SHADOW_OPACITY_KEY, 2, 50.0, |v| v / 255.0 * 100.0);
+                        p(self, ClipEffect::SHADOW_DIRECTION_KEY, 3, 135.0, |v| v);
+                        p(self, ClipEffect::SHADOW_DISTANCE_KEY, 4, 5.0, |v| v);
+                        p(self, ClipEffect::SHADOW_SOFTNESS_KEY, 5, 5.0, |v| v);
+                        if PRParamValue::bool(sv(comp, 6)) == Some(true) {
+                            e.parameters.insert(ClipEffect::SHADOW_ONLY_KEY.to_string(), AnimatedProperty::new(1.0));
+                        }
+                        out.push(e);
+                        self.report.note(name, Mapped, "");
+                    }
+                    "AE.ADBE Lumetri" => {
+                        if let Some(e) = self.lumetri(comp) {
+                            out.push(e);
+                        }
+                        if let Some(e) = self.lumetri_sharpen(comp) {
+                            out.push(e);
+                        }
+                    }
+                    "AE.ADBE Mosaic" => {
+                        let mut e = self.make_effect(ClipEffect::MOSAIC_KIND);
+                        e.parameters.insert(
+                            ClipEffect::MOSAIC_COLUMNS_KEY.to_string(),
+                            self.anim(ctx, comp.param(1), 10.0, PRParamValue::double, |v| v),
+                        );
+                        e.parameters.insert(
+                            ClipEffect::MOSAIC_ROWS_KEY.to_string(),
+                            self.anim(ctx, comp.param(2), 10.0, PRParamValue::double, |v| v),
+                        );
+                        if PRParamValue::bool(sv(comp, 3)) == Some(true) {
+                            e.parameters.insert(ClipEffect::MOSAIC_SHARP_KEY.to_string(), AnimatedProperty::new(1.0));
+                        }
+                        out.push(e);
+                        self.report.note(name, Mapped, "");
+                    }
+                    "AE.ADBE Tint" => {
+                        let mut e = self.make_effect(ClipEffect::TINT_KIND);
+                        if let Some(c) = PRParamValue::color(sv(comp, 1)) {
+                            e.colors.insert(ClipEffect::TINT_BLACK_KEY.to_string(), AnimatedProperty::new(rgb(&c)));
+                        }
+                        if let Some(c) = PRParamValue::color(sv(comp, 2)) {
+                            e.colors.insert(ClipEffect::TINT_WHITE_KEY.to_string(), AnimatedProperty::new(rgb(&c)));
+                        }
+                        e.parameters.insert(
+                            ClipEffect::TINT_AMOUNT_KEY.to_string(),
+                            self.anim(ctx, comp.param(3), 100.0, PRParamValue::double, |v| v),
+                        );
+                        out.push(e);
+                        self.report.note(name, Mapped, "");
+                    }
+                    "AE.ADBE Horizontal Flip" => {
+                        let e = self.make_effect(ClipEffect::HORIZONTAL_FLIP_KIND);
+                        out.push(e);
+                        self.report.note(name, Mapped, "");
+                    }
+                    "AE.ADBE_Noise_FX" => {
+                        // Premiere's grain effect (Intensity 3, Saturation 8, Master 10): the closest SQ effect is Noise.
+                        let mut e = self.make_effect(ClipEffect::NOISE_KIND);
+                        let master = PRParamValue::double(sv(comp, 10)).unwrap_or(100.0) / 100.0;
+                        e.parameters.insert(
+                            ClipEffect::NOISE_AMOUNT_KEY.to_string(),
+                            self.anim(ctx, comp.param(3), 50.0, PRParamValue::double, |v| (v * master).min(100.0)),
+                        );
+                        let sat = PRParamValue::double(sv(comp, 8)).unwrap_or(50.0);
+                        e.parameters.insert(
+                            ClipEffect::NOISE_COLOR_KEY.to_string(),
+                            AnimatedProperty::new(if sat > 0.0 { 1.0 } else { 0.0 }),
+                        );
+                        out.push(e);
+                        self.report.note(name, Approximated, "film grain drawn as Noise (Intensity x Master); shadow/midtone/highlight split and blend mode dropped");
+                    }
+                    "AE.ADBE Motion Blur" | "AE.ADBE Directional Blur" => {
+                        // Directional Blur (legacy match name "Motion Blur"): direction 0 = vertical smear, length px.
+                        let mut e = self.make_effect(ClipEffect::DIRECTIONAL_BLUR_KIND);
+                        e.parameters.insert(
+                            ClipEffect::BLUR_DIRECTION_KEY.to_string(),
+                            self.anim(ctx, comp.param(1), 0.0, PRParamValue::double, |v| v),
+                        );
+                        e.parameters.insert(
+                            ClipEffect::BLUR_LENGTH_KEY.to_string(),
+                            self.anim(ctx, comp.param(2), 0.0, PRParamValue::double, |v| v),
+                        );
+                        out.push(e);
+                        self.report.note(name, Mapped, "");
+                    }
+                    "AE.ADBE Alpha Adjust"
+                        if PRParamValue::double(sv(comp, 1)).unwrap_or(100.0) == 100.0
+                            && !animated(comp, 1)
+                            && PRParamValue::bool(sv(comp, 3)) != Some(true)
+                            && PRParamValue::bool(sv(comp, 4)) != Some(true) =>
+                    {
+                        self.report.note(name, Mapped, "neutral (100 %, no invert / mask only): no effect needed");
+                    }
+                    "AE.ADBE Mirror"
+                        if out.iter().any(|e| {
+                            e.kind == ClipEffect::TRANSFORM_KIND
+                                && e.parameters.get(ClipEffect::STAGE_SCALE_KEY).map(|p| p.value) != Some(100.0)
+                        }) =>
+                    {
+                        // Measured on the "seamless slide" preset (Transform 200 % + Mirror + Transform 50 %): Premiere's
+                        // reflection line then lies outside the picture (it works in the enlarged layer's coordinates). SQ's
+                        // stage space differs, so the line would cut through the frame: dropped (fidelity 18.1 dB with it,
+                        // 24.0 dB without).
+                        self.report.note(
+                            name,
+                            Dropped,
+                            "after a scaled Transform (reflection line in Premiere's enlarged layer)",
                         );
                     }
-                    e.parameters.insert(
-                        ClipEffect::GRADIENT_TYPE_KEY.to_string(),
-                        AnimatedProperty::new(if PRParamValue::double(sv(comp, 5)) == Some(1.0) { 1.0 } else { 0.0 }),
-                    );
-                    e.parameters.insert(
-                        ClipEffect::GRADIENT_BLEND_KEY.to_string(),
-                        self.anim(ctx, comp.param(7), 100.0, PRParamValue::double, |v| 100.0 - v),
-                    );
-                    out.push(e);
-                    let lost = if PRParamValue::double(sv(comp, 6)).unwrap_or(0.0) != 0.0 {
-                        "Ramp Scatter dropped"
-                    } else {
-                        ""
-                    };
-                    self.report.note(name, if lost.is_empty() { Mapped } else { Approximated }, lost);
+                    "AE.ADBE Mirror" => {
+                        let mut e = self.make_effect(ClipEffect::MIRROR_KIND);
+                        e.points.insert(
+                            ClipEffect::MIRROR_CENTER_KEY.to_string(),
+                            self.anim(ctx, comp.param(1), Vec2::ZERO, PRParamValue::point, |p| {
+                                Vec2::new((p.x - 0.5) * frame.x - text_offset.x, (p.y - 0.5) * frame.y - text_offset.y)
+                            }),
+                        );
+                        e.parameters.insert(
+                            ClipEffect::MIRROR_ANGLE_KEY.to_string(),
+                            self.anim(ctx, comp.param(2), 0.0, PRParamValue::double, |v| v),
+                        );
+                        out.push(e);
+                        self.report.note(name, Mapped, "");
+                    }
+                    "AE.Impact_Crop_FX" => {
+                        let fx = self.rounded_crop(comp, ctx, frame);
+                        out.extend(fx);
+                    }
+                    "AE.ADBE Ultra Key" => {
+                        if let Some(e) = self.ultra_key(comp, ctx) {
+                            out.push(e);
+                        }
+                    }
+                    "AE.ADBE Ramp" => {
+                        // Ramp (ids checked on the maintainer's instance): Start 1, Start Color 2, End 3, End Color 4, Shape 5
+                        // (0 linear, 1 radial), Scatter 6, Blend With Original 7. Points are 0...1 of the frame; SQ's are px from
+                        // its center.
+                        let mut e = self.make_effect(ClipEffect::GRADIENT_KIND);
+                        let point = |m: &mut Self, id: i64, fallback: Vec2| {
+                            m.anim(ctx, comp.param(id), fallback, PRParamValue::point, |p| {
+                                Vec2::new((p.x - 0.5) * frame.x - text_offset.x, (p.y - 0.5) * frame.y - text_offset.y)
+                            })
+                        };
+                        e.points.insert(
+                            ClipEffect::GRADIENT_START_KEY.to_string(),
+                            point(self, 1, Vec2::new(0.0, -frame.y / 2.0)),
+                        );
+                        e.points.insert(
+                            ClipEffect::GRADIENT_END_KEY.to_string(),
+                            point(self, 3, Vec2::new(0.0, frame.y / 2.0)),
+                        );
+                        for (id, key) in [(2, ClipEffect::GRADIENT_COLOR1_KEY), (4, ClipEffect::GRADIENT_COLOR2_KEY)] {
+                            // Colors keep their keys; alpha is dropped like before (the ramp covers the frame).
+                            if PRParamValue::color(sv(comp, id)).is_none() && !animated(comp, id) {
+                                continue;
+                            }
+                            e.colors.insert(
+                                key.to_string(),
+                                self.anim(ctx, comp.param(id), EffectColor::BLACK, PRParamValue::color, |c| rgb(&c)),
+                            );
+                        }
+                        e.parameters.insert(
+                            ClipEffect::GRADIENT_TYPE_KEY.to_string(),
+                            AnimatedProperty::new(if PRParamValue::double(sv(comp, 5)) == Some(1.0) {
+                                1.0
+                            } else {
+                                0.0
+                            }),
+                        );
+                        e.parameters.insert(
+                            ClipEffect::GRADIENT_BLEND_KEY.to_string(),
+                            self.anim(ctx, comp.param(7), 100.0, PRParamValue::double, |v| 100.0 - v),
+                        );
+                        out.push(e);
+                        let lost = if PRParamValue::double(sv(comp, 6)).unwrap_or(0.0) != 0.0 {
+                            "Ramp Scatter dropped"
+                        } else {
+                            ""
+                        };
+                        self.report.note(name, if lost.is_empty() { Mapped } else { Approximated }, lost);
+                    }
+                    "AE.ADBE SubspaceStabilizer" => {
+                        if out.iter().any(|e| e.kind == ClipEffect::STABILIZE_KIND) {
+                            self.report.note(name, Dropped, "a clip holds one Stabilizer");
+                            break 'arm;
+                        }
+                        let mut e = self.make_effect(ClipEffect::STABILIZE_KIND);
+                        let mut set =
+                            |key: &str, v: f64| e.parameters.insert(key.to_string(), AnimatedProperty::new(v));
+                        set(ClipEffect::STABILIZE_METHOD_KEY, 0.0);
+                        // Result: Smooth Motion (0) or No Motion (1).
+                        let locked = PRParamValue::double(sv(comp, 19)).unwrap_or(0.0) >= 1.0;
+                        set(ClipEffect::STABILIZE_MODE_KEY, if locked { 1.0 } else { 0.0 });
+                        // Smoothness 50 % is Premiere's default and SQ's default is 0.5 s: 1 % = 0.01 s.
+                        let smooth = PRParamValue::double(sv(comp, 20)).unwrap_or(50.0) / 100.0;
+                        set(ClipEffect::STABILIZE_SMOOTHNESS_KEY, smooth.clamp(0.05, 10.0));
+                        // Framing 2 = Stabilize, Crop, Auto-scale: Maximum Scale caps the zoom (150 % = 1/3 cropped away).
+                        if PRParamValue::double(sv(comp, 22)) == Some(2.0)
+                            && let Some(max) = PRParamValue::double(sv(comp, 4)).filter(|m| *m > 100.0)
+                        {
+                            set(ClipEffect::STABILIZE_MAX_CROP_KEY, ((1.0 - 100.0 / max) * 100.0).clamp(0.0, 50.0));
+                        }
+                        if PRParamValue::double(sv(comp, 22)) == Some(3.0) {
+                            set(ClipEffect::STABILIZE_EDGE_FILL_KEY, 1.0); // Synthesize Edges: mirrored edge
+                        }
+                        out.push(e);
+                        self.report.note(
+                            name,
+                            Approximated,
+                            "Standard Stabilizer (needs Analyze); Premiere's smoothness percent read as seconds / 100",
+                        );
+                    }
+                    "AE.Gyroflow" => {
+                        if out.iter().any(|e| e.kind == ClipEffect::STABILIZE_KIND) {
+                            self.report.note(name, Dropped, "a clip holds one Stabilizer");
+                            break 'arm;
+                        }
+                        let by_name = |n: &str| {
+                            comp.params
+                                .iter()
+                                .find(|p| p.name == n)
+                                .and_then(|p| PRParamValue::double(p.static_value.as_deref()))
+                        };
+                        let mut e = self.make_effect(ClipEffect::STABILIZE_KIND);
+                        let mut set =
+                            |key: &str, v: f64| e.parameters.insert(key.to_string(), AnimatedProperty::new(v));
+                        set(ClipEffect::STABILIZE_METHOD_KEY, 1.0);
+                        if let Some(v) = by_name("Smoothness") {
+                            set(ClipEffect::GYRO_SMOOTHNESS_KEY, v.clamp(1.0, 100.0));
+                        }
+                        if let Some(v) = by_name("Lens correction") {
+                            set(ClipEffect::GYRO_LENS_CORRECTION_KEY, v.clamp(0.0, 100.0));
+                        }
+                        if let Some(v) = by_name("Horizon lock") {
+                            set(ClipEffect::GYRO_HORIZON_LOCK_KEY, v.clamp(0.0, 100.0));
+                        }
+                        if let Some(v) = by_name("FOV") {
+                            set(ClipEffect::GYRO_FIELD_OF_VIEW_KEY, (v * 100.0).clamp(10.0, 300.0));
+                        }
+                        out.push(e);
+                        self.report.note(
+                            name,
+                            Approximated,
+                            "Gyroflow Stabilizer: smoothness, lens correction, horizon lock, FOV carried; zoom limit, .gyroflow project and rotation settings are not (SQ reads the gyro data from the clip file)",
+                        );
+                    }
+                    "AE.Impact_Mosaic_FX" => {
+                        let tiles = PRParamValue::double(sv(comp, 4)).unwrap_or(128.0).clamp(1.0, 4000.0).round();
+                        let rows = (tiles * frame.y / frame.x.max(1.0)).round().clamp(1.0, 4000.0);
+                        let mut e = self.make_effect(ClipEffect::MOSAIC_KIND);
+                        e.parameters.insert(ClipEffect::MOSAIC_COLUMNS_KEY.to_string(), AnimatedProperty::new(tiles));
+                        e.parameters.insert(ClipEffect::MOSAIC_ROWS_KEY.to_string(), AnimatedProperty::new(rows));
+                        out.push(e);
+                        self.report.note(
+                            name,
+                            Approximated,
+                            "square Mosaic; tile shape, rounding, light and outline dropped",
+                        );
+                    }
+                    "AE.Impact_Blur_FX" => {
+                        let mut e = self.make_effect(ClipEffect::DIRECTIONAL_BLUR_KIND);
+                        e.parameters.insert(
+                            ClipEffect::BLUR_DIRECTION_KEY.to_string(),
+                            self.anim(ctx, comp.param(2), 0.0, PRParamValue::double, |v| v),
+                        );
+                        e.parameters.insert(
+                            ClipEffect::BLUR_LENGTH_KEY.to_string(),
+                            self.anim(ctx, comp.param(3), 0.0, PRParamValue::double, |v| v),
+                        );
+                        out.push(e);
+                        self.report.note(
+                            name,
+                            Approximated,
+                            "Directional Blur; line thickness, chromatic aberration, edge mode dropped",
+                        );
+                    }
+                    "AE.Impact_Camera_Shake_FX" => {
+                        let mut e = self.make_effect(ClipEffect::SHAKE_KIND);
+                        if let Some(speed) = PRParamValue::double(sv(comp, 20)).filter(|s| *s > 0.0) {
+                            e.parameters.insert(
+                                ClipEffect::SHAKE_SPEED_KEY.to_string(),
+                                AnimatedProperty::new((8.0 * speed / 100.0).clamp(0.1, 60.0)),
+                            );
+                        }
+                        out.push(e);
+                        self.report.note(
+                            name,
+                            Approximated,
+                            "Shake with SQ's default strength; strafe / stride / roll amounts not comparable",
+                        );
+                    }
+                    _ => self.report.note(name, Dropped, &comp.display_name),
                 }
-                _ => self.report.note(name, Dropped, &comp.display_name),
             }
+            let produced = out.len() > before;
+            self.attach_masks(comp, masks, if produced { out.last_mut() } else { None });
         }
         out
     }

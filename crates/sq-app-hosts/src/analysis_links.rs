@@ -13,6 +13,7 @@ pub mod magic_job;
 pub mod mask_eval;
 pub mod mask_track;
 pub mod matte_tint;
+pub mod pacing;
 pub mod picture_sampler;
 pub mod scene_changes;
 pub mod stabilization_analyzer;

@@ -88,6 +88,11 @@ impl ShellHost {
         self.inner.start_mascot_animating()
     }
 
+    /// A Paste is waiting for its clipboard read: an idle window needs frames to take the result.
+    pub fn paste_waits(&self) -> bool {
+        self.inner.pending_paste_waits()
+    }
+
     /// Whether the start window is up (it takes every event).
     pub fn start_shown(&self) -> bool {
         self.inner.is_start_shown()
@@ -226,6 +231,12 @@ impl AppHost for ShellHost {
             None => self.inner.menu_bar.set_origin(self.inner.menu_bar.origin(), m),
         }
         self.inner.relayout_dialog(m);
+        let measure = cx.measure();
+        if self.inner.pending_paste_waits() {
+            let mut sc = ShellCx { session: cx.session, measure, ui: cx.ui, hooks: self.hooks.as_mut() };
+            self.inner.poll_paste(&mut sc);
+            self.route(cx); // a finished Paste started an import
+        }
         let measure = cx.measure();
         let sc = ShellCx { session: cx.session, measure, ui: cx.ui, hooks: self.hooks.as_mut() };
         self.start_spots = self.inner.a11y_start(&sc);

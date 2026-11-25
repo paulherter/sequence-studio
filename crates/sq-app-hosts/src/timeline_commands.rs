@@ -96,6 +96,14 @@ impl ShellHooks for TimelineHooks {
         self.0.borrow().media_clipboard.as_ref().map(crate::MediaClipboard::read)
     }
 
+    fn media_clipboard_offer(&self) -> Option<sq_editor_session::PasteOffer> {
+        self.0.borrow().media_clipboard.as_ref().map(crate::MediaClipboard::offer)
+    }
+
+    fn media_clipboard_job(&self) -> Option<Box<dyn FnOnce() -> sq_editor_session::PasteContent + Send>> {
+        self.0.borrow().media_clipboard.as_ref().and_then(crate::MediaClipboard::job)
+    }
+
     /// The Quick Apply palette (Option+Space): effects, transitions, presets, the supported menu commands and macros
     /// (Swift `LibraryHost.connectQuickApply`). Without this hook the command only said it was not available.
     fn quick_apply_items(&self) -> Option<Vec<sq_editor_session::QuickApplyItem>> {

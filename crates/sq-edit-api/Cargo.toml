@@ -11,6 +11,8 @@ publish.workspace = true
 sq-core-time.workspace = true
 sq-core-model.workspace = true
 sq-core-edit.workspace = true
+sq-core-effects.workspace = true
+sq-text.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }

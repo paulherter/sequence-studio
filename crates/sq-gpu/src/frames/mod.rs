@@ -14,18 +14,88 @@ use std::sync::{Arc, Mutex};
 pub struct GpuTexture {
     texture: wgpu::Texture,
     view: wgpu::TextureView,
+    /// Counts this texture in the live census until the last clone is dropped.
+    _live: Option<Arc<census::Live>>,
+}
+
+/// Live textures by (width, height, format, creating call site), so a memory peak has a named owner (play bench `MEM1`).
+pub mod census {
+    use std::collections::HashMap;
+    use std::sync::Mutex;
+
+    type Key = (u32, u32, String, &'static std::panic::Location<'static>);
+    static LIVE: Mutex<Option<HashMap<Key, (i64, u64)>>> = Mutex::new(None);
+
+    static TOTAL: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    static PEAK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+    pub struct Live {
+        key: Key,
+        bytes: u64,
+    }
+
+    impl Live {
+        pub(super) fn new(w: u32, h: u32, format: String, bytes: u64, at: &'static std::panic::Location<'static>) -> Self {
+            let key = (w, h, format, at);
+            let mut g = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+            let e = g.get_or_insert_with(HashMap::new).entry(key.clone()).or_default();
+            e.0 += 1;
+            e.1 += bytes;
+            let now = TOTAL.fetch_add(bytes, std::sync::atomic::Ordering::Relaxed) + bytes;
+            PEAK.fetch_max(now, std::sync::atomic::Ordering::Relaxed);
+            Self { key, bytes }
+        }
+    }
+
+    impl Drop for Live {
+        fn drop(&mut self) {
+            TOTAL.fetch_sub(self.bytes, std::sync::atomic::Ordering::Relaxed);
+            let mut g = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+            if let Some(map) = g.as_mut()
+                && let Some(e) = map.get_mut(&self.key)
+            {
+                e.0 -= 1;
+                e.1 -= self.bytes;
+                if e.0 <= 0 {
+                    map.remove(&self.key);
+                }
+            }
+        }
+    }
+
+    /// The live textures, biggest first: `count x WxH format = MB @ file:line`, top `n`, plus the totals.
+    pub fn report(n: usize) -> String {
+        let g = LIVE.lock().unwrap_or_else(|e| e.into_inner());
+        let mut rows: Vec<(&Key, &(i64, u64))> = g.iter().flat_map(|m| m.iter()).collect();
+        rows.sort_by_key(|a| std::cmp::Reverse(a.1.1));
+        let total: u64 = rows.iter().map(|r| r.1.1).sum();
+        let count: i64 = rows.iter().map(|r| r.1.0).sum();
+        let top: Vec<String> = rows
+            .iter()
+            .take(n)
+            .map(|(k, v)| format!("{}x {}x{} {} = {} MB @ {}:{}", v.0, k.0, k.1, k.2, v.1 >> 20, k.3.file(), k.3.line()))
+            .collect();
+        format!(
+            "live textures {count} = {} MB (peak since start {} MB): [{}]",
+            total >> 20,
+            PEAK.load(std::sync::atomic::Ordering::Relaxed) >> 20, top.join("; "))
+    }
 }
 
 impl GpuTexture {
     /// Wraps an existing texture (a plane imported from the platform decoder).
     pub fn from_texture(texture: wgpu::Texture) -> Self {
         let view = texture.create_view(&Default::default());
-        Self { texture, view }
+        Self { texture, view, _live: None }
     }
 
+    #[track_caller]
     pub(crate) fn create(device: &wgpu::Device, width: u32, height: u32, format: PixelFormat) -> Self {
-        Self::from_texture(device.create_texture(&wgpu::TextureDescriptor {
-            label: None,
+        let at = std::panic::Location::caller();
+        // Labeled by shape so an allocator report (play bench `MEM1`) tells which textures hold the memory.
+        let label = format!("tex {width}x{height} {format:?}");
+        let mut t = Self::from_texture(device.create_texture(&wgpu::TextureDescriptor {
+            label: Some(&label),
             size: wgpu::Extent3d { width, height, depth_or_array_layers: 1 },
             mip_level_count: 1,
             sample_count: 1,
@@ -33,7 +103,10 @@ impl GpuTexture {
             format: format.wgpu(),
             usage: usage(format),
             view_formats: &[],
-        }))
+        }));
+        let bytes = u64::from(width) * u64::from(height) * u64::from(format.bytes_per_pixel());
+        t._live = Some(Arc::new(census::Live::new(width, height, format!("{format:?}"), bytes, at)));
+        t
     }
 
     pub(crate) fn create_3d(device: &wgpu::Device, width: u32, height: u32, depth: u32, format: PixelFormat) -> Self {
@@ -150,11 +223,16 @@ impl TexturePool {
         Self { free: Arc::new(Mutex::new(FreeList { by_key: HashMap::new(), bytes: 0, budget })) }
     }
 
+    #[track_caller]
     pub(crate) fn acquire(&self, gpu: &Gpu, width: u32, height: u32, format: PixelFormat) -> PooledTexture {
         let key = (width, height, format);
-        let texture = lock(&self.free).take(key);
+        let taken = lock(&self.free).take(key);
+        let texture = match taken {
+            Some(t) => t,
+            None => gpu.texture(width, height, format),
+        };
         PooledTexture {
-            texture: Some(texture.unwrap_or_else(|| gpu.texture(width, height, format))),
+            texture: Some(texture),
             key,
             pool: Arc::clone(&self.free),
         }

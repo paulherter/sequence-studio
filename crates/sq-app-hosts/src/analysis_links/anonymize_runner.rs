@@ -35,6 +35,8 @@ pub type MakeSources = Box<dyn Fn(&AnonymizeRequest) -> Result<Arc<dyn Anonymize
 enum Message {
     Found(Result<Option<Vec<AnonymizeSighting>>, AnonymizeError>),
     Progress(f64),
+    /// The run waits for playback or an export (`true`, after 300 ms) or goes on.
+    Hold(bool),
     Followed(Result<Outcome, AnonymizeError>),
 }
 
@@ -79,6 +81,8 @@ pub struct AnonymizeRunner {
     tx: Sender<Message>,
     inbox: Receiver<Message>,
     wake: WakeSlot,
+    /// 0...1 of the last progress message, for the pause line.
+    progress: f64,
 }
 
 fn stage_id() -> String {
@@ -104,6 +108,7 @@ impl AnonymizeRunner {
             tx,
             inbox,
             wake: WakeSlot::default(),
+            progress: 0.0,
         }
     }
 
@@ -165,7 +170,13 @@ impl AnonymizeRunner {
         let (first, last, anchor) = (request.first, request.last, request.anchor);
         let (src, token, tx, wake) = (Arc::clone(&sources), cancel.clone(), self.tx.clone(), Arc::clone(&self.wake));
         std::thread::spawn(move || {
-            let found = anonymizer::find_everyone(&*src, first, last, anchor, &token, &mut |_| {});
+            sq_os::thread::set_current_thread_role(sq_os::thread::Role::Background);
+            let (hold_tx, hold_wake) = (tx.clone(), Arc::clone(&wake));
+            let mut hold = move |held: bool| {
+                let _ = hold_tx.send(Message::Hold(held));
+                wake_app(&hold_wake);
+            };
+            let found = anonymizer::find_everyone(&*src, first, last, anchor, &token, &mut |_| {}, &mut hold);
             let _ = tx.send(Message::Found(found));
             wake_app(&wake);
         });
@@ -235,13 +246,32 @@ impl AnonymizeRunner {
         let progress_tx = tx.clone();
         let progress_wake = Arc::clone(&wake);
         std::thread::spawn(move || {
-            let done = anonymizer::run(&*src, &jobs, media, first, last, gap, &store, &stage, &token, &mut |p| {
-                let _ = progress_tx.send(Message::Progress(p));
-                wake_app(&progress_wake);
-            });
+            sq_os::thread::set_current_thread_role(sq_os::thread::Role::Background);
+            let (hold_tx, hold_wake) = (tx.clone(), Arc::clone(&wake));
+            let mut hold = move |held: bool| {
+                let _ = hold_tx.send(Message::Hold(held));
+                wake_app(&hold_wake);
+            };
+            let done = anonymizer::run(
+                &*src,
+                &jobs,
+                media,
+                first,
+                last,
+                gap,
+                &store,
+                &stage,
+                &token,
+                &mut |p| {
+                    let _ = progress_tx.send(Message::Progress(p));
+                    wake_app(&progress_wake);
+                },
+                &mut hold,
+            );
             let _ = tx.send(Message::Followed(done));
             wake_app(&wake);
         });
+        self.progress = 0.0;
         run.picks = picks;
         run.choice = Some(choice);
         self.run = Some(run);
@@ -253,7 +283,18 @@ impl AnonymizeRunner {
         while let Ok(message) = self.inbox.try_recv() {
             match message {
                 Message::Found(r) => self.found(session, r),
+                Message::Hold(held) => {
+                    if let Some(run) = &self.run {
+                        let line = if held {
+                            super::pacing::paused_line(&run.what, self.progress * 100.0)
+                        } else {
+                            format!("{} {} %", run.what, (self.progress * 100.0).round() as i64)
+                        };
+                        self.job(Some(line));
+                    }
+                }
                 Message::Progress(p) => {
+                    self.progress = p;
                     if let Some(run) = &self.run {
                         let line = format!("{} {} %", run.what, (p * 100.0).round() as i64);
                         self.job(Some(line));
@@ -491,7 +532,7 @@ impl AnonymizeSources for SystemAnonymizeSources {
             .get_or_init(|| {
                 let environment: HashMap<String, String> = std::env::vars().collect();
                 let folder = model_folder(&self.support, &environment)?;
-                EdgeTAMOnnxModel::new(&folder, true, None).map(Arc::new).map_err(|e| e.to_string())
+                EdgeTAMOnnxModel::new_with_threads(&folder, true, None, i32::try_from(sq_os::thread::background_threads()).unwrap_or(0)).map(Arc::new).map_err(|e| e.to_string())
             })
             .as_ref()
             .map_err(Clone::clone)?;

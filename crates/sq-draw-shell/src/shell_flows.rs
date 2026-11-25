@@ -94,6 +94,9 @@ impl ShellHost {
             ShellFlow::GoToTimecode => Self::go_to_timecode(h).await,
             ShellFlow::Tone { editing } => Self::tone_dialog(h, editing).await,
             ShellFlow::ImportMixed(urls) => Self::import_mixed(h, urls).await,
+            ShellFlow::ApiImport { urls, reply } => Self::api_import(h, urls, reply).await,
+            ShellFlow::ApiExport { request, reply } => Self::api_export_flow(h, request, reply).await,
+            ShellFlow::ApiSyncFit { clip, to, reply } => Self::api_sync_fit(h, clip, to, reply).await,
             ShellFlow::PlaceFiles(urls) => Self::place_files(h, urls, PlaceOptions::default()).await,
             ShellFlow::PlaceFilesAt { urls, at, track, new_track, insert } => {
                 let mode = if insert { ThreePointMode::Insert } else { ThreePointMode::Overwrite };
@@ -172,6 +175,44 @@ impl ShellHost {
         Self::open_project(h, url).await;
     }
 
+    /// Opens the project file at `url` in the session and tells the shell (no question, no dialog): what the flow below does
+    /// once the unsaved changes are settled, and what the edit API's `/v1/open` calls.
+    pub fn open_project_now(p: ShellParts<'_>, url: &Path) -> Result<(), Box<dyn std::error::Error>> {
+        sq_core_time::milestones::begin("project open begins");
+        match p.session.open(url) {
+            Ok(_) => {
+                sq_core_time::milestones::mark("session open returned");
+                crate::shell_log::info(&format!("open project: opened {}", url.display()));
+                p.shell.emit(ShellEvent::ProjectChanged);
+                p.shell.project_opened(p.session);
+                Ok(())
+            }
+            Err(e) => {
+                crate::shell_log::error(&format!("open project: failed {}: {e}", url.display()));
+                Err(e)
+            }
+        }
+    }
+
+    /// Saves the open project (`target` None) or saves it as `target`, without asking or showing a dialog: what the edit
+    /// API's `/v1/save` calls. Returns the file written, or the error text.
+    pub fn save_now(p: ShellParts<'_>, target: Option<&Path>) -> Result<PathBuf, String> {
+        let url = match target {
+            Some(t) => {
+                p.session.save_as(t).map_err(|e| e.to_string())?;
+                t.to_path_buf()
+            }
+            None => {
+                let url = p.session.file_url().map(Path::to_path_buf).ok_or("the project has no file yet")?;
+                p.session.save().map_err(|e| e.to_string())?;
+                url
+            }
+        };
+        p.shell.note_recent(&url);
+        p.shell.emit(ShellEvent::ProjectChanged);
+        Ok(url)
+    }
+
     /// Opens the project at `url`; a Premiere project is imported instead.
     pub async fn open_project<R: ShellRoot + ?Sized>(h: UiRef<R>, url: PathBuf) {
         crate::shell_log::info(&format!("open project: {}", url.display()));
@@ -193,23 +234,12 @@ impl ShellHost {
             return;
         }
         let ran = h.with(|r| {
-            let p = r.shell_parts();
             let name = url.file_name().map(|n| n.to_string_lossy().into_owned()).unwrap_or_default();
-            sq_core_time::milestones::begin("project open begins");
-            match p.session.open(&url) {
-                Ok(_) => {
-                    sq_core_time::milestones::mark("session open returned");
-                    crate::shell_log::info(&format!("open project: opened {}", url.display()));
-                    p.shell.emit(ShellEvent::ProjectChanged);
-                    p.shell.project_opened(p.session);
-                }
-                Err(e) => {
-                    crate::shell_log::error(&format!("open project: failed {}: {e}", url.display()));
-                    let known = e.downcast_ref::<ProjectFileError>().and_then(|pfe| message(pfe, &name, url.exists()));
-                    match known {
-                        Some((title, detail)) => p.shell.present_message(&title, &detail, None),
-                        None => p.shell.present_error(&SQL10n::format("Could not open “%@”", &[&name]), &*e),
-                    }
+            if let Err(e) = Self::open_project_now(r.shell_parts(), &url) {
+                let known = e.downcast_ref::<ProjectFileError>().and_then(|pfe| message(pfe, &name, url.exists()));
+                match known {
+                    Some((title, detail)) => r.shell_parts().shell.present_message(&title, &detail, None),
+                    None => r.shell_parts().shell.present_error(&SQL10n::format("Could not open “%@”", &[&name]), &*e),
                 }
             }
         });

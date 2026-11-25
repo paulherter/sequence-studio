@@ -314,8 +314,7 @@ impl ExportPreset {
         }
     }
 
-    /// `settings_matching` for a sheet that opens or resets, plus the delivery target's loudness normalization (LUFS and
-    /// true-peak ceiling). A preset of another shape than the sequence (YouTube on a vertical sequence, TikTok on a
+    /// `settings_matching` for a sheet that opens or resets. Loudness normalization stays off. A preset of another shape than the sequence (YouTube on a vertical sequence, TikTok on a
     /// horizontal one) never changes the sequence's size, with or without a delivery target.
     pub fn settings_matching_target(
         &self,
@@ -332,9 +331,9 @@ impl ExportPreset {
                 s.video.set_pixel_aspect(f.pixel_aspect());
             }
         }
-        if let Some(t) = target {
-            s.audio.loudness = Some(LoudnessNormalization::new(t.target_lufs, t.true_peak_db));
-        }
+        // The delivery target no longer switches loudness normalization on: a voice must sound as it does in the
+        // sequence (and in Premiere), so the target only picks the preset.
+        let _ = target;
         s
     }
 
@@ -771,7 +770,7 @@ impl ExportPreferences {
 
     /// Puts the remembered choices on `settings`, which hold the preset's values. `loudness` is the target a normalized
     /// export uses here (the sequence's delivery target or the preset's platform target).
-    pub fn apply(&self, settings: &mut ExportSettings, loudness: LoudnessNormalization) {
+    pub fn apply(&self, settings: &mut ExportSettings, _loudness: LoudnessNormalization) {
         if self.preset_id == Self::CUSTOM_PRESET_ID
             && let Some(v) = &self.custom_video
         {
@@ -786,7 +785,8 @@ impl ExportPreferences {
         settings.cover_image = self.cover_image;
         settings.continue_on_damaged_frames = self.continue_on_damaged_frames;
         settings.audio.enabled = self.audio_enabled;
-        settings.audio.loudness = self.normalize_loudness.then_some(loudness);
+        // Normalization is never restored from the remembered choices: it always starts off.
+        settings.audio.loudness = None;
     }
 
     /// JSON bytes the app stores.

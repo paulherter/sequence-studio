@@ -156,7 +156,32 @@ impl Scratch {
         &self.gpu
     }
 
+    /// How many textures are held now, the mark for [`Scratch::release_since`].
+    pub fn mark(&self) -> usize {
+        self.held.len()
+    }
+
+    /// Hands the textures taken since `mark` back to the pool, except `keep` (the step's result). Only for textures no
+    /// later pass reads: the queue runs in order, so the next acquire may overwrite them once the passes that read them
+    /// are recorded. Keeps a multi-step effect chain at a few 4K textures instead of a few per step.
+    pub fn release_since(&mut self, mark: usize, keep: Option<&GpuTexture>) {
+        let mut i = mark;
+        while i < self.held.len() {
+            if keep.is_some_and(|k| k.texture() == self.held[i].texture()) {
+                i += 1;
+            } else {
+                self.held.remove(i);
+            }
+        }
+    }
+
+    /// Hands one held texture back to the pool (see [`Scratch::release_since`] for when that is safe).
+    pub fn release(&mut self, texture: &GpuTexture) {
+        self.held.retain(|h| h.texture() != texture.texture());
+    }
+
     /// A `width` x `height` texture of `format`, kept until the scratch is dropped.
+    #[track_caller]
     pub fn texture(&mut self, width: u32, height: u32, format: PixelFormat) -> GpuTexture {
         let pooled = self.gpu.acquire(width.max(1), height.max(1), format);
         let texture = (*pooled).clone();
@@ -165,10 +190,12 @@ impl Scratch {
     }
 
     /// A working image (premultiplied working-linear `Rgba16Float`).
+    #[track_caller]
     pub fn image(&mut self, width: u32, height: u32) -> GpuTexture {
         self.texture(width, height, PixelFormat::Rgba16Float)
     }
 
+    #[track_caller]
     pub fn acquire(&mut self, width: u32, height: u32) -> GpuTexture {
         self.image(width, height)
     }

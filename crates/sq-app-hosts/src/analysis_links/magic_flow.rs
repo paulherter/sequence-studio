@@ -239,6 +239,13 @@ impl MagicRunner {
                     self.progress = Some(p);
                     out.push(format!("Tracking mask: {:.0}%", p * 100.0));
                 }
+                TrackMessage::Paused => {
+                    let at = self.progress.unwrap_or(0.0);
+                    out.push(super::pacing::paused_line("Tracking mask", at * 100.0));
+                }
+                TrackMessage::Resumed => {
+                    out.push(format!("Tracking mask: {:.0}%", self.progress.unwrap_or(0.0) * 100.0));
+                }
                 TrackMessage::Done(outcome) => out.push(outcome.status()),
             }
         }

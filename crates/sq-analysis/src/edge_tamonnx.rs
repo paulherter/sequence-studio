@@ -181,18 +181,34 @@ impl EdgeTAMOnnxModel {
         Self::with_provider(directory, sq_onnx::onnx_model::Provider::choose(accelerate), device)
     }
 
+    /// [`EdgeTAMOnnxModel::new`] with at most `threads` runtime threads per part (0 = the runtime's default); a background job
+    /// passes `sq_os::thread::background_threads()` so playback keeps cores.
+    pub fn new_with_threads(directory: &Path, accelerate: bool, device: Option<i32>, threads: i32) -> Result<EdgeTAMOnnxModel> {
+        Self::with_provider_threads(directory, sq_onnx::onnx_model::Provider::choose(accelerate), device, threads)
+    }
+
     /// Loads all parts on the named provider (the CPU when the accelerator refuses a part).
     pub fn with_provider(
         directory: &Path,
         provider: sq_onnx::onnx_model::Provider,
         device: Option<i32>,
     ) -> Result<EdgeTAMOnnxModel> {
+        Self::with_provider_threads(directory, provider, device, 0)
+    }
+
+    /// [`EdgeTAMOnnxModel::with_provider`] with a thread cap (0 = default).
+    pub fn with_provider_threads(
+        directory: &Path,
+        provider: sq_onnx::onnx_model::Provider,
+        device: Option<i32>,
+        threads: i32,
+    ) -> Result<EdgeTAMOnnxModel> {
         let load = |name: &str| -> Result<OnnxModel> {
             let file = EdgeTAMOnnxLocation::file(name, directory);
             if !file.exists() {
                 return Err(EdgeTAMOnnxError::Missing(file.display().to_string()));
             }
-            Ok(OnnxModel::with_provider(&file.to_string_lossy(), provider, device, 0)?)
+            Ok(OnnxModel::with_provider(&file.to_string_lossy(), provider, device, threads)?)
         };
         Ok(EdgeTAMOnnxModel {
             encoder: load("encoder")?,

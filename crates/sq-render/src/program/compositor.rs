@@ -352,6 +352,7 @@ impl ProgramCompositor {
         let submit_span = sq_os::trace::span("render", "gpu submit");
         let submission = self.gpu.submit(cmds);
         self.in_flight.submitted(submission);
+        self.compositor.release_scratch();
         drop(submit_span);
         let submitted = Instant::now();
         let poll_span = sq_os::trace::span("render", "gpu poll");

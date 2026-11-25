@@ -14,6 +14,12 @@ mod ffi {
         fn rnnoise_destroy(st: *mut c_void);
         fn rnnoise_reset(st: *mut c_void);
         fn rnnoise_process_frame(st: *mut c_void, out: *mut f32, input: *const f32) -> f32;
+        fn rnnoise_process_frame_floor(
+            st: *mut c_void,
+            out: *mut f32,
+            input: *const f32,
+            floors: *const f32,
+        ) -> f32;
     }
 
     /// Samples per RNNoise frame (480 at 48 kHz).
@@ -44,6 +50,18 @@ mod ffi {
             // SAFETY: both slices hold at least FRAME_SIZE floats (checked above), `out` and `input` cannot alias
             // (`&mut` vs `&`), and `self.0` is a live state.
             unsafe { rnnoise_process_frame(self.0.as_ptr(), out.as_mut_ptr(), input.as_ptr()) };
+        }
+    }
+
+    impl DenoiseState {
+        /// Like `process_frame`, but no band gain falls below `floors` = (under 2 kHz, 2 to 4 kHz, 4 kHz and up), all
+        /// linear: a bounded spectral reduction of the signal itself.
+        pub fn process_frame_floor(&mut self, out: &mut [f32], input: &[f32], floors: [f32; 4]) {
+            assert!(out.len() >= FRAME_SIZE && input.len() >= FRAME_SIZE, "RNNoise frames need {FRAME_SIZE} samples");
+            // SAFETY: same as `process_frame`.
+            unsafe {
+                rnnoise_process_frame_floor(self.0.as_ptr(), out.as_mut_ptr(), input.as_ptr(), floors.as_ptr());
+            }
         }
     }
 

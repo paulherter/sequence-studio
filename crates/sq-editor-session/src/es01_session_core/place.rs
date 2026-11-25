@@ -46,6 +46,9 @@ pub struct PlaceOptions {
     pub backtimed: bool,
     /// Source patch targets (`source_patch`) instead of the drop rule.
     pub patched: bool,
+    /// The part of every placed media item to use instead of its Mark In / Mark Out (the edit API's `sourceIn` /
+    /// `sourceOut`); `None` = the marks of the item.
+    pub source: Option<(Option<Time>, Option<Time>)>,
 }
 
 impl Default for PlaceOptions {
@@ -60,6 +63,7 @@ impl Default for PlaceOptions {
             place_on_top: false,
             backtimed: false,
             patched: false,
+            source: None,
         }
     }
 }
@@ -156,7 +160,12 @@ impl EditorSession {
             }
         }
         let requested = options.at.unwrap_or(self.playhead);
-        let marks = self.project().source_marks.clone();
+        let mut marks = self.project().source_marks.clone();
+        if let Some((mark_in, mark_out)) = options.source {
+            for r in &refs {
+                marks.insert(r.id, SourceMarks { mark_in, mark_out, ..SourceMarks::default() });
+            }
+        }
         let patch = (options.patched && options.video_track.is_none() && options.new_track.is_none())
             .then(|| self.source_patch());
         let existing: BTreeSet<Id> = t.tracks.iter().flat_map(|tr| tr.clips().iter().map(|c| c.id)).collect();

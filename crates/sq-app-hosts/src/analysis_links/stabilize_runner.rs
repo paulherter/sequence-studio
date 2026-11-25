@@ -113,6 +113,16 @@ impl StabilizeRunner {
                         run.progress = p;
                     }
                 }
+                (_, StabilizationMessage::Paused) => {
+                    if let Some(run) = self.running.as_ref() {
+                        out.push(super::pacing::paused_line("Stabilizer analysis", run.progress * 100.0));
+                    }
+                }
+                (_, StabilizationMessage::Resumed) => {
+                    if let Some(run) = self.running.as_ref() {
+                        out.push(format!("Stabilizer analysis: {:.0}%", run.progress * 100.0));
+                    }
+                }
                 (clip, StabilizationMessage::Done(Ok(_))) => {
                     session.replan_stabilizers(&[clip], &self.store.lookup());
                     // A result that still leaves the clip wanting one would loop; the clip waits for a settings change.

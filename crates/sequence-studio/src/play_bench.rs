@@ -108,6 +108,7 @@ pub(crate) fn memory_breakdown(cache_bytes: usize) -> Option<String> {
             .and_then(|t| t.lines().find_map(|l| l.strip_prefix("Threads:").map(|v| v.trim().to_string())))
             .unwrap_or_default();
         let (open_sw, big_threads) = sq_media_ffmpeg::shim::open_software_decoders();
+        let census = sq_gpu::frames::census::report(10);
         let pool = sq_frame::buffer_pool::BufferPool::shared();
         let (reused, fresh) = pool.counts();
         let mut sizes: Vec<(u64, u64, u64)> = big.into_iter().map(|(mb, (n, total))| (total, mb, n)).collect();
@@ -116,7 +117,7 @@ pub(crate) fn memory_breakdown(cache_bytes: usize) -> Option<String> {
             sizes.iter().take(8).map(|(total, mb, n)| format!("{n}x{mb} MB={total}")).collect();
         let kinds_text: Vec<String> = kinds.iter().map(|(k, kb)| format!("{k} {} MB", kb >> 10)).collect();
         Some(format!(
-            "MEM frame_cache {} MB; free_picture_buffers {} MB (reused {reused}, fresh {fresh}); anonymous {} MB; by mapping: {}; big anonymous regions (resident, top 8): {}; threads {threads}; open software decoders {open_sw} (big frame threads {big_threads})\n",
+            "MEM frame_cache {} MB; free_picture_buffers {} MB (reused {reused}, fresh {fresh}); anonymous {} MB; by mapping: {}; big anonymous regions (resident, top 8): {}; threads {threads}; open software decoders {open_sw} (big frame threads {big_threads}); {census}\n",
             cache_bytes >> 20,
             pool.free_bytes() >> 20,
             anon_total >> 10,
@@ -126,8 +127,38 @@ pub(crate) fn memory_breakdown(cache_bytes: usize) -> Option<String> {
     }
     #[cfg(not(target_os = "linux"))]
     {
-        let _ = cache_bytes;
-        None
+        // Windows and the Mac have no smaps: the engine's own counters and the GPU allocator's totals (the iGPU's shared
+        // memory is system RAM, so its allocations compete with the process for the same 8 GB).
+        let pool = sq_frame::buffer_pool::BufferPool::shared();
+        let (reused, fresh) = pool.counts();
+        let gpu = crate::surface::shared_gpu()
+            .and_then(|(_, g)| g.device().generate_allocator_report())
+            .map(|r| {
+                let mut by: std::collections::BTreeMap<String, (u64, u64)> = std::collections::BTreeMap::new();
+                for a in &r.allocations {
+                    let e = by.entry(a.name.clone()).or_default();
+                    e.0 += 1;
+                    e.1 += a.size;
+                }
+                let mut top: Vec<_> = by.into_iter().collect();
+                top.sort_by(|a, b| b.1.1.cmp(&a.1.1));
+                let top: Vec<String> = top.iter().take(8).map(|(n, (c, b))| format!("{n} {c}x={} MB", b >> 20)).collect();
+                format!(
+                    "gpu allocator allocated {} MB reserved {} MB in {} blocks, top: [{}]",
+                    r.total_allocated_bytes >> 20,
+                    r.total_reserved_bytes >> 20,
+                    r.blocks.len(),
+                    top.join("; ")
+                )
+            })
+            .unwrap_or_else(|| "gpu allocator n/a".into());
+        let (open_sw, big_threads) = sq_media_ffmpeg::shim::open_software_decoders();
+        let census = sq_gpu::frames::census::report(10);
+        Some(format!(
+            "MEM frame_cache {} MB; free_picture_buffers {} MB (reused {reused}, fresh {fresh}); {gpu}; open software decoders {open_sw} (big frame threads {big_threads}); {census}\n",
+            cache_bytes >> 20,
+            pool.free_bytes() >> 20,
+        ))
     }
 }
 

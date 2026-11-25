@@ -172,7 +172,11 @@ fn serve(mut stream: TcpStream, router: &Arc<EditAPIRouter>) {
                 let remaining = deadline.saturating_duration_since(Instant::now());
                 match rx.recv_timeout(remaining) {
                     Ok(response) => send(&mut stream, &response),
-                    Err(_) => cancel.store(true, Ordering::SeqCst),
+                    Err(_) => {
+                        cancel.store(true, Ordering::SeqCst);
+                        // Never close without a reply: the caller learns the call was canceled.
+                        send(&mut stream, &HTTPResponse::error(503, "request deadline passed; the call was canceled", None));
+                    }
                 }
                 return;
             }

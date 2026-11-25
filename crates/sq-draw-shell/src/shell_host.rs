@@ -29,7 +29,7 @@ use sq_core_time::{Id, IdSource, Timestamp};
 use sq_draw::{Canvas, DrawTheme, InputEvent, InputKey, InputModifiers, TextMeasure, UiCx};
 use sq_editor_session::{
     AudioRoleDefaults, CommandRouting, EdgeSelection, EditAction, EditorLookCommands, EditorSession, KeyRouter,
-    MagicTrackHealthCache, PasteContent, PasteRoute, QuickApplyItem, RecentProjects, StorageLocations, TrimModeModel,
+    MagicTrackHealthCache, PasteContent, PasteOffer, PasteRoute, QuickApplyItem, RecentProjects, StorageLocations, TrimModeModel,
 };
 use sq_library::preset_store::PresetItem;
 use sq_os::Platform;
@@ -161,6 +161,54 @@ pub struct StartSettings {
     pub whats_new_seen: Option<String>,
 }
 
+/// A one-shot answer slot for a flow the edit API starts: the flow sends once, the API thread waits on the receiver.
+pub struct FlowReply<T>(std::sync::Arc<std::sync::Mutex<Option<std::sync::mpsc::Sender<T>>>>);
+
+impl<T> FlowReply<T> {
+    /// A slot and the receiver of its answer.
+    pub fn channel() -> (FlowReply<T>, std::sync::mpsc::Receiver<T>) {
+        let (tx, rx) = std::sync::mpsc::channel();
+        (FlowReply(std::sync::Arc::new(std::sync::Mutex::new(Some(tx)))), rx)
+    }
+
+    /// Answers once; later calls do nothing.
+    pub fn send(&self, value: T) {
+        let sender = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+        if let Some(tx) = sender {
+            let _ = tx.send(value);
+        }
+    }
+}
+
+impl<T> Clone for FlowReply<T> {
+    fn clone(&self) -> Self {
+        FlowReply(std::sync::Arc::clone(&self.0))
+    }
+}
+
+impl<T> std::fmt::Debug for FlowReply<T> {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str("FlowReply")
+    }
+}
+
+impl<T> PartialEq for FlowReply<T> {
+    fn eq(&self, other: &Self) -> bool {
+        std::sync::Arc::ptr_eq(&self.0, &other.0)
+    }
+}
+
+/// What one path of an edit API import became.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ApiImported {
+    /// The path as asked for.
+    pub path: PathBuf,
+    /// The media item it is now (an existing item for a file the project already had).
+    pub media: Option<Id>,
+    /// Why there is none.
+    pub error: Option<String>,
+}
+
 /// A flow that awaits dialogs or file choosers: the host asks its owner to run it with [`ShellHost::run_flow`] (Swift
 /// `spawn { await ... }`).
 #[derive(Clone, Debug, PartialEq)]
@@ -236,6 +284,29 @@ pub enum ShellFlow {
     ImportAnything,
     /// Import these files, folders and projects (`importMixed`: Paste, drops).
     ImportMixed(Vec<PathBuf>),
+    /// The edit API's import: the same flow as a drop on the window, then the answer per path.
+    ApiImport {
+        /// The files.
+        urls: Vec<PathBuf>,
+        /// Gets one entry per path once the import ended.
+        reply: FlowReply<Vec<ApiImported>>,
+    },
+    /// The edit API's export: builds the job like the Export sheet and queues it; answers the queue job ids.
+    ApiExport {
+        /// What to export.
+        request: crate::ApiExportRequest,
+        /// The queue job ids, or why not.
+        reply: FlowReply<Result<Vec<Id>, String>>,
+    },
+    /// The edit API's Sync Audio: the fit of `clip` against `to` (timecode, sound or capture date), without moving anything.
+    ApiSyncFit {
+        /// The clip to move.
+        clip: Id,
+        /// The reference clip.
+        to: Id,
+        /// The fit, or why there is none.
+        reply: FlowReply<Result<sq_core_audio::audio_drift_fit::AudioDriftFit, String>>,
+    },
     /// Files dragged from the Library onto the timeline: imported if new, then placed at the playhead.
     PlaceFiles(Vec<PathBuf>),
     /// The same, landing where the pointer was released (the drop preview's time, track and insert or overwrite).
@@ -359,6 +430,16 @@ pub trait ShellHooks {
     fn media_clipboard(&self) -> Option<PasteContent> {
         None
     }
+    /// What the clipboard offers, for the menu rules that run every frame: must not read or encode clipboard data.
+    /// The default reads it through [`ShellHooks::media_clipboard`]; a host with cheap facts overrides this.
+    fn media_clipboard_offer(&self) -> Option<PasteOffer> {
+        self.media_clipboard().map(|c| PasteOffer::of(&c))
+    }
+    /// The full clipboard read as a job for a worker thread (Paste of a picture is slow); `None` = read it on the UI
+    /// thread through [`ShellHooks::media_clipboard`].
+    fn media_clipboard_job(&self) -> Option<Box<dyn FnOnce() -> PasteContent + Send>> {
+        None
+    }
     /// Where a pasted image is written (`pastedImageFolder`): a saved project copies it on import, so the scratch folder
     /// (or temp) does; an unsaved one keeps the file where it is, so it should survive a restart.
     fn pasted_image_folder(&self, saved: bool) -> PathBuf {
@@ -409,6 +490,8 @@ pub struct ShellHost {
     /// What the last bar built by `refresh_menus` was made from.
     pub(crate) menu_stamp: RefCell<Option<crate::shell_menu_cache::MenuStamp>>,
     pub(crate) menu_builds: Cell<u64>,
+    /// A Paste whose clipboard read runs on a worker thread; its result is taken in `poll_paste`.
+    pub(crate) pending_paste: RefCell<Option<crate::shell_paste_media::PendingPaste>>,
     /// Tests turn this on: every frame that keeps the bar builds it again and must find it equal (`refresh_menus`).
     pub verify_menu_cache: bool,
     pub(crate) menus_built: RefCell<Vec<ShellMenu>>,
@@ -579,6 +662,7 @@ impl ShellHost {
             facts_memo: RefCell::new(None),
             menu_stamp: RefCell::new(None),
             menu_builds: Cell::new(0),
+            pending_paste: RefCell::new(None),
             verify_menu_cache: false,
             menus_built: RefCell::new(Vec::new()),
             focus: None,
@@ -928,9 +1012,9 @@ impl ShellHost {
         p.has_angles_clip = session
             .active_timeline()
             .is_some_and(|t| t.tracks.iter().any(|tr| tr.clips().iter().any(AnglesClipExt::is_angles_clip)));
-        if hooks.media_clipboard().is_some() {
+        if let Some(offer) = hooks.media_clipboard_offer() {
             p.can_paste_media =
-                matches!(self.media_route(session, hooks, None), PasteRoute::ImportFiles | PasteRoute::ImportImage);
+                matches!(self.media_route(session, offer), PasteRoute::ImportFiles | PasteRoute::ImportImage);
         }
         hooks.fill_facts(&mut p);
         let focus = self.focus;

@@ -507,13 +507,7 @@ impl EditorSession {
     pub fn add_track(&mut self, kind: TrackKind) {
         self.with_ids(|s, src| {
             s.attempt(if kind == TrackKind::Video { "Add Video Track" } else { "Add Audio Track" }, None, |t| {
-                let last = t.tracks.iter().rposition(|x| x.kind == kind);
-                let i = match last {
-                    Some(i) => i as i64 + 1,
-                    None if kind == TrackKind::Video => 0,
-                    None => t.tracks.len() as i64,
-                } as usize;
-                t.tracks.insert(i, sq_core_model::Track::new(src.next_id(), kind));
+                sq_core_edit::timeline_add_track::AddTrackExt::insert_track_after_last(t, kind, src);
                 Ok(())
             })
         });

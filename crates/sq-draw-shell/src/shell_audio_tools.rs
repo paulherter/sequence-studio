@@ -8,7 +8,7 @@ use crate::shell_dialog::ShellDialog;
 use crate::shell_flow_env::SettingsDefaults;
 use crate::shell_flows::ShellRoot;
 use crate::shell_form::{NumberField, Row, ShellForm};
-use crate::shell_host::{ShellEvent, ShellHost};
+use crate::shell_host::{FlowReply, ShellEvent, ShellHost};
 use sq_core_audio::audio_drift_fit::{AudioDriftFit, AudioSyncMethod};
 use sq_core_audio::ducking::Ducking;
 use sq_core_audio::live_ducking::{DialogueSilenceProvider, LiveDucking};
@@ -575,6 +575,45 @@ impl ShellHost {
             let p = r.shell_parts();
             Self::finish_sync_audio(p.shell, p.session, plan_reference, &fits);
         });
+    }
+
+    /// The edit API's half of Sync Audio: the same facts and fit as the menu command (start timecodes, else the sound
+    /// envelopes, else capture dates), without changing the timeline. The caller applies it with `EditorSession::sync_audio`.
+    pub async fn api_sync_fit<R: ShellRoot + ?Sized>(
+        h: UiRef<R>,
+        clip: Id,
+        to: Id,
+        reply: FlowReply<Result<AudioDriftFit, String>>,
+    ) {
+        reply.send(Self::api_sync_fit_inner(&h, clip, to).await);
+    }
+
+    async fn api_sync_fit_inner<R: ShellRoot + ?Sized>(h: &UiRef<R>, clip: Id, to: Id) -> Result<AudioDriftFit, String> {
+        let Some(found) = h.with(|r| {
+            let p = r.shell_parts();
+            let media = |id: Id| -> Option<MediaRef> {
+                let c = p.session.active_timeline()?.tracks.iter().flat_map(|t| t.clips().iter()).find(|c| c.id == id)?;
+                p.session.project().media(c.media).cloned()
+            };
+            (media(to), media(clip))
+        }) else {
+            return Err("the app is closing".into());
+        };
+        let (Some(reference), Some(other)) = found else {
+            return Err("both clips must be media clips of the open sequence".into());
+        };
+        let shapes = Self::waveforms(h, &[reference.id, other.id], 10).await;
+        let ref_facts = Self::sync_facts(h, &reference, shapes.get(&reference.id).map(|w| &**w)).await;
+        let other_facts = Self::sync_facts(h, &other, shapes.get(&other.id).map(|w| &**w)).await;
+        let pool = h.with(|r| r.shell_parts().shell.flow_env.services.worker_pool()).flatten();
+        let fit = match pool {
+            Some(pool) => pool.run(move |_| ShellSyncFacts::fit(&ref_facts, &other_facts)).await.ok().flatten(),
+            // shortcut: no worker pool, the fit runs on the UI thread; upgrade when the app provides one.
+            None => ShellSyncFacts::fit(&ref_facts, &other_facts),
+        };
+        fit.ok_or_else(|| {
+            "the recordings could not be matched: no shared sound and no timecode or capture date".to_string()
+        })
     }
 
     /// The start timecode comes from the host's reader first (the Mac: AVFoundation), else from the portable one

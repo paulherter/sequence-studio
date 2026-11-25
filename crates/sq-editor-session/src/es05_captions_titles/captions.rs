@@ -537,11 +537,16 @@ impl EditorSession {
     /// Adds `items` to the current caption track as one undo step; existing captions that overlap an item go first.
     // Swift: EditorSession+Captions.swift:87
     pub fn add_captions(&mut self, items: Vec<CaptionItem>) -> bool {
+        self.add_captions_named(items, "Create Captions")
+    }
+
+    /// `add_captions` with its own undo name (the Edit API says "Agent: Add Captions").
+    pub fn add_captions_named(&mut self, items: Vec<CaptionItem>, undo_name: &str) -> bool {
         if items.is_empty() {
             return false;
         }
         let target = self.current_caption_track().map(|t| t.id);
-        self.attempt_keyed_ids("Create Captions", None, |t, ids| {
+        self.attempt_keyed_ids(undo_name, None, |t, ids| {
             let existing: Vec<CaptionItem> =
                 target.and_then(|id| t.caption_track(id)).map(|c| c.items().to_vec()).unwrap_or_default();
             let kept = existing.into_iter().filter(|e| !items.iter().any(|i| i.range.overlaps(&e.range)));

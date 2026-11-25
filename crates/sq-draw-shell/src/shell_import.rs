@@ -4,7 +4,7 @@
 //! platform's: `MediaImporter` on the Mac, `FFmpegMediaProbe` on Windows), a .prproj through the Premiere importer.
 
 use crate::shell_flows::ShellRoot;
-use crate::shell_host::{ShellEvent, ShellFlow, ShellHost};
+use crate::shell_host::{ApiImported, FlowReply, ShellEvent, ShellFlow, ShellHost};
 use crate::shell_interchange::ImportFailure;
 use sq_core_file::{FILE_EXTENSION, LEGACY_FILE_EXTENSIONS};
 use sq_editor_session::{PlaceOptions, ProjectPanelModel};
@@ -187,6 +187,27 @@ impl ShellHost {
             };
             r.shell_parts().shell.emit(ShellEvent::Status(line));
         });
+    }
+
+    /// The edit API's import: `import_mixed` like a drop on the window, then the media item of every path.
+    pub async fn api_import<R: ShellRoot + ?Sized>(h: UiRef<R>, urls: Vec<PathBuf>, reply: FlowReply<Vec<ApiImported>>) {
+        Self::import_mixed(h.clone(), urls.clone()).await;
+        let answer = h
+            .with(|r| {
+                let panel = r.panel_parts().0;
+                let why = panel
+                    .last_import_report()
+                    .and_then(|report| report.failure_notice())
+                    .map_or_else(|| "not imported".to_string(), |(_, detail)| detail);
+                urls.iter()
+                    .map(|u| {
+                        let media = panel.media_id_for_imported(u);
+                        ApiImported { path: u.clone(), media, error: media.is_none().then(|| why.clone()) }
+                    })
+                    .collect::<Vec<_>>()
+            })
+            .unwrap_or_default();
+        reply.send(answer);
     }
 
     /// Imports `urls` (a file already in the project is reused) and places the media as one drop (`options.at` none = the

@@ -12,6 +12,8 @@ use sq_core_masks::subject_track_rules::SubjectTrackRules;
 use sq_core_model::{Clip, ClipMask, MagicPoint};
 use sq_core_time::{Id, Time, Vec2};
 use sq_editor_session::EditorSession;
+use super::pacing::yield_to_playback;
+use sq_playback::engine::activity::PlayActivity;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -117,10 +119,43 @@ pub fn run_track_with(
     cancel: &CancelToken,
     progress: &mut dyn FnMut(f64),
 ) -> TrackOutcome {
+    run_track_paced(
+        frames,
+        tracker,
+        store,
+        key,
+        points,
+        corrections,
+        cancel,
+        progress,
+        &PlayActivity::shared(),
+        &mut |_| {},
+    )
+}
+
+/// [`run_track_with`] against a given playback counter. The frames on the monitor come first: while an engine plays or scrubs
+/// the run stands still between frames (a cancel still ends it at once) and goes on when the picture rests. Measured
+/// 2026-11-25 on the real project: a CPU run beside playback cost 1-5 points of shown frames and ui frames over 25 ms went
+/// from 1 to 40-56, with 8 or 16 threads alike, so a thread cap alone does not protect playback. A run while not playing
+/// is as fast as before.
+#[allow(clippy::too_many_arguments)]
+pub fn run_track_paced(
+    frames: &mut dyn TrackFrames,
+    tracker: &mut dyn Tracker,
+    store: &FrameMatteStore,
+    key: &str,
+    points: &[(Vec2, bool)],
+    corrections: &[Correction],
+    cancel: &CancelToken,
+    progress: &mut dyn FnMut(f64),
+    playback: &PlayActivity,
+    hold: &mut dyn FnMut(bool),
+) -> TrackOutcome {
     let total = frames.count();
     let mut out = TrackOutcome { frames: 0, stopped: false, error: None };
     let mut previous: Option<f64> = None;
     for i in 0..total {
+        yield_to_playback(playback, cancel, hold);
         if cancel.is_cancelled() {
             out.stopped = true;
             break;
@@ -162,6 +197,10 @@ pub type WakeFn = Arc<dyn Fn() + Send + Sync>;
 pub enum TrackMessage {
     /// 0...1.
     Progress(f64),
+    /// The run stands still because playback or an export runs (sent after a wait of 300 ms).
+    Paused,
+    /// Playback rests; the run goes on.
+    Resumed,
     /// The last message.
     Done(TrackOutcome),
 }
@@ -200,14 +239,33 @@ impl MagicTrackJob {
         let cancel = CancelToken::new();
         let token = cancel.clone();
         std::thread::spawn(move || {
+            // Nobody waits on a track run: it yields to playback and the UI (the runtime's pool inherits this).
+            sq_os::thread::set_current_thread_role(sq_os::thread::Role::Background);
             let outcome = match make_tracker() {
                 Ok(mut tracker) => {
                     let (tx, wake) = (tx.clone(), Arc::clone(&wake));
-                    run_track_with(&mut *frames, &mut *tracker, &store, &key, &points, &corrections, &token, &mut |p| {
-                        // The receiver is gone when the app quits; nothing is left to tell.
-                        let _ = tx.send(TrackMessage::Progress(p));
-                        wake();
-                    })
+                    let hold_tx = tx.clone();
+                    let hold_wake = Arc::clone(&wake);
+                    let mut hold = move |held: bool| {
+                        let _ = hold_tx.send(if held { TrackMessage::Paused } else { TrackMessage::Resumed });
+                        hold_wake();
+                    };
+                    run_track_paced(
+                        &mut *frames,
+                        &mut *tracker,
+                        &store,
+                        &key,
+                        &points,
+                        &corrections,
+                        &token,
+                        &mut |p| {
+                            // The receiver is gone when the app quits; nothing is left to tell.
+                            let _ = tx.send(TrackMessage::Progress(p));
+                            wake();
+                        },
+                        &PlayActivity::shared(),
+                        &mut hold,
+                    )
                 }
                 Err(why) => TrackOutcome { frames: 0, stopped: false, error: Some(why) },
             };
@@ -254,7 +312,9 @@ pub struct EdgeTamTracker(EdgeTAMOnnxSession);
 impl EdgeTamTracker {
     /// Loads the model from `folder` (a few seconds: call it on the job's thread).
     pub fn load(folder: &Path) -> Result<EdgeTamTracker, String> {
-        let model = EdgeTAMOnnxModel::new(folder, true, None).map_err(|e| e.to_string())?;
+        // A long job: cap the runtime's pool so decode, render and the UI keep cores.
+        let threads = i32::try_from(sq_os::thread::background_threads()).unwrap_or(0);
+        let model = EdgeTAMOnnxModel::new_with_threads(folder, true, None, threads).map_err(|e| e.to_string())?;
         Ok(EdgeTamTracker(Arc::new(model).make_session()))
     }
 
@@ -406,6 +466,73 @@ mod tests {
         assert_eq!(seen.len(), 4);
         assert!((seen[3] - 0.4).abs() < 1e-9);
         assert_eq!(out.status(), "Tracked the mask over 4 frames.");
+    }
+
+    #[test]
+    fn a_run_stands_still_while_playback_is_busy_and_goes_on_after() {
+        use sq_playback::engine::activity::PlayMark;
+        let playback = Arc::new(PlayActivity::default());
+        let mut mark = PlayMark::new(Arc::clone(&playback));
+        mark.set(true);
+        let (seen_tx, seen) = channel::<f64>();
+        let (hold_tx, holds) = channel::<bool>();
+        let p = Arc::clone(&playback);
+        let done = std::thread::spawn(move || {
+            let store = FrameMatteStore::new(None);
+            let tell = |x: f64| {
+                let _ = seen_tx.send(x);
+            };
+            let mut tell = tell;
+            run_track_paced(
+                &mut Frames(5),
+                &mut Follow { lasts: 99, seen: 0 },
+                &store,
+                "k",
+                &click(),
+                &[],
+                &CancelToken::new(),
+                &mut tell,
+                &p,
+                &mut |held| {
+                    let _ = hold_tx.send(held);
+                },
+            )
+        });
+        assert!(seen.recv_timeout(std::time::Duration::from_millis(500)).is_err(), "no frame is tracked while playing");
+        assert_eq!(holds.try_recv(), Ok(true), "a wait over 300 ms is announced");
+        mark.set(false);
+        let out = done.join().unwrap_or_else(|_| panic!("join"));
+        assert_eq!(out.frames, 5, "the run finishes once playback rests");
+        assert_eq!(holds.try_recv(), Ok(false), "and the end of the wait too");
+    }
+
+    #[test]
+    fn a_cancel_ends_a_run_that_waits_for_playback() {
+        use sq_playback::engine::activity::PlayMark;
+        let playback = Arc::new(PlayActivity::default());
+        let mut mark = PlayMark::new(Arc::clone(&playback));
+        mark.set(true);
+        let cancel = CancelToken::new();
+        let c = cancel.clone();
+        let p = Arc::clone(&playback);
+        let done = std::thread::spawn(move || {
+            let store = FrameMatteStore::new(None);
+            run_track_paced(
+                &mut Frames(5),
+                &mut Follow { lasts: 99, seen: 0 },
+                &store,
+                "k",
+                &click(),
+                &[],
+                &c,
+                &mut |_| {},
+                &p,
+                &mut |_| {},
+            )
+        });
+        cancel.cancel();
+        let out = done.join().unwrap_or_else(|_| panic!("join"));
+        assert!(out.stopped && out.frames == 0);
     }
 
     #[test]

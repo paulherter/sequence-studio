@@ -11,6 +11,7 @@ publish.workspace = true
 sq-core-time.workspace = true
 sq-core-model.workspace = true
 sq-core-effects.workspace = true
+sq-core-masks.workspace = true
 sq-core-color.workspace = true
 sq-core-audio.workspace = true
 sq-audiofx.workspace = true

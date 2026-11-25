@@ -3,7 +3,9 @@
 
 use crate::edit_diff::EditDiff;
 use crate::edit_operation::EditOperation;
+use crate::param_ops::{self, OpFailure};
 use crate::time_limits::TimeLimits;
+use sq_core_edit::timeline_add_track::AddTrackExt;
 use sq_core_edit::timeline_edits::{SlipKeyframes, TimelineEditsExt};
 use sq_core_edit::timeline_enable::TimelineEnableExt;
 use sq_core_edit::timeline_markers::TimelineMarkersExt;
@@ -27,8 +29,17 @@ pub enum TransactionErrorKind {
     NoPicture,
     /// An operation carries a time outside `TimeLimits`.
     InvalidTime,
+    /// A track operation names a track the sequence does not have.
+    TrackNotFound,
+    /// A value the operation carries is out of range (size, frame rate, sample rate); the text says which.
+    InvalidValue(&'static str),
+    /// A session operation (`addClip`, `createSequence`, `setActiveSequence`) reached the plain transaction: only the app
+    /// session runs those.
+    NeedsSession,
     /// A timeline gesture is in progress; try again.
     Busy,
+    /// The request does not fit the clip (unknown parameter, value out of range, ...); `detail` says what.
+    Invalid,
     /// The sequence the agent read is no longer the active one.
     SequenceChanged,
     /// The request timed out or its connection went away before the commit.
@@ -44,16 +55,18 @@ pub struct TransactionError {
     pub operation_index: Option<usize>,
     /// Wire name of that operation.
     pub operation: Option<String>,
+    /// Why, for `Invalid`.
+    pub detail: Option<String>,
 }
 
 impl TransactionError {
     /// An error not tied to an operation.
     pub fn new(kind: TransactionErrorKind) -> TransactionError {
-        TransactionError { kind, operation_index: None, operation: None }
+        TransactionError { kind, operation_index: None, operation: None, detail: None }
     }
 
     fn at(kind: TransactionErrorKind, index: usize, operation: &str) -> TransactionError {
-        TransactionError { kind, operation_index: Some(index), operation: Some(operation.to_string()) }
+        TransactionError { kind, operation_index: Some(index), operation: Some(operation.to_string()), detail: None }
     }
 
     /// The model's error, when the model refused an edit.
@@ -81,6 +94,10 @@ impl TransactionError {
                 "the media has no probed picture, its pixel aspect cannot be set".to_string()
             }
             TransactionErrorKind::InvalidTime => TimeLimits::message(),
+            TransactionErrorKind::TrackNotFound => "track not found".to_string(),
+            TransactionErrorKind::InvalidValue(what) => (*what).to_string(),
+            TransactionErrorKind::NeedsSession => "this operation needs the app session".to_string(),
+            TransactionErrorKind::Invalid => self.detail.clone().unwrap_or_else(|| "invalid request".to_string()),
             TransactionErrorKind::Busy => "a timeline edit is in progress, try again".to_string(),
             TransactionErrorKind::SequenceChanged => "the active sequence changed since it was read".to_string(),
             TransactionErrorKind::Cancelled => "request canceled".to_string(),
@@ -136,11 +153,58 @@ impl EditTransaction {
             }
             work.set_pixel_aspect(*aspect, *media);
         }
+        // Sequence settings: a project-level edit like the Sequence Settings dialog (`Project::set_settings`).
+        for (i, op) in ops.iter().enumerate() {
+            let EditOperation::SetSequenceSettings { sequence: own, width, height, fps, sample_rate } = op else {
+                continue;
+            };
+            let target = own.unwrap_or(sequence);
+            let Some(t) = work.timeline(target) else {
+                return Err(TransactionError::at(TransactionErrorKind::Edit(EditError::TimelineNotFound), i, op.name()));
+            };
+            let mut settings = t.settings();
+            let f = &mut settings.format;
+            f.width = width.unwrap_or(f.width);
+            f.height = height.unwrap_or(f.height);
+            if let Some(fps) = fps {
+                f.frame_duration = fps.frame_duration();
+            }
+            f.audio_sample_rate = sample_rate.unwrap_or(f.audio_sample_rate);
+            if !f.is_valid() {
+                return Err(TransactionError::at(
+                    TransactionErrorKind::InvalidValue(
+                        "invalid sequence settings: size 1...16384, a positive frame rate and sample rate",
+                    ),
+                    i,
+                    op.name(),
+                ));
+            }
+            work.set_settings(&settings, target)
+                .map_err(|e| TransactionError::at(TransactionErrorKind::Edit(e), i, op.name()))?;
+        }
+        if let Some(i) = ops.iter().position(EditOperation::is_session_operation) {
+            return Err(TransactionError::at(TransactionErrorKind::NeedsSession, i, ops[i].name()));
+        }
+        for (i, op) in ops.iter().enumerate() {
+            if let EditOperation::SetTrackState { track, .. } = op
+                && work.timeline(sequence).is_some_and(|t| t.track(*track).is_none())
+            {
+                return Err(TransactionError::at(TransactionErrorKind::TrackNotFound, i, op.name()));
+            }
+        }
         let mut index: Option<usize> = None;
+        let mut detail: Option<String> = None;
         let result = work.edit(sequence, |t| {
             for (i, op) in ops.iter().enumerate() {
                 index = Some(i);
-                Self::apply_op(op, t, ids)?;
+                match Self::apply_op(op, t, ids) {
+                    Ok(()) => {}
+                    Err(OpFailure::Edit(e)) => return Err(e),
+                    Err(OpFailure::Invalid(why)) => {
+                        detail = Some(why);
+                        return Err(EditError::InvalidFormat);
+                    }
+                }
             }
             index = None; // errors after the loop (nesting check) belong to no single operation
             // As EditorSession.performTimeline does after every edit.
@@ -148,11 +212,13 @@ impl EditTransaction {
             Ok(())
         });
         if let Err(e) = result {
-            let kind = TransactionErrorKind::Edit(e);
-            return Err(match index {
+            let kind = if detail.is_some() { TransactionErrorKind::Invalid } else { TransactionErrorKind::Edit(e) };
+            let mut err = match index {
                 Some(i) => TransactionError::at(kind, i, ops[i].name()),
                 None => TransactionError::new(kind),
-            });
+            };
+            err.detail = detail;
+            return Err(err);
         }
         *project = work;
         Ok(())
@@ -198,7 +264,7 @@ impl EditTransaction {
         Ok((p, diff))
     }
 
-    fn apply_op(op: &EditOperation, t: &mut Timeline, ids: &mut dyn IdSource) -> Result<(), EditError> {
+    fn apply_op(op: &EditOperation, t: &mut Timeline, ids: &mut dyn IdSource) -> Result<(), OpFailure> {
         let unlocked =
             |t: &Timeline| -> Vec<Id> { t.tracks.iter().filter(|tr| !tr.is_locked).map(|tr| tr.id).collect() };
         match op {
@@ -241,8 +307,49 @@ impl EditTransaction {
             EditOperation::AddMarker { at, name } => {
                 t.add_marker(*at, name, ids);
             }
-            // A media setting: applied by `apply` before the timeline edits.
-            EditOperation::SetPixelAspect { .. } => {}
+            // Media and sequence settings: applied by `apply` before the timeline edits.
+            EditOperation::SetPixelAspect { .. } | EditOperation::SetSequenceSettings { .. } => {}
+            EditOperation::RemoveClip { clips, ripple } => {
+                if *ripple {
+                    t.ripple_delete(clips)?;
+                } else {
+                    t.lift_clips(clips)?;
+                }
+            }
+            EditOperation::AddTrack { kind } => {
+                t.insert_track_after_last(*kind, ids);
+            }
+            EditOperation::SetClipSpeed { clip, speed } => {
+                t.set_speed(*clip, *speed, None, None, false, false)?;
+            }
+            EditOperation::SetTrackState { track, mute, solo, lock, visible } => {
+                let tr = t.tracks.iter_mut().find(|tr| tr.id == *track).ok_or(EditError::ClipNotFound)?;
+                tr.is_muted = mute.unwrap_or(tr.is_muted);
+                tr.is_solo = solo.unwrap_or(tr.is_solo);
+                tr.is_locked = lock.unwrap_or(tr.is_locked);
+                tr.is_visible = visible.unwrap_or(tr.is_visible);
+            }
+            // The session runs these; `apply` refused them before this point.
+            EditOperation::AddClip { .. }
+            | EditOperation::CreateSequence { .. }
+            | EditOperation::SetActiveSequence { .. }
+            | EditOperation::SyncAudio { .. } => return Err(EditError::NotConvertible.into()),
+            EditOperation::SetParam { clip, param, value } => param_ops::set_param(t, *clip, param, value)?,
+            EditOperation::AddEffect { clip, effect, index } => param_ops::add_effect(t, *clip, effect, *index, ids)?,
+            EditOperation::RemoveEffect { clip, effect } => param_ops::remove_effect(t, *clip, *effect)?,
+            EditOperation::SetKeyframe { clip, param, at, value, interpolation } => {
+                let i = interpolation.as_deref().map(crate::clip_params::parse_interpolation).transpose()?;
+                param_ops::set_keyframe(t, *clip, param, *at, value, i, ids)?;
+            }
+            EditOperation::RemoveKeyframe { clip, param, at } => param_ops::remove_keyframe(t, *clip, param, *at)?,
+            EditOperation::AddGraphic { track, at, duration, name, layers } => {
+                param_ops::add_graphic(t, *track, *at, *duration, name.as_deref(), layers, ids)?;
+            }
+            EditOperation::SetTextLayer { clip, layer, fields } => param_ops::set_text_layer(t, *clip, *layer, fields)?,
+            EditOperation::AddTextLayer { clip, index, fields } => {
+                param_ops::add_text_layer(t, *clip, fields, *index, ids)?;
+            }
+            EditOperation::RemoveTextLayer { clip, layer } => param_ops::remove_text_layer(t, *clip, *layer)?,
         }
         Ok(())
     }
@@ -262,6 +369,9 @@ pub struct HostCommit {
 }
 
 impl HostCommit {
+    /// `sequence` of a commit sent without one: allowed only while no sequence is open (the first `createSequence`).
+    pub const NO_SEQUENCE: Id = Id::from_u128(0);
+
     /// The checks every host runs on its own thread right before applying: not canceled (timed-out connection), no
     /// gesture in progress, and the sequence the agent read is still the active one.
     pub fn admit(&self, active: Option<Id>, busy: bool, cancel: &AtomicBool) -> Result<(), TransactionError> {
@@ -271,7 +381,8 @@ impl HostCommit {
         if busy {
             return Err(TransactionError::new(TransactionErrorKind::Busy));
         }
-        if active != Some(self.sequence) {
+        let first_sequence = self.sequence == Self::NO_SEQUENCE && active.is_none();
+        if active != Some(self.sequence) && !first_sequence {
             return Err(TransactionError::new(TransactionErrorKind::SequenceChanged));
         }
         Ok(())
@@ -345,6 +456,42 @@ mod tests {
 
     fn ids() -> SequentialIds {
         SequentialIds::default()
+    }
+
+    #[test]
+    fn building_operations_change_tracks_speed_settings_and_clips() {
+        use crate::edit_operation::Fps;
+        let f = Fixture::new();
+        let mut p = f.project.clone();
+        let tracks_before = p.timelines[0].tracks.len();
+        let ops = [
+            EditOperation::AddTrack { kind: TrackKind::Audio },
+            EditOperation::SetTrackState { track: f.a1, mute: Some(true), solo: None, lock: None, visible: Some(false) },
+            EditOperation::SetClipSpeed { clip: f.b, speed: sq_core_model::ClipSpeed::new(2, 1) },
+            EditOperation::RemoveClip { clips: vec![f.a], ripple: false },
+            EditOperation::SetSequenceSettings {
+                sequence: None,
+                width: Some(1080),
+                height: Some(1920),
+                fps: Some(Fps { num: 30, den: 1 }),
+                sample_rate: None,
+            },
+        ];
+        EditTransaction::apply(&ops, &mut p, f.seq, &mut ids()).expect("apply");
+        let t = &p.timelines[0];
+        assert_eq!(t.tracks.len(), tracks_before + 1);
+        assert!(t.tracks.last().is_some_and(|x| x.kind == TrackKind::Audio));
+        let a1 = t.track(f.a1).expect("a1");
+        assert!(a1.is_muted && !a1.is_visible && !a1.is_solo);
+        assert_eq!((t.format.width, t.format.height, t.format.frame_duration), (1080, 1920, Time::new(1, 30)));
+        assert!(t.track(f.v1).is_some_and(|v| v.clips().iter().all(|c| c.id != f.a)), "a is lifted");
+        // A refusal changes nothing.
+        let mut q = f.project.clone();
+        let bad = [EditOperation::SetTrackState { track: Id::from_u128(77), mute: Some(true), solo: None, lock: None, visible: None }];
+        assert_eq!(EditTransaction::apply(&bad, &mut q, f.seq, &mut ids()).map_err(|e| e.kind), Err(TransactionErrorKind::TrackNotFound));
+        let session_op = [EditOperation::SetActiveSequence { sequence: f.seq }];
+        assert_eq!(EditTransaction::apply(&session_op, &mut q, f.seq, &mut ids()).map_err(|e| e.kind), Err(TransactionErrorKind::NeedsSession));
+        assert_eq!(q, f.project);
     }
 
     #[test]

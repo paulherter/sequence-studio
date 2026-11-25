@@ -38,9 +38,15 @@ impl std::error::Error for StabilizationError {}
 /// Reports progress 0...1.
 pub type Progress<'a> = Option<&'a (dyn Fn(f64) + Sync)>;
 
+/// Told `true` when a run stands still for playback (after a wait of 300 ms) and `false` when it goes on.
+pub type HoldFn = std::sync::Arc<dyn Fn(bool) + Send + Sync>;
+
 /// Measures the camera motion of a media file over a source range. Swift's `async` becomes a blocking call that checks a
 /// `CancelToken` (no executor yet, PORTING section 9).
 pub trait StabilizationAnalyzing: Sync {
+    /// Where the analyzer tells that it waits for playback; the default analyzer never waits.
+    fn set_hold(&mut self, _hold: HoldFn) {}
+
     /// `picture_width/height`: the upright source picture size the motions are measured in (the clip's own frame).
     fn analyze(
         &self,

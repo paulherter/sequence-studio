@@ -12,7 +12,7 @@ use sq_core_time::IdSource;
 const NOISE_REDUCTION_MATCH_NAME: &str = "c6762838-e451-4d22-9c90-b0eaa734605a";
 const MULTIBAND_MATCH_PREFIX: &str = "3981e750-";
 /// Largest multiband limiter drive (margin - threshold, dB) the importer sets up.
-const MAX_LIMITER_DRIVE_DB: f64 = 12.0;
+const MAX_LIMITER_DRIVE_DB: f64 = 10.0;
 const PARAMETRIC_EQ_MATCH_PREFIX: &str = "8edcd326-";
 
 fn static_value(comp: &PRComponent, i: usize) -> Option<&str> {
@@ -71,7 +71,7 @@ impl Mapping<'_> {
                     e.enabled = !bypassed;
                     c.effects.push(e);
                     self.report.note(
-                        &comp.display_name,
+                        "Noise Reduction",
                         Status::Approximated,
                         "Amount = Strength x 100 %; Makeup / Auto Gain / Boost Type not mapped",
                     );
@@ -81,7 +81,7 @@ impl Mapping<'_> {
                     map_multiband(comp, ctx, &mut e, self.ids);
                     e.enabled = !bypassed;
                     c.effects.push(e);
-                    self.report.note(&comp.display_name, Status::Approximated, "Multiband: output gain, thresholds, ratios, band gains, attack (x 500 ms), release (x 5 s), crossovers (20 Hz + x 19980 Hz) exact; band bypass / solo / link mapped; Limiter = gain margin - threshold + brickwall at the margin (LMAX positions 48-53; threshold, margin and attack scales assumed); band mute and LMAX ratio not mapped");
+                    self.report.note("Multiband Compressor", Status::Approximated, "Multiband: output gain, thresholds, ratios, band gains, attack (x 500 ms), release (x 5 s), crossovers (20 Hz + x 19980 Hz) exact; band bypass / solo / link mapped; Limiter = gain margin - threshold + brickwall at the margin (LMAX positions 48-53; threshold, margin and attack scales assumed); band mute and LMAX ratio not mapped");
                 }
                 m if m.starts_with(PARAMETRIC_EQ_MATCH_PREFIX) => {
                     let mut e = self.make_effect(ae::AUDIO_PARAMETRIC_EQ_KIND);
@@ -94,9 +94,13 @@ impl Mapping<'_> {
                     {
                         notes.push("output gain not mapped".to_string());
                     }
-                    self.report.note(&comp.display_name, Status::Approximated, &notes.join("; "));
+                    self.report.note("Parametric EQ", Status::Approximated, &notes.join("; "));
                 }
-                _ => self.report.note(&comp.display_name, Status::Dropped, "audio effect has no SQ counterpart yet"),
+                _ => self.report.note(
+                    &unmapped_audio_name(&comp.display_name),
+                    Status::Dropped,
+                    &format!("audio effect has no SQ counterpart yet ({})", comp.match_name),
+                ),
             }
         }
         if !has_volume && gain != 1.0 {
@@ -196,4 +200,24 @@ fn map_parametric_eq(comp: &PRComponent, ctx: &ClipContext, e: &mut ClipEffect, 
     freq(&mut p, e, &k("hp", "Freq"), 39, 80.0);
     e.parameters.insert(k("lp", "On"), on(41));
     freq(&mut p, e, &k("lp", "Freq"), 42, 16_000.0);
+}
+
+/// The report name of an audio effect SQ cannot do: Premiere's display name, or a plain "Audio effect" when that is a raw
+/// GUID (an effect without a display name) or empty. Mapped effects use SQ's English names, never the (localized) display name.
+pub(crate) fn unmapped_audio_name(display: &str) -> String {
+    let d = display.trim();
+    let guid = d.len() == 36 && d.bytes().enumerate().all(|(i, b)| if matches!(i, 8 | 13 | 18 | 23) { b == b'-' } else { b.is_ascii_hexdigit() });
+    if d.is_empty() || guid { "Audio effect".to_string() } else { d.to_string() }
+}
+
+#[cfg(test)]
+mod feature_name_tests {
+    use super::unmapped_audio_name;
+
+    #[test]
+    fn a_raw_guid_never_becomes_a_feature_name() {
+        assert_eq!(unmapped_audio_name("7ea99d31-ca8f-454f-acd7-81a258efb336"), "Audio effect");
+        assert_eq!(unmapped_audio_name(""), "Audio effect");
+        assert_eq!(unmapped_audio_name("Hall"), "Hall");
+    }
 }

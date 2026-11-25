@@ -203,12 +203,12 @@ fn platform_maps_to_preset() {
 }
 
 #[test]
-fn tiktok_sequence_gives_vertical_settings_with_loudness() {
+fn tiktok_sequence_gives_vertical_settings_without_loudness() {
     let f = fmt(1080, 1920);
     let t = target(DeliveryPlatform::Tiktok);
     let s = ExportPreset::default_preset(Some(&f), Some(&t)).settings_matching_target(Some(&f), Some(&t));
     assert!(s.video.width == 1080 && s.video.height == 1920);
-    assert_eq!(s.audio.loudness, Some(LoudnessNormalization::new(-14.0, -1.0)));
+    assert_eq!(s.audio.loudness, None, "TikTok sound is never on by itself");
 }
 
 /// A delivery preset of another aspect never changes the sequence's size: the sheet opens at the sequence's own size.
@@ -224,7 +224,7 @@ fn a_delivery_target_of_another_aspect_keeps_the_sequence_size() {
         let (f, t) = (fmt(w, h), target(platform));
         let s = ExportPreset::default_preset(Some(&f), Some(&t)).settings_matching_target(Some(&f), Some(&t));
         assert_eq!((s.video.width, s.video.height), (w, h), "{platform:?} on {w}x{h}");
-        assert!(s.audio.loudness.is_some(), "the target's loudness stays");
+        assert!(s.audio.loudness.is_none(), "a target never turns loudness on");
     }
     // The same aspect keeps the preset's own size.
     let (f, t) = (fmt(1920, 1080), target(DeliveryPlatform::Youtube));
@@ -289,7 +289,7 @@ fn preferences_round_trip_and_apply() {
     let mut target = ExportPreset::DEFAULT.settings();
     back.apply(&mut target, LoudnessNormalization::new(-16.0, -1.0));
     assert!(target.video.width == 640 && target.captions == CaptionMode::SidecarVtt);
-    assert_eq!(target.audio.loudness, Some(LoudnessNormalization::new(-16.0, -1.0)));
+    assert_eq!(target.audio.loudness, None, "remembered loudness is not restored");
     // A damaged value never stops the dialog from opening.
     let damaged =
         ExportPreferences::decode(Some(br#"{"presetID": 5, "captions": "x", "audioEnabled": false}"#)).unwrap();

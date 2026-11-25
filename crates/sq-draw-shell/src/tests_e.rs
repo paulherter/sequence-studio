@@ -438,6 +438,86 @@ mod paste_media {
         assert!(enabled(&rig, &hooks, PanelID::Timeline));
     }
 
+    /// A host with cheap facts: the menu must ask only the offer, never the data.
+    struct Cheap(std::cell::Cell<u32>);
+
+    impl ShellHooks for Cheap {
+        fn media_clipboard(&self) -> Option<PasteContent> {
+            self.0.set(self.0.get() + 1);
+            Some(PasteContent::new(Vec::new(), Some(vec![0; 4_000_000])))
+        }
+        fn media_clipboard_offer(&self) -> Option<sq_editor_session::PasteOffer> {
+            Some(sq_editor_session::PasteOffer { has_files: false, has_image: true })
+        }
+    }
+
+    #[test]
+    fn menu_refresh_with_a_big_picture_does_not_read_the_clipboard() {
+        let rig = Rig::new();
+        let hooks = Cheap(std::cell::Cell::new(0));
+        rig.with(|r| r.shell.focus = Some(PanelID::Project));
+        assert!(rig.with(|r| r.shell.menu_enabled(&r.session, &hooks, EditorCommand::Paste)));
+        rig.with(|r| {
+            let _ = r.shell.menus(&r.session, &hooks);
+            let _ = r.shell.refresh_menus(&r.session, &hooks);
+        });
+        assert_eq!(hooks.0.get(), 0, "image data is read only when the user pastes");
+    }
+
+    /// Hooks whose clipboard read is a worker job (the gate lets the test finish it when it wants).
+    struct Job(std::cell::RefCell<Option<std::sync::mpsc::Receiver<()>>>);
+
+    impl ShellHooks for Job {
+        fn media_clipboard_offer(&self) -> Option<sq_editor_session::PasteOffer> {
+            Some(sq_editor_session::PasteOffer { has_files: true, has_image: false })
+        }
+        fn media_clipboard_job(&self) -> Option<Box<dyn FnOnce() -> PasteContent + Send>> {
+            let gate = self.0.borrow_mut().take()?;
+            Some(Box::new(move || {
+                let _ = gate.recv();
+                PasteContent::new(vec![PathBuf::from("/b.mov")], None)
+            }))
+        }
+    }
+
+    fn poll_until_done(rig: &Rig, hooks: &mut Job) {
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(10);
+        while rig.with(|r| r.shell.pending_paste_waits()) && std::time::Instant::now() < deadline {
+            rig.with(|r| {
+                let mut ui = sq_draw::UiCx::new();
+                let mut cx = ShellCx { session: &mut r.session, measure: measure(), ui: &mut ui, hooks };
+                r.shell.poll_paste(&mut cx);
+            });
+            std::thread::yield_now();
+        }
+    }
+
+    #[test]
+    fn a_worker_paste_imports_once_into_the_panel_it_was_made_in_and_a_second_paste_waits() {
+        let rig = Rig::new();
+        rig.with(|r| r.shell.focus = Some(PanelID::Project));
+        let (open, gate) = std::sync::mpsc::channel();
+        let mut hooks = Job(std::cell::RefCell::new(Some(gate)));
+        let paste = |rig: &Rig, hooks: &mut Job| {
+            rig.with(|r| {
+                let mut ui = sq_draw::UiCx::new();
+                let mut cx = ShellCx { session: &mut r.session, measure: measure(), ui: &mut ui, hooks };
+                r.shell.paste_media(&mut cx)
+            })
+        };
+        assert!(paste(&rig, &mut hooks));
+        assert!(rig.with(|r| r.shell.pending_paste_waits()));
+        // a second Paste only says it waits; then focus moves while the read runs
+        assert!(paste(&rig, &mut hooks));
+        rig.with(|r| r.shell.focus = Some(PanelID::EffectControls));
+        assert!(rig.with(|r| r.shell.take_flows()).is_empty(), "nothing imported before the read is done");
+        open.send(()).expect("gate");
+        poll_until_done(&rig, &mut hooks);
+        assert_eq!(rig.with(|r| r.shell.take_flows()), vec![ShellFlow::ImportMixed(vec![PathBuf::from("/b.mov")])]);
+        poll_until_done(&rig, &mut hooks);
+        assert!(rig.with(|r| r.shell.take_flows()).is_empty(), "the result is delivered once");
+    }
+
     #[test]
     fn pasting_files_starts_the_import() {
         let rig = Rig::new();

@@ -141,6 +141,8 @@ pub struct PRComponent {
     pub display_name: String,
     pub params: Vec<PRParamValue>,
     pub is_audio: bool,
+    /// Components hung under this one (`SubComponents`): the masks of an effect or of Opacity.
+    pub sub_components: Vec<PRComponent>,
 }
 
 impl PRComponent {
@@ -522,7 +524,14 @@ impl PRReader {
                 v
             })
             .collect();
+        let sub_components = c
+            .children_at("SubComponents/SubComponent")
+            .into_iter()
+            .filter_map(|x| t.deref(Some(x)))
+            .filter_map(|n| Self::component(n, t))
+            .collect();
         Some(PRComponent {
+            sub_components,
             display_name: base
                 .and_then(|b| b.text_at("DisplayName"))
                 .map_or_else(|| match_name.clone(), str::to_string),

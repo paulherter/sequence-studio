@@ -2,7 +2,7 @@
 // Swift: Generators.swift (addGeneratorClip)
 
 use crate::labels::TEXT_GENERATOR;
-use crate::{Clip, EditError, GeneratorRef, Project, TrackKind};
+use crate::{Clip, EditError, GeneratorRef, Project, Timeline, TrackKind};
 use sq_core_time::{Id, IdSource, Time, TimeRange};
 
 /// Where a generator clip goes.
@@ -29,16 +29,38 @@ impl Project {
         at: GeneratorPlacement,
         ids: &mut dyn IdSource,
     ) -> Result<Id, EditError> {
-        let GeneratorPlacement { timeline, track, start, duration } = at;
-        let t = self.timelines.iter().find(|t| t.id == timeline).ok_or(EditError::TimelineNotFound)?;
-        let tr = t.tracks.iter().position(|x| x.id == track).ok_or(EditError::ClipNotFound)?;
-        if t.tracks[tr].kind != TrackKind::Video {
+        let timeline = at.timeline;
+        if !self.timelines.iter().any(|t| t.id == timeline) {
+            return Err(EditError::TimelineNotFound);
+        }
+        let mut placed = None;
+        self.edit(timeline, |t| {
+            placed = Some(t.place_generator_clip(generator, name, at, ids)?);
+            Ok(())
+        })?;
+        placed.ok_or(EditError::ClipNotFound)
+    }
+}
+
+impl Timeline {
+    /// The sequence-level body of `Project::add_generator_clip` (same checks and errors; `at.timeline` is ignored): the
+    /// Edit API places a Graphic from inside a batch with it.
+    pub fn place_generator_clip(
+        &mut self,
+        generator: GeneratorRef,
+        name: Option<&str>,
+        at: GeneratorPlacement,
+        ids: &mut dyn IdSource,
+    ) -> Result<Id, EditError> {
+        let GeneratorPlacement { track, start, duration, .. } = at;
+        let tr = self.tracks.iter().position(|x| x.id == track).ok_or(EditError::ClipNotFound)?;
+        if self.tracks[tr].kind != TrackKind::Video {
             return Err(EditError::WrongTrackKind);
         }
-        if t.tracks[tr].is_locked {
+        if self.tracks[tr].is_locked {
             return Err(EditError::TrackLocked);
         }
-        if duration < t.frame_duration() || start < Time::ZERO {
+        if duration < self.frame_duration() || start < Time::ZERO {
             return Err(EditError::EmptyClip);
         }
         let id = ids.next_id();
@@ -49,7 +71,7 @@ impl Project {
         };
         let mut clip = Clip::new(id, &title, id, TrackKind::Video, TimeRange::new(Time::ZERO, duration), start);
         clip.generator = Some(generator);
-        self.edit(timeline, |t| t.tracks[tr].overwrite(clip, ids))?;
+        self.tracks[tr].overwrite(clip, ids)?;
         Ok(id)
     }
 }

@@ -137,6 +137,7 @@ impl Gpu {
                 label: Some("sq-gpu"),
                 required_features: features,
                 required_limits: adapter.limits(),
+                memory_hints: memory_hints(),
                 ..Default::default()
             })
             .await
@@ -451,11 +452,13 @@ impl Gpu {
     }
 
     /// A GPU-only texture for passes: sampled, storage (when the format allows), render target and copy source/target.
+    #[track_caller]
     pub fn texture(&self, width: u32, height: u32, format: PixelFormat) -> GpuTexture {
         GpuTexture::create(&self.device, width, height, format)
     }
 
     /// A pooled texture; goes back to the pool when dropped.
+    #[track_caller]
     pub fn acquire(self: &Arc<Self>, width: u32, height: u32, format: PixelFormat) -> crate::frames::PooledTexture {
         self.pool.acquire(self, width, height, format)
     }
@@ -519,6 +522,16 @@ impl Gpu {
             Some(e) => Err(GpuError::Pipeline(e.to_string().lines().next().unwrap_or("error").to_string())),
             None => Ok(built),
         }
+    }
+}
+
+/// wgpu allocator policy: `SQ_GPU_MEMORY_HINTS=usage` asks for small blocks (an iGPU shares system RAM with the decoder),
+/// anything else keeps wgpu's performance default.
+// shortcut: env knob for the Windows iGPU measurement; make `usage` the default on shared-memory adapters once measured.
+fn memory_hints() -> wgpu::MemoryHints {
+    match std::env::var("SQ_GPU_MEMORY_HINTS").as_deref() {
+        Ok("usage") => wgpu::MemoryHints::MemoryUsage,
+        _ => wgpu::MemoryHints::Performance,
     }
 }
 

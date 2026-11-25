@@ -96,7 +96,7 @@ fn multiband_maps_the_documented_formulas() {
     assert!(near(v(&e, &ae::mb_crossover_key(3)), 6910.0, 0.5));
     assert_eq!(v(&e, ae::MB_LIMITER_ON_KEY), 0.0, "a component without the LMAX params has no limiter");
     assert!(e.enabled);
-    assert_eq!(r.report.status_of("Multiband"), Some(Status::Approximated));
+    assert_eq!(r.report.status_of("Multiband Compressor"), Some(Status::Approximated));
 }
 
 #[test]
@@ -112,6 +112,17 @@ fn multiband_limiter_maps_from_the_lmax_params() {
     assert!(near(v(&e, ae::MB_LIMITER_RELEASE_KEY), 500.0, 1e-6));
     assert!(near(v(&e, ae::MB_LIMITER_ATTACK_KEY), 4.0, 1e-6));
     assert_eq!(v(&imported("1"), ae::MB_LIMITER_ON_KEY), 0.0);
+}
+
+/// "Rode NTG Indoor" stores threshold 0.55 / margin 0.98: read at face value that is a 27 dB drive. Premiere's own render of
+/// "iOS 27 Features #2" (voice clips, audio-premiere bench) matches SQ in loudness (-13.9 vs -14.0 LUFS) and in every
+/// 1/3-octave band within 0.5 dB with the drive capped at 10 dB; at 12 dB it was 1.3 dB too loud and 1 dB too bright.
+#[test]
+fn multiband_limiter_drive_is_capped_at_what_premiere_renders() {
+    let vals = [(1, "0.5"), (48, "0.55"), (49, "0.98"), (51, "0.75"), (53, "0.")];
+    let e = import(MULTIBAND, "Multiband", 60, &vals, ae::AUDIO_MULTIBAND_KIND).0;
+    let drive = v(&e, ae::MB_LIMITER_MARGIN_KEY) - v(&e, ae::MB_LIMITER_THRESHOLD_KEY);
+    assert!(near(drive, 10.0, 1e-9), "drive {drive}");
 }
 
 #[test]
@@ -138,12 +149,13 @@ fn parametric_eq_maps_gain_frequency_and_enable_flags() {
         (41, "0."),
         (42, "0.749791"),
     ];
-    let (e, _) = import(PEQ, "EQ", 46, &vals, ae::AUDIO_PARAMETRIC_EQ_KIND);
+    let (e, r) = import(PEQ, "EQ", 46, &vals, ae::AUDIO_PARAMETRIC_EQ_KIND);
     let k = ae::peq_key;
     assert!(near(v(&e, &k("b4", "Gain")), -3.63, 0.01) && near(v(&e, &k("b4", "Freq")), 2560.6, 0.5));
     assert!(near(v(&e, &k("b4", "Q")), 1.0, 0.01));
     assert!(near(v(&e, &k("b1", "Freq")), 50.0, 0.1) && near(v(&e, &k("ls", "Freq")), 40.0, 0.1));
     assert!(v(&e, &k("b1", "On")) == 0.0 && v(&e, &k("b4", "On")) == 1.0);
+    assert_eq!(r.report.status_of("Parametric EQ"), Some(Status::Approximated), "the report names the effect in English, not by its GUID");
     assert!(near(v(&e, &k("hs", "Gain")), 1.0, 0.001) && near(v(&e, &k("hs", "Freq")), 18_000.0, 1.0));
     assert!(v(&e, &k("hp", "On")) == 1.0 && near(v(&e, &k("hp", "Freq")), 79.8, 0.1));
     assert_eq!(v(&e, &k("lp", "On")), 0.0);

@@ -289,30 +289,7 @@ impl Speech {
 
     /// Swift `addCaptions`: the captions (sequence time already) become caption items on the frame grid, one undo step.
     fn add_captions(session: &mut EditorSession, timeline: Id, captions: &[Caption]) -> String {
-        let fd = session.project().timelines.iter().find(|t| t.id == timeline).map(|t| t.format.frame_duration);
-        let mut ids = RandomIds;
-        let items: Vec<CaptionItem> = captions
-            .iter()
-            .map(|c| CaptionItem {
-                id: sq_core_time::IdSource::next_id(&mut ids),
-                lines: c.lines.clone(),
-                range: c.range,
-                style_ref: c.style_ref.clone(),
-                animation_ref: c.animation_ref.clone(),
-                style_overridden: false,
-                words: c
-                    .words
-                    .iter()
-                    .map(|w| CaptionWord {
-                        text: w.text.clone(),
-                        range: TimeRange::from_end(w.range.start - c.range.start, w.range.end() - c.range.start),
-                        confidence: w.confidence,
-                    })
-                    .collect(),
-                position: c.position,
-            })
-            .collect();
-        let snapped = fd.map_or(items.clone(), |fd| CaptionMapping::snapped(&items, fd));
+        let snapped = caption_items(session, timeline, captions);
         if snapped.is_empty() {
             return "There are no captions to create.".to_string();
         }
@@ -507,6 +484,35 @@ pub(super) fn disguise_voice_with(model: Option<SharedModel>, session: &mut Edit
 pub(super) fn scan_filler_words_in(session: &mut EditorSession, language: &str) -> String {
     let scan = session.propose_filler_word_cuts(language);
     filler_words_text(&scan, session.active_timeline().is_some_and(has_captions))
+}
+
+/// The captions (sequence time) as caption items on `timeline`'s frame grid; the one conversion the Captions panel and the
+/// Edit API share.
+pub(crate) fn caption_items(session: &EditorSession, timeline: Id, captions: &[Caption]) -> Vec<CaptionItem> {
+    let fd = session.project().timelines.iter().find(|t| t.id == timeline).map(|t| t.format.frame_duration);
+    let mut ids = RandomIds;
+    let items: Vec<CaptionItem> = captions
+        .iter()
+        .map(|c| CaptionItem {
+            id: sq_core_time::IdSource::next_id(&mut ids),
+            lines: c.lines.clone(),
+            range: c.range,
+            style_ref: c.style_ref.clone(),
+            animation_ref: c.animation_ref.clone(),
+            style_overridden: false,
+            words: c
+                .words
+                .iter()
+                .map(|w| CaptionWord {
+                    text: w.text.clone(),
+                    range: TimeRange::from_end(w.range.start - c.range.start, w.range.end() - c.range.start),
+                    confidence: w.confidence,
+                })
+                .collect(),
+            position: c.position,
+        })
+        .collect();
+    fd.map_or(items.clone(), |fd| CaptionMapping::snapped(&items, fd))
 }
 
 #[cfg(test)]

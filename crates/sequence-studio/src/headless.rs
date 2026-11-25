@@ -1146,6 +1146,9 @@ fn spawn_real_analysis(app: &Headless, clip: sq_core_time::Id, stab: bool) {
     };
     eprintln!("real-analysis start {} stab={stab}", path.display());
     std::thread::spawn(move || {
+        if std::env::var_os("SQ_WF_REAL_FOREGROUND").is_none() {
+            sq_os::thread::set_current_thread_role(sq_os::thread::Role::Background);
+        }
         let t = Instant::now();
         let secs = source.duration.value() as f64 / source.duration.timescale().max(1) as f64;
         if stab {
@@ -1177,7 +1180,8 @@ fn spawn_real_analysis(app: &Headless, clip: sq_core_time::Id, stab: bool) {
                 "wf-real",
                 &[(sq_core_time::Vec2::new(0.5, 0.5), false)],
                 &sq_analysis::analysis_turn::CancelToken::new(),
-                &mut |_| {},
+                // One line per stored frame: the window closes the process mid-run, so this is the only count of frames done.
+                &mut |p| eprintln!("real-analysis frame {:.0} {:.2}s", p * 1000.0, t.elapsed().as_secs_f64()),
             );
             eprintln!(
                 "real-analysis subjectmask frames={} err={:?} {:.1}s for {secs:.1}s of video",
@@ -1586,8 +1590,19 @@ fn workflow_bench(
             }
             if Instant::now() >= ui_next {
                 let t = Instant::now();
+                let cpu0 = sq_os::thread::thread_cpu_split();
                 frame(&app);
                 let took = t.elapsed().as_secs_f64() * 1e3;
+                if took > 25.0
+                    && let (Some((u0, s0)), Some((u1, s1))) = (cpu0, sq_os::thread::thread_cpu_split())
+                {
+                    // Wall vs the thread's own CPU: wall >> user+sys means it waited (lock, preempted), sys large means kernel work.
+                    eprintln!(
+                        "ui-slow wall={took:.1}ms user={:.1}ms sys={:.1}ms",
+                        (u1 - u0).as_secs_f64() * 1e3,
+                        (s1 - s0).as_secs_f64() * 1e3
+                    );
+                }
                 r.max_ui_ms = r.max_ui_ms.max(took);
                 r.ui_over_25ms += u32::from(took > 25.0);
                 ui_next = (ui_next + Duration::from_micros(16_667)).max(Instant::now());
@@ -1720,6 +1735,8 @@ fn soak(width: u32, height: u32, project: Option<&Path>, fonts: &Path, out: &Pat
 
 /// Runs a test mode and writes its file.
 pub fn run(mode: &Mode, project: Option<&Path>, fonts: &Path) -> Result<(), String> {
+    // The benches size the hardware decoder pools like the app does (also set in main).
+    sq_media_ffmpeg::decode::set_machine_memory(sq_platform::physical_memory().unwrap_or(0));
     let offscreen = matches!(
         mode,
         Mode::UiShot { .. }

@@ -158,8 +158,62 @@ pub const MAX_HARDWARE_SESSIONS_OVERRIDE: usize = 32;
 pub fn session_limit(text: Option<&str>) -> usize {
     match text.and_then(|v| v.trim().parse::<usize>().ok()).filter(|n| *n > 0) {
         Some(n) => n.min(MAX_HARDWARE_SESSIONS_OVERRIDE),
-        None => DEFAULT_MAX_HARDWARE_SESSIONS,
+        None => default_session_limit(tier_memory()),
     }
+}
+
+/// The RAM tiers apply where the hardware decoder pools surfaces out of shared system memory. Only the Windows path
+/// (D3D11VA, `HOLDS_POOL`) was measured so; VA-API on Linux and VideoToolbox (not on this path) keep the plain defaults.
+// shortcut: Windows stands for "integrated GPU"; a discrete GPU there also gets the tiers on <= 16 GB. Upgrade to the DXGI
+// adapter's DedicatedVideoMemory once the app reports it here.
+const SHARED_MEMORY_POOLS: bool = HOLDS_POOL;
+
+/// Physical memory of the machine in bytes, 0 until the app reports it ([`set_machine_memory`]).
+static MACHINE_MEMORY: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The app reports the machine's RAM once at start so the default session limit can follow it.
+pub fn set_machine_memory(bytes: u64) {
+    MACHINE_MEMORY.store(bytes, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Sessions allowed without an override. Each D3D11VA session pools 4K P010 surfaces (about 25 MB each, 20 or more per
+/// session) out of the iGPU's shared system RAM: 8 sessions on an 8 GB machine pushed the guest to 11 GB committed and
+/// 2-6 % of the frames at 4 layers of 4K effects, 2 sessions played 59-73 % (win11-vm, notes/tempo/win-fx4k-2026-11-24.md).
+/// Unknown memory (0) keeps the plain default.
+// shortcut: memory tiers by guess; upgrade to counting the pooled surface bytes against the free GPU memory.
+pub fn default_session_limit(memory_bytes: u64) -> usize {
+    const GIB: u64 = 1 << 30;
+    match memory_bytes {
+        0 => DEFAULT_MAX_HARDWARE_SESSIONS,
+        m if m <= 8 * GIB => 2,
+        m if m <= 16 * GIB => 4,
+        _ => DEFAULT_MAX_HARDWARE_SESSIONS,
+    }
+}
+
+/// Pooled hardware frames beyond the decoder's references, from the same memory tiers: 12 up to 16 GB, the plain
+/// `default_extra` above. win11-vm (8 GB, 2 sessions, carry follows the pool): extra 12 played 14 of 15 runs >= 93 %
+/// (one 60 %), 8 about 3 of 4, 10 and 16 one or two bad runs in 5, 5 mostly bad; the pool must stay deep enough for
+/// the carry plus a call's frames more than it must be small (notes/tempo/win-fx4k-2026-11-24.md round 5).
+/// Unknown memory (0) keeps `default_extra`.
+pub fn default_extra_hw_frames(memory_bytes: u64, default_extra: i32) -> i32 {
+    const GIB: u64 = 1 << 30;
+    match memory_bytes {
+        0 => default_extra,
+        m if m <= 8 * GIB => default_extra.min(12),
+        m if m <= 16 * GIB => default_extra.min(12),
+        _ => default_extra,
+    }
+}
+
+/// The memory the RAM tiers see: the machine's where surfaces come from shared system memory, else 0 (plain defaults).
+pub fn tier_memory() -> u64 {
+    if SHARED_MEMORY_POOLS { machine_memory() } else { 0 }
+}
+
+/// The machine memory the app reported ([`set_machine_memory`]), 0 if none.
+pub fn machine_memory() -> u64 {
+    MACHINE_MEMORY.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// A slot in the process-wide limit (`SQ_MAX_HW_DECODERS` lowers or raises it, see [`session_limit`]).
@@ -199,6 +253,12 @@ pub fn acquire_hardware_session_for(rate: u64) -> Option<SessionGuard<'static>> 
 /// range returned in one list) ran the pool dry and the decoder failed.
 pub fn hardware_hold_limit(extra_hw_frames: i32, carry: usize) -> usize {
     usize::try_from(extra_hw_frames).unwrap_or(0).saturating_sub(carry + 1).max(1)
+}
+
+/// Pictures a decoder may carry to the next call with `extra_hw_frames` pooled surfaces: at most half of them (so a call
+/// can still hold `extra - carry - 1`, never forcing every range of two frames or more into software), at most `max`.
+pub fn carry_limit(extra_hw_frames: i32, max: usize) -> usize {
+    (usize::try_from(extra_hw_frames).unwrap_or(0) / 2).clamp(1, max)
 }
 
 /// How one `decode` call runs on a decoder.
@@ -277,6 +337,16 @@ mod tests {
         assert_eq!(session_limit(Some("3")), 3, "and below it");
         assert_eq!(session_limit(Some("1000")), MAX_HARDWARE_SESSIONS_OVERRIDE);
         assert_eq!(session_limit(Some("0")), DEFAULT_MAX_HARDWARE_SESSIONS);
+        const G: u64 = 1 << 30;
+        assert_eq!(default_session_limit(0), DEFAULT_MAX_HARDWARE_SESSIONS, "unknown memory");
+        assert_eq!(default_session_limit(8 * G), 2, "an 8 GB machine");
+        assert_eq!(default_session_limit(16 * G), 4);
+        assert_eq!(default_session_limit(32 * G), DEFAULT_MAX_HARDWARE_SESSIONS);
+        assert_eq!(default_extra_hw_frames(0, 16), 16);
+        assert_eq!(default_extra_hw_frames(8 * G, 16), 12);
+        assert_eq!(default_extra_hw_frames(16 * G, 16), 12);
+        assert_eq!(default_extra_hw_frames(32 * G, 16), 16);
+        assert_eq!(default_extra_hw_frames(8 * G, 4), 4, "never raises a smaller default");
         assert_eq!(session_limit(Some("many")), DEFAULT_MAX_HARDWARE_SESSIONS);
         // A pool with the default maximum of 2 still opens a third session when the override says 3.
         let s = HardwareSessions::new(2);
@@ -309,6 +379,19 @@ mod tests {
         assert_eq!(decode_path(true, true, 30, limit), DecodePath::Open, "delivered frames are downloaded one by one");
         assert_eq!(decode_path(false, false, 30, limit), DecodePath::Open, "software has no pool");
         assert_eq!(hardware_hold_limit(0, 8), 1, "never below one frame");
+    }
+
+    #[test]
+    fn small_machine_tiers_keep_ranges_in_hardware() {
+        const GIB: u64 = 1 << 30;
+        for mem in [4 * GIB, 8 * GIB, 16 * GIB, 64 * GIB] {
+            let extra = default_extra_hw_frames(mem, 16);
+            let carry = carry_limit(extra, 8);
+            assert!(hardware_hold_limit(extra, carry) >= if extra >= 12 { 5 } else { 1 }, "{mem}: extra {extra} carry {carry}");
+        }
+        assert_eq!(carry_limit(16, 8), 8, "the default pool keeps the old carry");
+        assert_eq!(hardware_hold_limit(16, carry_limit(16, 8)), 7);
+        assert_eq!(hardware_hold_limit(12, carry_limit(12, 8)), 5);
     }
 
     #[test]

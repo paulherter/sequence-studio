@@ -9,6 +9,7 @@
 mod audio;
 mod effects;
 mod lumetri;
+pub(crate) mod masks;
 pub(crate) mod shapes;
 pub(crate) mod text;
 
@@ -160,6 +161,8 @@ pub(crate) struct Mapping<'a> {
     /// Nesting edges "from|to" that close a cycle (A nests B nests A): dropped on import.
     pub(crate) cyclic_edges: BTreeSet<String>,
     pub(crate) ids: &'a mut dyn IdSource,
+    /// Masks collected by `effects` for the clip being built (taken by `take_masks`).
+    pub(crate) pending_masks: Vec<sq_core_model::ClipMask>,
 }
 
 impl<'a> Mapping<'a> {
@@ -183,6 +186,7 @@ impl<'a> Mapping<'a> {
             sequences,
             cyclic_edges: Self::cyclic_nesting(&doc.sequences),
             ids,
+            pending_masks: Vec::new(),
         }
     }
 
@@ -333,7 +337,7 @@ impl<'a> Mapping<'a> {
             // Exponential Fade, Custom Fade (curve unknown): SQ's default audio crossfade.
             self.report.note(&format!("Transition {n}"), Status::Approximated, "played as Constant Power");
             (TransitionKind::ConstantPower, "constantPower")
-        } else if n.contains("Cross Dissolve") {
+        } else if n.contains("Cross Dissolve") || n.contains("Impact_Dissolve") {
             (TransitionKind::CrossDissolve, "Cross Dissolve")
         } else if n.contains("Dip to Black") || n.contains("DipToBlack") {
             (TransitionKind::DipToBlack, "dipToBlack")
@@ -540,6 +544,7 @@ impl<'a> Mapping<'a> {
         if kind == TrackKind::Video {
             c.animation = self.motion(item, &ctx, frame, text_offset, pixel_aspect);
             c.effects = self.effects(item, &ctx, frame, stage_offset);
+            self.take_masks(&mut c);
             c.blend_mode = self.blend_mode(item);
             // Premiere shows camera log as is (no source conversion) and the look LUT does the log-to-display mapping;
             // our automatic conversion would apply it twice. A look LUT therefore pins the footage to Rec. 709 as shot.
@@ -650,6 +655,7 @@ impl<'a> Mapping<'a> {
         let frame = Vec2::new(seq.width as f64, seq.height as f64);
         c.animation = self.motion(item, &ctx, frame, Vec2::ZERO, 1.0);
         c.effects = self.effects(item, &ctx, frame, Vec2::ZERO);
+        self.take_masks(&mut c);
         c.blend_mode = self.blend_mode(item);
         // Text and Shape layers of an adjustment graphic are not drawn by Premiere either; they only limit where the effects
         // reach. Checked 2026-10-06: all 140 such clips in the maintainer's projects are Mister Horse carriers (texts "Mister
@@ -716,6 +722,25 @@ impl<'a> Mapping<'a> {
         if text_offset != Vec2::ZERO && !a.anchor.is_animated() && motion.is_empty() {
             a.anchor = AnimatedProperty::new(Vec2::new(-text_offset.x, -text_offset.y));
         }
+        // Basic 3D: Swivel turns about the vertical axis (SQ Tilt Y), Tilt about the horizontal one (Tilt X); the same
+        // card-in-front-of-camera idea. Signs follow the AE convention (top / right edge away for positive values),
+        // not yet checked against a Premiere render. Distance to Image and Specular Highlight have no SQ control.
+        if let Some(b) = item.components_named("AE.ADBE Basic 3D").first() {
+            a.tilt_y = ctx.animated(self.ids, b.param(1), 0.0, PRParamValue::double, |d| d.clamp(-89.0, 89.0));
+            a.tilt_x = ctx.animated(self.ids, b.param(2), 0.0, PRParamValue::double, |d| d.clamp(-89.0, 89.0));
+            let lost = b.param(3).is_some_and(|p| {
+                p.is_animated() || PRParamValue::double(p.static_value.as_deref()).unwrap_or(0.0) != 0.0
+            }) || PRParamValue::bool(b.param(4).and_then(|p| p.static_value.as_deref())) == Some(true);
+            if lost {
+                self.report.note(
+                    "AE.ADBE Basic 3D",
+                    Status::Approximated,
+                    "Swivel and Tilt as Tilt Y / X; Distance to Image and Specular Highlight dropped",
+                );
+            } else {
+                self.report.note("AE.ADBE Basic 3D", Status::Mapped, "Swivel / Tilt as Tilt Y / X");
+            }
+        }
         if let Some(o) = item.components_named("AE.ADBE Opacity").first() {
             a.opacity = ctx.animated(self.ids, o.param(1), 1.0, PRParamValue::double, |v| v / 100.0);
             self.report.note("AE.ADBE Opacity", Status::Mapped, "");
@@ -760,6 +785,12 @@ impl<'a> Mapping<'a> {
         }
         self.report.note("Opacity blend mode", Status::Dropped, "unknown blend menu index: drawn as Normal");
         BlendMode::Normal
+    }
+
+    /// Moves the masks `effects` collected onto the clip.
+    pub(crate) fn take_masks(&mut self, c: &mut Clip) {
+        use sq_core_masks::ClipMasksExt;
+        c.set_masks(std::mem::take(&mut self.pending_masks));
     }
 
     /// A fresh effect of a catalog `kind` (Swift force-unwraps `ClipEffect.make`).

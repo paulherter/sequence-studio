@@ -6,7 +6,7 @@ use sq_core_model::{Clip, ClipSpeed, Project, Timeline, Track, TrackKind};
 use sq_core_time::{Id, Time, TimeRange};
 
 /// Read model of a project for agents: compact, ids and rational times only. Ids are the model's own persisted UUIDs, so
-/// they stay valid across undo/redo and save + reopen. File paths and bookmarks are left out.
+/// they stay valid across undo/redo and save + reopen. Bookmarks are left out; media file paths are in.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ProjectState {
@@ -21,6 +21,15 @@ pub struct ProjectState {
     pub media: Vec<MediaState>,
     /// Sequences.
     pub sequences: Vec<SequenceState>,
+    /// The playhead of the open sequence.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub playhead: Option<Time>,
+    /// The project file, when saved.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub file: Option<String>,
+    /// Unsaved changes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dirty: Option<bool>,
 }
 
 impl ProjectState {
@@ -33,18 +42,49 @@ impl ProjectState {
             media: p
                 .media
                 .iter()
-                .map(|m| MediaState {
-                    id: m.id,
-                    name: m.name.clone(),
-                    duration: m.info.as_ref().map(|i| i.duration).or(m.duration),
+                .map(|m| {
+                    let video = m.info.as_ref().and_then(|i| i.video.as_ref());
+                    MediaState {
+                        id: m.id,
+                        name: m.name.clone(),
+                        duration: m.info.as_ref().map(|i| i.duration).or(m.duration),
+                        path: m.path.clone(),
+                        size: m.fingerprint.size,
+                        width: video.map(|v| v.display_width()),
+                        height: video.map(|v| v.display_height()),
+                        fps: video.map(|v| FpsState::of(v.nominal_frame_duration)),
+                        has_audio: m.info.as_ref().map(|i| i.audio.is_some()),
+                    }
                 })
                 .collect(),
             sequences: p.timelines.iter().map(SequenceState::new).collect(),
+            playhead: None,
+            file: None,
+            dirty: None,
         }
     }
 }
 
-/// A media item without its file path.
+/// A frame rate as the ratio of frames per second (`30000/1001`) and its decimal value.
+#[derive(Clone, Copy, Debug, PartialEq, Serialize, Deserialize)]
+pub struct FpsState {
+    /// Frames ...
+    pub num: i64,
+    /// ... per this many seconds.
+    pub den: i64,
+    /// `num / den`.
+    pub value: f64,
+}
+
+impl FpsState {
+    /// The rate of a frame of `frame_duration`.
+    pub fn of(frame_duration: Time) -> FpsState {
+        let (num, den) = (frame_duration.timescale(), frame_duration.value());
+        FpsState { num, den, value: if den == 0 { 0.0 } else { num as f64 / den as f64 } }
+    }
+}
+
+/// A media item.
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct MediaState {
@@ -55,6 +95,22 @@ pub struct MediaState {
     /// Length, when known.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub duration: Option<Time>,
+    /// The file the item reads.
+    pub path: String,
+    /// File size in bytes.
+    pub size: i64,
+    /// Picture width as shown (upright); absent for sound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub width: Option<i64>,
+    /// Picture height as shown (upright); absent for sound.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub height: Option<i64>,
+    /// Frame rate of the picture; absent for sound and stills' absence of info.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fps: Option<FpsState>,
+    /// Whether the file has a sound track; absent while not probed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub has_audio: Option<bool>,
 }
 
 /// A sequence with its tracks and markers.
@@ -71,6 +127,10 @@ pub struct SequenceState {
     pub height: i64,
     /// Duration of one frame.
     pub frame_duration: Time,
+    /// Frame rate.
+    pub fps: FpsState,
+    /// Audio sample rate in Hz.
+    pub sample_rate: i64,
     /// End of the last clip.
     pub duration: Time,
     /// In/out range.
@@ -91,6 +151,8 @@ impl SequenceState {
             width: t.format.width,
             height: t.format.height,
             frame_duration: t.frame_duration(),
+            fps: FpsState::of(t.frame_duration()),
+            sample_rate: t.format.audio_sample_rate,
             duration: t.duration(),
             in_out: t.in_out,
             tracks: t.tracks.iter().map(TrackState::new).collect(),
@@ -115,6 +177,12 @@ pub struct TrackState {
     pub name: String,
     /// Whether edits are refused.
     pub locked: bool,
+    /// Whether the track's sound is off.
+    pub muted: bool,
+    /// Whether only soloed tracks play.
+    pub solo: bool,
+    /// Whether the track's picture shows.
+    pub visible: bool,
     /// Clips in track order.
     pub clips: Vec<ClipState>,
 }
@@ -131,6 +199,9 @@ impl TrackState {
             .to_string(),
             name: t.name.clone(),
             locked: t.is_locked,
+            muted: t.is_muted,
+            solo: t.is_solo,
+            visible: t.is_visible,
             clips: t.clips().iter().map(|c| ClipState::new(c, t.id)).collect(),
         }
     }
@@ -242,7 +313,8 @@ mod tests {
         assert_eq!(clip.speed, Some(f.project.timelines[0].tracks[0].clips()[0].speed));
         let json = serde_json::to_string(&st).unwrap_or_default();
         assert!(json.contains("\"timescale\"") && json.contains("\"type\":\"media\""));
-        assert!(!json.contains("/x/m.mov")); // no file paths leave the app
+        assert!(json.contains("/x/m.mov")); // the media path is read model
+        assert!(json.contains("\"muted\":false") && json.contains("\"sampleRate\":48000"));
         assert_eq!(serde_json::from_str::<ProjectState>(&json).ok(), Some(st));
     }
 }

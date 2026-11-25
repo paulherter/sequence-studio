@@ -126,7 +126,6 @@ pub(crate) enum Act {
     SampleRate,
     AudioBitrate,
     BitDepth(Vec<i64>),
-    Normalize,
     AudioLoudness,
     LoudnessTarget,
     DeliveryTarget,
@@ -866,7 +865,9 @@ impl Rows<'_> {
             let at = depths.iter().position(|d| *d == s.audio.pcm_bit_depth).unwrap_or(1);
             rows.push(row("Bit Depth", vec![popup(&titles, at, on, false, Act::BitDepth(depths))]));
         }
-        let mut norm = vec![check("", s.audio.loudness.is_some(), on, Width::Fit, true, Act::Normalize)];
+        // The Normalize checkbox is gone: loudness stays as it is in the sequence. Only a normalization that is already
+        // set (the Audio row's loudness popup) still shows its target.
+        let mut norm = Vec::new();
         if let Some(ln) = s.audio.loudness {
             norm.extend(scrub(
                 ln.target_lufs,
@@ -884,7 +885,9 @@ impl Rows<'_> {
             let at = m.delivery_target_index().map_or(0, |i| i + 1);
             norm.push(popup(&titles, at, on, true, Act::DeliveryTarget));
         }
-        rows.push(row("Normalize", norm));
+        if !norm.is_empty() {
+            rows.push(row("Normalize", norm));
+        }
         if !m.loudness_range_available() {
             rows.push(row(
                 "Loudness Range",
@@ -1385,11 +1388,6 @@ pub(crate) fn apply(model: &mut ExportDialogModel, act: &Act, v: &Val) -> Outcom
         Act::BitDepth(depths) => {
             if let Some(d) = index.and_then(|i| depths.get(i)) {
                 model.edit(|s| s.audio.pcm_bit_depth = *d);
-            }
-        }
-        Act::Normalize => {
-            if let Some(b) = on {
-                model.set_normalize_loudness(b);
             }
         }
         Act::AudioLoudness => {

@@ -145,7 +145,6 @@ fn every_swift_row_title_is_in_the_sheet() {
         "Color Space",
         "Audio",
         "Sample Rate",
-        "Normalize",
         "Audio Check",
         "Captions",
         "Range",
@@ -299,11 +298,11 @@ fn the_audio_rows_write_the_model() {
     sheet.deliver(Path { s, r, i: 1 }, Val::Bool(false));
     assert_eq!(hint(&sheet), "Audio is off: the file exports without sound.");
     sheet.deliver(Path { s, r, i: 1 }, Val::Bool(true));
-    put(&sheet, "Normalize", 0, Val::Bool(true));
+    // The Audio row's delivery target set a loudness, so the Normalize row (target scrub, unit, preset popup) shows now.
     assert!(m.borrow().normalize_loudness());
-    put(&sheet, "Normalize", 1, Val::Number(-16.0));
+    put(&sheet, "Normalize", 0, Val::Number(-16.0));
     assert_eq!(m.borrow().settings().audio.loudness.map(|l| l.target_lufs), Some(-16.0));
-    put(&sheet, "Normalize", 3, Val::Index(1));
+    put(&sheet, "Normalize", 2, Val::Index(1));
     assert!(m.borrow().delivery_target_index().is_some(), "a delivery target sets the loudness");
     put(&sheet, "True Peak Max", 0, Val::Number(-2.0));
     assert_eq!(m.borrow().settings().audio.loudness.map(|l| l.true_peak_ceiling_db), Some(-2.0));

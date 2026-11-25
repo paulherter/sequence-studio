@@ -1,6 +1,7 @@
 //! macOS-only services of the app (see the README). Empty on other systems.
 #![cfg(target_os = "macos")]
 
+mod clipboard;
 mod color_space;
 mod display;
 mod dock;
@@ -17,6 +18,7 @@ mod system_watch;
 mod title_bar_setting;
 mod window_drag;
 
+pub use clipboard::clipboard_facts;
 pub use color_space::{layer_report, tag_surface_display_p3, tag_surface_srgb};
 pub use display::{edr_values, max_edr_component_value};
 pub use dock::DockProgress;
