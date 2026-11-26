@@ -72,6 +72,7 @@ Key sets: the switcher offers Sequence Studio (default), Classic NLE (Premiere-s
 | ; | ; | Clear Range |
 | ⌥M | Alt+M | Clear Selected Marker |
 | ⇧⌘W | Ctrl+Shift+W | Close Project |
+| ⌥G | Alt+G | Combine… |
 | ⌘C | Ctrl+C | Copy |
 | ⌘X | Ctrl+X | Cut |
 | ⇧X | Shift+X | Cut Out (Mark Start, then Delete Range) |

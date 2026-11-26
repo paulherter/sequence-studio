@@ -270,8 +270,15 @@ impl VtVideoDecoder {
             // GOP, HEVC CRA) does not clear it, so the GOP's P frames were predicted from stale pictures with the same
             // frame number (C2177: P80 from an earlier decode's P80 instead of I77). A new session has none (about 9 ms
             // at 4K on an M1 Max, so only when the start is no IDR picture, which clears them by itself).
-            guard.session = None;
-            guard.session = Some(self.open_session()?);
+            let fresh = self.open_session()?;
+            retire(guard.session.replace(fresh));
+            guard.used = false;
+        } else if flush && guard.session.as_ref().is_some_and(|s| s.inflight() > 0) {
+            // A seek while the old position's pictures are still in the hardware: `finish` below would wait for every one of
+            // them (up to WINDOW pictures of 25 ms at 4K) only to throw them away. A fresh session (about 9 ms) starts
+            // at once and the old one drains on its own thread.
+            let fresh = self.open_session()?;
+            retire(guard.session.replace(fresh));
             guard.used = false;
         }
         let State { session, cursor, carry, imported, used, tail, .. } = &mut *guard;
@@ -398,6 +405,24 @@ impl VtVideoDecoder {
             origin,
         });
         Ok(results.into_values().collect())
+    }
+}
+
+/// Drops a session whose pictures nobody wants any more on its own thread: the drop waits for the hardware to finish
+/// them, and the decode that replaced the session must not wait with it.
+fn retire(old: Option<Session>) {
+    static RETIRING: crate::retire::Retiring = crate::retire::Retiring::new();
+    let Some(old) = old else { return };
+    // Past the cap (or when nothing is in flight) the drop is inline, as before.
+    if old.inflight() == 0 || !RETIRING.try_begin() {
+        return;
+    }
+    let spawned = std::thread::Builder::new().name("sq-vt-retire".into()).spawn(move || {
+        drop(old);
+        RETIRING.end();
+    });
+    if spawned.is_err() {
+        RETIRING.end();
     }
 }
 

@@ -63,6 +63,11 @@ impl<T> Drop for WorkFuture<T> {
 
 impl WorkerPool {
     pub fn threads(n: usize) -> Self {
+        WorkerPool::threads_with_init(n, None)
+    }
+
+    /// As `threads`; `init` runs once at the top of every worker thread (a scheduling class for a pool of background work).
+    pub fn threads_with_init(n: usize, init: Option<Arc<dyn Fn() + Send + Sync>>) -> Self {
         let inner = Arc::new(PoolInner {
             queue: Mutex::default(),
             cv: Condvar::new(),
@@ -73,9 +78,13 @@ impl WorkerPool {
             // shortcut: a thread the OS refuses to start is skipped (fewer workers); upgrade to an error return if that must be visible.
             .filter_map(|i| {
                 let inner = Arc::clone(&inner);
+                let init = init.clone();
                 thread::Builder::new()
                     .name(format!("sq-worker-{i}"))
                     .spawn(move || {
+                        if let Some(init) = init {
+                            init();
+                        }
                         loop {
                             let job = {
                                 let mut q = lock(&inner.queue);

@@ -975,3 +975,20 @@ fn media_list_keeps_kind_size_created_columns_at_the_default_width() {
     assert!(env.panel.shows_list_columns(env.panel.list_rect().width));
     assert!(!env.panel.shows_list_columns(299.0));
 }
+
+#[test]
+fn switching_to_presets_opens_all_presets_whatever_chip_lies_under_the_click() {
+    // The Presets chips take the place of the Media mode row, so the switch click must not reach them.
+    for width in [420.0, 640.0, 900.0] {
+        for dx in [4.0_f64, 16.0, 28.0, 40.0, 52.0] {
+            let mut env = Env::new();
+            env.panel.size = CGSize::new(width, 400.0);
+            let (_, presets) = env.panel.mode_rects();
+            let at = CGPoint::new(presets.min_x() + dx.min(presets.width - 2.0), presets.mid_y());
+            env.panel.mouse_down(at, InputModifiers::NONE, 0.0);
+            env.panel.mouse_up(at);
+            assert!(env.panel.model.is_showing_presets());
+            assert_eq!(*env.panel.model.selection(), LibrarySection::Presets(None), "width {width} dx {dx}");
+        }
+    }
+}

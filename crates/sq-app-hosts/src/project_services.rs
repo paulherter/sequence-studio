@@ -174,11 +174,54 @@ fn shared_demuxer(path: &Path) -> Option<Arc<FFmpegDemuxer>> {
     FFmpegDemuxer::open_shared(path).ok()
 }
 
-/// One picture of `path` at `at`, `height` tall, decoded with FFmpeg (blocking).
-pub fn decode_thumbnail(path: &Path, at: Time, height: i64, aspect: Option<PixelAspect>) -> Option<Thumbnail> {
+/// Threads of a poster decoder: one picture does not need the cores playback needs.
+const POSTER_THREADS: i32 = 1;
+/// Decoders kept for the next posters of the same files (a clip's tiles ask many frames of one file; a 4K software
+/// decoder costs 30-60 ms to open).
+const KEPT_DECODERS: usize = 3;
+
+type Kept = (PathBuf, Arc<FFmpegDemuxer>, Arc<FFmpegVideoDecoder>);
+static KEPT: std::sync::Mutex<Vec<Kept>> = std::sync::Mutex::new(Vec::new());
+
+/// The demuxer and the one-thread decoder of `path`, the most recently used kept (`KEPT_DECODERS`).
+fn poster_decoder(path: &Path) -> Option<(Arc<FFmpegDemuxer>, Arc<FFmpegVideoDecoder>)> {
     let demuxer = shared_demuxer(path)?;
+    {
+        let mut kept = KEPT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if let Some(i) = kept.iter().position(|(p, d, _)| p == path && Arc::ptr_eq(d, &demuxer)) {
+            let hit = kept.remove(i);
+            let out = (Arc::clone(&hit.1), Arc::clone(&hit.2));
+            kept.push(hit);
+            return Some(out);
+        }
+    }
+    let decoder = Arc::new(FFmpegVideoDecoder::new_background(Arc::clone(&demuxer), Id::from_u128(0), POSTER_THREADS).ok()?);
+    let mut kept = KEPT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    kept.retain(|(p, _, _)| p != path);
+    if kept.len() >= KEPT_DECODERS {
+        kept.remove(0);
+    }
+    kept.push((path.to_path_buf(), Arc::clone(&demuxer), Arc::clone(&decoder)));
+    Some((demuxer, decoder))
+}
+
+/// A pool for poster decodes: its threads take the Background class once, at their start (a thread keeps its class, so the
+/// pool must run nothing else).
+pub fn poster_pool(threads: usize) -> sq_runtime::WorkerPool {
+    sq_runtime::WorkerPool::threads_with_init(
+        threads,
+        Some(Arc::new(|| {
+            sq_os::thread::set_current_thread_role(sq_os::thread::Role::Background);
+        })),
+    )
+}
+
+/// One picture of `path` at `at`, `height` tall, decoded with FFmpeg (blocking). Background work (run it on a `poster_pool`):
+/// one decoder thread, and it waits while the timeline plays or is scrubbed (`thumbnail_gate`).
+pub fn decode_thumbnail(path: &Path, at: Time, height: i64, aspect: Option<PixelAspect>) -> Option<Thumbnail> {
+    crate::thumbnail_gate::wait_until_clear();
+    let (demuxer, decoder) = poster_decoder(path)?;
     let index = demuxer.index().frame_at(at).unwrap_or(0);
-    let decoder = FFmpegVideoDecoder::new(Arc::clone(&demuxer), Id::from_u128(0), false, 0).ok()?;
     let frames = decoder.decode_blocking(index..=index, None, None).ok()?;
     let decoded = frames.first()?;
     let rgba = decoded.frame.storage_as::<FFmpegFrame>()?.download_rgba().ok()?;
@@ -342,5 +385,36 @@ mod tests {
     #[test]
     fn a_missing_file_gives_no_picture() {
         assert!(decode_thumbnail(Path::new("/no/such/file.mp4"), Time::ZERO, 64, None).is_none());
+    }
+
+    #[test]
+    fn posters_of_one_file_reuse_one_decoder_and_keep_at_most_three() {
+        let dir = std::env::temp_dir().join(format!("sq-poster-kept-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let mut files = Vec::new();
+        for n in 0..4 {
+            let f = dir.join(format!("c{n}.mp4"));
+            let ok = Command::new("ffmpeg")
+                .args(["-v", "error", "-y", "-f", "lavfi", "-i", "testsrc2=size=160x120:rate=25:duration=1"])
+                .args(["-c:v", "mpeg4"])
+                .arg(&f)
+                .output()
+                .is_ok_and(|o| o.status.success());
+            if !ok {
+                eprintln!("skipped: ffmpeg cannot write a clip");
+                return;
+            }
+            files.push(f);
+        }
+        let (_, first) = poster_decoder(&files[0]).expect("decoder");
+        let (_, again) = poster_decoder(&files[0]).expect("decoder");
+        assert!(Arc::ptr_eq(&first, &again), "the second poster of a file reuses its decoder");
+        assert!(decode_thumbnail(&files[0], Time::new(1, 25), 60, None).is_some());
+        for f in &files[1..] {
+            assert!(decode_thumbnail(f, Time::ZERO, 60, None).is_some());
+        }
+        let mine = KEPT.lock().unwrap().iter().filter(|(p, _, _)| p.starts_with(&dir)).count();
+        assert!(mine <= KEPT_DECODERS, "{mine} decoders kept");
+        std::fs::remove_dir_all(dir).ok();
     }
 }

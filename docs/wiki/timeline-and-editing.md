@@ -328,7 +328,7 @@ Combine turns several clips into one clip that holds them. Inside it is a sequen
 #### How to combine clips
 
 1. Select the clips.
-2. Right-click one of them and choose **Combine…**.
+2. Right-click one of them and choose **Combine…** (with two or more clips selected it is the first entry), or press Option-G (Windows and Linux: Alt+G).
 3. Type a name for the new sequence. The default is "Combined 01".
 4. Click OK. The clips are now one clip.
 

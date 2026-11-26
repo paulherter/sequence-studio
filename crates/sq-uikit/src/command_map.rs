@@ -283,6 +283,7 @@ fn build_premiere_default(platform: sq_os::Platform) -> CommandMap {
     // Premiere's selection Group under our name (Cmd+G stays the layer Group); Make Subclip and Edit Original keep Premiere's keys.
     add(g, Key::Char('g'), M::COMMAND | M::OPTION, EditorCommand::Bundle);
     add(g, Key::Char('g'), M::COMMAND | M::OPTION | M::SHIFT, EditorCommand::Unbundle);
+    add(g, Key::Char('g'), M::OPTION, EditorCommand::Combine); // Final Cut's compound clip key; Alt+G on Windows and Linux
     add(g, Key::Char('u'), M::COMMAND, EditorCommand::MakeSubclip);
     add(g, Key::Char('e'), M::COMMAND, EditorCommand::EditOriginal);
     add(g, Key::Char('t'), M::COMMAND | M::OPTION, EditorCommand::SaveAsTemplate); // Save the selected title layers as a template
@@ -563,6 +564,14 @@ mod tests {
 
     fn maps() -> Vec<(&'static str, CommandMap)> {
         vec![("premiere", CommandMap::premiere_default()), ("sq", CommandMap::sq_default())]
+    }
+
+    #[test]
+    fn option_g_runs_combine_in_both_key_sets() {
+        for (name, m) in maps() {
+            assert_eq!(m.command_for(&ch('g', M::OPTION), None), Some(EditorCommand::Combine), "{name}");
+            assert_eq!(m.binding_for(&EditorCommand::Combine), Some(ch('g', M::OPTION)), "{name}");
+        }
     }
 
     fn ch(c: char, m: M) -> KeyBinding {

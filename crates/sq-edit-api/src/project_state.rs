@@ -2,7 +2,7 @@
 //! Read model of a project for agents: compact, ids and rational times only.
 
 use serde::{Deserialize, Serialize};
-use sq_core_model::{Clip, ClipSpeed, Project, Timeline, Track, TrackKind, Transition};
+use sq_core_model::{CaptionItem, CaptionTrack, Clip, ClipSpeed, Project, Timeline, Track, TrackKind, Transition};
 use sq_core_time::{Id, Time, TimeRange};
 
 /// Read model of a project for agents: compact, ids and rational times only. Ids are the model's own persisted UUIDs, so
@@ -143,6 +143,75 @@ pub struct SequenceState {
     /// Transitions of all tracks (what `addTransition` made); absent when none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transitions: Vec<TransitionState>,
+    /// Caption tracks with their items (text and times only, no word timings); absent when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub caption_tracks: Vec<CaptionTrackState>,
+}
+
+/// A caption track as agents read it: the captions the Captions panel lists, compact (no per-word data).
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptionTrackState {
+    /// Track id.
+    pub id: Id,
+    /// Shown name.
+    pub name: String,
+    /// Whether edits are refused.
+    pub locked: bool,
+    /// Whether the captions show.
+    pub visible: bool,
+    /// The track's style (`style` of `addCaptions`).
+    pub style: String,
+    /// The Look the track was last given.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub look: Option<String>,
+    /// Captions in time order.
+    pub items: Vec<CaptionItemState>,
+}
+
+/// One caption: text, timeline range and the style it is drawn with.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct CaptionItemState {
+    /// Caption id.
+    pub id: Id,
+    /// The lines joined with a newline.
+    pub text: String,
+    /// First timeline time.
+    pub from: Time,
+    /// End (exclusive).
+    pub to: Time,
+    /// Own style; absent when it follows the track.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub style: Option<String>,
+}
+
+impl CaptionTrackState {
+    /// The read model of `t`.
+    pub fn new(t: &CaptionTrack) -> CaptionTrackState {
+        CaptionTrackState {
+            id: t.id,
+            name: t.name.clone(),
+            locked: t.is_locked,
+            visible: t.is_visible,
+            style: t.style_ref.clone(),
+            look: t.look_id.clone(),
+            items: t.items().iter().map(CaptionItemState::new).collect(),
+        }
+    }
+}
+
+impl CaptionItemState {
+    /// The read model of `i`.
+    pub fn new(i: &CaptionItem) -> CaptionItemState {
+        CaptionItemState {
+            id: i.id,
+            text: i.lines.join("\n"),
+            from: i.range.start,
+            to: i.range.end(),
+            style: (i.style_overridden && !i.style_ref.is_empty()).then(|| i.style_ref.clone()),
+        }
+    }
 }
 
 /// A transition as agents read it: the kind names match `GET /v1/transitions`, `outgoing` / `incoming` are the clips of
@@ -209,6 +278,7 @@ impl SequenceState {
                 .map(|m| MarkerState { id: m.id, time: m.time, duration: m.duration, name: m.name.clone() })
                 .collect(),
             transitions: TransitionState::all(t),
+            caption_tracks: t.caption_tracks.iter().map(CaptionTrackState::new).collect(),
         }
     }
 }
@@ -364,5 +434,24 @@ mod tests {
         assert!(json.contains("/x/m.mov")); // the media path is read model
         assert!(json.contains("\"muted\":false") && json.contains("\"sampleRate\":48000"));
         assert_eq!(serde_json::from_str::<ProjectState>(&json).ok(), Some(st));
+    }
+
+    #[test]
+    fn state_lists_caption_items_compactly() {
+        let mut f = Fixture::new();
+        let track: CaptionTrack = serde_json::from_value(serde_json::json!({
+            "id": Id::from_u128(7001), "name": "Captions", "styleRef": "pill",
+            "items": [{"id": Id::from_u128(7002), "lines": ["Hello", "world"],
+                "range": serde_json::to_value(TimeRange::new(s(1), s(2))).unwrap(),
+                "words": []}]
+        }))
+        .expect("track");
+        f.project.timelines[0].caption_tracks.push(track);
+        let st = ProjectState::new(&f.project);
+        let c = &st.sequences[0].caption_tracks[0];
+        assert!(c.style == "pill" && c.visible && c.items.len() == 1);
+        let i = &c.items[0];
+        assert!(i.text == "Hello\nworld" && i.from == s(1) && i.to == s(3) && i.style.is_none());
+        assert!(!serde_json::to_string(&st).unwrap_or_default().contains("words"));
     }
 }

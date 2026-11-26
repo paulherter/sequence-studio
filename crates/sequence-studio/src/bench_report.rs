@@ -20,6 +20,8 @@ pub struct BenchOpts {
     pub quality: BenchQuality,
     /// `--bench-verify`: read every new picture's barcode back and compare it with the presenter's flag.
     pub verify: bool,
+    /// `--page color`: the UI draws the Color page (source tiles, scopes, wheels) during the run, the same page switch as `--ui-shot`.
+    pub color_page: bool,
 }
 
 /// `--quality auto|full|half|quarter`: what Preferences > Playback holds for the run.

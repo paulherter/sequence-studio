@@ -587,25 +587,42 @@ fn build(all: &[Item], depth: usize, force_normal: bool, under: &[RenderNode]) -
             && g.effects.keys().is_empty()
             && !pre.round_first
             && g.effects.masks.is_empty();
-        out.push(if plain {
-            RenderNode::Group {
-                format: g.format.clone(),
-                transform: t,
-                opacity,
-                corner_radius: g.corner_radius,
-                children: kids,
+        let group_node = |t: ClipTransform, opacity: f64, children: Vec<RenderNode>, blend_mode: BlendMode| {
+            if plain {
+                RenderNode::Group { format: g.format.clone(), transform: t, opacity, corner_radius: g.corner_radius, children }
+            } else {
+                RenderNode::StyledGroup {
+                    format: g.format.clone(),
+                    transform: t,
+                    opacity,
+                    corner_radius: g.corner_radius,
+                    children,
+                    effects: g.effects.clone(),
+                    blend_mode,
+                }
             }
-        } else {
-            RenderNode::StyledGroup {
-                format: g.format.clone(),
-                transform: t,
-                opacity,
-                corner_radius: g.corner_radius,
-                children: kids,
-                effects: g.effects.clone(),
-                blend_mode: group_blend,
+        };
+        // Motion blur of the nested clip: one copy of the group image per sub-frame transform at 1/n of the opacity, summed
+        // in the parent's canvas (as for a leaf layer), then blended as a whole.
+        match g.motion_blur.as_ref().filter(|m| m.transforms.len() > 1) {
+            Some(mb) => {
+                let n = mb.transforms.len();
+                let mut copies: Vec<RenderNode> = mb
+                    .transforms
+                    .iter()
+                    .map(|s| {
+                        let mut st = sample_transform(s, &g.transform, &g.transform, n);
+                        let o = st.opacity;
+                        st.opacity = 1.0;
+                        group_node(st, o, kids.clone(), BlendMode::Normal)
+                    })
+                    .collect();
+                let first = copies.remove(0);
+                let node = RenderNode::Pair { format: mb.format.clone(), first: vec![first], second: copies };
+                out.push(if group_blend == BlendMode::Normal { node } else { RenderNode::Blended(Box::new(node), group_blend) });
             }
-        });
+            None => out.push(group_node(t, opacity, kids, group_blend)),
+        }
         i = j;
     }
     [mattes, out].concat()
@@ -773,6 +790,27 @@ mod tests {
         assert_eq!(kinds(&tree), ["layer", "layer"]);
         // Unequal arrays pair up to the shorter one.
         assert_eq!(RenderNode::tree(&[request(1), request(2)], &[layer()]).len(), 1);
+    }
+
+    #[test]
+    fn a_nested_clip_with_motion_blur_draws_one_group_copy_per_sample() {
+        let mut a = request(1);
+        let mut g = group(50);
+        g.transform.opacity = 1.0;
+        let mut moved = g.transform;
+        moved.position = Vec2::new(10.0, 0.0);
+        g.motion_blur =
+            Some(MotionBlurSamples { format: format(64, 48), transforms: vec![g.transform, moved], local_times: vec![] });
+        a.groups = vec![g];
+        let tree = RenderNode::tree(&[a], &[layer()]);
+        assert_eq!(kinds(&tree), ["pair"]);
+        let RenderNode::Pair { first, second, .. } = &tree[0] else { panic!("pair expected") };
+        let (RenderNode::Group { opacity: o1, .. }, RenderNode::Group { transform, opacity: o2, .. }) = (&first[0], &second[0])
+        else {
+            panic!("groups expected")
+        };
+        assert_eq!((*o1, *o2), (0.5, 0.5));
+        assert_eq!(transform.position, Vec2::new(10.0, 0.0));
     }
 
     #[test]

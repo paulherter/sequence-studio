@@ -1621,6 +1621,7 @@ impl AppRoot {
         if let Some(stall) = session.take_present_stall() {
             self.monitor.panel.model.note_present_stall(stall.as_secs_f64());
         }
+        crate::thumbnail_gate::note_playback(session.is_playing(), session.playhead());
         let counts = session.engine().play_counts();
         self.monitor.panel.model.update_play_counts(counts, session.is_playing(), now);
     }
@@ -1947,6 +1948,12 @@ impl AppRoot {
             zooms: !matches!(focus, Some(PanelID::ProgramMonitor | PanelID::SourceMonitor)),
             owns_delete: matches!(focus, None | Some(PanelID::Timeline)),
         };
+        // Combine… asks for the sequence name through the same prompt as the clip menu row.
+        let (combines, commands): (Vec<_>, Vec<_>) =
+            commands.into_iter().partition(|c| *c == sq_uikit::editor_command::EditorCommand::Combine);
+        for _ in combines {
+            self.timeline.combine(cx.session);
+        }
         let TimelineAppHost { panel, host } = self.timeline.inner();
         for c in commands {
             lines.extend(timeline_commands::run(&c, panel, host, cx.session, &scope, &mut self.settings));

@@ -87,6 +87,36 @@ fn backgrounds(kind: &PictureKind) -> Option<(Vec<[f32; 4]>, Option<bool>)> {
 /// warped (only 8-bit RGBA and YCbCr planes are) or the pass failed: the caller shows the picture as is. The pass is
 /// submitted (not waited for): later work on the queue sees its result.
 pub fn warp_picture(gpu: &Arc<Gpu>, picture: &Picture, map: &WarpMap) -> Option<Picture> {
+    warp(gpu, picture, map, None)
+}
+
+/// `gyroWarpScaled` exists on this target. Windows: its `.dxil` is not generated yet (needs Windows), so playback keeps the
+/// full-size warp there. Windows: generate it with `cargo xtask shaders`, commit it, then enable (see `NO_DXIL_YET` in xtask).
+pub const SCALED_GYRO_WARP: bool = cfg!(not(windows));
+
+/// The most source pixels one output pixel of the scaled warp averages per axis (the shader visits at most 10).
+pub const MAX_BOX_RATIO: f64 = 8.0;
+
+/// Preview only: `warp_picture` written at `luma` size (the luma plane; chroma planes keep their ratio to it). Each output
+/// texel averages the box of source pixels it covers (`gyroWarpScaled`) instead of the exact Lanczos-4 point, so the 4K plane is
+/// sampled without aliasing and the pass touches `luma` pixels instead of the source's. `luma` is clamped so one output
+/// pixel covers at most [`MAX_BOX_RATIO`] source pixels per axis; at or above the source size this is `warp_picture`.
+pub fn warp_picture_scaled(gpu: &Arc<Gpu>, picture: &Picture, map: &WarpMap, luma: (u32, u32)) -> Option<Picture> {
+    let (sw, sh) = (picture.planes.0.width(), picture.planes.0.height());
+    let min = |s: u32| ((f64::from(s) / MAX_BOX_RATIO).ceil() as u32).max(1);
+    let luma = (luma.0.max(min(sw)), luma.1.max(min(sh)));
+    if luma.0 >= sw || luma.1 >= sh {
+        return warp(gpu, picture, map, None);
+    }
+    warp(gpu, picture, map, Some(luma))
+}
+
+/// The size of a plane `plane` wide when the luma plane `luma_src` wide is written `luma_dst` wide.
+fn scaled_extent(plane: u32, luma_src: u32, luma_dst: u32) -> u32 {
+    ((u64::from(plane) * u64::from(luma_dst) + u64::from(luma_src) / 2) / u64::from(luma_src.max(1))).max(1) as u32
+}
+
+fn warp(gpu: &Arc<Gpu>, picture: &Picture, map: &WarpMap, luma: Option<(u32, u32)>) -> Option<Picture> {
     let (backgrounds, _) = backgrounds(&picture.kind)?;
     let (a, b) = &picture.planes;
     let sources: Vec<&GpuTexture> = std::iter::once(a).chain(b.as_ref()).collect();
@@ -95,10 +125,21 @@ pub fn warp_picture(gpu: &Arc<Gpu>, picture: &Picture, map: &WarpMap) -> Option<
     }
     let buffer = gpu.storage_buffer(map.bytes().len() as u64);
     gpu.queue().write_buffer(&buffer, 0, &map.bytes());
-    let outputs: Vec<GpuTexture> =
-        sources.iter().map(|s| gpu.texture(s.width(), s.height(), PixelFormat::Rgba16Float)).collect();
+    let (lw, lh) = (a.width(), a.height());
+    let extent = |s: &GpuTexture| match luma {
+        Some((dw, dh)) => (scaled_extent(s.width(), lw, dw), scaled_extent(s.height(), lh, dh)),
+        None => (s.width(), s.height()),
+    };
+    let outputs: Vec<GpuTexture> = sources
+        .iter()
+        .map(|s| {
+            let (w, h) = extent(s);
+            gpu.texture(w, h, PixelFormat::Rgba16Float)
+        })
+        .collect();
+    let entry = if luma.is_some() { "gyroWarpScaled" } else { "gyroWarp" };
     let run = || -> Result<(), GpuError> {
-        let pipeline = gpu.compute_pipeline("GyroWarp", "gyroWarp", PixelFormat::Rgba16Float)?;
+        let pipeline = gpu.compute_pipeline("GyroWarp", entry, PixelFormat::Rgba16Float)?;
         let mut cmds = gpu.commands();
         {
             let mut pass = cmds.compute();
@@ -284,6 +325,68 @@ mod tests {
             worst = worst.max((v - r).abs());
         }
         assert!(worst <= 2.0 / 255.0, "GPU vs CPU warp: worst {}/255", worst * 255.0);
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn the_scaled_warp_matches_the_full_warp_downsampled() {
+        let Some(gpu) = Gpu::new().ok() else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        let (w, h, k) = (256usize, 192usize, 4usize);
+        let src = plane(w, h);
+        let m = map(32, 24);
+        let bg = [0.0625, 0.0, 0.0, 1.0];
+        let full = warp_plane_cpu(&src, (w, h), 1, (w, h), &m, bg);
+        let bytes: Vec<u8> = src.iter().map(|v| (v * 255.0).round() as u8).collect();
+        let t = gpu.texture(w as u32, h as u32, PixelFormat::Rgba8Unorm);
+        let rgba: Vec<u8> = bytes.iter().flat_map(|&v| [v, 0, 0, 255]).collect();
+        gpu.upload_texture(&t, &rgba, w as u32 * 4);
+        let chroma = gpu.texture(w as u32 / 2, h as u32 / 2, PixelFormat::Rgba8Unorm);
+        gpu.upload_texture(&chroma, &vec![128u8; w / 2 * h / 2 * 4], w as u32 / 2 * 4);
+        let pic = Picture::ycbcr(t, chroma, 8, false);
+        let scaled = warp_picture_scaled(&gpu, &pic, &m, ((w / k) as u32, (h / k) as u32)).expect("scaled warp");
+        assert_eq!((scaled.planes.0.width(), scaled.planes.0.height()), ((w / k) as u32, (h / k) as u32));
+        let chroma_out = scaled.planes.1.as_ref().expect("chroma");
+        assert_eq!((chroma_out.width(), chroma_out.height()), ((w / k / 2) as u32, (h / k / 2) as u32));
+        let got = gpu.read_texture(&scaled.planes.0).unwrap();
+        let (ow, oh) = (w / k, h / k);
+        let (mut err, mut n) = (0.0f64, 0usize);
+        for y in 3..oh - 3 {
+            for x in 3..ow - 3 {
+                let mut r = 0.0f32;
+                for dy in 0..k {
+                    for dx in 0..k {
+                        r += full[(y * k + dy) * w + x * k + dx];
+                    }
+                }
+                let r = r / (k * k) as f32;
+                let v = half_to_f32(u16::from_le_bytes([got[(y * ow + x) * 8], got[(y * ow + x) * 8 + 1]]));
+                err += f64::from(v - r).powi(2);
+                n += 1;
+            }
+        }
+        let psnr = 10.0 * (1.0 / (err / n as f64).max(1e-12)).log10();
+        eprintln!("scaled vs downsampled full warp: {psnr:.1} dB");
+        assert!(psnr >= 30.0, "scaled warp vs downsampled full warp: {psnr:.1} dB");
+    }
+
+    #[test]
+    #[cfg(not(windows))]
+    fn a_target_at_or_above_the_source_size_is_the_exact_warp() {
+        let Some(gpu) = Gpu::new().ok() else {
+            eprintln!("skipping: no GPU adapter");
+            return;
+        };
+        let t = gpu.texture(64, 48, PixelFormat::Rgba8Unorm);
+        let c = gpu.texture(32, 24, PixelFormat::Rgba8Unorm);
+        let pic = Picture::ycbcr(t, c, 8, false);
+        let out = warp_picture_scaled(&gpu, &pic, &WarpMap::identity(8, 6), (64, 48)).expect("warp");
+        assert_eq!((out.planes.0.width(), out.planes.0.height()), (64, 48));
+        // Far below the source: clamped to one output pixel per 8 source pixels.
+        let out = warp_picture_scaled(&gpu, &pic, &WarpMap::identity(8, 6), (2, 2)).expect("warp");
+        assert_eq!((out.planes.0.width(), out.planes.0.height()), (8, 6));
     }
 
     fn half_to_f32(h: u16) -> f32 {

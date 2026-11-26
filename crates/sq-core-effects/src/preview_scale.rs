@@ -1,12 +1,13 @@
 //! Preview scale: a `LayerRequest` rewritten for a canvas `f` times the sequence size (0 < f <= 1), so the compositor can
 //! draw a preview at the monitor's pixel size and show the same picture, only smaller. Every parameter in canvas pixels
 //! is multiplied by `f`; parameters that are fractions, degrees, counts or colors stay. A request that holds something
-//! this module cannot scale exactly (nested groups, motion blur, shapes, transitions, a film look, a filter whose pixel
+//! this module cannot scale exactly (motion blur of a pair, shapes, transitions, a film look, a filter whose pixel
 //! unit is unclear) returns `None`: the caller then composes that frame at the full size.
 //! shortcut: filters not listed in `scale_filter` are refused, not scaled; list more when a preview needs them.
 
 use crate::effects_evaluation::{ClipEffects, DropShadow, EffectMasks, EffectSegment, ImageFilter};
-use crate::evaluation::LayerRequest;
+use crate::effect_transform_stage::MotionBlurSamples;
+use crate::evaluation::{LayerGroup, LayerRequest};
 use sq_core_masks::MaskShape;
 use sq_core_model::ClipTransform;
 use sq_core_time::Vec2;
@@ -102,6 +103,21 @@ impl ClipEffects {
     }
 }
 
+fn scale_group(g: &LayerGroup, f: f64) -> Option<LayerGroup> {
+    Some(LayerGroup {
+        format: scale_format(&g.format, f),
+        transform: scale_transform(&g.transform, f, false),
+        corner_radius: g.corner_radius * f,
+        effects: g.effects.scaled(f, f)?,
+        motion_blur: g.motion_blur.as_ref().map(|mb| MotionBlurSamples {
+            format: scale_format(&mb.format, f),
+            transforms: mb.transforms.iter().map(|t| scale_transform(t, f, false)).collect(),
+            local_times: mb.local_times.clone(),
+        }),
+        ..g.clone()
+    })
+}
+
 impl LayerRequest {
     /// This request for a canvas `f` times the sequence size, 0 < f <= 1 (f = 1 returns it unchanged). `None`: compose it
     /// at the full size.
@@ -110,11 +126,9 @@ impl LayerRequest {
             return Some(self.clone());
         }
         if !(f > 0.0 && f < 1.0)
-            || !self.groups.is_empty()
             || self.shape.is_some()
             || self.pair.is_some()
             || !self.stack_transitions.is_empty()
-            || self.gyro.is_some()
         {
             return None;
         }
@@ -133,6 +147,9 @@ impl LayerRequest {
         }
         let px = if self.generator.is_none() { 1.0 } else { f };
         o.effects = self.effects.scaled(f, px)?;
+        // A nested clip is an offscreen image of the inner format, drawn into the parent: the image is `f` times as large
+        // (its own pixels are canvas pixels, like a generator's), so its Scale stays and its position, radius and effects follow.
+        o.groups = self.groups.iter().map(|g| scale_group(g, f)).collect::<Option<Vec<_>>>()?;
         Some(o)
     }
 }
@@ -197,6 +214,17 @@ mod tests {
         assert_eq!((m.format.width, m.format.height), (960, 540));
         assert_eq!(m.transforms[1].position, Vec2::new(40.0, 20.0));
         assert_eq!(m.local_times.len(), 2);
+    }
+
+    #[test]
+    fn a_gyro_layer_scales_like_any_media_layer_and_keeps_its_gyro_options() {
+        // The warp acts on the source picture (normalized map), so it does not depend on the canvas size.
+        let mut r = req();
+        r.gyro = Some(sq_core_masks::stabilize_effect::GyroflowOptions::default());
+        r.transform.scale = Vec2::new(1.0, 1.0);
+        let s = r.scaled(0.5).expect("a gyro layer scales");
+        assert_eq!(s.gyro, r.gyro);
+        assert_eq!(s.transform.scale, Vec2::new(0.5, 0.5));
     }
 
     #[test]
@@ -278,7 +306,19 @@ mod tests {
             pixel_aspect_store: None,
             unknown: sq_core_model::UnknownKeys::default(),
         };
-        r.groups.push(crate::evaluation::LayerGroup::new(Id::from_u128(9), Id::from_u128(9), Id::from_u128(9), format));
+        let mut g = crate::evaluation::LayerGroup::new(Id::from_u128(9), Id::from_u128(9), Id::from_u128(9), format);
+        g.transform.position = Vec2::new(40.0, 20.0);
+        g.transform.scale = Vec2::new(0.8, 0.8);
+        g.corner_radius = 4.0;
+        g.effects = seg(|s| s.blur_after = 6.0);
+        r.groups.push(g);
+        let o = r.scaled(0.5).expect("a nested clip scales");
+        let g = &o.groups[0];
+        assert_eq!((g.format.width, g.format.height), (4, 4));
+        assert_eq!((g.transform.position, g.transform.scale, g.corner_radius), (Vec2::new(20.0, 10.0), Vec2::new(0.8, 0.8), 2.0));
+        assert_eq!(g.effects.segments[0].blur_after, 3.0);
+        // A group effect the module cannot scale still refuses the whole frame.
+        r.groups[0].effects = ClipEffects { anti_flicker: 1.0, ..ClipEffects::default() };
         assert!(r.scaled(0.5).is_none());
     }
 }

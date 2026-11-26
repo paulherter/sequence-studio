@@ -96,7 +96,7 @@ impl LibraryHost {
         self.live.share_atlas(SharedAtlas::clone(&atlas));
         self.stills.share_atlas(SharedAtlas::clone(&atlas));
         self.posters.get_or_insert_with(|| {
-            PosterPump::new(Arc::new(FfmpegPosters), Arc::new(WorkerPool::threads(1)), SharedAtlas::clone(&atlas))
+            PosterPump::new(Arc::new(FfmpegPosters), Arc::new(crate::project_services::poster_pool(1)), SharedAtlas::clone(&atlas))
         });
     }
 

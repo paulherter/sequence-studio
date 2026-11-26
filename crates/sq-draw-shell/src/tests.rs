@@ -458,6 +458,22 @@ mod menus {
     }
 
     #[test]
+    fn a_long_bar_menu_in_a_small_window_stays_inside_it() {
+        let (ran, m) = (Ran::default(), measure());
+        for h in [260.0, 300.0, 400.0, 500.0] {
+            let mut bar = MenuBar::new();
+            bar.controller.bounds = CGRect::new(0.0, 0.0, 800.0, h);
+            let mut rows: Vec<SQMenuItem> = (0..16).map(|i| row(&format!("Item {i}"), &ran, None)).collect();
+            rows[3] = row("Open Recent", &ran, Some(vec![row("A", &ran, None)]));
+            bar.set_menus(vec![ShellMenu::new("File", rows)], &m);
+            let x = bar.title_frames()[0].mid_x() as f32;
+            bar.handle(&InputEvent::MouseDown { x, y: 10.0, modifiers: NONE }, 1.0, &m, &mut None);
+            let f = bar.controller.views()[0].frame();
+            assert!(f.min_y() >= 0.0 && f.max_y() <= h, "window {h}: {f:?}");
+        }
+    }
+
+    #[test]
     fn click_opens_below_the_title_and_hover_switches() {
         let (ran, m) = (Ran::default(), measure());
         let mut bar = MenuBar::new();
@@ -1444,6 +1460,28 @@ mod host {
         rig.run_flows();
         assert!(rig.with(|r| r.session.is_dirty()));
         assert!(rig.with(|r| r.session.file_url().is_none()));
+    }
+
+    #[test]
+    fn the_real_file_menu_stays_inside_a_small_window() {
+        for h in [400.0, 500.0, 600.0] {
+            let rig = Rig::new();
+            rig.cx(|sh, cx| {
+                sh.set_size(CGSize::new(700.0, h));
+                sh.layout(cx.session, &*cx.hooks, &cx.measure);
+                sh.a11y_open_menu(0, cx);
+            });
+            let f = rig.with(|r| r.shell.menu_bar.controller.views()[0].frame());
+            let rows = rig.with(|r| r.shell.menu_bar.controller.views()[0].items.len());
+            assert!(f.min_y() >= 0.0 && f.max_y() <= h, "window {h}: {f:?} rows {rows}");
+            let v = rig.with(|r| {
+                let v = &r.shell.menu_bar.controller.views()[0];
+                (v.content_size().height, v.visible_size().height)
+            });
+            if v.0 <= h - 16.0 {
+                assert_eq!(v.1, v.0, "window {h}: the menu fits, so it shows whole");
+            }
+        }
     }
 
     #[test]

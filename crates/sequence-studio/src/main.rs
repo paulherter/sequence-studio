@@ -1973,6 +1973,11 @@ impl ApplicationHandler<Wake> for Handler {
     fn user_event(&mut self, _el: &ActiveEventLoop, wake: Wake) {
         let _block = start_trace::block("user_event");
         let _phase = loop_trace::enter(loop_trace::Phase::UserEvent);
+        // A double click on a project while the app is still starting: the file becomes the project the main window opens
+        // with, instead of being dropped (it used to start an empty project until a second `open`).
+        if let (Wake::Open(Some(path)), None) = (&wake, &self.shell) {
+            self.project = Some(path.clone());
+        }
         if let (Wake::Open(path), Some(shell)) = (&wake, &mut self.shell) {
             shell.window.focus_window();
             if shell.window.is_minimized() == Some(true) {
@@ -2227,6 +2232,8 @@ fn run() -> Result<(), String> {
     // app and exits (Swift: the running app receives the open-file request).
     let (open_tx, open_rx) = std::sync::mpsc::channel();
     let apple_events = open_tx.clone();
+    // Launch Services sends the "open documents" event of a cold start before `resumed`: register for it right away.
+    sq_platform::install_open_handler(open_tx.clone());
     let primary = match sq_platform::instance::claim(&support, project.as_deref(), open_tx) {
         Ok(sq_platform::instance::Claim::Forwarded) => return Ok(()),
         Ok(primary) => Some(primary),

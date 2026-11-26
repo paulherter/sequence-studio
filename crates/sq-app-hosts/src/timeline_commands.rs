@@ -341,6 +341,7 @@ pub fn is_view_command(c: &C) -> bool {
             | C::TrimBackward5
             | C::TrimForward5
             | C::SaveAsTemplate
+            | C::Combine
             | C::CreateAnglesClip
             | C::ToggleAnimationZones
             | C::EditMarker

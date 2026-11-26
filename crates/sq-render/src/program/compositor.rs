@@ -277,7 +277,7 @@ impl ProgramCompositor {
         let layers_scope = sq_gpu::gpu::timing::layers_scope();
         for l in requests {
             let _layer_span = sq_os::trace::span_args("render", "layer prepare", || format!("clip={:?}", l.clip));
-            let mut r = self.layer_for(l, inputs.source, &mut pictures, &mut kept)?;
+            let mut r = self.layer_for(l, inputs.source, options.preview, &mut pictures, &mut kept)?;
             let loading_placeholder = matches!(r.content, Content::Placeholder(PlaceholderKind::Loading));
             let adjustment = l.generator.as_ref().is_some_and(|g| g.kind == ADJUSTMENT_KIND);
             if !loading_placeholder || adjustment {
@@ -506,6 +506,7 @@ impl ProgramCompositor {
         &mut self,
         l: &LayerRequest,
         source: &dyn Fn(&LayerRequest) -> LayerSource,
+        preview: bool,
         pictures: &mut Vec<Picture>,
         kept: &mut Vec<Arc<GpuFrame>>,
     ) -> Result<RenderLayer, ProgramError> {
@@ -565,7 +566,13 @@ impl ProgramCompositor {
                 let t = sq_gpu::gpu::timing::sub_start();
                 let mut picture = to_gpu(&self.gpu, &s.frame, Some(key), &mut self.planes, kept)?;
                 if let Some(map) = &s.gyro {
-                    picture = super::gyro_warp::warp_picture(&self.gpu, &picture, map).unwrap_or(picture);
+                    let texture = (i64::from(picture.planes.0.width()), i64::from(picture.planes.0.height()));
+                    let scaled = gyro_warp_size(preview, &l.transform, texture, (s.info.width, s.info.height));
+                    let warped = match scaled {
+                        Some(size) => super::gyro_warp::warp_picture_scaled(&self.gpu, &picture, map, size),
+                        None => super::gyro_warp::warp_picture(&self.gpu, &picture, map),
+                    };
+                    picture = warped.unwrap_or(picture);
                 }
                 sq_gpu::gpu::timing::sub_add(sq_gpu::gpu::timing::Sub::ToGpu, t);
                 pictures.push(picture);
@@ -617,6 +624,16 @@ fn float_bytes(v: &[f32]) -> std::borrow::Cow<'_, [u8]> {
     {
         std::borrow::Cow::Owned(v.iter().flat_map(|x| x.to_le_bytes()).collect())
     }
+}
+
+/// The luma size the Gyroflow warp of a layer is written at: only while playing a preview (`preview`, a canvas below the
+/// sequence size) and only when the layer is shown at most half its texture size, at the size it is shown (the grade then runs
+/// at the same size). `None` = the exact full-size warp: export, paused pictures, stills and layers shown larger.
+fn gyro_warp_size(preview: bool, t: &ClipTransform, texture: (i64, i64), native: (i64, i64)) -> Option<(u32, u32)> {
+    if !preview || !super::gyro_warp::SCALED_GYRO_WARP {
+        return None;
+    }
+    crate::compositor::preview_shown_size(t, texture, native).map(|(w, h)| (w as u32, h as u32))
 }
 
 fn offline(l: &LayerRequest) -> RenderLayer {
@@ -702,5 +719,32 @@ mod float_bytes_tests {
         assert!(matches!(b, std::borrow::Cow::Borrowed(_)));
         assert_eq!(b.as_ptr(), v.as_ptr().cast::<u8>());
         assert_eq!(b.len(), v.len() * 4);
+    }
+}
+
+#[cfg(test)]
+mod gyro_size_tests {
+    use super::*;
+
+    fn shown_at(scale: f64) -> ClipTransform {
+        let mut t = ClipTransform::IDENTITY;
+        t.scale.x = scale;
+        t.scale.y = scale;
+        t
+    }
+
+    #[test]
+    fn export_and_paused_frames_keep_the_full_size_warp() {
+        let t = shown_at(0.25);
+        assert_eq!(gyro_warp_size(false, &t, (3840, 2160), (3840, 2160)), None);
+        assert_eq!(gyro_warp_size(true, &t, (3840, 2160), (3840, 2160)), Some((960, 540)));
+    }
+
+    #[test]
+    fn layers_shown_large_or_tilted_keep_the_full_size_warp() {
+        assert_eq!(gyro_warp_size(true, &shown_at(0.8), (3840, 2160), (3840, 2160)), None);
+        let mut tilted = shown_at(0.25);
+        tilted.tilt_x = 10.0;
+        assert_eq!(gyro_warp_size(true, &tilted, (3840, 2160), (3840, 2160)), None);
     }
 }

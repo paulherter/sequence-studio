@@ -38,7 +38,7 @@ pub type SharedStartPosters = Rc<RefCell<StartPosters>>;
 impl StartPosters {
     /// FFmpeg frames on two workers, packed into `atlas`.
     pub fn new(atlas: SharedAtlas) -> StartPosters {
-        StartPosters::with_services(Arc::new(FfmpegPosters), Arc::new(WorkerPool::threads(2)), atlas)
+        StartPosters::with_services(Arc::new(FfmpegPosters), Arc::new(crate::project_services::poster_pool(2)), atlas)
     }
 
     /// Like [`StartPosters::new`] with the source and the pool given (tests).

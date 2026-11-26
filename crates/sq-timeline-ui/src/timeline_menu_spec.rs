@@ -240,7 +240,7 @@ impl TimelineContextMenu {
             cmd(A::Ungroup, "Ungroup", has_groups, EditorCommand::Ungroup),
             cmd(A::Bundle, "Bundle", can_bundle, EditorCommand::Bundle),
             cmd(A::Unbundle, "Unbundle", clips.iter().any(|c| c.bundle.is_some()), EditorCommand::Unbundle),
-            TimelineMenuItem::new(A::Nest, "Combine…", has_clips),
+            cmd(A::Nest, "Combine…", has_clips, EditorCommand::Combine),
             TimelineMenuItem::new(A::Unnest, "Unnest", has_nested),
             cmd(A::ExtendToSequenceEnd, "Extend to Sequence End", only_adjustments, EditorCommand::ExtendToSequenceEnd)
                 .checked(only_adjustments && clips.iter().all(|c| c.extends_to_end_store == Some(true))),
@@ -577,6 +577,21 @@ mod tests {
     use super::*;
     use crate::test_support::{FD, mk, mkv, timeline, track};
     use sq_core_time::TimeRange;
+
+    #[test]
+    fn combine_shows_option_g_from_the_key_map() {
+        let map = CommandMap::premiere_default();
+        let item = TimelineMenuItem::with_command(
+            TimelineMenuAction::Nest,
+            "Combine…",
+            true,
+            false,
+            &EditorCommand::Combine,
+            &map,
+        );
+        assert_eq!(item.key, "g");
+        assert_eq!(item.key_modifiers, KeyModifiers::OPTION);
+    }
 
     fn item(items: &[TimelineMenuItem], a: TimelineMenuAction) -> Option<&TimelineMenuItem> {
         items.iter().find(|i| i.action == a)

@@ -51,6 +51,9 @@ pub struct LayerGroup {
     pub effects: ClipEffects,
     /// How the group image meets the layers below.
     pub blend_mode: BlendMode,
+    /// Sub-frame transforms of the nested clip when its Shutter Angle blurs its motion (`None` = sharp): the whole group
+    /// image is drawn once per sample.
+    pub motion_blur: Option<MotionBlurSamples>,
 }
 
 impl LayerGroup {
@@ -65,6 +68,7 @@ impl LayerGroup {
             corner_radius: 0.0,
             effects: ClipEffects::none(),
             blend_mode: BlendMode::Normal,
+            motion_blur: None,
         }
     }
 }
@@ -670,6 +674,7 @@ fn layers_at(
                     corner_radius: fx.corner_radius(),
                     effects: fx.clone(),
                     blend_mode: blend,
+                    motion_blur: c.motion_blur(t, fd, &canvas, *factor),
                 };
                 // A held nested clip shows one instant of the inner sequence. A held half of a transition (no inner time
                 // beyond the edge) shows the clip's edge frame.
@@ -716,6 +721,7 @@ fn layers_at(
                     corner_radius: fx.corner_radius(),
                     effects: fx.clone(),
                     blend_mode: blend,
+                    motion_blur: c.motion_blur(t, fd, &canvas, *factor),
                 };
                 let local = t - c.start;
                 let frame = Vec2::new(canvas.display_width() as f64, canvas.height as f64);

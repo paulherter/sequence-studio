@@ -181,6 +181,11 @@ mod tests {
         let s = plan(&r, &f, Some((1920, 1080)), DecodeScale::Full, true).unwrap();
         assert_eq!((s.format.width, s.format.height), (1920, 1080));
         assert_eq!(s.requests[0].transform.position.x, 200.0);
+        // A stabilized (gyro) layer scales too while playing; paused and export frames stay on the exact full-size path.
+        let mut gyro = req();
+        gyro.gyro = Some(sq_core_masks::stabilize_effect::GyroflowOptions::default());
+        assert!(plan(&[gyro.clone()], &f, Some((1920, 1080)), DecodeScale::Full, true).is_some());
+        assert!(plan(&[gyro], &f, Some((1920, 1080)), DecodeScale::Full, false).is_none(), "export/paused: full size");
     }
 
     #[test]

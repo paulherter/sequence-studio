@@ -289,7 +289,7 @@ impl TimelineMenus {
             rows.push(row(out, "Grade All From This Camera", MenuEffect::GradeAllFromCamera));
         }
         if clip_menu {
-            rows = crate::clip_menu_groups::regroup_clip_menu(rows);
+            rows = crate::clip_menu_groups::regroup_clip_menu(rows, s.selection().len() >= 2);
         }
         Some(rows)
     }
@@ -894,7 +894,7 @@ impl TimelineMenus {
     // MARK: Dialog flows (the Mac SQDialog sheets, as host prompts)
 
     /// `requestNest`: Combine… names the new sequence (`NestSheet` rules), then nests the selection.
-    fn nest(out: &MenuOutbox, s: &EditorSession, host: &mut TimelineHost) {
+    pub fn nest(out: &MenuOutbox, s: &EditorSession, host: &mut TimelineHost) {
         if s.selection().is_empty() {
             return;
         }

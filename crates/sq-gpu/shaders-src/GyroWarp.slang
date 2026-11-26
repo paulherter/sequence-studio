@@ -75,3 +75,48 @@ void gyroWarp(uint3 tid : SV_DispatchThreadID) {
     }
     out0.Store(gid, clamp(sum, float4(0.0f, 0.0f, 0.0f, 0.0f), float4(1.0f, 1.0f, 1.0f, 1.0f)));
 }
+
+// Preview only: the same warp, written at a smaller size than the plane. The output texel samples the map exactly like
+// `gyroWarp`, then averages the box of source pixels it covers (srcSize / dstSize per axis, exact fractional edge weights)
+// instead of a Lanczos-4 point: decimating with the point filter aliases. Background outside the picture as above.
+// The host keeps srcSize / dstSize at most 8 per axis (the loop below visits at most 10 pixels per axis).
+[shader("compute")][numthreads(16, 16, 1)]
+void gyroWarpScaled(uint3 tid : SV_DispatchThreadID) {
+    GyroWarpU p = gu;
+    if (tid.x >= p.dstSize.x || tid.y >= p.dstSize.y) { return; }
+    uint2 gid = tid.xy;
+    float2 m = (float2(gid) + 0.5f) * float2(p.mapSize) / float2(p.dstSize) - 0.5f;
+    int2 i0 = clamp(int2(floor(m)), int2(0, 0), max(int2(p.mapSize) - 2, int2(0, 0)));
+    int2 i1 = min(i0 + 1, int2(p.mapSize) - 1);
+    float2 t = m - float2(i0);
+    uint w = p.mapSize.x;
+    float4 a = mapTexel(uint2(i0), w), b = mapTexel(uint2(i1.x, i0.y), w);
+    float4 c = mapTexel(uint2(i0.x, i1.y), w), d = mapTexel(uint2(i1), w);
+    if (min(min(a.z, b.z), min(c.z, d.z)) < 0.5f) { out0.Store(gid, p.background); return; }
+    float2 s = lerp(lerp(a.xy, b.xy, t.x), lerp(c.xy, d.xy, t.x), t.y);
+    float2 ratio = float2(p.srcSize) / float2(p.dstSize);
+    // The covered box in source pixel edges: pixel k spans [k, k + 1).
+    float2 centre = s * float2(p.srcSize);
+    float2 lo = centre - 0.5f * ratio;
+    float2 hi = centre + 0.5f * ratio;
+    int2 first = int2(floor(lo));
+    int2 count = min(int2(ceil(hi)) - first, int2(10, 10));
+    int2 size = int2(p.srcSize);
+    float4 sum = float4(0.0f, 0.0f, 0.0f, 0.0f);
+    float wsum = 0.0f;
+    for (int yp = 0; yp < count.y; yp++) {
+        int sy = first.y + yp;
+        float wy = max(0.0f, min(float(sy + 1), hi.y) - max(float(sy), lo.y));
+        if (wy <= 0.0f) { continue; }
+        for (int xp = 0; xp < count.x; xp++) {
+            int sx = first.x + xp;
+            float wx = max(0.0f, min(float(sx + 1), hi.x) - max(float(sx), lo.x));
+            if (wx <= 0.0f) { continue; }
+            bool inside = sx >= 0 && sx < size.x && sy >= 0 && sy < size.y;
+            float4 px = inside ? read0(int2(sx, sy)) : p.background;
+            sum += px * (wx * wy);
+            wsum += wx * wy;
+        }
+    }
+    out0.Store(gid, clamp(sum / max(wsum, 1e-6f), float4(0.0f, 0.0f, 0.0f, 0.0f), float4(1.0f, 1.0f, 1.0f, 1.0f)));
+}

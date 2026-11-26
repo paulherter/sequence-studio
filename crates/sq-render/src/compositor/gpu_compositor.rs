@@ -871,16 +871,10 @@ impl GpuCompositor {
     /// shown at `scale` canvas px per native px, its texture holds `texture / native` texels per native px; the grade runs at
     /// one texel per canvas px (at least 2 x 2 source texels per output texel, at most 4 x 4: the kernel's sampling).
     fn preview_grade_size(&self, t: &ClipTransform, texture: (i64, i64), native: (i64, i64)) -> Option<(i64, i64)> {
-        if !self.preview_reduce || t.is_tilted() || native.0 <= 0 || native.1 <= 0 {
+        if !self.preview_reduce {
             return None;
         }
-        let shown = t.scale.x.max(t.scale.y) * native.0 as f64 / texture.0 as f64;
-        if !(shown > 0.0 && shown <= 0.5) {
-            return None;
-        }
-        let rw = ((texture.0 as f64 * shown).ceil() as i64).max(1);
-        let rh = ((texture.1 as f64 * shown).ceil() as i64).max(1);
-        (rw >= 64 && rh >= 64).then_some((rw, rh))
+        preview_shown_size(t, texture, native)
     }
 
     /// `convert` at the size of `out` (any ratio; `convertToRGBScaled`).
@@ -1064,4 +1058,20 @@ fn solid_hint() -> sq_core_model::VideoTrackInfo {
         field_order: None,
         deinterlace_off: false,
     }
+}
+
+/// Preview only: the size (in texels of a `texture`-sized picture) a layer is shown at, `None` = it is shown larger than half
+/// its texture, tilted or its size unknown. The layer is shown at `scale` canvas px per native px, its texture holds
+/// `texture / native` texels per native px; the grade (and the Gyroflow warp) runs at one texel per canvas px.
+pub fn preview_shown_size(t: &ClipTransform, texture: (i64, i64), native: (i64, i64)) -> Option<(i64, i64)> {
+    if t.is_tilted() || native.0 <= 0 || native.1 <= 0 {
+        return None;
+    }
+    let shown = t.scale.x.max(t.scale.y) * native.0 as f64 / texture.0 as f64;
+    if !(shown > 0.0 && shown <= 0.5) {
+        return None;
+    }
+    let rw = ((texture.0 as f64 * shown).ceil() as i64).max(1);
+    let rh = ((texture.1 as f64 * shown).ceil() as i64).max(1);
+    (rw >= 64 && rh >= 64).then_some((rw, rh))
 }

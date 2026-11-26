@@ -131,7 +131,7 @@ pub struct ProjectHost {
 impl ProjectHost {
     /// A host over an empty project; the first `sync` loads the session's. Posters come from FFmpeg on two workers.
     pub fn new() -> ProjectHost {
-        ProjectHost::with_services(Arc::new(FfmpegPosters), Arc::new(WorkerPool::threads(2)), Box::new(SystemPlatform))
+        ProjectHost::with_services(Arc::new(FfmpegPosters), Arc::new(crate::project_services::poster_pool(2)), Box::new(SystemPlatform))
     }
 
     /// Like [`ProjectHost::new`] with the poster source, the pool that runs it and the file manager given (tests).

@@ -4,7 +4,7 @@ Sequence Studio is an open-source video editor for Mac, Windows and Linux, writt
 This page lists everything that is still planned, small things included, in one table sorted by priority.
 It has no dates and no version numbers: we ship when it works, and 1.0 comes only when the app is really finished.
 
-Last reviewed: 2026-11-19
+Last reviewed: 2026-11-26
 
 ## How to read the table
 
@@ -35,6 +35,10 @@ preview is meant only for very weak machines. The app collects no telemetry.
 
 | ID | Priority | Area | Item | Status |
 | --- | --- | --- | --- | --- |
+| SQ-203 | 1 | Playback | Gyroflow stabilization is applied from the very first frame when playback starts or jumps, so the unstabilized picture never shows for a moment before the stabilized crop takes over. | not started |
+| SQ-204 | 1 | Playback | Clips with Gyroflow stabilization play as smoothly as clips without it; the stabilization cost per frame is measured and kept off the playback path. | not started |
+| SQ-205 | 1 | Playback | Real phone footage (the Oppo Enco Buds and Oppo Reno 16F TikTok projects) plays butter-smooth in the Edit page at full quality: no dropped frames and even frame pacing, so it feels like normal footage. | not started |
+| SQ-206 | 1 | Color | Playback stays smooth on the Color page while grading the same projects, also at full quality; today it stutters even at half quality. | not started |
 | SQ-001 | 1 | Playback | A benchmark suite measures frame spacing, dropped frames, audio dropouts and start times, and rejects speed changes that slow playback. | in progress |
 | SQ-002 | 1 | Playback | A video with a graded 4K clip on top plays smoothly on the Mac, as the earlier Swift version did. | in progress |
 | SQ-003 | 1 | Playback | 4K clips shown small are decoded at reduced size on the Mac, so memory use and dropped frames fall. | in progress |

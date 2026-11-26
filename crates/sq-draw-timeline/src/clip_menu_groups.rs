@@ -138,7 +138,10 @@ fn tidy(items: Vec<SQMenuItem>) -> Vec<SQMenuItem> {
 
 /// Regroups the flat clip menu `rows`. Rows of the plan that are missing are skipped; separators in `rows` are dropped (the
 /// plan has its own).
-pub fn regroup_clip_menu(rows: Vec<SQMenuItem>) -> Vec<SQMenuItem> {
+///
+/// With `combine_first` (two or more clips selected) "Combine…" becomes the first row, followed by its own separator, and
+/// leaves the Arrange submenu: the row is moved, never shown twice.
+pub fn regroup_clip_menu(rows: Vec<SQMenuItem>, combine_first: bool) -> Vec<SQMenuItem> {
     let enabled = |t: &str| rows.iter().any(|r| r.title == t && r.is_enabled);
     let audio_only = enabled("Audio Gain…") && !enabled("Fit to Frame");
     let has_grades = rows.iter().any(|r| r.title == "Grade From Previous Clip");
@@ -146,6 +149,7 @@ pub fn regroup_clip_menu(rows: Vec<SQMenuItem>) -> Vec<SQMenuItem> {
     // Project panel's options menu.
     let mut pool: Vec<SQMenuItem> =
         rows.into_iter().filter(|r| r.kind != SQMenuItemKind::Separator && r.title != "New Color Matte…").collect();
+    let combine = if combine_first { take(&mut pool, &["Combine…"]) } else { None };
     let planned = build(&mut pool, &plan(audio_only, has_grades));
     // Rows the plan does not name (sync, angle and edit-point rows, "New Color Matte…") keep their place above the plan.
     let mut out = pool;
@@ -153,7 +157,12 @@ pub fn regroup_clip_menu(rows: Vec<SQMenuItem>) -> Vec<SQMenuItem> {
         out.push(SQMenuItem::separator());
     }
     out.extend(planned);
-    tidy(out)
+    let mut out = tidy(out);
+    if let Some(c) = combine {
+        out.insert(0, SQMenuItem::separator());
+        out.insert(0, c);
+    }
+    out
 }
 
 #[cfg(test)]
@@ -189,7 +198,7 @@ mod tests {
             "Delete",
             "Ripple Delete",
         ]);
-        let out = regroup_clip_menu(rows);
+        let out = regroup_clip_menu(rows, false);
         let top: Vec<&str> =
             out.iter().filter(|i| i.kind != SQMenuItemKind::Separator).map(|i| i.title.as_str()).collect();
         assert_eq!(
@@ -217,6 +226,23 @@ mod tests {
     }
 
     #[test]
+    fn combine_is_the_first_row_with_two_clips_and_only_there() {
+        let rows = || flat(&["Match Angle", "Cut", "Group", "Combine…", "Unnest", "Delete"]);
+        let out = regroup_clip_menu(rows(), true);
+        assert_eq!(out[0].title, "Combine…");
+        assert_eq!(out[1].kind, SQMenuItemKind::Separator);
+        assert_eq!(out[2].title, "Match Angle");
+        fn count(items: &[SQMenuItem]) -> usize {
+            items.iter().map(|i| usize::from(i.title == "Combine…") + i.submenu.as_deref().map_or(0, count)).sum()
+        }
+        assert_eq!(count(&out), 1, "moved, not duplicated");
+        // One clip: Combine… stays in Arrange.
+        let one = regroup_clip_menu(rows(), false);
+        assert_ne!(one[0].title, "Combine…");
+        assert_eq!(count(&one), 1);
+    }
+
+    #[test]
     fn no_row_is_lost_and_unnamed_rows_stay_on_top() {
         let rows = flat(&[
             "Match Angle",
@@ -227,7 +253,7 @@ mod tests {
             "Reverse Clip",
             "New Color Matte…",
         ]);
-        let out = regroup_clip_menu(rows);
+        let out = regroup_clip_menu(rows, false);
         fn count(items: &[SQMenuItem]) -> usize {
             items
                 .iter()
@@ -245,9 +271,9 @@ mod tests {
         let mut audio = flat(&["Audio Gain…", "Fit to Frame", "Fill Frame"]);
         audio[1].is_enabled = false;
         audio[2].is_enabled = false;
-        let out = regroup_clip_menu(audio);
+        let out = regroup_clip_menu(audio, false);
         assert!(out.iter().all(|i| i.title != "Frame"));
-        let out = regroup_clip_menu(flat(&["Grade From Previous Clip", "Grade All From This Camera"]));
+        let out = regroup_clip_menu(flat(&["Grade From Previous Clip", "Grade All From This Camera"]), false);
         let color = out.iter().find(|i| i.title == "Color").and_then(|i| i.submenu.as_ref()).unwrap();
         assert_eq!(names(color), ["Grade From Previous Clip", "Grade All From This Camera"]);
     }

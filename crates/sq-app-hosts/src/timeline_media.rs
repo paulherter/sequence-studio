@@ -107,11 +107,11 @@ impl TimelineMedia {
         TimelineMedia::with_sources(
             Arc::new(FfmpegPosters),
             Arc::new(ffmpeg_waveform),
-            Arc::new(WorkerPool::threads(POSTER_THREADS)),
+            Arc::new(crate::project_services::poster_pool(POSTER_THREADS)),
             Arc::new(WorkerPool::threads(1)),
             atlas,
         )
-        .with_frame_pool(Arc::new(WorkerPool::threads(FRAME_JOBS)))
+        .with_frame_pool(Arc::new(crate::project_services::poster_pool(FRAME_JOBS)))
     }
 
     fn with_frame_pool(self, pool: Arc<WorkerPool>) -> TimelineMedia {

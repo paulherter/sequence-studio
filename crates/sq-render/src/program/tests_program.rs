@@ -569,6 +569,58 @@ fn a_graded_media_layer_in_a_quarter_size_preview_matches_the_downscaled_full_re
     assert!(bad < good - 3.0, "the control must be clearly worse: {bad} dB");
 }
 
+#[test]
+fn a_media_layer_inside_a_nested_clip_in_a_quarter_size_preview_matches_the_downscaled_full_render() {
+    use sq_core_effects::evaluation::LayerGroup;
+    let Some(gpu) = gpu() else { return };
+    let mut pc = ProgramCompositor::new(&gpu).expect("compositor");
+    let frame = striped_nv12();
+    let source = |l: &LayerRequest| {
+        LayerSource::Media(Source {
+            media: l.media,
+            index: 1,
+            frame: frame.clone(),
+            info: info(512, 320),
+            proxy: false,
+            divisor: 1,
+            gyro: None,
+        })
+    };
+    let grade = |_: &LayerRequest| None;
+    let render = |pc: &mut ProgramCompositor, r: &LayerRequest, f: &SequenceFormat, preview: bool| {
+        let inputs = Inputs { grade: &grade, split: None, mattes: None, source: &source };
+        let options = RenderOptions { readback: true, preview, ..RenderOptions::default() };
+        let frame = pc.render(std::slice::from_ref(r), f, &options, &inputs).expect("render");
+        Shot { px: pc.download_rgba8(frame).expect("download"), w: f.width as usize }
+    };
+    let (full_f, small_f) = (format(512, 320), format(128, 80));
+    let mut req = request(1);
+    let mut g = LayerGroup::new(Id::from_u128(77), Id::from_u128(78), Id::from_u128(79), format(512, 320));
+    g.transform.scale = Vec2::new(0.6, 0.6);
+    g.transform.position = Vec2::new(48.0, -24.0);
+    g.corner_radius = 24.0;
+    req.groups = vec![g];
+    let full = render(&mut pc, &req, &full_f, false);
+    let small = req.scaled(0.25).expect("a nested clip scales");
+    assert_eq!((small.groups[0].format.width, small.groups[0].format.height), (128, 80));
+    let preview = render(&mut pc, &small, &small_f, true);
+    let mut down = Vec::new();
+    for y in 0..80usize {
+        for x in 0..128usize {
+            for c in 0..4 {
+                let mut sum = 0u32;
+                for (dx, dy) in (0..16).map(|i| (i % 4, i / 4)) {
+                    sum += u32::from(full.px[((4 * y + dy) * 512 + 4 * x + dx) * 4 + c]);
+                }
+                down.push(((sum + 8) / 16) as u8);
+            }
+        }
+    }
+    let good = psnr(&preview.px, &down);
+    eprintln!("nested media 1/4 preview vs downscaled full: {good:.1} dB");
+    assert!(good >= 28.0, "{good} dB");
+}
+
 /// Blur, Drop Shadow and a pixel filter on a decoded media layer: the chain runs at the layer's own (native) size whatever
 /// the canvas is, so the preview must keep their pixel values (a generator's canvas-sized layer is the one that follows f).
 /// Checked at f = 0.5 and 0.25, with the graded (reduced convert) and the ungraded (native texture) path, against the
@@ -768,5 +820,112 @@ fn a_coloured_hard_edged_nv12_frame_scaled_matches_the_box_downscaled_full_rende
         let db = psnr(&preview.px, &down);
         eprintln!("coloured nv12 1/{k}: {db:.1} dB");
         assert!(db >= 38.0, "1/{k}: {db} dB");
+    }
+}
+
+/// Row 72 of a 640x360 render of a 128 px wide white card (Transform effect, Position X 0 -> 250 over 10 frames at 25 fps)
+/// at the middle frame, through `video_layers` and the program compositor: (soft pixels, lit pixels).
+fn card_row_spread(shutter: f64, media: bool, preview: Option<f64>, nested: bool) -> (usize, usize) {
+    use sq_core_effects::evaluation::{LayerHooks, TimelineEvaluation};
+    use sq_core_model::{AnimatedProperty, Clip, ClipEffect, Timeline, Track, TrackKind};
+    use sq_core_time::{IdSource, Keyframe, KeyframeTrack, SequentialIds, TimeRange};
+    let Some(gpu) = gpu() else { return (usize::MAX, usize::MAX) };
+    let mut pc = ProgramCompositor::new(&gpu).expect("compositor");
+    let mut ids = SequentialIds::default();
+    let mut c = Clip::new(
+        Id::from_u128(1),
+        "card",
+        Id::from_u128(2),
+        TrackKind::Video,
+        TimeRange::new(Time::ZERO, Time::new(4, 1)),
+        Time::ZERO,
+    );
+    if !media {
+        c.generator = Some(GeneratorRef { kind: "solid".into(), payload: vec![255, 255, 255], payload_version: 1 });
+    }
+    let mut e = ClipEffect::make(Id::from_u128(7), ClipEffect::TRANSFORM_KIND).expect("transform");
+    e.parameters.insert(ClipEffect::STAGE_SCALE_KEY.to_string(), AnimatedProperty::new(20.0));
+    e.parameters.insert(ClipEffect::STAGE_SHUTTER_ANGLE_KEY.to_string(), AnimatedProperty::new(shutter));
+    let keys = vec![
+        Keyframe::new(ids.next_id(), Time::ZERO, 0.0),
+        Keyframe::new(ids.next_id(), Time::new(2, 5), 250.0),
+    ];
+    e.parameters.insert(
+        ClipEffect::STAGE_POSITION_X_KEY.to_string(),
+        AnimatedProperty { value: 0.0, track: KeyframeTrack::with_keys(keys) },
+    );
+    c.effects = vec![e];
+    if nested {
+        // As in a real project: a Drop Shadow sits before the Transform.
+        c.effects.insert(0, ClipEffect::make(Id::from_u128(8), ClipEffect::DROP_SHADOW_KIND).expect("shadow"));
+    }
+    let mut f = format(640, 360);
+    f.frame_duration = Time::new(1, 25);
+    // Nested: the card is an inner sequence's clip and the moving clip is the outer one that holds that sequence.
+    let inner = nested.then(|| {
+        let mut ic = Clip::new(
+            Id::from_u128(11),
+            "inner",
+            Id::from_u128(12),
+            TrackKind::Video,
+            TimeRange::new(Time::ZERO, Time::new(4, 1)),
+            Time::ZERO,
+        );
+        ic.generator = Some(GeneratorRef { kind: "solid".into(), payload: vec![255, 255, 255], payload_version: 1 });
+        let mut it = Track::new(ids.next_id(), TrackKind::Video);
+        it.overwrite(ic, &mut ids).expect("overwrite");
+        Timeline::new(ids.next_id(), "inner", f.clone(), vec![it])
+    });
+    if let Some(i) = &inner {
+        c.sequence = Some(i.id);
+        c.generator = None;
+    }
+    let mut track = Track::new(ids.next_id(), TrackKind::Video);
+    track.overwrite(c, &mut ids).expect("overwrite");
+    let tl = Timeline::new(ids.next_id(), "t", f.clone(), vec![track]);
+    let resolve = |id: Id| inner.as_ref().filter(|i| i.id == id);
+    let reqs = tl.video_layers(Time::new(1, 5), &resolve, &LayerHooks::plain(), None);
+    let frame = gray_nv12(1280, 720, 235);
+    let source = |l: &LayerRequest| {
+        LayerSource::Media(Source {
+            media: l.media,
+            index: 3,
+            frame: frame.clone(),
+            info: info(1280, 720),
+            proxy: false,
+            divisor: 1,
+            gyro: None,
+        })
+    };
+    let (reqs, f) = match preview {
+        Some(k) => {
+            let r: Vec<_> = reqs.iter().map(|r| r.scaled(k).expect("scalable")).collect();
+            (r, format((640.0 * k) as i64, (360.0 * k) as i64))
+        }
+        None => (reqs, f),
+    };
+    let s = if media { shoot(&mut pc, &reqs, &f, &no_grade, &source) } else { shoot(&mut pc, &reqs, &f, &no_grade, &nothing) };
+    let k = preview.unwrap_or(1.0);
+    let row: Vec<i32> = (0..f.width as usize).map(|x| s.at(x, (180.0 * k) as usize)[0]).collect();
+    (row.iter().filter(|v| (10..245).contains(*v)).count(), row.iter().filter(|v| **v > 10).count())
+}
+
+#[test]
+fn a_transform_effect_shutter_angle_smears_a_moving_card_in_the_render() {
+    for (media, preview, nested) in
+        [(false, None, false), (true, None, false), (true, Some(0.5), false), (false, Some(0.5), false), (false, None, true)]
+    {
+        let (soft0, lit0) = card_row_spread(0.0, media, preview, nested);
+        let (soft360, lit360) = card_row_spread(360.0, media, preview, nested);
+        eprintln!("media {media} nested {nested} preview {preview:?}: shutter 0: soft {soft0} lit {lit0}; shutter 360: soft {soft360} lit {lit360}");
+        if soft0 == usize::MAX {
+            return;
+        }
+        let k = preview.unwrap_or(1.0);
+        assert!(soft0 <= 4, "sharp card has a hard edge: {soft0}");
+        assert!(
+            soft360 as f64 >= 15.0 * k && lit360 as f64 >= lit0 as f64 + 15.0 * k,
+            "media {media} nested {nested} preview {preview:?}: moving edge is smeared: soft {soft360}, lit {lit360} vs {lit0}"
+        );
     }
 }

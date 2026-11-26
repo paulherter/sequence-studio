@@ -150,7 +150,20 @@ pub struct PhaseResult {
     pub applied: u32,
     pub max_call_ms: f64,
     pub call_of: String,
+    /// Each paused seek: from the request to the first different picture on screen (ms).
+    pub seek_ms: Vec<f64>,
     pub stages: Vec<String>,
+}
+
+/// The p50 / p95 / max of `values` (nearest rank), `None` when empty.
+pub fn percentiles(values: &[f64]) -> Option<(f64, f64, f64)> {
+    if values.is_empty() {
+        return None;
+    }
+    let mut v = values.to_vec();
+    v.sort_by(f64::total_cmp);
+    let rank = |p: f64| v[(((v.len() as f64) * p).ceil() as usize).clamp(1, v.len()) - 1];
+    Some((rank(0.5), rank(0.95), v[v.len() - 1]))
 }
 
 impl PhaseResult {
@@ -167,6 +180,10 @@ impl PhaseResult {
             "replay_first_ms": self.replay_first_ms.map(round1), "cpu_pct": round1(self.cpu_pct),
             "rss_peak_mb": round1(self.rss_peak_mb), "ui_over_25ms": self.ui_over_25ms, "max_ui_ms": round1(self.max_ui_ms),
             "applied": self.applied, "max_call_ms": round1(self.max_call_ms), "call_of": self.call_of,
+            "seeks": self.seek_ms.len(),
+            "seek_p50_ms": percentiles(&self.seek_ms).map(|p| round1(p.0)),
+            "seek_p95_ms": percentiles(&self.seek_ms).map(|p| round1(p.1)),
+            "seek_max_ms": percentiles(&self.seek_ms).map(|p| round1(p.2)),
             "stages": self.stages,
         })
     }
@@ -197,6 +214,14 @@ pub fn summary(results: &[PhaseResult]) -> Value {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn seek_latency_percentiles_use_the_nearest_rank() {
+        assert_eq!(percentiles(&[]), None);
+        assert_eq!(percentiles(&[7.0]), Some((7.0, 7.0, 7.0)));
+        let v: Vec<f64> = (1..=20).map(f64::from).collect();
+        assert_eq!(percentiles(&v), Some((10.0, 19.0, 20.0)));
+    }
 
     #[test]
     fn the_script_is_deterministic_and_every_action_fits_in_its_phase() {

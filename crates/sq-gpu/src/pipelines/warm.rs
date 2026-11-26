@@ -20,6 +20,9 @@ const F16: PixelFormat = PixelFormat::Rgba16Float;
 pub(crate) const KNOWN_COMPUTE: &[(&str, &str, PixelFormat)] = &[
     ("ColorChainInPlace", "colorChainInPlace", F16), // the slowest (about 400 ms): first
     ("SourceConvert", "convertToRGB", F16),
+    ("GyroWarp", "gyroWarp", F16),
+    #[cfg(not(windows))] // no DXIL for it yet, see SCALED_GYRO_WARP
+    ("GyroWarp", "gyroWarpScaled", F16),
     // The first graded layer of a monitor-size preview builds it inside a playing compose (a 56-59 ms gap 2.7 s after Play).
     ("SourceConvert", "convertToRGBScaled", F16),
     ("Pointwise", "premultipliedLinearToEncoded709", F16),

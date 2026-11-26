@@ -215,6 +215,11 @@ impl TimelinePanelHost {
         self.flush_status(cx);
     }
 
+    /// Combine… from a key or the Clip menu: the name prompt of the clip menu row, then the nest ([`TimelineMenus::nest`]).
+    pub fn combine(&mut self, session: &EditorSession) {
+        TimelineMenus::nest(&self.outbox, session, &mut self.inner.host);
+    }
+
     /// Editors and commands asked since the last call, in order.
     pub fn take_events(&mut self) -> Vec<TimelineHostEvent> {
         std::mem::take(&mut self.queues.borrow_mut().events)

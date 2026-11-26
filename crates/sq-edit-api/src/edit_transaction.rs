@@ -403,6 +403,7 @@ impl EditTransaction {
                 )?;
                 param_ops::set_keyframe(t, *clip, param, *at, value, &shape, ids)?;
             }
+            EditOperation::AddZoomCut(z) => crate::zoom_cut::add_zoom_cut(t, z, ids)?,
             EditOperation::RemoveKeyframe { clip, param, at } => param_ops::remove_keyframe(t, *clip, param, *at)?,
             EditOperation::MoveKeyframe { clip, param, from, to } => param_ops::move_keyframe(t, *clip, param, *from, *to)?,
             EditOperation::ShiftKeyframes { clip, param, by, after } => {

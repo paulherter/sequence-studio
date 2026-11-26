@@ -3,6 +3,7 @@
 
 pub mod codec;
 pub mod plan;
+pub mod retire;
 
 #[cfg(target_os = "macos")]
 mod decoder;

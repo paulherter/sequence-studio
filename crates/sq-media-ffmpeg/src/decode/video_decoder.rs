@@ -164,6 +164,26 @@ impl FFmpegVideoDecoder {
         hardware: bool,
         extra_hw_frames: i32,
     ) -> Result<FFmpegVideoDecoder, MediaError> {
+        FFmpegVideoDecoder::with_threads(demuxer, media, hardware, extra_hw_frames, 0)
+    }
+
+    /// A software decoder fixed to `threads` (outside the shared decode-thread budget) for background pictures such as
+    /// posters: the budgeted decoder of `new` takes every core and fought the playback decode for them.
+    pub fn new_background(
+        demuxer: Arc<FFmpegDemuxer>,
+        media: Id,
+        threads: i32,
+    ) -> Result<FFmpegVideoDecoder, MediaError> {
+        FFmpegVideoDecoder::with_threads(demuxer, media, false, 0, threads.max(1))
+    }
+
+    fn with_threads(
+        demuxer: Arc<FFmpegDemuxer>,
+        media: Id,
+        hardware: bool,
+        extra_hw_frames: i32,
+        sw_threads: i32,
+    ) -> Result<FFmpegVideoDecoder, MediaError> {
         let info = demuxer.track_info();
         let (color_space, full_range) = frame_color(demuxer.raw());
         let pixel_format = download_layout(info.bit_depth, full_range);
@@ -196,7 +216,7 @@ impl FFmpegVideoDecoder {
         let is_hardware = decoder.is_some();
         let decoder = match decoder {
             Some(d) => d,
-            None => open_decoder(&demuxer, false, 0)?,
+            None => open_decoder_threads(&demuxer, false, 0, sw_threads)?,
         };
         Ok(FFmpegVideoDecoder {
             info,

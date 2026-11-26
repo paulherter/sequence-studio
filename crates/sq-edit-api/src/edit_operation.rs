@@ -124,6 +124,8 @@ pub enum EditOperation {
     AddTextLayer { clip: Id, index: Option<usize>, fields: Value },
     /// Removes a text layer.
     RemoveTextLayer { clip: Id, layer: Id },
+    /// A zoom transition at a cut: scale keys on both clips (plus a short fade of the upper picture), as `setKeyframe`.
+    AddZoomCut(crate::zoom_cut::ZoomCut),
     /// Adds the text animator of a side (`in` / `out`) of a text layer.
     AddTextAnimator { clip: Id, layer: Id, fields: Value },
     /// Changes fields of a layer's text animator.
@@ -243,6 +245,7 @@ impl EditOperation {
             Self::SetTextLayer { .. } => "setTextLayer",
             Self::AddTextLayer { .. } => "addTextLayer",
             Self::RemoveTextLayer { .. } => "removeTextLayer",
+            Self::AddZoomCut(_) => "addZoomCut",
             Self::AddTextAnimator { .. } => "addTextAnimator",
             Self::SetTextAnimator { .. } => "setTextAnimator",
             Self::SetTextAccent { .. } => "setTextAccent",
@@ -286,6 +289,7 @@ impl EditOperation {
             | Self::SetTextLayer { .. }
             | Self::AddTextLayer { .. }
             | Self::RemoveTextLayer { .. }
+            | Self::AddZoomCut(_)
             | Self::AddTextAnimator { .. }
             | Self::SetTextAnimator { .. }
             | Self::SetTextAccent { .. }
@@ -313,7 +317,7 @@ impl EditOperation {
     }
 
     /// Every wire name, in documentation order.
-    pub const ALL_NAMES: [&'static str; 44] = [
+    pub const ALL_NAMES: [&'static str; 45] = [
         "razor",
         "rippleDelete",
         "lift",
@@ -358,6 +362,7 @@ impl EditOperation {
         "setTextAccent",
         "addMask",
         "removeTextAnimator",
+        "addZoomCut",
     ];
 }
 
@@ -440,6 +445,7 @@ impl EditOperation {
             "applyPreset" => Some(&["op", "clip", "preset", "at", "mode"]),
             "addGraphic" => Some(&["op", "track", "at", "duration", "name", "layers"]),
             "removeTextLayer" => Some(&["op", "clip", "layer"]),
+            "addZoomCut" => Some(&["op", "outgoing", "incoming", "direction", "outFrames", "inFrames", "fadeFrames"]),
             "removeTextAnimator" => Some(&["op", "clip", "layer", "side"]),
             _ => None,
         };
@@ -656,6 +662,7 @@ impl EditOperation {
                 crate::text_animators::parse_side(c.get("side"))?;
                 Self::RemoveTextAnimator { clip: required(c, "clip")?, layer: required(c, "layer")?, side: optional(c, "side")? }
             }
+            "addZoomCut" => Self::AddZoomCut(crate::zoom_cut::ZoomCut::parse(c)?),
             "removeTextLayer" => Self::RemoveTextLayer { clip: required(c, "clip")?, layer: required(c, "layer")? },
             _ => {
                 return Err(format!("op: unknown op '{op}'; known: {}", Self::ALL_NAMES.join(", ")));
@@ -848,6 +855,14 @@ impl EditOperation {
                 put("clip", json!(clip));
                 put("layer", json!(layer));
             }
+            Self::AddZoomCut(z) => {
+                put("outgoing", json!(z.outgoing));
+                put("incoming", json!(z.incoming));
+                put("direction", json!(if z.zoom_in { "in" } else { "out" }));
+                z.out_frames.iter().for_each(|n| put("outFrames", json!(n)));
+                z.in_frames.iter().for_each(|n| put("inFrames", json!(n)));
+                z.fade_frames.iter().for_each(|n| put("fadeFrames", json!(n)));
+            }
             Self::AddTextAnimator { clip, layer, fields } | Self::SetTextAnimator { clip, layer, fields } => {
                 put("clip", json!(clip));
                 put("layer", json!(layer));
@@ -1007,7 +1022,7 @@ mod tests {
         assert_eq!(ops.iter().filter(|o| o.is_session_operation()).count(), 5);
         let again = serde_json::to_string(&ops).and_then(|s| serde_json::from_str::<Vec<EditOperation>>(&s));
         assert_eq!(again.ok(), Some(ops));
-        assert_eq!(EditOperation::ALL_NAMES.len(), 44);
+        assert_eq!(EditOperation::ALL_NAMES.len(), 45);
     }
 
     #[test]

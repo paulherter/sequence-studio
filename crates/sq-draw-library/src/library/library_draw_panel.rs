@@ -1370,7 +1370,10 @@ impl LibraryDrawPanel {
         if self.shows_header() && p.y < self.list_rect().min_y() {
             let (media, presets) = self.mode_rects();
             if media.contains(p) || presets.contains(p) {
+                // The switch click ends here: the chips of the new mode sit under the old switch row, so falling
+                // through would press the chip below the cursor (the Presets view opened on "Transitions").
                 self.set_mode(presets.contains(p));
+                return;
             }
             for (chip, _, frame) in self.chip_frames() {
                 if frame.contains(p) {

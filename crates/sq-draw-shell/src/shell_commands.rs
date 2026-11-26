@@ -136,6 +136,7 @@ impl ShellCommands {
             C::Insert | C::Overwrite => p.panels_loaded && p.can_place_source,
             C::EnableClip | C::Duplicate | C::MoveSelectionUp | C::MoveSelectionDown | C::Group => !selection_empty,
             C::Ungroup => !session.selected_group_clips().is_empty(),
+            C::Combine => !selection_empty,
             C::Bundle => session.bundle_menu_state().can_bundle,
             C::Unbundle => session.bundle_menu_state().can_unbundle,
             C::MakeSubclip => p.source_media_loaded || p.project_selected_media == 1,

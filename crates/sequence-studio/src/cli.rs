@@ -521,7 +521,10 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
             }
             "--select" => pose.select = Some(value("a clip index or name")?.clone()),
             "--page" => match value("edit or color")?.as_str() {
-                "color" => pose.color_page = true,
+                "color" => {
+                    pose.color_page = true;
+                    bench.color_page = true;
+                }
                 "edit" => {}
                 _ => return Err("bad --page".into()),
             },
@@ -824,6 +827,10 @@ mod tests {
         let Mode::PlayBench { bench, .. } = c.mode else { panic!("mode") };
         assert_eq!(bench.quality, crate::bench_report::BenchQuality::Half);
         assert!(parse(&args(&["--play-bench", "o.txt", "--quality", "best"])).is_err());
+        assert!(!bench.color_page, "the Edit page by default");
+        let c = parse(&args(&["p.sqproj", "--play-bench", "o.txt", "--page", "color"])).expect("parses");
+        let Mode::PlayBench { bench, .. } = c.mode else { panic!("mode") };
+        assert!(bench.color_page, "--page color reaches the bench");
     }
 
     #[test]

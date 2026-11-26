@@ -83,6 +83,12 @@ pub struct EditDiff {
     pub markers_added: i64,
     /// Markers only the old state has.
     pub markers_removed: i64,
+    /// Captions only the new state has (`addCaptions`); absent when none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub captions_added: i64,
+    /// Captions only the old state has; absent when none.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub captions_removed: i64,
     /// Media items shown with another pixel aspect after the commit; absent when none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pixel_aspect_changes: Option<i64>,
@@ -95,6 +101,14 @@ pub struct EditDiff {
     /// Transitions only the old state has; absent when none.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub transitions_removed: Vec<TransitionState>,
+}
+
+fn is_zero(n: &i64) -> bool {
+    *n == 0
+}
+
+fn caption_ids(t: &Timeline) -> BTreeSet<Id> {
+    t.caption_tracks.iter().flat_map(|c| c.items().iter().map(|i| i.id)).collect()
 }
 
 fn order(a: &ClipRef, b: &ClipRef) -> std::cmp::Ordering {
@@ -171,6 +185,8 @@ impl EditDiff {
             && self.duration_before == self.duration_after
             && self.markers_added == 0
             && self.markers_removed == 0
+            && self.captions_added == 0
+            && self.captions_removed == 0
             && self.pixel_aspect_changes.is_none()
             && self.param_changes.is_empty()
             && self.transitions_added.is_empty()
@@ -194,6 +210,7 @@ impl EditDiff {
         changed.sort_by(|x, y| order(&x.before, &y.before));
         let mb: BTreeSet<Id> = before.markers.iter().map(|m| m.id).collect();
         let ma: BTreeSet<Id> = after.markers.iter().map(|m| m.id).collect();
+        let (cb, ca) = (caption_ids(before), caption_ids(after));
         let (tb, ta) = (TransitionState::all(before), TransitionState::all(after));
         let transitions_added = ta.iter().filter(|x| !tb.iter().any(|y| y.id == x.id)).cloned().collect();
         let transitions_removed = tb.iter().filter(|x| !ta.iter().any(|y| y.id == x.id)).cloned().collect();
@@ -205,6 +222,8 @@ impl EditDiff {
             duration_after: after.duration(),
             markers_added: ma.difference(&mb).count() as i64,
             markers_removed: mb.difference(&ma).count() as i64,
+            captions_added: ca.difference(&cb).count() as i64,
+            captions_removed: cb.difference(&ca).count() as i64,
             pixel_aspect_changes: None,
             param_changes: param_changes(before, after),
             transitions_added,

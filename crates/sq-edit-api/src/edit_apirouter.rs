@@ -468,7 +468,8 @@ impl EditAPIRouter {
                 None,
             );
         }
-        let undo_name = format!("Agent: {}", label.as_deref().unwrap_or("Edit"));
+        let only_zoom_cuts = !req.operations.is_empty() && req.operations.iter().all(|o| matches!(o, EditOperation::AddZoomCut(_)));
+        let undo_name = format!("Agent: {}", label.as_deref().unwrap_or(if only_zoom_cuts { "Zoom cut" } else { "Edit" }));
         let dry = req.dry_run == Some(true);
         match self.run_commit(&req, &undo_name, dry, cancel) {
             Ok(response) => response,

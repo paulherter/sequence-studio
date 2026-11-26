@@ -23,6 +23,9 @@ impl EffectControlsModel {
     // MARK: Selection
 
     pub(crate) fn prune_selection(&mut self) {
+        if self.selection.is_empty() && self.clip.is_some() {
+            return; // nothing selected, nothing to prune: skips cloning every key track on each sync
+        }
         let Some(c) = self.clip.clone() else {
             self.set_selection(BTreeSet::new());
             return;

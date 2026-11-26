@@ -719,6 +719,11 @@ fn spread(v: &mut [f64]) -> String {
 /// shown against expected and dropped (the engine's counters), the gaps between distinct monitor pictures, the UI frame
 /// cost and the engine's per-stage times. The software renderer is not timed: only the app's own work is.
 /// Numbers and how to run it on every system: docs/rust/PERF-NOTES.md, "Many layers (perf-layers)".
+/// The page a `--play-bench` run draws: `--page color` takes the same page switch as `--ui-shot` (`build_on`).
+fn bench_page(bench: &crate::bench_report::BenchOpts) -> WorkspacePage {
+    if bench.color_page { WorkspacePage::Color } else { WorkspacePage::Edit }
+}
+
 fn play_bench(
     width: u32,
     height: u32,
@@ -743,7 +748,8 @@ fn play_bench(
         },
     );
     let rss_before_open = crate::play_bench::rss_mb().unwrap_or(0.0);
-    let (app, picture) = build_in(&support, width, height, 2.0, project, fonts);
+    let page = bench_page(bench);
+    let (app, picture) = build_on(&support, width, height, 2.0, project, fonts, page, false, None);
     let rss_after_build = crate::play_bench::rss_mb().unwrap_or(0.0);
     let mut slots = ImageSlots::default();
     let first_by = opened + Duration::from_secs(30);
@@ -944,6 +950,7 @@ fn play_bench(
         project.map_or("none".into(), |p| p.display().to_string()),
         to_first.unwrap_or(f64::NAN)
     );
+    out += &format!("page: {}\n", if bench.color_page { "color" } else { "edit" });
     out += &quality.line();
     out += &frame_csv_note;
     if let Some(v) = &verify {
@@ -1464,6 +1471,7 @@ fn workflow_bench(
         let mut playing = false;
         let mut position = shown(&app);
         let (mut last_change, mut play_began) = (None::<Instant>, None::<Instant>);
+        let mut seek_requested = None::<Instant>;
         let mut first_play_done = false;
         let mut fx_clip = None;
         let mut harvested = (0u64, 0u64, 0u64);
@@ -1565,6 +1573,7 @@ fn workflow_bench(
                     }
                     Action::ScrubTo(permille) => {
                         let ms = length_ms * i64::from(permille) / 1000;
+                        seek_requested = Some(Instant::now());
                         app.with(|a| a.session_mut().seek(Time::new(ms, 1000)));
                     }
                     Action::BeginScrub => app.with(|a| a.session_mut().begin_scrub()).unwrap_or(()),
@@ -1612,6 +1621,9 @@ fn workflow_bench(
                 && Some(p) != position
             {
                 position = Some(p);
+                if !playing && let Some(asked) = seek_requested.take() {
+                    r.seek_ms.push(asked.elapsed().as_secs_f64() * 1e3);
+                }
                 if playing {
                     let at = Instant::now();
                     r.shown += 1;
@@ -2102,6 +2114,16 @@ mod tests {
         let colorful = atlas.pixels.chunks(4).filter(|p| p[3] == 255 && p[0].abs_diff(p[2]) > 60).count();
         assert!(colorful > 2000, "the poster is flat in the atlas ({colorful} colorful pixels)");
         assert_eq!((image.width, image.height), (1280, 800));
+    }
+
+    #[test]
+    fn the_play_bench_switches_to_the_color_page_and_reports_it() {
+        let color = crate::bench_report::BenchOpts { color_page: true, secs_ms: Some(1000), ..Default::default() };
+        assert_eq!(bench_page(&color), WorkspacePage::Color);
+        assert_eq!(bench_page(&crate::bench_report::BenchOpts::default()), WorkspacePage::Edit);
+        let fonts = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Packages/SQText/Sources/SQText/Resources/Fonts");
+        let text = play_bench(640, 400, None, &fonts, &color);
+        assert!(text.contains("page: color\n"), "{text}");
     }
 
     #[test]

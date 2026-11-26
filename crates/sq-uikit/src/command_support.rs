@@ -284,6 +284,7 @@ impl CommandSupport {
                 | EditorCommand::Ungroup
                 | EditorCommand::Bundle
                 | EditorCommand::Unbundle
+                | EditorCommand::Combine
                 | EditorCommand::JoinCuts
                 | EditorCommand::MakeSubclip
                 | EditorCommand::EditOriginal

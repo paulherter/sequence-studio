@@ -429,3 +429,317 @@ float4 read0_0(int2 p_1, KernelContext_0 thread* kernelContext_1)
     return;
 }
 
+
+#line 84
+[[kernel]] void gyroWarpScaled(uint3 tid_1 [[thread_position_in_grid]], GyroWarpU_0 constant* gu_2 [[buffer(0)]], uint32_t device* gyroMap_2 [[buffer(2)]], texture2d<float, access::write> out0_2 [[texture(25)]], texture2d<float, access::sample> in0_2 [[texture(0)]])
+{
+
+#line 84
+    thread KernelContext_0 kernelContext_3;
+
+#line 84
+    (&kernelContext_3)->gu_0 = gu_2;
+
+#line 84
+    (&kernelContext_3)->gyroMap_0 = gyroMap_2;
+
+#line 84
+    (&kernelContext_3)->out0_0 = out0_2;
+
+#line 84
+    (&kernelContext_3)->in0_0 = in0_2;
+    GyroWarpU_0 p_3 = *gu_2;
+
+#line 85
+    bool _S31;
+    if((tid_1.x) >= ((*gu_2).dstSize_0.x))
+    {
+
+#line 86
+        _S31 = true;
+
+#line 86
+    }
+    else
+    {
+
+#line 86
+        _S31 = (tid_1.y) >= (p_3.dstSize_0.y);
+
+#line 86
+    }
+
+#line 86
+    if(_S31)
+    {
+
+#line 86
+        return;
+    }
+
+#line 87
+    uint2 gid_1 = tid_1.xy;
+
+#line 87
+    float2 _S32 = float2(0.5f) ;
+    float2 _S33 = float2(p_3.dstSize_0);
+
+#line 88
+    float2 m_1 = (float2(gid_1) + _S32) * float2(p_3.mapSize_0) / _S33 - _S32;
+    int2 _S34 = int2(int(0), int(0));
+
+#line 89
+    int2 _S35 = int2(p_3.mapSize_0);
+
+#line 89
+    int2 i0_1 = clamp(int2(floor(m_1)), _S34, max(_S35 - int2(int(2)) , _S34));
+
+#line 89
+    int2 _S36 = int2(int(1)) ;
+    int2 _S37 = min(i0_1 + _S36, _S35 - _S36);
+    float2 t_1 = m_1 - float2(i0_1);
+    uint w_2 = p_3.mapSize_0.x;
+
+#line 92
+    float4 _S38 = mapTexel_0(uint2(i0_1), w_2, &kernelContext_3);
+
+#line 92
+    float4 _S39 = mapTexel_0(uint2(uint(_S37.x), uint(i0_1.y)), w_2, &kernelContext_3);
+
+#line 92
+    float4 _S40 = mapTexel_0(uint2(uint(i0_1.x), uint(_S37.y)), w_2, &kernelContext_3);
+
+#line 92
+    float4 _S41 = mapTexel_0(uint2(_S37), w_2, &kernelContext_3);
+
+
+    if((min(min(_S38.z, _S39.z), min(_S40.z, _S41.z))) < 0.5f)
+    {
+
+#line 95
+        (&kernelContext_3)->out0_0.write(p_3.background_0,gid_1);
+
+#line 95
+        return;
+    }
+
+#line 96
+    float2 _S42 = float2(t_1.x) ;
+    float2 _S43 = float2(p_3.srcSize_0);
+
+    float2 centre_0 = mix(mix(_S38.xy, _S39.xy, _S42), mix(_S40.xy, _S41.xy, _S42), float2(t_1.y) ) * _S43;
+    float2 _S44 = _S32 * (_S43 / _S33);
+
+#line 100
+    float2 lo_0 = centre_0 - _S44;
+    float2 hi_0 = centre_0 + _S44;
+    int2 _S45 = int2(floor(lo_0));
+    int2 _S46 = min(int2(ceil(hi_0)) - _S45, int2(int(10), int(10)));
+    int2 _S47 = int2(p_3.srcSize_0);
+    float4 _S48 = float4(0.0f, 0.0f, 0.0f, 0.0f);
+
+#line 105
+    int yp_1 = int(0);
+
+#line 105
+    float4 sum_3 = _S48;
+
+#line 105
+    float wsum_0 = 0.0f;
+
+    for(;;)
+    {
+
+#line 107
+        if(yp_1 < (_S46.y))
+        {
+        }
+        else
+        {
+
+#line 107
+            break;
+        }
+
+#line 108
+        int sy_1 = _S45.y + yp_1;
+        float _S49 = max(0.0f, min(float(sy_1 + int(1)), hi_0.y) - max(float(sy_1), lo_0.y));
+
+#line 109
+        float4 sum_4;
+
+#line 109
+        float wsum_1;
+        if(_S49 <= 0.0f)
+        {
+
+#line 110
+            sum_4 = sum_3;
+
+#line 110
+            wsum_1 = wsum_0;
+
+#line 110
+            yp_1 = yp_1 + int(1);
+
+#line 110
+            sum_3 = sum_4;
+
+#line 110
+            wsum_0 = wsum_1;
+
+#line 107
+            continue;
+        }
+
+#line 107
+        int xp_1 = int(0);
+
+#line 107
+        sum_4 = sum_3;
+
+#line 107
+        wsum_1 = wsum_0;
+
+
+
+        for(;;)
+        {
+
+#line 111
+            if(xp_1 < (_S46.x))
+            {
+            }
+            else
+            {
+
+#line 111
+                break;
+            }
+
+#line 112
+            int sx_1 = _S45.x + xp_1;
+            float _S50 = max(0.0f, min(float(sx_1 + int(1)), hi_0.x) - max(float(sx_1), lo_0.x));
+            if(_S50 <= 0.0f)
+            {
+
+#line 114
+                xp_1 = xp_1 + int(1);
+
+#line 111
+                continue;
+            }
+
+
+            if(sx_1 >= int(0))
+            {
+
+#line 115
+                _S31 = sx_1 < (_S47.x);
+
+#line 115
+            }
+            else
+            {
+
+#line 115
+                _S31 = false;
+
+#line 115
+            }
+
+#line 115
+            bool _S51;
+
+#line 115
+            if(_S31)
+            {
+
+#line 115
+                _S51 = sy_1 >= int(0);
+
+#line 115
+            }
+            else
+            {
+
+#line 115
+                _S51 = false;
+
+#line 115
+            }
+
+#line 115
+            bool inside_0;
+
+#line 115
+            if(_S51)
+            {
+
+#line 115
+                inside_0 = sy_1 < (_S47.y);
+
+#line 115
+            }
+            else
+            {
+
+#line 115
+                inside_0 = false;
+
+#line 115
+            }
+
+#line 115
+            float4 px_1;
+            if(inside_0)
+            {
+
+#line 116
+                float4 _S52 = read0_0(int2(sx_1, sy_1), &kernelContext_3);
+
+#line 116
+                px_1 = _S52;
+
+#line 116
+            }
+            else
+            {
+
+#line 116
+                px_1 = p_3.background_0;
+
+#line 116
+            }
+            float _S53 = _S50 * _S49;
+            float wsum_2 = wsum_1 + _S53;
+
+#line 118
+            sum_4 = sum_4 + px_1 * float4(_S53) ;
+
+#line 118
+            wsum_1 = wsum_2;
+
+#line 111
+            xp_1 = xp_1 + int(1);
+
+#line 111
+        }
+
+#line 107
+        yp_1 = yp_1 + int(1);
+
+#line 107
+        sum_3 = sum_4;
+
+#line 107
+        wsum_0 = wsum_1;
+
+#line 107
+    }
+
+#line 121
+    (&kernelContext_3)->out0_0.write(clamp(sum_3 / float4(max(wsum_0, 9.99999997475242708e-07f)) , _S48, float4(1.0f, 1.0f, 1.0f, 1.0f)),gid_1);
+    return;
+}
+

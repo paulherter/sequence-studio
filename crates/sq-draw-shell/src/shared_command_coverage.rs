@@ -45,7 +45,7 @@ impl SharedCommandCoverage {
     /// Owner file per case name for the commands `ShellCommands::run` does not take. Traced by hand from `ShellHost.execute`:
     /// the shell's own flows (SQDrawShell), the host `onCommand` chain (SQAppShell hosts, `TimelinePanel.runViewCommand` /
     /// `runSpeedCommand`, the app's `SharedUIController+ShellHooks` and Windows `AppController+ViewOptions`). Sorted by name.
-    pub const OWNERS: [(&'static str, &'static str); 168] = [
+    pub const OWNERS: [(&'static str, &'static str); 169] = [
         ("acceptProposedCutAtPlayhead", "ShellAudioFlows.swift"),
         ("acceptProposedCuts", "ShellAudioFlows.swift"),
         ("addBeatMarkers", "ShellAudioFlows.swift"),
@@ -74,6 +74,7 @@ impl SharedCommandCoverage {
         ("checkCuts", "ShellClipDialogs.swift"),
         ("clearPosterFrame", "MonitorCardHost.swift"),
         ("closeProject", "ShellHost.swift"),
+        ("combine", "TimelinePanel+ViewCommands.swift"),
         ("createAnglesClip", "TimelinePanel+ViewCommands.swift"),
         ("cutToBeats", "ShellTimelineOps.swift"),
         ("deleteProjectItems", "ShellFocusedEdit.swift"),

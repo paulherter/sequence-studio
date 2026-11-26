@@ -256,6 +256,8 @@ pub enum EditorCommand {
     /// the W7.6 layer Group). Clip > Make Subclip (Cmd+U) and Edit Original (Cmd+E), Premiere's keys.
     Bundle,
     Unbundle,
+    /// Clip > Combine… (Opt+G, Final Cut's compound clip key): names a new sequence and nests the selection in it.
+    Combine,
     MakeSubclip,
     EditOriginal,
     /// Sequence > Join Cuts (no key; Premiere calls it Join Through Edits): puts the leftovers of a blade back into one clip.
@@ -756,6 +758,7 @@ impl EditorCommand {
             Self::Ungroup => "Ungroup".to_string(),
             Self::Bundle => "Bundle".to_string(),
             Self::Unbundle => "Unbundle".to_string(),
+            Self::Combine => "Combine…".to_string(),
             Self::JoinCuts => "Join Cuts".to_string(),
             Self::MakeSubclip => "Make Subclip".to_string(),
             Self::EditOriginal => "Edit Original".to_string(),

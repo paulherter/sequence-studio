@@ -324,6 +324,10 @@ fn summary(entries: &[Entry]) -> String {
     s
 }
 
+/// Entries whose `.dxil` was never generated (DXIL needs Windows). Windows gets an empty blob and the code never picks them
+/// there (`SCALED_GYRO_WARP`). Windows: run `cargo xtask shaders`, commit the dxil, remove the name here and enable the flag.
+const NO_DXIL_YET: &[&str] = &["gyroWarpScaled"];
+
 /// `entries.rs`, included by `sq-gpu`: one `ShaderEntry` per entry point; each backend's bytes only on its own target.
 fn table(entries: &[Entry]) -> String {
     let mut s =
@@ -338,14 +342,18 @@ fn table(entries: &[Entry]) -> String {
         };
         let _ = writeln!(
             s,
-            "    ShaderEntry {{ module: \"{m}\", name: \"{n}\", stage: {stage}, workgroup: ({}, {}, {}), out_read: {}, cbuffers: {:?},\n        #[cfg(target_os = \"macos\")] msl: include_str!({}),\n        #[cfg(windows)] dxil: include_bytes!({}),\n        #[cfg(not(any(target_os = \"macos\", windows)))] spirv: include_bytes!({}) }},",
+            "    ShaderEntry {{ module: \"{m}\", name: \"{n}\", stage: {stage}, workgroup: ({}, {}, {}), out_read: {}, cbuffers: {:?},\n        #[cfg(target_os = \"macos\")] msl: include_str!({}),\n        #[cfg(windows)] dxil: {},\n        #[cfg(not(any(target_os = \"macos\", windows)))] spirv: include_bytes!({}) }},",
             e.workgroup[0],
             e.workgroup[1],
             e.workgroup[2],
             e.out_read,
             e.cbuffers,
             path("msl", format!("{}.metal", e.module)),
-            path("dxil", format!("{}.{}.dxil", e.module, e.name)),
+            if NO_DXIL_YET.contains(&e.name.as_str()) {
+                "&[]".to_string()
+            } else {
+                format!("include_bytes!({})", path("dxil", format!("{}.{}.dxil", e.module, e.name)))
+            },
             path("spirv", format!("{}.{}.spv", e.module, e.name)),
             m = e.module,
             n = e.name,

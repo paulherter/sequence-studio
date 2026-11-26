@@ -165,6 +165,8 @@ plays the 20 s at 1x through `sequence-studio <project> --play-bench <result.txt
 commands by hand in PowerShell (`$env:SQ_BENCH_SECS = 21`) and read the `RESULT` line of each file; the media commands are in
 `scripts/perf-media.sh`.
 
+`--page color` (with `--play-bench`) draws the Color page UI (source tiles, scopes, wheels) during Play through the same page switch as `--ui-shot --page color`; the report gets a `page: color` line and the usual numbers (frames shown/expected, drops, gaps, UI frame time).
+
 What `--play-bench` reports (one `RESULT` line for scripts): first picture after open, Play to the first new picture, frames
 shown against expected and dropped (the engine's counters), the gaps between new frame positions on screen (p50, p95, max,
 how many over 50 and 100 ms), late frames and the engine's per-stage times. A frame is late when a layer was still a

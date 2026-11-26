@@ -4,6 +4,7 @@ mod analysis_links;
 mod animation_keystones;
 mod audio_extraction;
 pub mod audio_notice;
+pub mod thumbnail_gate;
 #[cfg(test)]
 mod catalogue_shots;
 mod chrome;

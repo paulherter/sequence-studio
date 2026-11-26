@@ -598,7 +598,7 @@ impl SQMenuLayout {
     /// Screen frame (y up) of a menu with `content` size. `anchor` is the top-left corner when it opens downward;
     /// `anchor_top` (the control's top edge, y) allows flipping above the control. The height is clamped to the screen's
     /// visible frame minus a margin, and the frame always lies fully inside it. The menu opens below if the whole content fits
-    /// there, else above if it fits, else on the roomier side shortened to that room (it scrolls), else it fills the screen height.
+    /// there, else above if it fits, else, when it fits the window at all, slid up so it shows whole, else on the roomier side shortened to that room (it scrolls), else it fills the screen height.
     pub fn placement(content: CGSize, anchor: CGPoint, anchor_top: Option<f64>, screen: CGRect) -> CGRect {
         let area = screen.inset_by(Self::SCREEN_MARGIN, Self::SCREEN_MARGIN);
         let full = content.height.min(area.height);
@@ -616,6 +616,9 @@ impl SQMenuLayout {
             let above = (area.max_y() - top).max(0.0);
             if full <= above {
                 y = top;
+            } else if content.height <= area.height {
+                // Fits the window but neither side: slide it up over the control so no row is cut off or hidden behind a scroll.
+                y = area.min_y();
             } else if below.max(above) >= Self::MIN_SIDE_HEIGHT {
                 h = full.min(below.max(above));
                 y = if below >= above { anchor.y - h } else { top };

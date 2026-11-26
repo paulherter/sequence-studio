@@ -200,7 +200,7 @@ impl ColorPageHost {
             scopes_clear: false,
             source_picture: None,
             scope_source: ScopeSource::Program,
-            posters: PosterPump::new(Arc::new(FfmpegPosters), Arc::new(WorkerPool::threads(1)), SharedAtlas::default()),
+            posters: PosterPump::new(Arc::new(FfmpegPosters), Arc::new(crate::project_services::poster_pool(1)), SharedAtlas::default()),
             scope_generation: 0,
             source_names: Vec::new(),
         }
