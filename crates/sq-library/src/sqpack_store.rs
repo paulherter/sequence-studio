@@ -124,6 +124,7 @@ impl PresetStore {
                     SQPackConflict::Replace => {
                         let mut item = PresetItem::new(old_id, kind, &name, now, e.payload.clone(), e.payload_version);
                         item.pack = Some(folder.clone());
+                        item.folder.clone_from(&e.folder);
                         replacing.push((old_id, item));
                         taken.insert(key(&name));
                         result.replaced += 1;
@@ -144,6 +145,7 @@ impl PresetStore {
             taken.insert(key(&name));
             let mut item = PresetItem::new(ids.next_id(), kind, &name, now, e.payload.clone(), e.payload_version);
             item.pack = Some(folder.clone());
+            item.folder.clone_from(&e.folder);
             result.added.push(item);
         }
         if !result.added.is_empty() || !replacing.is_empty() {
@@ -330,6 +332,7 @@ mod tests {
             payload_version: 1,
             payload: b"{}".to_vec(),
             assets: vec![],
+            folder: None,
         };
         let mut list = entries(&["Pop In"]).unwrap_or_default();
         list.push(ws);

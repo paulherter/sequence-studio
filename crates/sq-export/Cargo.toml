@@ -8,6 +8,7 @@ license.workspace = true
 publish.workspace = true
 
 [dependencies]
+sq-os.workspace = true
 sq-core-time.workspace = true
 sq-core-model.workspace = true
 sq-core-audio.workspace = true

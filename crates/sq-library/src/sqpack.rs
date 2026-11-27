@@ -113,6 +113,8 @@ pub struct SQPackEntry {
     pub payload: Vec<u8>,
     /// Paths of the pack assets this entry uses.
     pub assets: Vec<String>,
+    /// Library folder ("/" path) the preset is filed in; `None` = top level of the pack.
+    pub folder: Option<String>,
 }
 
 impl SQPackEntry {
@@ -124,6 +126,7 @@ impl SQPackEntry {
             payload_version: item.payload_version,
             payload: item.payload.clone(),
             assets,
+            folder: item.folder.clone(),
         }
     }
 }
@@ -339,9 +342,13 @@ impl SQPackFormat {
             }
             let payload: Value =
                 serde_json::from_slice(&e.payload).map_err(|_| SQPackError::DamagedEntry(e.name.clone()))?;
-            entry_json.push(json!({
+            let mut entry = json!({
                 "kind": e.kind, "name": e.name, "payloadVersion": e.payload_version, "payload": payload, "assets": e.assets,
-            }));
+            });
+            if let (Some(folder), Some(o)) = (&e.folder, entry.as_object_mut()) {
+                o.insert("folder".to_string(), Value::String(folder.clone()));
+            }
+            entry_json.push(entry);
         }
         let m = &pack.manifest;
         let kinds = sorted_kinds(&pack.entries);
@@ -449,6 +456,7 @@ impl SQPackFormat {
                 payload_version: pv,
                 payload: payload_data,
                 assets: refs,
+                folder: crate::preset_store::normalized_folder(o.get("folder").and_then(Value::as_str)),
             };
             registry.validate(&entry)?;
             if let Some(missing) = entry.assets.iter().find(|a| !paths.contains(a.as_str())) {
@@ -883,6 +891,7 @@ mod tests {
             payload_version: 1,
             payload: br#"{"layers":[]}"#.to_vec(),
             assets: vec![],
+            folder: None,
         };
         let caps = SQPackCaps::default();
         let data = SQPackFormat::encode(&pack(Some(vec![entry]), vec![]), &caps, &registry).unwrap_or_default();
@@ -896,6 +905,7 @@ mod tests {
             payload: b"{}".to_vec(),
             kind: "multiLayerTemplate".into(),
             assets: vec![],
+            folder: None,
         };
         assert_eq!(
             SQPackFormat::encode(&pack(Some(vec![bad]), vec![]), &caps, &registry).err(),

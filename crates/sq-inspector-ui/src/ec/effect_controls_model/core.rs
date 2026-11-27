@@ -128,11 +128,21 @@ pub struct ItemHost {
     pub layer: Id,
 }
 
+/// Summary keys of the sections, valid while `stamp` is the model's current (clip revision, magic revision, frame duration).
+#[derive(Default)]
+pub(crate) struct SummaryCache {
+    pub(crate) stamp: Option<(u64, u64, Time)>,
+    pub(crate) by_section: std::collections::HashMap<EffectSection, Vec<sq_core_model::keyframes_editing::SummaryKey>>,
+}
+
 /// State and edit logic of the Effect Controls panel for one clip.
 pub struct EffectControlsModel {
     pub(crate) clip: Option<Clip>,
     /// Counts changes of `clip`: display caches (lanes, graph) rebuild when it moves, never on playhead ticks.
     pub(crate) clip_revision: u64,
+    /// `summary_keys` per section, valid for one (clip revision, tracked-frames revision, frame duration); the draw path asks
+    /// for every section every frame.
+    pub(crate) summary_cache: std::cell::RefCell<SummaryCache>,
     /// Bumped by every setter that changes what a view reads.
     pub(crate) version: u64,
     /// Timeline time.
@@ -258,6 +268,7 @@ impl EffectControlsModel {
         EffectControlsModel {
             clip: None,
             clip_revision: 0,
+            summary_cache: std::cell::RefCell::default(),
             version: 0,
             playhead: Time::ZERO,
             frame_duration: Time::new(1, 30),

@@ -155,7 +155,11 @@ fn parametric_eq_maps_gain_frequency_and_enable_flags() {
     assert!(near(v(&e, &k("b4", "Q")), 1.0, 0.01));
     assert!(near(v(&e, &k("b1", "Freq")), 50.0, 0.1) && near(v(&e, &k("ls", "Freq")), 40.0, 0.1));
     assert!(v(&e, &k("b1", "On")) == 0.0 && v(&e, &k("b4", "On")) == 1.0);
-    assert_eq!(r.report.status_of("Parametric EQ"), Some(Status::Approximated), "the report names the effect in English, not by its GUID");
+    assert_eq!(
+        r.report.status_of("Parametric EQ"),
+        Some(Status::Approximated),
+        "the report names the effect in English, not by its GUID"
+    );
     assert!(near(v(&e, &k("hs", "Gain")), 1.0, 0.001) && near(v(&e, &k("hs", "Freq")), 18_000.0, 1.0));
     assert!(v(&e, &k("hp", "On")) == 1.0 && near(v(&e, &k("hp", "Freq")), 79.8, 0.1));
     assert_eq!(v(&e, &k("lp", "On")), 0.0);

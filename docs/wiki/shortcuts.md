@@ -499,6 +499,7 @@ These are in the menus. You can give them a key in Window > Keyboard Shortcuts.
 | Top and Bottom 50/50, Animated | Clip > Multi-Clip > Split Screen > Animated |
 | Trim to In/Out | Clip > Arrange |
 | Unlink | Clip > Link and Group |
+| Unnest | Clip > Link and Group |
 | Voice Chain | Clip > Audio Options > Voice |
 | Voiceover from Text… | Clip > Audio Options > Voice |
 | Web 2.2 | View > View Gamma |

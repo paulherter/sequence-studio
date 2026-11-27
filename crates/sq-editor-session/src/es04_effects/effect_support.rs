@@ -95,6 +95,16 @@ impl EffectDragPayload {
     pub fn transition_kind(id: &str) -> Option<TransitionKind> {
         transition_kind_from_raw(id.strip_prefix(Self::TRANSITION_PREFIX)?)
     }
+    /// The Effects panel's "Adjustment Layer" entry: a drag or double-click that places an Adjustment Layer clip.
+    pub const ADJUSTMENT_LAYER_ID: &'static str = "layer.adjustment";
+    /// Whether `id` is the Adjustment Layer entry.
+    pub fn is_adjustment_layer(id: &str) -> bool {
+        id == Self::ADJUSTMENT_LAYER_ID
+    }
+    /// How long a new Adjustment Layer from the panel is.
+    pub fn adjustment_layer_duration() -> sq_core_time::Time {
+        sq_core_time::Time::new(5, 1)
+    }
     // Swift: EffectDragPayload.swift:14
     pub fn encode_drag(ids: &[String]) -> String {
         ids.join("\n")

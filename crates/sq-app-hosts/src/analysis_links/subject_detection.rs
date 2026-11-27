@@ -81,7 +81,7 @@ mod tests {
     #[test]
     fn a_clip_with_a_rotation_tag_is_analyzed_upright() {
         let Ok(path) = std::env::var("SQ_ROTATED_CLIP") else {
-            eprintln!("skipped: SQ_ROTATED_CLIP (a landscape clip with a 90 degree rotation tag) is not set");
+            sq_os::errln!("skipped: SQ_ROTATED_CLIP (a landscape clip with a 90 degree rotation tag) is not set");
             return;
         };
         let reader = FfmpegFrameReader::open(Path::new(&path)).expect("open");

@@ -608,7 +608,7 @@ fn matches_the_swift_float_dumps() {
             other => panic!("unknown golden op {other}"),
         }
     }
-    println!("oracle: {} floats checked over {counts:?}, max relative error {:e}", chk.count, chk.max_err);
+    sq_os::outln!("oracle: {} floats checked over {counts:?}, max relative error {:e}", chk.count, chk.max_err);
     assert!(
         chk.failures.is_empty(),
         "{} mismatches, first ones:\n{}",

@@ -19,8 +19,7 @@ use sq_media::media_error::MediaError;
 use sq_media::media_opener::{MediaOpener, OpenedMedia};
 use sq_media::video_decoding::{DecodedFrame, StopCheck, VideoDecoding};
 use sq_media_ffmpeg::decode::{
-    FFmpegDemuxer, FFmpegFrame, FFmpegVideoDecoder, extra_hw_frames, flagged_full_range, frame_color,
-    media_error,
+    FFmpegDemuxer, FFmpegFrame, FFmpegVideoDecoder, extra_hw_frames, flagged_full_range, frame_color, media_error,
 };
 use sq_render::program::CpuPlanes;
 use sq_video_hw::VtVideoDecoder;
@@ -400,7 +399,7 @@ impl DefaultOpener {
                     });
                 }
                 // Only the Mac has VideoToolbox: on Windows and Linux the stub always refuses, which is no news worth a line.
-                Err(e) if cfg!(target_os = "macos") => eprintln!(
+                Err(e) if cfg!(target_os = "macos") => sq_os::errln!(
                     "videotoolbox: {} {} {}-bit not decoded in hardware ({e}); using software",
                     demuxer.format_description().codec,
                     info.chroma,

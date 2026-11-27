@@ -97,6 +97,16 @@ pub struct PresetItem {
     /// Name of the `.sqpack` this preset was imported from (shown as a Library folder); `None` for presets the user made.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pack: Option<String>,
+    /// Library folder as a "/" path such as `"Lower Thirds/Social"` (a folder of the preset store, not a disk folder);
+    /// `None` = top level. Written to `.sqpreset` and `.sqpack`. Older builds ignore the key.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub folder: Option<String>,
+}
+
+/// `folder` as a clean "/" path: segments trimmed, empty ones dropped; `None` when nothing is left.
+pub fn normalized_folder(folder: Option<&str>) -> Option<String> {
+    let parts: Vec<&str> = folder?.split('/').map(str::trim).filter(|s| !s.is_empty()).collect();
+    (!parts.is_empty()).then(|| parts.join("/"))
 }
 
 impl PresetItem {
@@ -109,7 +119,7 @@ impl PresetItem {
         payload: Vec<u8>,
         payload_version: i64,
     ) -> PresetItem {
-        PresetItem { id, kind, name: name.to_string(), created_at, payload, payload_version, pack: None }
+        PresetItem { id, kind, name: name.to_string(), created_at, payload, payload_version, pack: None, folder: None }
     }
 }
 
@@ -285,6 +295,12 @@ impl PresetStore {
         self.mutate(id, |p| p.name = trimmed.to_string())
     }
 
+    /// Files a preset in the Library folder `folder` (a "/" path; `None` or blank = top level).
+    pub fn set_folder(&mut self, id: Id, folder: Option<String>) -> Result<(), LibraryStoreError> {
+        let folder = normalized_folder(folder.as_deref());
+        self.mutate(id, |p| p.folder = folder)
+    }
+
     /// Replaces the payload of a preset.
     pub fn update_payload(&mut self, id: Id, payload: Vec<u8>, version: i64) -> Result<(), LibraryStoreError> {
         self.mutate(id, |p| {
@@ -374,11 +390,15 @@ impl PresetFile {
     /// The file bytes of `item` (pretty, sorted keys).
     pub fn encode(item: &PresetItem) -> Result<Vec<u8>, LibraryStoreError> {
         let payload: Value = serde_json::from_slice(&item.payload).map_err(|e| LibraryStoreError::Io(e.to_string()))?;
-        json_file_io::pretty_sorted(&json!({
+        let mut file = json!({
             "format": Self::FORMAT_NAME, "formatVersion": Self::FORMAT_VERSION,
             "kind": item.kind.raw_value(), "name": item.name,
             "payloadVersion": item.payload_version, "payload": payload,
-        }))
+        });
+        if let (Some(folder), Some(o)) = (&item.folder, file.as_object_mut()) {
+            o.insert("folder".to_string(), Value::String(folder.clone()));
+        }
+        json_file_io::pretty_sorted(&file)
     }
 
     /// The preset in `data` as a new item (new id from `ids`, created `now`). A newer format fails with
@@ -406,7 +426,9 @@ impl PresetFile {
             PresetKind::from_raw(kind_name).ok_or_else(|| PresetFileError::UnknownKind(kind_name.to_string()))?;
         let payload_data = serde_json::to_vec(payload).map_err(|_| PresetFileError::DamagedPayload)?;
         Self::validate(kind, &payload_data, payload_version)?;
-        Ok(PresetItem::new(ids.next_id(), kind, name, now, payload_data, payload_version))
+        let mut item = PresetItem::new(ids.next_id(), kind, name, now, payload_data, payload_version);
+        item.folder = normalized_folder(obj.get("folder").and_then(Value::as_str));
+        Ok(item)
     }
 
     /// Kinds this layer knows how to read are checked on import; others stay opaque.
@@ -730,9 +752,11 @@ mod tests {
         let mut bad = Vec::new();
         for p in store.all() {
             let r = match p.kind {
-                PresetKind::Effect => EffectPreset::from_payload(&p.payload, p.payload_version, &mut SequentialIds::default())
-                    .map(drop)
-                    .map_err(|e| format!("{e:?}")),
+                PresetKind::Effect => {
+                    EffectPreset::from_payload(&p.payload, p.payload_version, &mut SequentialIds::default())
+                        .map(drop)
+                        .map_err(|e| format!("{e:?}"))
+                }
                 _ => Ok(()),
             };
             if let Err(e) = r {

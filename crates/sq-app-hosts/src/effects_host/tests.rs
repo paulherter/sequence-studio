@@ -184,7 +184,7 @@ fn real_user_presets_reach_the_effects_panel() {
     h.list_presets(&presets);
     let listed = EffectsCatalog::preset_entries(&presets).len();
     let rows = h.inner.panel.rows().len();
-    eprintln!("library presets {}, effects entries {listed}, rows {rows}", presets.len());
+    sq_os::errln!("library presets {}, effects entries {listed}, rows {rows}", presets.len());
     assert!(presets.len() >= 57, "library lists {}", presets.len());
     assert_eq!(listed, 57);
     let mut h2 = h;

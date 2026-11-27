@@ -190,7 +190,11 @@ impl ShellHost {
     }
 
     /// The edit API's import: `import_mixed` like a drop on the window, then the media item of every path.
-    pub async fn api_import<R: ShellRoot + ?Sized>(h: UiRef<R>, urls: Vec<PathBuf>, reply: FlowReply<Vec<ApiImported>>) {
+    pub async fn api_import<R: ShellRoot + ?Sized>(
+        h: UiRef<R>,
+        urls: Vec<PathBuf>,
+        reply: FlowReply<Vec<ApiImported>>,
+    ) {
         let depth = h.with(|r| r.panel_parts().1.undo_step_depth());
         Self::import_mixed(h.clone(), urls.clone()).await;
         // The import's steps are the agent's own now, so `POST /v1/undo` can take them (and the steps before them).

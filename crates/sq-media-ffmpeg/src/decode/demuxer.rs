@@ -302,7 +302,7 @@ mod tests {
             .arg(&file)
             .status();
         if !made.is_ok_and(|s| s.success()) {
-            eprintln!("skipped: this ffmpeg has no libx264 (LGPL build)");
+            sq_os::errln!("skipped: this ffmpeg has no libx264 (LGPL build)");
             let _ = std::fs::remove_dir_all(&dir);
             return;
         }
@@ -385,7 +385,7 @@ mod tests {
                 .arg(&file)
                 .status();
             if !made.is_ok_and(|s| s.success()) {
-                eprintln!("skipped {name}: this ffmpeg cannot encode it");
+                sq_os::errln!("skipped {name}: this ffmpeg cannot encode it");
                 continue;
             }
             made_any = true;
@@ -455,7 +455,7 @@ mod tests {
                 .is_ok_and(|s| s.success())
         };
         if !make("1") {
-            eprintln!("skipped: this ffmpeg has no libx264 (LGPL build)");
+            sq_os::errln!("skipped: this ffmpeg has no libx264 (LGPL build)");
             let _ = std::fs::remove_dir_all(&dir);
             return;
         }

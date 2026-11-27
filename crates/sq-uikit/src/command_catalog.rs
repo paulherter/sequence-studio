@@ -94,6 +94,7 @@ impl CommandCatalog {
             EditorCommand::Bundle,
             EditorCommand::Unbundle,
             EditorCommand::Combine,
+            EditorCommand::Unnest,
             EditorCommand::JoinCuts,
             EditorCommand::MakeSubclip,
             EditorCommand::EditOriginal,
@@ -367,6 +368,6 @@ mod tests {
         assert!(unique.contains(&EditorCommand::ToggleTrackTarget(TrackKind::Audio, 9)));
         assert!(unique.contains(&EditorCommand::SwitchAngle(1)));
         assert!(unique.contains(&EditorCommand::ReplaceMode(ReplaceMode::FromEnd)));
-        assert_eq!(CommandCatalog::plain().len(), 303);
+        assert_eq!(CommandCatalog::plain().len(), 304);
     }
 }

@@ -12,20 +12,23 @@ const WIDTH: usize = 320;
 /// A template waiting for the Program frame that becomes its preview image.
 pub(crate) struct PendingTemplate {
     pub name: String,
-    pub template: serde_json::Value,
+    pub template: sq_core_model::TitleTemplate,
+    /// Library folder to file the template in ("/" path), `None` = top level.
+    pub folder: Option<String>,
 }
 
 impl PendingTemplate {
     /// The Library save of this template with `thumbnail` (`None`: the row shows an icon). `asked`: a preview image was
     /// wanted, so the status line says when it could not be made.
     pub fn into_save(self, thumbnail: Option<Vec<u8>>, asked: bool) -> Save {
-        let PendingTemplate { name, template } = self;
+        let PendingTemplate { name, template, folder } = self;
         let mut done = format!("Saved template \u{201c}{name}\u{201d}. Find it in the Library under Titles.");
         if asked && thumbnail.is_none() {
             done.push_str(" No preview image could be made.");
         }
         let preset = TitleTemplatePreset { template, thumbnail };
-        let make: MakePreset = Box::new(move |id, at| preset.preset_item(&name, id, at).map_err(|e| e.to_string()));
+        let make: MakePreset =
+            Box::new(move |id, at| preset.preset_item_in(&name, folder.as_deref(), id, at).map_err(|e| e.to_string()));
         Save { make, done, failure: "The template could not be saved: " }
     }
 }
@@ -94,7 +97,23 @@ mod tests {
 
     #[test]
     fn a_template_without_a_picture_says_so() {
-        let pending = |t: &str| PendingTemplate { name: t.into(), template: serde_json::json!({}) };
+        let pending = |t: &str| PendingTemplate {
+            name: t.into(),
+            template: sq_core_model::TitleTemplate::new(
+                sq_core_time::Id::from_u128(9),
+                t,
+                None,
+                sq_core_model::Timeline::new(
+                    sq_core_time::Id::from_u128(8),
+                    t,
+                    sq_core_model::SequenceFormat::new(sq_core_time::Time::new(1, 30)),
+                    vec![sq_core_model::Track::new(sq_core_time::Id::from_u128(7), sq_core_model::TrackKind::Video)],
+                ),
+                Vec::new(),
+                None,
+            ),
+            folder: None,
+        };
         assert!(pending("A").into_save(None, true).done.ends_with("No preview image could be made."));
         assert!(pending("A").into_save(None, false).done.ends_with("under Titles."), "none was wanted: no note");
         let with = pending("B").into_save(Some(vec![1, 2, 3]), true);

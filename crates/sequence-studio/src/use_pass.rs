@@ -932,7 +932,7 @@ pub(crate) fn run(
         let result = sweep(&ctx, spec);
         outputs.add(spec, &result, &known);
         results.push((spec.name, result));
-        eprintln!("use-pass: {} done in {:.1} s", spec.name, began.elapsed().as_secs_f64());
+        sq_os::errln!("use-pass: {} done in {:.1} s", spec.name, began.elapsed().as_secs_f64());
         // Written after every screen, so a run that is killed keeps what it had.
         outputs.render_report(&results, &known);
         outputs.write(out)?;

@@ -1,10 +1,10 @@
 // Swift: EditDiff.swift
 //! What a commit changes in one sequence.
 
+use crate::project_state::TransitionState;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use sq_core_model::{Clip, Project, Timeline};
-use crate::project_state::TransitionState;
 use sq_core_time::{Id, Time, TimeRange};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -111,8 +111,11 @@ fn caption_ids(t: &Timeline) -> BTreeSet<Id> {
     t.caption_tracks.iter().flat_map(|c| c.items().iter().map(|i| i.id)).collect()
 }
 
-fn order(a: &ClipRef, b: &ClipRef) -> std::cmp::Ordering {
-    (a.start, a.id.to_string()).cmp(&(b.start, b.id.to_string()))
+/// Start, then the track's place in the timeline (video tracks first, so a clip and its linked audio come in the same
+/// order every time), then the id (ids are random, so they only break a tie on one track).
+fn order(pos: &std::collections::HashMap<Id, usize>, a: &ClipRef, b: &ClipRef) -> std::cmp::Ordering {
+    let key = |r: &ClipRef| (r.start, pos.get(&r.track).copied().unwrap_or(usize::MAX), r.id.to_string());
+    key(a).cmp(&key(b))
 }
 
 fn refs(t: &Timeline) -> BTreeMap<Id, ClipRef> {
@@ -196,10 +199,14 @@ impl EditDiff {
     /// The diff from `before` to `after`.
     pub fn new(before: &Timeline, after: &Timeline) -> EditDiff {
         let (b, a) = (refs(before), refs(after));
+        let mut pos = std::collections::HashMap::new();
+        for t in [before, after] {
+            pos.extend(t.tracks.iter().enumerate().map(|(i, tr)| (tr.id, i)));
+        }
         let mut added: Vec<ClipRef> = a.values().filter(|r| !b.contains_key(&r.id)).cloned().collect();
-        added.sort_by(order);
+        added.sort_by(|x, y| order(&pos, x, y));
         let mut removed: Vec<ClipRef> = b.values().filter(|r| !a.contains_key(&r.id)).cloned().collect();
-        removed.sort_by(order);
+        removed.sort_by(|x, y| order(&pos, x, y));
         let mut changed: Vec<Change> = b
             .values()
             .filter_map(|old| {
@@ -207,7 +214,7 @@ impl EditDiff {
                 Some(Change { id: old.id, before: old.clone(), after: new.clone() })
             })
             .collect();
-        changed.sort_by(|x, y| order(&x.before, &y.before));
+        changed.sort_by(|x, y| order(&pos, &x.before, &y.before));
         let mb: BTreeSet<Id> = before.markers.iter().map(|m| m.id).collect();
         let ma: BTreeSet<Id> = after.markers.iter().map(|m| m.id).collect();
         let (cb, ca) = (caption_ids(before), caption_ids(after));
@@ -236,5 +243,35 @@ impl EditDiff {
         let display = |m: &sq_core_model::MediaRef| m.info.as_ref()?.video.as_ref().map(|v| v.display_pixel_aspect());
         let n = after.media.iter().filter(|m| before.media(m.id).is_some_and(|old| display(old) != display(m))).count();
         self.pixel_aspect_changes = if n == 0 { None } else { Some(n as i64) };
+    }
+}
+
+#[cfg(test)]
+mod order_tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn clip_ref(id: u128, track: u128) -> ClipRef {
+        let s = |v| Time::new(v, 1);
+        ClipRef {
+            id: Id::from_u128(id),
+            track: Id::from_u128(track),
+            name: String::new(),
+            start: s(0),
+            duration: s(4),
+            source: TimeRange::new(s(0), s(4)),
+            enabled: true,
+        }
+    }
+
+    /// A clip and its linked audio start together: the video track's clip comes first whatever the random ids are.
+    #[test]
+    fn clips_starting_together_come_in_track_order_not_id_order() {
+        let pos = HashMap::from([(Id::from_u128(1), 0), (Id::from_u128(2), 1)]);
+        for (video_id, audio_id) in [(9, 8), (8, 9)] {
+            let mut v = [clip_ref(audio_id, 2), clip_ref(video_id, 1)];
+            v.sort_by(|x, y| order(&pos, x, y));
+            assert_eq!(v[0].track, Id::from_u128(1), "video first with ids {video_id}/{audio_id}");
+        }
     }
 }

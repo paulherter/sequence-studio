@@ -151,6 +151,26 @@ fn adjustment_layer_goes_on_a_free_track_and_is_selected() {
 }
 
 #[test]
+fn add_adjustment_layer_is_one_undo_step_and_redo_brings_it_back() {
+    let (mut s, _) = session(1);
+    let has = |s: &EditorSession, id: Id| {
+        s.active_timeline().is_some_and(|t| t.tracks.iter().any(|tr| tr.clips().iter().any(|c| c.id == id)))
+    };
+    let before = s.history().undo_depth();
+    let Some(made) = s.add_adjustment_layer(Some(Time::new(30, 1)), None, Time::new(5, 1)) else {
+        panic!("no layer: {:?}", s.last_error())
+    };
+    assert_eq!(s.history().undo_depth(), before + 1, "exactly one step");
+    assert!(has(&s, made));
+    assert!(s.undo());
+    assert!(!has(&s, made), "undo removes it");
+    assert_eq!(s.history().undo_depth(), before);
+    assert!(s.redo());
+    assert!(has(&s, made), "redo brings it back");
+    assert_eq!(s.history().undo_depth(), before + 1);
+}
+
+#[test]
 fn variants_are_added_activated_and_removed() {
     let (mut s, _) = session(1);
     assert_eq!(s.active_variant_id(), None);

@@ -570,7 +570,7 @@ mod tests {
             .output()
             .is_ok_and(|o| o.status.success());
         if !made {
-            eprintln!("skipped: ffmpeg cannot write the clip");
+            sq_os::errln!("skipped: ffmpeg cannot write the clip");
             return;
         }
         let mut s = FfmpegSound::new();

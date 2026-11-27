@@ -856,7 +856,8 @@ mod words_tests {
 
     #[test]
     fn a_word_cap_above_one_groups_that_many_words() {
-        let tr = transcript(vec![w("a", 0, 200), w("b", 250, 450), w("c", 500, 700), w("d", 750, 950), w("e", 1000, 1200)]);
+        let tr =
+            transcript(vec![w("a", 0, 200), w("b", 250, 450), w("c", 500, 700), w("d", 750, 950), w("e", 1000, 1200)]);
         let mut pr = CaptionPreset::short_video();
         pr.max_words_per_caption = Some(2);
         pr.max_chars_per_line = 40;

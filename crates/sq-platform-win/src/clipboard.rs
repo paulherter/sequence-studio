@@ -1,6 +1,8 @@
 //! What the clipboard offers, without opening it: the sequence number and the formats on offer.
 
-use windows_sys::Win32::System::DataExchange::{GetClipboardSequenceNumber, IsClipboardFormatAvailable, RegisterClipboardFormatW};
+use windows_sys::Win32::System::DataExchange::{
+    GetClipboardSequenceNumber, IsClipboardFormatAvailable, RegisterClipboardFormatW,
+};
 use windows_sys::Win32::System::Ole::{CF_DIB, CF_DIBV5, CF_HDROP};
 
 /// The clipboard's sequence number and whether it offers files and/or a picture.

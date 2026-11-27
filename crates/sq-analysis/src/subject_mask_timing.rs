@@ -66,7 +66,7 @@ impl SubjectMaskTiming {
         let per_frame = frames
             .map(|n| format!(", {n} frames, {:.1} ms/frame", wall * 1000.0 / n.max(1) as f64))
             .unwrap_or_default();
-        eprintln!("[SubjectMask] timing {what}: {wall:.2} s{per_frame}; {}", Self::take_timings());
+        sq_os::errln!("[SubjectMask] timing {what}: {wall:.2} s{per_frame}; {}", Self::take_timings());
     }
 }
 

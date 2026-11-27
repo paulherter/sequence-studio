@@ -11,8 +11,8 @@ use crate::time_limits::{TimeLimits, WireTime};
 use serde::{Deserialize, Deserializer, Serialize};
 use serde_json::{Map, Value};
 use sq_core_model::{EditError, Project};
-use sq_core_time::{Id, Time};
 use sq_core_time::text::graphemes;
+use sq_core_time::{Id, Time};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
@@ -84,6 +84,22 @@ pub trait EditAPIHost: Send + Sync {
     /// The effect presets the user saved or imported (Library > Presets), decoded; `applyPreset` takes them by id or name.
     fn user_effect_presets(&self) -> Vec<crate::transition_ops::UserEffectPreset> {
         Vec::new()
+    }
+
+    /// The title templates of the Library (Library > Titles), with their editable fields.
+    fn templates(&self) -> Vec<crate::template_ops::TemplateInfo> {
+        Vec::new()
+    }
+
+    /// One title template by Library id or name (case-insensitive; an id wins), decoded; `insertTemplate` places it.
+    fn template(&self, _id_or_name: &str) -> Option<sq_core_model::TitleTemplate> {
+        None
+    }
+
+    /// Saves the video clips `clips` of the open sequence as a title template named `name` in Library folder `folder`
+    /// ("/" path); returns the new Library item id.
+    fn save_template(&self, _clips: Vec<Id>, _name: String, _folder: Option<String>) -> Result<Id, HostError> {
+        Err(HostError::unsupported())
     }
 }
 
@@ -280,6 +296,13 @@ pub struct CommitResponse {
     /// Sequences the batch created.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub sequences_added: Vec<Id>,
+    /// Clips the batch created in `sequence`, in track order: the combined clip (video clip first, then its linked sound
+    /// clip) of `combine`, the restored clips of `uncombine`. Absent when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clips_added: Vec<Id>,
+    /// Folders the batch created (`createFolder`). Absent when none.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub folders_added: Vec<Id>,
     /// The open sequence after the batch, when it is not `sequence`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_sequence: Option<Id>,
@@ -339,7 +362,13 @@ impl EditAPIRouter {
             ("GET", "/v1/gaps") => self.gaps(&r.query),
             ("GET", "/v1/textAnimators") => HTTPResponse::json(200, &crate::text_animators::catalog_json()),
             ("GET", "/v1/transitions") => HTTPResponse::json(200, &crate::transition_ops::transitions_json()),
-            ("GET", "/v1/effectPresets") => HTTPResponse::json(200, &crate::transition_ops::presets_json(&self.host.user_effect_presets())),
+            ("GET", "/v1/effectPresets") => {
+                HTTPResponse::json(200, &crate::transition_ops::presets_json(&self.host.user_effect_presets()))
+            }
+            ("GET", "/v1/templates") => {
+                HTTPResponse::json(200, &crate::template_ops::templates_json(&self.host.templates()))
+            }
+            ("POST", "/v1/templates") => self.save_template(&r.body),
             ("GET", "/v1/effects") => HTTPResponse::json(200, &crate::clip_params::effects_catalog_json()),
             ("GET", p) if p.starts_with("/v1/clip/") => self.clip_params(p),
             ("POST", "/v1/commit") => self.commit(&r.body, cancel),
@@ -357,13 +386,18 @@ impl EditAPIRouter {
             ("POST", "/v1/playhead") => self.playhead(&r.body),
             ("GET", "/v1/captionStyles") => self.perceive(Ok(PerceiveRequest::CaptionStyles), cancel),
             ("GET", "/v1/fonts") => self.perceive(Ok(PerceiveRequest::Fonts), cancel),
-            ("POST", p) if PerceiveRequest::POST_PATHS.contains(&p) => self.perceive(PerceiveRequest::parse(p, &r.body), cancel),
+            ("POST", p) if PerceiveRequest::POST_PATHS.contains(&p) => {
+                self.perceive(PerceiveRequest::parse(p, &r.body), cancel)
+            }
             (_, p) if PerceiveRequest::POST_PATHS.contains(&p) || p == "/v1/captionStyles" || p == "/v1/fonts" => {
                 HTTPResponse::error(405, "method not allowed", None)
             }
-            (_, "/v1/state" | "/v1/commit" | "/v1/undo" | "/v1/redo" | "/v1/import" | "/v1/export" | "/v1/presets" | "/v1/save" | "/v1/open" | "/v1/playhead" | "/v1/effects" | "/v1/textAnimators" | "/v1/transitions" | "/v1/effectPresets" | "/v1/gaps") => {
-                HTTPResponse::error(405, "method not allowed", None)
-            }
+            (
+                _,
+                "/v1/state" | "/v1/commit" | "/v1/undo" | "/v1/redo" | "/v1/import" | "/v1/export" | "/v1/presets"
+                | "/v1/save" | "/v1/open" | "/v1/playhead" | "/v1/effects" | "/v1/textAnimators" | "/v1/transitions"
+                | "/v1/effectPresets" | "/v1/gaps" | "/v1/templates",
+            ) => HTTPResponse::error(405, "method not allowed", None),
             _ => HTTPResponse::error(404, "unknown endpoint", None),
         }
     }
@@ -400,10 +434,7 @@ impl EditAPIRouter {
     }
 
     fn clip_params(&self, path: &str) -> HTTPResponse {
-        let id = path
-            .strip_prefix("/v1/clip/")
-            .and_then(|r| r.strip_suffix("/params"))
-            .and_then(Id::parse);
+        let id = path.strip_prefix("/v1/clip/").and_then(|r| r.strip_suffix("/params")).and_then(Id::parse);
         let Some(id) = id else { return HTTPResponse::error(404, "unknown endpoint", None) };
         let Some(p) = self.host.project() else { return HTTPResponse::error(503, "no project open", None) };
         let found = p.timelines.iter().flat_map(|t| t.tracks.iter()).find_map(|tr| tr.clip(id));
@@ -468,8 +499,12 @@ impl EditAPIRouter {
                 None,
             );
         }
-        let only_zoom_cuts = !req.operations.is_empty() && req.operations.iter().all(|o| matches!(o, EditOperation::AddZoomCut(_)));
-        let undo_name = format!("Agent: {}", label.as_deref().unwrap_or(if only_zoom_cuts { "Zoom cut" } else { "Edit" }));
+        let only_zoom_cuts =
+            !req.operations.is_empty() && req.operations.iter().all(|o| matches!(o, EditOperation::AddZoomCut(_)));
+        let undo_name = format!(
+            "Agent: {}",
+            label.as_deref().unwrap_or(if only_zoom_cuts { zoom_label(&req.operations) } else { "Edit" })
+        );
         let dry = req.dry_run == Some(true);
         match self.run_commit(&req, &undo_name, dry, cancel) {
             Ok(response) => response,
@@ -498,12 +533,33 @@ impl EditAPIRouter {
             operations = crate::transition_ops::resolve_user_presets(operations, &self.host.user_effect_presets())
                 .map_err(|why| TransactionError::invalid(&why))?;
         }
+        for (i, op) in operations.iter_mut().enumerate() {
+            let EditOperation::InsertTemplate { template, fields, resolved, .. } = op else { continue };
+            let Some(found) = self.host.template(template) else {
+                let why = format!("no such template '{template}' (GET /v1/templates lists the ids and names)");
+                return Ok(HTTPResponse::error(404, &why, Some(i)));
+            };
+            match crate::template_ops::parse_fields(&found, fields) {
+                Ok(values) => {
+                    *resolved = Some(Box::new(crate::template_ops::ResolvedTemplate { template: found, values }))
+                }
+                Err(why) => return Ok(HTTPResponse::error(400, &why, Some(i))),
+            }
+        }
         let commit = HostCommit { name: undo_name.to_string(), sequence: seq, operations, dry_run: dry };
         let active_before = self.host.active_sequence();
         let (before, after) = self.host.run(&commit, cancel)?;
         // A commit without a sequence created the first one: it is the open one now, and the "before" is empty.
         let seq = if seq == HostCommit::NO_SEQUENCE {
             self.host.active_sequence().or_else(|| after.timelines.last().map(|t| t.id)).unwrap_or(seq)
+        } else {
+            seq
+        };
+        // deleteSequence of the sequence the batch ran on: the reply names the sequence that is open now (no clip diff).
+        let seq = if after.timeline(seq).is_none()
+            && req.operations.iter().any(|o| matches!(o, EditOperation::DeleteSequence { .. }))
+        {
+            self.host.active_sequence().filter(|a| after.timeline(*a).is_some()).unwrap_or(seq)
         } else {
             seq
         };
@@ -537,12 +593,42 @@ impl EditAPIRouter {
             after.timelines.iter().map(|t| t.id).filter(|id| before.timeline(*id).is_none()).collect();
         // After createSequence the new sequence is the open one: it is what the reply names (the diff stays the one of
         // the sequence the batch ran on).
+        let clips_added: Vec<Id> = {
+            let ids = |t: &sq_core_model::Timeline| -> Vec<Id> {
+                t.tracks.iter().flat_map(|tr| tr.clips().iter().map(|c| c.id)).collect()
+            };
+            let old = ids(b);
+            ids(a).into_iter().filter(|id| !old.contains(id)).collect()
+        };
+        let folders_added: Vec<Id> = {
+            let old = before.root_bin.all_refs();
+            after
+                .root_bin
+                .all_refs()
+                .into_iter()
+                .filter(|r| !old.contains(r))
+                .filter_map(|r| match r {
+                    sq_core_model::BinItemRef::Bin(id) => Some(id),
+                    _ => None,
+                })
+                .collect()
+        };
         let active_now = self.host.active_sequence();
         let active_sequence = active_now.filter(|a| *a != seq);
         let seq = active_now.filter(|a| !dry && sequences_added.contains(a)).unwrap_or(seq);
         Ok(HTTPResponse::json(
             200,
-            &CommitResponse { applied, sequence: seq, undo_name: undo_name.to_string(), diff, sequences_added, active_sequence, gaps_opened },
+            &CommitResponse {
+                applied,
+                sequence: seq,
+                undo_name: undo_name.to_string(),
+                diff,
+                sequences_added,
+                clips_added,
+                folders_added,
+                active_sequence,
+                gaps_opened,
+            },
         ))
     }
 
@@ -740,6 +826,31 @@ impl EditAPIRouter {
     }
 
     /// `POST /v1/playhead {at}`: moves the playhead.
+    /// `POST /v1/templates {clips, name, folder?}`: the Save as Template command on `clips`; answers `{id}`.
+    fn save_template(&self, body: &[u8]) -> HTTPResponse {
+        let map = match Self::object(body, &["clips", "name", "folder"], "template request") {
+            Ok(m) => m,
+            Err(e) => return e,
+        };
+        let parsed = (|| -> Result<(Vec<Id>, String, Option<String>), String> {
+            Ok((required(&map, "clips")?, required(&map, "name")?, optional(&map, "folder")?))
+        })();
+        let (clips, name, folder) = match parsed {
+            Ok(p) => p,
+            Err(e) => return HTTPResponse::error(400, &e, None),
+        };
+        if clips.is_empty() || clips.len() > 200 {
+            return HTTPResponse::error(400, "clips: 1...200 clip ids of the open sequence", None);
+        }
+        if name.trim().is_empty() || name.chars().any(char::is_control) || name.chars().count() > 120 {
+            return HTTPResponse::error(400, "name: 1...120 characters, no control characters", None);
+        }
+        match self.host.save_template(clips, name, folder) {
+            Ok(id) => HTTPResponse::json(200, &serde_json::json!({ "id": id })),
+            Err(e) => Self::host_error(&e),
+        }
+    }
+
     fn playhead(&self, body: &[u8]) -> HTTPResponse {
         let map = match Self::object(body, &["at"], "playhead request") {
             Ok(m) => m,
@@ -771,6 +882,11 @@ impl EditAPIRouter {
             HTTPResponse::error(409, "the last step is not this agent's edit", None)
         }
     }
+}
+
+/// Undo name of a batch of zoom cuts: "Zoom Layer" when any of them is laid as an adjustment layer.
+fn zoom_label(ops: &[EditOperation]) -> &'static str {
+    if ops.iter().any(|o| matches!(o, EditOperation::AddZoomCut(z) if z.as_layer)) { "Zoom Layer" } else { "Zoom cut" }
 }
 
 #[cfg(test)]
@@ -867,7 +983,9 @@ pub(crate) mod tests {
             method: method.into(),
             path: path.split('?').next().unwrap_or(path).into(),
             query: path.split_once('?').map(|(_, q)| q.to_string()).unwrap_or_default(),
-            headers, body: body.as_bytes().to_vec() }
+            headers,
+            body: body.as_bytes().to_vec(),
+        }
     }
 
     fn with(mut r: HTTPRequest, key: &str, value: Option<&str>) -> HTTPRequest {
@@ -1091,13 +1209,19 @@ pub(crate) mod tests {
         assert_eq!(handle(&router, &req("GET", &format!("/v1/clip/{}/params", Id::from_u128(31337)), "")).status, 404);
         assert_eq!(handle(&router, &req("GET", "/v1/clip/nope/params", "")).status, 404);
         let fx = json(&handle(&router, &req("GET", "/v1/effects", "")));
-        let scopes: Vec<&str> = fx["effects"].as_array().map(|a| a.iter().filter_map(|e| e["scope"].as_str()).collect()).unwrap_or_default();
+        let scopes: Vec<&str> = fx["effects"]
+            .as_array()
+            .map(|a| a.iter().filter_map(|e| e["scope"].as_str()).collect())
+            .unwrap_or_default();
         assert!(scopes.contains(&"audio") && scopes.contains(&"video"));
         assert!(fx["effects"].as_array().is_some_and(|a| a.iter().any(|e| e["kind"] == "color")));
         // A parameter change is a diff the agent can read back; a dry run changes nothing.
         let op = format!(r#"{{"op":"setParam","clip":"{}","param":"audio.gainDb","value":4}}"#, f.a_audio);
         let dry = json(&handle(&router, &req("POST", "/v1/commit", &commit_body(&f, &op, "Gain", true, None))));
-        assert_eq!((dry["applied"].as_bool(), dry["diff"]["paramChanges"][0]["params"][0]["param"].as_str()), (Some(false), Some("audio.gainDb")));
+        assert_eq!(
+            (dry["applied"].as_bool(), dry["diff"]["paramChanges"][0]["params"][0]["param"].as_str()),
+            (Some(false), Some("audio.gainDb"))
+        );
         let real = json(&handle(&router, &req("POST", "/v1/commit", &commit_body(&f, &op, "Gain", false, None))));
         assert_eq!(real["applied"], serde_json::json!(true));
         assert_eq!(real["diff"]["paramChanges"][0]["params"][0]["after"]["value"], serde_json::json!(4.0));

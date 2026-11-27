@@ -27,6 +27,7 @@ impl WorkspacePackKind {
             payload_version: Self::PAYLOAD_VERSION,
             payload: serde_json::to_vec(&w)?,
             assets: Vec::new(),
+            folder: None,
         })
     }
 

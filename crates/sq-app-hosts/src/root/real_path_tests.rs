@@ -132,6 +132,9 @@ fn the_create_menu_rectangle_chosen_in_the_strip_then_a_drag_on_the_picture_make
 #[test]
 fn reset_to_saved_layout_docks_a_floating_panel_through_the_real_root() {
     let (mut r, mut rig) = standard(demo_session(Scenario::Plain));
+    // A frozen clock: with the real one a slow machine passes the half-second save delay before the check, the pump
+    // saves the state by itself and the forced flush below finds nothing left.
+    r.dock.floating.clock = Box::new(|| 0.0);
     assert!(r.dock.float(PanelID::Effects, None));
     assert!(r.dock.float(PanelID::EffectControls, None));
     r.sync(&rig.session);

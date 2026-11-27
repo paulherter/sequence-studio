@@ -6,7 +6,7 @@
 //! a plain fill until it is decoded.
 
 use super::color_grade_controller::{ColorGradeController, ColorMenuCommand};
-use super::color_grade_target::ColorSourceListItem;
+use super::color_grade_target::{ColorSourceListCache, ColorSourceListItem};
 use super::color_page_models::{ColorPageFormat, ColorUses};
 use sq_core_model::{Project, Timeline};
 use sq_core_time::{Id, Time};
@@ -134,11 +134,19 @@ pub struct ColorSourcesDraw {
     hovered: Option<usize>,
     /// Menus the strip asked for, oldest first (Swift `onMenu`).
     pub menus: Vec<SourcesMenuRequest>,
+    /// The tiles, rebuilt only when the project changes (several reads per frame).
+    cache: std::cell::RefCell<ColorSourceListCache>,
 }
 
 impl Default for ColorSourcesDraw {
     fn default() -> Self {
-        ColorSourcesDraw { size: CGSize::new(600.0, 200.0), scroll_x: 0.0, hovered: None, menus: Vec::new() }
+        ColorSourcesDraw {
+            size: CGSize::new(600.0, 200.0),
+            scroll_x: 0.0,
+            hovered: None,
+            menus: Vec::new(),
+            cache: std::cell::RefCell::new(ColorSourceListCache::new(true)),
+        }
     }
 }
 
@@ -155,8 +163,13 @@ impl ColorSourcesDraw {
         self.hovered
     }
 
-    fn items(session: &EditorSession) -> Vec<ColorSourceListItem> {
-        ColorSourcesLayout::tiles(session.active_timeline(), session.project())
+    fn items(&self, session: &EditorSession) -> std::rc::Rc<Vec<ColorSourceListItem>> {
+        self.cache.borrow_mut().items(session)
+    }
+
+    /// How often the tile list was built (tests).
+    pub fn list_builds(&self) -> u32 {
+        self.cache.borrow().builds
     }
 
     fn highlighted(controller: &ColorGradeController, items: &[ColorSourceListItem]) -> Option<usize> {
@@ -200,7 +213,7 @@ impl ColorSourcesDraw {
         let fs = f64::from(type_size::BODY);
         let bounds = CGRect::new(0.0, 0.0, self.size.width, self.size.height);
         c.fill(bounds, t.content());
-        let list = Self::items(session);
+        let list = self.items(session);
         if let Some(e) = ColorSourcesLayout::empty_state(session.active_timeline().is_some(), list.len()) {
             c.draw_text_in(
                 &SQL10n::string(e.0),
@@ -262,13 +275,13 @@ impl ColorSourcesDraw {
     }
 
     pub fn mouse_moved(&mut self, controller: &ColorGradeController, session: &EditorSession, p: Option<CGPoint>) {
-        let n = Self::items(session).len();
+        let n = self.items(session).len();
         self.hovered = p.and_then(|p| self.tile_index(controller, n, p));
     }
 
     /// The tip under the pointer: the tile's whole name (names are cut at the tile width).
     pub fn help(&self, controller: &ColorGradeController, session: &EditorSession, p: CGPoint) -> Option<String> {
-        let items = Self::items(session);
+        let items = self.items(session);
         self.tile_index(controller, items.len(), p).map(|i| items[i].name.clone())
     }
 
@@ -281,7 +294,7 @@ impl ColorSourcesDraw {
         p: CGPoint,
         modifiers: InputModifiers,
     ) {
-        let list = Self::items(session);
+        let list = self.items(session);
         let Some(i) = self.tile_index(controller, list.len(), p) else { return };
         controller.pick_source(session, &list[i]);
         if modifiers.contains(InputModifiers::SECONDARY) {
@@ -292,7 +305,7 @@ impl ColorSourcesDraw {
 
     pub fn scroll(&mut self, controller: &ColorGradeController, session: &EditorSession, dx: f64, dy: f64) {
         self.scroll_x += if dx.abs() > dy.abs() { -dx } else { -dy };
-        self.clamp_scroll(controller, Self::items(session).len());
+        self.clamp_scroll(controller, self.items(session).len());
     }
 
     /// The arrow keys step through the sources and grade the one reached (and scroll it into view).
@@ -308,7 +321,7 @@ impl ColorSourcesDraw {
             InputKey::Left | InputKey::Up => false,
             _ => return false,
         };
-        let list = Self::items(session);
+        let list = self.items(session);
         let current = Self::highlighted(controller, &list);
         let Some(i) = ColorSourcesLayout::stepped_index(current, list.len(), forward) else { return true };
         controller.pick_source(session, &list[i]);

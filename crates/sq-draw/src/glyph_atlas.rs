@@ -1251,7 +1251,7 @@ pub(crate) mod tests {
         sq_text::portable_font_match::set_fonts_root(&fonts_root());
         let Some(montserrat) = GlyphRasterFont::bundled("Montserrat", sq_text::text_style::FontWeight::Regular, false)
         else {
-            eprintln!("skipping: Montserrat is not bundled here");
+            sq_os::errln!("skipping: Montserrat is not bundled here");
             return;
         };
         assert_eq!(montserrat.glyph_for('⇥'), 0);
@@ -1302,7 +1302,7 @@ pub(crate) mod tests {
             let drawn = text.chars().all(|c| at.metric_for(c, 0).glyph != 0);
             let width = at.width_of(text, 14.0, 0);
             assert!(width > 0.0, "{script} has no width");
-            eprintln!("script {script}: {}", if drawn { "real glyphs" } else { "no system font, tofu box" });
+            sq_os::errln!("script {script}: {}", if drawn { "real glyphs" } else { "no system font, tofu box" });
             have.insert(script, drawn);
         }
         assert!(have["latin"]);
@@ -1321,7 +1321,7 @@ pub(crate) mod tests {
         let c = '中';
         let m = at.metric_for(c, 0);
         if m.face == 0 {
-            eprintln!("no CJK system font here: skipped");
+            sq_os::errln!("no CJK system font here: skipped");
             return;
         }
         let em = at.width_of(&c.to_string(), 100.0, 0);

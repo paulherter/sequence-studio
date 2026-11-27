@@ -59,7 +59,7 @@ pub use monitor_panel_model::{MonitorEvent, MonitorPanelModel, MonitorWiring};
 pub use safe_zone_choice::SafeZoneChoice;
 pub use scope_image::ScopeImage;
 pub use scope_trace_settings::ScopeTraceSettings;
-pub use scopes_panel::{ScopeCountsSource, ScopesPanel};
+pub use scopes_panel::{ScopeCountsSource, ScopeDrawer, ScopesPanel, install_gpu_drawer};
 pub use source_monitor_core::{SourceCoreEvent, SourceMonitorCore};
 pub use source_timeline_builder::SourceTimelineBuilder;
 pub use transform_overlay::{OverlayEvent, TransformOverlay};

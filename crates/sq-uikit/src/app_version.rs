@@ -29,9 +29,19 @@ impl AppVersion {
         Self::display_of(&Self::number())
     }
 
-    /// "Sequence Studio 0.1 Alpha".
+    /// "Sequence Studio 0.1 Alpha"; a nightly build shows its packager version instead ("Sequence Studio 0.2.1-nightly.20261127").
+    /// Status bar, launch log and crash files read this one string.
     pub fn full_name() -> String {
-        format!("Sequence Studio {}", Self::display())
+        Self::full_name_of(&Self::display(), option_env!("SQ_CHANNEL"), option_env!("SQ_BUILD_VERSION"))
+    }
+
+    /// [`Self::full_name`] from its inputs (the display version, the build channel, the packager's build version).
+    pub fn full_name_of(display: &str, channel: Option<&str>, build_version: Option<&str>) -> String {
+        let nightly = channel.is_some_and(|c| c.trim().eq_ignore_ascii_case("nightly"));
+        match build_version.map(str::trim) {
+            Some(v) if nightly && !v.is_empty() => format!("Sequence Studio {v}"),
+            _ => format!("Sequence Studio {display}"),
+        }
     }
 
     /// "Version 0.1 Alpha (1)", the About line.
@@ -66,6 +76,18 @@ mod tests {
         assert_eq!(AppVersion::display_of("0.1"), "0.1 Alpha");
         assert_eq!(AppVersion::number_from(Some("0.10")), "0.10");
         assert_eq!(AppVersion::number_from(None), AppVersion::FALLBACK_NUMBER);
+    }
+
+    #[test]
+    fn full_name_shows_the_nightly_version() {
+        let d = "0.2.1 Alpha";
+        assert_eq!(
+            AppVersion::full_name_of(d, Some("nightly"), Some("0.2.1-nightly.20261127")),
+            "Sequence Studio 0.2.1-nightly.20261127"
+        );
+        assert_eq!(AppVersion::full_name_of(d, None, Some("0.2.1-nightly.20261127")), "Sequence Studio 0.2.1 Alpha");
+        assert_eq!(AppVersion::full_name_of(d, Some("nightly"), None), "Sequence Studio 0.2.1 Alpha");
+        assert_eq!(AppVersion::full_name_of(d, Some("nightly"), Some(" ")), "Sequence Studio 0.2.1 Alpha");
     }
 
     #[test]

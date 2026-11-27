@@ -5,7 +5,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use sq_core_edit::stinger::StingerExt;
 use sq_core_effects::transition::EffectDefaultsTransitionExt;
 use sq_core_effects::transition::{
-    ResolvedTransition, TransitionSpec, add_element_transitions_looked, add_transition_looked, TimelineTransitions, TrackTransitions, TransitionChange, TransitionKindExt, TransitionPoint,
+    ResolvedTransition, TimelineTransitions, TrackTransitions, TransitionChange, TransitionKindExt, TransitionPoint,
+    TransitionSpec, add_element_transitions_looked, add_transition_looked,
 };
 use sq_core_effects::transition_feel::TimelineTransitionFeel;
 use sq_core_model::{
@@ -228,7 +229,13 @@ impl EditorSession {
                 .as_ref()
                 .map(|u| u.duration)
                 .unwrap_or_else(|| Self::factory_transition_duration(kind, fd, defaults));
-            made = Some(add_transition_looked(t, point, &TransitionSpec { kind, track, duration: d, alignment }, user.as_ref(), ids)?);
+            made = Some(add_transition_looked(
+                t,
+                point,
+                &TransitionSpec { kind, track, duration: d, alignment },
+                user.as_ref(),
+                ids,
+            )?);
             Ok(())
         });
         if ok {

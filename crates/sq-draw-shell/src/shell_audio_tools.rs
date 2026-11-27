@@ -588,11 +588,16 @@ impl ShellHost {
         reply.send(Self::api_sync_fit_inner(&h, clip, to).await);
     }
 
-    async fn api_sync_fit_inner<R: ShellRoot + ?Sized>(h: &UiRef<R>, clip: Id, to: Id) -> Result<AudioDriftFit, String> {
+    async fn api_sync_fit_inner<R: ShellRoot + ?Sized>(
+        h: &UiRef<R>,
+        clip: Id,
+        to: Id,
+    ) -> Result<AudioDriftFit, String> {
         let Some(found) = h.with(|r| {
             let p = r.shell_parts();
             let media = |id: Id| -> Option<MediaRef> {
-                let c = p.session.active_timeline()?.tracks.iter().flat_map(|t| t.clips().iter()).find(|c| c.id == id)?;
+                let c =
+                    p.session.active_timeline()?.tracks.iter().flat_map(|t| t.clips().iter()).find(|c| c.id == id)?;
                 p.session.project().media(c.media).cloned()
             };
             (media(to), media(clip))

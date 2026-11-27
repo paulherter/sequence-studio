@@ -13,6 +13,7 @@ pub(crate) mod mask_ops;
 pub(crate) mod param_ops;
 pub mod perceive;
 pub mod project_state;
+pub mod template_ops;
 pub(crate) mod text_accent;
 pub mod text_animators;
 pub mod text_layers;
@@ -20,10 +21,15 @@ pub mod text_tracking;
 pub mod time_limits;
 pub mod transition_ops;
 pub(crate) mod zoom_cut;
+pub(crate) mod zoom_layer;
 
-#[cfg(test)]
-mod param_tests;
 #[cfg(test)]
 mod accent_mask_tests;
 #[cfg(test)]
+mod param_tests;
+#[cfg(test)]
+mod template_tests;
+#[cfg(test)]
 mod zoom_cut_tests;
+#[cfg(test)]
+mod zoom_layer_tests;

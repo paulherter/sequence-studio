@@ -558,3 +558,22 @@ fn a_multi_drag_keeps_an_outside_edit_of_a_peer() {
     let back = m.peers().first().map(|p| (p.name.clone(), p.animation.opacity.value));
     assert_eq!(back, Some(("renamed".to_string(), 1.0)), "Escape restores the value and keeps the name");
 }
+
+#[test]
+fn summary_keys_are_cached_per_clip_revision_and_an_edit_invalidates_them() {
+    let (mut r, _) = nudge_rig();
+    let first = r.m.summary_keys(&EffectSection::Opacity);
+    assert_eq!(first.len(), 3);
+    let revision = r.m.clip_revision();
+    assert_eq!(r.m.summary_keys(&EffectSection::Opacity), first, "a second read gives the same keys");
+    assert_eq!(r.m.clip_revision(), revision, "reading does not move the clip");
+    // An edit that moves a key: the cached keys must not survive it.
+    r.m.set_selection_for(&EffectProperty::Opacity, &BTreeSet::from([Id::from_u128(12)]));
+    r.m.nudge_selected_keys(1);
+    r.pump();
+    assert!(r.m.clip_revision() > revision);
+    let after = r.m.summary_keys(&EffectSection::Opacity);
+    assert_ne!(after, first);
+    let moved: Vec<Time> = after.iter().map(|k| k.time).collect();
+    assert_eq!(moved, vec![s(1), s(2) + r.m.frame_duration, s(3)]);
+}

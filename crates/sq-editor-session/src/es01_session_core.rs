@@ -66,6 +66,10 @@ impl EditorSession {
     // Swift: EditorSession.swift:172
     pub fn add_auxiliary_engine(&mut self, engine: Box<dyn ProgramEngine>) {
         self.auxiliary_engines.retain(|e| e.is_alive());
+        let mut engine = engine;
+        // A monitor added later (Trim) starts with what the Program engine already knows.
+        engine.set_proxy_use(self.engine.proxy_use());
+        engine.set_proxy_playback_media(&self.proxy_playback_media);
         self.auxiliary_engines.push(engine);
     }
 
@@ -84,12 +88,22 @@ impl EditorSession {
                     self.engine.set_proxy_use(u);
                     self.auxiliary_engines.iter_mut().for_each(|e| e.set_proxy_use(u));
                 }
+                crate::ProxyEffect::PlaybackMediaChanged(ids) => {
+                    self.engine.set_proxy_playback_media(&ids);
+                    self.proxy_playback_media = ids.clone();
+                    self.auxiliary_engines.iter_mut().for_each(|e| e.set_proxy_playback_media(&ids));
+                }
                 crate::ProxyEffect::ProxiesChanged(ids) => {
                     self.engine.proxies_changed(&ids);
                     self.auxiliary_engines.iter_mut().for_each(|e| e.proxies_changed(&ids));
                 }
             }
         }
+    }
+
+    /// True when no proxy service runs or none has a live decision or transcode.
+    pub fn proxies_settled(&self) -> bool {
+        self.auto_proxy.as_ref().is_none_or(|p| p.proxies_settled())
     }
 
     /// One turn of the proxy service: worker results in, new work out, then the monitors hear what changed. Returns the

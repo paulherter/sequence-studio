@@ -724,7 +724,7 @@ mod tests {
         for ext in ["png", "tif", "dpx", "tga", "exr"] {
             let file = dir.join(format!("r.{ext}"));
             if !make(&["-f", "lavfi", "-i", "color=c=0xFF0000:s=16x12", "-frames:v", "1"], &file) {
-                eprintln!("skipped {ext}: ffmpeg cannot write it");
+                sq_os::errln!("skipped {ext}: ffmpeg cannot write it");
                 continue;
             }
             let (w, h) = crate::shim::image_size(&file).expect("size");

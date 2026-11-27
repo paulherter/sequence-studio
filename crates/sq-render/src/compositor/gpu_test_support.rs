@@ -11,11 +11,11 @@ pub(crate) fn gpu() -> Option<Arc<Gpu>> {
     static GPU: OnceLock<Option<Arc<Gpu>>> = OnceLock::new();
     GPU.get_or_init(|| match Gpu::new() {
         Ok(g) => {
-            eprintln!("adapter: {} ({:?})", g.info().name, g.info().backend);
+            sq_os::errln!("adapter: {} ({:?})", g.info().name, g.info().backend);
             Some(g)
         }
         Err(e) => {
-            eprintln!("skipping GPU tests: {e}");
+            sq_os::errln!("skipping GPU tests: {e}");
             None
         }
     })

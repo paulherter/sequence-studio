@@ -20,8 +20,13 @@ pub struct ColorClipRow {
 impl ColorClipRow {
     /// What the second line says about a clip's two grades: which one is active and whether the other is kept.
     pub fn grade_text(has_simple: bool, graph: Option<&ColorGraph>) -> &'static str {
-        let Some(graph) = graph else { return if has_simple { "Simple" } else { "No grade" } };
-        if graph.is_active {
+        Self::grade_text_active(has_simple, graph.map(|g| g.is_active))
+    }
+
+    /// `grade_text` from the graph's `is_active` only (no graph clone needed).
+    pub fn grade_text_active(has_simple: bool, graph_active: Option<bool>) -> &'static str {
+        let Some(active) = graph_active else { return if has_simple { "Simple" } else { "No grade" } };
+        if active {
             return if has_simple { "Pro on, Simple kept" } else { "Pro" };
         }
         if has_simple { "Simple on, Pro kept" } else { "Pro kept, off" }

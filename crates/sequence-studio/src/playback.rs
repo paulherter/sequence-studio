@@ -53,6 +53,9 @@ pub struct SessionEngine {
     monitor: Arc<crate::meter_tap::MonitorControl>,
     shown_generation: u64,
     reported: Time,
+    /// The target of the last paused seek, which the engine may not have reached yet: `position` answers it so a redraw, a
+    /// step or an audio scrub started right after a seek works from where the seek went, not from the old frame.
+    pending_seek: std::cell::Cell<Option<Time>>,
     rate: PlaybackRate,
     /// The play range and loop the session set; the render thread owns the behavior.
     play_range: Option<TimeRange>,
@@ -95,6 +98,13 @@ pub(crate) fn bench_clock(engine: &dyn ProgramEngine) -> Option<(Time, bool)> {
 pub(crate) fn bench_shown(engine: &dyn ProgramEngine) -> Option<Time> {
     let e = engine.as_any().downcast_ref::<SessionEngine>()?;
     Some(e.handle.latest_shown()?.position)
+}
+
+/// The newest shown composite's position and whether it holds the exact pictures of that frame (not a stand-in).
+pub(crate) fn bench_shown_exact(engine: &dyn ProgramEngine) -> Option<(Time, bool)> {
+    let e = engine.as_any().downcast_ref::<SessionEngine>()?;
+    let s = e.handle.latest_shown()?;
+    Some((s.position, s.exact))
 }
 
 /// Bytes in the engine's frame cache now (the bench's memory line).
@@ -206,7 +216,7 @@ fn audio_event_line(event: &OutputEvent) -> Option<String> {
 /// Writes an audio failure to the app log and shows it in the status bar.
 fn report_audio(line: &str, wake: &WakeSlot) {
     crate::applog::error(line);
-    eprintln!("{line}");
+    sq_os::errln!("{line}");
     let queue = Arc::clone(&wake.notices.lock().unwrap_or_else(std::sync::PoisonError::into_inner));
     sq_app_hosts::audio_notice::post(&queue, line);
     if let Some(f) = wake.get() {
@@ -336,6 +346,7 @@ pub fn engine(
         monitor,
         shown_generation: 0,
         reported: Time::ZERO,
+        pending_seek: std::cell::Cell::new(None),
         rate: PlaybackRate::ZERO,
         play_range: None,
         loops: false,
@@ -389,13 +400,32 @@ pub struct DisplayPath {
     textures: Option<(GpuTexture, GpuTexture)>,
 }
 
+/// The scope pictures are drawn by the shared `Scopes.scopeDraw` kernel on the app's GPU (the panel keeps the CPU drawing as
+/// the fallback when this returns `None`).
+fn install_scope_drawer(gpu: &Arc<Gpu>) {
+    use sq_draw::monitor::scope_graticule::ScopeKind;
+    use sq_render::gpu_effects::scope_passes::{ScopeDrawKind, ScopePasses};
+    let passes = ScopePasses::new(gpu);
+    sq_draw_monitor::install_gpu_drawer(Arc::new(move |kind, counts, width, height, gain| {
+        let k = match kind {
+            ScopeKind::Waveform => ScopeDrawKind::Waveform,
+            ScopeKind::Parade => ScopeDrawKind::Parade,
+            ScopeKind::Vectorscope => ScopeDrawKind::Vectorscope,
+            ScopeKind::Histogram => ScopeDrawKind::Histogram,
+        };
+        let pixels = passes.draw_image(counts, k, width as u32, height as u32, gain).ok()?;
+        (pixels.len() == width * height * 4).then_some(RgbaImage { width, height, pixels })
+    }));
+}
+
 impl DisplayPath {
     pub const PATH: &'static str = "GPU copy + GPU display gamma, sampled by the window (no readback)";
 
     pub fn new(gpu: Arc<Gpu>) -> Option<DisplayPath> {
         let gamma = sq_draw::display_gamma::GpuDisplayGamma::new(Arc::clone(&gpu))
-            .map_err(|e| eprintln!("display gamma pass: {e}"))
+            .map_err(|e| sq_os::errln!("display gamma pass: {e}"))
             .ok()?;
+        install_scope_drawer(&gpu);
         Some(DisplayPath { gpu, gamma, textures: None })
     }
 
@@ -419,7 +449,7 @@ impl DisplayPath {
         self.gpu.submit(cmds);
         let gamma = picture.view_choices().gamma().gamma();
         if let Err(e) = self.gamma.apply(source, &display, gamma) {
-            eprintln!("display gamma pass: {e}");
+            sq_os::errln!("display gamma pass: {e}");
             return Some(read_picture(&self.gpu, shown));
         }
         let gpu = Arc::clone(&self.gpu);
@@ -623,12 +653,23 @@ impl ProgramEngine for SessionEngine {
         });
     }
 
+    fn set_proxy_playback_media(&mut self, ids: &std::collections::BTreeSet<Id>) {
+        self.handle.set_proxy_playback_media(ids.iter().copied().collect());
+    }
+
     fn proxies_changed(&mut self, ids: &std::collections::BTreeSet<Id>) {
         self.handle.proxies_changed(ids.iter().copied().collect());
     }
 
     fn position(&self) -> Time {
-        self.handle.status().position
+        let at = self.handle.status().position;
+        match self.pending_seek.get() {
+            Some(t) if t != at => t,
+            _ => {
+                self.pending_seek.set(None);
+                at
+            }
+        }
     }
 
     fn rate(&self) -> PlaybackRate {
@@ -646,17 +687,26 @@ impl ProgramEngine for SessionEngine {
         self.rate = rate;
         self.handle.play(rate);
         self.settle();
+        self.pending_seek.set(None);
     }
 
     fn pause(&mut self) {
         self.rate = PlaybackRate::ZERO;
         self.handle.pause();
         self.settle();
+        self.pending_seek.set(None);
     }
 
     fn seek(&mut self, t: Time) {
         self.handle.seek(t);
-        self.settle();
+        // A paused seek (scrub, click on the ruler) does not wait: the picture comes through the frame poll and the engine
+        // keeps only the newest queued seek. A jump while playing waits, so `position`/`rate` answer for it.
+        if self.rate() != PlaybackRate::ZERO {
+            self.settle();
+            self.pending_seek.set(None);
+        } else {
+            self.pending_seek.set(Some(t));
+        }
     }
 
     fn meter_reading(&self) -> Option<sq_editor_session::MeterReading> {
@@ -697,6 +747,7 @@ impl ProgramEngine for SessionEngine {
         let from = self.audio_scrubbing.then(|| self.position());
         self.handle.step(i32::try_from(frames).unwrap_or(0));
         self.settle();
+        self.pending_seek.set(None);
         if let (Some(from), Some(scrub)) = (from, &self.scrub) {
             scrub.step(from, self.position());
         }
@@ -714,6 +765,7 @@ impl ProgramEngine for SessionEngine {
             scrub.scrub(t, scrub_nanos());
         }
         self.handle.scrub(t);
+        self.pending_seek.set(None);
     }
 
     fn end_scrub(&mut self) {
@@ -755,8 +807,8 @@ impl ProgramEngine for SessionEngine {
         self.pump_picture();
         if self.perf_logged.is_some_and(|t| t.elapsed().as_secs() >= 1) && !self.rate.is_paused() {
             self.perf_logged = Some(std::time::Instant::now());
-            eprintln!("engine: {:?}", self.handle.status());
-            eprintln!("engine: {:?}", self.handle.query(|e| e.stats().report()));
+            sq_os::errln!("engine: {:?}", self.handle.status());
+            sq_os::errln!("engine: {:?}", self.handle.query(|e| e.stats().report()));
         }
         let now = self.handle.status().position;
         (now != std::mem::replace(&mut self.reported, now)).then_some(now)
@@ -955,6 +1007,28 @@ mod audio_event_tests {
         fn file_path(&self, _: Id) -> Option<PathBuf> {
             self.0.lock().ok().map(|p| p.clone())
         }
+    }
+
+    #[test]
+    fn a_paused_seek_answers_its_target_at_once_and_a_redraw_lands_on_it() {
+        let media = Arc::new(MovingFile(std::sync::Mutex::new(PathBuf::from("/gone/a.mp4"))));
+        let mut engine =
+            engine(media as Arc<dyn SessionMediaResolving>, MonitorPicture::default(), WakeSlot::default());
+        let mut ids = sq_core_time::SequentialIds::default();
+        let mut track = Track::new(Id::from_u128(2), TrackKind::Video);
+        let range = sq_core_time::TimeRange::new(Time::ZERO, Time::seconds(4));
+        let clip = Clip::new(Id::from_u128(4), "a", Id::from_u128(3), TrackKind::Video, range, Time::ZERO);
+        assert!(track.insert(clip, &mut ids).is_ok());
+        let timeline =
+            Timeline::new(Id::from_u128(1), "T", sq_core_model::SequenceFormat::new(Time::new(1, 25)), vec![track]);
+        engine.set_timeline(&timeline, &BTreeMap::new());
+        engine.seek(Time::seconds(1));
+        engine.seek(Time::seconds(3));
+        assert_eq!(engine.position(), Time::seconds(3), "no stale read right after a seek that did not wait");
+        engine.redraw();
+        let Some(e) = engine.as_any().downcast_ref::<SessionEngine>() else { panic!("a SessionEngine") };
+        e.settle();
+        assert_eq!(e.handle.status().position, Time::seconds(3), "the redraw seeks to the newest target");
     }
 
     #[test]

@@ -83,7 +83,7 @@ unsafe extern "C-unwind" fn next_drawable(this: *mut AnyObject, cmd: Sel) -> *mu
                 && let Some(at) = instant_of(secs)
             {
                 if !FIRST_REPORTED.swap(true, Ordering::Relaxed) {
-                    eprintln!("glass clock: first presented time received (drawable {seq})");
+                    sq_os::errln!("glass clock: first presented time received (drawable {seq})");
                 }
                 report(seq, at);
             }
@@ -140,7 +140,7 @@ pub fn install_glass_clock(
     // wgpu hosts its CAMetalLayer as a sublayer of the view's own layer, so the layer tree is searched.
     let layer = find_metal_layer(root, 0);
     if layer.is_null() {
-        eprintln!("glass clock: no CAMetalLayer found under the window view's layer");
+        sq_os::errln!("glass clock: no CAMetalLayer found under the window view's layer");
         return false;
     }
     if HOOKS.set(Hooks { acquired: Box::new(acquired), presented: Arc::new(presented) }).is_err() {
@@ -159,6 +159,6 @@ pub fn install_glass_clock(
     let wrapper: NextDrawable = next_drawable;
     // SAFETY: the wrapper has the signature of `-[CAMetalLayer nextDrawable]` and calls the replaced method.
     unsafe { method.set_implementation(std::mem::transmute::<NextDrawable, Imp>(wrapper)) };
-    eprintln!("glass clock: installed on the window's CAMetalLayer");
+    sq_os::errln!("glass clock: installed on the window's CAMetalLayer");
     true
 }

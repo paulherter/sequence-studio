@@ -21,7 +21,6 @@ pub(crate) const KNOWN_COMPUTE: &[(&str, &str, PixelFormat)] = &[
     ("ColorChainInPlace", "colorChainInPlace", F16), // the slowest (about 400 ms): first
     ("SourceConvert", "convertToRGB", F16),
     ("GyroWarp", "gyroWarp", F16),
-    #[cfg(not(windows))] // no DXIL for it yet, see SCALED_GYRO_WARP
     ("GyroWarp", "gyroWarpScaled", F16),
     // The first graded layer of a monitor-size preview builds it inside a playing compose (a 56-59 ms gap 2.7 s after Play).
     ("SourceConvert", "convertToRGBScaled", F16),
@@ -117,6 +116,13 @@ pub(crate) fn open_cache(
     Some((cache, path))
 }
 
+static PREWARM_DONE: std::sync::OnceLock<std::time::Instant> = std::sync::OnceLock::new();
+
+/// When the background prewarm finished (`None` while it runs or when it was off); the play bench reports it as a stage.
+pub fn prewarm_done_at() -> Option<std::time::Instant> {
+    PREWARM_DONE.get().copied()
+}
+
 impl Gpu {
     /// Builds every known pipeline on background threads (the caller does not wait) and then saves the driver cache.
     /// Errors are ignored here; the draw that needs the pipeline reports them.
@@ -131,6 +137,7 @@ impl Gpu {
                 let _span = sq_os::trace::span("gpu", "pipeline prewarm");
                 gpu.build_known();
                 gpu.save_pipeline_cache();
+                let _ = PREWARM_DONE.set(std::time::Instant::now());
             })
             .ok()
     }

@@ -5,9 +5,9 @@
 //! in kind: the Mac has a system menu bar, Windows draws its own). See docs/rust/PLATFORM-MATRIX.md.
 
 pub mod app_update;
-pub mod clipboard;
 pub mod app_window;
 mod backend;
+pub mod clipboard;
 pub mod desktop_integration;
 #[cfg(unix)]
 mod disk_unix;

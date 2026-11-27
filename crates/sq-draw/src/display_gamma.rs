@@ -95,7 +95,7 @@ mod tests {
     #[test]
     fn gpu_pass_equals_the_cpu_table() {
         let Ok(gpu) = Gpu::new() else {
-            eprintln!("skipped: no GPU adapter");
+            sq_os::errln!("skipped: no GPU adapter");
             return;
         };
         let (w, h) = (256usize, 3usize);

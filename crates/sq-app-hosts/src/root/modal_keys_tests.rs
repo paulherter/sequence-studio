@@ -82,7 +82,7 @@ fn no_surface_that_owns_the_keyboard_lets_a_key_reach_the_timeline() {
         // shortcut: Settings and the shortcuts page need the app's preference services, which the test rig lacks; the
         // surfaces that did not open here are reported, not tested, and the list below pins the ones that must.
         if !(root.shell.owns_keyboard() || root.has_dialog()) {
-            eprintln!("not opened in the test rig: {name}");
+            sq_os::errln!("not opened in the test rig: {name}");
             continue;
         }
         tested.push(name);

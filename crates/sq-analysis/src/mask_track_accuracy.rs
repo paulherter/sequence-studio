@@ -165,7 +165,7 @@ fn the_synthetic_clips_meet_the_accuracy_targets() {
     let mut failures = Vec::new();
     for (name, kind, mode) in cases {
         let a = measure(kind, mode);
-        println!("{}", row(name, &a));
+        sq_os::outln!("{}", row(name, &a));
         let scale_ok = matches!(mode, MaskTrackMode::Position) || a.max_scale <= 0.03;
         if a.tracked != a.frames || a.mean_px > 2.0 || a.max_px > 6.0 || !scale_ok {
             failures.push(row(name, &a));
@@ -219,9 +219,9 @@ fn a_real_clip_is_tracked_through() {
     for (i, m) in motions.iter().enumerate().step_by(10) {
         if let Some(m) = m {
             let c = m.apply(Vec2::new((b[0] + b[2]) / 2.0, (b[1] + b[3]) / 2.0));
-            println!("frame {i}: center {:.1}, {:.1} px", c.x * W as f64, c.y * H as f64);
+            sq_os::outln!("frame {i}: center {:.1}, {:.1} px", c.x * W as f64, c.y * H as f64);
         }
     }
-    println!("tracked {tracked}/{}", frames.len());
+    sq_os::outln!("tracked {tracked}/{}", frames.len());
     assert!(tracked * 10 >= frames.len() * 8, "lost the object early");
 }

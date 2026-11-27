@@ -877,6 +877,16 @@ impl TimelineMenus {
                 }
                 return host.request(&TimelineEditorRequest::NewColorMatte);
             }
+            A::NewAdjustmentLayer => {
+                if s.active_timeline().is_none() {
+                    return Some("Open a sequence first.".to_string());
+                }
+                s.stop_playback();
+                if s.add_adjustment_layer(None, None, sq_core_time::Time::new(5, 1)).is_none() {
+                    return Some(s.last_error().unwrap_or("Could not add the adjustment layer.").to_string());
+                }
+                s.seek(s.playhead());
+            }
             A::TogglePlaceSequencesAsClips => {
                 let on = !panel.tool_state().place_sequences_as_clips;
                 panel.tool_state_mut().place_sequences_as_clips = on;

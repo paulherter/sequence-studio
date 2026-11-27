@@ -66,13 +66,13 @@ fn reference(path: &PathBuf) -> Vec<f32> {
 #[test]
 fn every_audio_flavor_opens_and_matches_ffmpeg() {
     if !shim::AVAILABLE || ffmpeg().arg("-version").output().is_err() {
-        eprintln!("skipped: no FFmpeg shim or command");
+        sq_os::errln!("skipped: no FFmpeg shim or command");
         return;
     }
     let mut failures = Vec::new();
     for v in V {
         let Some(path) = make(v) else {
-            eprintln!("skipped {}: ffmpeg cannot make it", v.name);
+            sq_os::errln!("skipped {}: ffmpeg cannot make it", v.name);
             continue;
         };
         let src: Box<dyn AudioSource> = match FFmpegAudioSource::open_mapped(&path, 48_000, None) {
@@ -117,7 +117,7 @@ fn a_junk_file_is_unreadable_not_minus_one() {
 #[test]
 fn streamed_reads_equal_the_whole_decode_after_seeks() {
     if !shim::AVAILABLE || ffmpeg().arg("-version").output().is_err() {
-        eprintln!("skipped: no FFmpeg shim or command");
+        sq_os::errln!("skipped: no FFmpeg shim or command");
         return;
     }
     for (name, codec, tol) in [("stream.wav", "pcm_s16le", 1e-4f32), ("stream.m4a", "aac", 0.02)] {
@@ -138,7 +138,7 @@ fn streamed_reads_equal_the_whole_decode_after_seeks() {
             .status()
             .is_ok_and(|s| s.success());
         if !made {
-            eprintln!("skipped {name}");
+            sq_os::errln!("skipped {name}");
             continue;
         }
         let whole = shim::decode_audio(&path, 48_000, 2).unwrap();

@@ -13,11 +13,23 @@ use sq_core_time::text::graphemes;
 
 /// `raster` with the cursor `spec` drawn after character `after` (`TextUnitCharacter::index`). The raster is returned
 /// unchanged when the glyph cannot be placed (empty glyph, no layout).
-pub fn with_cursor(raster: Raster, template: &TextTemplate, units: &TextUnits, after: usize, spec: &TextCursor) -> Raster {
+pub fn with_cursor(
+    raster: Raster,
+    template: &TextTemplate,
+    units: &TextUnits,
+    after: usize,
+    spec: &TextCursor,
+) -> Raster {
     place(&raster, template, units, after, spec).unwrap_or(raster)
 }
 
-fn place(raster: &Raster, template: &TextTemplate, units: &TextUnits, after: usize, spec: &TextCursor) -> Option<Raster> {
+fn place(
+    raster: &Raster,
+    template: &TextTemplate,
+    units: &TextUnits,
+    after: usize,
+    spec: &TextCursor,
+) -> Option<Raster> {
     let ch = units.characters.get(after)?;
     // Caret index = number of graphemes up to the end of the character (the unit ranges count UTF-16 of the display text).
     let end = ch.range.location + ch.range.length;
@@ -110,12 +122,8 @@ mod tests {
     /// A 2-character typewriter ("ab", 500 ms apart, no fade) with the standard cursor in `color`.
     fn typewriter_ref(color: Option<&str>) -> GeneratorRef {
         let template = TextTemplate::new("t", "ab", TextStyle::default());
-        let mut a = TextAnimator::new(
-            TextAnimatorEffect::Typewriter,
-            TextAnimatorUnit::Character,
-            Time::ZERO,
-            Time::new(1, 2),
-        );
+        let mut a =
+            TextAnimator::new(TextAnimatorEffect::Typewriter, TextAnimatorUnit::Character, Time::ZERO, Time::new(1, 2));
         a.cursor = Some(TextCursor { color: color.map(Into::into), ..TextCursor::standard() });
         let mut set = AnimationSet::new(None, None);
         set.set_text_animator(true, Some(a));
@@ -125,7 +133,10 @@ mod tests {
     /// Opaque pixels of `f`'s picture in the columns from `x` on.
     fn ink_from(f: &crate::text_generator_portable::PortableTextFrame, x: usize) -> usize {
         let p = &f.picture;
-        (0..p.height).flat_map(|y| (x..p.width).map(move |c| (y, c))).filter(|&(y, c)| p.pixels[(y * p.width + c) * 4 + 3] > 0.5).count()
+        (0..p.height)
+            .flat_map(|y| (x..p.width).map(move |c| (y, c)))
+            .filter(|&(y, c)| p.pixels[(y * p.width + c) * 4 + 3] > 0.5)
+            .count()
     }
 
     #[test]
@@ -134,7 +145,9 @@ mod tests {
         let canvas = SequenceFormat { width: 1920, height: 1080, ..SequenceFormat::new(Time::new(1, 30)) };
         let ms = |v: i64| Time::new(v, 1000);
         let r = typewriter_ref(Some("#ff0000"));
-        let frame = |t: Time| TextGenerator::portable_frame(&r, t, Time::new(5, 1), &canvas, 1.0, None).unwrap_or_else(|e| panic!("{e}"));
+        let frame = |t: Time| {
+            TextGenerator::portable_frame(&r, t, Time::new(5, 1), &canvas, 1.0, None).unwrap_or_else(|e| panic!("{e}"))
+        };
         // 700 ms: "ab" typed since 500 ms, solid cursor after "b".
         let typing = frame(ms(0)).expect("a frame"); // only "a" is typed
         assert_eq!(typing.cursor, Some(0));
@@ -149,7 +162,8 @@ mod tests {
         assert!(ink_from(&on_again, right.saturating_sub(1)) > 0, "cursor pixels right of the last character");
         assert!(frame(ms(500 + 600)).expect("a frame").cursor.is_none(), "gone after the hold");
         let p = &on_again.picture;
-        let red = (0..p.width * p.height).any(|i| p.pixels[i * 4] > 0.5 && p.pixels[i * 4 + 1] < 0.1 && p.pixels[i * 4 + 3] > 0.5);
+        let red = (0..p.width * p.height)
+            .any(|i| p.pixels[i * 4] > 0.5 && p.pixels[i * 4 + 1] < 0.1 && p.pixels[i * 4 + 3] > 0.5);
         assert!(red, "the cursor is red");
         assert!(!on_again.shares_picture(&off));
     }

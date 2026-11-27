@@ -18,7 +18,7 @@ use sq_editor_session::{Change, ColorClipboard, EditorSession, WorkspacePage};
 use sq_inspector_ui::color::color_grade_controller::{ColorGradeController, ColorGradeEvent, ColorMenuCommand};
 use sq_inspector_ui::color::color_grade_draw::LutFilesFor;
 use sq_inspector_ui::color::color_grade_draw::{ColorGradeDraw, ColorGradeHost, GradeFileRequest};
-use sq_inspector_ui::color::color_grade_target::ColorSourceListItem;
+use sq_inspector_ui::color::color_grade_target::ColorSourceListCache;
 use sq_inspector_ui::color::color_graph_menus::LUTTarget;
 use sq_inspector_ui::color::color_inspector_model::LUTChoice;
 use sq_inspector_ui::color::color_inspector_model_graph::GraphLUTSlot;
@@ -28,7 +28,7 @@ use sq_inspector_ui::color::color_viewer_header_draw::{
     ColorStripToolsDraw, ColorViewerHeaderDraw, StripDropdown, StripPanel,
 };
 use sq_library::lutlibrary::check_lut_file;
-use sq_runtime::{ModalAsk, WorkerPool};
+use sq_runtime::ModalAsk;
 use sq_uikit::controls_grid::{CGPoint, CGRect, CGSize};
 use sq_uikit::design_tokens::sq_tokens::metrics;
 use sq_uikit::panel_id::PanelID;
@@ -105,6 +105,7 @@ pub struct ColorPageHost {
     scope_generation: u64,
     /// The Sources tiles' names as last drawn, for the accessibility nodes.
     source_names: Vec<String>,
+    source_list: ColorSourceListCache,
 }
 
 /// The first of the two image slots of the Scopes' pictures (`DrawList::IMAGE_SLOTS`: 2-3 scopes).
@@ -200,9 +201,14 @@ impl ColorPageHost {
             scopes_clear: false,
             source_picture: None,
             scope_source: ScopeSource::Program,
-            posters: PosterPump::new(Arc::new(FfmpegPosters), Arc::new(crate::project_services::poster_pool(1)), SharedAtlas::default()),
+            posters: PosterPump::new(
+                Arc::new(FfmpegPosters),
+                Arc::new(crate::project_services::poster_pool(1)),
+                SharedAtlas::default(),
+            ),
             scope_generation: 0,
             source_names: Vec::new(),
+            source_list: ColorSourceListCache::new(false),
         }
         .with_scope_slots()
     }
@@ -599,8 +605,12 @@ impl ColorPageHost {
         if self.on_color_page {
             // Each tile shows the frame its first cut is about (`ColorSourcesLayout::frame_time`); the poster stands in
             // until that frame arrived.
-            let items = ColorSourceListItem::items(cx.session.active_timeline(), Some(cx.session.project()));
-            self.source_names = items.iter().map(|i| i.name.clone()).collect();
+            let items = self.source_list.items(cx.session);
+            if self.source_names.len() != items.len()
+                || self.source_names.iter().zip(items.iter()).any(|(a, b)| *a != b.name)
+            {
+                self.source_names = items.iter().map(|i| i.name.clone()).collect();
+            }
             let timeline = cx.session.active_timeline();
             let wanted = items.iter().filter_map(|i| {
                 Some((cx.session.project().media(i.media)?, ColorSourcesLayout::frame_time(i, timeline)))

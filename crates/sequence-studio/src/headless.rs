@@ -58,7 +58,7 @@ pub(crate) fn build_on(
 ) -> (Headless, MonitorPicture) {
     let atlas = GlyphAtlas::ui(fonts);
     if atlas.is_none() {
-        eprintln!("Inter not found in {}: text will not draw", fonts.display());
+        sq_os::errln!("Inter not found in {}: text will not draw", fonts.display());
     }
     atlas.iter().for_each(|a| a.set_point_scale(scale));
     let clock = Arc::new(SystemClock::new());
@@ -151,7 +151,7 @@ pub(crate) fn wait_for_picture(app: &Headless, picture: &MonitorPicture, slots: 
     // wait 20 s for a picture that cannot come, and say so, so a black shot is not read as a failed open.
     let picture_expected = app.with(|a| video_at_playhead(a.session())).unwrap_or(true);
     if has_media && !picture_expected {
-        eprintln!("shot: no video clip under the playhead, the monitor is black on purpose");
+        sq_os::errln!("shot: no video clip under the playhead, the monitor is black on purpose");
     }
     let end = Instant::now() + Duration::from_secs(20);
     let mut last_poster = Instant::now();
@@ -227,7 +227,7 @@ pub(crate) fn select_clip(session: &mut sq_editor_session::EditorSession, which:
     match id {
         // `select`, as a click does: it also ends Selection Follows Playhead (Swift SharedUIShot: `session.select`).
         Some(id) => session.select_with_partners(std::iter::once(id).collect()),
-        None => eprintln!("--select: no clip {which}"),
+        None => sq_os::errln!("--select: no clip {which}"),
     }
 }
 
@@ -252,7 +252,7 @@ pub(crate) fn shot_poses(pose: &Pose) -> Vec<String> {
 fn write_bar_outlines(app: &Headless, pose: &Pose, title: &str) {
     if title != "all" {
         if !app.with(|a| a.open_bar_menu(title)).unwrap_or(false) {
-            eprintln!("--menu: no menu {title}");
+            sq_os::errln!("--menu: no menu {title}");
         }
         return;
     }
@@ -370,7 +370,7 @@ fn run_step(
             // Loud, not a silent no-op: a menu shortcut never runs behind an open question (cmd+s after a drop that asked
             // "Copy, Move or Leave" saved nothing).
             if let (true, Some(title)) = (key.is_menu_chord(*modifiers), open_dialog(app, size)) {
-                eprintln!(
+                sq_os::errln!(
                     "--step key: the dialog \"{title}\" is open and takes the shortcut; answer it first (key:enter picks its default button)"
                 );
             }
@@ -508,12 +508,16 @@ fn run_step(
                 pump(app, slots, 20, size);
             }
             if media(app) == before {
-                eprintln!("--step import:{}: nothing arrived in the project within {:?}", file.display(), IMPORT_WAIT);
+                sq_os::errln!(
+                    "--step import:{}: nothing arrived in the project within {:?}",
+                    file.display(),
+                    IMPORT_WAIT
+                );
             } else {
                 // The question about files outside the project folder comes right after the clip lands.
                 pump(app, slots, 100, size);
                 if let Some(title) = open_dialog(app, size) {
-                    eprintln!(
+                    sq_os::errln!(
                         "--step import:{}: the dialog \"{title}\" is open (key:enter picks its default button)",
                         file.display()
                     );
@@ -751,6 +755,7 @@ fn play_bench(
     let page = bench_page(bench);
     let (app, picture) = build_on(&support, width, height, 2.0, project, fonts, page, false, None);
     let rss_after_build = crate::play_bench::rss_mb().unwrap_or(0.0);
+    let built_ms = opened.elapsed().as_secs_f64() * 1e3;
     let mut slots = ImageSlots::default();
     let first_by = opened + Duration::from_secs(30);
     // The generation also moves for a cleared monitor: wait for a picture with pixels.
@@ -760,6 +765,28 @@ fn play_bench(
         std::thread::sleep(Duration::from_millis(2));
     }
     let first_picture = opened.elapsed().as_secs_f64() * 1e3;
+    // `--wait-proxies`: let the background queue make the proxies first; the frame loop pumps the service.
+    let proxy_wait = bench.wait_proxies_ms.map(|ms| {
+        let started = Instant::now();
+        let limit = started + Duration::from_millis(ms.max(0) as u64);
+        // The decisions start on the first frames: pump a moment before trusting "settled".
+        let mut idle_turns = 0;
+        while Instant::now() < limit && idle_turns < 100 {
+            app.turn();
+            app.with(|a| a.frame(w, h));
+            std::thread::sleep(Duration::from_millis(20));
+            idle_turns = if app.with(|a| a.session().proxies_settled()).unwrap_or(true) { idle_turns + 1 } else { 0 };
+        }
+        let settled = app.with(|a| a.session().proxies_settled()).unwrap_or(true);
+        format!(
+            "PROXY WAIT: {} after {:.1} s\n",
+            if settled { "settled" } else { "TIMED OUT" },
+            started.elapsed().as_secs_f64()
+        )
+    });
+    // Stage clock (ms since the bench start): app + GPU + project built, pipeline prewarm done (None: still running or off).
+    let prewarm_ms =
+        sq_gpu::pipelines::prewarm_done_at().map(|t| t.saturating_duration_since(opened).as_secs_f64() * 1e3);
     wait_for_picture(&app, &picture, &mut slots, w, h);
     let (fps, length) = app
         .with(|a| {
@@ -950,6 +977,12 @@ fn play_bench(
         project.map_or("none".into(), |p| p.display().to_string()),
         to_first.unwrap_or(f64::NAN)
     );
+    out.push_str(&format!(
+        "STAGES ms since open: built {built_ms:.0}, first picture {first_picture:.0} (wait for the first decode and present {:.0}), prewarm done {}\n",
+        first_picture - built_ms,
+        prewarm_ms.map_or("not at the first picture".into(), |m| format!("{m:.0}"))
+    ));
+    out += proxy_wait.as_deref().unwrap_or("");
     out += &format!("page: {}\n", if bench.color_page { "color" } else { "edit" });
     out += &quality.line();
     out += &frame_csv_note;
@@ -1048,7 +1081,7 @@ fn play_bench(
         };
         let text = serde_json::to_string_pretty(&report.to_json()).unwrap_or_default();
         if let Err(e) = std::fs::write(json_path, text) {
-            eprintln!("{}: {e}", json_path.display());
+            sq_os::errln!("{}: {e}", json_path.display());
         }
     }
     out
@@ -1148,10 +1181,10 @@ fn spawn_real_analysis(app: &Headless, clip: sq_core_time::Id, stab: bool) {
         })
         .flatten()
     else {
-        eprintln!("real-analysis: clip or media not found");
+        sq_os::errln!("real-analysis: clip or media not found");
         return;
     };
-    eprintln!("real-analysis start {} stab={stab}", path.display());
+    sq_os::errln!("real-analysis start {} stab={stab}", path.display());
     std::thread::spawn(move || {
         if std::env::var_os("SQ_WF_REAL_FOREGROUND").is_none() {
             sq_os::thread::set_current_thread_role(sq_os::thread::Role::Background);
@@ -1162,22 +1195,22 @@ fn spawn_real_analysis(app: &Headless, clip: sq_core_time::Id, stab: bool) {
             let r = <sq_app_hosts::FfmpegStabilizationAnalyzer as sq_analysis::stabilization_analyzing::StabilizationAnalyzing>::analyze(
                 &sq_app_hosts::FfmpegStabilizationAnalyzer::new(&path), source, 3840, 2160, None,
                 &sq_analysis::analysis_turn::CancelToken::new());
-            eprintln!(
+            sq_os::errln!(
                 "real-analysis stabilizer ok={} {:.1}s for {secs:.1}s of video",
                 r.is_ok(),
                 t.elapsed().as_secs_f64()
             );
         } else {
             let Ok(models) = std::env::var("SQ_SUBJECT_MASK_MODELS") else {
-                return eprintln!("real-analysis: no SQ_SUBJECT_MASK_MODELS");
+                return sq_os::errln!("real-analysis: no SQ_SUBJECT_MASK_MODELS");
             };
             let mut tracker = match sq_app_hosts::EdgeTamTracker::load(std::path::Path::new(&models)) {
                 Ok(t) => t,
-                Err(e) => return eprintln!("real-analysis: model: {e}"),
+                Err(e) => return sq_os::errln!("real-analysis: model: {e}"),
             };
             let mut frames = match sq_app_hosts::FfmpegTrackFrames::open(&path, source.start, source.end()) {
                 Ok(f) => f,
-                Err(e) => return eprintln!("real-analysis: frames: {e}"),
+                Err(e) => return sq_os::errln!("real-analysis: frames: {e}"),
             };
             let store = sq_analysis::frame_matte_store::FrameMatteStore::new(None);
             let out = sq_app_hosts::run_track(
@@ -1188,9 +1221,9 @@ fn spawn_real_analysis(app: &Headless, clip: sq_core_time::Id, stab: bool) {
                 &[(sq_core_time::Vec2::new(0.5, 0.5), false)],
                 &sq_analysis::analysis_turn::CancelToken::new(),
                 // One line per stored frame: the window closes the process mid-run, so this is the only count of frames done.
-                &mut |p| eprintln!("real-analysis frame {:.0} {:.2}s", p * 1000.0, t.elapsed().as_secs_f64()),
+                &mut |p| sq_os::errln!("real-analysis frame {:.0} {:.2}s", p * 1000.0, t.elapsed().as_secs_f64()),
             );
-            eprintln!(
+            sq_os::errln!(
                 "real-analysis subjectmask frames={} err={:?} {:.1}s for {secs:.1}s of video",
                 out.frames,
                 out.error,
@@ -1388,7 +1421,7 @@ fn workflow_bench(
     use sq_core_masks::masks::ClipMasksExt as _;
     use sq_core_model::{AnimatedProperty, ClipEffect};
     let phases = crate::workflow_bench::script(script_name).ok_or(format!(
-        "no script {script_name} (all, play, drag, effect, stabilizer, subjectmask, undo, scrub, quick)"
+        "no script {script_name} (all, play, drag, effect, stabilizer, subjectmask, undo, scrub, scrub_slow, scrub_fast, quick)"
     ))?;
     let (w, h) = (i64::from(width), i64::from(height));
     let support = std::env::temp_dir().join("sequence-studio-workflow-bench");
@@ -1606,7 +1639,7 @@ fn workflow_bench(
                     && let (Some((u0, s0)), Some((u1, s1))) = (cpu0, sq_os::thread::thread_cpu_split())
                 {
                     // Wall vs the thread's own CPU: wall >> user+sys means it waited (lock, preempted), sys large means kernel work.
-                    eprintln!(
+                    sq_os::errln!(
                         "ui-slow wall={took:.1}ms user={:.1}ms sys={:.1}ms",
                         (u1 - u0).as_secs_f64() * 1e3,
                         (s1 - s0).as_secs_f64() * 1e3
@@ -1661,7 +1694,7 @@ fn workflow_bench(
         r.cpu_pct = 100.0 * (crate::workflow_bench::cpu_seconds() - cpu0) / (r.wall_ms / 1e3).max(1e-3);
         r.rss_peak_mb = crate::workflow_bench::peak_rss_mb();
         let line = r.to_json().to_string();
-        eprintln!("{line}");
+        sq_os::errln!("{line}");
         lines.push(line);
         results.push(r);
     }
@@ -1802,13 +1835,13 @@ fn run_mode(mode: &Mode, project: Option<&Path>, fonts: &Path) -> Result<(), Str
         Mode::Soak { out, width, height } => soak(*width, *height, project, fonts, out),
         Mode::EngineBench { out } => {
             let text = crate::play_bench::run(project.ok_or("--engine-bench needs a clip")?)?;
-            print!("{text}");
+            sq_os::out!("{text}");
             std::fs::write(out, text).map_err(|e| format!("{}: {e}", out.display()))
         }
         Mode::BenchProject { out, media } => {
             let written = crate::bench_project::write_all(out, media)?;
             let text: String = written.iter().map(|p| format!("{}\n", p.display())).collect();
-            print!("{text}");
+            sq_os::out!("{text}");
             Ok(())
         }
         Mode::PerfProject { out, media, case } => {
@@ -1817,7 +1850,7 @@ fn run_mode(mode: &Mode, project: Option<&Path>, fonts: &Path) -> Result<(), Str
                 None => crate::perf_project::write_all(out, media)?,
             };
             let text: String = written.iter().map(|p| format!("{}\n", p.display())).collect();
-            print!("{text}");
+            sq_os::out!("{text}");
             Ok(())
         }
         Mode::StartErrorShot { out, scale, light } => {
@@ -1836,14 +1869,14 @@ fn run_mode(mode: &Mode, project: Option<&Path>, fonts: &Path) -> Result<(), Str
         Mode::PresentCheck { out } => {
             let clip = project.ok_or("--present-check needs a clip")?;
             let report = crate::present_check::run(clip, &crate::present_check::Plan::standard())?;
-            print!("{}", report.text);
+            sq_os::out!("{}", report.text);
             std::fs::write(out, report.text).map_err(|e| format!("{}: {e}", out.display()))
         }
         Mode::MaskEval { out, click, disk } => {
             let clip = project.ok_or("--mask-eval needs a clip")?;
             let disk = disk.as_deref().map(sq_app_hosts::Disk::parse).transpose()?;
             let text = sq_app_hosts::mask_eval(clip, sq_core_time::Vec2::new(click.0, click.1), disk, None)?;
-            print!("{text}");
+            sq_os::out!("{text}");
             std::fs::write(out, text).map_err(|e| format!("{}: {e}", out.display()))
         }
         Mode::Export(args) => {
@@ -1864,11 +1897,11 @@ fn run_mode(mode: &Mode, project: Option<&Path>, fonts: &Path) -> Result<(), Str
                 Some(c) => sq_app_hosts::desktop_entry::apply(env.as_ref(), c)?,
                 None => sq_platform::desktop_integration::state(env.as_ref()),
             };
-            println!("{state:?}");
+            sq_os::outln!("{state:?}");
             Ok(())
         }
         Mode::ListPresets => {
-            crate::export_cli::list_presets().iter().for_each(|n| println!("{n}"));
+            crate::export_cli::list_presets().iter().for_each(|n| sq_os::outln!("{n}"));
             Ok(())
         }
         Mode::A11yDump { out, width, height } => {
@@ -2089,7 +2122,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sq-poster-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let Some(clip_path) = make_clip(&dir) else {
-            eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+            sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
             return;
         };
         let (session, _) = crate::untitled_session(&dir);
@@ -2162,7 +2195,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sq-posters-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let Some(clip_path) = make_clip(&dir) else {
-            eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+            sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
             return;
         };
         let (session, _) = crate::untitled_session(&dir);
@@ -2206,7 +2239,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sq-grid-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let Some(clip_path) = make_clip(&dir) else {
-            eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+            sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
             return;
         };
         let (session, _) = crate::untitled_session(&dir);
@@ -2262,7 +2295,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sq-monitor-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let Some(clip_path) = make_clip(&dir) else {
-            eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+            sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
             return;
         };
         let media = Id::from_u128(100);
@@ -2691,7 +2724,7 @@ mod tests {
     fn new_project_import_twice_answer_save_reopen_keeps_both_clips() {
         let dir = scratch("shot-import-save");
         let Some(made) = make_clip(&dir) else {
-            eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+            sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
             return;
         };
         let (first, second) = (dir.join("a.mp4"), dir.join("b.mp4"));
@@ -2748,7 +2781,7 @@ mod tests {
     ) -> Option<OpenedImport> {
         let dir = scratch(&format!("shot-opened-{}-{files_beside}", project_file.replace('/', "-")));
         let Some(made) = make_clip(&dir) else {
-            eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+            sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
             return None;
         };
         let clip = dir.join("elsewhere").join("c1.mp4");
@@ -2859,7 +2892,7 @@ mod tests {
     fn an_import_step_puts_the_file_in_the_project_panel() {
         let dir = scratch("shot-import");
         let Some(made) = make_clip(&dir) else {
-            eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+            sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
             return;
         };
         let clip = dir.join("zebra-import.mp4");

@@ -257,6 +257,9 @@ impl ShellCommands {
             C::Ungroup => {
                 s.ungroup_selection();
             }
+            C::Unnest => {
+                s.unnest_selection();
+            }
             C::Bundle => {
                 if !s.bundle_selection() {
                     return Some("Select two or more clips to bundle.".to_string());

@@ -435,7 +435,7 @@ fn menus_follow_the_selection() {
     let none = |_: &sq_uikit::editor_command::EditorCommand| String::new();
     let empty = ProjectPanelMenus::items(&ProjectMenuContext::new(), &none, Rc::clone(&run));
     let titles: Vec<_> = empty.iter().filter(|r| !r.title.is_empty()).map(|r| r.title.as_str()).collect();
-    assert_eq!(titles, ["New Folder", "New Sequence…", "New Color Matte…", "Import…", "Find…"]);
+    assert_eq!(titles, ["New Folder", "New Sequence…", "New Color Matte…", "New Adjustment Layer", "Import…", "Find…"]);
     let c = ProjectMenuContext {
         media: vec![id(1)],
         target_count: 1,

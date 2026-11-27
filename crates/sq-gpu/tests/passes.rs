@@ -277,7 +277,7 @@ fn upload(gpu: &Gpu, w: u32, h: u32, data: &[u16]) -> GpuTexture {
 }
 
 #[test]
-fn all_64_pipelines_build() -> R<()> {
+fn all_pipelines_build() -> R<()> {
     let Some(gpu) = gpu() else { return Ok(()) };
     let mut built = 0;
     for e in ENTRIES {
@@ -304,7 +304,7 @@ fn all_64_pipelines_build() -> R<()> {
         }
         built += 1;
     }
-    assert_eq!(built, 64);
+    assert_eq!(built, 66);
     Ok(())
 }
 

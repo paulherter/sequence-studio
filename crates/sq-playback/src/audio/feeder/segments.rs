@@ -337,7 +337,7 @@ impl AudioFeeder {
             Err(e) => {
                 self.failed_opens.insert(media, Instant::now());
                 if self.logged_failures.insert(media) {
-                    eprintln!("AudioFeeder: cannot open audio of media {media}: {e}");
+                    sq_os::errln!("AudioFeeder: cannot open audio of media {media}: {e}");
                 }
                 None
             }

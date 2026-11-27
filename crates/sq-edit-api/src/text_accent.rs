@@ -41,7 +41,9 @@ pub fn check_spec(m: &Map<String, Value>) -> Result<(), String> {
 /// Applies the accent (or clears it) on a text layer.
 pub fn apply(layer: &mut GraphicsLayer, m: &Map<String, Value>) -> Result<(), String> {
     check_spec(m)?;
-    let GraphicsContent::Text { generator } = &layer.content else { return Err("the layer is not a text layer".into()) };
+    let GraphicsContent::Text { generator } = &layer.content else {
+        return Err("the layer is not a text layer".into());
+    };
     let (mut template, animations) = TextGenerator::decode(generator).map_err(|e| format!("text layer: {e}"))?;
     if m.contains_key("clear") {
         template.highlight = None;
@@ -72,5 +74,7 @@ pub fn read_back(layer: &GraphicsLayer) -> Option<Value> {
         return None;
     }
     let c = h.color;
-    Some(json!({"from": h.words.start, "to": h.words.end, "color": {"red": c.red, "green": c.green, "blue": c.blue, "alpha": c.alpha}}))
+    Some(
+        json!({"from": h.words.start, "to": h.words.end, "color": {"red": c.red, "green": c.green, "blue": c.blue, "alpha": c.alpha}}),
+    )
 }

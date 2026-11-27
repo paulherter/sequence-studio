@@ -4,13 +4,13 @@ mod analysis_links;
 mod animation_keystones;
 mod audio_extraction;
 pub mod audio_notice;
-pub mod thumbnail_gate;
 #[cfg(test)]
 mod catalogue_shots;
 mod chrome;
 mod color_page_host;
 mod color_popover;
 mod popover_guard;
+pub mod thumbnail_gate;
 pub use color_popover::PickerAids;
 mod conform_host;
 pub mod desktop_entry;

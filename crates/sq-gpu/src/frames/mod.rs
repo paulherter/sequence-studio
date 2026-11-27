@@ -35,7 +35,13 @@ pub mod census {
     }
 
     impl Live {
-        pub(super) fn new(w: u32, h: u32, format: String, bytes: u64, at: &'static std::panic::Location<'static>) -> Self {
+        pub(super) fn new(
+            w: u32,
+            h: u32,
+            format: String,
+            bytes: u64,
+            at: &'static std::panic::Location<'static>,
+        ) -> Self {
             let key = (w, h, format, at);
             let mut g = LIVE.lock().unwrap_or_else(|e| e.into_inner());
             let e = g.get_or_insert_with(HashMap::new).entry(key.clone()).or_default();
@@ -73,12 +79,16 @@ pub mod census {
         let top: Vec<String> = rows
             .iter()
             .take(n)
-            .map(|(k, v)| format!("{}x {}x{} {} = {} MB @ {}:{}", v.0, k.0, k.1, k.2, v.1 >> 20, k.3.file(), k.3.line()))
+            .map(|(k, v)| {
+                format!("{}x {}x{} {} = {} MB @ {}:{}", v.0, k.0, k.1, k.2, v.1 >> 20, k.3.file(), k.3.line())
+            })
             .collect();
         format!(
             "live textures {count} = {} MB (peak since start {} MB): [{}]",
             total >> 20,
-            PEAK.load(std::sync::atomic::Ordering::Relaxed) >> 20, top.join("; "))
+            PEAK.load(std::sync::atomic::Ordering::Relaxed) >> 20,
+            top.join("; ")
+        )
     }
 }
 
@@ -231,11 +241,7 @@ impl TexturePool {
             Some(t) => t,
             None => gpu.texture(width, height, format),
         };
-        PooledTexture {
-            texture: Some(texture),
-            key,
-            pool: Arc::clone(&self.free),
-        }
+        PooledTexture { texture: Some(texture), key, pool: Arc::clone(&self.free) }
     }
 
     /// Never more than `bytes` of free textures from now on.

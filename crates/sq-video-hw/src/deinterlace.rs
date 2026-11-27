@@ -305,7 +305,7 @@ mod tests {
     #[test]
     fn gpu_deinterlace_matches_the_cpu_pass_within_one_code_value() {
         let Ok(gpu) = Gpu::new() else {
-            eprintln!("skipped: no GPU");
+            sq_os::errln!("skipped: no GPU");
             return;
         };
         let bytes = picture();
@@ -322,7 +322,7 @@ mod tests {
                 keep: None,
             };
             let Some(pass) = GpuDeinterlacer::new(Arc::clone(&gpu), order, PlaneLayout::Nv12) else {
-                eprintln!("skipped: the device cannot write 8-bit planes as storage");
+                sq_os::errln!("skipped: the device cannot write 8-bit planes as storage");
                 return;
             };
             let out = pass.run(&frame).expect("the pass runs");

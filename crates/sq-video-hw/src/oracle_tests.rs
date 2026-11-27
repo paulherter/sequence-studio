@@ -40,13 +40,13 @@ fn ffmpeg() -> Command {
 /// The GPU and the FFmpeg shim/command, or `None` with the reason printed.
 fn ready() -> Option<Arc<Gpu>> {
     if !shim::AVAILABLE || !ffmpeg().arg("-version").output().is_ok_and(|o| o.status.success()) {
-        eprintln!("skipped: the FFmpeg shim is not linked or no ffmpeg command is available");
+        sq_os::errln!("skipped: the FFmpeg shim is not linked or no ffmpeg command is available");
         return None;
     }
     match Gpu::new() {
         Ok(gpu) => Some(gpu),
         Err(e) => {
-            eprintln!("skipped: no GPU adapter ({e})");
+            sq_os::errln!("skipped: no GPU adapter ({e})");
             None
         }
     }
@@ -86,7 +86,7 @@ fn make_clip(name: &str, size: &str, seconds: u32, encode: &[&str]) -> Option<Pa
     // The bundled LGPL build has no libx264: a system ffmpeg on the PATH makes the clip when it has.
     let out = run(ffmpeg()).filter(|o| o.status.success()).or_else(|| run(Command::new("ffmpeg")))?;
     if !out.status.success() || !path.exists() {
-        eprintln!("skipped {name}: ffmpeg cannot encode with {encode:?}: {}", String::from_utf8_lossy(&out.stderr));
+        sq_os::errln!("skipped {name}: ffmpeg cannot encode with {encode:?}: {}", String::from_utf8_lossy(&out.stderr));
         return None;
     }
     Some(path)
@@ -163,7 +163,7 @@ fn check_clip_on(name: &str, encode: &[&str], out_fmt: &str, optional: bool) {
     let (demuxer, dec) = match try_open(&gpu, &clip) {
         Ok(opened) => opened,
         Err(e) if optional => {
-            eprintln!("skipped {name}: no hardware decoder on this machine ({e})");
+            sq_os::errln!("skipped {name}: no hardware decoder on this machine ({e})");
             return;
         }
         Err(e) => panic!("{e}"),
@@ -297,7 +297,7 @@ fn hidden_frames_and_early_frames_stay_out() {
 #[test]
 fn bench_4k_hevc_10_bit() {
     if std::env::var_os("SQ_VIDEO_HW_BENCH").is_none() {
-        eprintln!("skipped: set SQ_VIDEO_HW_BENCH=1");
+        sq_os::errln!("skipped: set SQ_VIDEO_HW_BENCH=1");
         return;
     }
     let Some(gpu) = ready() else { return };
@@ -329,7 +329,7 @@ fn bench_4k_hevc_10_bit() {
         }
     }
     per_frame.sort_by(f64::total_cmp);
-    eprintln!(
+    sq_os::errln!(
         "4K HEVC 10-bit via sq-video-hw: median {:.2} ms/frame, best {:.2}, worst {:.2} ({} chunks)",
         per_frame[per_frame.len() / 2],
         per_frame[0],

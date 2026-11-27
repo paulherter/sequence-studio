@@ -11,17 +11,23 @@ use crate::pending_steps::autosave_rows;
 use crate::shell_commands::ShellPanelFacts;
 use crate::shell_host::{ShellHooks, ShellHost};
 use crate::shell_menu_bar::{ShellMenu, ShellMenuState};
-use sq_core_time::{Id, Timestamp};
-use sq_editor_session::{Change, EditorSession};
+use sq_core_time::{EaseSide, EasingCurve, Id, Timestamp};
+use sq_editor_session::{Change, EditorLookCommands, EditorSession};
 use sq_uikit::command_map::Entry;
 use sq_uikit::editor_command::EditorCommand;
 use sq_uikit::panel_id::PanelID;
+use sq_uikit::sqmenu_model::SQMenuItem;
 
 /// What the last built bar was made from (see the module docs).
 #[derive(Clone, PartialEq)]
 pub(crate) struct MenuStamp {
     project: Id,
+    /// The session's change counters without the playhead one: a seek or a play tick bumps it on every frame, and the
+    /// rows that read the playhead are in `at_playhead` by value.
     versions: [u64; Change::COUNT],
+    /// The rows whose enabled state depends on where the playhead is (Edit Marker, Jump Cut, Mark Overhang, the speed
+    /// point rows). Computed from the session each frame (a scan of the clips, far cheaper than a build).
+    at_playhead: [bool; 9],
     /// Session state the rows read that no change counter covers (a file coming back online, the undo stacks).
     undo: (bool, bool, Option<String>, Option<String>),
     selection: std::collections::BTreeSet<Id>,
@@ -71,7 +77,45 @@ impl ShellHost {
                 );
             }
         }
-        "menu bar kept stale (rows differ in more than title and enabled); add that input to MenuStamp".to_string()
+        /// The first leaf row (with its path of titles) whose fields differ between two lists of rows.
+        fn row_diff(path: &str, fresh: &[SQMenuItem], kept: &[SQMenuItem]) -> Option<String> {
+            for (a, b) in fresh.iter().zip(kept) {
+                if a == b {
+                    continue;
+                }
+                let at = format!("{path} > {}", a.title);
+                if let (Some(x), Some(y)) = (&a.submenu, &b.submenu)
+                    && x != y
+                    && let Some(found) = row_diff(&at, x, y)
+                {
+                    return Some(found);
+                }
+                return Some(format!(
+                    "{at}: fresh (enabled {}, checked {}, shortcut {:?}, help {:?}, icon {:?}), kept (enabled {}, checked {}, shortcut {:?}, help {:?}, icon {:?})",
+                    a.is_enabled,
+                    a.is_checked,
+                    a.shortcut,
+                    a.help,
+                    a.icon,
+                    b.is_enabled,
+                    b.is_checked,
+                    b.shortcut,
+                    b.help,
+                    b.icon
+                ));
+            }
+            None
+        }
+        for (f, k) in fresh.iter().zip(kept) {
+            if let Some(found) = row_diff(&f.title, &f.items, &k.items) {
+                return format!("menu bar kept stale: {found}; add that input to MenuStamp");
+            }
+        }
+        format!(
+            "menu bar kept stale (menu or row count differ: {} vs {}); add that input to MenuStamp",
+            fresh.len(),
+            kept.len()
+        )
     }
 
     /// How many times the bar was built through [`ShellHost::refresh_menus`] (tests and the frame log).
@@ -102,9 +146,21 @@ impl ShellHost {
         } else {
             Timestamp::from_unix_seconds((shell.now.unix_seconds() / 60.0).floor() * 60.0)
         };
+        let versions = versions_without_playhead(session);
         MenuStamp {
             project: session.project().id,
-            versions: *session.versions(),
+            versions,
+            at_playhead: [
+                session.can_edit_marker_at_playhead(),
+                EditorLookCommands::enabled(&EditorCommand::AddFrameHold, session).unwrap_or(false),
+                session.jump_cut_enabled(),
+                session.can_mark_overhang(),
+                session.can_add_speed_point(),
+                session.speed_point_accepts_ease(&EasingCurve::linear(), EaseSide::Both),
+                session.speed_point_accepts_ease(&EasingCurve::ease_in_out(), EaseSide::Both),
+                session.speed_point_accepts_ease(&EasingCurve::ease_in(), EaseSide::In),
+                session.speed_point_accepts_ease(&EasingCurve::ease_out(), EaseSide::Out),
+            ],
             undo: (
                 session.can_undo(),
                 session.can_redo(),
@@ -125,4 +181,14 @@ impl ShellHost {
             keys: self.map.entries.clone(),
         }
     }
+}
+
+/// The session's change counters with the playhead one zeroed: a seek or a play tick bumps it on every frame, and nothing
+/// that is cached on these counters (the menu stamp, the Angles clip scan) reads the playhead.
+pub(crate) fn versions_without_playhead(session: &EditorSession) -> [u64; Change::COUNT] {
+    let mut versions = *session.versions();
+    if let Some(i) = Change::PLAYHEAD.index() {
+        versions[i] = 0;
+    }
+    versions
 }

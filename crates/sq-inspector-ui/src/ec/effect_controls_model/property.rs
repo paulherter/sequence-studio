@@ -279,6 +279,10 @@ impl EffectProperty {
     /// P4: the X/Y pair this property is the row of (it is the pair's X member); nil for every other property.
     pub fn pair(&self) -> Option<EffectParamPair> {
         let EffectProperty::Fx { kind, key, .. } = self else { return None };
+        if let Some(spec) = EffectCatalog::spec_ref(kind) {
+            let pr = spec.pair_containing(key)?;
+            return (pr.x == *key).then(|| pr.clone());
+        }
         let spec = EffectCatalog::spec_for(kind)?;
         let pr = spec.pair_containing(key)?;
         (pr.x == *key).then(|| pr.clone())

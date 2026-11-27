@@ -249,6 +249,10 @@ impl SessionProxyServing for ProxyHost {
         self.dispatch();
     }
 
+    fn proxies_settled(&self) -> bool {
+        !self.service.needs_busy_polling()
+    }
+
     fn background_jobs(&self) -> Vec<BackgroundProxyJob> {
         self.service
             .queue

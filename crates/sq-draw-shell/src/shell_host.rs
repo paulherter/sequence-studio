@@ -29,7 +29,8 @@ use sq_core_time::{Id, IdSource, Timestamp};
 use sq_draw::{Canvas, DrawTheme, InputEvent, InputKey, InputModifiers, TextMeasure, UiCx};
 use sq_editor_session::{
     AudioRoleDefaults, CommandRouting, EdgeSelection, EditAction, EditorLookCommands, EditorSession, KeyRouter,
-    MagicTrackHealthCache, PasteContent, PasteOffer, PasteRoute, QuickApplyItem, RecentProjects, StorageLocations, TrimModeModel,
+    MagicTrackHealthCache, PasteContent, PasteOffer, PasteRoute, QuickApplyItem, RecentProjects, StorageLocations,
+    TrimModeModel,
 };
 use sq_library::preset_store::PresetItem;
 use sq_os::Platform;
@@ -490,6 +491,10 @@ pub struct ShellHost {
     /// What the last bar built by `refresh_menus` was made from.
     pub(crate) menu_stamp: RefCell<Option<crate::shell_menu_cache::MenuStamp>>,
     pub(crate) menu_builds: Cell<u64>,
+    /// `has_angles_clip` of the last clip scan, keyed on the project and the session's change counters.
+    pub(crate) angles_scan: RefCell<Option<(sq_core_time::Id, [u64; sq_editor_session::Change::COUNT], bool)>>,
+    /// How many clip scans ran (tests).
+    pub angles_scans: Cell<u64>,
     /// A Paste whose clipboard read runs on a worker thread; its result is taken in `poll_paste`.
     pub(crate) pending_paste: RefCell<Option<crate::shell_paste_media::PendingPaste>>,
     /// Tests turn this on: every frame that keeps the bar builds it again and must find it equal (`refresh_menus`).
@@ -662,6 +667,8 @@ impl ShellHost {
             facts_memo: RefCell::new(None),
             menu_stamp: RefCell::new(None),
             menu_builds: Cell::new(0),
+            angles_scan: RefCell::new(None),
+            angles_scans: Cell::new(0),
             pending_paste: RefCell::new(None),
             verify_menu_cache: false,
             menus_built: RefCell::new(Vec::new()),
@@ -767,7 +774,7 @@ impl ShellHost {
         Rc::clone(&self.events)
     }
 
-    pub(crate) fn emit(&mut self, e: ShellEvent) {
+    pub fn emit(&mut self, e: ShellEvent) {
         self.events.borrow_mut().push(e);
     }
 
@@ -1009,9 +1016,17 @@ impl ShellHost {
 
     pub(crate) fn current_facts_uncached(&self, session: &EditorSession, hooks: &dyn ShellHooks) -> ShellPanelFacts {
         let mut p = self.panels.clone();
-        p.has_angles_clip = session
-            .active_timeline()
-            .is_some_and(|t| t.tracks.iter().any(|tr| tr.clips().iter().any(AnglesClipExt::is_angles_clip)));
+        // The scan walks every clip; it reruns only after a session change (the stamp asks on every frame).
+        let key = (session.project().id, crate::shell_menu_cache::versions_without_playhead(session));
+        let cached = self.angles_scan.borrow().filter(|c| (c.0, c.1) == key).map(|c| c.2);
+        p.has_angles_clip = cached.unwrap_or_else(|| {
+            self.angles_scans.set(self.angles_scans.get() + 1);
+            let found = session
+                .active_timeline()
+                .is_some_and(|t| t.tracks.iter().any(|tr| tr.clips().iter().any(AnglesClipExt::is_angles_clip)));
+            *self.angles_scan.borrow_mut() = Some((key.0, key.1, found));
+            found
+        });
         if let Some(offer) = hooks.media_clipboard_offer() {
             p.can_paste_media =
                 matches!(self.media_route(session, offer), PasteRoute::ImportFiles | PasteRoute::ImportImage);

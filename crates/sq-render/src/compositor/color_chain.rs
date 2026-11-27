@@ -206,7 +206,7 @@ mod tests {
             }
             assert!((got[i * 4 + 3] - 0.75).abs() < 1e-3, "{name}: alpha not passed through");
         }
-        eprintln!("{name}: worst normalized error {worst}");
+        sq_os::errln!("{name}: worst normalized error {worst}");
         Some(worst)
     }
 

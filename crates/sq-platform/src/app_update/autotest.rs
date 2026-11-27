@@ -57,7 +57,7 @@ pub fn step_line(step: &str, detail: &str) -> String {
 /// Writes a line to stderr and, when given, appends it to the log file.
 pub fn log(log_file: Option<&Path>, step: &str, detail: &str) {
     let line = step_line(step, detail);
-    eprintln!("{line}");
+    sq_os::errln!("{line}");
     if let Some(file) = log_file
         && let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(file)
     {

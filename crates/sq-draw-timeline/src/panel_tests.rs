@@ -458,6 +458,31 @@ mod transition_layer {
     }
 
     #[test]
+    fn an_adjustment_layer_dragged_over_a_clip_lands_on_the_track_above_and_on_an_empty_spot_in_place() {
+        use crate::EffectDrop;
+        let (mut r, _) = setup();
+        let ids = vec![sq_editor_session::EffectDragPayload::ADJUSTMENT_LAYER_ID.to_string()];
+        let five = Time::seconds(5);
+        let (v1, v2) = (r.tl().tracks[0].id, r.tl().tracks[1].id);
+        let y_of = |r: &Rig, t: Id| {
+            let row = r.p.rows().into_iter().find(|x| x.track == t).expect("row");
+            row.y + row.height / 2.0
+        };
+        let x = r.p.geometry.x(FD * 10);
+        // Over the V1 clip: the free spot on V2 above.
+        let y1 = y_of(&r, v1);
+        assert!(r.p.effect_drop_hover(&ids, x as f32, y1 as f32, five));
+        let Some(EffectDrop::Layer(l)) = r.p.effect_drop_take() else { panic!("layer target expected") };
+        assert_eq!((l.track, l.adjustment), (v2, true));
+        // On the empty spot of V2: V2 itself, no longer than the gap before the transition layer at frame 40.
+        let y2 = y_of(&r, v2);
+        assert!(r.p.effect_drop_hover(&ids, x as f32, y2 as f32, five));
+        let Some(EffectDrop::Layer(l)) = r.p.effect_drop_take() else { panic!("layer target expected") };
+        assert_eq!(l.track, v2);
+        assert!(l.start + l.duration <= FD * 40);
+    }
+
+    #[test]
     fn the_cut_marker_moves_the_cut_as_one_undo_step() {
         let (mut r, id) = setup();
         let row = r.p.rows().into_iter().find(|x| x.track == r.tl().tracks[1].id).expect("row");

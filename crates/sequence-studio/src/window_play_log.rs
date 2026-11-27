@@ -135,6 +135,7 @@ impl WindowPlayLog {
         self.fps = fps;
         self.played = Some(Instant::now());
         sq_playback::engine::frame_trace::set_enabled(true);
+        sq_gpu::gpu::timing::reset();
         Step::Play
     }
 
@@ -227,7 +228,7 @@ impl WindowPlayLog {
                 "{text}draw outcomes over the run: presented {ok}, occluded {occluded}, no drawable {none}, errors {failed}\n"
             )
         };
-        let text = text + &loop_text;
+        let text = text + &gpu_pass_text() + &loop_text;
         let _ = std::fs::write(&self.path, &text);
         text
     }
@@ -376,6 +377,27 @@ pub fn summary_from(rows: &[(f64, i64, f64, bool)], secs: f64, fps: f64, start: 
         uq(0.95),
         uq(1.0),
     )
+}
+
+/// Per-pass GPU time over the run (`SQ_GPU_TIMING=1`, adapters with timestamp queries), the window run's counterpart of the
+/// `--play-bench` report: which pass makes a page's engine frame heavier. Empty without the switch.
+fn gpu_pass_text() -> String {
+    let passes = sq_gpu::gpu::timing::report();
+    if passes.is_empty() {
+        return String::new();
+    }
+    let mut out = String::from("GPU time per pass over the run (SQ_GPU_TIMING=1):\n");
+    for t in passes.iter().take(24) {
+        out += &format!(
+            "  {:<56} {:>8.1} ms total, {:>6.3} ms mean, {:>6.2} ms max, {} passes\n",
+            t.label,
+            t.total_ms,
+            t.total_ms / t.passes.max(1) as f64,
+            t.max_ms,
+            t.passes
+        );
+    }
+    out
 }
 
 #[cfg(test)]

@@ -287,6 +287,9 @@ fn selection_commands_enable_with_the_right_clip() {
     check(Scenario::Plain, C::Ungroup, true, |_, rig| {
         assert!(rig.session.group_selection().is_some());
     });
+    check(Scenario::Plain, C::Unnest, true, |_, rig| {
+        assert!(rig.session.nest_selection("N").is_some());
+    });
     check(Scenario::Plain, C::Unbundle, true, |_, rig| {
         assert!(rig.session.bundle_selection());
     });
@@ -547,6 +550,7 @@ fn the_menu_enable_rules_match_swift() {
         assert!(enabled_in(Scenario::Plain, c, nothing), "{c:?} with a selection");
     }
     assert!(!enabled_in(Scenario::Plain, C::Ungroup, nothing));
+    assert!(!enabled_in(Scenario::Plain, C::Unnest, nothing), "Unnest needs a nested clip");
     // Undo / Redo follow the history.
     assert!(enabled_in(Scenario::Plain, C::Undo, nothing));
     assert!(!enabled_in(Scenario::Plain, C::Redo, nothing));

@@ -43,11 +43,10 @@ pub fn read_mogrt(url: &Path) -> Result<MogrtRead, String> {
 
 fn mogrt_read(result: MogrtImportResult) -> Result<MogrtRead, String> {
     let MogrtImportResult { template, thumbnail, report, .. } = result;
-    let value = serde_json::to_value(&template).map_err(|e| e.to_string())?;
     let dropped_count = report.entries().iter().filter(|e| e.status == Status::Dropped).map(|e| e.count).sum();
     Ok(MogrtRead {
         name: template.name.clone(),
-        preset: TitleTemplatePreset { template: value, thumbnail },
+        preset: TitleTemplatePreset { template: template.clone(), thumbnail },
         slot_count: template.slots.len(),
         dropped_count,
         report,

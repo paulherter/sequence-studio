@@ -602,13 +602,14 @@ mod api_look_tests {
         .iter()
         .any(|f| std::path::Path::new(f).exists());
         if !has_font {
-            eprintln!("skipped: no color emoji font");
+            sq_os::errln!("skipped: no color emoji font");
             return;
         }
         let _lock = crate::portable_fallback::FALLBACK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         PortableFallback::set_bitmap_emoji(PortableFallback::system_bitmap_emoji());
         let r = PortableTextRenderer::render("Hi \u{1F525}", &paul(), None, None, 1.0, None).expect("raster");
-        let colorful = r.picture.pixels.chunks(4).any(|c| c[3] > 0.8 && c[0].max(c[1]).max(c[2]) - c[0].min(c[1]).min(c[2]) > 0.3);
+        let colorful =
+            r.picture.pixels.chunks(4).any(|c| c[3] > 0.8 && c[0].max(c[1]).max(c[2]) - c[0].min(c[1]).min(c[2]) > 0.3);
         assert!(colorful, "the emoji drew no color pixel");
     }
 
@@ -617,7 +618,7 @@ mod api_look_tests {
     fn a_bitmap_emoji_is_scaled_to_the_font_size_and_sits_on_the_baseline() {
         let _lock = crate::portable_fallback::FALLBACK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let Some(font) = PortableFallback::system_bitmap_emoji() else {
-            eprintln!("skipped: no color emoji font");
+            sq_os::errln!("skipped: no color emoji font");
             return;
         };
         PortableFallback::set_bitmap_emoji(Some(font));
@@ -625,8 +626,9 @@ mod api_look_tests {
         let size = style.size;
         let r = PortableTextRenderer::render("\u{1F525}", &style, None, None, 1.0, None).expect("raster");
         let p = &r.picture;
-        let rows: Vec<usize> =
-            (0..p.height).filter(|&y| (0..p.width).any(|x| px(p, x, y)[3] > 0.5 && px(p, x, y)[0] > px(p, x, y)[2] + 0.2)).collect();
+        let rows: Vec<usize> = (0..p.height)
+            .filter(|&y| (0..p.width).any(|x| px(p, x, y)[3] > 0.5 && px(p, x, y)[0] > px(p, x, y)[2] + 0.2))
+            .collect();
         assert!(!rows.is_empty(), "no colored rows");
         let tall = (rows[rows.len() - 1] - rows[0] + 1) as f64;
         assert!(tall > size * 0.6 && tall < size * 1.6, "emoji {tall} px tall at font size {size}");

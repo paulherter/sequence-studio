@@ -268,21 +268,21 @@ mod tests {
     #[test]
     fn a_real_clip_is_transcribed_through_ffmpeg_with_language_detection_and_a_channel_map() {
         let Ok(clip) = std::env::var("SQ_SPEECH_CLIP") else {
-            eprintln!("skipped: SQ_SPEECH_CLIP (a media file with English speech) is not set");
+            sq_os::errln!("skipped: SQ_SPEECH_CLIP (a media file with English speech) is not set");
             return;
         };
         let service = platform_service();
         let auto = Locale::new("auto");
         if let Err(e) = service.prepare(&auto, &mut |_| {}, &CancelToken::new()) {
             assert!(matches!(e, TranscriptionError::EngineMissing(_)), "{e}");
-            eprintln!("skipped: {e}");
+            sq_os::errln!("skipped: {e}");
             return;
         }
         let path = Path::new(&clip);
         let text =
             |t: &Transcript| t.words.iter().map(|w| w.text.as_str()).collect::<Vec<_>>().join(" ").to_lowercase();
         let t = service.transcribe(path, &auto, &mut |_| {}, &CancelToken::new(), &mut RandomIds).expect("transcribe");
-        eprintln!("detected {} -> {}", t.language, text(&t));
+        sq_os::errln!("detected {} -> {}", t.language, text(&t));
         assert!(t.language.starts_with("en"), "{}", t.language);
         assert!(text(&t).contains("country"), "{}", text(&t));
         // The same clip through the item's channel map (first channel only).

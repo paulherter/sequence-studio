@@ -334,7 +334,7 @@ fn settings_the_export_sheet_and_the_shortcuts_page_keep_every_key_from_the_time
             h.turn();
         }
         if !has_dialog(&h) {
-            eprintln!("not opened in the headless app: {name}");
+            sq_os::errln!("not opened in the headless app: {name}");
             continue;
         }
         opened.push(name);
@@ -447,7 +447,7 @@ fn the_export_finished_card_owns_the_keys_until_this_key_closes_it(closing_key: 
     typed_key(&h, InputKey::Character('m'), ctrl, None);
     let button = h.with(|a| a.shell_parts().shell.dialog().and_then(|d| d.button_frames().get(&0).copied())).flatten();
     let title = h.with(|a| a.shell_parts().shell.dialog().map(|d| format!("{:?}", d.model.buttons))).flatten();
-    eprintln!("PROBE sheet {} {title:?} button {button:?}", has_dialog(&h));
+    sq_os::errln!("PROBE sheet {} {title:?} button {button:?}", has_dialog(&h));
     assert!(button.is_some(), "the Export button");
     // The Export button, then the first button of every question that follows (offline media, name taken).
     for round in 0..4 {
@@ -463,7 +463,7 @@ fn the_export_finished_card_owns_the_keys_until_this_key_closes_it(closing_key: 
         for _ in 0..5 {
             h.turn();
         }
-        eprintln!("PROBE round {round} jobs {}", queue.all_statuses().len());
+        sq_os::errln!("PROBE round {round} jobs {}", queue.all_statuses().len());
     }
     let end = std::time::Instant::now() + std::time::Duration::from_secs(10);
     while std::time::Instant::now() < end {

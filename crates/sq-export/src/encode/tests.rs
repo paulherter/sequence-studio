@@ -123,12 +123,12 @@ fn export(
     url: &Path,
 ) -> Result<Outcome, ExportError> {
     if !shim::AVAILABLE {
-        eprintln!("skipped: the FFmpeg shim is not linked");
+        sq_os::errln!("skipped: the FFmpeg shim is not linked");
         return Ok(Outcome::Skipped);
     }
     match enc.export(video, audio, s, url, &CancelToken::new(), &mut |_| {}) {
         Err(ExportError::WriterFailed(m)) if m.contains("encoder") && m.contains("could be opened") => {
-            eprintln!("skipped: {m}");
+            sq_os::errln!("skipped: {m}");
             Ok(Outcome::Skipped)
         }
         Ok(_) => Ok(Outcome::Written),
@@ -153,6 +153,7 @@ fn decode(path: &Path) -> (Vec<Vec<u8>>, Vec<i64>) {
         hardware: false,
         extra_hw_frames: 0,
         sw_threads: 0,
+        scrub: false,
     })
     .unwrap();
     let mut frames: Vec<(i64, Vec<u8>)> = Vec::new();
@@ -226,7 +227,7 @@ fn software_h264_mp4_structure_pictures_and_determinism() {
     let (a, b) = (scratch("sw-a.mp4"), scratch("sw-b.mp4"));
     let s = settings(VideoCodec::H264, false);
     let Outcome::Written = export(&enc, &mut Synth::new(24), None, &s, &a).unwrap() else { return };
-    println!("software H.264 encoder: {}", enc.last_video_encoder());
+    sq_os::outln!("software H.264 encoder: {}", enc.last_video_encoder());
     assert_faststart(&a);
     check_video(&a, 24, 38.0);
     export(&enc, &mut Synth::new(24), None, &s, &b).unwrap();
@@ -242,7 +243,7 @@ fn hardware_h264_reaches_45_db() {
         return;
     };
     let name = enc.last_video_encoder();
-    println!("H.264 encoder with hardware on: {name}");
+    sq_os::outln!("H.264 encoder with hardware on: {name}");
     let hardware = ["videotoolbox", "amf", "nvenc", "qsv", "_mf"].iter().any(|h| name.contains(h));
     check_video(&path, 24, if hardware { 45.0 } else { 38.0 });
 }
@@ -256,7 +257,7 @@ fn hardware_hevc_reaches_45_db() {
         return;
     };
     let name = enc.last_video_encoder();
-    println!("HEVC encoder with hardware on: {name}");
+    sq_os::outln!("HEVC encoder with hardware on: {name}");
     let hardware = ["videotoolbox", "amf", "nvenc", "qsv", "_mf"].iter().any(|h| name.contains(h));
     check_video(&path, 24, if hardware { 45.0 } else { 38.0 });
 }
@@ -305,7 +306,7 @@ fn hevc_mp4_is_tagged_hvc1() {
     else {
         return;
     };
-    println!("HEVC encoder: {}", enc.last_video_encoder());
+    sq_os::outln!("HEVC encoder: {}", enc.last_video_encoder());
     let bytes = std::fs::read(&path).unwrap();
     // The LGPL build has no libx265: HEVC then falls back to MPEG-4 Part 2, which must not carry the hvc1 tag.
     let fallback = enc.last_video_encoder() == "mpeg4";
@@ -387,7 +388,7 @@ fn wav_pcm24_is_exact_and_flac_is_lossless() {
     let enc = FfmpegExportEncoder::new();
     for (format, name) in [(AudioFileFormat::Wav, "tone.wav"), (AudioFileFormat::Flac, "tone.flac")] {
         if !shim::AVAILABLE {
-            eprintln!("skipped: the FFmpeg shim is not linked");
+            sq_os::errln!("skipped: the FFmpeg shim is not linked");
             return;
         }
         let mut s = ExportSettings::default().audio;
@@ -424,7 +425,7 @@ fn cancel_deletes_the_partial_file() {
     });
     match r {
         Err(ExportError::Cancelled) => assert!(!path.exists(), "the partial file is gone"),
-        Err(ExportError::WriterFailed(m)) => eprintln!("skipped: {m}"),
+        Err(ExportError::WriterFailed(m)) => sq_os::errln!("skipped: {m}"),
         other => panic!("{other:?}"),
     }
 }
@@ -440,7 +441,7 @@ fn a_failing_frame_stops_the_export_and_removes_the_file() {
     src.fail_at = Some(5);
     let r = enc.export(&mut src, None, &settings(VideoCodec::H264, false), &path, &CancelToken::new(), &mut |_| {});
     if matches!(r, Err(ExportError::WriterFailed(_))) {
-        eprintln!("skipped: no H.264 encoder");
+        sq_os::errln!("skipped: no H.264 encoder");
         return;
     }
     assert_eq!(r, Err(ExportError::Other("render failed".to_string())));
@@ -451,7 +452,7 @@ fn a_failing_frame_stops_the_export_and_removes_the_file() {
 fn gif_and_stills_are_written() {
     let enc = FfmpegExportEncoder::new();
     if !shim::AVAILABLE {
-        eprintln!("skipped: the FFmpeg shim is not linked");
+        sq_os::errln!("skipped: the FFmpeg shim is not linked");
         return;
     }
     let mut s = settings(VideoCodec::H264, false);
@@ -466,7 +467,7 @@ fn gif_and_stills_are_written() {
             assert_eq!(u16::from_le_bytes([bytes[6], bytes[7]]), W as u16);
             assert_eq!(Demux::open(&gif).map(|d| d.packets().len()).unwrap_or(6), 6);
         }
-        Err(e) => eprintln!("skipped: {e}"),
+        Err(e) => sq_os::errln!("skipped: {e}"),
     }
     // A still from a half-float frame: PNG signature, EXR magic.
     let half: Vec<u8> = (0..W * H * 4).flat_map(|_| 0x3800u16.to_le_bytes()).collect();
@@ -476,7 +477,7 @@ fn gif_and_stills_are_written() {
         let file = scratch(&format!("still.{}", format.file_extension()));
         match super::sequence::write_one(&half, W, H, W * 8, format, &file) {
             Ok(()) => assert_eq!(&std::fs::read(&file).unwrap()[..4], magic),
-            Err(e) => eprintln!("skipped: {e}"),
+            Err(e) => sq_os::errln!("skipped: {e}"),
         }
     }
 }
@@ -522,7 +523,7 @@ fn constant_quality_reaches_the_encoder_and_orders_the_sizes() {
         let Some(high) = size_of(&enc, &s, &format!("cq-high-{hardware}.mp4")) else { return };
         s.video.set_constant_quality(Some(0.1));
         let low = size_of(&enc, &s, &format!("cq-low-{hardware}.mp4")).unwrap();
-        println!("constant quality ({}): q 1.0 = {high} B, q 0.1 = {low} B", enc.last_video_encoder());
+        sq_os::outln!("constant quality ({}): q 1.0 = {high} B, q 0.1 = {low} B", enc.last_video_encoder());
         assert!(high > low, "{}: quality 1.0 ({high} B) is not larger than 0.1 ({low} B)", enc.last_video_encoder());
     }
 }
@@ -534,12 +535,12 @@ fn maximum_bitrate_caps_a_software_vbr_file() {
     s.video.bitrate = BitrateMode::Average(20_000_000);
     let Some(free) = size_of(&enc, &s, "max-free.mp4") else { return };
     if enc.last_video_encoder() == "mpeg4" {
-        eprintln!("skipped: the mpeg4 fallback (LGPL build) has no VBV cap");
+        sq_os::errln!("skipped: the mpeg4 fallback (LGPL build) has no VBV cap");
         return;
     }
     s.video.bitrate = BitrateMode::AverageAndMax { average: 300_000, max: 400_000 };
     let capped = size_of(&enc, &s, "max-capped.mp4").unwrap();
-    println!("maximum bitrate: uncapped {free} B, 400 kbit/s cap {capped} B");
+    sq_os::outln!("maximum bitrate: uncapped {free} B, 400 kbit/s cap {capped} B");
     // 24 frames at 30 fps = 0.8 s: 400 kbit/s is 40 kB, with container overhead and the first buffer fill.
     assert!(capped < free && capped < 80_000, "capped file {capped} B");
 }
@@ -570,7 +571,7 @@ fn the_verifier_reads_back_the_level_of_a_written_wav() {
     let mut tone = SineAudioSource::new(s.audio.sample_rate, 2, Time::new(2, 1), 1000, 0.5);
     enc.export(&mut Synth::new(60), Some(&mut tone), &s, &path, &CancelToken::new(), &mut |_| {}).unwrap();
     let m = super::measure_output_audio(&path).unwrap().expect("the file has audio");
-    println!("verifier: {:.1} LUFS, true peak {:.2} dBTP", m.integrated_lufs, m.true_peak_db);
+    sq_os::outln!("verifier: {:.1} LUFS, true peak {:.2} dBTP", m.integrated_lufs, m.true_peak_db);
     assert!((m.true_peak_db + 6.0).abs() < 0.6, "true peak {}", m.true_peak_db);
     assert!(m.integrated_lufs.is_finite() && m.integrated_lufs < -6.0);
 }
@@ -590,15 +591,17 @@ fn a_normalized_m4a_is_measured_again_and_stays_under_the_ceiling() {
     let report = match enc.export(&mut Synth::new(90), Some(&mut tone), &s, &path, &CancelToken::new(), &mut |_| {}) {
         Ok(r) => r.expect("a loudness report"),
         Err(ExportError::WriterFailed(m)) => {
-            eprintln!("skipped: {m}");
+            sq_os::errln!("skipped: {m}");
             return;
         }
         Err(e) => panic!("{e}"),
     };
     let v = report.verified.expect("the written file was measured");
-    println!(
+    sq_os::outln!(
         "normalized m4a: file {:.2} LUFS / {:.2} dBTP, ceiling {}",
-        v.integrated_lufs, v.true_peak_db, report.ceiling_db
+        v.integrated_lufs,
+        v.true_peak_db,
+        report.ceiling_db
     );
     assert_eq!(report.ceiling_db, -1.0, "the report keeps the ceiling the user asked for");
     assert!(v.true_peak_db <= -1.0 + 0.3, "true peak {}", v.true_peak_db);

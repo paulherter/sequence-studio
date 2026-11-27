@@ -147,7 +147,7 @@ fn translation_is_interpolated_close_to_the_truth() -> R {
             error(&better.blend, &truth, margin),
             error(&faster.flow, &truth, margin),
         );
-        eprintln!(
+        sq_os::errln!(
             "translation d=({dx}, {dy}) t={t}: flow(better) {fe:.2} flow(faster) {ff:.2} blend {be:.2} (8-bit steps)"
         );
         assert!(fe < be * 0.25, "flow {fe} vs blend {be}");

@@ -443,7 +443,7 @@ mod tests {
         let new = MaskOps::blur(&m, w, h, 12.0);
         let new_ms = t.elapsed().as_secs_f64() * 1e3;
         assert!(old.iter().zip(&new).all(|(a, b)| a.to_bits() == b.to_bits()));
-        eprintln!("blur {w}x{h} sigma 12: old {old_ms:.1} ms, new {new_ms:.1} ms");
+        sq_os::errln!("blur {w}x{h} sigma 12: old {old_ms:.1} ms, new {new_ms:.1} ms");
     }
 
     #[test]

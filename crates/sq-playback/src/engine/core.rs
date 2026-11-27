@@ -17,6 +17,7 @@ use super::caption_plan;
 use super::clock_hold::{ClockHold, FIRST_PICTURE_LIMIT, HoldStep, ahead_indices};
 use super::display_pacing::{DisplayPacer, PlayStart, PlayStep, loop_wrap, wrapped};
 use super::handle::{Command, EngineDeps, Msg, Shared, Shown, Status};
+use super::key_strip::{self, KeyStrip, STRIP_DIVISOR, StripOutcome};
 use super::lanes::{CancelToken, LanePool};
 use super::late_frames::{CUT_GRACE, LateFrames};
 use super::look_preview::LookPreview;
@@ -187,6 +188,23 @@ impl Lane {
     }
 }
 
+/// `drop_idle_lanes`: an extra lane stays when something read it lately, or while the cut-in it was warmed for is still ahead.
+/// The playing lane of the same file reaches a near jump first, so the prefetch stopped refreshing the warmed lane and it was closed
+/// as idle before the cut (Dreh 26.11: 616 ms seek of a stale lane at 17.0 s).
+pub(crate) fn keeps_lane(idle_refreshes: u64, hold_until: Option<Time>, position: Time) -> bool {
+    idle_refreshes < 90 || hold_active(hold_until, position)
+}
+
+/// A hold counts while its cut is ahead and within the 4 s the prefetch samples ahead of the playhead.
+pub(crate) fn hold_active(hold_until: Option<Time>, position: Time) -> bool {
+    hold_until.is_some_and(|h| h > position && h - position <= Time::seconds(4))
+}
+
+/// Whether a hold survives a re-plan: the cut it was warmed for is still in the plan, or lies beyond what the plan looks at.
+pub(crate) fn hold_survives(h: Time, cuts: &[Time], position: Time, plan_ahead: Time) -> bool {
+    h - position > plan_ahead || cuts.contains(&h)
+}
+
 pub struct ProgramEngine {
     deps: EngineDeps,
     tx: Sender<Msg>,
@@ -215,6 +233,11 @@ pub struct ProgramEngine {
     look_preview: Option<LookPreview>,
     media_paths: HashMap<Id, String>,
     last_error: Option<String>,
+    /// Set by the compose of a stabilized layer whose gyro analysis failed (the original shows); `compose` moves it to `last_error`.
+    gyro_failed: Mutex<Option<String>>,
+    /// A stabilized layer's gate said Wait: nothing new is drawn and the clock stays held until its data is ready.
+    gyro_waiting: bool,
+    gyro_watch: super::gyro_gate::GyroWatch,
 
     sources: HashMap<Id, Arc<MediaSource>>,
     /// The open proxy of a media, beside its original.
@@ -223,6 +246,8 @@ pub struct ProgramEngine {
     /// Media the opener has no proxy for (asked once until `proxies_changed`).
     no_proxy: HashSet<Id>,
     proxy_use: ProxyUse,
+    /// Media read from their proxy while playing even at Full quality (software-decoded here; set by the session).
+    proxy_playback_media: HashSet<Id>,
     /// The media whose proxy the monitor reads right now (for the one log line per switch).
     proxy_reading: HashSet<Id>,
     opening: HashSet<Id>,
@@ -241,6 +266,8 @@ pub struct ProgramEngine {
     cache: HashMap<Key, Picture>,
     cache_bytes: usize,
     cache_generation: u64,
+    /// One quarter-size key picture per GOP of idle software 4K clips: the stand-in of a scrub jump (`key_strip.rs`).
+    strip: Arc<KeyStrip>,
     frame_cache_bytes: usize,
     in_flight: HashSet<Key>,
     /// The refresh each file was last needed at (wanted, prefetched, in flight or held for a cut-in): `close_idle_media`.
@@ -320,6 +347,7 @@ impl ProgramEngine {
         format.height = 1080;
         let timeline = Timeline::new(Id::from_u128(0), "", format, Vec::new());
         let now = Instant::now();
+        let strip_cap = key_strip::strip_cap(deps.frame_cache_bytes);
         if let Some(g) = &deps.gyro {
             // A Gyroflow analysis finished: draw again with the stabilized picture.
             let (tx, shared) = (tx.clone(), Arc::clone(&shared));
@@ -351,11 +379,15 @@ impl ProgramEngine {
             look_preview: None,
             media_paths: HashMap::new(),
             last_error: None,
+            gyro_failed: Mutex::new(None),
+            gyro_waiting: false,
+            gyro_watch: super::gyro_gate::GyroWatch::default(),
             sources: HashMap::new(),
             proxy_sources: HashMap::new(),
             proxy_opening: HashSet::new(),
             no_proxy: HashSet::new(),
             proxy_use: ProxyUse::DEFAULT,
+            proxy_playback_media: HashSet::new(),
             proxy_reading: HashSet::new(),
             opening: HashSet::new(),
             open_failed: HashMap::new(),
@@ -369,6 +401,7 @@ impl ProgramEngine {
             cache: HashMap::new(),
             cache_bytes: 0,
             cache_generation: 0,
+            strip: Arc::new(KeyStrip::new(strip_cap)),
             in_flight: HashSet::new(),
             needed_at: HashMap::new(),
             idle_clock: (Duration::ZERO, None),
@@ -440,8 +473,13 @@ impl ProgramEngine {
                 }
                 Err(RecvTimeoutError::Timeout) => {}
             }
+            // The whole backlog at once, so seeks queued behind a slow frame collapse to the newest (a scrub drag).
+            let mut backlog = Vec::new();
             while let Ok(m) = rx.try_recv() {
                 self.shared.taken(&m);
+                backlog.push(m);
+            }
+            for m in super::seek_coalesce::coalesce_seeks(backlog) {
                 if matches!(m, Msg::Stop) {
                     return;
                 }
@@ -471,6 +509,12 @@ impl ProgramEngine {
         }
     }
 
+    #[cfg(test)]
+    /// A stabilized layer's gyro data is still loading, so nothing new is drawn (tests, status).
+    pub(crate) fn gyro_waiting(&self) -> bool {
+        self.gyro_waiting
+    }
+
     /// How many times `compose` was entered (tests).
     #[cfg(test)]
     pub(crate) fn compose_calls(&self) -> u64 {
@@ -484,6 +528,7 @@ impl ProgramEngine {
                 let stats = Arc::clone(&self.stats);
                 stats.time(Stage::Arrive, || self.decoded(key, picture, scale, preview));
             }
+            Msg::Strip { media, gop, generation, outcome } => self.strip.finished(media, gop, generation, outcome),
             Msg::Finished { keys, error } => {
                 let stats = Arc::clone(&self.stats);
                 stats.time(Stage::Finish, || self.finished(&keys, error));
@@ -502,6 +547,7 @@ impl ProgramEngine {
             Command::SetMedia(refs) => self.set_media(&refs),
             Command::MediaChanged(ids) => self.media_changed(&ids),
             Command::SetProxyUse(u) => self.set_proxy_use(u),
+            Command::SetProxyPlaybackMedia(ids) => self.set_proxy_playback_media(ids),
             Command::ProxiesChanged(ids) => self.proxies_changed(&ids),
             Command::Play(r) => self.play(r),
             Command::Pause => self.pause(),
@@ -726,7 +772,49 @@ impl ProgramEngine {
         self.rasters_warmed.clear();
         self.wanted = None;
         self.shown = None;
+        self.prepare_gyro();
         self.refresh();
+    }
+
+    /// Starts the gyro analysis of every stabilized clip now (project open, edit), so the data is ready before the first
+    /// frame of the clip is composed. The top sequence and every nested one.
+    fn prepare_gyro(&self) {
+        let Some(hook) = &self.deps.gyro else { return };
+        let all = std::iter::once(&self.timeline).chain(self.sequences.values());
+        let clips = super::gyro_gate::stabilized_media(all);
+        // The engine keeps every stabilized clip's analysis (no eviction storm with many clips) and runs a few at a time.
+        hook.maps.expect_clips(clips.len());
+        for (media, o) in clips {
+            if let Some(path) = self.media_paths.get(&media) {
+                hook.maps.prepare(path, &o);
+            }
+        }
+        // The ones under and near the playhead go first.
+        for l in self.layers_at(self.position) {
+            self.prioritize_gyro(&l);
+        }
+    }
+
+    /// The analysis of this layer's clip is needed soon: it moves to the front of the engine's queue.
+    fn prioritize_gyro(&self, l: &LayerRequest) {
+        let (Some(hook), Some(o), Some(path)) = (&self.deps.gyro, &l.gyro, self.media_paths.get(&l.media)) else {
+            return;
+        };
+        hook.maps.prioritize(path, o);
+    }
+
+    /// Mid-play entry into a stabilized clip whose data is still loading: after `GYRO_FIRST_WAIT` the clock and the sound
+    /// hold like at Play (the last picture stays); `tick` releases them when the picture is composed.
+    fn hold_clock_for_gyro(&mut self, waited: Duration) {
+        if self.state.rate().is_paused() || self.clock_hold.is_held() || waited < super::gyro_gate::GYRO_FIRST_WAIT {
+            return;
+        }
+        self.deps.clock.stop();
+        self.clock_hold = ClockHold::Held { since: Instant::now() };
+        self.play_start = None;
+        self.last_shown_frame = None; // the hold is not a dropped run
+        self.run_serial += 1;
+        sq_core_time::milestones::note("play: clock held, stabilized clip still analysing");
     }
 
     fn set_media(&mut self, refs: &[MediaRef]) {
@@ -738,6 +826,10 @@ impl ProgramEngine {
             .map(|(id, _)| *id)
             .collect();
         self.media_paths = paths;
+        for id in &moved {
+            self.strip.invalidate(*id);
+        }
+        self.prepare_gyro();
         if let Some(c) = &self.deps.color {
             c.invalidate();
         }
@@ -826,6 +918,9 @@ impl ProgramEngine {
     }
 
     fn play(&mut self, r: PlaybackRate) {
+        if r != self.state.rate() {
+            self.clear_holds(); // a new direction or speed: the cut may never come
+        }
         if r.is_paused() {
             self.pause();
             return;
@@ -943,7 +1038,16 @@ impl ProgramEngine {
         self.refresh(); // the paused frame from the original at full detail (a no-op when the keys did not change)
     }
 
+    fn clear_holds(&mut self) {
+        for all in self.lanes.values_mut() {
+            for l in all {
+                l.hold_until = None;
+            }
+        }
+    }
+
     fn seek(&mut self, t: Time) {
+        self.clear_holds();
         self.played_through.clear();
         // A jump is not a dropped run: the next picture starts the count again.
         self.last_shown_frame = None;
@@ -973,7 +1077,7 @@ impl ProgramEngine {
         }
         self.transition(Event::EndScrub);
         if play_trace() {
-            eprintln!("[play-trace] {:.3}s end scrub at {:?}", trace_clock(), self.position);
+            sq_os::errln!("[play-trace] {:.3}s end scrub at {:?}", trace_clock(), self.position);
         }
         // The scrub's own preview decodes (a coarser picture than the paused one) still queued or running: the exact pictures
         // replace them, and the decoder is busy with them first. Real project, 4K 140 Mb/s H.264: the last scrub job (a
@@ -1010,6 +1114,7 @@ impl ProgramEngine {
 
     /// Once per loop: advances the playhead from the master clock while playing and keeps decoding.
     pub(crate) fn tick(&mut self) {
+        self.fill_strip();
         if let Some(waited) = self.clock_hold.waited() {
             let first_picture = match &self.wanted {
                 Some(w) => self.shown.as_ref() == Some(w),
@@ -1020,14 +1125,17 @@ impl ProgramEngine {
                 static SEEN: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
                 let now = u8::from(first_picture) | (u8::from(ahead) << 1);
                 if SEEN.swap(now, std::sync::atomic::Ordering::Relaxed) != now {
-                    eprintln!(
+                    sq_os::errln!(
                         "[play-trace] {:.3}s hold {:.0} ms: first picture {first_picture}, frames ahead ready {ahead}",
                         trace_clock(),
                         waited.as_secs_f64() * 1e3
                     );
                 }
             }
-            let step = ClockHold::step(waited, first_picture, ahead);
+            let mut step = ClockHold::step(waited, first_picture, ahead);
+            if self.gyro_waiting && step == HoldStep::Release {
+                step = HoldStep::WaitFirstPicture; // the gate gives up by itself (GYRO_GIVE_UP)
+            }
             let release = step == HoldStep::Release;
             let waited_out = waited > FIRST_PICTURE_LIMIT;
             if release && (waited_out || !self.awaiting_display_start()) {
@@ -1338,11 +1446,22 @@ impl ProgramEngine {
     fn reads_proxy(&self, media: Id) -> bool {
         let scrubbing = self.state.is_scrubbing();
         let playing = !scrubbing && !self.state.is_warming() && !self.state.rate().is_paused();
-        proxy_read_allowed(scrubbing, playing, self.proxy_use, self.quality) && self.proxy_sources.contains_key(&media)
+        proxy_read_allowed(scrubbing, playing, self.proxy_use, self.quality, self.proxy_playback_media.contains(&media))
+            && self.proxy_sources.contains_key(&media)
     }
 
     fn source_of(&self, k: &Key) -> Option<Arc<MediaSource>> {
         if k.proxy { self.proxy_sources.get(&k.media) } else { self.sources.get(&k.media) }.cloned()
+    }
+
+    fn set_proxy_playback_media(&mut self, ids: HashSet<Id>) {
+        if ids == self.proxy_playback_media {
+            return;
+        }
+        self.proxy_playback_media = ids;
+        let open: Vec<Id> = self.sources.keys().copied().collect();
+        open.into_iter().for_each(|m| self.ensure_proxy(m));
+        self.refresh();
     }
 
     fn set_proxy_use(&mut self, u: ProxyUse) {
@@ -1371,7 +1490,7 @@ impl ProgramEngine {
 
     /// Opens the media's proxy off the render thread when a state may use it and the opener has not said no.
     fn ensure_proxy(&mut self, media: Id) {
-        if !(self.proxy_use.scrubbing || self.proxy_use.playback)
+        if !(self.proxy_use.scrubbing || self.proxy_use.playback || self.proxy_playback_media.contains(&media))
             || self.proxy_sources.contains_key(&media)
             || self.proxy_opening.contains(&media)
             || self.no_proxy.contains(&media)
@@ -1516,7 +1635,7 @@ impl ProgramEngine {
         }
         let Some(src) = self.lane_for(&k, ahead, claimed, prefetching) else {
             if play_trace() {
-                eprintln!(
+                sq_os::errln!(
                     "[play-trace] {:.3}s pos {:?} request frame {} no lane (prefetch {prefetching})",
                     trace_clock(),
                     self.position,
@@ -1527,7 +1646,7 @@ impl ProgramEngine {
         };
         let last = (src.frame_count() as i64 - 1).min(k.index + ahead);
         if play_trace() {
-            eprintln!(
+            sq_os::errln!(
                 "[play-trace] {:.3}s pos {:?} request frame {}..{} lane {} (prefetch {prefetching}) div {} scrubbing {} playing {}",
                 trace_clock(),
                 self.position,
@@ -1641,6 +1760,7 @@ impl ProgramEngine {
                 continue;
             }
             for l in self.layers_at(t) {
+                self.prioritize_gyro(&l); // a stabilized clip coming up: its analysis goes first, so no hold is needed
                 if l.generator.is_some() {
                     self.warm_generator(&l, t);
                     continue;
@@ -1652,7 +1772,9 @@ impl ProgramEngine {
                 }
                 // A clip that shows up before `t`: warm its first visible frame, where the cut (or a transition's incoming
                 // side, which shows the clip before its own start) lands.
-                let first = self.first_visible(l.clip, self.position, t).unwrap_or_else(|| l.clone());
+                let (first, cut_frame) = self
+                    .first_visible_frame(l.clip, self.position, t)
+                    .unwrap_or_else(|| (l.clone(), t.frame_index(fd)));
                 if let Some(k) = self.key_for(&first)
                     && !keys.contains(&k)
                 {
@@ -1661,8 +1783,25 @@ impl ProgramEngine {
                     {
                         self.reads_backward.insert(pk);
                     }
-                    self.cut_in_times.insert(k, t);
+                    // The cut itself, the same in every re-plan: the sample time `t` slid with the playhead, so a hold never
+                    // reached its cut and `hold_survives` cleared it at the next plan (Dreh 26.11: 460 ms gap at 17.0 s).
+                    self.cut_in_times.insert(k, fd * cut_frame);
+                    self.warm_gyro(&first, k.index);
                     keys.push(k);
+                }
+            }
+        }
+        // An edit removed or moved a cut inside the planned range: its warmed lane is nobody's to hold.
+        let plan_ahead = Time::seconds(seconds_ahead.iter().copied().fold(0.0, f64::max).ceil() as i64);
+        let position = self.position;
+        for (media, all) in self.lanes.iter_mut() {
+            let cuts: Vec<Time> =
+                self.cut_in_times.iter().filter(|(k, _)| k.media == *media).map(|(_, t)| *t).collect();
+            for l in all {
+                if let Some(h) = l.hold_until
+                    && !hold_survives(h, &cuts, position, plan_ahead)
+                {
+                    l.hold_until = None;
                 }
             }
         }
@@ -1718,7 +1857,7 @@ impl ProgramEngine {
             let started = Instant::now();
             let _ = rasters.layer(&first, &format);
             if let Some((t, clip, local)) = trace {
-                eprintln!(
+                sq_os::errln!(
                     "[play-trace] {t:.3}s warm title clip {clip:?} local {local:?} took {:.0} ms",
                     started.elapsed().as_secs_f64() * 1e3
                 );
@@ -1731,7 +1870,21 @@ impl ProgramEngine {
     /// plans and a hidden middle part cannot hide the first visible one). A transition's incoming clip shows before its own
     /// start (the dissolve starts a second early): warming only its start left the first frames of the dissolve to a cold
     /// decode, one frame lost at the dissolve and stand-ins while the lane caught up.
+    /// Starts the gyro warp map of a cut-in clip's first frame ahead of the cut: computed on the render thread at the cut
+    /// it held the picture 440 ms (Dreh 26.11, 460 ms gap at 16.9 s).
+    fn warm_gyro(&self, l: &LayerRequest, index: i64) {
+        let (Some(o), Some(hook)) = (l.gyro.as_ref(), self.deps.gyro.as_ref()) else { return };
+        let (Some(path), Some(src)) = (self.media_paths.get(&l.media), self.sources.get(&l.media)) else { return };
+        let Some(e) = usize::try_from(index).ok().and_then(|i| src.demuxer.index().entries().get(i)) else { return };
+        hook.maps.warm(path, o, sq_core_masks::GyroflowOptions::timestamp_microseconds(e.pts));
+    }
+
     fn first_visible(&self, clip: Id, from: Time, to: Time) -> Option<LayerRequest> {
+        self.first_visible_frame(clip, from, to).map(|(r, _)| r)
+    }
+
+    /// `first_visible` with the frame index where the clip first shows.
+    fn first_visible_frame(&self, clip: Id, from: Time, to: Time) -> Option<(LayerRequest, i64)> {
         let fd = self.timeline.frame_duration();
         let layer_at = |frame: i64| self.layers_at(fd * frame).into_iter().find(|x| x.clip == clip);
         let end = to.frame_index(fd);
@@ -1742,7 +1895,7 @@ impl ProgramEngine {
             super::first_visible::scan_stride(fd),
             |f| layer_at(f).is_some(),
         );
-        Some(if frame == end { at_end } else { layer_at(frame).unwrap_or(at_end) })
+        Some((if frame == end { at_end } else { layer_at(frame).unwrap_or(at_end) }, frame))
     }
 
     fn decode(&mut self, src: &Arc<MediaSource>, key: &Key, range: RangeInclusive<i64>) {
@@ -1811,13 +1964,13 @@ impl ProgramEngine {
             let traced = play_trace().then(|| (trace_clock(), name.clone(), range.clone(), src.id));
             if let Some((t, n, r, id)) = &traced {
                 let wait = submitted.map_or(0.0, |q| (t - q) * 1e3);
-                eprintln!("[play-trace] {t:.3}s job start {n} {r:?} lane {id} queued {wait:.0} ms");
+                sq_os::errln!("[play-trace] {t:.3}s job start {n} {r:?} lane {id} queued {wait:.0} ms");
             }
             struct TraceEnd(Option<(f64, String, RangeInclusive<i64>, u64)>);
             impl Drop for TraceEnd {
                 fn drop(&mut self) {
                     if let Some((t, n, r, id)) = self.0.take() {
-                        eprintln!(
+                        sq_os::errln!(
                             "[play-trace] {:.3}s job end {n} {r:?} lane {id} took {:.0} ms",
                             trace_clock(),
                             (trace_clock() - t) * 1e3
@@ -1850,7 +2003,7 @@ impl ProgramEngine {
                 let lap = super::frame_trace::enabled().then(|| Mutex::new(Instant::now()));
                 Arc::new(move |i, picture| {
                     if play_trace() {
-                        eprintln!("[play-trace] {:.3}s delivered frame {i} of {media}", trace_clock());
+                        sq_os::errln!("[play-trace] {:.3}s delivered frame {i} of {media}", trace_clock());
                     }
                     if let Some(lap) = &lap {
                         let mut t = lap.lock().unwrap_or_else(PoisonError::into_inner);
@@ -2014,6 +2167,15 @@ impl ProgramEngine {
             // The lane warmed for a far cut stays open until the cut: unrefreshed it was closed as idle after ~90
             // refreshes, and the cut then seeked a cold decoder back to the sync sample (0.3-1.5 s on a 4K long-GOP file).
             l.used = refresh_count;
+            if play_trace() {
+                eprintln!(
+                    "[play-trace] {:.3}s REFRESH lane {} (at {:?}) for cut-in frame {}",
+                    trace_clock(),
+                    l.source.id,
+                    l.at,
+                    k.index
+                );
+            }
             if let Some(t) = self.cut_in_times.get(k) {
                 l.hold_until = l.hold_until.max(Some(*t));
             }
@@ -2044,7 +2206,7 @@ impl ProgramEngine {
                         let l = &all[*i];
                         let wanted = self.prefetch_keys.iter().any(|w| w.media == k.media && l.reaches(w.index))
                             // shortcut: a hold past a loop wrap or a seek ends at the next 4 s window; the sampled keys cover those.
-                            || l.hold_until.is_some_and(|h| h > self.position && h - self.position <= Time::seconds(4));
+                            || hold_active(l.hold_until, self.position);
                         prefetch_may_take_lane(refresh_count - l.used, playing, wanted)
                     })
                     .max_by_key(|i| refresh_count - all[*i].used)
@@ -2055,7 +2217,7 @@ impl ProgramEngine {
                     .iter()
                     .map(|l| format!("(at {:?} to {} used {})", l.at, l.to, refresh_count - l.used))
                     .collect();
-                eprintln!(
+                sq_os::errln!(
                     "[play-trace] {:.3}s prefetch of {} finds no lane: taken {taken:?}, lanes {}",
                     trace_clock(),
                     k.index,
@@ -2072,6 +2234,19 @@ impl ProgramEngine {
         };
         claimed.entry(k.media).or_default().insert(i);
         let seeks = !all[i].reaches(k.index);
+        if seeks && play_trace() {
+            let st: Vec<String> = all
+                .iter()
+                .map(|l| format!("(id {} at {:?} to {} idle {})", l.source.id, l.at, l.to, refresh_count - l.used))
+                .collect();
+            eprintln!(
+                "[play-trace] {:.3}s lane {} SEEKS to {} (prefetch {prefetching}): taken {taken:?}, lanes {}",
+                trace_clock(),
+                all[i].source.id,
+                k.index,
+                st.join(" ")
+            );
+        }
         let lane = &mut all[i];
         if seeks {
             lane.to = k.index - 1; // this lane seeks
@@ -2106,13 +2281,25 @@ impl ProgramEngine {
             return;
         }
         let now = self.refresh_count;
+        let position = self.position;
         let mut graveyard = Vec::new();
         for all in self.lanes.values_mut().filter(|a| a.len() > 1) {
             let mut kept = Vec::new();
             for (n, l) in std::mem::take(all).into_iter().enumerate() {
-                if n == 0 || now - l.used < 90 {
+                if n == 0 || keeps_lane(now - l.used, l.hold_until, position) {
                     kept.push(l);
                 } else {
+                    if play_trace() {
+                        eprintln!(
+                            "[play-trace] {:.3}s DROP idle lane {} at {:?} to {} idle {} hold_until {:?}",
+                            trace_clock(),
+                            l.source.id,
+                            l.at,
+                            l.to,
+                            now - l.used,
+                            l.hold_until
+                        );
+                    }
                     graveyard.push(l);
                 }
             }
@@ -2150,7 +2337,7 @@ impl ProgramEngine {
             self.needed_at.insert(k.media, now);
         }
         for (media, all) in &self.lanes {
-            if all.iter().any(|l| l.hold_until.is_some_and(|h| h > self.position)) {
+            if all.iter().any(|l| hold_active(l.hold_until, self.position)) {
                 self.needed_at.insert(*media, now);
             }
         }
@@ -2398,7 +2585,8 @@ impl ProgramEngine {
             return Some((*c, p.clone()));
         }
         if !(stand_in && (!self.state.rate().is_paused() || self.state.is_scrubbing())) {
-            return None;
+            // A paused jump (click on the ruler) shows the key picture while the exact frame decodes.
+            return if stand_in { self.strip_picture(k, None) } else { None };
         }
         let near: Vec<(&Key, &Picture)> = self
             .cache
@@ -2408,8 +2596,129 @@ impl ProgramEngine {
         let forward = self.state.rate().num() >= 0;
         let floor = self.played_through.floor(k.media, k.index);
         let index =
-            stand_in_index(near.iter().map(|(c, _)| c.index), k.index, self.state.is_scrubbing(), forward, floor)?;
+            stand_in_index(near.iter().map(|(c, _)| c.index), k.index, self.state.is_scrubbing(), forward, floor);
+        if self.state.is_scrubbing()
+            && let Some(hit) = self.strip_picture(k, Some(index))
+        {
+            return Some(hit);
+        }
+        let index = index?;
         near.into_iter().filter(|(c, _)| c.index == index).min_by_key(|(c, _)| c.divisor).map(|(c, p)| (*c, p.clone()))
+    }
+
+    /// The key picture of the GOP of `k` from the strip when `strip_applies`: `nearest` is the nearest decoded frame while
+    /// scrubbing, `None` outside a scrub (paused).
+    fn strip_picture(&self, k: &Key, nearest: Option<Option<i64>>) -> Option<(Key, Picture)> {
+        if k.proxy || !self.state.rate().is_paused() {
+            return None;
+        }
+        let base = self.sources.get(&k.media)?;
+        let gop = base.demuxer.index().decode_start_index(usize::try_from(k.index).unwrap_or(0)) as i64;
+        let in_gop = || {
+            let idx = base.demuxer.index();
+            self.cache.keys().any(|c| {
+                c.media == k.media
+                    && c.proxy == k.proxy
+                    && idx.decode_start_index(usize::try_from(c.index).unwrap_or(0)) as i64 == gop
+            })
+        };
+        let scrubbing = nearest.is_some();
+        if !key_strip::strip_applies(scrubbing, nearest.flatten(), k.index, gop, !scrubbing && in_gop()) {
+            return None;
+        }
+        let p = self.strip.get(k.media, gop)?;
+        Some((Key { media: k.media, index: gop, proxy: false, divisor: STRIP_DIVISOR }, p))
+    }
+
+    /// Idle (nothing plays, scrubs or decodes): decodes the next key picture of a software 4K clip near the playhead into the
+    /// strip, one job at a time per media, held back by the process-wide activity check while anything plays or scrubs.
+    // shortcut: only clips whose decoder is open (shown since the media was opened) get a strip, within a minute of the playhead;
+    // upgrade with an opener of its own when jumps to clips never shown matter.
+    fn fill_strip(&mut self) {
+        if !self.state.rate().is_paused()
+            || self.state.is_scrubbing()
+            || self.state.is_warming()
+            || !self.in_flight.is_empty()
+            || PlayActivity::shared().is_busy()
+        {
+            return;
+        }
+        let window = Time::seconds(60);
+        let (from, to) = (self.position - window, self.position + window);
+        let mut clips: Vec<(Id, TimeRange, TimeRange)> = Vec::new(); // media, timeline range, source range
+        for t in self.timeline.tracks.iter().filter(|t| t.kind == sq_core_model::TrackKind::Video) {
+            for c in t.clips().iter().filter(|c| c.generator.is_none() && !c.is_still && c.sequence.is_none()) {
+                let r = c.timeline();
+                if r.end() >= from && r.start <= to {
+                    clips.push((c.media, r, c.source));
+                }
+            }
+        }
+        let mut seen: HashSet<Id> = HashSet::new();
+        for (media, r, source) in &clips {
+            if !seen.insert(*media) {
+                continue;
+            }
+            let Some(src) = self.sources.get(media).cloned() else { continue };
+            // The used source frame ranges of the media: a clip added or a trim that reaches further plans again.
+            let mut ranges: Vec<(i64, i64)> = clips
+                .iter()
+                .filter(|(m, _, _)| m == media)
+                .map(|(_, _, s)| (src.frame_index(s.start), src.frame_index(s.start + s.duration)))
+                .collect();
+            ranges.sort_unstable();
+            ranges.dedup();
+            if self.strip.needs_plan(*media, &ranges) {
+                if !key_strip::wants_strip(src.decoder.is_hardware(), src.info.width) {
+                    self.strip.skip(*media);
+                    continue;
+                }
+                let index = src.demuxer.index();
+                let mut gops: Vec<i64> = Vec::new();
+                for (a, b) in &ranges {
+                    gops.extend(key_strip::gop_starts(*a, *b, |i| index.decode_start_index(i as usize) as i64));
+                }
+                gops.sort_unstable();
+                gops.dedup();
+                self.strip.plan(*media, ranges, gops);
+            }
+            let here = if r.start <= self.position && self.position <= r.end() {
+                src.frame_index(source.start + (self.position - r.start))
+            } else {
+                src.frame_index(source.start)
+            };
+            self.strip.set_focus(*media, here);
+            // Only a media that is filling is asked; a skipped or finished one never holds up the next.
+            if let Some((gop, generation)) = self.strip.next_to_decode(*media) {
+                self.submit_strip_job(&src, *media, gop, generation);
+                return;
+            }
+        }
+    }
+
+    fn submit_strip_job(&self, src: &Arc<MediaSource>, media: Id, gop: i64, generation: u64) {
+        let (tx, stats, src) = (self.tx.clone(), Arc::clone(&self.stats), Arc::clone(src));
+        self.pool.submit_with(src.id, false, move || {
+            let busy = || PlayActivity::shared().is_busy();
+            let got: Arc<Mutex<Option<Picture>>> = Arc::default();
+            let outcome = if busy() {
+                StripOutcome::Busy
+            } else {
+                let deliver: Arc<dyn Fn(i64, Picture) + Send + Sync> = {
+                    let got = Arc::clone(&got);
+                    Arc::new(move |_, p| *got.lock().unwrap_or_else(PoisonError::into_inner) = Some(p))
+                };
+                let stop: sq_media::video_decoding::StopCheck = Arc::new(busy);
+                let result = src.stream_pictures(gop..=gop, STRIP_DIVISOR, false, &stats, deliver, stop);
+                let picture = got.lock().unwrap_or_else(PoisonError::into_inner).take();
+                match (picture, result) {
+                    (Some(p), _) => StripOutcome::Done(p),
+                    (None, _) if busy() => StripOutcome::Busy,
+                    _ => StripOutcome::Failed,
+                }
+            };
+            let _ = tx.send(Msg::Strip { media, gop, generation, outcome });
+        });
     }
 
     fn caption_layers(&self) -> Vec<caption_plan::CaptionLayerRequest> {
@@ -2445,6 +2754,34 @@ impl ProgramEngine {
         if !self.opening.is_empty() && self.wanted_requests.iter().any(|r| self.opening.contains(&r.media)) {
             return;
         }
+        // A stabilized layer is never drawn unwarped while its data loads: nothing new is drawn (the last picture stays), the
+        // clock stays held, and the engine's observer composes again when the analysis moved on.
+        self.gyro_waiting = false;
+        if let Some(hook) = self.deps.gyro.as_ref().filter(|h| !h.wait) {
+            let mut asked: Vec<(String, u64)> = Vec::new();
+            for l in &self.wanted_requests {
+                let (Some(o), Some(path)) = (&l.gyro, self.media_paths.get(&l.media)) else { continue };
+                match self.gyro_watch.check(hook, path, o) {
+                    super::gyro_gate::GyroGate::Go => {}
+                    super::gyro_gate::GyroGate::Wait => {
+                        self.gyro_waiting = true;
+                        hook.maps.prioritize(path, o); // the picture waits for this one
+                    }
+                    super::gyro_gate::GyroGate::Failed(why) => {
+                        *self.gyro_failed.lock().unwrap_or_else(PoisonError::into_inner) =
+                            Some(format!("Stabilizer: {path}: {why}"));
+                    }
+                }
+                asked.push((path.clone(), hook.maps.generation(path, o)));
+            }
+            self.gyro_watch.retain_asked(&asked);
+            if self.gyro_waiting {
+                let waited = asked.iter().filter_map(|(p, g)| self.gyro_watch.waited(p, *g)).max().unwrap_or_default();
+                self.hold_clock_for_gyro(waited);
+                self.compose_retry = true; // look again next tick (also reaches the give-up time)
+                return;
+            }
+        }
         let captions = self.caption_layers();
         let has_generator = self.wanted_requests.iter().any(|r| r.generator.is_some());
         if want.keys.is_empty() && !self.shows_transparency_grid && captions.is_empty() && !has_generator {
@@ -2463,6 +2800,11 @@ impl ProgramEngine {
         };
         let traced = super::frame_trace::enabled().then(Instant::now);
         let result = self.render_with(&mut comp, &captions);
+        match self.gyro_failed.lock().unwrap_or_else(PoisonError::into_inner).take() {
+            Some(w) => self.last_error = Some(w),
+            None if self.last_error.as_deref().is_some_and(|e| e.starts_with("Stabilizer: ")) => self.last_error = None,
+            None => {}
+        }
         super::frame_trace::note_wanted(want.keys.len());
         if let Some(t) = traced {
             super::frame_trace::note_compose(t.elapsed().as_secs_f64() * 1e3);
@@ -2614,7 +2956,9 @@ impl ProgramEngine {
             };
             let t = timing::sub_start();
             let Some(k) = self.peek_key(l) else { return missing() };
+            let picture_span = sq_os::trace::span("render", "source picture_for");
             let found = self.picture_for(&k, true);
+            drop(picture_span);
             timing::sub_add(timing::Sub::Picture, t);
             let (Some((shown, pic)), Some(src)) = (found, self.sources.get(&k.media)) else {
                 return missing();
@@ -2622,11 +2966,15 @@ impl ProgramEngine {
             // Gyroflow Stabilizer: the decoded frame is warped by the camera's gyro data before anything else (the same call
             // for export; a proxy frame is warped with the original's gyro data, the map is normalized).
             let t = timing::sub_start();
+            let _gyro_span = l.gyro.is_some().then(|| sq_os::trace::span("render", "source gyro map"));
             let gyro = l.gyro.as_ref().and_then(|o| {
                 let hook = self.deps.gyro.as_ref()?;
                 let path = self.media_paths.get(&l.media)?;
                 let ts = sq_core_masks::GyroflowOptions::timestamp_microseconds(pic.frame.presentation_time);
-                hook.maps.map(path, o, ts, hook.wait)
+                match super::gyro_gate::gyro_outcome(hook, path, o, ts) {
+                    super::gyro_gate::GyroOutcome::Warped(m) => Some(m),
+                    super::gyro_gate::GyroOutcome::Original => None,
+                }
             });
             timing::sub_add(timing::Sub::Gyro, t);
             LayerSource::Media(Source {

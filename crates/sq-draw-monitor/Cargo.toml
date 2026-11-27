@@ -26,6 +26,7 @@ sq-os.workspace = true
 workspace-hack = { version = "0.1", path = "../../workspace-hack" }
 
 [dev-dependencies]
+sq-gpu.workspace = true
 serde_json.workspace = true
 
 # Workspace lints repeated (a crate cannot extend them) plus the async-safety lints of sq-runtime.

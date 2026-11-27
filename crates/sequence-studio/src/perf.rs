@@ -57,7 +57,7 @@ impl FramePerf {
         let secs = self.since.elapsed().as_secs_f64();
         if secs >= 1.0 {
             let n = f64::from(self.frames);
-            eprintln!(
+            sq_os::errln!(
                 "perf: {:.1} frames/s, {:.1} pictures/s, upload {:.2} ms, upload+draw+present {:.2} ms, playhead {playhead:.2} s",
                 n / secs,
                 (generation - first) as f64 / secs,

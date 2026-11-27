@@ -206,7 +206,10 @@ fn map_parametric_eq(comp: &PRComponent, ctx: &ClipContext, e: &mut ClipEffect, 
 /// GUID (an effect without a display name) or empty. Mapped effects use SQ's English names, never the (localized) display name.
 pub(crate) fn unmapped_audio_name(display: &str) -> String {
     let d = display.trim();
-    let guid = d.len() == 36 && d.bytes().enumerate().all(|(i, b)| if matches!(i, 8 | 13 | 18 | 23) { b == b'-' } else { b.is_ascii_hexdigit() });
+    let guid = d.len() == 36
+        && d.bytes()
+            .enumerate()
+            .all(|(i, b)| if matches!(i, 8 | 13 | 18 | 23) { b == b'-' } else { b.is_ascii_hexdigit() });
     if d.is_empty() || guid { "Audio effect".to_string() } else { d.to_string() }
 }
 

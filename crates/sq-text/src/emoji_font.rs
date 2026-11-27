@@ -433,7 +433,7 @@ pub(crate) mod tests {
         let Some(font) = EmojiFont::from_path(&path) else { return };
         assert!(matches!(font.source, Source::Sbix(_)));
         let resident = font.resident_bytes();
-        eprintln!("sbix resident bytes: {resident}");
+        sq_os::errln!("sbix resident bytes: {resident}");
         assert!(resident < 5_000_000, "resident {resident}");
         let data = std::fs::read(&path).unwrap();
         let face = Face::parse(&data, 0).unwrap();
@@ -496,7 +496,7 @@ pub(crate) mod tests {
                 assert_eq!(b.rgba.len() as i64, b.width * b.height * 4, "{name}");
                 // The face is one to 1.25 em tall (Noto's art is 1.17 em) and inside its advance (Apple 1 em, Noto 1.25 em, Segoe 1.33 em).
                 let adv = (font.advance(g) as f64 * px / font.units_per_em as f64).round() as i64;
-                eprintln!("{name} @{px}: {}x{} advance {adv} left {} top {}", b.width, b.height, b.left, b.top);
+                sq_os::errln!("{name} @{px}: {}x{} advance {adv} left {} top {}", b.width, b.height, b.left, b.top);
                 assert!(
                     b.height as f64 >= px - 1.0 && b.height as f64 <= px * 1.25 + 1.0,
                     "{name} @{px}: height {}",

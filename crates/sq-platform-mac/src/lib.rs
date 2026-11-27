@@ -84,7 +84,7 @@ impl MenuBar {
                 self.shown = native;
                 self.stale = false;
             }
-            Err(e) => eprintln!("menu bar: {e}"),
+            Err(e) => sq_os::errln!("menu bar: {e}"),
         }
     }
 

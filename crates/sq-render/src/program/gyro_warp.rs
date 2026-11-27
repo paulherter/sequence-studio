@@ -47,11 +47,39 @@ impl WarpMap {
     }
 }
 
+/// One clip's gyro data as the compositor sees it. `Failed` = the original is shown and the engine reports why.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GyroReadiness {
+    Loading,
+    Ready,
+    Failed(String),
+}
+
 /// Where the gyro engine's warp maps come from. Called from the render thread; `wait` = block until the clip's analysis is
 /// done (export), otherwise a clip that is not analyzed yet gives `None` and shows unwarped (playback).
 pub trait GyroMaps: Send + Sync {
+    /// Starts the clip's analysis if nobody did (project open, new clip): its data is ready before playback asks for a frame.
+    fn prepare(&self, _path: &str, _options: &GyroflowOptions) {}
+    /// The clip is needed soon (the playhead is near): its analysis moves to the front of the queue.
+    fn prioritize(&self, path: &str, options: &GyroflowOptions) {
+        self.prepare(path, options);
+    }
+    /// The project has `n` stabilized clips: the engine keeps at least that many analyses.
+    fn expect_clips(&self, _n: usize) {}
+    /// Changes when the analysis of this clip is replaced (Analyze Again, restart); 0 when there is none.
+    fn generation(&self, _path: &str, _options: &GyroflowOptions) -> u64 {
+        0
+    }
+    /// Waits at most `limit` for the clip's analysis; playback calls this before it composes a stabilized layer, so the
+    /// first frame after play or a jump is already warped. `Loading` after the limit = it is still running.
+    fn readiness(&self, _path: &str, _options: &GyroflowOptions, _limit: std::time::Duration) -> GyroReadiness {
+        GyroReadiness::Ready
+    }
     /// The map of the frame at `ts_us` (microseconds in the file `path`) with `options`; `None` = show the frame as is.
     fn map(&self, path: &str, options: &GyroflowOptions, ts_us: i64, wait: bool) -> Option<Arc<WarpMap>>;
+    /// Computes the map of the frame at `ts_us` in the background so the first frame of a clip that cuts in finds it ready
+    /// (the first `map` of a clip took 440 ms on the render thread: a 460 ms playback gap, Dreh 26.11). Never blocks.
+    fn warm(&self, _path: &str, _options: &GyroflowOptions, _ts_us: i64) {}
     /// `f` runs (any thread) when an analysis finished or failed: redraw.
     fn add_observer(&self, f: Arc<dyn Fn() + Send + Sync>);
 }
@@ -90,9 +118,8 @@ pub fn warp_picture(gpu: &Arc<Gpu>, picture: &Picture, map: &WarpMap) -> Option<
     warp(gpu, picture, map, None)
 }
 
-/// `gyroWarpScaled` exists on this target. Windows: its `.dxil` is not generated yet (needs Windows), so playback keeps the
-/// full-size warp there. Windows: generate it with `cargo xtask shaders`, commit it, then enable (see `NO_DXIL_YET` in xtask).
-pub const SCALED_GYRO_WARP: bool = cfg!(not(windows));
+/// `gyroWarpScaled` exists on this target (MSL, DXIL and SPIR-V are all committed).
+pub const SCALED_GYRO_WARP: bool = true;
 
 /// The most source pixels one output pixel of the scaled warp averages per axis (the shader visits at most 10).
 pub const MAX_BOX_RATIO: f64 = 8.0;
@@ -297,7 +324,7 @@ mod tests {
     #[test]
     fn the_gpu_pass_matches_the_cpu_reference() {
         let Some(gpu) = Gpu::new().ok() else {
-            eprintln!("skipping: no GPU adapter");
+            sq_os::errln!("skipping: no GPU adapter");
             return;
         };
         let (w, h) = (96usize, 64usize);
@@ -328,10 +355,9 @@ mod tests {
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn the_scaled_warp_matches_the_full_warp_downsampled() {
         let Some(gpu) = Gpu::new().ok() else {
-            eprintln!("skipping: no GPU adapter");
+            sq_os::errln!("skipping: no GPU adapter");
             return;
         };
         let (w, h, k) = (256usize, 192usize, 4usize);
@@ -368,15 +394,14 @@ mod tests {
             }
         }
         let psnr = 10.0 * (1.0 / (err / n as f64).max(1e-12)).log10();
-        eprintln!("scaled vs downsampled full warp: {psnr:.1} dB");
+        sq_os::errln!("scaled vs downsampled full warp: {psnr:.1} dB");
         assert!(psnr >= 30.0, "scaled warp vs downsampled full warp: {psnr:.1} dB");
     }
 
     #[test]
-    #[cfg(not(windows))]
     fn a_target_at_or_above_the_source_size_is_the_exact_warp() {
         let Some(gpu) = Gpu::new().ok() else {
-            eprintln!("skipping: no GPU adapter");
+            sq_os::errln!("skipping: no GPU adapter");
             return;
         };
         let t = gpu.texture(64, 48, PixelFormat::Rgba8Unorm);

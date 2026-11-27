@@ -471,6 +471,7 @@ pub fn parse(args: &[String]) -> Result<Cli, String> {
                     .ok_or("--quality takes auto, full, half or quarter")?
             }
             "--bench-verify" => bench.verify = true,
+            "--wait-proxies" => bench.wait_proxies_ms = Some(parse_ms(value("seconds")?).ok_or("bad --wait-proxies")?),
             "--bench-json" => bench.json = Some(PathBuf::from(value("a file")?)),
             "--bench-tag" => {
                 let text = value("key=value")?;
@@ -800,6 +801,14 @@ mod tests {
         assert!(matches!(&c.mode, Mode::WorkflowBench { script, .. } if script == "drag"));
         assert!(c.mode.is_bench());
         assert!(c.mode.is_bench());
+    }
+
+    #[test]
+    fn wait_proxies_takes_seconds() {
+        let c = parse(&args(&["p.sqproj", "--play-bench", "o.txt", "--wait-proxies", "600"])).expect("parses");
+        let Mode::PlayBench { bench, .. } = c.mode else { panic!("mode") };
+        assert_eq!(bench.wait_proxies_ms, Some(600_000));
+        assert!(parse(&args(&["p.sqproj", "--play-bench", "o.txt", "--wait-proxies", "x"])).is_err());
     }
 
     #[test]

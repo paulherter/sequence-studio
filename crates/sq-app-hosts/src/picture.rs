@@ -164,4 +164,24 @@ mod tests {
         a.set(None);
         assert_ne!(a.generation(), g);
     }
+
+    #[test]
+    fn a_gpu_picture_is_read_back_once_per_generation() {
+        use std::sync::atomic::AtomicUsize;
+        let reads = Arc::new(AtomicUsize::new(0));
+        let counter = Arc::clone(&reads);
+        let a = MonitorPicture::default();
+        a.set_gpu(
+            (2, 2),
+            Arc::new(()),
+            Arc::new(move || {
+                counter.fetch_add(1, Ordering::Relaxed);
+                Some(RgbaImage::filled(2, 2, Color::WHITE))
+            }),
+        );
+        for _ in 0..5 {
+            assert!(a.get().is_some());
+        }
+        assert_eq!(reads.load(Ordering::Relaxed), 1);
+    }
 }

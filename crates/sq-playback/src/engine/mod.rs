@@ -10,7 +10,9 @@ pub mod core;
 pub mod display_pacing;
 mod first_visible;
 pub mod frame_trace;
+mod gyro_gate;
 pub mod handle;
+pub mod key_strip;
 pub mod lanes;
 mod late_frames;
 pub mod layer_rasters;
@@ -23,6 +25,7 @@ pub mod power_policy;
 pub mod preview_rate;
 pub mod preview_size;
 pub mod proxy_picture;
+mod seek_coalesce;
 pub mod state;
 pub mod stats;
 pub mod system_watch;
@@ -62,5 +65,7 @@ mod tests_quality;
 #[cfg(test)]
 mod tests_shutter;
 
+#[cfg(test)]
+mod tests_gyro;
 #[cfg(test)]
 mod tests_state;

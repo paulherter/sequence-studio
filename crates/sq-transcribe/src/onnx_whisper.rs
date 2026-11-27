@@ -194,7 +194,8 @@ pub(crate) fn lost_speech_inside(spans: &[(i64, i64)], voiced: &[bool]) -> Optio
             let loud = region.iter().filter(|v| **v).count();
             if i64::try_from(loud).ok()? * frame >= i64::try_from(MIN_LOST_SPEECH_CS).ok()? {
                 // The first frame that starts real voice (8 of the next 10 frames), a little before it for the onset.
-                let onset = (0..region.len()).find(|i| region[*i..region.len().min(i + 10)].iter().filter(|v| **v).count() >= 8);
+                let onset = (0..region.len())
+                    .find(|i| region[*i..region.len().min(i + 10)].iter().filter(|v| **v).count() >= 8);
                 // Speech is dense from its onset to the next token; a pause with room noise or music is patchy or starts
                 // late. A gap without such a run is skipped, later gaps are still checked.
                 let dense = onset.is_some_and(|i| {
@@ -711,7 +712,11 @@ impl OnnxWhisper {
                             (s, whisper_align::word_end_in_voice(s, e, &voiced))
                         })
                         .collect();
-                    let gap = if gap_resume_allowed(gap_resumes, offset_cs) { lost_speech_inside(&spans, &voiced) } else { None };
+                    let gap = if gap_resume_allowed(gap_resumes, offset_cs) {
+                        lost_speech_inside(&spans, &voiced)
+                    } else {
+                        None
+                    };
                     gap_resumes += usize::from(gap.is_some());
                     let resume = match (resume, gap) {
                         (Some(a), Some(b)) => Some(a.min(b)),
@@ -1284,7 +1289,7 @@ mod tests {
     fn the_accelerator_and_the_cpu_write_the_same_words() {
         use sq_onnx::onnx_model::Provider;
         let Ok(wav) = std::env::var("SQ_WHISPER_WAV") else {
-            eprintln!("skipped: SQ_WHISPER_WAV is not set");
+            sq_os::errln!("skipped: SQ_WHISPER_WAV is not set");
             return;
         };
         let env = |k: &str| match k {
@@ -1304,7 +1309,7 @@ mod tests {
             let locale = Locale::new("en-US");
             if let Err(e) = service.prepare(&locale, &mut |_| {}, &CancelToken::new()) {
                 Provider::force(None);
-                eprintln!("skipped: {e}");
+                sq_os::errln!("skipped: {e}");
                 return;
             }
             let start = std::time::Instant::now();
@@ -1318,7 +1323,7 @@ mod tests {
                 )
                 .unwrap_or_else(|e| panic!("transcribe failed: {e}"));
             let took = start.elapsed().as_secs_f64();
-            eprintln!(
+            sq_os::errln!(
                 "whisper {} {provider:?}: {took:.2} s for {seconds:.1} s of audio ({:.3} s per audio second): {}",
                 service.store.pin.size,
                 took / seconds.max(0.001),
@@ -1335,7 +1340,7 @@ mod tests {
     #[test]
     fn a_real_english_clip_comes_out_as_words_through_the_service() {
         let Ok(wav) = std::env::var("SQ_WHISPER_WAV") else {
-            eprintln!("skipped: SQ_WHISPER_WAV (16 kHz mono WAV with English speech) is not set");
+            sq_os::errln!("skipped: SQ_WHISPER_WAV (16 kHz mono WAV with English speech) is not set");
             return;
         };
         let env = |k: &str| match k {
@@ -1350,13 +1355,13 @@ mod tests {
         let mut download = Vec::new();
         if let Err(e) = service.prepare(&locale, &mut |f| download.push(f), &CancelToken::new()) {
             if matches!(e, TranscriptionError::EngineMissing(_)) {
-                eprintln!("skipped: {e}");
+                sq_os::errln!("skipped: {e}");
                 return;
             }
             panic!("prepare failed: {e}");
         }
         assert!(service.store.is_installed());
-        eprintln!("download progress steps: {}", download.len());
+        sq_os::errln!("download progress steps: {}", download.len());
 
         // A canceled job reports it and makes no words.
         let c = CancelToken::new();
@@ -1381,9 +1386,9 @@ mod tests {
                 &mut sq_core_time::SequentialIds::default(),
             )
             .unwrap_or_else(|e| panic!("transcribe failed: {e}"));
-        eprintln!("TRANSCRIPT ({}, {:.1}s): {}", service.store.pin.size, start.elapsed().as_secs_f64(), t.text());
+        sq_os::errln!("TRANSCRIPT ({}, {:.1}s): {}", service.store.pin.size, start.elapsed().as_secs_f64(), t.text());
         for w in &t.words {
-            eprintln!(
+            sq_os::errln!(
                 "  {:>6.2}-{:>6.2}  {}",
                 w.range.start.value() as f64 / w.range.start.timescale() as f64,
                 w.range.end().value() as f64 / w.range.end().timescale() as f64,
@@ -1402,7 +1407,7 @@ mod tests {
         assert!(t.words.last().is_some_and(
             |w| secs(w.range.end()) <= read_wav(&wav).map_or(f64::MAX, |a| a.len() as f64 / 16000.0) + 0.05
         ));
-        eprintln!("aligned model: {}", service.store.pin.aligned);
+        sq_os::errln!("aligned model: {}", service.store.pin.aligned);
         assert!(t.words.iter().all(|w| w.confidence.is_some_and(|c| (0.0..=1.0).contains(&c))));
     }
 
@@ -1459,13 +1464,21 @@ mod tests {
     }
 
     fn token_at(text: &str, start_cs: i64) -> WhisperToken {
-        WhisperToken { bytes: text.as_bytes().to_vec(), is_special: false, start_cs, end_cs: start_cs + 10, probability: 0.9 }
+        WhisperToken {
+            bytes: text.as_bytes().to_vec(),
+            is_special: false,
+            start_cs,
+            end_cs: start_cs + 10,
+            probability: 0.9,
+        }
     }
 
     #[test]
     fn a_window_keeps_the_tokens_before_the_resume_point_and_never_half_a_word() {
-        let t = || vec![token_at(" Hallo", 1000), token_at(" L", 1100), token_at("ohnt", 1200), token_at(" sich", 1300)];
-        let words = |v: Vec<WhisperToken>| v.iter().map(|t| String::from_utf8_lossy(&t.bytes).into_owned()).collect::<Vec<_>>();
+        let t =
+            || vec![token_at(" Hallo", 1000), token_at(" L", 1100), token_at("ohnt", 1200), token_at(" sich", 1300)];
+        let words =
+            |v: Vec<WhisperToken>| v.iter().map(|t| String::from_utf8_lossy(&t.bytes).into_owned()).collect::<Vec<_>>();
         // Offset 1000: " L" at 100, "ohnt" at 200; a resume at 150 splits the word.
         assert_eq!(words(tokens_before(t(), 1000, Some(150))), [" Hallo"]);
         assert_eq!(words(tokens_before(t(), 1000, Some(250))), [" Hallo", " L", "ohnt"]);
@@ -1477,7 +1490,7 @@ mod tests {
     #[test]
     fn real_german_speech_gets_distinct_word_times() {
         let Ok(wav) = std::env::var("SQ_WHISPER_DE_WAV") else {
-            eprintln!("skipped: SQ_WHISPER_DE_WAV is not set");
+            sq_os::errln!("skipped: SQ_WHISPER_DE_WAV is not set");
             return;
         };
         let env = |k: &str| match k {
@@ -1488,7 +1501,7 @@ mod tests {
         let service = OnnxWhisperService::standard(env, Box::new(|p| read_wav(&p.to_string_lossy())));
         let locale = Locale::new("de-DE");
         if let Err(e) = service.prepare(&locale, &mut |_| {}, &CancelToken::new()) {
-            eprintln!("skipped: {e}");
+            sq_os::errln!("skipped: {e}");
             return;
         }
         let t = service
@@ -1502,7 +1515,7 @@ mod tests {
             .unwrap_or_else(|e| panic!("transcribe failed: {e}"));
         let secs = |t: sq_core_time::Time| t.value() as f64 / t.timescale() as f64;
         for w in &t.words {
-            eprintln!("  {:>7.2}-{:>7.2}  {}", secs(w.range.start), secs(w.range.end()), w.text);
+            sq_os::errln!("  {:>7.2}-{:>7.2}  {}", secs(w.range.start), secs(w.range.end()), w.text);
         }
         assert!(t.words.len() > 20, "{}", t.text());
         // The 30 s chunk boundary must not swallow speech: words inside 22-28 s, none repeated across the boundary.

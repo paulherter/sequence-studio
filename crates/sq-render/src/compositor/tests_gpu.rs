@@ -451,7 +451,7 @@ fn the_reference_tree_renders_the_same_on_every_backend() {
     if let Ok(dir) = std::env::var("SQ_GPU_GOLDEN") {
         let other = std::fs::read(PathBuf::from(dir).join(name)).expect("golden dump of the other backend");
         let (max8, over) = diff8(&bytes, &other);
-        eprintln!("{name}: 8-bit max {max8}/255, channels over 1: {:.3} %", over * 100.0);
+        sq_os::errln!("{name}: 8-bit max {max8}/255, channels over 1: {:.3} %", over * 100.0);
         assert!(max8 <= 1 && over == 0.0, "{name}: max {max8}/255, {:.3} % of channels over 1", over * 100.0);
     }
 }
@@ -539,7 +539,7 @@ fn p210_chroma_versus_the_merged_420_chroma_of_real_frames() {
             }
         }
         let psnr = |s: f64| if s == 0.0 { f64::INFINITY } else { -10.0 * (s / (w * h) as f64).log10() };
-        println!(
+        sq_os::outln!(
             "P210CMP {tag} {w}x{h}: PSNR Y {:.2} Cb {:.2} Cr {:.2} dB; max abs diff (of 1.0) Y {:.4} Cb {:.4} Cr {:.4}",
             psnr(se[0]),
             psnr(se[1]),

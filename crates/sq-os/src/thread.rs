@@ -401,9 +401,11 @@ mod tests {
         // Both read the same counters a moment apart: the split never exceeds the later total by more than a tick.
         assert!(user + system <= total + Duration::from_millis(5), "{user:?} + {system:?} vs {total:?}");
         let before = thread_cpu_split().expect("split").1;
-        for _ in 0..40 {
-            // Fresh zeroed memory touched page by page: the kernel faults the pages in.
-            let mut v = vec![0u8; 16 << 20];
+        for _ in 0..10 {
+            // Fresh zeroed memory touched page by page: the kernel faults the pages in. 64 MB is above glibc's largest
+            // mmap threshold (32 MB), so every block is a new mapping; a smaller one gets reused from the heap after the
+            // first free and then faults nothing.
+            let mut v = vec![0u8; 64 << 20];
             for i in (0..v.len()).step_by(4096) {
                 v[i] = 1;
             }

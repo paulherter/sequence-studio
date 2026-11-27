@@ -30,27 +30,40 @@ fn an_accent_word_renders_in_the_accent_color_and_undoes() {
     let f = Fixture::new();
     let mut h = History::with_default_limit(f.project.clone());
     let t = |v: i64| json!({"value": v, "timescale": 1});
-    commit(&mut h, &f, json!([{"op":"addGraphic","track":f.v1,"at":t(10),"duration":t(3),
-        "layers":[{"text":"one two three","size":80,"color":"#ffffff"}]}]))
+    commit(
+        &mut h,
+        &f,
+        json!([{"op":"addGraphic","track":f.v1,"at":t(10),"duration":t(3),
+        "layers":[{"text":"one two three","size":80,"color":"#ffffff"}]}]),
+    )
     .unwrap_or_else(|e| panic!("{e}"));
     let gid = graphic(&h);
     let layer = clip_params_json(&clip_of(&h, gid))["layers"][0]["id"].as_str().unwrap_or("").to_string();
     let render = |h: &History<Project>| {
         let c = clip_of(h, gid);
-        let GraphicsContent::Text { generator } = &c.graphics_store.as_ref().map_or_else(|| panic!("doc"), |d| d.layers[0].content.clone())
-        else { panic!("text") };
+        let GraphicsContent::Text { generator } =
+            &c.graphics_store.as_ref().map_or_else(|| panic!("doc"), |d| d.layers[0].content.clone())
+        else {
+            panic!("text")
+        };
         let (tpl, _) = TextGenerator::decode(generator).unwrap_or_else(|e| panic!("{e}"));
-        let r = PortableTextRenderer::render(&tpl.text, &tpl.style, None, None, 1.0, tpl.highlight.as_ref()).unwrap_or_else(|| panic!("raster"));
+        let r = PortableTextRenderer::render(&tpl.text, &tpl.style, None, None, 1.0, tpl.highlight.as_ref())
+            .unwrap_or_else(|| panic!("raster"));
         r.picture.pixels.chunks(4).filter(|p| p[3] > 0.9 && p[0] > 0.9 && p[1] > 0.8 && p[2] < 0.2).count()
     };
     assert_eq!(render(&h), 0, "no yellow before the accent");
     let depth = h.undo_depth();
-    commit(&mut h, &f, json!([{"op":"setTextAccent","clip":gid,"layer":layer,"from":1,"color":"#FFEB00"}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"setTextAccent","clip":gid,"layer":layer,"from":1,"color":"#FFEB00"}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(h.undo_depth(), depth + 1);
     assert!(render(&h) > 50, "the accent word has yellow pixels");
     let j = clip_params_json(&clip_of(&h, gid));
-    assert_eq!((j["layers"][0]["accent"]["from"].as_u64(), j["layers"][0]["accent"]["to"].as_u64()), (Some(1), Some(2)));
-    commit(&mut h, &f, json!([{"op":"setTextAccent","clip":gid,"layer":layer,"clear":true}])).unwrap_or_else(|e| panic!("{e}"));
+    assert_eq!(
+        (j["layers"][0]["accent"]["from"].as_u64(), j["layers"][0]["accent"]["to"].as_u64()),
+        (Some(1), Some(2))
+    );
+    commit(&mut h, &f, json!([{"op":"setTextAccent","clip":gid,"layer":layer,"clear":true}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(render(&h), 0);
     assert!(clip_params_json(&clip_of(&h, gid))["layers"][0].get("accent").is_none());
     h.undo();
@@ -64,7 +77,10 @@ fn an_accent_word_renders_in_the_accent_color_and_undoes() {
     ] {
         assert!(serde_json::from_value::<Vec<EditOperation>>(json!([bad])).is_err());
     }
-    assert!(commit(&mut h, &f, json!([{"op":"setTextAccent","clip":gid,"layer":layer,"from":3,"color":"#ffeb00"}])).is_err());
+    assert!(
+        commit(&mut h, &f, json!([{"op":"setTextAccent","clip":gid,"layer":layer,"from":3,"color":"#ffeb00"}]))
+            .is_err()
+    );
 }
 
 #[test]

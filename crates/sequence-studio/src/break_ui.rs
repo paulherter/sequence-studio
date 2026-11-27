@@ -211,7 +211,7 @@ pub(crate) fn measure(dir: &Path, file: &Path, w: u32, h: u32, scale: f32) -> St
         app.turn();
     }
     worst.sort_by(|a, b| b.1.total_cmp(&a.1));
-    eprintln!("BREAK   hosts {:?}", worst.iter().take(3).map(|(n, t)| format!("{n} {t:.1}ms")).collect::<Vec<_>>());
+    sq_os::errln!("BREAK   hosts {:?}", worst.iter().take(3).map(|(n, t)| format!("{n} {t:.1}ms")).collect::<Vec<_>>());
     times.sort_by(f64::total_cmp);
     Stats { cut_glyphs: cut, p95_ms: times[(times.len() * 95 / 100).min(times.len() - 1)], quads }
 }
@@ -225,14 +225,14 @@ mod tests {
         let file = write_project(&dir, name, &spec);
         for &(w, h, s) in sizes {
             let st = measure(&dir, &file, w, h, s);
-            eprintln!(
+            sq_os::errln!(
                 "BREAK {name} {w}x{h}@{s}: p95 {:.1} ms, {} quads, {} cut glyphs",
                 st.p95_ms,
                 st.quads,
                 st.cut_glyphs.len()
             );
             for g in st.cut_glyphs.iter().step_by((st.cut_glyphs.len() / 12).max(1)) {
-                eprintln!("BREAK   cut glyph at ({:.0},{:.0}) clip {:.0}..{:.0}", g.0, g.1, g.2, g.3);
+                sq_os::errln!("BREAK   cut glyph at ({:.0},{:.0}) clip {:.0}..{:.0}", g.0, g.1, g.2, g.3);
             }
             // shortcut: the frame budget is asserted in release builds only (debug is 10x slower), upgrade when CI runs release.
             assert!(
@@ -317,7 +317,7 @@ mod tests {
                 worst = (worst.0.max(list.quads().len()), worst.1.max(t.elapsed().as_secs_f64() * 1000.0));
                 assert!(list.quads().iter().all(|q| q.rect.x.is_finite() && q.rect.w.is_finite()), "non-finite rect");
             }
-            eprintln!("BREAK zoom {text}: max {} quads, worst frame {:.1} ms", worst.0, worst.1);
+            sq_os::errln!("BREAK zoom {text}: max {} quads, worst frame {:.1} ms", worst.0, worst.1);
             assert!(worst.0 < 40_000, "ruler ticks unbounded at zoom {text}: {} quads", worst.0);
         }
         let _ = std::fs::remove_dir_all(&dir);

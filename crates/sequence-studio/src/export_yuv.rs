@@ -213,7 +213,7 @@ mod tests {
                 rgba[(y * w + x) * 4..(y * w + x) * 4 + 3].copy_from_slice(&c);
             }
         }
-        let Some(gpu_out) = run(&rgba, w, h) else { return eprintln!("no GPU: skipped") };
+        let Some(gpu_out) = run(&rgba, w, h) else { return sq_os::errln!("no GPU: skipped") };
         let want = reference(&rgba, w, h);
         let worst = gpu_out.iter().zip(&want).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
         assert!(worst <= 1, "GPU and CPU NV12 differ by {worst} codes");

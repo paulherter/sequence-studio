@@ -206,7 +206,7 @@ extern "C" fn run_loop_activity(_observer: *mut c_void, activity: c_ulong, info:
     let stall = ctx.watch.lock().unwrap_or_else(PoisonError::into_inner).activity(which, sq_playback::probe::now());
     if let Some((ms, line)) = stall {
         ctx.probe.record_stall(ms);
-        eprintln!("{line}");
+        sq_os::errln!("{line}");
     }
 }
 
@@ -385,7 +385,7 @@ mod tests {
             let ahead = present.saturating_duration_since(at);
             s.lock().unwrap_or_else(PoisonError::into_inner).push((ahead, interval));
         }) else {
-            eprintln!("skipped: no display link");
+            sq_os::errln!("skipped: no display link");
             return;
         };
         let t = Instant::now();

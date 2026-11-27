@@ -347,7 +347,8 @@ impl TextUnits {
             return None;
         }
         let (e, b) = (elapsed, cursor.blink);
-        let halves = i128::from(e.value()) * i128::from(b.timescale()) / (i128::from(e.timescale()) * i128::from(b.value().max(1)));
+        let halves = i128::from(e.value()) * i128::from(b.timescale())
+            / (i128::from(e.timescale()) * i128::from(b.value().max(1)));
         Some(TypewriterCursorPlace { after_character, visible: halves % 2 == 0 })
     }
 }
@@ -880,7 +881,12 @@ mod tests {
     fn a_typewriter_cursor_follows_the_last_character_and_blinks_after_typing() {
         use sq_core_model::anchored_animation::TextCursor;
         let units = TextUnits::segment("abc d", &[Utf16Range { location: 0, length: 5 }]);
-        let mut a = TextAnimator::new(TextAnimatorEffect::Typewriter, TextAnimatorUnit::Character, Time::ZERO, Time::new(1, 10));
+        let mut a = TextAnimator::new(
+            TextAnimatorEffect::Typewriter,
+            TextAnimatorUnit::Character,
+            Time::ZERO,
+            Time::new(1, 10),
+        );
         let ms = |v: i64| Time::new(v, 1000);
         assert_eq!(units.typewriter_cursor(&a, ms(0)), None, "no cursor configured");
         a.cursor = Some(TextCursor::standard());

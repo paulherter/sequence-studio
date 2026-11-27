@@ -10,6 +10,7 @@ use crate::panel::{Gesture, TimelinePanel};
 use crate::skin::TimelineSkin;
 use sq_core_edit::clip_markers::ClipMarkersExt as _;
 use sq_core_edit::sync_offsets::SyncOffsetsExt as _;
+use sq_core_effects::adjustment_clip::ClipAdjustmentExt as _;
 use sq_core_effects::transition::TransitionKindExt as _;
 use sq_core_effects::transition::{ResolvedTransition, TrackTransitions as _};
 use sq_core_effects::transition_layer::ClipTransitionLayer as _;
@@ -512,6 +513,8 @@ impl TimelinePanel {
             cv.restore_gstate();
         } else if drawn.height < ClipBodyMetrics::BODY_MIN_HEIGHT {
             cv.fill_rounded(drawn, radius, band_color);
+        } else if c.is_adjustment() {
+            self.draw_adjustment_body(cv, drawn, radius, band_h, fill_color, band_color);
         } else {
             cv.fill_rounded(drawn, radius, self.theme.clip_body(self.labels.label(c)));
             cv.save_gstate();
@@ -576,6 +579,39 @@ impl TimelinePanel {
             f64::INFINITY,
             medium,
         );
+        cv.restore_gstate();
+    }
+
+    /// An Adjustment Layer: the name band in the label color, the body below see-through (the picture it adjusts shows
+    /// through) with a diagonal hatch, like a transition layer's held part.
+    fn draw_adjustment_body(
+        &self,
+        cv: &mut Canvas,
+        drawn: CGRect,
+        radius: f64,
+        band_h: f64,
+        fill_color: Color,
+        band_color: Color,
+    ) {
+        let skin = self.skin();
+        cv.fill_rounded(drawn, radius, fill_color.with_alpha(TimelineSkin::ADJUSTMENT_BODY_ALPHA));
+        let below = CGRect::new(drawn.min_x(), drawn.min_y() + band_h, drawn.width, (drawn.height - band_h).max(0.0));
+        cv.save_gstate();
+        cv.clip_to(below);
+        let mut x = below.min_x() - below.height;
+        while x < below.max_x() {
+            cv.stroke_line(
+                CGPoint { x, y: below.max_y() },
+                CGPoint { x: x + below.height, y: below.min_y() },
+                1.0,
+                skin.clip_edge(),
+            );
+            x += 6.0;
+        }
+        cv.restore_gstate();
+        cv.save_gstate();
+        cv.clip_to(CGRect::new(drawn.min_x(), drawn.min_y(), drawn.width, band_h));
+        cv.fill_rounded(drawn, radius, band_color);
         cv.restore_gstate();
     }
 

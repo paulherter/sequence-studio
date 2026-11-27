@@ -16,14 +16,12 @@ impl Retiring {
 
     /// Takes a place for one more draining session; false when `MAX_RETIRING` are draining already.
     pub fn try_begin(&self) -> bool {
-        self.0
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < MAX_RETIRING).then_some(n + 1))
-            .is_ok()
+        self.0.try_update(Ordering::AcqRel, Ordering::Acquire, |n| (n < MAX_RETIRING).then_some(n + 1)).is_ok()
     }
 
     /// A draining session is gone.
     pub fn end(&self) {
-        let _ = self.0.fetch_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
+        let _ = self.0.try_update(Ordering::AcqRel, Ordering::Acquire, |n| n.checked_sub(1));
     }
 }
 

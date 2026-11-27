@@ -376,7 +376,7 @@ mod tests {
     #[test]
     fn the_shader_matches_the_cpu_twin() {
         let Ok(gpu) = Gpu::new() else {
-            eprintln!("skipped: no GPU adapter");
+            sq_os::errln!("skipped: no GPU adapter");
             return;
         };
         let (w, h) = (4u32, 1u32);
@@ -440,7 +440,7 @@ mod tests {
     #[test]
     fn two_pictures_and_the_p3_target_match_the_cpu_twin() {
         let Ok(gpu) = Gpu::new() else {
-            eprintln!("skipped: no GPU adapter");
+            sq_os::errln!("skipped: no GPU adapter");
             return;
         };
         let (w, h) = (4u32, 1u32);
@@ -485,7 +485,7 @@ mod tests {
         let got = gpu.read_texture(&target).expect("read");
         let value = |i: usize, c: usize| half_value(u16::from_le_bytes([got[i * 8 + c * 2], got[i * 8 + c * 2 + 1]]));
         assert!((value(0, 0) - 12.5).abs() < 0.05, "1000 nit patch writes {}", value(0, 0));
-        eprintln!("1000-nit patch written as scRGB {} (12.5 = 1000 nit)", value(0, 0));
+        sq_os::errln!("1000-nit patch written as scRGB {} (12.5 = 1000 nit)", value(0, 0));
         for i in 0..4 {
             let w_ = want(i, Encoding::Scrgb);
             for (c, w) in w_.iter().enumerate() {

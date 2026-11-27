@@ -7,7 +7,10 @@ use super::hardware::{
     supports_hardware_decode,
 };
 use super::timing::{DecodeCursor, DecodePlan};
-use crate::shim::{Decoder, DecoderConfig, Frame, InputPacket, Received, Sent};
+use crate::shim::{
+    Decoder, DecoderConfig, Frame, InputPacket, PLAN_DWELL, Received, Sent, ThreadPlan, current_thread_plan,
+    plan_switch_allowed,
+};
 use sq_core_model::{FieldOrder, VideoTrackInfo};
 use sq_core_time::{Id, Time};
 use sq_frame::sqframe::{SQFrame, SQFrameColorSpace, SQFramePixelFormat, SQFrameStorage};
@@ -25,7 +28,9 @@ pub const DEFAULT_EXTRA_HW_FRAMES: i32 = 16;
 
 /// `DEFAULT_EXTRA_HW_FRAMES`, or `SQ_HW_EXTRA_FRAMES` (measurement knob: each pooled 4K surface is 12 MB of shared memory).
 pub fn extra_hw_frames() -> i32 {
-    std::env::var("SQ_HW_EXTRA_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| super::hardware::default_extra_hw_frames(super::hardware::tier_memory(), DEFAULT_EXTRA_HW_FRAMES))
+    std::env::var("SQ_HW_EXTRA_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or_else(|| {
+        super::hardware::default_extra_hw_frames(super::hardware::tier_memory(), DEFAULT_EXTRA_HW_FRAMES)
+    })
 }
 
 /// Pictures decoded past the previous range (reorder delay) kept for the next call.
@@ -37,6 +42,28 @@ fn carry_cap(s: &State) -> usize {
 }
 /// Threads of the throw-away software decoder (a one-off range, outside the shared thread budget).
 const ONE_SHOT_THREADS: i32 = 2;
+
+/// `SQ_SCRUB_TRACE=1`: thread plan and decode time of every decoder call on stderr (diagnosis only).
+fn scrub_trace() -> bool {
+    static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *ON.get_or_init(|| std::env::var_os("SQ_SCRUB_TRACE").is_some())
+}
+
+/// Whether a decoder on `plan` must reopen on the shared budget when the scrub ends.
+fn demote_after_scrub(plan: ThreadPlan) -> bool {
+    plan != ThreadPlan::Playback
+}
+
+#[cfg(test)]
+mod demote_tests {
+    use super::*;
+
+    #[test]
+    fn only_a_scrub_decoder_reopens_when_the_scrub_ends() {
+        assert!(demote_after_scrub(ThreadPlan::Scrub(8)));
+        assert!(!demote_after_scrub(ThreadPlan::Playback));
+    }
+}
 
 type FallbackHook = Arc<dyn Fn(&str) + Send + Sync>;
 static FALLBACK_HOOK: RwLock<Option<FallbackHook>> = RwLock::new(None);
@@ -61,6 +88,12 @@ struct State {
     carry: HashMap<usize, DecodedFrame>,
     /// Whether the software decoder runs in preview mode right now (`set_preview`).
     preview: bool,
+    /// The thread plan the open software decoder was made for (`decode_blocking_until` swaps it with the scrub mode).
+    plan: ThreadPlan,
+    /// When `plan` was last changed (`plan_switch_allowed`).
+    plan_since: std::time::Instant,
+    /// A plan whose open failed: not tried again until the wanted plan changes.
+    plan_failed: Option<ThreadPlan>,
     /// The slot of the process-wide hardware session limit while the decoder is a hardware one.
     session: Option<SessionGuard<'static>>,
     /// Hardware frames the pool holds beyond the decoder's own references (the `extra_hw_frames` it was opened with).
@@ -116,12 +149,33 @@ fn open_decoder(d: &FFmpegDemuxer, hardware: bool, extra_hw_frames: i32) -> Resu
     open_decoder_threads(d, hardware, extra_hw_frames, 0)
 }
 
+/// Puts `opened` into `slot` and drops what was there; a failed open leaves `slot` as it was.
+fn swap_in<T, E>(slot: &mut Option<T>, opened: Result<T, E>) -> Result<(), E> {
+    *slot = Some(opened?);
+    Ok(())
+}
+
+/// A software decoder with fixed `threads` (0: the shared budget); `scrub` counts them in the budget.
+fn open_decoder_threads_plan(d: &FFmpegDemuxer, threads: i32, scrub: bool) -> Result<Decoder, MediaError> {
+    open_decoder_cfg(d, false, 0, threads, scrub)
+}
+
 /// `sw_threads` > 0 fixes a software decoder's threads (a throw-away decoder must not count in the shared budget).
 fn open_decoder_threads(
     d: &FFmpegDemuxer,
     hardware: bool,
     extra_hw_frames: i32,
     sw_threads: i32,
+) -> Result<Decoder, MediaError> {
+    open_decoder_cfg(d, hardware, extra_hw_frames, sw_threads, false)
+}
+
+fn open_decoder_cfg(
+    d: &FFmpegDemuxer,
+    hardware: bool,
+    extra_hw_frames: i32,
+    sw_threads: i32,
+    scrub: bool,
 ) -> Result<Decoder, MediaError> {
     let raw = d.raw();
     let format = d.format_description();
@@ -137,6 +191,7 @@ fn open_decoder_threads(
         hardware,
         extra_hw_frames,
         sw_threads,
+        scrub,
     };
     let _span = sq_os::trace::span_args("open", "decoder open", || {
         format!("codec={} hw={hardware} {}x{}", format.codec, raw.width, raw.height)
@@ -229,6 +284,9 @@ impl FFmpegVideoDecoder {
                 cursor: None,
                 carry: HashMap::new(),
                 preview: false,
+                plan: ThreadPlan::Playback,
+                plan_since: std::time::Instant::now().checked_sub(PLAN_DWELL).unwrap_or_else(std::time::Instant::now),
+                plan_failed: None,
                 session,
                 extra_hw_frames: pool_frames(extra_hw_frames),
                 tail: None,
@@ -258,6 +316,11 @@ impl FFmpegVideoDecoder {
         self.state.lock().unwrap_or_else(PoisonError::into_inner)
     }
 
+    /// The thread plan of the open decoder (tests and traces).
+    pub fn thread_plan(&self) -> ThreadPlan {
+        self.lock().plan
+    }
+
     /// "h264 (software)" / "h264 (d3d11va)" / "h264 (vaapi)".
     pub fn decoder_name(&self) -> String {
         self.lock().decoder.as_ref().map_or_else(|| "none".to_string(), Decoder::name)
@@ -268,6 +331,16 @@ impl FFmpegVideoDecoder {
     /// Turning it off restarts the next decode from a keyframe, so the exact pictures do not build on drifted references.
     pub fn set_preview(&self, on: bool) {
         self.preview_flag.store(on, Ordering::Relaxed);
+        // The end of a scrub: an idle `Scrub` decoder gives its threads back now (a few ms on the caller), not inside its next
+        // decode call, which would stall playback once on reopen + seek when it reaches this clip. A busy decoder (lock held)
+        // demotes itself at its next call as before.
+        // shortcut: reopens on the calling (engine) thread, ~5-40 ms per Scrub decoder; move to a background job if a project has many.
+        if !on
+            && let Ok(mut s) = self.state.try_lock()
+            && demote_after_scrub(s.plan)
+        {
+            let _ = self.apply_thread_plan(&mut s, false);
+        }
     }
 
     /// Decodes `range` on the calling thread (blocking), as `VideoDecoding::decode_deliver` does. `deliver` gets each
@@ -307,6 +380,22 @@ impl FFmpegVideoDecoder {
             return Ok(Vec::new());
         }
         let preview = self.preview_flag.load(Ordering::Relaxed);
+        let _busy = crate::shim::BusyBig::enter(!s.hardware && self.info.width * self.info.height >= 3_500_000);
+        let trace_t = scrub_trace().then(std::time::Instant::now);
+        self.apply_thread_plan(&mut s, preview)?;
+        if let Some(t) = trace_t {
+            sq_os::errln!(
+                "[scrub-trace] media {} frames {}..{} preview {preview} hardware {} plan {:?} busy_big {} lock_wait {:.1} ms plan_apply {:.1} ms",
+                self.media,
+                range.start(),
+                range.end(),
+                s.hardware,
+                s.plan,
+                crate::shim::busy_big_software(),
+                waited.elapsed().as_secs_f64() * 1e3 - t.elapsed().as_secs_f64() * 1e3,
+                t.elapsed().as_secs_f64() * 1e3
+            );
+        }
         if preview != s.preview
             && let Some(d) = s.decoder.as_mut()
         {
@@ -335,13 +424,28 @@ impl FFmpegVideoDecoder {
                 cursor: None,
                 carry: HashMap::new(),
                 preview: false,
+                plan: ThreadPlan::Playback,
+                plan_since: std::time::Instant::now().checked_sub(PLAN_DWELL).unwrap_or_else(std::time::Instant::now),
+                plan_failed: None,
                 session: None,
                 extra_hw_frames: 0,
                 tail: None,
             };
             return self.decode_locked(&range, &mut once, None, None);
         }
-        let error = match self.decode_locked(&range, &mut s, deliver, stop) {
+        let decode_t = scrub_trace().then(std::time::Instant::now);
+        let first = self.decode_locked(&range, &mut s, deliver, stop);
+        if let Some(t) = decode_t {
+            sq_os::errln!(
+                "[scrub-trace] media {} frames {}..{} decode_locked {:.1} ms ok {}",
+                self.media,
+                range.start(),
+                range.end(),
+                t.elapsed().as_secs_f64() * 1e3,
+                first.is_ok()
+            );
+        }
+        let error = match first {
             Ok(frames) => return Ok(frames),
             Err(e) => e,
         };
@@ -359,6 +463,46 @@ impl FFmpegVideoDecoder {
         self.decode_locked(&range, &mut s, deliver, stop)
     }
 
+    /// Scrub mode (`preview`, the engine sets it only while scrubbing) gives a lone big software decoder more threads, the end
+    /// of the scrub gives it the shared budget back. ffmpeg cannot change the threads of an open decoder, so the decoder is
+    /// reopened (a few ms) and the next decode seeks.
+    fn apply_thread_plan(&self, s: &mut State, preview: bool) -> Result<(), MediaError> {
+        if s.hardware || s.decoder.is_none() {
+            return Ok(());
+        }
+        let big = self.info.width * self.info.height >= 3_500_000;
+        let plan = current_thread_plan(preview, big);
+        if scrub_trace() && preview {
+            sq_os::errln!(
+                "[scrub-trace] plan decision: big {big} wanted {plan:?} have {:?} allowed {} failed {:?} since {:?} {}",
+                s.plan,
+                plan_switch_allowed(preview, s.plan, plan, s.plan_since.elapsed()),
+                s.plan_failed,
+                s.plan_since.elapsed(),
+                crate::shim::plan_inputs()
+            );
+        }
+        if !plan_switch_allowed(preview, s.plan, plan, s.plan_since.elapsed()) || s.plan_failed == Some(plan) {
+            return Ok(());
+        }
+        let (threads, scrub) = match plan {
+            ThreadPlan::Playback => (0, false),
+            ThreadPlan::Scrub(n) => (n, true),
+        };
+        // Open the new decoder before the old one goes: a failed open leaves the old decoder working (on its old plan).
+        let opened = open_decoder_threads_plan(&self.demuxer, threads, scrub);
+        if swap_in(&mut s.decoder, opened).is_err() {
+            s.plan_failed = Some(plan);
+            return Ok(());
+        }
+        s.plan = plan;
+        s.plan_since = std::time::Instant::now();
+        s.plan_failed = None;
+        s.preview = false; // a new decoder is exact: the preview switch below applies
+        s.reset();
+        Ok(())
+    }
+
     /// Replaces the hardware decoder by a software one and frees its session slot; the next decode seeks.
     fn reopen_software(&self, s: &mut State) -> Result<(), MediaError> {
         s.decoder = None;
@@ -366,6 +510,8 @@ impl FFmpegVideoDecoder {
         s.hardware = false;
         s.session = None;
         s.preview = false;
+        s.plan = ThreadPlan::Playback;
+        s.plan_failed = None;
         self.hardware_flag.store(false, Ordering::Relaxed);
         s.reset();
         Ok(())
@@ -653,7 +799,7 @@ impl Run<'_> {
 fn lock_wait_trace(waited: std::time::Duration, range: &RangeInclusive<usize>) {
     static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     if *ON.get_or_init(|| std::env::var_os("SQ_PLAY_TRACE").is_some()) && waited.as_millis() >= 1 {
-        eprintln!("[play-trace] decoder lock wait {:.0} ms for frames {range:?}", waited.as_secs_f64() * 1e3);
+        sq_os::errln!("[play-trace] decoder lock wait {:.0} ms for frames {range:?}", waited.as_secs_f64() * 1e3);
     }
 }
 
@@ -703,5 +849,19 @@ impl VideoDecoding for FFmpegVideoDecoder {
             d.flush();
         }
         s.reset();
+    }
+}
+
+#[cfg(test)]
+mod plan_tests {
+    use super::swap_in;
+
+    #[test]
+    fn a_failed_open_keeps_the_old_decoder() {
+        let mut slot = Some(1);
+        assert!(swap_in(&mut slot, Err::<i32, &str>("no memory")).is_err());
+        assert_eq!(slot, Some(1));
+        assert!(swap_in(&mut slot, Ok::<i32, &str>(2)).is_ok());
+        assert_eq!(slot, Some(2));
     }
 }

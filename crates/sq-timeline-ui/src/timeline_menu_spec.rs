@@ -78,6 +78,8 @@ pub enum TimelineMenuAction {
     MakeGraphic,
     /// New Color Matte… at the playhead (the dialog is the host's).
     NewColorMatte,
+    /// New Adjustment Layer at the playhead, 5 s, on the track above the top clip there.
+    NewAdjustmentLayer,
     /// Save the selected title layers as a template, and the zones toggle (check mark).
     SaveTemplate,
     ToggleZones,
@@ -241,7 +243,7 @@ impl TimelineContextMenu {
             cmd(A::Bundle, "Bundle", can_bundle, EditorCommand::Bundle),
             cmd(A::Unbundle, "Unbundle", clips.iter().any(|c| c.bundle.is_some()), EditorCommand::Unbundle),
             cmd(A::Nest, "Combine…", has_clips, EditorCommand::Combine),
-            TimelineMenuItem::new(A::Unnest, "Unnest", has_nested),
+            cmd(A::Unnest, "Unnest", has_nested, EditorCommand::Unnest),
             cmd(A::ExtendToSequenceEnd, "Extend to Sequence End", only_adjustments, EditorCommand::ExtendToSequenceEnd)
                 .checked(only_adjustments && clips.iter().all(|c| c.extends_to_end_store == Some(true))),
             cmd(A::Speed, "Speed…", can_retime, EditorCommand::SpeedDuration),
@@ -418,6 +420,7 @@ impl TimelineContextMenu {
                 &EditorCommand::PasteInsert,
                 map,
             ),
+            TimelineMenuItem::new(A::NewAdjustmentLayer, "New Adjustment Layer", true).separator_before(true),
             TimelineMenuItem::keyed(
                 A::TogglePlaceSequencesAsClips,
                 "Place Sequences as Clips",
@@ -699,7 +702,11 @@ mod tests {
             ["Paste", "Paste Insert", "Ripple Delete"]
         );
         let empty = TimelineContextMenu::empty_items(false, true, &map);
-        assert!(empty[2].is_checked && empty[2].separator_before && !empty[0].is_enabled);
+        assert_eq!(
+            empty.iter().map(|i| i.title.as_str()).collect::<Vec<_>>(),
+            ["Paste", "Paste Insert", "New Adjustment Layer", "Place Sequences as Clips"]
+        );
+        assert!(empty[3].is_checked && empty[3].separator_before && !empty[0].is_enabled && empty[2].is_enabled);
     }
 
     #[test]

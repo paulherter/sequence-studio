@@ -14,6 +14,7 @@ sq-core-masks.workspace = true
 sq-core-effects.workspace = true
 sq-os.workspace = true
 sq-draw.workspace = true
+sq-draw-monitor = { path = "../sq-draw-monitor" }
 sq-gpu.workspace = true
 sq-audiofx.workspace = true
 sq-playback.workspace = true

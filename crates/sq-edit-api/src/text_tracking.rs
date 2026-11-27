@@ -18,11 +18,15 @@ pub(crate) fn layer_of_path(path: &str) -> Option<Id> {
 }
 
 fn number(v: &Value) -> Result<f64, String> {
-    v.as_f64().filter(|n| n.is_finite() && (MIN..=MAX).contains(n)).ok_or_else(|| format!("tracking: a number {MIN}...{MAX} (points between letters)"))
+    v.as_f64()
+        .filter(|n| n.is_finite() && (MIN..=MAX).contains(n))
+        .ok_or_else(|| format!("tracking: a number {MIN}...{MAX} (points between letters)"))
 }
 
 fn edit(layer: &mut GraphicsLayer, f: impl FnOnce(&mut TextTemplate) -> Result<(), String>) -> Result<(), String> {
-    let GraphicsContent::Text { generator } = &layer.content else { return Err("the layer is not a text layer".into()) };
+    let GraphicsContent::Text { generator } = &layer.content else {
+        return Err("the layer is not a text layer".into());
+    };
     let (mut template, animations) = TextGenerator::decode(generator).map_err(|e| format!("text layer: {e}"))?;
     f(&mut template)?;
     let generator = TextGenerator::make_ref(&template, animations.as_ref()).map_err(|e| e.to_string())?;
@@ -81,9 +85,15 @@ pub(crate) fn move_key(layer: &mut GraphicsLayer, duration: Time, from: Time, to
 }
 
 /// Shifts the keys at or after `after`; 0 when the layer has no tracking keys (nothing is re-encoded then).
-pub(crate) fn shift_keys(layer: &mut GraphicsLayer, duration: Time, by: Time, after: Option<Time>) -> Result<usize, String> {
+pub(crate) fn shift_keys(
+    layer: &mut GraphicsLayer,
+    duration: Time,
+    by: Time,
+    after: Option<Time>,
+) -> Result<usize, String> {
     let keyed = match &layer.content {
-        GraphicsContent::Text { generator } => TextGenerator::decode(generator).is_ok_and(|(t, _)| t.tracking_keys.as_ref().is_some_and(|p| !p.track.is_empty())),
+        GraphicsContent::Text { generator } => TextGenerator::decode(generator)
+            .is_ok_and(|(t, _)| t.tracking_keys.as_ref().is_some_and(|p| !p.track.is_empty())),
         _ => false,
     };
     if !keyed {

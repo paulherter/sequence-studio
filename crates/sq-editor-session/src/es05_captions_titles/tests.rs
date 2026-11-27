@@ -698,7 +698,7 @@ fn a_template_from_the_selection_gets_text_and_style_slots_and_inserts_as_one_cl
     );
     assert_eq!(template.duration(), s(5));
     let depth = sess.undo_depth();
-    let Some(placed) = sess.insert_title_template(&template, Some(s(30))) else { panic!("not placed") };
+    let Some(placed) = sess.insert_title_template(&template, Some(s(30)), None) else { panic!("not placed") };
     assert_eq!(sess.undo_depth(), depth + 1);
     assert_eq!(sess.undo_name(), Some("Insert Title Template"));
     assert!(sess.selection().contains(&placed));

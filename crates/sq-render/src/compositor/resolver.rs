@@ -412,7 +412,7 @@ fn load(inner: &Inner, key: &LutKey, media: Id, force: bool) -> LutEntry {
         }
     }
     if std::env::var("SQ_COLOR_LOG").is_ok_and(|v| v == "1") {
-        eprintln!(
+        sq_os::errln!(
             "COLOR: media={media:?} luts={}/{}{}",
             luts.len(),
             key.refs.len(),

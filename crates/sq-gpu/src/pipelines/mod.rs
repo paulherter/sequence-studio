@@ -7,6 +7,7 @@
 
 mod passthrough;
 pub(crate) mod warm;
+pub use warm::prewarm_done_at;
 
 use crate::gpu::{Gpu, GpuError, lock};
 use crate::layout::{LayoutKind, PixelFormat};

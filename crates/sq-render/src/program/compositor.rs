@@ -238,6 +238,11 @@ impl ProgramCompositor {
     /// Composites `requests` (bottom to top) at the sequence size and presents. The frame is submitted without waiting for
     /// itself, but never more than `FRAMES_IN_FLIGHT` frames queue on the GPU: before recording, `render` waits for the frame
     /// before the previous one (`options.gpu_wait`) so an overloaded GPU slows the producer down instead of piling up memory.
+    /// How many full-frame intermediates the last `render` acquired.
+    pub fn offscreens(&self) -> usize {
+        self.compositor.offscreens()
+    }
+
     pub fn render(
         &mut self,
         requests: &[LayerRequest],
@@ -534,7 +539,9 @@ impl ProgramCompositor {
             });
         }
         let t = sq_gpu::gpu::timing::sub_start();
+        let source_span = sq_os::trace::span("render", "layer source");
         let picked = source(l);
+        drop(source_span);
         sq_gpu::gpu::timing::sub_add(sq_gpu::gpu::timing::Sub::Source, t);
         Ok(match picked {
             LayerSource::Offline => offline(l),
@@ -564,7 +571,10 @@ impl ProgramCompositor {
             LayerSource::Media(s) => {
                 let key = PlaneKey { media: s.media, index: s.index, proxy: s.proxy, divisor: s.divisor };
                 let t = sq_gpu::gpu::timing::sub_start();
+                let to_gpu_span = sq_os::trace::span("render", "layer to gpu");
                 let mut picture = to_gpu(&self.gpu, &s.frame, Some(key), &mut self.planes, kept)?;
+                drop(to_gpu_span);
+                let _gyro_span = s.gyro.is_some().then(|| sq_os::trace::span("render", "layer gyro warp"));
                 if let Some(map) = &s.gyro {
                     let texture = (i64::from(picture.planes.0.width()), i64::from(picture.planes.0.height()));
                     let scaled = gyro_warp_size(preview, &l.transform, texture, (s.info.width, s.info.height));

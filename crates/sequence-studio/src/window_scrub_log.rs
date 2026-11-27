@@ -15,6 +15,8 @@ const SPAN_SECS: f64 = 10.0;
 /// A request whose frame has not come after this long counts as dropped (a later pass over the same frame is not its answer).
 const GIVE_UP: Duration = Duration::from_secs(1);
 const JUMP_EVERY: Duration = Duration::from_millis(250);
+/// `cold`: one jump per this long, so every jump can finish (a cold 4K decode takes 150-350 ms) before the next one.
+const COLD_EVERY: Duration = Duration::from_millis(1500);
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Pattern {
@@ -22,6 +24,8 @@ pub enum Pattern {
     Normal,
     Fast,
     Jumps,
+    /// One jump per `COLD_EVERY` over the whole clip, each into a key-frame interval not visited before in the run.
+    Cold,
 }
 
 impl Pattern {
@@ -31,6 +35,7 @@ impl Pattern {
             "normal" => Pattern::Normal,
             "fast" => Pattern::Fast,
             "jumps" => Pattern::Jumps,
+            "cold" => Pattern::Cold,
             _ => return None,
         })
     }
@@ -41,7 +46,7 @@ impl Pattern {
             Pattern::Slow => Some(0.5),
             Pattern::Normal => Some(1.0),
             Pattern::Fast => Some(4.0),
-            Pattern::Jumps => None,
+            Pattern::Jumps | Pattern::Cold => None,
         }
     }
 }
@@ -54,6 +59,10 @@ pub enum Action {
     Begin,
     /// A pointer move to this timeline frame: `scrub`.
     Scrub(i64),
+    /// The jumps are over: `end_scrub`, then Play for `SQ_WINDOW_SCRUBLOG_PLAY` seconds.
+    Play,
+    /// The play phase is over: stop playing, `finish`.
+    QuitPlaying,
     /// The run is over: `end_scrub`, then `finish`.
     Quit,
     /// No frame reached the screen in time.
@@ -69,6 +78,8 @@ pub struct Request {
     pub matched: Option<f64>,
     /// The newest frame on screen when the request was made.
     pub shown_before: i64,
+    /// Milliseconds from the request to the first present of the target frame with its exact pictures (`cold` only).
+    pub exact: Option<f64>,
 }
 
 /// A position on a back-and-forth sweep: `x` runs on, the result stays inside `0..=span` (ping-pong).
@@ -93,6 +104,96 @@ pub fn jump_target(from: f64, span: f64, r: f64, up: bool) -> f64 {
         hi
     };
     pick.clamp(0.0, span)
+}
+
+/// The slot (0..n) the k-th cold jump goes to: a stride walk through all `n` slots that hits each once and lands far from the last
+/// one (the stride is about 0.618 n, made coprime with n).
+pub fn cold_slot(k: u64, n: u64) -> u64 {
+    fn gcd(a: u64, b: u64) -> u64 {
+        if b == 0 { a } else { gcd(b, a % b) }
+    }
+    let n = n.max(1);
+    let mut stride = ((n as f64 * 0.618) as u64).max(1);
+    while gcd(stride, n) != 1 {
+        stride += 1;
+    }
+    (k * stride) % n
+}
+
+/// The cold-jump target frame: the clip is cut into `n + 1` equal slots, slot 0 (where the run starts, already decoded) is never
+/// used, jump k lands in slot `1 + cold_slot(k, n)` at the position `r` (0..1) inside it. Slots are far wider than a GOP, so no
+/// jump falls into a key-frame interval an earlier one (or the start) visited.
+pub fn cold_target(k: u64, n: u64, timeline_frames: i64, r: f64) -> i64 {
+    let n = n.max(1);
+    let width = timeline_frames.max(1) as f64 / (n + 1) as f64;
+    let at = (1 + cold_slot(k, n)) as f64 * width + r.clamp(0.0, 0.999) * width;
+    (at as i64).clamp(0, (timeline_frames - 1).max(0))
+}
+
+fn pct(sorted: &[f64], p: f64) -> f64 {
+    sorted.get(((sorted.len().max(1) - 1) as f64 * p).round() as usize).copied().unwrap_or(0.0)
+}
+
+/// The play phase of a `cold` run: `(seconds, frames per second, presents (time s, frame))`.
+pub type PlayPhase<'a> = (f64, f64, &'a [(f64, i64)]);
+
+/// The summary of a `cold` run: per jump the time to the first picture of the target frame (a stand-in counts) and to its exact
+/// pictures. `play` is the optional play phase after the jumps: `(seconds, frames per second, presents (time s, frame))`.
+pub fn cold_summary(reqs: &[Request], secs: f64, idle: f64, play: Option<PlayPhase<'_>>) -> String {
+    let stat = |v: Vec<f64>| {
+        let mut v = v;
+        v.sort_by(f64::total_cmp);
+        format!("p50 {:.1} p95 {:.1} max {:.1}", pct(&v, 0.5), pct(&v, 0.95), v.last().copied().unwrap_or(0.0))
+    };
+    let first: Vec<f64> = reqs.iter().filter_map(|r| r.matched).collect();
+    let exact: Vec<f64> = reqs.iter().filter_map(|r| r.exact).collect();
+    let mut s = format!(
+        "window scrub cold {secs:.0} s (idle {idle:.0} s before the first jump), jumps {}\n\
+         first picture ms {} (jumps with one {})\n\
+         exact frame ms {} (jumps with the exact frame {})\n",
+        reqs.len(),
+        stat(first.clone()),
+        first.len(),
+        stat(exact.clone()),
+        exact.len()
+    );
+    if let Some((play_s, fps, presents)) = play {
+        let changes: Vec<(f64, i64)> = presents.iter().copied().fold(Vec::new(), |mut v, p| {
+            if v.last().is_none_or(|l: &(f64, i64)| l.1 != p.1) {
+                v.push(p);
+            }
+            v
+        });
+        let mut gaps: Vec<f64> = changes.windows(2).map(|w| (w[1].0 - w[0].0) * 1e3).collect();
+        gaps.sort_by(f64::total_cmp);
+        let expected = (play_s * fps).round() as i64;
+        let advanced = changes.last().zip(changes.first()).map_or(0, |(l, f)| l.1 - f.1);
+        s += &format!(
+            "playback right after the jumps {play_s:.0} s: frames shown {} of {expected} expected (timeline frames advanced {advanced}, dropped {}), gap ms p50 {:.1} p95 {:.1} max {:.1}\n",
+            changes.len(),
+            (expected - changes.len() as i64).max(0),
+            pct(&gaps, 0.5),
+            pct(&gaps, 0.95),
+            gaps.last().copied().unwrap_or(0.0)
+        );
+    }
+    s
+}
+
+/// The per-request CSV of a `cold` run.
+pub fn cold_csv(reqs: &[Request]) -> String {
+    let mut s = String::from("t_s,target_frame,shown_before,first_picture_ms,exact_ms\n");
+    for r in reqs {
+        s += &format!(
+            "{:.4},{},{},{},{}\n",
+            r.at_s,
+            r.target,
+            r.shown_before,
+            r.matched.map_or(String::new(), |l| format!("{l:.2}")),
+            r.exact.map_or(String::new(), |l| format!("{l:.2}"))
+        );
+    }
+    s
 }
 
 /// The summary text of a run: request counts by how fast the matching frame arrived, and the latency spread of the matched ones.
@@ -215,6 +316,10 @@ pub fn csv(reqs: &[Request]) -> String {
     s
 }
 
+fn env_secs(name: &str) -> f64 {
+    std::env::var(name).ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0).max(0.0)
+}
+
 pub struct WindowScrubLog {
     path: PathBuf,
     pattern: Pattern,
@@ -238,6 +343,15 @@ pub struct WindowScrubLog {
     presents: Vec<(f64, i64)>,
     /// The run ended (`Action::Quit` was given).
     over: bool,
+    /// Seconds to wait after the first picture before the first jump (`SQ_WINDOW_SCRUBLOG_IDLE`, lets a background pass fill).
+    idle: f64,
+    /// Seconds of play after the jumps (`SQ_WINDOW_SCRUBLOG_PLAY`, 0 = none).
+    play_secs: f64,
+    play_began: Option<Instant>,
+    /// Presents of the play phase: (seconds from its start, frame).
+    play_presents: Vec<(f64, i64)>,
+    /// The exact flag of the newest shown composite.
+    shown_exact: bool,
 }
 
 impl WindowScrubLog {
@@ -246,7 +360,7 @@ impl WindowScrubLog {
         let v = std::env::var("SQ_WINDOW_SCRUBLOG").ok().filter(|v| !v.is_empty())?;
         let parts: Vec<&str> = v.split(',').collect();
         let pattern = parts.get(1).and_then(|p| Pattern::parse(p)).unwrap_or_else(|| {
-            eprintln!("SQ_WINDOW_SCRUBLOG: pattern must be slow, normal, fast or jumps; using normal");
+            sq_os::errln!("SQ_WINDOW_SCRUBLOG: pattern must be slow, normal, fast, jumps or cold; using normal");
             Pattern::Normal
         });
         let secs = parts.get(2).and_then(|s| s.parse::<f64>().ok()).unwrap_or(DEFAULT_SECS);
@@ -271,7 +385,20 @@ impl WindowScrubLog {
             shown: -1,
             presents: Vec::new(),
             over: false,
+            idle: env_secs("SQ_WINDOW_SCRUBLOG_IDLE"),
+            play_secs: env_secs("SQ_WINDOW_SCRUBLOG_PLAY"),
+            play_began: None,
+            play_presents: Vec::new(),
+            shown_exact: false,
         })
+    }
+
+    fn period(&self) -> Duration {
+        match self.pattern {
+            Pattern::Jumps => JUMP_EVERY,
+            Pattern::Cold => COLD_EVERY,
+            _ => self.display_frame,
+        }
     }
 
     fn rand(&mut self) -> f64 {
@@ -286,14 +413,17 @@ impl WindowScrubLog {
     /// calls `scrub` would leave the loop asleep between pictures and measure that, not the scrub).
     pub fn next_wake(&self) -> Option<Instant> {
         let begun = self.begun.filter(|_| !self.over)?;
-        let period = if self.pattern == Pattern::Jumps { JUMP_EVERY } else { self.display_frame };
+        if self.play_began.is_some() {
+            return Some(Instant::now() + Duration::from_millis(5));
+        }
+        let period = self.period();
         Some(begun + period.mul_f64(self.next_slot as f64))
     }
 
     /// The pointer a real drag would have: held and moved while the scrub runs, so the window switches to its drag present path
     /// (`DragPacing`, `Surface::set_interactive`) as it does under a hand. `None` before and after the run.
     pub fn held_pointer(&self) -> Option<(f32, f32)> {
-        self.begun.filter(|_| !self.over)?;
+        self.begun.filter(|_| !self.over && self.play_began.is_none())?;
         Some((if self.reqs.len() < 2 { 0.0 } else { 100.0 }, 0.0))
     }
 
@@ -310,7 +440,7 @@ impl WindowScrubLog {
                 return Action::Nothing;
             }
             let seen = *self.seen_picture.get_or_insert_with(Instant::now);
-            if seen.elapsed() < Duration::from_secs(3) {
+            if seen.elapsed().as_secs_f64() < 3.0 + self.idle {
                 return Action::Nothing;
             }
             self.fps = fps;
@@ -319,15 +449,30 @@ impl WindowScrubLog {
                 std::env::var("SQ_WINDOW_SCRUBLOG_START").ok().and_then(|v| v.parse::<f64>().ok()).unwrap_or(0.0);
             self.span_from = ((from * fps).round() as i64).clamp(0, (timeline_frames - 1).max(0));
             self.span_frames = ((SPAN_SECS * fps).round() as i64).min(timeline_frames - 1 - self.span_from).max(0);
+            if self.pattern == Pattern::Cold {
+                // The cold jumps spread over the whole clip, not over the 10 s span of the sweeps.
+                self.span_frames = (timeline_frames - 1 - self.span_from).max(0);
+            }
             self.begun = Some(Instant::now());
             return Action::Begin;
         };
+        if let Some(pb) = self.play_began {
+            if pb.elapsed().as_secs_f64() >= self.play_secs {
+                self.over = true;
+                return Action::QuitPlaying;
+            }
+            return Action::Nothing;
+        }
         let elapsed = begun.elapsed();
         if elapsed.as_secs_f64() >= self.secs {
+            if self.play_secs > 0.0 {
+                self.play_began = Some(Instant::now());
+                return Action::Play;
+            }
             self.over = true;
             return Action::Quit;
         }
-        let period = if self.pattern == Pattern::Jumps { JUMP_EVERY } else { self.display_frame };
+        let period = self.period();
         let slot = (elapsed.as_secs_f64() / period.as_secs_f64().max(1e-4)) as u64;
         if slot < self.next_slot {
             return Action::Nothing;
@@ -337,6 +482,21 @@ impl WindowScrubLog {
         let span = self.span_frames as f64 / self.fps;
         let pos = match self.pattern.rate() {
             Some(rate) => ping_pong(rate * elapsed.as_secs_f64(), span),
+            None if self.pattern == Pattern::Cold => {
+                let n = (self.secs / COLD_EVERY.as_secs_f64()).floor() as u64;
+                let r = self.rand();
+                let k = self.reqs.len() as u64 % n.max(1);
+                let target = cold_target(k, n, self.span_from + self.span_frames, r);
+                self.last_jump = target as f64 / self.fps;
+                self.reqs.push(Request {
+                    at_s: elapsed.as_secs_f64(),
+                    target,
+                    matched: None,
+                    shown_before: self.shown,
+                    exact: None,
+                });
+                return Action::Scrub(target);
+            }
             None => {
                 let (r, up) = (self.rand(), self.rand() < 0.5);
                 self.last_jump = jump_target(self.last_jump, span, r, up);
@@ -344,18 +504,43 @@ impl WindowScrubLog {
             }
         };
         let target = self.span_from + (pos * self.fps).round() as i64;
-        self.reqs.push(Request { at_s: elapsed.as_secs_f64(), target, matched: None, shown_before: self.shown });
+        self.reqs.push(Request {
+            at_s: elapsed.as_secs_f64(),
+            target,
+            matched: None,
+            shown_before: self.shown,
+            exact: None,
+        });
         Action::Scrub(target)
     }
 
     /// One draw: `shown` is the timeline frame the newest composite holds (`None` when none yet).
-    pub fn frame(&mut self, shown: Option<i64>, presented: bool, now: Instant) {
+    pub fn frame(&mut self, shown: Option<i64>, exact: bool, presented: bool, now: Instant) {
         if !presented {
             return;
         }
         self.presented_any = true;
         let Some(shown) = shown else { return };
         self.shown = shown;
+        self.shown_exact = exact;
+        if let Some(pb) = self.play_began {
+            self.play_presents.push((pb.elapsed().as_secs_f64(), shown));
+            return;
+        }
+        if self.pattern == Pattern::Cold {
+            // The newest jump only: no give-up time, a cold decode may take longer than a second. `matched` = first picture of
+            // the target (a stand-in counts), `exact` = its exact pictures.
+            if let (Some(b), Some(r)) = (self.begun, self.reqs.last_mut()) {
+                let ms = (now.saturating_duration_since(b).as_secs_f64() - r.at_s).max(0.0) * 1e3;
+                if shown == r.target {
+                    r.matched.get_or_insert(ms);
+                    if exact {
+                        r.exact.get_or_insert(ms);
+                    }
+                }
+            }
+            return;
+        }
         if let Some(b) = self.begun {
             self.presents.push((now.saturating_duration_since(b).as_secs_f64(), shown));
         }
@@ -371,13 +556,20 @@ impl WindowScrubLog {
             Pattern::Normal => "normal",
             Pattern::Fast => "fast",
             Pattern::Jumps => "jumps",
+            Pattern::Cold => "cold",
         };
         let text = if self.reqs.is_empty() {
             "FAILED: the window presented no frame or made no scrub request\n".to_string()
+        } else if self.pattern == Pattern::Cold {
+            let play = self.play_began.map(|_| (self.play_secs, self.fps, self.play_presents.as_slice()));
+            cold_summary(&self.reqs, self.secs, self.idle, play)
         } else {
             summary(&self.reqs, &self.presents, self.display_frame.as_secs_f64() * 1e3, name, self.secs)
         };
-        let _ = std::fs::write(self.path.with_extension("scrub.csv"), csv(&self.reqs));
+        let _ = std::fs::write(
+            self.path.with_extension("scrub.csv"),
+            if self.pattern == Pattern::Cold { cold_csv(&self.reqs) } else { csv(&self.reqs) },
+        );
         if let Some(r) = crate::loop_trace::finish(self.begun) {
             let _ = std::fs::write(self.path.with_extension("turns.csv"), r.turns_csv);
             let _ = std::fs::write(self.path.with_extension("stalls.csv"), r.stalls_csv);
@@ -391,14 +583,49 @@ impl WindowScrubLog {
 mod tests {
     use super::*;
 
+    #[test]
+    fn cold_jumps_visit_every_slot_once_and_never_the_start() {
+        for n in [1u64, 2, 12, 24, 40, 97] {
+            let mut seen: Vec<u64> = (0..n).map(|k| cold_slot(k, n)).collect();
+            seen.sort_unstable();
+            assert_eq!(seen, (0..n).collect::<Vec<_>>(), "n={n}");
+        }
+        // 60 s at 30 fps, 24 jumps: every target in its own slot of 2.4 s (72 frames), none in the first slot, >= 1 s apart.
+        let t: Vec<i64> = (0..24).map(|k| cold_target(k, 24, 1800, 0.5)).collect();
+        assert!(t.iter().all(|f| *f >= 72 && *f < 1800), "{t:?}");
+        let mut sorted = t.clone();
+        sorted.sort_unstable();
+        assert!(sorted.windows(2).all(|w| w[1] - w[0] >= 60), "{sorted:?}");
+        assert!(t.windows(2).all(|w| (w[1] - w[0]).abs() >= 150), "consecutive jumps are far apart: {t:?}");
+    }
+
+    #[test]
+    fn cold_summary_reports_first_picture_exact_and_playback() {
+        let r =
+            |f: Option<f64>, e: Option<f64>| Request { at_s: 0.0, target: 1, matched: f, shown_before: 0, exact: e };
+        let reqs = vec![r(Some(5.0), Some(200.0)), r(Some(7.0), Some(300.0)), r(Some(6.0), None)];
+        let presents: Vec<(f64, i64)> = (0..30).map(|i| (i as f64 / 30.0, i)).collect();
+        let s = cold_summary(&reqs, 36.0, 10.0, Some((1.0, 30.0, &presents)));
+        assert!(s.contains("first picture ms p50 6.0 p95 7.0 max 7.0 (jumps with one 3)"), "{s}");
+        assert!(s.contains("exact frame ms p50 300.0 p95 300.0 max 300.0 (jumps with the exact frame 2)"), "{s}");
+        assert!(s.contains("frames shown 30 of 30 expected"), "{s}");
+        assert!(s.contains("dropped 0"), "{s}");
+    }
+
     fn req(target: i64, matched: Option<f64>) -> Request {
-        Request { at_s: 0.0, target, matched, shown_before: 0 }
+        Request { at_s: 0.0, target, matched, shown_before: 0, exact: None }
     }
 
     #[test]
     fn a_sweep_returning_over_a_skipped_frame_does_not_match_the_old_request() {
         // fast_r1.scrub.csv at t=14.5108: frame 59 asked while 60 was shown, the sweep goes down to 0 and back up.
-        let at = |at_s: f64, target: i64, shown_before: i64| Request { at_s, target, matched: None, shown_before };
+        let at = |at_s: f64, target: i64, shown_before: i64| Request {
+            at_s,
+            target,
+            matched: None,
+            shown_before,
+            exact: None,
+        };
         let mut reqs = vec![at(14.5108, 59, 60), at(14.5275, 56, 60), at(14.5442, 50, 56), at(14.5609, 46, 50)];
         match_present(&mut reqs, 56, 14.540);
         match_present(&mut reqs, 46, 14.570);
@@ -434,6 +661,7 @@ mod tests {
             target,
             matched,
             shown_before,
+            exact: None,
         };
         let reqs = vec![
             at(0.00, 3, 3, None), // frame already on screen
@@ -505,13 +733,13 @@ mod tests {
         let t0 = Instant::now();
         log.reqs.push(req(5, None));
         log.begun = Some(t0);
-        log.frame(Some(4), true, t0 + Duration::from_millis(10));
+        log.frame(Some(4), false, true, t0 + Duration::from_millis(10));
         assert_eq!(log.reqs[0].matched, None);
-        log.frame(Some(5), false, t0 + Duration::from_millis(20));
+        log.frame(Some(5), false, false, t0 + Duration::from_millis(20));
         assert_eq!(log.reqs[0].matched, None, "a draw that did not present shows nothing");
-        log.frame(Some(5), true, t0 + Duration::from_millis(30));
+        log.frame(Some(5), false, true, t0 + Duration::from_millis(30));
         assert_eq!(log.reqs[0].matched.map(|m| m.round()), Some(30.0));
-        log.frame(Some(5), true, t0 + Duration::from_millis(50));
+        log.frame(Some(5), false, true, t0 + Duration::from_millis(50));
         assert_eq!(log.reqs[0].matched.map(|m| m.round()), Some(30.0), "the first match stays");
     }
 
@@ -536,6 +764,11 @@ mod tests {
                 shown: -1,
                 presents: Vec::new(),
                 over: false,
+                idle: 0.0,
+                play_secs: 0.0,
+                play_began: None,
+                play_presents: Vec::new(),
+                shown_exact: false,
             }
         }
     }

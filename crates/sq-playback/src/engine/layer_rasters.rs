@@ -294,7 +294,7 @@ impl RasterProvider for LayerRasters {
         let ms = started.elapsed().as_secs_f64() * 1e3;
         if ms > 1.0 {
             let thread = std::thread::current();
-            eprintln!(
+            sq_os::errln!(
                 "[play-trace] {:.3}s slow raster {} ms kind {} clip {:?} local {:?} on {}",
                 super::core::trace_clock(),
                 ms.round(),

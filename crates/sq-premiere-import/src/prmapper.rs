@@ -24,8 +24,8 @@ use sq_core_effects::adjustment_clip::adjustment_layer;
 use sq_core_effects::transition::TransitionExt;
 use sq_core_model::{
     AnimatedProperty, BlendMode, Clip, ClipAnimation, ClipFootageColor, ClipSpeed, ColorSpaceID, EffectColor,
-    GeneratorRef, Marker, MarkerColor, MediaFingerprint, MediaRef, Project, SequenceFormat, Timeline, Track,
-    TrackKind, Transition, TransitionAlignment, TransitionKind,
+    GeneratorRef, Marker, MarkerColor, MediaFingerprint, MediaRef, Project, SequenceFormat, Timeline, Track, TrackKind,
+    Transition, TransitionAlignment, TransitionKind,
 };
 use sq_core_project::media_path_resolver::{Hit, MediaPathResolver, Request};
 use sq_core_time::{

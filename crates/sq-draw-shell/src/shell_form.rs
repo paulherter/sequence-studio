@@ -5570,7 +5570,7 @@ mod tests {
         // A long label never widens the column past the cap; the widest German form word fits whole under it.
         assert_eq!(form(vec![Row::field("x", &"W".repeat(40), "")]).label_width(), m::LABEL_MAX);
         let w = form(vec![Row::field("x", "Bildwiederholfrequenz", "")]).label_width();
-        eprintln!("german label column {w}");
+        sq_os::errln!("german label column {w}");
         assert!(w < m::LABEL_MAX, "{w}");
     }
 

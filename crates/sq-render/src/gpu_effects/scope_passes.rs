@@ -72,6 +72,7 @@ struct Uniforms {
     max_index: u32,
     out_w: u32,
     out_h: u32,
+    gain: f32,
 }
 
 /// Row width of the linear kernels (clear, max): index `y * ROW_WIDTH + x`.
@@ -83,9 +84,18 @@ impl Uniforms {
             .u32s(&[self.width, self.height, self.stride, self.flags])
             .u32s(&[self.wave_w, self.wave_l, self.vec_n, ROW_WIDTH])
             .u32s(&[self.off_wave_luma, self.off_parade, self.off_vector, self.off_hist])
-            .u32s(&[self.offset, self.count, self.max_index, 0])
+            .u32s(&[self.offset, self.count, self.max_index, self.gain.to_bits()])
             .u32s(&[self.out_w, self.out_h, 0, 0])
     }
+}
+
+/// Which scope picture [`ScopePasses::draw_image`] draws (the `flags` of `scopeDraw`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScopeDrawKind {
+    Waveform = 0,
+    Parade = 1,
+    Vectorscope = 2,
+    Histogram = 3,
 }
 
 /// The scope passes of one device.
@@ -205,5 +215,50 @@ impl ScopePasses {
         self.encode(&mut cmds, source, counts, layout, None, scopes, pixel_stride)?;
         self.gpu.submit_and_wait(cmds)?;
         self.read(counts, layout)
+    }
+
+    /// One scope picture (`width` x `height`, opaque RGBA8, rows top down) drawn on the GPU from `counts` (the GPU form of
+    /// the CPU `ScopeImage::render`): uploads the counts, draws, reads the small picture back.
+    pub fn draw_image(
+        &self,
+        counts: &ScopeCounts,
+        kind: ScopeDrawKind,
+        width: u32,
+        height: u32,
+        gain: f32,
+    ) -> Result<Vec<u8>, GpuError> {
+        let l = counts.layout;
+        let buffer = self.make_counts(&l);
+        let words = counts.to_words();
+        self.gpu.queue().write_buffer(&buffer, 0, &words.iter().flat_map(|w| w.to_le_bytes()).collect::<Vec<u8>>());
+        let (offset, pw, ph, max) = match kind {
+            ScopeDrawKind::Waveform => (l.offset_waveform_luma(), l.waveform_width, l.waveform_levels, 0),
+            ScopeDrawKind::Parade => (l.offset_parade(), 3 * l.waveform_width, l.waveform_levels, 1),
+            ScopeDrawKind::Vectorscope => (l.offset_vector(), l.vectorscope_size, l.vectorscope_size, 2),
+            ScopeDrawKind::Histogram => (l.offset_histogram(), ScopeLayout::HISTOGRAM_BINS, 4, 3),
+        };
+        let u = Uniforms {
+            flags: kind as u32,
+            wave_w: pw as u32,
+            wave_l: ph as u32,
+            offset: offset as u32,
+            max_index: (l.offset_maxima() + max) as u32,
+            out_w: width,
+            out_h: height,
+            gain,
+            ..Uniforms::default()
+        };
+        let out = self.gpu.texture(width, height, PixelFormat::Rgba8Unorm);
+        let mut cmds = self.gpu.commands();
+        let mut enc = cmds.compute();
+        enc.set_buffer(&buffer, 2)?;
+        enc.set_pipeline(&self.gpu.compute_pipeline("Scopes", "scopeDraw", PixelFormat::Rgba8Unorm)?);
+        enc.set_constants(u.block().bytes(), 0)?;
+        enc.set_output(&out);
+        enc.dispatch(width, height)?;
+        drop(enc);
+        let ticket = cmds.read_texture(&out)?;
+        self.gpu.submit(cmds);
+        ticket.wait(&self.gpu)
     }
 }

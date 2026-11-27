@@ -213,7 +213,10 @@ fn failure(session: &EditorSession, what: &str) -> String {
 pub fn apply_to_selection(session: &mut EditorSession, ids: &[String], with: &EffectsApply) -> Option<String> {
     let mut status = None;
     for id in ids {
-        let ok = if let Some(kind) = EffectDragPayload::transition_kind(id) {
+        let ok = if EffectDragPayload::is_adjustment_layer(id) {
+            session.stop_playback();
+            session.add_adjustment_layer(None, None, EffectDragPayload::adjustment_layer_duration()).is_some()
+        } else if let Some(kind) = EffectDragPayload::transition_kind(id) {
             let scope =
                 if kind.track_kind() == TrackKind::Video { TransitionScope::Video } else { TransitionScope::Audio };
             session.stop_playback();
@@ -258,7 +261,11 @@ pub fn drop_on_clips(
     if targets.is_empty() || EffectDragPayload::transition_kind(first).is_some() {
         return None;
     }
-    let ids: Vec<&String> = ids.iter().filter(|i| EffectDragPayload::transition_kind(i).is_none()).collect();
+    // The Adjustment Layer entry is a clip of its own, not an effect for the clips it lands on.
+    let ids: Vec<&String> = ids
+        .iter()
+        .filter(|i| EffectDragPayload::transition_kind(i).is_none() && !EffectDragPayload::is_adjustment_layer(i))
+        .collect();
     if let Some(preset) = preset_in(first, with.presets) {
         let preset = preset.clone();
         return (!session.apply_preset(&preset, Some(targets), with.mode))
@@ -299,6 +306,10 @@ pub fn apply_drop(
         (EffectDrop::Layer(l), Some(kind)) => {
             session.add_transition_layer(kind, l.track, l.start, l.duration, l.cut).is_some()
         }
+        (EffectDrop::Layer(l), None) if ids.first().is_some_and(|i| EffectDragPayload::is_adjustment_layer(i)) => {
+            session.stop_playback();
+            session.add_adjustment_layer(Some(l.start), Some(l.track), l.duration).is_some()
+        }
         _ => false,
     };
     (!ok).then(|| failure(session, ids.first().map_or("The effect", String::as_str)))
@@ -322,6 +333,9 @@ fn drop_transition(
 
 /// The length a transition layer dropped on an empty spot gets.
 pub fn layer_duration(session: &EditorSession, ids: &[String], defaults: &TransitionDefaults) -> sq_core_time::Time {
+    if ids.first().is_some_and(|i| EffectDragPayload::is_adjustment_layer(i)) {
+        return EffectDragPayload::adjustment_layer_duration();
+    }
     ids.first()
         .and_then(|id| EffectDragPayload::transition_kind(id))
         .map_or(sq_core_time::Time::seconds(1), |k| session.transition_layer_duration(k, defaults))

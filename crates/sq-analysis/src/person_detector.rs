@@ -467,7 +467,7 @@ mod tests {
         let (Ok(face_path), Ok(body_path)) =
             (std::env::var("SQ_PEOPLE_FACE_PPM"), std::env::var("SQ_PEOPLE_BODIES_PPM"))
         else {
-            eprintln!("skipped: SQ_PEOPLE_FACE_PPM / SQ_PEOPLE_BODIES_PPM are not set");
+            sq_os::errln!("skipped: SQ_PEOPLE_FACE_PPM / SQ_PEOPLE_BODIES_PPM are not set");
             return;
         };
         let folder = std::env::var("SQ_PERSON_MODELS")
@@ -482,7 +482,7 @@ mod tests {
                 Ok(d) => d,
                 Err(e) => {
                     Provider::force(None);
-                    eprintln!("skipped: {e}");
+                    sq_os::errln!("skipped: {e}");
                     return;
                 }
             };
@@ -497,7 +497,7 @@ mod tests {
                 ));
             }
             let per = start.elapsed().as_secs_f64() * 1000.0 / n as f64;
-            eprintln!("people {provider:?}: {per:.1} ms for YuNet on the portrait + YOLOX on the people picture");
+            sq_os::errln!("people {provider:?}: {per:.1} ms for YuNet on the portrait + YOLOX on the people picture");
             found.push(last.unwrap_or_default());
         }
         Provider::force(None);
@@ -524,7 +524,7 @@ mod tests {
         let (Ok(face_path), Ok(body_path)) =
             (std::env::var("SQ_PEOPLE_FACE_PPM"), std::env::var("SQ_PEOPLE_BODIES_PPM"))
         else {
-            eprintln!("skipped: SQ_PEOPLE_FACE_PPM / SQ_PEOPLE_BODIES_PPM are not set");
+            sq_os::errln!("skipped: SQ_PEOPLE_FACE_PPM / SQ_PEOPLE_BODIES_PPM are not set");
             return;
         };
         let folder = std::env::var("SQ_PERSON_MODELS")
@@ -532,7 +532,7 @@ mod tests {
         let det = match OnnxPeopleDetector::open(&folder) {
             Ok(d) => d,
             Err(e) => {
-                eprintln!("skipped: {e}");
+                sq_os::errln!("skipped: {e}");
                 return;
             }
         };
@@ -540,7 +540,7 @@ mod tests {
             panic!("cannot read the test pictures");
         };
         let subjects = subjects_of(&det, &face_frame).unwrap_or_else(|e| panic!("{e}"));
-        eprintln!("portrait: {subjects:?}");
+        sq_os::errln!("portrait: {subjects:?}");
         let faces: Vec<_> = subjects.iter().filter(|s| s.kind == SubjectKind::Face).collect();
         assert_eq!(faces.len(), 1, "one face expected");
         let r = faces[0].rect;
@@ -549,7 +549,7 @@ mod tests {
         assert!(faces[0].confidence > 0.6);
 
         let (bodies, faces) = det.detect(&body_frame, true).unwrap_or_else(|e| panic!("{e}"));
-        eprintln!("people picture: {} bodies {bodies:?}, {} faces", bodies.len(), faces.len());
+        sq_os::errln!("people picture: {} bodies {bodies:?}, {} faces", bodies.len(), faces.len());
         assert!(!bodies.is_empty(), "at least one person");
         assert!(bodies.iter().all(|b| b.width > 0.01 && b.height > 0.05 && b.x + b.width <= 1.0 + 1e-9));
         // The Reframe path: the frame source feeds `subjects`, and the focus lands on the face.

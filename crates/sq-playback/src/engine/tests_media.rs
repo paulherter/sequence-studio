@@ -31,7 +31,7 @@ fn ffmpeg() -> Command {
 /// A 5 s, 25 fps, 640x360 testsrc2 clip (keyframe every second, B-frames) made with `encoder`, or `None` with a message.
 fn make_clip(encoder: &str) -> Option<PathBuf> {
     if !sq_media_ffmpeg::shim::AVAILABLE {
-        eprintln!("skipped: the FFmpeg shim is not linked");
+        sq_os::errln!("skipped: the FFmpeg shim is not linked");
         return None;
     }
     let dir = std::env::temp_dir().join(format!("sq-playback-engine-{}", std::process::id()));
@@ -44,7 +44,7 @@ fn make_clip(encoder: &str) -> Option<PathBuf> {
         .output()
         .ok()?;
     if !out.status.success() || !path.exists() {
-        eprintln!("skipped: no ffmpeg command with a {encoder} encoder");
+        sq_os::errln!("skipped: no ffmpeg command with a {encoder} encoder");
         return None;
     }
     Some(path)
@@ -53,11 +53,11 @@ fn make_clip(encoder: &str) -> Option<PathBuf> {
 fn gpu() -> Option<Arc<Gpu>> {
     match Gpu::new() {
         Ok(g) => {
-            eprintln!("adapter: {} ({:?})", g.info().name, g.info().backend);
+            sq_os::errln!("adapter: {} ({:?})", g.info().name, g.info().backend);
             Some(g)
         }
         Err(e) => {
-            eprintln!("skipped: no GPU adapter ({e})");
+            sq_os::errln!("skipped: no GPU adapter ({e})");
             None
         }
     }
@@ -98,8 +98,8 @@ fn check(encoder: &str) {
         s.rate.is_some_and(|r| r.is_paused()) && s.shown_frames > 0
     });
     let s = handle.status();
-    eprintln!("play 1x ({encoder}): {s:?}");
-    eprintln!("{:#?}", handle.query(|e| e.stats().report()));
+    sq_os::errln!("play 1x ({encoder}): {s:?}");
+    sq_os::errln!("{:#?}", handle.query(|e| e.stats().report()));
     assert_eq!(s.last_error, None);
     // Real-time test: the whole-workspace run loads every core, so a scheduler stall may skip a frame or two
     // (seen: 2 of 125 under load, 0 alone). More than 2 % still means the engine cannot keep up.
@@ -194,13 +194,13 @@ fn measure_app_like_playback_fps() {
         std::thread::sleep(Duration::from_millis(4));
     }
     let secs = start.elapsed().as_secs_f64();
-    eprintln!(
+    sq_os::errln!(
         "app-like fps: seen {:.1}/s, status {:?}, readback avg {:.1} ms",
         f64::from(seen) / secs,
         handle.status(),
         read_ms / f64::from(seen.max(1))
     );
-    eprintln!("{:#?}", handle.query(|e| e.stats().report()));
+    sq_os::errln!("{:#?}", handle.query(|e| e.stats().report()));
 }
 
 /// Scrubs a real clip back and forth at 60 Hz, logs how many distinct pictures the monitor got, then checks that the
@@ -248,8 +248,8 @@ fn measure_fast_scrub_and_the_settled_frame_is_exact() {
         }
         std::thread::sleep(Duration::from_millis(16));
     }
-    eprintln!("scrub: {} moves, {} distinct pictures in 4 s; status {:?}", ticks, seen, handle.status());
-    eprintln!("{:#?}", handle.query(|e| e.stats().report()));
+    sq_os::errln!("scrub: {} moves, {} distinct pictures in 4 s; status {:?}", ticks, seen, handle.status());
+    sq_os::errln!("{:#?}", handle.query(|e| e.stats().report()));
     let target = fd * 37;
     if std::env::var_os("SQ_NO_SCRUB").is_some() {
         handle.end_scrub();
@@ -289,7 +289,7 @@ fn measure_fast_scrub_and_the_settled_frame_is_exact() {
         let direct = comp.download_rgba8(frame).expect("download");
         let w = engine_pixels.iter().zip(&direct).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
         let off = engine_pixels.iter().zip(&direct).filter(|(a, b)| a.abs_diff(**b) > 8).count();
-        eprintln!("frame {idx}: worst {w}, off {off}");
+        sq_os::errln!("frame {idx}: worst {w}, off {off}");
         exact |= w == 0;
     }
     assert!(exact, "the settled frame after a scrub is none of the frames 36..=46 decoded directly");

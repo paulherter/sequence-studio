@@ -49,7 +49,7 @@ impl ComputeFallback {
             Ok(v) => return Ok(v),
             Err(e) => e,
         };
-        eprintln!(
+        sq_os::errln!(
             "[{}] {} failed, fallback to {}: {}",
             self.name,
             if cpu { "CPU" } else { "default compute" },
@@ -65,7 +65,7 @@ impl ComputeFallback {
             }
             Err(second) => {
                 *self.count() = 0;
-                eprintln!("[{}] both compute paths failed: {}", self.name, second);
+                sq_os::errln!("[{}] both compute paths failed: {}", self.name, second);
                 Err(if cpu { second } else { first })
             }
         }

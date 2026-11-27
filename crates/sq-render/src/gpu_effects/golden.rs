@@ -71,7 +71,7 @@ fn seg(blur: f64, filter: Option<ImageFilter>) -> EffectSegment {
 #[test]
 fn plans_match_the_swift_dump() {
     let Some(mut g) = Golden::load() else {
-        eprintln!("skipping: run oracle/sq-render/gpu-effects/run.sh to make the golden file");
+        sq_os::errln!("skipping: run oracle/sq-render/gpu-effects/run.sh to make the golden file");
         return;
     };
     for reach in [0.5, 1.0, 1.5, 2.0, 3.0, 5.0, 8.0, 17.0, 33.0, 100.0, 1000.0] {

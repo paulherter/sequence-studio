@@ -21,6 +21,9 @@ const HEAD_SIZE: f64 = timeline::HEAD_SIZE;
 impl TimelineSkin<'_> {
     /// Clip bodies sit this far inside the lane top and bottom. Drawing only; hit tests use the lane.
     pub const CLIP_INSET: f64 = 2.0;
+    /// Opacity of an Adjustment Layer's see-through body.
+    // shortcut: not in design/tokens.src.json yet; move it there with the next design-system token round.
+    pub const ADJUSTMENT_BODY_ALPHA: f32 = 0.35;
     /// Width of a selection outline.
     pub const SELECTION_OUTLINE_WIDTH: f64 = timeline::SELECTION_OUTLINE_WIDTH;
 

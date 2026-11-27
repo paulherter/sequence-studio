@@ -20,6 +20,8 @@ pub struct TransitionLayerDropTarget {
     pub cut: Time,
     /// Highlight box in view coordinates.
     pub rect: Rect,
+    /// An Adjustment Layer drop: no center marker (there is no cut).
+    pub adjustment: bool,
 }
 
 /// The part of a transition layer clip under the pointer that has its own drag.
@@ -100,7 +102,38 @@ impl TransitionLayerLayout {
         playhead: Time,
         duration: Time,
     ) -> Option<TransitionLayerDropTarget> {
-        if !(kind.is_layer_kind() && p.x >= TimelineGeometry::CONTENT_ORIGIN_X) {
+        if !kind.is_layer_kind() {
+            return None;
+        }
+        Self::gap_target(p, timeline, geometry, playhead, duration)
+    }
+
+    /// An Adjustment Layer dropped at `p`: the empty spot on the video track under the pointer (`drop_target`'s rules);
+    /// over a clip it goes on the video track directly above, when that is free there.
+    pub fn adjustment_drop_target(
+        p: Point,
+        timeline: &Timeline,
+        geometry: &TimelineGeometry,
+        playhead: Time,
+        duration: Time,
+    ) -> Option<TransitionLayerDropTarget> {
+        let found = Self::gap_target(p, timeline, geometry, playhead, duration).or_else(|| {
+            let rows = geometry.rows(timeline);
+            let k = rows.iter().position(|r| p.y >= r.y && p.y < r.max_y())?;
+            let above = rows.get(k.checked_sub(1)?)?;
+            Self::gap_target(Point::new(p.x, above.y + 1.0), timeline, geometry, playhead, duration)
+        });
+        found.map(|t| TransitionLayerDropTarget { adjustment: true, ..t })
+    }
+
+    fn gap_target(
+        p: Point,
+        timeline: &Timeline,
+        geometry: &TimelineGeometry,
+        playhead: Time,
+        duration: Time,
+    ) -> Option<TransitionLayerDropTarget> {
+        if p.x < TimelineGeometry::CONTENT_ORIGIN_X {
             return None;
         }
         let row = geometry.rows(timeline).into_iter().find(|r| p.y >= r.y && p.y < r.max_y())?;
@@ -144,6 +177,7 @@ impl TransitionLayerLayout {
             duration: d,
             cut,
             rect: Rect::new(geometry.x(start), row.y + 1.0, geometry.width(d), (row.height - 2.0).max(1.0)),
+            adjustment: false,
         })
     }
 

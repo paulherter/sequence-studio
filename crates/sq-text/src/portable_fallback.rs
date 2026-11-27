@@ -5,8 +5,8 @@
 //! Emoji sequences (ZWJ, skin tones, flags, keycaps) are joined by the face's GSUB features and drawn from its COLR layers
 //! (`sfnt_color_glyphs`); a sequence the face cannot join shows its parts one by one.
 
-use crate::fallback_font_files::{FallbackFontFiles, FallbackRole};
 use crate::emoji_font::EmojiFont;
+use crate::fallback_font_files::{FallbackFontFiles, FallbackRole};
 use crate::glyph_raster::GlyphRasterFont;
 use sq_os::Platform;
 use std::sync::{Arc, LazyLock, PoisonError, RwLock};
@@ -207,10 +207,9 @@ impl PortableFallback {
                     // Like the outline path: the glyphs sit on the first scalars of the cluster, the rest take no room.
                     for k in 0..end - i {
                         match glyphs.get(k) {
-                            Some(&glyph) => out.push((
-                                Pick { font: None, glyph, advance: None, emoji: Some(Arc::clone(e)) },
-                                false,
-                            )),
+                            Some(&glyph) => {
+                                out.push((Pick { font: None, glyph, advance: None, emoji: Some(Arc::clone(e)) }, false))
+                            }
                             None => out.push(skipped()),
                         }
                     }
@@ -391,7 +390,7 @@ mod tests {
     fn a_bitmap_emoji_cluster_is_one_glyph_on_its_first_scalar() {
         let _lock = FALLBACK_TEST_LOCK.lock().unwrap_or_else(PoisonError::into_inner);
         let Some(font) = PortableFallback::system_bitmap_emoji() else {
-            eprintln!("skipped: no bitmap color emoji font");
+            sq_os::errln!("skipped: no bitmap color emoji font");
             return;
         };
         let s: Vec<char> = "A\u{1F44D}\u{1F3FD}".chars().collect();

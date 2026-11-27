@@ -52,7 +52,9 @@ fn parse(m: &Map<String, Value>) -> Result<Spec, String> {
     }
     let feather = match m.get("feather") {
         None => None,
-        Some(v) => Some(v.as_f64().filter(|f| (0.0..=MAX_FEATHER).contains(f)).ok_or("addMask: feather is 0...4000 px")?),
+        Some(v) => {
+            Some(v.as_f64().filter(|f| (0.0..=MAX_FEATHER).contains(f)).ok_or("addMask: feather is 0...4000 px")?)
+        }
     };
     let invert = match m.get("invert") {
         None => false,

@@ -241,7 +241,10 @@ impl CaptionLookSpec {
                 Value::Bool(false) => Part::Off,
                 Value::Object(o) => {
                     check_strict_keys(o, &["color", "radius"], "box")?;
-                    let color = o.get("color").map_or(Ok([0.0, 0.0, 0.0, 0.6]), parse_rgba).map_err(|e| format!("box.color: {e}"))?;
+                    let color = o
+                        .get("color")
+                        .map_or(Ok([0.0, 0.0, 0.0, 0.6]), parse_rgba)
+                        .map_err(|e| format!("box.color: {e}"))?;
                     let radius = o.get("radius").map_or(Ok(12.0), |x| num(x, "box.radius"))?;
                     if radius < 0.0 {
                         return Err("box.radius: at least 0".into());
@@ -279,12 +282,23 @@ pub const MAX_WIDTH: u32 = 4096;
 
 impl PerceiveRequest {
     /// The POST routes of this family.
-    pub const POST_PATHS: [&'static str; 7] =
-        ["/v1/addCaptions", "/v1/capture", "/v1/media/frames", "/v1/media/transcript", "/v1/media/levels", "/v1/media/scenes", "/v1/importPremiere"];
+    pub const POST_PATHS: [&'static str; 7] = [
+        "/v1/addCaptions",
+        "/v1/capture",
+        "/v1/media/frames",
+        "/v1/media/transcript",
+        "/v1/media/levels",
+        "/v1/media/scenes",
+        "/v1/importPremiere",
+    ];
 
     /// Parses the body of `path`. Unknown keys are refused.
     pub fn parse(path: &str, body: &[u8]) -> Result<PerceiveRequest, String> {
-        let value: Value = if body.is_empty() { Value::Object(Map::new()) } else { serde_json::from_slice(body).map_err(|e| format!("invalid request: {e}"))? };
+        let value: Value = if body.is_empty() {
+            Value::Object(Map::new())
+        } else {
+            serde_json::from_slice(body).map_err(|e| format!("invalid request: {e}"))?
+        };
         let Value::Object(m) = value else { return Err("the body must be a JSON object".into()) };
         let width = |m: &Map<String, Value>| -> Result<Option<u32>, String> {
             let w: Option<u32> = optional(m, "width")?;
@@ -297,7 +311,8 @@ impl PerceiveRequest {
         match path {
             "/v1/capture" => {
                 check_strict_keys(&m, &["sequence", "at", "width", "contactSheet"], "capture request")?;
-                let sheet = optional::<ContactSheetWire>(&m, "contactSheet")?.map(ContactSheetWire::checked).transpose()?;
+                let sheet =
+                    optional::<ContactSheetWire>(&m, "contactSheet")?.map(ContactSheetWire::checked).transpose()?;
                 let at = times(&m, "at")?;
                 if at.is_empty() && sheet.is_none() {
                     return Err("give `at` or `contactSheet`".into());
@@ -305,7 +320,12 @@ impl PerceiveRequest {
                 if at.len() > MAX_FRAMES {
                     return Err(format!("at: at most {MAX_FRAMES} times"));
                 }
-                Ok(PerceiveRequest::Capture { sequence: optional(&m, "sequence")?, at, width: width(&m)?, contact_sheet: sheet })
+                Ok(PerceiveRequest::Capture {
+                    sequence: optional(&m, "sequence")?,
+                    at,
+                    width: width(&m)?,
+                    contact_sheet: sheet,
+                })
             }
             "/v1/media/frames" => {
                 check_strict_keys(&m, &["media", "at", "count", "width"], "media frames request")?;
@@ -342,8 +362,21 @@ impl PerceiveRequest {
                 check_strict_keys(
                     &m,
                     &[
-                        "clip", "sequence", "style", "wordByWord", "position", "wordsPerCaption", "size", "color", "shadow", "box",
-                        "positionY", "font", "weight", "words", "look",
+                        "clip",
+                        "sequence",
+                        "style",
+                        "wordByWord",
+                        "position",
+                        "wordsPerCaption",
+                        "size",
+                        "color",
+                        "shadow",
+                        "box",
+                        "positionY",
+                        "font",
+                        "weight",
+                        "words",
+                        "look",
                     ],
                     "addCaptions request",
                 )?;
@@ -364,7 +397,8 @@ impl PerceiveRequest {
                     Some("bottom") => CaptionSpot::Bottom,
                     Some(o) => return Err(format!("position: unknown '{o}'; known: top, center, bottom")),
                 };
-                let base = if style.as_deref() == Some("paul") { CaptionLookSpec::paul() } else { CaptionLookSpec::default() };
+                let base =
+                    if style.as_deref() == Some("paul") { CaptionLookSpec::paul() } else { CaptionLookSpec::default() };
                 let look = CaptionLookSpec::parse(&m, base)?;
                 let word_by_word = match look.words_per_caption {
                     Some(n) => n == 1,
@@ -372,9 +406,22 @@ impl PerceiveRequest {
                 };
                 let saved_look: Option<String> = optional(&m, "look")?;
                 if saved_look.is_some() {
-                    let own = ["style", "wordByWord", "wordsPerCaption", "size", "color", "shadow", "box", "positionY", "font", "weight"];
+                    let own = [
+                        "style",
+                        "wordByWord",
+                        "wordsPerCaption",
+                        "size",
+                        "color",
+                        "shadow",
+                        "box",
+                        "positionY",
+                        "font",
+                        "weight",
+                    ];
                     if let Some(k) = own.iter().find(|k| m.contains_key(**k)) {
-                        return Err(format!("look: a saved look carries its own style and segmentation; leave out `{k}` (only `position`, `words`, `clip`/`sequence` combine with it)"));
+                        return Err(format!(
+                            "look: a saved look carries its own style and segmentation; leave out `{k}` (only `position`, `words`, `clip`/`sequence` combine with it)"
+                        ));
                     }
                     if saved_look.as_deref().is_some_and(|n| n.trim().is_empty()) {
                         return Err("look: the name of a saved look".into());
@@ -440,15 +487,25 @@ mod tests {
         let one = br#"{"at":{"value":1,"timescale":2}}"#;
         let many = br#"{"at":[{"value":1,"timescale":1},{"value":2,"timescale":1}],"width":640}"#;
         let sheet = br#"{"contactSheet":{"from":{"value":0,"timescale":1},"to":{"value":10,"timescale":1},"count":6}}"#;
-        assert!(matches!(PerceiveRequest::parse("/v1/capture", one), Ok(PerceiveRequest::Capture { at, .. }) if at.len() == 1));
-        assert!(matches!(PerceiveRequest::parse("/v1/capture", many), Ok(PerceiveRequest::Capture { at, width: Some(640), .. }) if at.len() == 2));
-        assert!(matches!(PerceiveRequest::parse("/v1/capture", sheet), Ok(PerceiveRequest::Capture { contact_sheet: Some(s), .. }) if s.count == 6));
+        assert!(
+            matches!(PerceiveRequest::parse("/v1/capture", one), Ok(PerceiveRequest::Capture { at, .. }) if at.len() == 1)
+        );
+        assert!(
+            matches!(PerceiveRequest::parse("/v1/capture", many), Ok(PerceiveRequest::Capture { at, width: Some(640), .. }) if at.len() == 2)
+        );
+        assert!(
+            matches!(PerceiveRequest::parse("/v1/capture", sheet), Ok(PerceiveRequest::Capture { contact_sheet: Some(s), .. }) if s.count == 6)
+        );
     }
 
     #[test]
     fn unknown_keys_and_bad_targets_are_refused() {
         let at = r#""at":{"value":1,"timescale":1}"#;
-        assert!(PerceiveRequest::parse("/v1/capture", format!("{{{at},\"wdith\":9}}").as_bytes()).unwrap_err().contains("wdith"));
+        assert!(
+            PerceiveRequest::parse("/v1/capture", format!("{{{at},\"wdith\":9}}").as_bytes())
+                .unwrap_err()
+                .contains("wdith")
+        );
         assert!(PerceiveRequest::parse("/v1/capture", b"{}").is_err());
         assert!(PerceiveRequest::parse("/v1/capture", format!("{{{at},\"width\":0}}").as_bytes()).is_err());
         assert!(PerceiveRequest::parse("/v1/media/transcript", b"{}").is_err());
@@ -459,21 +516,51 @@ mod tests {
         assert!(PerceiveRequest::parse("/v1/media/frames", format!(r#"{{"media":"{id}"}}"#).as_bytes()).is_err());
         assert!(PerceiveRequest::parse("/v1/importPremiere", br#"{"path":" "}"#).is_err());
         let ok = format!(r#"{{"clip":"{id}","style":"pill","position":"center"}}"#);
-        assert!(matches!(PerceiveRequest::parse("/v1/addCaptions", ok.as_bytes()), Ok(PerceiveRequest::AddCaptions { word_by_word: true, position: CaptionSpot::Center, .. })));
-        let paul = PerceiveRequest::parse("/v1/addCaptions", format!(r#"{{"clip":"{id}","style":"paul","wordsPerCaption":3,"box":{{"radius":4}}}}"#).as_bytes());
+        assert!(matches!(
+            PerceiveRequest::parse("/v1/addCaptions", ok.as_bytes()),
+            Ok(PerceiveRequest::AddCaptions { word_by_word: true, position: CaptionSpot::Center, .. })
+        ));
+        let paul = PerceiveRequest::parse(
+            "/v1/addCaptions",
+            format!(r#"{{"clip":"{id}","style":"paul","wordsPerCaption":3,"box":{{"radius":4}}}}"#).as_bytes(),
+        );
         assert!(matches!(&paul, Ok(PerceiveRequest::AddCaptions { word_by_word: false, look, .. })
             if look.words_per_caption == Some(3) && look.position_y == Some(0.7068) && matches!(look.box_, Some(Part::On(b)) if b.radius == 4.0)));
-        for bad in [r#""wordsPerCaption":4"#, r#""shadow":true"#, r#""positionY":1.5"#, r#""weight":"huge""#, r#""size":0"#] {
-            assert!(PerceiveRequest::parse("/v1/addCaptions", format!(r#"{{"clip":"{id}",{bad}}}"#).as_bytes()).is_err(), "{bad}");
+        for bad in
+            [r#""wordsPerCaption":4"#, r#""shadow":true"#, r#""positionY":1.5"#, r#""weight":"huge""#, r#""size":0"#]
+        {
+            assert!(
+                PerceiveRequest::parse("/v1/addCaptions", format!(r#"{{"clip":"{id}",{bad}}}"#).as_bytes()).is_err(),
+                "{bad}"
+            );
         }
-        assert!(PerceiveRequest::parse("/v1/addCaptions", format!(r#"{{"clip":"{id}","style":"nope"}}"#).as_bytes()).is_err());
-        assert!(PerceiveRequest::parse("/v1/addCaptions", format!(r#"{{"clip":"{id}","track":"{id}"}}"#).as_bytes()).is_err());
+        assert!(
+            PerceiveRequest::parse("/v1/addCaptions", format!(r#"{{"clip":"{id}","style":"nope"}}"#).as_bytes())
+                .is_err()
+        );
+        assert!(
+            PerceiveRequest::parse("/v1/addCaptions", format!(r#"{{"clip":"{id}","track":"{id}"}}"#).as_bytes())
+                .is_err()
+        );
         // Own words (bare seconds and rational) and a saved look by name; a look refuses the keys it carries itself.
-        let own = format!(r#"{{"sequence":"{id}","look":"Caption Look 1","words":[{{"text":"b","from":1.5,"to":2}},{{"text":"a","from":0,"to":{{"value":1,"timescale":2}}}}]}}"#);
+        let own = format!(
+            r#"{{"sequence":"{id}","look":"Caption Look 1","words":[{{"text":"b","from":1.5,"to":2}},{{"text":"a","from":0,"to":{{"value":1,"timescale":2}}}}]}}"#
+        );
         assert!(matches!(PerceiveRequest::parse("/v1/addCaptions", own.as_bytes()),
             Ok(PerceiveRequest::AddCaptions { words: Some(w), saved_look: Some(l), .. }) if l == "Caption Look 1" && w[0].text == "a" && w[1].from == Time::new(3, 2)));
-        for bad in [r#""look":"x","size":50"#, r#""look":"x","style":"pill""#, r#""words":[]"#, r#""words":[{"text":"a","from":2,"to":1}]"#, r#""words":[{"text":" ","from":0,"to":1}]"#, r#""words":[{"text":"a","from":0,"to":1,"x":1}]"#] {
-            assert!(PerceiveRequest::parse("/v1/addCaptions", format!(r#"{{"sequence":"{id}",{bad}}}"#).as_bytes()).is_err(), "{bad}");
+        for bad in [
+            r#""look":"x","size":50"#,
+            r#""look":"x","style":"pill""#,
+            r#""words":[]"#,
+            r#""words":[{"text":"a","from":2,"to":1}]"#,
+            r#""words":[{"text":" ","from":0,"to":1}]"#,
+            r#""words":[{"text":"a","from":0,"to":1,"x":1}]"#,
+        ] {
+            assert!(
+                PerceiveRequest::parse("/v1/addCaptions", format!(r#"{{"sequence":"{id}",{bad}}}"#).as_bytes())
+                    .is_err(),
+                "{bad}"
+            );
         }
     }
 }

@@ -42,7 +42,7 @@ fn ffmpeg() -> Command {
 fn ready() -> bool {
     let ok = shim::AVAILABLE && ffmpeg().arg("-version").output().is_ok_and(|o| o.status.success());
     if !ok {
-        eprintln!("skipped: the FFmpeg shim is not linked or no ffmpeg command is available");
+        sq_os::errln!("skipped: the FFmpeg shim is not linked or no ffmpeg command is available");
     }
     ok
 }
@@ -78,7 +78,7 @@ fn make_clip(name: &str, encoder: &str, pix_fmt: &str) -> Option<PathBuf> {
         .output()
         .ok()?;
     if !out.status.success() || !path.exists() {
-        eprintln!("skipped {name}: ffmpeg has no working {encoder} encoder");
+        sq_os::errln!("skipped {name}: ffmpeg has no working {encoder} encoder");
         return None;
     }
     Some(path)
@@ -233,14 +233,14 @@ fn audio_matches_ffmpeg_resampling() {
 #[test]
 fn vp9_webm_samples_decode_their_first_frames() {
     if !shim::AVAILABLE {
-        eprintln!("skipped: the FFmpeg shim is not linked");
+        sq_os::errln!("skipped: the FFmpeg shim is not linked");
         return;
     }
     let Some(home) = std::env::var_os("HOME") else { return };
     for name in ["sample-vp9-vorbis.webm", "sample-vp9-vorbis-long.webm"] {
         let path = PathBuf::from(&home).join("Documents/SequenceStudio/TestMedia").join(name);
         if !path.exists() {
-            eprintln!("skipped {name}: not present");
+            sq_os::errln!("skipped {name}: not present");
             continue;
         }
         let demuxer = Arc::new(FFmpegDemuxer::open(&path).unwrap());
@@ -275,7 +275,7 @@ fn make_sized_clip(name: &str, encoders: &[&str], pix_fmt: &str, size: &str, sec
             }
         }
     }
-    eprintln!("skipped {name}: ffmpeg has no working encoder of {encoders:?}");
+    sq_os::errln!("skipped {name}: ffmpeg has no working encoder of {encoders:?}");
     None
 }
 
@@ -296,7 +296,7 @@ fn check_hw_equals_software(name: &str, encoders: &[&str], pix_fmt: &str, sixtee
     let Some(clip) = make_sized_clip(name, encoders, pix_fmt, "2560x1440", 1) else { return };
     let (demuxer, hw) = open_decoder(&clip, true);
     if !hw.is_hardware() {
-        eprintln!("skipped {name}: the GPU decoder did not open ({})", hw.decoder_name());
+        sq_os::errln!("skipped {name}: the GPU decoder did not open ({})", hw.decoder_name());
         return;
     }
     let (_, sw) = open_decoder(&clip, false);
@@ -335,7 +335,7 @@ fn check_hw_equals_software(name: &str, encoders: &[&str], pix_fmt: &str, sixtee
             differing += u64::from(d > 0);
         }
     }
-    eprintln!(
+    sq_os::errln!(
         "{name}: {} frames, hw {} vs sw: max diff {max}, mean {:.5}, {differing} of {count} samples differ",
         a.len(),
         hw.decoder_name(),
@@ -389,11 +389,99 @@ fn bench_decode() {
         done += frames.len();
     }
     let secs = start.elapsed().as_secs_f64();
-    println!(
+    sq_os::outln!(
         "test result: BENCH {} hw={} frames={done} wall={secs:.2}s fps={:.1}",
         dec.decoder_name(),
         dec.is_hardware(),
         done as f64 / secs
+    );
+}
+
+/// Scrub benchmark (not run by default): `SQ_BENCH_CLIP=<file> SQ_BENCH_PREVIEW=0|1 SQ_BENCH_PATTERN=jump|walk cargo test
+/// -p sq-media-ffmpeg --release bench_scrub -- --ignored --nocapture`. Software decode. `key`: as `jump` but the GOP's first frame (what showing the nearest key frame costs); `jump`: one frame at 24 spread
+/// positions, each its own GOP (a fast drag: seek + decode up to the target); `walk`: the playhead steps 1 frame at a time
+/// through one GOP, asking one frame per step as a scrub without the GOP window does. Prints ms per step and the frames
+/// the decoder had to run through (`SQ_TRACE`-free: only wall time).
+#[test]
+#[ignore]
+fn bench_scrub() {
+    let Some(clip) = std::env::var_os("SQ_BENCH_CLIP").map(PathBuf::from) else { return };
+    let preview = std::env::var("SQ_BENCH_PREVIEW").is_ok_and(|v| v == "1");
+    let pattern = std::env::var("SQ_BENCH_PATTERN").unwrap_or_else(|_| "jump".into());
+    let (demuxer, dec) = open_decoder(&clip, false);
+    dec.set_preview(preview);
+    let n = demuxer.index().count();
+    let targets: Vec<usize> = if pattern == "walk" {
+        (0..24).map(|i| n / 2 + 3 + i).collect()
+    } else if pattern == "key" {
+        // The sync sample of each jump target's GOP (the bench clips have a key frame every 29 frames).
+        (0..24).map(|i| ((i * 7919 + 13) % (n - 1)) / 29 * 29).collect()
+    } else {
+        (0..24).map(|i| (i * 7919 + 13) % (n - 1)).collect()
+    };
+    // "strip": the key strip of the engine (key_strip.rs). Fill = decode each target GOP's key frame once (idle, background);
+    // then every jump shows the stored key picture at once (first picture) while the exact frame decodes as in "jump".
+    if pattern == "strip" {
+        let jumps: Vec<usize> = (0..24).map(|i| (i * 7919 + 13) % (n - 1)).collect();
+        let mut strip: std::collections::HashMap<usize, Vec<DecodedFrame>> = std::collections::HashMap::new();
+        let mut fill = Vec::new();
+        for t in &jumps {
+            let g = demuxer.index().decode_start_index(*t);
+            let t0 = std::time::Instant::now();
+            strip.entry(g).or_insert_with(|| block_on(dec.decode(g..=g)).unwrap());
+            fill.push(t0.elapsed().as_secs_f64() * 1000.0);
+        }
+        let (mut first, mut exact) = (Vec::new(), Vec::new());
+        for t in &jumps {
+            let t0 = std::time::Instant::now();
+            let hit = strip.get(&demuxer.index().decode_start_index(*t)).map(|f| f.len());
+            std::hint::black_box(hit);
+            first.push(t0.elapsed().as_secs_f64() * 1000.0);
+            let t1 = std::time::Instant::now();
+            std::hint::black_box(block_on(dec.decode(*t..=*t)).unwrap());
+            exact.push(t1.elapsed().as_secs_f64() * 1000.0);
+        }
+        let p50 = |v: &mut Vec<f64>| {
+            v.sort_by(f64::total_cmp);
+            v[v.len() / 2]
+        };
+        sq_os::outln!(
+            "test result: BENCH_SCRUB strip gops={} fill-p50={:.1}ms first-picture-p50={:.4}ms exact-frame-p50={:.1}ms",
+            strip.len(),
+            p50(&mut fill),
+            p50(&mut first),
+            p50(&mut exact)
+        );
+        return;
+    }
+    let mut ms = Vec::new();
+    for t in targets {
+        let t0 = std::time::Instant::now();
+        let frames = block_on(dec.decode(t..=t)).unwrap();
+        std::hint::black_box(&frames);
+        ms.push(t0.elapsed().as_secs_f64() * 1000.0);
+    }
+    let plan = dec.thread_plan();
+    // Back to playback: the next decode with the preview switched off must be on the shared budget again.
+    dec.set_preview(false);
+    assert_eq!(
+        dec.thread_plan(),
+        crate::shim::ThreadPlan::Playback,
+        "an idle decoder demotes at the end of the scrub, not at its next decode"
+    );
+    block_on(dec.decode(0..=0)).unwrap();
+    let after = dec.thread_plan();
+    let mut sorted = ms.clone();
+    sorted.sort_by(f64::total_cmp);
+    sq_os::outln!(
+        "test result: BENCH_SCRUB plan={plan:?} after-scrub={after:?} {} {pattern} preview={preview} threads-env={:?} n={} p50={:.1}ms p95={:.1}ms max={:.1}ms steps={:?}",
+        dec.decoder_name(),
+        std::env::var("SQ_DEC_THREADS").ok(),
+        ms.len(),
+        sorted[ms.len() / 2],
+        sorted[ms.len() * 95 / 100],
+        sorted[ms.len() - 1],
+        ms.iter().map(|m| m.round() as i64).collect::<Vec<_>>()
     );
 }
 
@@ -410,7 +498,7 @@ fn make_interlaced_clip(name: &str, order: &str) -> Option<PathBuf> {
     if out.status.success() && path.exists() {
         return Some(path);
     }
-    eprintln!("skipped {name}: ffmpeg cannot write an interlaced MPEG-2 clip");
+    sq_os::errln!("skipped {name}: ffmpeg cannot write an interlaced MPEG-2 clip");
     None
 }
 
@@ -469,7 +557,7 @@ fn a_variable_frame_rate_clip_is_conformed_to_the_planned_constant_slots() {
         .ok()
         .filter(|o| o.status.success());
     if made.is_none() {
-        eprintln!("skipped: ffmpeg cannot write the VFR clip");
+        sq_os::errln!("skipped: ffmpeg cannot write the VFR clip");
         return;
     }
     // The clip is rotated by its display matrix: the conform keeps it.
@@ -496,7 +584,7 @@ fn a_variable_frame_rate_clip_is_conformed_to_the_planned_constant_slots() {
     let seen = std::cell::Cell::new(0.0);
     let result = crate::conform::conform_to_constant_frame_rate(&src, &dst, fd, &|p| seen.set(p), &|| false);
     if let Err(e) = &result {
-        eprintln!("skipped: no ProRes encoder? {e}");
+        sq_os::errln!("skipped: no ProRes encoder? {e}");
         return;
     }
     assert_eq!(seen.get(), 1.0);
@@ -531,14 +619,14 @@ fn conform_keeps_every_audio_track_with_its_rate_and_channels() {
         .ok()
         .filter(|o| o.status.success());
     if made.is_none() {
-        eprintln!("skipped: ffmpeg cannot write the three-track clip");
+        sq_os::errln!("skipped: ffmpeg cannot write the three-track clip");
         return;
     }
     assert_eq!(FFmpegAudioSource::track_channels(&src).unwrap(), vec![2, 1, 6]);
     let dst = scratch("conform-multi-out.mov");
     let fd = sq_core_time::Time::new(1, 25);
     if let Err(e) = crate::conform::conform_to_constant_frame_rate(&src, &dst, fd, &|_| (), &|| false) {
-        eprintln!("skipped: no ProRes encoder? {e}");
+        sq_os::errln!("skipped: no ProRes encoder? {e}");
         return;
     }
     assert_eq!(FFmpegAudioSource::track_channels(&dst).unwrap(), vec![2, 1, 6]);
@@ -567,7 +655,7 @@ fn a_four_mono_track_file_plays_the_channels_the_map_names() {
     }
     cmd.args(["-map", "0", "-map", "1", "-map", "2", "-map", "3", "-c:a", "pcm_s16le"]).arg(&src);
     if !cmd.output().is_ok_and(|o| o.status.success()) {
-        eprintln!("skipped: ffmpeg cannot write the four-track file");
+        sq_os::errln!("skipped: ffmpeg cannot write the four-track file");
         return;
     }
     assert_eq!(FFmpegAudioSource::track_channels(&src).unwrap(), vec![1, 1, 1, 1]);
@@ -632,7 +720,7 @@ fn prores_4444_carries_its_fourcc_to_the_decoder() {
         .ok()
         .filter(|o| o.status.success());
     if made.is_none() {
-        eprintln!("skipped: ffmpeg cannot write ProRes 4444");
+        sq_os::errln!("skipped: ffmpeg cannot write ProRes 4444");
         return;
     }
     let demux = shim::Demux::open(&src).unwrap();
@@ -652,6 +740,7 @@ fn prores_4444_carries_its_fourcc_to_the_decoder() {
         hardware: false,
         extra_hw_frames: 0,
         sw_threads: 0,
+        scrub: false,
     })
     .unwrap();
     let data = demux.read(0).unwrap();
@@ -689,7 +778,7 @@ fn a_negative_start_clip_opens_fast_and_decodes_its_first_shown_frame() {
             -preset ultrafast -bf 2 -g 60 -x264-params open-gop=1 -pix_fmt yuv420p -c:a aac -shortest";
         let args: Vec<&str> = make.split_whitespace().chain([src.to_str().unwrap()]).collect();
         if !run(&args) {
-            eprintln!("skipped: this ffmpeg has no libx264 (LGPL build)");
+            sq_os::errln!("skipped: this ffmpeg has no libx264 (LGPL build)");
             let _ = std::fs::remove_dir_all(&dir);
             return;
         }
@@ -734,7 +823,7 @@ fn make_cut_clip(name: &str, codec: &[&str], rate: &str, cut: (&str, &str)) -> O
     if cut && path.exists() {
         return Some(path);
     }
-    eprintln!("skipped {name}: ffmpeg cannot write a clip with {codec:?}");
+    sq_os::errln!("skipped {name}: ffmpeg cannot write a clip with {codec:?}");
     None
 }
 
@@ -813,7 +902,8 @@ fn frames_at_the_end_that_never_decode_show_the_last_good_picture() {
     let count = demuxer.index().count();
     let dec = FFmpegVideoDecoder::new(Arc::clone(&demuxer), Id::from_u128(1), false, 0).unwrap();
     // The last six frames after a seek (the export's read-ahead batch), the whole clip, and the last frame alone.
-    let bad: Vec<_> = (0..count).filter_map(|i| block_on(dec.decode(i..=i)).err().map(|e| (i, e.to_string()))).collect();
+    let bad: Vec<_> =
+        (0..count).filter_map(|i| block_on(dec.decode(i..=i)).err().map(|e| (i, e.to_string()))).collect();
     assert!(bad.is_empty(), "single frames {bad:?}");
     for range in [count - 6..=count - 1, 0..=count - 1, count - 1..=count - 1] {
         let frames = block_on(dec.decode(range.clone())).unwrap_or_else(|e| panic!("FAILED {range:?} of {count}: {e}"));
@@ -833,16 +923,27 @@ fn a_real_stream_copied_cut_decodes_its_last_frames() {
     let count = demuxer.index().count();
     let entries = demuxer.index().entries();
     let zero: Vec<_> = (0..count).filter(|i| entries[*i].duration == sq_core_time::Time::ZERO).collect();
-    eprintln!("count {count} packets {} zero-duration {} first {:?} last {:?}", demuxer.packet_count(), zero.len(), zero.first(), zero.last());
-    for i in count.saturating_sub(40)..count {
-        eprintln!("idx {i} pts {:?} dur {:?} ref_start {}", entries[i].pts, entries[i].duration, demuxer.index().reference_start_ordinal(i));
+    sq_os::errln!(
+        "count {count} packets {} zero-duration {} first {:?} last {:?}",
+        demuxer.packet_count(),
+        zero.len(),
+        zero.first(),
+        zero.last()
+    );
+    for (i, entry) in entries.iter().enumerate().take(count).skip(count.saturating_sub(40)) {
+        sq_os::errln!(
+            "idx {i} pts {:?} dur {:?} ref_start {}",
+            entry.pts,
+            entry.duration,
+            demuxer.index().reference_start_ordinal(i)
+        );
     }
     let dec = FFmpegVideoDecoder::new(Arc::clone(&demuxer), Id::from_u128(1), false, 0).unwrap();
     let bad: Vec<_> = (count - 60..count)
         .filter_map(|i| {
-            eprintln!("decoding {i}");
+            sq_os::errln!("decoding {i}");
             let r = block_on(dec.decode(i..=i));
-            eprintln!("decoded {i} ok={}", r.is_ok());
+            sq_os::errln!("decoded {i} ok={}", r.is_ok());
             r.err().map(|e| (i, e.to_string()))
         })
         .collect();
@@ -850,7 +951,7 @@ fn a_real_stream_copied_cut_decodes_its_last_frames() {
     let range = count - 20..=count - 1;
     let began = std::time::Instant::now();
     let frames = block_on(dec.decode(range.clone())).unwrap_or_else(|e| panic!("FAILED {range:?} of {count}: {e}"));
-    eprintln!("last 20 took {:?}", began.elapsed());
+    sq_os::errln!("last 20 took {:?}", began.elapsed());
     assert_eq!(frames.len(), range.count());
     // The export's way: forward batches from the start (continuing decodes), through the last frame.
     let began = std::time::Instant::now();
@@ -860,5 +961,5 @@ fn a_real_stream_copied_cut_decodes_its_last_frames() {
         block_on(dec.decode(next..=end)).unwrap_or_else(|e| panic!("FAILED forward {next}..={end} of {count}: {e}"));
         next = end + 1;
     }
-    eprintln!("forward took {:?}", began.elapsed());
+    sq_os::errln!("forward took {:?}", began.elapsed());
 }

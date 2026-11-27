@@ -373,7 +373,8 @@ impl VtVideoDecoder {
             return Ok(Vec::new());
         }
         // Every sample went in and the session settled: what is still missing at the end of the file never decodes.
-        let sent_to_end = plan::extended_end(*range.end(), self.demuxer.index().count()) + 1 >= self.demuxer.index().count();
+        let sent_to_end =
+            plan::extended_end(*range.end(), self.demuxer.index().count()) + 1 >= self.demuxer.index().count();
         let hold = if sent_to_end { run.hold_tail() } else { None };
         let Run { mut wanted, mut results, last_decoded, .. } = run;
         *tail = last_decoded;
@@ -500,7 +501,10 @@ impl Run<'_> {
                     self.results.insert(index, frame);
                 }
             }
-        } else if near_end && index < *self.range.start() && self.last_decoded.as_ref().is_none_or(|(last, _)| *last < index) {
+        } else if near_end
+            && index < *self.range.start()
+            && self.last_decoded.as_ref().is_none_or(|(last, _)| *last < index)
+        {
             // The picture before the range (decoded on the way from the GOP start): what the range holds when its own
             // frames never decode.
             self.last_decoded = Some((index, self.import(out, index)?));
@@ -531,7 +535,7 @@ impl Run<'_> {
         if let Some(pass) = &d.deinterlace {
             match pass.run(&gpu_frame) {
                 Some(progressive) => gpu_frame = progressive,
-                None => eprintln!("videotoolbox: the GPU deinterlace failed for one picture; it is shown woven"),
+                None => sq_os::errln!("videotoolbox: the GPU deinterlace failed for one picture; it is shown woven"),
             }
         }
         let sq = SQFrame::new(

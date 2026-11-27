@@ -54,6 +54,9 @@ pub fn route_project(
             ProjectListEvent::OpenVariant(id, variant) => session.open_sequence_tab_variant(id, variant),
             ProjectListEvent::Flash(line) => status.push(line),
             ProjectListEvent::Host(ProjectMenuAction::ImportMedia, _) => flows.push(ShellFlow::ImportAnything),
+            ProjectListEvent::Host(ProjectMenuAction::NewAdjustmentLayer, _) => {
+                flows.push(ShellFlow::Project(ShellAction::NewAdjustmentLayer));
+            }
             ProjectListEvent::Host(ProjectMenuAction::Find, _) => flows.push(ShellFlow::Tool(ShellTool::Find)),
             // The panel menu's "Custom Ratio…" (`customSelectionPixelAspect`); "New Color Matte…" opens the dialog in the root.
             event @ ProjectListEvent::Host(ProjectMenuAction::NewColorMatte, _) => deferred.push(event),
@@ -131,7 +134,11 @@ pub struct ProjectHost {
 impl ProjectHost {
     /// A host over an empty project; the first `sync` loads the session's. Posters come from FFmpeg on two workers.
     pub fn new() -> ProjectHost {
-        ProjectHost::with_services(Arc::new(FfmpegPosters), Arc::new(crate::project_services::poster_pool(2)), Box::new(SystemPlatform))
+        ProjectHost::with_services(
+            Arc::new(FfmpegPosters),
+            Arc::new(crate::project_services::poster_pool(2)),
+            Box::new(SystemPlatform),
+        )
     }
 
     /// Like [`ProjectHost::new`] with the poster source, the pool that runs it and the file manager given (tests).

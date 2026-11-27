@@ -180,19 +180,25 @@ impl Gpu {
         let wanted = std::env::var("SQ_GPU_ADAPTER").ok();
         if let Some(i) = adapter::choose(&candidates, wanted.as_deref()) {
             let info = adapters[i].get_info();
-            eprintln!("gpu: using {} ({:?}, {:?}); adapters: {}", info.name, info.device_type, info.backend, listing());
+            sq_os::errln!(
+                "gpu: using {} ({:?}, {:?}); adapters: {}",
+                info.name,
+                info.device_type,
+                info.backend,
+                listing()
+            );
             return adapters.into_iter().nth(i).ok_or_else(|| GpuError::NoAdapter("adapter list changed".into()));
         }
         if !adapters.is_empty() {
             let missing =
                 adapters.iter().map(|a| format!("{:?}", required - a.features())).collect::<Vec<_>>().join(" | ");
-            eprintln!("gpu: no usable adapter; adapters: {}", listing());
+            sq_os::errln!("gpu: no usable adapter; adapters: {}", listing());
             return Err(GpuError::MissingFeature(format!(
                 "no adapter has them all ({missing}); adapters: {}",
                 listing()
             )));
         }
-        eprintln!("gpu: the system lists no adapter, asking for the high-performance one");
+        sq_os::errln!("gpu: the system lists no adapter, asking for the high-performance one");
         instance
             .request_adapter(&wgpu::RequestAdapterOptions {
                 power_preference: wgpu::PowerPreference::HighPerformance,
@@ -545,7 +551,7 @@ pub(crate) mod tests {
         GPU.get_or_init(|| match Gpu::new() {
             Ok(gpu) => Some(gpu),
             Err(e) => {
-                eprintln!("skipping GPU tests: {e}");
+                sq_os::errln!("skipping GPU tests: {e}");
                 None
             }
         })
@@ -557,6 +563,6 @@ pub(crate) mod tests {
         let Some(gpu) = test_gpu() else { return };
         assert_eq!(gpu.sampler_views().len(), 3);
         assert!(gpu.supports(PixelFormat::Rgba16Float));
-        eprintln!("adapter: {} ({:?})", gpu.info().name, gpu.info().backend);
+        sq_os::errln!("adapter: {} ({:?})", gpu.info().name, gpu.info().backend);
     }
 }

@@ -411,7 +411,7 @@ Other Fast Cut commands:
 A proxy is a lighter copy of a heavy clip that plays smoothly. Sequence Studio makes them for you.
 
 - Proxies are made in the background, one at a time, while you edit. Turn this off in **Settings > Playback > Background Work** ("Make proxies while you edit"). The work also pauses by itself when the Mac is hot or memory runs low.
-- Scrubbing uses a ready proxy. Playback uses it on a weak Mac. A proxy shows the same colors as its original, so a scrubbed frame and the frame you stop on look alike.
+- Scrubbing uses a ready proxy. Playback uses it on a weak Mac, and on any Mac for a clip it can only decode in software. A proxy shows the same colors as its original, so a scrubbed frame and the frame you stop on look alike.
 - Paused frames and export use your original files, unless you turn on **Settings > Media > Export > Use proxies when exporting**. That is only for drafts, because the quality is lower. It is off by default.
 - **Settings > Media > Cache Size** limits the disk space for proxies (the least recently used go first). **Cache Folder** moves them. **Delete Cache** clears them; they are rebuilt when needed.
 

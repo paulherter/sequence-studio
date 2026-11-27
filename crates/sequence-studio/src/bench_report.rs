@@ -22,6 +22,9 @@ pub struct BenchOpts {
     pub verify: bool,
     /// `--page color`: the UI draws the Color page (source tiles, scopes, wheels) during the run, the same page switch as `--ui-shot`.
     pub color_page: bool,
+    /// `--wait-proxies <seconds>`: keep the background proxy service in the run and let its queue finish (at most that long)
+    /// before Play, so Auto's software-decode rule has proxies to play.
+    pub wait_proxies_ms: Option<i64>,
 }
 
 /// `--quality auto|full|half|quarter`: what Preferences > Playback holds for the run.

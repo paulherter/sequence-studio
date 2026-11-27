@@ -11,10 +11,12 @@ pub mod planes;
 mod tests_parity;
 #[cfg(test)]
 mod tests_program;
+#[cfg(test)]
+mod tests_zoom_proof;
 
 pub use compositor::{
     GPU_WAIT_LIMIT, Inputs, LayerSource, OUTPUT_RING, ProgramCompositor, ProgramError, Raster, RenderOptions,
     RenderedFrame, Source,
 };
-pub use gyro_warp::{GyroMaps, WarpMap, warp_picture, warp_picture_scaled, warp_plane_cpu};
+pub use gyro_warp::{GyroMaps, GyroReadiness, WarpMap, warp_picture, warp_picture_scaled, warp_plane_cpu};
 pub use planes::{CpuPlanes, PlaneCache, PlaneError, PlaneKey, to_gpu};

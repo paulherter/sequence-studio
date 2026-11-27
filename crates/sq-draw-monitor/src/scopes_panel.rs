@@ -24,6 +24,32 @@ use sq_uikit::localization::SQL10n;
 use sq_uikit::sqicon::SQIcon;
 use sq_uikit::sqmenu_model::SQMenuItem;
 use std::rc::Rc;
+use std::sync::{Arc, OnceLock};
+
+/// Draws one scope picture from its counts on the GPU (`kind`, counts, width, height, gain); `None` = could not, the CPU draws.
+pub type ScopeDrawer = Arc<dyn Fn(ScopeKind, &ScopeCounts, usize, usize, f32) -> Option<RgbaImage> + Send + Sync>;
+
+static DRAWER: OnceLock<ScopeDrawer> = OnceLock::new();
+
+/// Installs the GPU scope drawing of the app (once; the shared `Scopes.scopeDraw` kernel on whatever backend the app runs).
+/// `SQ_SCOPES_CPU=1` keeps the CPU drawing (A/B runs).
+pub fn install_gpu_drawer(drawer: ScopeDrawer) {
+    let _ = DRAWER.set(drawer);
+}
+
+/// One scope picture: the GPU drawing when installed, else (or when it fails) the CPU `ScopeImage::render`.
+fn draw_scope(kind: ScopeKind, counts: &ScopeCounts, width: usize, height: usize, gain: f32) -> RgbaImage {
+    static CPU_ONLY: OnceLock<bool> = OnceLock::new();
+    let cpu_only = *CPU_ONLY.get_or_init(|| std::env::var_os("SQ_SCOPES_CPU").is_some());
+    if !cpu_only
+        && width > 0
+        && height > 0
+        && let Some(img) = DRAWER.get().and_then(|d| d(kind, counts, width, height, gain))
+    {
+        return img;
+    }
+    ScopeImage::render(kind, counts, width, height, gain)
+}
 
 /// A picture source that measures the scopes of its shown composite on the GPU (Windows: the shared `ScopePasses` on
 /// D3D12): the host asks it before falling back to the CPU binning of the readback.
@@ -388,7 +414,7 @@ impl ScopesPanel {
             let w = (p.width * self.scale as f64).round() as i64;
             let h = (p.height * self.scale as f64).round() as i64;
             if w > 1 && h > 1 {
-                let mut img = ScopeImage::render(
+                let mut img = draw_scope(
                     self.kinds[i],
                     counts,
                     w as usize,
@@ -415,7 +441,7 @@ impl ScopesPanel {
             let w = (p.width * self.scale as f64).round() as i64;
             let h = (p.height * self.scale as f64).round() as i64;
             tiles.push((w > 1 && h > 1).then(|| {
-                let mut img = ScopeImage::render(k, &counts, w as usize, h as usize, self.settings.intensity_for(k));
+                let mut img = draw_scope(k, &counts, w as usize, h as usize, self.settings.intensity_for(k));
                 if k == ScopeKind::Vectorscope {
                     Self::cut_to_circle(&mut img);
                 }

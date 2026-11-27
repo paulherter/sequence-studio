@@ -1374,6 +1374,40 @@ fn new_effect_kinds_write_their_gate_version_and_round_trip_and_plain_projects_k
 }
 
 #[test]
+fn an_adjustment_layer_with_a_blur_and_extend_to_sequence_end_round_trips() {
+    use sq_core_model::GeneratorRef;
+    let mut p = sample();
+    replace_first(&mut p, |c| {
+        c.generator = Some(GeneratorRef { kind: "adjustment".into(), payload: Vec::new(), payload_version: 1 });
+        c.effects.push(effect("gaussianBlur"));
+        c.extends_to_end_store = Some(true);
+    });
+    let version = ProjectFile::written_version(&p);
+    assert!(version > 36, "the adjustment layer gates the file version");
+    round_trips(&p, version, "adjustment layer");
+    assert_eq!(first_clip(&decoded(&json_of(&p)).unwrap()).extends_to_end_store, Some(true));
+}
+
+#[test]
+fn an_adjustment_zoom_with_keyed_motion_scale_round_trips() {
+    use sq_core_model::GeneratorRef;
+    use sq_core_time::{Keyframe, Vec2};
+    let mut p = sample();
+    replace_first(&mut p, |c| {
+        c.generator = Some(GeneratorRef { kind: "adjustment".into(), payload: Vec::new(), payload_version: 1 });
+        c.animation.scale.track.insert(Keyframe::new(id(911), t(0, 1), Vec2::new(1.0, 1.0)));
+        c.animation.scale.track.insert(Keyframe::new(id(912), t(1, 2), Vec2::new(1.1, 1.1)));
+        c.animation.scale.track.insert(Keyframe::new(id(913), t(1, 1), Vec2::new(1.0, 1.0)));
+    });
+    let version = ProjectFile::written_version(&p);
+    assert!(version > 36, "the adjustment layer gates the file version");
+    round_trips(&p, version, "adjustment zoom");
+    let back = first_clip(&decoded(&json_of(&p)).unwrap());
+    assert_eq!(back.animation.scale.track.keys.len(), 3);
+    assert_eq!(back.animation.scale.value_at_local(t(1, 2)), Vec2::new(1.1, 1.1));
+}
+
+#[test]
 fn animation_zones_bump_to_v58_and_round_trip() {
     use sq_core_model::{AnimationZones, ZoneMiddle};
     let mut p = sample();

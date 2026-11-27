@@ -111,6 +111,25 @@ impl ScopeCounts {
         })
     }
 
+    /// The counts as the words of the GPU buffer (the inverse of [`from_words`](Self::from_words)).
+    pub fn to_words(&self) -> Vec<u32> {
+        let l = self.layout;
+        let mut w = vec![0u32; l.total_count()];
+        let mut put = |at: usize, v: &[u32]| w[at..at + v.len()].copy_from_slice(v);
+        put(l.offset_waveform_luma(), &self.waveform_luma);
+        put(l.offset_parade(), &self.waveform_parade);
+        put(l.offset_vector(), &self.vectorscope);
+        put(l.offset_histogram(), &self.histogram);
+        let m = l.offset_maxima();
+        w[m..m + 4].copy_from_slice(&[
+            self.max_waveform_luma,
+            self.max_waveform_parade,
+            self.max_vectorscope,
+            self.max_histogram,
+        ]);
+        w
+    }
+
     /// Adds one output-signal pixel (R'G'B' 0...1, its Y') at source column `x` of `width`.
     pub fn add(&mut self, rgb: [f32; 3], luma: f32, x: usize, width: usize) {
         let l = self.layout;

@@ -253,22 +253,25 @@ impl Drop for EngineFrames {
     fn drop(&mut self) {
         if std::env::var_os("SQ_EXPORT_TRACE").is_some() {
             let [w, r, s] = self.trace.get();
-            eprintln!(
+            sq_os::errln!(
                 "export-trace render side: {} frames, seek+compose {w:.0} ms, readback {r:.0} ms, resample {s:.0} ms",
                 self.count
             );
-            eprintln!("export-trace stages: {:?}", self.handle.query(|e| e.stats().report()).unwrap_or_default());
+            sq_os::errln!("export-trace stages: {:?}", self.handle.query(|e| e.stats().report()).unwrap_or_default());
             // The engine's own timers (a paused engine books no rows): decode is summed over the lane threads, which overlap the render thread.
             let (dec, comp, n, gw, ph, idle, up) = sq_playback::engine::frame_trace::unbooked();
             let wanted = sq_playback::engine::frame_trace::wanted_pictures();
             for (m, n, ms) in sq_playback::engine::frame_trace::decode_by_media().iter().take(8) {
-                eprintln!("export-trace lane media {m}: {n} pictures, {ms:.0} ms");
+                sq_os::errln!("export-trace lane media {m}: {n} pictures, {ms:.0} ms");
             }
             sq_playback::engine::frame_trace::set_enabled(false);
-            eprintln!("export-trace pictures wanted by the composites: {wanted}");
-            eprintln!(
+            sq_os::errln!("export-trace pictures wanted by the composites: {wanted}");
+            sq_os::errln!(
                 "export-trace engine: decode {dec:.0} ms (lanes), compose {comp:.0} ms in {n} composites, gpu_wait {gw:.0} ms, phases layers/draw/submit/poll {:.0}/{:.0}/{:.0}/{:.0}, idle {idle:.0} ms, upload {up:.0} ms",
-                ph[0], ph[1], ph[2], ph[3]
+                ph[0],
+                ph[1],
+                ph[2],
+                ph[3]
             );
         }
     }
@@ -410,7 +413,8 @@ impl EngineFrames {
                 return Ok(Pending::Black);
             }
             let last_error = self.handle.status().last_error;
-            if let Some(why) = error_due(&mut error_seen, last_error.clone(), stale.as_deref(), self.fail_fast, Instant::now())
+            if let Some(why) =
+                error_due(&mut error_seen, last_error.clone(), stale.as_deref(), self.fail_fast, Instant::now())
             {
                 return Err(ExportError::Other(why));
             }
@@ -636,11 +640,11 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("sq-still-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let Some(tool) = ffmpeg_tool() else {
-            eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+            sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
             return;
         };
         if Gpu::new().is_err() {
-            eprintln!("skipped: no graphics device");
+            sq_os::errln!("skipped: no graphics device");
             return;
         }
         let (timeline, reference) = tiny_sequence(&tool, &dir);
@@ -663,11 +667,11 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("sq-export-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let Some(tool) = ffmpeg_tool() else {
-            eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+            sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
             return;
         };
         if Gpu::new().is_err() {
-            eprintln!("skipped: no graphics device");
+            sq_os::errln!("skipped: no graphics device");
             return;
         }
         let (timeline, reference) = tiny_sequence(&tool, &dir);
@@ -738,7 +742,7 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("sq-export-ui-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let (Some(tool), true) = (ffmpeg_tool(), Gpu::new().is_ok()) else {
-            eprintln!("skipped: no ffmpeg or no graphics device");
+            sq_os::errln!("skipped: no ffmpeg or no graphics device");
             return;
         };
         let (timeline, reference) = tiny_sequence(&tool, &dir);
@@ -776,7 +780,7 @@ pub(crate) mod tests {
             app.turn();
         }
         let out = found().map(|e| e.path());
-        let _ = out.as_ref().map(|p| eprintln!("exported {}", p.display()));
+        let _ = out.as_ref().map(|p| sq_os::errln!("exported {}", p.display()));
         assert!(out.as_ref().is_some_and(|p| std::fs::metadata(p).is_ok_and(|m| m.len() > 1000)), "no file written");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -854,7 +858,7 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("sq-export-real-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let (Some(tool), true) = (ffmpeg_tool(), Gpu::new().is_ok()) else {
-            eprintln!("skipped: no ffmpeg or no graphics device");
+            sq_os::errln!("skipped: no ffmpeg or no graphics device");
             return;
         };
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Packages/SQText/Sources/SQText/Resources/Fonts");
@@ -912,14 +916,14 @@ pub(crate) mod tests {
             let audio = src.audio.as_mut().map(|a| &mut **a as &mut dyn AudioSource);
             let done = encoder.export(src.video.as_mut(), audio, &s, &file, &CancelToken::new(), &mut |_| {});
             if let Err(e) = done {
-                eprintln!("{name}: not written ({e})");
+                sq_os::errln!("{name}: not written ({e})");
                 continue;
             }
             let v = probe(
                 &file,
                 "stream=codec_name,width,height,avg_frame_rate,nb_frames,color_range,color_space,color_transfer,color_primaries,duration",
             );
-            eprintln!("{name} [{}]:\n{v}", encoder.last_video_encoder());
+            sq_os::errln!("{name} [{}]:\n{v}", encoder.last_video_encoder());
             assert!(v.contains("width=320") && v.contains("height=180") && v.contains("avg_frame_rate=25/1"), "{v}");
             assert!(
                 v.contains("color_range=tv")
@@ -962,12 +966,12 @@ pub(crate) mod tests {
             let (ba, bb) = (block(&got), block(&reference_frame));
             let block_mean = ba.iter().zip(&bb).map(|(a, b)| (a - b).abs()).sum::<f64>() / ba.len() as f64;
             let luma_bias = la.iter().zip(&lb).map(|(a, b)| a - b).sum::<f64>() / la.len() as f64;
-            eprintln!(
+            sq_os::errln!(
                 "{name}: luma-only mean {luma_mean:.2} (bias {luma_bias:+.2}), 2x2-block-averaged mean {block_mean:.2}"
             );
             let mean = diffs.iter().sum::<u32>() as f64 / diffs.len() as f64;
             let max = diffs.iter().max().copied().unwrap_or(0);
-            eprintln!("{name}: frame 10 against the program render: mean {mean:.2}, max {max} of 255");
+            sq_os::errln!("{name}: frame 10 against the program render: mean {mean:.2}, max {max} of 255");
             // Like with like: a 4:2:0 file keeps luma per pixel and color per 2x2 block, so per-pixel RGB also counts the
             // chroma lost at the title's hard edges (max ~130, mean 2.75 on the Mac, 3.21 on the Windows hardware encoder).
             // The decode above is exact (accurate_rnd, full_chroma_int): swscale's default yuv to rgb step alone added a -1.3
@@ -989,7 +993,7 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("sq-export-map-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let Some(tool) = ffmpeg_tool() else {
-            eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+            sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
             return;
         };
         let src = dir.join("four-mono.mov");
@@ -1017,7 +1021,7 @@ pub(crate) mod tests {
         };
         let map = sq_core_model::AudioChannelMap::stereo(1, 3).unwrap();
         let (l, r) = mean([(media, map)].into_iter().collect());
-        eprintln!("mapped export mix: left {l:.3}, right {r:.3}");
+        sq_os::errln!("mapped export mix: left {l:.3}, right {r:.3}");
         // Tracks 2 and 4 (0.2 and 0.4), each copied to its side at unity (a mono track plays duplicated, as Swift).
         assert!((l - 0.2).abs() < 0.02 && (r - 0.4).abs() < 0.02, "left {l} right {r}");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1031,7 +1035,7 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("sq-export-cap-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let (Some(tool), true) = (ffmpeg_tool(), Gpu::new().is_ok()) else {
-            eprintln!("skipped: no ffmpeg or no graphics device");
+            sq_os::errln!("skipped: no ffmpeg or no graphics device");
             return;
         };
         let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Packages/SQText/Sources/SQText/Resources/Fonts");
@@ -1065,7 +1069,7 @@ pub(crate) mod tests {
         };
         let (plain, burned) = (frame(CaptionMode::None), frame(CaptionMode::BurnIn));
         let changed = plain.chunks(4).zip(burned.chunks(4)).filter(|(a, b)| a != b).count();
-        eprintln!("burn-in changed {changed} pixels");
+        sq_os::errln!("burn-in changed {changed} pixels");
         assert!(changed > 50, "burn-in changed only {changed} pixels");
         assert_eq!(plain, frame(CaptionMode::SidecarSrt), "a sidecar mode draws nothing into the picture");
         let _ = std::fs::remove_dir_all(&dir);
@@ -1108,12 +1112,12 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("sq-export-hdr-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let (Some(tool), true) = (ffmpeg_tool(), Gpu::new().is_ok()) else {
-            eprintln!("skipped: no ffmpeg or no graphics device");
+            sq_os::errln!("skipped: no ffmpeg or no graphics device");
             return;
         };
         let (timeline, mut reference) = tiny_sequence(&tool, &dir);
         let Some(pq) = make_pq_clip(&tool, &dir) else {
-            eprintln!("skipped: this ffmpeg cannot write a 10-bit ProRes clip");
+            sq_os::errln!("skipped: this ffmpeg cannot write a 10-bit ProRes clip");
             return;
         };
         reference.path = pq.to_string_lossy().into_owned();
@@ -1156,7 +1160,7 @@ pub(crate) mod tests {
         let at = (180 * 640 + 320) * 8;
         let half = u16::from_le_bytes([bytes[at], bytes[at + 1]]);
         let value = f32::from_bits((u32::from((half >> 10) & 0x1F) + 112) << 23 | u32::from(half & 0x3FF) << 13);
-        eprintln!("center red {value} x reference white");
+        sq_os::errln!("center red {value} x reference white");
         assert!((3.6..4.1).contains(&value), "linear light {value}, want about 3.87");
         let file = dir.join("hdr.mp4");
         let encoder = FfmpegExportEncoder::new();
@@ -1164,20 +1168,20 @@ pub(crate) mod tests {
         if let Err(e) = done {
             // SQ_REQUIRE_HDR_FILE=1 (the PC run) turns a missing file into a failure.
             assert!(std::env::var_os("SQ_REQUIRE_HDR_FILE").is_none(), "HDR file not written: {e}");
-            eprintln!("not written ({e})");
+            sq_os::errln!("not written ({e})");
             return;
         }
         let v = probe(&file, "stream=codec_name,pix_fmt,color_transfer,color_primaries,color_space,nb_frames");
-        eprintln!("[{}]\n{v}", encoder.last_video_encoder());
+        sq_os::errln!("[{}]\n{v}", encoder.last_video_encoder());
         assert!(v.contains("pix_fmt=yuv420p10le") && v.contains("color_transfer=smpte2084"), "{v}");
         assert!(v.contains("color_primaries=bt2020") && v.contains("color_space=bt2020nc"), "{v}");
         let side = probe_side_data(&file);
-        eprintln!("side data: {side}");
+        sq_os::errln!("side data: {side}");
         assert!(side.contains("Mastering display") && side.contains("Content light level"), "{side}");
         let y = decode_luma10(&tool, &file, 5);
         assert_eq!(y.len(), 640 * 360);
         let peak = y.iter().copied().max().unwrap_or(0);
-        eprintln!("peak Y' code {peak} (source 700, SDR white 573)");
+        sq_os::errln!("peak Y' code {peak} (source 700, SDR white 573)");
         assert!(peak > 650 && peak < 740, "peak code {peak}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1187,7 +1191,7 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("sq-export-seg-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let (Some(tool), true) = (ffmpeg_tool(), Gpu::new().is_ok()) else {
-            eprintln!("skipped: no ffmpeg or no graphics device");
+            sq_os::errln!("skipped: no ffmpeg or no graphics device");
             return;
         };
         let (timeline, reference) = tiny_sequence(&tool, &dir);
@@ -1208,7 +1212,7 @@ pub(crate) mod tests {
         )
         .expect("segment");
         let v = probe(&file, "stream=codec_name,profile,width,height,nb_frames");
-        eprintln!("segment: {v}");
+        sq_os::errln!("segment: {v}");
         assert!(v.contains("codec_name=prores") && v.contains("width=320") && v.contains("nb_frames=10"), "{v}");
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1222,7 +1226,7 @@ pub(crate) mod tests {
         let dir = std::env::temp_dir().join(format!("sq-stems-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let Some(tool) = ffmpeg_tool() else {
-            eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+            sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
             return;
         };
         let (mut timeline, reference) = tiny_sequence(&tool, &dir);
@@ -1365,7 +1369,7 @@ pub(crate) mod tests {
     #[test]
     fn a_default_dissolve_blends_at_both_cuts_of_the_middle_clip() {
         let Some([first, second]) = dissolved_cut_frames() else {
-            eprintln!("skipped: no ffmpeg or no graphics device");
+            sq_os::errln!("skipped: no ffmpeg or no graphics device");
             return;
         };
         // Green into blue and magenta into white: the green channel is 0 or 255 (or the flat green) on a pure side, in between in a mix.
@@ -1377,12 +1381,72 @@ pub(crate) mod tests {
     #[test]
     fn the_gpu_nv12_frames_match_the_rgba_frames() {
         let (Some(rgba), Some(nv12)) = (dissolved_cut_frames_in(false), dissolved_cut_frames_in(true)) else {
-            eprintln!("skipped: no ffmpeg or no graphics device");
+            sq_os::errln!("skipped: no ffmpeg or no graphics device");
             return;
         };
         for (a, b) in rgba.iter().zip(&nv12) {
             let worst = a.iter().zip(b).map(|(x, y)| x.abs_diff(*y)).max().unwrap_or(0);
             assert!(worst <= 6, "RGBA {a:?} against NV12 {b:?}");
         }
+    }
+    /// Shutter Angle on a plain moving video clip must smear it in the export path (the engine the Program monitor uses).
+    /// `SQ_PROOF_DIR=<dir>` also writes both frames as PPM.
+    #[test]
+    fn a_shutter_angle_blurs_a_plain_moving_video_clip_in_the_exported_frame() {
+        use sq_core_model::AnimatedProperty;
+        use sq_core_time::{IdSource, Keyframe, KeyframeTrack, SequentialIds, Vec2};
+        let dir = std::env::temp_dir().join(format!("sq-shutter-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).expect("temp folder");
+        let Some(tool) = ffmpeg_tool() else {
+            sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+            return;
+        };
+        if Gpu::new().is_err() {
+            sq_os::errln!("skipped: no graphics device");
+            return;
+        }
+        let (timeline, reference) = tiny_sequence(&tool, &dir);
+        let still = |angle: f64, canvas: (i64, i64)| {
+            let mut tl = timeline.clone();
+            (tl.format.width, tl.format.height) = canvas;
+            let mut ids = SequentialIds::default();
+            let mut clips = tl.tracks[0].clips().to_vec();
+            let a = &mut clips[0].animation;
+            let mut key = |t: Time, v: Vec2| Keyframe::new(ids.next_id(), t, v);
+            a.position = AnimatedProperty {
+                value: Vec2::ZERO,
+                track: KeyframeTrack::with_keys(vec![
+                    key(Time::ZERO, Vec2::new(-160.0, 0.0)),
+                    key(Time::new(1, 2), Vec2::new(160.0, 0.0)),
+                ]),
+            };
+            a.shutter_angle = AnimatedProperty::new(angle);
+            tl.tracks[0].set_clips(clips);
+            let snapshot = ExportSnapshot {
+                timelines: vec![tl].into(),
+                media: vec![reference.clone()].into(),
+                use_proxies_for_export: false,
+            };
+            render_still(&snapshot, Id::from_u128(1), Time::new(1, 4), None).expect("a frame")
+        };
+        // The canvas smaller and wider than the 320x180 clip: the layer's own fit transform differs from the request's.
+        for canvas in [(160, 90), (400, 300)] {
+            let (a, b) = (still(0.0, canvas), still(360.0, canvas));
+            let n = a.pixels.iter().zip(&b.pixels).filter(|(x, y)| x != y).count();
+            assert!(n > 500, "canvas {canvas:?}: shutter 360 left the frame unchanged ({n} differing bytes)");
+        }
+        let (sharp, blur) = (still(0.0, (320, 180)), still(360.0, (320, 180)));
+        if let Some(out) = std::env::var_os("SQ_PROOF_DIR") {
+            let out = std::path::Path::new(&out);
+            std::fs::create_dir_all(out).expect("proof folder");
+            for (name, f) in [("shutter0", &sharp), ("shutter360", &blur)] {
+                let mut ppm = format!("P6\n{} {}\n255\n", f.width, f.height).into_bytes();
+                ppm.extend(f.pixels.chunks(4).flat_map(|p| [p[0], p[1], p[2]]));
+                std::fs::write(out.join(format!("{name}.ppm")), ppm).expect("ppm");
+            }
+        }
+        let differing = sharp.pixels.iter().zip(&blur.pixels).filter(|(a, b)| a != b).count();
+        let _ = std::fs::remove_dir_all(&dir);
+        assert!(differing > 1000, "shutter 360 left the exported frame unchanged ({differing} differing bytes)");
     }
 }

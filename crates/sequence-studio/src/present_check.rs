@@ -654,11 +654,11 @@ mod tests {
     #[test]
     fn scrub_and_play_hand_the_window_only_the_frames_they_claim() {
         if !sq_media_ffmpeg::shim::AVAILABLE || Gpu::new().is_err() {
-            eprintln!("skipped: no FFmpeg or no GPU");
+            sq_os::errln!("skipped: no FFmpeg or no GPU");
             return;
         }
         let Some(path) = clip() else {
-            eprintln!("skipped: no ffmpeg tool");
+            sq_os::errln!("skipped: no ffmpeg tool");
             return;
         };
         let plan = Plan {
@@ -672,7 +672,7 @@ mod tests {
         };
         let r = run(&path, &plan).expect("present check");
         let _ = std::fs::remove_dir_all(path.parent().expect("dir"));
-        eprintln!("{}", r.text);
+        sq_os::errln!("{}", r.text);
         let c = &r.counts;
         assert!(c.pictures > 100, "{}", r.text);
         assert_eq!((c.wrong_exact, c.unmatched), (0, 0), "{}", r.text);

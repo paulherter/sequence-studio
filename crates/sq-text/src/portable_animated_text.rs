@@ -307,7 +307,10 @@ impl PortableTextRenderer {
                 for b in emoji {
                     layer.draw_bitmap_mapped(&b.bmp, |lx, ly| {
                         // layer pixel -> raster pixel -> layout space -> before the character's transform -> ink pixels
-                        let q = inv.apply(Vec2::new((lx + bx.x as f64) / s + geo.bounds.x, (ly + bx.y as f64) / s + geo.bounds.y));
+                        let q = inv.apply(Vec2::new(
+                            (lx + bx.x as f64) / s + geo.bounds.x,
+                            (ly + bx.y as f64) / s + geo.bounds.y,
+                        ));
                         ((q.x - ink.x) * s - b.x, (q.y - ink.y) * s - b.y)
                     });
                 }
@@ -671,7 +674,7 @@ mod tests {
     fn a_bitmap_emoji_moves_and_fades_with_its_character() {
         let _lock = crate::portable_fallback::FALLBACK_TEST_LOCK.lock().unwrap_or_else(|e| e.into_inner());
         let Some(font) = crate::portable_fallback::PortableFallback::system_bitmap_emoji() else {
-            eprintln!("skipped: no color emoji font");
+            sq_os::errln!("skipped: no color emoji font");
             return;
         };
         crate::portable_fallback::PortableFallback::set_bitmap_emoji(Some(font));

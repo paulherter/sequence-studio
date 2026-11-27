@@ -201,9 +201,13 @@ pub struct EditorSession {
     pub(crate) auto_proxy: Option<Box<dyn SessionProxyServing>>,
     /// Extra monitors (the Trim monitor's engines); dead ones (`is_alive` false) are dropped when one is added.
     pub(crate) auxiliary_engines: Vec<Box<dyn ProgramEngine>>,
+    /// The media set last sent to the engines as playing their proxy at any quality (for engines added later).
+    pub(crate) proxy_playback_media: std::collections::BTreeSet<Id>,
     pub(crate) autosave_store: AutosaveStore,
     /// The last folder listing of `autosave_versions`: the menus ask on every frame and a listing is file IO.
     pub(crate) autosave_listing: std::sync::Mutex<Option<AutosaveListing>>,
+    /// Offline media found by the last `stat()` pass, keyed on the project/media versions; the shell menus ask every frame.
+    pub(crate) missing_media_cache: std::sync::Mutex<Option<MissingMediaCache>>,
     /// Bumped whenever the app writes or deletes an autosave (also from the recovery snapshot worker), so a listing read
     /// before that is never served again; the time window only covers changes from outside.
     pub(crate) autosave_generation: Arc<std::sync::atomic::AtomicU64>,
@@ -349,8 +353,10 @@ impl EditorSession {
             media: deps.media,
             auto_proxy: None,
             auxiliary_engines: Vec::new(),
+            proxy_playback_media: std::collections::BTreeSet::new(),
             autosave_store: deps.autosave_store,
             autosave_listing: std::sync::Mutex::new(None),
+            missing_media_cache: std::sync::Mutex::new(None),
             autosave_generation: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             save_queue: deps.save_queue,
             clock: deps.clock,
@@ -866,6 +872,14 @@ impl fmt::Debug for EditorSession {
             .field("playhead", &self.playhead)
             .finish_non_exhaustive()
     }
+}
+
+/// The offline media of one `stat()` pass over the project's media.
+pub(crate) struct MissingMediaCache {
+    pub(crate) project: Id,
+    pub(crate) versions: (u64, u64),
+    pub(crate) at: std::time::Instant,
+    pub(crate) missing: Vec<sq_core_model::MediaRef>,
 }
 
 #[cfg(test)]

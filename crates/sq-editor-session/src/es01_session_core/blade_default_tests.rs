@@ -121,7 +121,7 @@ fn a_drop_on_v2_puts_the_sound_on_a2_linked_to_the_picture() {
     assert!(v.link.is_some(), "V2 clip has a link group");
     assert_eq!(v.link, a.link, "V2 and A2 clips share it");
     let targeted: Vec<_> = t.tracks.iter().filter(|x| x.is_targeted).map(|x| x.id).collect();
-    println!("targeted after the drop: {targeted:?}, v2 {v2:?}, a2 {a2:?}");
+    sq_os::outln!("targeted after the drop: {targeted:?}, v2 {v2:?}, a2 {a2:?}");
 }
 
 #[test]
@@ -157,7 +157,7 @@ fn add_edit_with_nothing_selected_after_a_v2_drop_follows_the_targets() {
     s.add_edit_at_playhead(false);
     let a2 = track_of(&s, TrackKind::Audio, 1);
     let t = s.active_timeline().unwrap();
-    println!(
+    sq_os::outln!(
         "nothing selected: V2 {} clips, A2 {} clips, targeted {:?}",
         t.track(v2).unwrap().clips().len(),
         t.track(a2).unwrap().clips().len(),

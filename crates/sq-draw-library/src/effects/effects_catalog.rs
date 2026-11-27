@@ -159,6 +159,7 @@ impl EffectsCatalog {
             e(ClipEffect::UNSHARP_MASK_KIND, "Unsharp Mask", "Blur & Sharpen", SQIcon::Triangle),
             e(ClipEffect::RADIAL_BLUR_KIND, "Radial Blur", "Blur & Sharpen", SQIcon::SunRays),
             e(ClipEffect::MOTION_BLUR_KIND, "Motion Blur", "Blur & Sharpen", SQIcon::CircleDashed),
+            e(EffectDragPayload::ADJUSTMENT_LAYER_ID, "Adjustment Layer", "Color & Basics", SQIcon::SlidersHorizontal),
             e(ClipEffect::INVERT_KIND, "Invert", "Color & Basics", SQIcon::Contrast),
             e(ClipEffect::COLOR_KIND, "Color", "Color & Basics", SQIcon::Palette),
             e(ClipEffect::BRIGHTNESS_CONTRAST_KIND, "Brightness & Contrast", "Color & Basics", SQIcon::SunDim),

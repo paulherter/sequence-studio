@@ -47,7 +47,7 @@ pub fn shared_gpu() -> Option<&'static (wgpu::Instance, Arc<Gpu>)> {
     match shared() {
         Ok(pair) => Some(pair),
         Err(e) => {
-            eprintln!("no GPU: {e}");
+            sq_os::errln!("no GPU: {e}");
             None
         }
     }
@@ -168,6 +168,10 @@ struct HdrState {
 
 /// The window's drawing target.
 pub struct Surface {
+    /// The drawable accepts a copy (`COPY_DST`): the UI is kept in a layer and redrawn only where it changed.
+    can_copy: bool,
+    /// Presented UI frames by what they redrew: nothing, some regions, everything (`SQ_RETAIN_LOG`).
+    damage_counts: [u64; 3],
     gpu: Arc<Gpu>,
     surface: wgpu::Surface<'static>,
     config: wgpu::SurfaceConfiguration,
@@ -261,6 +265,12 @@ impl Surface {
         can_present(&caps.formats, config.format)
             .map_err(|e| StartFailure::new(StartCode::GpuPresent, "checking the window surface", e))?;
         let float_ok = float_surface_supported(&caps);
+        // The retained UI layer is copied into the drawable: the surface must allow it (else every frame is drawn in full).
+        let can_copy = caps.usages.contains(wgpu::TextureUsages::COPY_DST);
+        let mut config = config;
+        if can_copy {
+            config.usage |= wgpu::TextureUsages::COPY_DST;
+        }
         crate::applog::info(&format!("float display surface supported: {float_ok}"));
         configure(&surface, &gpu, &config, SurfaceMode::Sdr8);
         let renderer = WgpuRenderer::new(Arc::clone(&gpu), PixelFormat::Bgra8Unorm)
@@ -269,6 +279,8 @@ impl Surface {
         let immediate_playback = std::env::var("SQ_PRESENT_IMMEDIATE").is_ok_and(|v| v == "1")
             && caps.present_modes.contains(&wgpu::PresentMode::Immediate);
         let mut s = Surface {
+            can_copy,
+            damage_counts: [0; 3],
             mailbox,
             immediate_playback,
             interactive: false,
@@ -291,9 +303,11 @@ impl Surface {
             timing: PresentTiming::default(),
         };
         if resize_log::on() {
-            eprintln!(
+            sq_os::errln!(
                 "surface: present modes {:?}, using {:?}, frame latency {}",
-                caps.present_modes, s.config.present_mode, s.config.desired_maximum_frame_latency
+                caps.present_modes,
+                s.config.present_mode,
+                s.config.desired_maximum_frame_latency
             );
         }
         s.probe_display(window);
@@ -517,7 +531,26 @@ impl Surface {
             self.draw_extended(list, atlas, &frame.texture)?;
         } else {
             let target = GpuTexture::from_texture(frame.texture.clone());
-            self.renderer.draw(list, &target, CLEAR, atlas, 1.0).map_err(|e| e.to_string())?;
+            if self.can_copy {
+                let redrawn = self.renderer.draw_retained(list, &target, CLEAR, atlas).map_err(|e| e.to_string())?;
+                let slot = match &redrawn {
+                    sq_draw::damage::Damage::None => 0,
+                    sq_draw::damage::Damage::Regions(_) => 1,
+                    sq_draw::damage::Damage::Full => 2,
+                };
+                self.damage_counts[slot] += 1;
+                let n: u64 = self.damage_counts.iter().sum();
+                if n.is_multiple_of(240) && std::env::var_os("SQ_RETAIN_LOG").is_some() {
+                    sq_os::errln!(
+                        "ui layer frames: none {} regions {} full {}",
+                        self.damage_counts[0],
+                        self.damage_counts[1],
+                        self.damage_counts[2]
+                    );
+                }
+            } else {
+                self.renderer.draw(list, &target, CLEAR, atlas, 1.0).map_err(|e| e.to_string())?;
+            }
         }
         self.timing.draw = drawing.elapsed();
         let presenting = std::time::Instant::now();

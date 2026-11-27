@@ -21,8 +21,8 @@ use std::time::Duration;
 const CHUNK: usize = 8;
 
 /// Writes proxies with FFmpeg: ProRes 422 Proxy at 1/2 or 1/4 size, ProRes 422 at source size ("Optimized").
-// shortcut: video only (playback and export take sound from the original), source frame durations are kept as one
-// constant rate (a variable-rate source fails the frame-times check and plays its original), even sizes only.
+// shortcut: video only (playback and export take sound from the original), even sizes only. Frame times are the
+// source's own (see `proxy_stamp`).
 pub struct FfmpegProxyTranscoder;
 
 impl ProxyTranscoding for FfmpegProxyTranscoder {
@@ -48,7 +48,11 @@ impl ProxyTranscoding for FfmpegProxyTranscoder {
         let d = kind.scale_divisor();
         let (w, h) = (info.width, info.height);
         let (ow, oh) = (((w / d) & !1).max(2), ((h / d) & !1).max(2));
-        let frame = first.duration;
+        // The proxy keeps the source's own frame times: its time base is the source's timescale and every frame is
+        // written at the source's presentation time, so a source with a 1/600 clock and 59.94 fps (or a variable rate)
+        // gets the same frame times and the proxy passes `has_original_frame_times`.
+        let scale = proxy_clock(&entries);
+        let stamps: Vec<i64> = entries.iter().map(|e| proxy_stamp(e.pts, scale)).collect();
         // The encoder picks the container by extension, the cache's partial file has none it knows.
         let mut movie = destination.as_os_str().to_owned();
         movie.push(".mov");
@@ -57,8 +61,8 @@ impl ProxyTranscoding for FfmpegProxyTranscoder {
             path: movie.clone(),
             width: i32::try_from(ow).map_err(|e| write(&e))?,
             height: i32::try_from(oh).map_err(|e| write(&e))?,
-            fps_num: i32::try_from(frame.timescale()).map_err(|e| write(&e))?,
-            fps_den: i32::try_from(frame.value()).map_err(|e| write(&e))?,
+            fps_num: i32::try_from(scale).map_err(|e| write(&e))?,
+            fps_den: 1,
             prores: if kind == ProxyKind::Optimized { 3 } else { 1 },
             color_tags: (demuxer.raw().color_primaries, demuxer.raw().color_transfer, demuxer.raw().color_matrix),
             rotation: info.rotation as i32,
@@ -90,7 +94,7 @@ impl ProxyTranscoding for FfmpegProxyTranscoder {
                         f.frame.storage_as::<FFmpegFrame>().ok_or_else(|| read(&"the decoder gave no picture"))?;
                     let picture = storage.download().map_err(|e| read(&e))?;
                     let small = if d == 1 { picture } else { shrink(&picture, (w, h), (ow, oh), d, bytes) };
-                    enc.video(&small, layout, (ow * bytes) as i32, (from + offset) as i64).map_err(|e| write(&e))?;
+                    enc.video(&small, layout, (ow * bytes) as i32, stamps[from + offset]).map_err(|e| write(&e))?;
                 }
                 progress((to + 1) as f64 / total as f64);
             }
@@ -106,6 +110,34 @@ impl ProxyTranscoding for FfmpegProxyTranscoder {
             source_duration: last.pts + last.duration - first.pts,
         })
     }
+}
+
+/// The clock of the proxy's frames: the least common multiple of the (gcd-reduced) timescales of the source's frame
+/// times and durations, so every stamp is exact. shortcut: past 1,000,000 ticks per second (a wild variable-rate
+/// source) the clock is 90 kHz and stamps are rounded, which then fails the frame-times check and plays the original.
+pub(crate) fn proxy_clock(entries: &[sq_media::sample_index::Entry]) -> i64 {
+    fn gcd(a: i64, b: i64) -> i64 {
+        if b == 0 { a } else { gcd(b, a % b) }
+    }
+    let mut clock = 1i64;
+    for e in entries {
+        for ts in [e.pts.timescale(), e.duration.timescale()] {
+            let ts = ts.max(1);
+            clock = clock / gcd(clock, ts) * ts;
+            if clock > 1_000_000 {
+                return 90_000;
+            }
+        }
+    }
+    clock
+}
+
+/// A source frame time in ticks of `1/scale` s (exact when the source already counts in `scale`).
+pub(crate) fn proxy_stamp(pts: sq_core_time::Time, scale: i64) -> i64 {
+    let (v, ts) = (i128::from(pts.value()), i128::from(pts.timescale().max(1)));
+    let n = v * i128::from(scale);
+    // Round to nearest, ties away from zero.
+    ((n * 2 + n.signum() * ts) / (ts * 2)) as i64
 }
 
 /// Box-averages a semi-planar 4:2:0 picture (Y plane, then interleaved UV) by `d` into `out` size. Samples are `bytes`
@@ -217,9 +249,14 @@ impl ProxyAwareOpener {
         // The proxy holds the original's codes unscaled: its pictures are read the way the original's are.
         let proxy = self.inner.open_proxy(&hit.url, media, original).ok()?;
         if !has_original_frame_times(proxy.demuxer.index(), original.demuxer.index()) {
+            drop(proxy); // its file is deleted below
+            // A proxy made by an older encoder (constant rate) never matches: throw it away once so the Auto queue
+            // makes a new one with the source's frame times. A second refusal keeps the file and stops there.
+            let again = self.provider.retire_mismatched(path, &hit);
             sq_core_time::milestones::note(&format!(
-                "proxy: ready proxy of {} not used, its frame times differ from the original",
-                path.display()
+                "proxy: ready proxy of {} not used, its frame times differ from the original ({})",
+                path.display(),
+                if again { "made again once" } else { "not made again" }
             ));
             return None;
         }
@@ -275,6 +312,105 @@ mod tests {
         let got = opener.open(&clip, Id::from_u128(1)).ok()?;
         let original = plain.open(&clip, Id::from_u128(1)).ok()?;
         Some((got, original, dir))
+    }
+
+    #[test]
+    fn the_clock_is_exact_for_reduced_times() {
+        use sq_core_time::Time;
+        use sq_media::sample_index::Entry;
+        let at = |v: i64| {
+            let t = Time::new(v, 600);
+            Entry { pts: t, dts: t, duration: Time::new(10, 600), is_sync: true, decode_ordinal: 0 }
+        };
+        let clock = proxy_clock(&[at(0), at(10), at(501), at(2862)]);
+        assert_eq!(clock, 600);
+        assert_eq!(proxy_stamp(Time::new(2862, 600), clock), 2862);
+        assert_eq!(proxy_clock(&[at(0)]), 60, "a lone zero frame of a 1/60 s duration");
+    }
+
+    #[test]
+    fn stamps_keep_the_source_clock() {
+        use sq_core_time::Time;
+        assert_eq!(proxy_stamp(Time::new(501, 600), 600), 501);
+        assert_eq!(proxy_stamp(Time::new(1, 3), 600), 200);
+        assert_eq!(proxy_stamp(Time::new(1001, 60000), 600), 10);
+    }
+
+    /// An iPhone-like source: 59.94 fps on a 1/600 clock, so frame times are not a multiple of one frame duration.
+    #[test]
+    fn a_proxy_of_a_59_94_fps_source_on_a_600_clock_keeps_its_frame_times() {
+        let Some(tool) = ffmpeg_tool() else { return };
+        let dir = std::env::temp_dir().join(format!("sq-proxy-ntsc-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let clip = dir.join("ntsc.mov");
+        let made = std::process::Command::new(&tool)
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=60000/1001:duration=1.5"])
+            .args(["-c:v", "mpeg4", "-pix_fmt", "yuv420p", "-video_track_timescale", "600"])
+            .arg(&clip)
+            .status();
+        if !made.is_ok_and(|s| s.success()) {
+            return;
+        }
+        let cache = Arc::new(ProxyCache::new(dir.join("cache")));
+        let mut queue = ProxyQueue::new(Arc::clone(&cache), 1);
+        let mut ids = sq_core_time::SequentialIds::default();
+        let now = wall_clock();
+        queue.enqueue(&clip, ProxyKind::ProxyHalf, ProxyJobPriority::Background, 0, &mut ids, now).unwrap();
+        queue.run_until_idle(&FfmpegProxyTranscoder, now);
+        assert!(!cache.all_records().is_empty(), "no proxy was made");
+        let provider = Arc::new(ProxyProvider::with_interlaced(cache, Box::new(|_| false)));
+        let plain: Arc<dyn MediaOpener> = Arc::new(DefaultOpener::new(None));
+        let opener = ProxyAwareOpener::new(Arc::clone(&plain), provider, Arc::new(|| true));
+        let got = opener.open(&clip, Id::from_u128(1)).unwrap();
+        assert!(got.label.ends_with("proxy"), "the proxy was refused: {}", got.label);
+        let original = plain.open(&clip, Id::from_u128(1)).unwrap();
+        let times = |m: &OpenedMedia| m.demuxer.index().entries().iter().map(|e| e.pts).collect::<Vec<_>>();
+        assert_eq!(times(&got), times(&original));
+        let _ = std::fs::remove_dir_all(dir);
+    }
+
+    /// A source whose first frame is not at 0 (start offset): the index counts from its first frame, the proxy is
+    /// stamped from the index, so both start at 0 and agree.
+    #[test]
+    fn a_proxy_of_a_source_with_a_start_offset_keeps_its_frame_times() {
+        let Some(tool) = ffmpeg_tool() else { return };
+        let dir = std::env::temp_dir().join(format!("sq-proxy-offset-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let clip = dir.join("offset.mov");
+        let made = std::process::Command::new(&tool)
+            .args(["-y", "-v", "error", "-f", "lavfi", "-i", "testsrc2=size=320x180:rate=25:duration=1"])
+            .args([
+                "-c:v",
+                "mpeg4",
+                "-pix_fmt",
+                "yuv420p",
+                "-output_ts_offset",
+                "3.5",
+                "-avoid_negative_ts",
+                "disabled",
+            ])
+            .arg(&clip)
+            .status();
+        if !made.is_ok_and(|s| s.success()) {
+            return;
+        }
+        let plain: Arc<dyn MediaOpener> = Arc::new(DefaultOpener::new(None));
+        let original = plain.open(&clip, Id::from_u128(1)).unwrap();
+        assert_eq!(original.demuxer.index().entries()[0].pts, sq_core_time::Time::ZERO, "the index starts at 0");
+        let cache = Arc::new(ProxyCache::new(dir.join("cache")));
+        let mut queue = ProxyQueue::new(Arc::clone(&cache), 1);
+        let mut ids = sq_core_time::SequentialIds::default();
+        let now = wall_clock();
+        queue.enqueue(&clip, ProxyKind::ProxyHalf, ProxyJobPriority::Background, 0, &mut ids, now).unwrap();
+        queue.run_until_idle(&FfmpegProxyTranscoder, now);
+        assert!(!cache.all_records().is_empty(), "no proxy was made");
+        let provider = Arc::new(ProxyProvider::with_interlaced(cache, Box::new(|_| false)));
+        let opener = ProxyAwareOpener::new(Arc::clone(&plain), provider, Arc::new(|| true));
+        let got = opener.open(&clip, Id::from_u128(1)).unwrap();
+        assert!(got.label.ends_with("proxy"), "the proxy was refused: {}", got.label);
+        let _ = std::fs::remove_dir_all(dir);
     }
 
     #[test]

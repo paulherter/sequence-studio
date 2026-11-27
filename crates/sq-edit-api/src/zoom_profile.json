@@ -1,0 +1,60 @@
+{
+ "version": "2026.11.26",
+ "doc": "Zoom transition profile as data: curves, timing and rules for zoom cuts.",
+ "fps": 30,
+ "applies_to": "face <-> B-roll cuts only. Face -> face (take to take) and shots inside a B-roll block are plain hard cuts: no zoom pair, no fade, no direction change.",
+ "pair": {
+  "direction": "both pictures zoom in the SAME direction; alternates cut by cut (100->110, then 110->100)",
+  "outgoing": "ease-in, fastest at the cut, ends at the cut",
+  "incoming": "ease-out, fastest at the cut, then calm",
+  "upper_fade_frames": 2,
+  "fade_rule": "only the UPPER picture fades (2 frames); the fastest frame of BOTH pictures sits inside that fade, never after it. Upper leaves: fade c-2..c, its zoom ends at c, the lower one's starts at c-2. Upper arrives: fade c..c+2, its zoom starts at c, the lower one's ends at c+2. Same track: hard cut, the pair alone carries it.",
+  "same_speed_at_cut": "both pictures move at the same speed at the cut; the calmer (longer) move sets it, the shorter one zooms less",
+  "keys_per_move": 2,
+  "extra_hold_keys": false,
+  "scale_range": [
+   100,
+   110
+  ]
+ },
+ "curves": {
+  "fast_side_handle_influence": 0.04,
+  "calm_side_handle_influence": 1.0,
+  "note": "The key at the cut is the fastest point: steep short handle on the cut side, calm handle pulled out to 100 % on the other. A linear start handle peaks ~18 % into the move: wrong. Every key eased (bezier)."
+ },
+ "timing_frames": {
+  "upper_leave": 28,
+  "lower_arrive": 48,
+  "lower_leave": 42,
+  "upper_arrive": 26,
+  "video_start_in": 44,
+  "min_move": 9,
+  "note": "moves ~1.5x the classic zoom presets; they shorten to make room"
+ },
+ "holds": {
+  "min_frames": 10,
+  "min_share": 0.3,
+  "rule": "every picture keeps a calm hold between its arriving and leaving move; a picture too short for two moves gets ONE move that keeps its direction (fast at both cuts)."
+ },
+ "limits": {
+  "min_block_s": 0.5,
+  "min_face_reveal_s": 0.5,
+  "min_zoomed_s": 1.0,
+  "face_flash": "a face never flashes < 0.5 s between two B-roll blocks: the script refuses; close the gap in the cut first"
+ },
+ "first_and_last": {
+  "first": "VideoStart IN",
+  "last": "VideoEnd IN + Necessary/FollowAnimation.mov",
+  "card_not_covering_frame": "pops on its own with the same curves; the face under it keeps running"
+ },
+ "under_a_block": "the face must already be the next take: the older take's PICTURE ends where the next one starts (hidden under the block); its sound runs on (trim linked:false). Rule 9 in uebergaenge.py.",
+ "never": [
+  "headZoom",
+  "overlayPop",
+  "talkPulse (zoom in the middle of a clip)",
+  "pasting the 'Zoom … / TOP|BOT' presets whole",
+  "zoom in the middle of a clip",
+  "a transition between face and face"
+ ],
+ "other_transitions": "max 3 swipes with motion blur per video; hard cuts everywhere else; effect SFX (Beep, swoosh) at -20 dB on swipes and pops."
+}

@@ -5,7 +5,8 @@
 //! One renderer serves one window, so one glyph atlas (one display scale): the page texture mirrors the atlas and only its
 //! dirty rect is uploaded per frame ([`GlyphAtlas::take_dirty`]; do not share an atlas between renderers).
 
-use crate::draw_list::{Color, DrawList, DrawQuad};
+use crate::damage::{Damage, Dirty, damage};
+use crate::draw_list::{Color, DrawList, DrawQuad, QuadKind, Rect};
 use crate::glyph_atlas::{DirtyRect, GlyphAtlas};
 use crate::software::RgbaImage;
 use sq_gpu::frames::GpuTexture;
@@ -31,6 +32,7 @@ pub enum VideoOverride {
 /// Draws draw lists with wgpu.
 pub struct WgpuRenderer {
     gpu: Arc<Gpu>,
+    format: PixelFormat,
     pipeline: Arc<RenderPipeline>,
     atlas: Option<GpuTexture>,
     /// The atlas generation this renderer last uploaded.
@@ -45,6 +47,9 @@ pub struct WgpuRenderer {
     black: Option<GpuTexture>,
     quads: Option<(wgpu::Buffer, u64)>,
     bytes: Vec<u8>,
+    /// The retained UI layer ([`Self::draw_retained`]) and the list it shows.
+    retained: Option<(GpuTexture, Vec<DrawQuad>)>,
+    dirty: Dirty,
 }
 
 impl WgpuRenderer {
@@ -60,6 +65,7 @@ impl WgpuRenderer {
         })?;
         Ok(WgpuRenderer {
             gpu,
+            format,
             pipeline,
             atlas: None,
             atlas_seen: 0,
@@ -70,6 +76,8 @@ impl WgpuRenderer {
             black: None,
             quads: None,
             bytes: Vec::new(),
+            retained: None,
+            dirty: Dirty { all: true, ..Dirty::default() },
         })
     }
 
@@ -80,6 +88,7 @@ impl WgpuRenderer {
     /// Uploads image slot `slot` (0...5). The slot's texture is recreated when the size changes.
     pub fn set_image(&mut self, slot: usize, img: &RgbaImage) {
         let Some(cell) = self.images.get_mut(slot) else { return };
+        self.dirty.images[slot] = true;
         let same = cell.as_ref().is_some_and(|t| (t.width(), t.height()) == (img.width as u32, img.height as u32));
         if !same {
             *cell = Some(self.gpu.texture(img.width as u32, img.height as u32, PixelFormat::Rgba8Unorm));
@@ -91,6 +100,7 @@ impl WgpuRenderer {
 
     /// Sets (or with `None` removes) the picture of the video quad; without one the quad is black.
     pub fn set_video(&mut self, img: Option<&RgbaImage>) {
+        self.dirty.video = true;
         let Some(img) = img else {
             self.video = None;
             return;
@@ -109,6 +119,7 @@ impl WgpuRenderer {
     /// Draws the video quad straight from `texture` (display-ready `Rgba8Unorm` code values on this renderer's device),
     /// with no upload; `None` removes the picture.
     pub fn set_video_texture(&mut self, texture: Option<&GpuTexture>) {
+        self.dirty.video = true;
         self.video = texture.cloned();
         self.video_shared = texture.is_some();
     }
@@ -125,6 +136,8 @@ impl WgpuRenderer {
         };
         self.atlas_seen = atlas.generation();
         let (Some(r), Some(tex)) = (region, &self.atlas) else { return };
+        // Glyphs are only ever added to the page, so a part upload leaves every drawn glyph as it was; a whole page may not.
+        self.dirty.all |= r.w >= size && r.h >= size;
         atlas.with_pixels(|pixels| {
             self.gpu.queue().write_texture(
                 wgpu::TexelCopyTextureInfo {
@@ -179,6 +192,68 @@ impl WgpuRenderer {
         video: VideoOverride,
         image: Option<(usize, VideoOverride)>,
     ) -> Result<(), GpuError> {
+        self.draw_inner(list, target, clear, atlas, view_scale, video, image, None)
+    }
+
+    /// Draws `list` into the retained UI layer, redrawing only what changed since the last call (`Damage`), then copies the
+    /// layer to `target` (this renderer's format, `COPY_DST`, the window size). Pixel-identical to [`Self::draw`] at scale 1.
+    /// Returns what it redrew. `SQ_NO_RETAIN=1` draws everything every time (A/B).
+    pub fn draw_retained(
+        &mut self,
+        list: &DrawList,
+        target: &GpuTexture,
+        clear: Color,
+        atlas: Option<&GlyphAtlas>,
+    ) -> Result<Damage, GpuError> {
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let off = *OFF.get_or_init(|| std::env::var_os("SQ_NO_RETAIN").is_some());
+        if off {
+            self.draw(list, target, clear, atlas, 1.0)?;
+            return Ok(Damage::Full);
+        }
+        let (w, h) = (target.width(), target.height());
+        if let Some(a) = atlas {
+            // The page upload decides whether the glyphs changed: do it before comparing.
+            self.sync_atlas(a);
+        }
+        let layer = match self.retained.take() {
+            Some((t, quads)) if (t.width(), t.height()) == (w, h) => Some((t, quads)),
+            _ => None,
+        };
+        let (layer_tex, damage) = match layer {
+            Some((t, prev)) => {
+                let d = damage(&prev, list.quads(), &self.dirty, w, h);
+                (t, d)
+            }
+            None => (self.gpu.texture(w, h, self.format), Damage::Full),
+        };
+        match &damage {
+            Damage::None => {}
+            Damage::Full => self.draw_inner(list, &layer_tex, clear, atlas, 1.0, VideoOverride::Keep, None, None)?,
+            Damage::Regions(r) => {
+                self.draw_inner(list, &layer_tex, clear, atlas, 1.0, VideoOverride::Keep, None, Some(r))?
+            }
+        }
+        self.dirty = Dirty::default();
+        let mut cmds = self.gpu.commands();
+        cmds.copy(&layer_tex, target);
+        self.gpu.submit(cmds);
+        self.retained = Some((layer_tex, list.quads().to_vec()));
+        Ok(damage)
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn draw_inner(
+        &mut self,
+        list: &DrawList,
+        target: &GpuTexture,
+        clear: Color,
+        atlas: Option<&GlyphAtlas>,
+        view_scale: f32,
+        video: VideoOverride,
+        image: Option<(usize, VideoOverride)>,
+        patch: Option<&[[u32; 4]]>,
+    ) -> Result<(), GpuError> {
         let wants = |v: VideoOverride| video == v || image.is_some_and(|(_, o)| o == v);
         if wants(VideoOverride::White) && self.white.is_none() {
             let t = self.gpu.texture(1, 1, PixelFormat::Rgba8Unorm);
@@ -199,8 +274,44 @@ impl WgpuRenderer {
             self.sync_atlas(a);
         }
         self.bytes.clear();
-        for q in list.quads() {
-            q.write_bytes(&mut self.bytes);
+        // Quads a later opaque rect fully covers are not sent (same pixels, less GPU time); the reduced view is not 1:1.
+        // `SQ_NO_OCCLUSION=1` switches it off for an A/B measurement.
+        static OFF: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        let off = *OFF.get_or_init(|| std::env::var_os("SQ_NO_OCCLUSION").is_some());
+        let one_to_one = !off && (view_scale <= 0.0 || (view_scale - 1.0).abs() < f32::EPSILON);
+        let keep = one_to_one.then(|| crate::occlusion::visible(list.quads()));
+        let mut count = 0u32;
+        if let Some(boxes) = patch {
+            // Each damaged box is first overwritten with the clear color, then every quad that touches a box is drawn
+            // again in list order (the scissor of each box keeps the rest of the layer).
+            for b in boxes {
+                let r = Rect::new(b[0] as f32, b[1] as f32, (b[2] - b[0]) as f32, (b[3] - b[1]) as f32);
+                let fill = DrawQuad {
+                    rect: r,
+                    uv: [0.0; 4],
+                    color: Color { a: 1.0, ..clear },
+                    radius: 0.0,
+                    stroke: 0.0,
+                    kind: QuadKind::Shape,
+                    slot: 0.0,
+                    clip: [r.x, r.y, r.max_x(), r.max_y()],
+                };
+                fill.write_bytes(&mut self.bytes);
+                count += 1;
+            }
+        }
+        for (i, q) in list.quads().iter().enumerate() {
+            let shown = keep.as_ref().is_none_or(|s| s[i]);
+            let touches = patch.is_none_or(|boxes| {
+                let r = crate::occlusion::bounds(q);
+                boxes
+                    .iter()
+                    .any(|b| r[0] < b[2] as f32 && r[2] > b[0] as f32 && r[1] < b[3] as f32 && r[3] > b[1] as f32)
+            });
+            if shown && touches {
+                q.write_bytes(&mut self.bytes);
+                count += 1;
+            }
         }
         let need = (self.bytes.len().max(DrawQuad::SIZE)) as u64;
         if self.quads.as_ref().is_none_or(|(_, cap)| *cap < need) {
@@ -227,7 +338,8 @@ impl WgpuRenderer {
 
         let mut cmds = self.gpu.commands();
         {
-            let mut pass = cmds.render(target, Some([clear.r as f64, clear.g as f64, clear.b as f64, 1.0]));
+            let mut pass =
+                cmds.render(target, patch.is_none().then_some([clear.r as f64, clear.g as f64, clear.b as f64, 1.0]));
             pass.set_pipeline(&self.pipeline);
             pass.set_constants(&constants, 0)?;
             if let (Some(_), Some(tex)) = (atlas, &self.atlas) {
@@ -247,8 +359,15 @@ impl WgpuRenderer {
                 }
             }
             pass.set_buffer(buffer, 2)?;
-            if !list.quads().is_empty() {
-                pass.draw(6, list.quads().len() as u32)?;
+            match patch {
+                None if count > 0 => pass.draw(6, count)?,
+                Some(boxes) if count > 0 => {
+                    for b in boxes {
+                        pass.set_scissor(b[0], b[1], b[2] - b[0], b[3] - b[1]);
+                        pass.draw(6, count)?;
+                    }
+                }
+                _ => {}
             }
         }
         self.gpu.submit(cmds);

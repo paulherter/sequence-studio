@@ -387,7 +387,10 @@ mod tests {
         for mem in [4 * GIB, 8 * GIB, 16 * GIB, 64 * GIB] {
             let extra = default_extra_hw_frames(mem, 16);
             let carry = carry_limit(extra, 8);
-            assert!(hardware_hold_limit(extra, carry) >= if extra >= 12 { 5 } else { 1 }, "{mem}: extra {extra} carry {carry}");
+            assert!(
+                hardware_hold_limit(extra, carry) >= if extra >= 12 { 5 } else { 1 },
+                "{mem}: extra {extra} carry {carry}"
+            );
         }
         assert_eq!(carry_limit(16, 8), 8, "the default pool keeps the old carry");
         assert_eq!(hardware_hold_limit(16, carry_limit(16, 8)), 7);

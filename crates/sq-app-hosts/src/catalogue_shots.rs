@@ -4094,7 +4094,7 @@ fn catalogue_shots() {
         n += render(&dir, &atlas, &group);
     }
     assert!(n >= 2 * 5, "button-raised alone is 5 states x 2 modes, wrote {n}");
-    println!("catalogue_shots: {n} files in {}", dir.display());
+    sq_os::outln!("catalogue_shots: {n} files in {}", dir.display());
 }
 
 /// Every `SQIcon` in a grid (24 pt, then 16 pt below), in `SQIcon::ALL` order: the contact sheet for checking an icon set.

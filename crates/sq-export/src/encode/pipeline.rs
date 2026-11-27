@@ -49,7 +49,7 @@ pub(super) fn pump(
             }
         }
         if trace {
-            eprintln!(
+            sq_os::errln!(
                 "export-trace encode side: {n} frames, waited for a frame {:.0} ms, consumed (convert+encode+audio) {:.0} ms",
                 waited.as_secs_f64() * 1e3,
                 consumed.as_secs_f64() * 1e3

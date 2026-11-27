@@ -6,7 +6,8 @@ use serde_json::{Value, json};
 use sq_core_effects::effect_preset::{Anchor, ApplyMode, EffectPreset, TimelineEffectPresetExt};
 use sq_core_effects::effect_stack_preset::EffectStackPresets;
 use sq_core_effects::transition::{
-    TimelineTransitions, TransitionKindExt, TransitionPoint, TransitionSpec, add_element_transitions_looked, add_transition_looked,
+    TimelineTransitions, TransitionKindExt, TransitionPoint, TransitionSpec, add_element_transitions_looked,
+    add_transition_looked,
 };
 use sq_core_model::{ClipEdge, EditError, Timeline, TrackKind, TransitionAlignment, TransitionKind};
 use sq_core_time::{Id, IdSource, Time};
@@ -89,7 +90,9 @@ pub(crate) fn add_transition(
             add_transition_looked(t, point, &spec, None, ids)?;
         }
         Place::Between(..) if kind.is_element() => {
-            return Err(format!("{}: an element transition sits on one clip edge; use clip + edge", kind_name(kind)).into());
+            return Err(
+                format!("{}: an element transition sits on one clip edge; use clip + edge", kind_name(kind)).into()
+            );
         }
         Place::Between(a, b) => {
             let point = TransitionPoint::Cut { outgoing: a, incoming: b };
@@ -173,7 +176,9 @@ pub(crate) fn resolve_user_presets(
                     at: *at,
                     mode: mode.clone(),
                 }),
-                _ => Err(format!("preset: '{preset}' names several of your presets; use the id from GET /v1/effectPresets")),
+                _ => Err(format!(
+                    "preset: '{preset}' names several of your presets; use the id from GET /v1/effectPresets"
+                )),
             }
         })
         .collect()
@@ -193,13 +198,16 @@ pub(crate) fn apply_preset(
     mode: Option<&str>,
     ids: &mut dyn IdSource,
 ) -> Result<(), OpFailure> {
-    let found = built_in(preset)
-        .ok_or_else(|| format!("preset: unknown '{preset}'; see GET /v1/effectPresets"))?;
+    let found = built_in(preset).ok_or_else(|| format!("preset: unknown '{preset}'; see GET /v1/effectPresets"))?;
     if let Some(edge) = at {
         let own = if found.anchor == Anchor::End { ClipEdge::Tail } else { ClipEdge::Head };
         if edge != own {
             let own = if own == ClipEdge::Tail { "tail" } else { "head" };
-            return Err(format!("preset '{}' is anchored at the clip's {own}; leave `at` out or use {own}", found.name).into());
+            return Err(format!(
+                "preset '{}' is anchored at the clip's {own}; leave `at` out or use {own}",
+                found.name
+            )
+            .into());
         }
     }
     let mode = match mode {

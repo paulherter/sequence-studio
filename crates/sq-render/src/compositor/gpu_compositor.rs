@@ -207,6 +207,8 @@ pub struct GpuCompositor {
     /// Intermediates and buffers of the running render; they go back to the pool at the next `render`.
     scratch: Vec<PooledTexture>,
     scratch_buffers: Vec<wgpu::Buffer>,
+    /// Full-frame intermediates taken by the last `render` (a counter for the tests and traces, no GPU cost).
+    offscreens: usize,
     solid_textures: HashMap<[u8; 3], GpuTexture>,
     /// C6: the Picture matte images of the current level, innermost last.
     pub picture_scopes: Vec<HashMap<Id, GpuTexture>>,
@@ -266,6 +268,7 @@ impl GpuCompositor {
             cover_neutral,
             scratch: Vec::new(),
             scratch_buffers: Vec::new(),
+            offscreens: 0,
             solid_textures: HashMap::new(),
             picture_scopes: vec![HashMap::new()],
             unsupported_frame_count: 0,
@@ -313,6 +316,7 @@ impl GpuCompositor {
         let _encode = sq_os::trace::span_args("render", "compositor encode", || format!("nodes={}", nodes.len()));
         self.scratch.clear();
         self.scratch_buffers.clear();
+        self.offscreens = 0;
         self.hooks.begin_render();
         self.picture_scopes = vec![HashMap::new()];
         self.encode(nodes, format, target, cmds, [0.0, 0.0, 0.0, if transparent { 0.0 } else { 1.0 }], false, pictures)
@@ -346,8 +350,14 @@ impl GpuCompositor {
     pub fn acquire(&mut self, w: i64, h: i64) -> GpuTexture {
         let t = self.gpu.acquire(w.max(1) as u32, h.max(1) as u32, F16);
         let tex = GpuTexture::clone(&t);
+        self.offscreens += 1;
         self.scratch.push(t);
         tex
+    }
+
+    /// How many intermediates the last `render` acquired.
+    pub fn offscreens(&self) -> usize {
+        self.offscreens
     }
 
     /// A zeroed data buffer that stays reserved until the next `render`.

@@ -75,7 +75,7 @@ mod tests {
         };
         let mut e = Encoder::open(&cfg).expect("a ProRes encoder");
         let name = e.video_name();
-        println!("prores {prores} encoder opened: {name}");
+        sq_os::outln!("prores {prores} encoder opened: {name}");
         assert!(name == "prores_videotoolbox" || name == "prores_ks", "{name}");
         let frame: Vec<u8> = (0..w * h * 4).map(|i| (i % 251) as u8).collect();
         for i in 0..10 {
@@ -198,7 +198,7 @@ mod tests {
                     f64::from(yuv[w * h + w * h / 4 + (cy / 2) * (w / 2) + cx / 2]),
                 ];
                 let want = expected_ycbcr(*c);
-                eprintln!("{name} {c:?}: got {got:?} want {want:.1?}");
+                sq_os::errln!("{name} {c:?}: got {got:?} want {want:.1?}");
                 for k in 0..3 {
                     assert!(
                         (got[k] - want[k]).abs() <= 1.5,

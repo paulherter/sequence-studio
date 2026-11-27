@@ -9,7 +9,9 @@ use sq_core_model::{Clip, MediaRef, Project, Timeline};
 use sq_core_time::{Id, Time, TimeRange};
 use sq_draw::RgbaImage;
 use sq_edit_api::edit_apirouter::EditAPIHost;
-use sq_edit_api::perceive::{CAPTION_STYLES, CaptionLookSpec, CaptionSpot, ContactSheet, PerceiveError, PerceiveRequest, Target};
+use sq_edit_api::perceive::{
+    CAPTION_STYLES, CaptionLookSpec, CaptionSpot, ContactSheet, PerceiveError, PerceiveRequest, Target,
+};
 use sq_editor_session::{EditorSession, ImportBackend, PlaceOptions, SessionDeps};
 use std::collections::{BTreeMap, HashMap};
 use std::path::{Path, PathBuf};
@@ -151,7 +153,11 @@ fn snapshot(project: &Project) -> ExportSnapshot {
 
 impl ApiBridge {
     /// The entry the router calls.
-    pub(crate) fn perceive_request(&self, request: &PerceiveRequest, cancel: &AtomicBool) -> Result<Value, PerceiveError> {
+    pub(crate) fn perceive_request(
+        &self,
+        request: &PerceiveRequest,
+        cancel: &AtomicBool,
+    ) -> Result<Value, PerceiveError> {
         if let PerceiveRequest::ImportPremiere { path, dry_run } = request {
             return self.import_premiere(path, *dry_run);
         }
@@ -191,7 +197,16 @@ impl ApiBridge {
                 } else {
                     at.clone()
                 };
-                self.capture(&scratch, timeline.id, media.as_u128() & u128::from(u32::MAX), &times, *width, None, &dir, cancel)
+                self.capture(
+                    &scratch,
+                    timeline.id,
+                    media.as_u128() & u128::from(u32::MAX),
+                    &times,
+                    *width,
+                    None,
+                    &dir,
+                    cancel,
+                )
             }
             PerceiveRequest::Levels { target, from, to } => self.levels(&project, target, *from, *to, &dir, cancel),
             PerceiveRequest::Transcript { target } => self.transcript(&project, target, cancel),
@@ -202,7 +217,7 @@ impl ApiBridge {
             PerceiveRequest::Scenes { .. } => Err(fail(501, "scene detection is not available through the API yet")),
             PerceiveRequest::ImportPremiere { .. } | PerceiveRequest::CaptionStyles | PerceiveRequest::Fonts => {
                 Err(fail(500, "unreachable"))
-            },
+            }
         }
     }
 
@@ -276,17 +291,23 @@ impl ApiBridge {
         range = TimeRange::new(start, stop - start);
         let sequences: HashMap<Id, Timeline> = owner.timelines.iter().map(|t| (t.id, t.clone())).collect();
         let paths: HashMap<Id, PathBuf> = owner.media.iter().map(|m| (m.id, PathBuf::from(&m.path))).collect();
-        let feed = crate::export_audio::FeederMix::new(&timeline, sequences, paths, crate::export_audio::channel_maps(&owner.media));
+        let feed = crate::export_audio::FeederMix::new(
+            &timeline,
+            sequences,
+            paths,
+            crate::export_audio::channel_maps(&owner.media),
+        );
         let mut source = TimelineAudioSource::new(feed, 2, range);
-        let measured = LoudnessNormalizer::measure(&mut source, &CancelToken::new()).map_err(|e| fail(500, format!("{e:?}")))?;
+        let measured =
+            LoudnessNormalizer::measure(&mut source, &CancelToken::new()).map_err(|e| fail(500, format!("{e:?}")))?;
         // Second pass over the same source: sample peak and the silences (100 ms windows below -50 dBFS, 0.4 s or longer).
         let rate = source.sample_rate().max(1) as f64;
         let (mut peak, mut frame, mut quiet_since): (f32, usize, Option<usize>) = (0.0, 0, None);
         let mut silences: Vec<(f64, f64)> = Vec::new();
         let window = (rate / 10.0) as usize;
         let (mut sum, mut count) = (0.0_f64, 0_usize);
-        let note = |quiet: bool, at: usize, silences: &mut Vec<(f64, f64)>, since: &mut Option<usize>| {
-            match (quiet, *since) {
+        let note =
+            |quiet: bool, at: usize, silences: &mut Vec<(f64, f64)>, since: &mut Option<usize>| match (quiet, *since) {
                 (true, None) => *since = Some(at),
                 (false, Some(s)) => {
                     *since = None;
@@ -295,8 +316,7 @@ impl ApiBridge {
                     }
                 }
                 _ => {}
-            }
-        };
+            };
         while let Some(chunk) = source.next_chunk(4096).map_err(|e| fail(500, format!("{e:?}")))? {
             if cancel.load(Ordering::SeqCst) {
                 return Err(fail(503, "cancelled"));
@@ -360,7 +380,11 @@ impl ApiBridge {
         work: impl FnOnce(ApiBridge) -> Result<Value, String> + Send + 'static,
     ) -> Result<Value, PerceiveError> {
         let slot: TaskSlot = Arc::new(Mutex::new(TaskState::Running));
-        let id = self.jobs.lock().unwrap_or_else(PoisonError::into_inner).add(kind, JobEntry::Task { kind, slot: Arc::clone(&slot) });
+        let id = self
+            .jobs
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .add(kind, JobEntry::Task { kind, slot: Arc::clone(&slot) });
         let (writer, bridge) = (Arc::clone(&slot), self.clone());
         std::thread::spawn(move || {
             let state = work(bridge).map_or_else(TaskState::Failed, TaskState::Done);
@@ -401,10 +425,10 @@ impl ApiBridge {
         cancel: &AtomicBool,
     ) -> Result<Value, PerceiveError> {
         use sq_core_model::{CaptionHorizontal, CaptionPosition, CaptionVertical};
+        use sq_core_time::IdSource as _;
         use sq_transcribe::caption_segmenter::CaptionSegmenter;
         use sq_transcribe::timeline_transcription::TimelineTranscription;
         use sq_transcribe::transcript::Transcript;
-        use sq_core_time::IdSource as _;
         use sq_transcribe::transcription_service::{CancelToken, Locale};
         let (timeline, clip) = match target {
             Target::Clip(id) => {
@@ -418,7 +442,9 @@ impl ApiBridge {
         let looks = self.looks.clone();
         let (preset, made_look) = match source.saved_look {
             Some(name) => (saved_look_preset(looks.as_deref(), name)?, None),
-            None => caption_preset_and_look(word_by_word, style, look, (timeline.format.width, timeline.frame_duration())),
+            None => {
+                caption_preset_and_look(word_by_word, style, look, (timeline.format.width, timeline.frame_duration()))
+            }
         };
         let own_words: Option<Vec<sq_edit_api::perceive::CaptionWordSpec>> = source.words.map(<[_]>::to_vec);
         let vertical = match spot {
@@ -629,7 +655,10 @@ struct CaptionSource<'a> {
 
 /// The preset of a look saved in the user's Look store (read only), found by name like the Captions panel lists it: its
 /// segmentation, and its style registered so the captions render through the one caption renderer.
-fn saved_look_preset(store: Option<&sq_editor_session::LookStore>, name: &str) -> Result<sq_transcribe::caption_preset::CaptionPreset, PerceiveError> {
+fn saved_look_preset(
+    store: Option<&sq_editor_session::LookStore>,
+    name: &str,
+) -> Result<sq_transcribe::caption_preset::CaptionPreset, PerceiveError> {
     use sq_editor_session::{CaptionLookStore, LookStoreCaptions};
     let store = store.ok_or_else(|| fail(501, "this build has no Look store"))?;
     let all = LookStoreCaptions(store).user_looks();
@@ -640,7 +669,8 @@ fn saved_look_preset(store: Option<&sq_editor_session::LookStore>, name: &str) -
         return Err(fail(404, format!("no saved caption look '{want}'; saved: {}", names.join(", "))));
     };
     let mut preset = hit.segmentation.clone();
-    preset.style_ref = sq_text::caption_presets::CaptionLookRegistry::shared().register(hit.look.clone(), &hit.id.to_string()).0;
+    preset.style_ref =
+        sq_text::caption_presets::CaptionLookRegistry::shared().register(hit.look.clone(), &hit.id.to_string()).0;
     preset.emphasis = sq_transcribe::caption_preset::CaptionEmphasis::None;
     Ok(preset)
 }
@@ -649,7 +679,11 @@ fn saved_look_preset(store: Option<&sq_editor_session::LookStore>, name: &str) -
 /// A look (the named style "paul" or any look key) becomes a Caption Look in the registry the Captions panel's saved
 /// looks use, so the captions render through the one caption renderer.
 #[cfg(test)]
-fn caption_preset(word_by_word: bool, style: Option<String>, look: &CaptionLookSpec) -> sq_transcribe::caption_preset::CaptionPreset {
+fn caption_preset(
+    word_by_word: bool,
+    style: Option<String>,
+    look: &CaptionLookSpec,
+) -> sq_transcribe::caption_preset::CaptionPreset {
     caption_preset_and_look(word_by_word, style, look, (1080, Time::new(1, 30))).0
 }
 
@@ -686,7 +720,8 @@ fn caption_preset_and_look(
     let mut made = None;
     if !look.is_empty() {
         let (id, made_look) = make_look(&preset.style_ref, look, is_paul.then_some(frame_duration));
-        preset.style_ref = sq_text::caption_presets::CaptionLookRegistry::shared().register(made_look.clone(), &id.to_string()).0;
+        preset.style_ref =
+            sq_text::caption_presets::CaptionLookRegistry::shared().register(made_look.clone(), &id.to_string()).0;
         made = Some((id, made_look));
         preset.emphasis = CaptionEmphasis::None;
     }
@@ -718,7 +753,11 @@ fn paul_pop(frame: Time) -> sq_core_model::anchored_animation::KeyframeTemplate 
     KeyframeTemplate {
         tracks: vec![AnimationTrack::from_shapes(
             "scale",
-            &[(Time::ZERO, 0.9, SegmentShape::Linear), (at(3), 1.05, SegmentShape::Linear), (at(4), 1.0, SegmentShape::Linear)],
+            &[
+                (Time::ZERO, 0.9, SegmentShape::Linear),
+                (at(3), 1.05, SegmentShape::Linear),
+                (at(4), 1.0, SegmentShape::Linear),
+            ],
         )],
         duration: at(4),
         anchor: AnimationAnchor::Start,
@@ -727,7 +766,11 @@ fn paul_pop(frame: Time) -> sq_core_model::anchored_animation::KeyframeTemplate 
 }
 
 /// The look of `base` changed by `look`, with an id that follows its values.
-fn make_look(base: &str, look: &CaptionLookSpec, pop_frame: Option<Time>) -> (Id, sq_text::caption_presets::CaptionLook) {
+fn make_look(
+    base: &str,
+    look: &CaptionLookSpec,
+    pop_frame: Option<Time>,
+) -> (Id, sq_text::caption_presets::CaptionLook) {
     use sq_edit_api::perceive::Part;
     use sq_text::caption_presets::{CaptionLook, CaptionPresetLibrary};
     use sq_text::text_style::{BoxPadding, FontWeight, RGBAColor, TextBackground, TextShadow};
@@ -746,7 +789,9 @@ fn make_look(base: &str, look: &CaptionLookSpec, pop_frame: Option<Time>) -> (Id
     }
     match look.shadow {
         Some(Part::Off) => style.shadow = None,
-        Some(Part::On(sh)) => style.shadow = Some(TextShadow::new(RGBAColor::new(0.0, 0.0, 0.0, sh.opacity), 0.0, sh.offset, sh.blur)),
+        Some(Part::On(sh)) => {
+            style.shadow = Some(TextShadow::new(RGBAColor::new(0.0, 0.0, 0.0, sh.opacity), 0.0, sh.offset, sh.blur))
+        }
         None => {}
     }
     match look.box_ {
@@ -754,7 +799,11 @@ fn make_look(base: &str, look: &CaptionLookSpec, pop_frame: Option<Time>) -> (Id
         Some(Part::On(b)) => {
             // Padding of the kit pill: 0.40 em across, 0.16 em up and down.
             let padding = BoxPadding::new(style.size * 0.40, style.size * 0.16);
-            style.background = Some(TextBackground::new(RGBAColor::new(b.color[0], b.color[1], b.color[2], b.color[3]), padding, b.radius));
+            style.background = Some(TextBackground::new(
+                RGBAColor::new(b.color[0], b.color[1], b.color[2], b.color[3]),
+                padding,
+                b.radius,
+            ));
         }
         None => {}
     }
@@ -780,7 +829,13 @@ fn transcribe_media(media: &MediaRef, clip: Option<(Clip, Time)>) -> Result<Valu
     use sq_transcribe::transcription_service::{CancelToken, Locale};
     let service = crate::speech::platform_service();
     let transcript = service
-        .transcribe(Path::new(&media.path), &Locale::new("auto"), &mut |_| {}, &CancelToken::new(), &mut sq_core_time::RandomIds)
+        .transcribe(
+            Path::new(&media.path),
+            &Locale::new("auto"),
+            &mut |_| {},
+            &CancelToken::new(),
+            &mut sq_core_time::RandomIds,
+        )
         .map_err(|e| format!("{e:?}"))?;
     let words = match &clip {
         Some((c, frame)) => TimelineTranscription::map_words(&transcript.words, c, *frame),
@@ -810,7 +865,13 @@ mod tests {
         assert!(LookStoreCaptions(&store).add(Id::from_u128(77), "Caption Look 1", &look, &seg));
         let preset = saved_look_preset(Some(&store), "caption look 1").expect("found by name, any case");
         assert_eq!(preset.max_words_per_caption, seg.max_words_per_caption);
-        assert_eq!(sq_text::caption_presets::CaptionLookRegistry::shared().library(None, false).style(Some(&preset.style_ref)).size, 64.0);
+        assert_eq!(
+            sq_text::caption_presets::CaptionLookRegistry::shared()
+                .library(None, false)
+                .style(Some(&preset.style_ref))
+                .size,
+            64.0
+        );
         let miss = saved_look_preset(Some(&store), "nope").expect_err("unknown name");
         assert!(miss.status == 404 && miss.message.contains("Caption Look 1"));
         assert_eq!(saved_look_preset(None, "x").err().map(|e| e.status), Some(501));
@@ -842,7 +903,8 @@ mod tests {
         std::fs::create_dir_all(&dir).expect("temp folder");
         let url = dir.join("looks.json");
         let store = sq_editor_session::LookStore::new(Some(url.clone()), None, None, None);
-        let (preset, made) = caption_preset_and_look(false, Some("paul".into()), &paul_look(), (1080, Time::new(1, 30)));
+        let (preset, made) =
+            caption_preset_and_look(false, Some("paul".into()), &paul_look(), (1080, Time::new(1, 30)));
         let (id, look) = made.expect("a look");
         save_look(&store, id, &look);
         save_look(&store, id, &look);
@@ -860,10 +922,15 @@ mod tests {
     fn a_box_key_makes_the_pill_and_word_cap_one_is_word_by_word() {
         use sq_edit_api::perceive::{BoxSpec, Part};
         use sq_text::caption_presets::CaptionLookRegistry;
-        let look = CaptionLookSpec { box_: Some(Part::On(BoxSpec { color: [1.0, 0.0, 0.0, 1.0], radius: 9.0 })), words_per_caption: Some(1), ..Default::default() };
+        let look = CaptionLookSpec {
+            box_: Some(Part::On(BoxSpec { color: [1.0, 0.0, 0.0, 1.0], radius: 9.0 })),
+            words_per_caption: Some(1),
+            ..Default::default()
+        };
         let preset = caption_preset(true, None, &look);
         assert_eq!(preset.max_words_per_caption, Some(1));
-        let bg = CaptionLookRegistry::shared().library(None, false).style(Some(&preset.style_ref)).background.expect("pill");
+        let bg =
+            CaptionLookRegistry::shared().library(None, false).style(Some(&preset.style_ref)).background.expect("pill");
         assert_eq!((bg.color.red, bg.corner_radius), (1.0, 9.0));
     }
 
@@ -880,10 +947,14 @@ mod tests {
         assert_eq!((at(0), at(3), at(4)), (0.9, 1.05, 1.0));
         assert!((at(1) - 0.95).abs() < 1e-9 && (at(5) - 1.0).abs() < 1e-9, "linear between the keys");
         // A wider frame scales the size; an explicit size wins.
-        let wide = caption_preset_and_look(false, Some("paul".into()), &paul_look(), (2160, fd)).1.expect("look").1.style.size;
+        let wide =
+            caption_preset_and_look(false, Some("paul".into()), &paul_look(), (2160, fd)).1.expect("look").1.style.size;
         assert_eq!(wide, 140.0);
         let own = CaptionLookSpec { size: Some(50.0), ..paul_look() };
-        assert_eq!(caption_preset_and_look(false, Some("paul".into()), &own, (1080, fd)).1.expect("look").1.style.size, 50.0);
+        assert_eq!(
+            caption_preset_and_look(false, Some("paul".into()), &own, (1080, fd)).1.expect("look").1.style.size,
+            50.0
+        );
     }
 
     #[test]
@@ -902,7 +973,13 @@ mod tests {
     fn word_by_word_gives_one_caption_per_word_and_off_gives_phrases() {
         // 10 s of continuous speech: 25 words of 0.4 s without pauses.
         let words: Vec<TranscriptWord> = (0..25)
-            .map(|i| TranscriptWord::new(Id::from_u128(i + 1), &format!("word{i}"), TimeRange::new(Time::new(i as i64 * 4, 10), Time::new(4, 10))))
+            .map(|i| {
+                TranscriptWord::new(
+                    Id::from_u128(i + 1),
+                    &format!("word{i}"),
+                    TimeRange::new(Time::new(i as i64 * 4, 10), Time::new(4, 10)),
+                )
+            })
             .collect();
         let t = Transcript::new("en", words);
         let one = caption_preset(true, Some("pill".into()), &CaptionLookSpec::default());

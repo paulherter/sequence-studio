@@ -85,7 +85,7 @@ fn save(dir: &Path, name: &str, px: &[u8], w: u32, h: u32) {
 #[test]
 fn an_open_shutter_blurs_a_text_clips_scale_in_the_monitor_path() {
     let Ok(gpu) = Gpu::new() else {
-        eprintln!("skipped: no GPU adapter");
+        sq_os::errln!("skipped: no GPU adapter");
         return;
     };
     let mut report = String::new();
@@ -125,7 +125,7 @@ fn an_open_shutter_blurs_a_text_clips_scale_in_the_monitor_path() {
             save(dir, &format!("{case}-shutter360.png"), &blur, w, h);
         }
     }
-    eprintln!("{report}");
+    sq_os::errln!("{report}");
     if let Some(dir) = std::env::var_os("SQ_PROOF_DIR") {
         std::fs::write(Path::new(&dir).join("diff.txt"), &report).expect("report");
     }

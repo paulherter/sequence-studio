@@ -142,7 +142,8 @@ pub(crate) fn memory_breakdown(cache_bytes: usize) -> Option<String> {
                 }
                 let mut top: Vec<_> = by.into_iter().collect();
                 top.sort_by(|a, b| b.1.1.cmp(&a.1.1));
-                let top: Vec<String> = top.iter().take(8).map(|(n, (c, b))| format!("{n} {c}x={} MB", b >> 20)).collect();
+                let top: Vec<String> =
+                    top.iter().take(8).map(|(n, (c, b))| format!("{n} {c}x={} MB", b >> 20)).collect();
                 format!(
                     "gpu allocator allocated {} MB reserved {} MB in {} blocks, top: [{}]",
                     r.total_allocated_bytes >> 20,

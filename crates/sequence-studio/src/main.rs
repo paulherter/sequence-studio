@@ -256,10 +256,18 @@ pub(crate) fn session_for_checked(
     } else if let Some(path) = project
         && let Err(e) = session.open(path)
     {
-        eprintln!("cannot open {}: {e}", path.display());
+        sq_os::errln!("cannot open {}: {e}", path.display());
         failure = Some(StartFailure::new(StartCode::ProjectOpen, "opening the project", e.to_string()).with_path(path));
     }
     (session, picture, failure)
+}
+
+/// The page the window opens on: Edit, or Color with `SQ_START_PAGE=color` (real-window measurements on the Color page).
+fn start_page() -> sq_editor_session::WorkspacePage {
+    match std::env::var("SQ_START_PAGE").as_deref() {
+        Ok("color") => sq_editor_session::WorkspacePage::Color,
+        _ => sq_editor_session::WorkspacePage::Edit,
+    }
 }
 
 /// Puts the editing window (menu bar, panels) into `app` and launches it: an empty untitled session shows the start window.
@@ -273,7 +281,7 @@ pub(crate) fn add_root(
     page: sq_editor_session::WorkspacePage,
 ) -> MonitorPicture {
     add_root_with(app, clock, theme, support, picture, page, |root| Box::new(root)).unwrap_or_else(|e| {
-        eprintln!("{e}");
+        sq_os::errln!("{e}");
         MonitorPicture::default()
     })
 }
@@ -413,6 +421,8 @@ struct Shell {
     glass_on: bool,
     /// The monitor picture generation the renderer holds.
     uploaded_generation: i64,
+    /// The Source picture generation (and float count) the renderers hold: the readback and upload run once per picture.
+    source_uploaded: (i64, usize),
     /// The last present found no drawable: the next loop turn draws again.
     retry_draw: bool,
     resize_log: resize_log::ResizeLog,
@@ -449,9 +459,18 @@ struct Shell {
     opened: Instant,
 }
 
+/// `WxH` in logical points, both positive and finite.
+fn parse_window_size(v: &str) -> Option<(f64, f64)> {
+    let (w, h) = v.split_once('x')?;
+    let (w, h) = (w.trim().parse::<f64>().ok()?, h.trim().parse::<f64>().ok()?);
+    (w.is_finite() && h.is_finite() && w >= 1.0 && h >= 1.0).then_some((w, h))
+}
+
 /// Size and position of the first window on the primary screen (`window_fit`).
 fn first_window_rect(el: &ActiveEventLoop) -> ((f64, f64), (i32, i32)) {
     const WANTED: (f64, f64) = (1440.0, 900.0);
+    // Measuring only: `SQ_WINDOW_SIZE=WxH` (logical points) replaces the wanted size; `fit_first_window` still clamps it to the screen.
+    let wanted = std::env::var("SQ_WINDOW_SIZE").ok().and_then(|v| parse_window_size(&v)).unwrap_or(WANTED);
     let monitor = el.primary_monitor().or_else(|| el.available_monitors().next());
     let scale = monitor.as_ref().map_or(1.0, |m| m.scale_factor());
     #[cfg(windows)]
@@ -463,8 +482,8 @@ fn first_window_rect(el: &ActiveEventLoop) -> ((f64, f64), (i32, i32)) {
         window_fit::WorkArea { x: p.x, y: p.y, width: s.width, height: s.height }
     });
     match area {
-        Some(area) => window_fit::fit_first_window(WANTED, scale, area),
-        None => (WANTED, (0, 0)),
+        Some(area) => window_fit::fit_first_window(wanted, scale, area),
+        None => (wanted, (0, 0)),
     }
 }
 
@@ -593,15 +612,8 @@ impl Shell {
         };
         #[cfg(target_os = "macos")]
         let wrap = |root| Box::new(root) as Box<dyn sq_app_shell::AppHost>;
-        let source_picture = add_root_with(
-            &app,
-            Arc::clone(&clock),
-            theme,
-            &support,
-            picture.clone(),
-            sq_editor_session::WorkspacePage::Edit,
-            wrap,
-        )?;
+        let source_picture =
+            add_root_with(&app, Arc::clone(&clock), theme, &support, picture.clone(), start_page(), wrap)?;
 
         start_trace::mark("UI built");
         #[cfg(target_os = "macos")]
@@ -646,6 +658,7 @@ impl Shell {
             glass_tried: false,
             glass_on: false,
             uploaded_generation: -1,
+            source_uploaded: (-1, 0),
             retry_draw: false,
             resize_log: resize_log::ResizeLog::default(),
             latency_log: latency_log::LatencyLog::default(),
@@ -1089,13 +1102,13 @@ impl Shell {
                 }
                 window_play_log::Step::Quit => {
                     let text = log.finish();
-                    eprint!("{text}");
+                    sq_os::err!("{text}");
                     self.app.with(|a| a.session_mut().play_pause());
                     self.playlog_done = true;
                 }
                 window_play_log::Step::Abort => {
                     let text = log.finish();
-                    eprint!("{text}");
+                    sq_os::err!("{text}");
                     self.playlog_done = true;
                 }
                 window_play_log::Step::Nothing => {}
@@ -1131,13 +1144,27 @@ impl Shell {
                     .unwrap_or(()),
                 window_scrub_log::Action::Quit => {
                     let text = log.finish();
-                    eprint!("{text}");
+                    sq_os::err!("{text}");
                     self.app.with(|a| a.session_mut().end_scrub());
                     self.playlog_done = true;
                 }
                 window_scrub_log::Action::Abort => {
                     let text = log.finish();
-                    eprint!("{text}");
+                    sq_os::err!("{text}");
+                    self.playlog_done = true;
+                }
+                window_scrub_log::Action::Play => {
+                    self.app.with(|a| {
+                        a.session_mut().end_scrub();
+                        a.session_mut().play_pause();
+                    });
+                }
+                window_scrub_log::Action::QuitPlaying => {
+                    let text = log.finish();
+                    sq_os::err!("{text}");
+                    self.app.with(|a| {
+                        a.session_mut().play_pause();
+                    });
                     self.playlog_done = true;
                 }
                 window_scrub_log::Action::Nothing => {}
@@ -1264,7 +1291,7 @@ impl Shell {
         if let Some(on) = self.pacing.update(held, playing) {
             let took = self.surface.set_interactive(on);
             if latency_log::on() {
-                eprintln!("latency-surface drag={} reconfigure={:.1}", u8::from(on), took.as_secs_f64() * 1e3);
+                sq_os::errln!("latency-surface drag={} reconfigure={:.1}", u8::from(on), took.as_secs_f64() * 1e3);
             }
             self.window.request_redraw();
         }
@@ -1323,14 +1350,20 @@ impl Shell {
                 f.surface.set_picture(&self.picture);
             }
         }
-        surface.set_source_picture(&self.source_picture);
-        for f in &mut self.floats {
-            f.surface.set_source_picture(&self.source_picture);
-        }
-        if let Some(img) = self.source_picture.get() {
-            surface.set_image(SOURCE_PICTURE_SLOT, &img);
+        // The Source picture is read back and uploaded once per generation (or when a float window came or went),
+        // never per frame: `get` is a blocking GPU readback until the pixels are kept.
+        let source_key = (self.source_picture.generation(), self.floats.len());
+        if source_key != self.source_uploaded {
+            self.source_uploaded = source_key;
+            surface.set_source_picture(&self.source_picture);
             for f in &mut self.floats {
-                f.surface.set_image(SOURCE_PICTURE_SLOT, &img);
+                f.surface.set_source_picture(&self.source_picture);
+            }
+            if let Some(img) = self.source_picture.get() {
+                surface.set_image(SOURCE_PICTURE_SLOT, &img);
+                for f in &mut self.floats {
+                    f.surface.set_image(SOURCE_PICTURE_SLOT, &img);
+                }
             }
         }
         // Posters, source thumbnails and scope pictures the panels made during this frame.
@@ -1357,7 +1390,7 @@ impl Shell {
                 self.app.with(|a| f.surface.present(&f.window, &part, a.atlas()))
             };
             if let Some(Err(e)) = shown {
-                eprintln!("floating window draw failed: {e}");
+                sq_os::errln!("floating window draw failed: {e}");
             }
         }
         let inner = window.inner_size();
@@ -1393,7 +1426,7 @@ impl Shell {
                 self.glass_tried = true;
                 self.glass_on = install_glass(&window);
                 if cfg!(target_os = "macos") && !self.glass_on {
-                    eprintln!("glass clock: not installed (the slots stay on the model)");
+                    sq_os::errln!("glass clock: not installed (the slots stay on the model)");
                 }
             }
             let seq = if self.glass_on { timing.acquired().saturating_sub(1) } else { self.present_count };
@@ -1464,7 +1497,7 @@ impl Shell {
         }
         match drawn {
             Some(Err(e)) => {
-                eprintln!("draw failed: {e}");
+                sq_os::errln!("draw failed: {e}");
                 if !self.first_frame_shown {
                     // An unbroken run of failures that lasts: the window never shows the app. Draw again soon to find
                     // out; the first draws of a cold start can fail before the surface is configured and heal.
@@ -1528,12 +1561,14 @@ impl Shell {
                 .with(|a| a.session().active_timeline().map(|t| t.format.frame_duration))
                 .flatten()
                 .map_or(30.0, |d| d.timescale() as f64 / d.value().max(1) as f64);
-            let shown = self
+            let (shown, exact) = self
                 .app
-                .with(|a| playback::bench_shown(a.session().engine()))
+                .with(|a| playback::bench_shown_exact(a.session().engine()))
                 .flatten()
-                .map(|p| (p.value() as f64 / p.timescale().max(1) as f64 * fps).round() as i64);
-            log.frame(shown, draw == window_play_log::Draw::Presented, Instant::now());
+                .map_or((None, false), |(p, exact)| {
+                    (Some((p.value() as f64 / p.timescale().max(1) as f64 * fps).round() as i64), exact)
+                });
+            log.frame(shown, exact, draw == window_play_log::Draw::Presented, Instant::now());
         }
     }
 
@@ -2161,7 +2196,8 @@ fn run() -> Result<(), String> {
     let args: Vec<String> = std::env::args().skip(1).collect();
     let cli::Cli { mode, project } = cli::parse(&args)?;
     // `SQ_BENCH_BACKGROUND=1` keeps the proxy service in a bench run, as the window has it (the real-project numbers).
-    let keep_background = std::env::var_os("SQ_BENCH_BACKGROUND").is_some();
+    let waits_for_proxies = matches!(&mode, cli::Mode::PlayBench { bench, .. } if bench.wait_proxies_ms.is_some());
+    let keep_background = std::env::var_os("SQ_BENCH_BACKGROUND").is_some() || waits_for_proxies;
     NO_BACKGROUND_PROXY.store(mode.is_bench() && !keep_background, std::sync::atomic::Ordering::Relaxed);
     if !crash::install(&paths::app_support_dir()) {
         let why = format!("the log goes to {} instead", applog::fallback_dir().display());
@@ -2296,7 +2332,7 @@ fn run() -> Result<(), String> {
 fn exit_soon(message: String) {
     std::thread::spawn(move || {
         std::thread::sleep(Duration::from_secs(3));
-        eprintln!("{message}");
+        sq_os::errln!("{message}");
         sq_media_ffmpeg::encode::finish_warm_up();
         std::process::exit(1);
     });
@@ -2335,7 +2371,7 @@ fn main() -> std::process::ExitCode {
     match outcome {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("{e}");
+            sq_os::errln!("{e}");
             std::process::ExitCode::FAILURE
         }
     }

@@ -12,10 +12,10 @@ use sq_core_model::{
     AnimatedProperty, Clip, ClipAnimation, ClipEffect, EffectCatalog, EffectColor, EffectParamKind, EffectParamSpec,
     GraphicsContent, GraphicsLayer, TrackKind, TrackPan,
 };
+use sq_core_time::keyframes_model::keyframe_math;
 use sq_core_time::{
     EaseHandle, EaseSide, EasingCurve, Id, IdSource, Interpolation, Keyframe, KeyframeValue, Time, Vec2,
 };
-use sq_core_time::keyframes_model::keyframe_math;
 
 /// The animation fields a clip or layer has.
 #[derive(Clone, Copy, Debug, PartialEq)]
@@ -230,7 +230,11 @@ impl<'a> Host<'a> {
                 ))
             }
             Addr::Effect(id, key) => {
-                let e = self.effects.iter_mut().find(|e| e.id == *id).ok_or_else(|| format!("no effect {id} on this clip"))?;
+                let e = self
+                    .effects
+                    .iter_mut()
+                    .find(|e| e.id == *id)
+                    .ok_or_else(|| format!("no effect {id} on this clip"))?;
                 let spec = EffectCatalog::param(&e.kind, key)
                     .ok_or_else(|| format!("effect '{}' has no parameter '{key}'", e.kind))?;
                 let meta = effect_meta(&spec);
@@ -248,7 +252,11 @@ impl<'a> Host<'a> {
                         if linked_y && !e.parameters.contains_key(key) {
                             return Err(format!("'{key}' follows its linked pair; set the X parameter instead"));
                         }
-                        Slot::Num(e.parameters.entry(key.clone()).or_insert_with(|| AnimatedProperty::new(spec.default_value)))
+                        Slot::Num(
+                            e.parameters
+                                .entry(key.clone())
+                                .or_insert_with(|| AnimatedProperty::new(spec.default_value)),
+                        )
                     }
                 };
                 Ok((slot, meta))
@@ -266,7 +274,11 @@ impl<'a> Host<'a> {
             if !(-60.0..=60.0).contains(&g) {
                 return Err("audio.gainDb must be within -60...60".into());
             }
-            return self.gain.as_deref_mut().map(|x| *x = g).ok_or_else(|| "audio.gainDb exists on clips only".to_string());
+            return self
+                .gain
+                .as_deref_mut()
+                .map(|x| *x = g)
+                .ok_or_else(|| "audio.gainDb exists on clips only".to_string());
         }
         let (slot, meta) = self.slot(addr)?;
         let animated = match &slot {
@@ -356,7 +368,11 @@ impl<'a> Host<'a> {
         ];
         out.extend(anims.into_iter().filter(|(_, k)| *k).map(|(a, _)| Addr::Anim(a)));
         for e in self.effects.iter() {
-            let keys = e.parameters.iter().filter(|(_, p)| p.is_animated()).map(|(k, _)| k)
+            let keys = e
+                .parameters
+                .iter()
+                .filter(|(_, p)| p.is_animated())
+                .map(|(k, _)| k)
                 .chain(e.points.iter().filter(|(_, p)| p.is_animated()).map(|(k, _)| k))
                 .chain(e.colors.iter().filter(|(_, p)| p.is_animated()).map(|(k, _)| k));
             out.extend(keys.map(|k| Addr::Effect(e.id, k.clone())));
@@ -403,12 +419,20 @@ impl<'a> Host<'a> {
         let wanted: Vec<(&str, Anim)> =
             ANIMS.iter().copied().filter(|(_, a)| (*a == Anim::Volume) == self.audio).collect();
         for (p, a) in wanted {
-            let kind = if self.audio { "Audio" } else if a == Anim::Opacity { "Opacity" } else { "Motion" };
+            let kind = if self.audio {
+                "Audio"
+            } else if a == Anim::Opacity {
+                "Opacity"
+            } else {
+                "Motion"
+            };
             if let Ok((slot, meta)) = self.slot(&Addr::Anim(a)) {
                 put(format!("{prefix}{p}"), kind, &meta, &slot, None);
             }
         }
-        if self.audio && let Some(g) = self.gain.as_deref() {
+        if self.audio
+            && let Some(g) = self.gain.as_deref()
+        {
             let meta = Meta {
                 title: "Audio Gain".into(),
                 unit: "dB".into(),
@@ -531,26 +555,45 @@ pub(crate) fn put_key<V: KeyframeValue>(
     p.track.insert(k);
     // A speed needs the neighbor key: the importer's one conversion, applied once both ends exist.
     if let Some(speed) = shape.out_handle.and_then(|h| h.speed) {
-        let (nt, nv) = p.track.next_key_after(at).map(|n| (n.time, n.value.clone())).ok_or(
-            "outHandle.speed needs a later key: add that key first, or leave speed out",
-        )?;
+        let (nt, nv) = p
+            .track
+            .next_key_after(at)
+            .map(|n| (n.time, n.value.clone()))
+            .ok_or("outHandle.speed needs a later key: add that key first, or leave speed out")?;
         let seconds = keyframe_math::seconds(nt - at);
-        let h = EaseHandle::from_speed(speed, shape.out_handle.map_or(0.0, |h| h.influence), seconds, V::minus(&nv, &value).speed_magnitude());
+        let h = EaseHandle::from_speed(
+            speed,
+            shape.out_handle.map_or(0.0, |h| h.influence),
+            seconds,
+            V::minus(&nv, &value).speed_magnitude(),
+        );
         p.track.update(id, |k| k.out_handle = h);
     }
     if let Some(speed) = shape.in_handle.and_then(|h| h.speed) {
-        let (pt, pv) = p.track.previous_key_before(at).map(|n| (n.time, n.value.clone())).ok_or(
-            "inHandle.speed needs an earlier key: add that key first, or leave speed out",
-        )?;
+        let (pt, pv) = p
+            .track
+            .previous_key_before(at)
+            .map(|n| (n.time, n.value.clone()))
+            .ok_or("inHandle.speed needs an earlier key: add that key first, or leave speed out")?;
         let seconds = keyframe_math::seconds(at - pt);
-        let h = EaseHandle::from_speed(speed, shape.in_handle.map_or(0.0, |h| h.influence), seconds, V::minus(&value, &pv).speed_magnitude());
+        let h = EaseHandle::from_speed(
+            speed,
+            shape.in_handle.map_or(0.0, |h| h.influence),
+            seconds,
+            V::minus(&value, &pv).speed_magnitude(),
+        );
         p.track.update(id, |k| k.in_handle = h);
     }
     Ok(())
 }
 
 /// Moves one key to `to` (inside the clip), keeping its id, value, interpolation and handles; refused when a key sits there.
-pub(crate) fn move_in<V: KeyframeValue>(p: &mut AnimatedProperty<V>, from: Time, to: Time, duration: Time) -> Result<(), String> {
+pub(crate) fn move_in<V: KeyframeValue>(
+    p: &mut AnimatedProperty<V>,
+    from: Time,
+    to: Time,
+    duration: Time,
+) -> Result<(), String> {
     if to < Time::ZERO || to > duration {
         return Err("to must lie inside the clip (clip-local time, 0 = clip start)".into());
     }
@@ -563,7 +606,12 @@ pub(crate) fn move_in<V: KeyframeValue>(p: &mut AnimatedProperty<V>, from: Time,
 }
 
 /// Moves the keys at or after `after` by `by`, all or nothing: refused when one leaves the clip or lands on a key that stays.
-pub(crate) fn shift_in<V: KeyframeValue>(p: &mut AnimatedProperty<V>, by: Time, after: Option<Time>, duration: Time) -> Result<usize, String> {
+pub(crate) fn shift_in<V: KeyframeValue>(
+    p: &mut AnimatedProperty<V>,
+    by: Time,
+    after: Option<Time>,
+    duration: Time,
+) -> Result<usize, String> {
     let moving = |t: Time| after.is_none_or(|a| t >= a);
     let mut n = 0;
     for k in p.track.keys.iter().filter(|k| moving(k.time)) {
@@ -573,7 +621,11 @@ pub(crate) fn shift_in<V: KeyframeValue>(p: &mut AnimatedProperty<V>, by: Time, 
         }
         n += 1;
     }
-    if p.track.keys.iter().any(|s| !moving(s.time) && p.track.keys.iter().any(|k| moving(k.time) && k.time + by == s.time)) {
+    if p.track
+        .keys
+        .iter()
+        .any(|s| !moving(s.time) && p.track.keys.iter().any(|k| moving(k.time) && k.time + by == s.time))
+    {
         return Err("a shifted keyframe would land on a keyframe that stays".into());
     }
     p.track.edit_keys(|keys| keys.iter_mut().filter(|k| moving(k.time)).for_each(|k| k.time += by));
@@ -655,7 +707,10 @@ fn number_in(v: &Value, meta: &Meta) -> Result<f64, String> {
         _ => parse_number(v)?,
     };
     if meta.min.is_some_and(|m| x < m) || meta.max.is_some_and(|m| x > m) {
-        let (lo, hi) = (meta.min.map_or("-inf".to_string(), |m| m.to_string()), meta.max.map_or("inf".to_string(), |m| m.to_string()));
+        let (lo, hi) = (
+            meta.min.map_or("-inf".to_string(), |m| m.to_string()),
+            meta.max.map_or("inf".to_string(), |m| m.to_string()),
+        );
         return Err(format!("{} must be within {lo}...{hi}, got {x}", meta.title));
     }
     Ok(if meta.db { TrackPan::linear(x) } else { x })
@@ -685,7 +740,9 @@ pub(crate) fn parse_rgba(v: &Value) -> Result<[f64; 4], String> {
             if (h.len() != 6 && h.len() != 8) || !h.is_ascii() {
                 return Err("colors are #rrggbb or #rrggbbaa".into());
             }
-            let b = |i: usize| u8::from_str_radix(&h[i..i + 2], 16).map(|x| f64::from(x) / 255.0).map_err(|e| e.to_string());
+            let b = |i: usize| {
+                u8::from_str_radix(&h[i..i + 2], 16).map(|x| f64::from(x) / 255.0).map_err(|e| e.to_string())
+            };
             Ok([b(0)?, b(2)?, b(4)?, if h.len() == 8 { b(6)? } else { 1.0 }])
         }
         Value::Array(a) if a.len() == 3 || a.len() == 4 => {
@@ -697,7 +754,12 @@ pub(crate) fn parse_rgba(v: &Value) -> Result<[f64; 4], String> {
                 Some(x) => parse_number(x).and_then(chan),
                 None => d.ok_or_else(|| format!("missing '{short}'")),
             };
-            Ok([get("red", "r", None)?, get("green", "g", None)?, get("blue", "b", None)?, get("alpha", "a", Some(1.0))?])
+            Ok([
+                get("red", "r", None)?,
+                get("green", "g", None)?,
+                get("blue", "b", None)?,
+                get("alpha", "a", Some(1.0))?,
+            ])
         }
         other => Err(format!("expected a color, got {other}")),
     }
@@ -752,11 +814,18 @@ pub fn clip_params_json(clip: &Clip) -> Value {
             if is_text && let Some((tpl, _)) = text {
                 params.push(crate::text_tracking::param_json(&name, id, &tpl));
                 let mut text_param = |path: String, title: &str, ty: Ty, value: Value| {
-                    params.push(json!({"path": format!("layer.{id}.{path}"), "group": name, "title": title, "type": ty.name(),
-                        "value": value, "animated": false, "layer": id}));
+                    params.push(
+                        json!({"path": format!("layer.{id}.{path}"), "group": name, "title": title, "type": ty.name(),
+                        "value": value, "animated": false, "layer": id}),
+                    );
                 };
                 text_param("text".into(), "Text", Ty::Text, json!(tpl.text));
-                text_param("style".into(), "Text style", Ty::Text, serde_json::to_value(&tpl.style).unwrap_or(Value::Null));
+                text_param(
+                    "style".into(),
+                    "Text style",
+                    Ty::Text,
+                    serde_json::to_value(&tpl.style).unwrap_or(Value::Null),
+                );
                 for (side, a) in crate::text_animators::layer_animators(&l).unwrap_or_default() {
                     text_param(format!("animator.{side}"), &format!("Text animator ({side})"), Ty::Text, a);
                 }

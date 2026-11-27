@@ -195,4 +195,47 @@ mod tests {
             assert!((target.center[1] - (0.5 - f64::from(c[1]))).abs() < 1e-6);
         }
     }
+
+    /// The GPU drawing (`Scopes.scopeDraw`) equals the CPU one: every scope kind of a fixed frame within a few 8-bit steps.
+    #[test]
+    fn gpu_drawn_scopes_match_the_cpu_pictures() {
+        use sq_render::gpu_effects::scope_passes::{ScopeDrawKind, ScopePasses};
+        use sq_render::passes::scope_binning::compute_rgba;
+        let Ok(gpu) = sq_gpu::gpu::Gpu::new() else {
+            sq_os::errln!("skipping: no GPU adapter");
+            return;
+        };
+        let passes = ScopePasses::new(&gpu);
+        let (w, h) = (96usize, 54usize);
+        let mut rgba = Vec::with_capacity(w * h * 4);
+        for y in 0..h {
+            for x in 0..w {
+                let (r, g, b) = ((x * 255 / w) as u8, (y * 255 / h) as u8, ((x * y) % 256) as u8);
+                rgba.extend_from_slice(&[r, g, b, 255]);
+            }
+        }
+        // Clipped whites too, so the red top slice is covered.
+        for px in rgba.as_chunks_mut::<4>().0.iter_mut().take(w) {
+            px[..3].copy_from_slice(&[255, 255, 255]);
+        }
+        let c = compute_rgba(&rgba, w, h, ScopeLayout::default(), 1);
+        let kinds = [
+            (ScopeKind::Waveform, ScopeDrawKind::Waveform),
+            (ScopeKind::Parade, ScopeDrawKind::Parade),
+            (ScopeKind::Vectorscope, ScopeDrawKind::Vectorscope),
+            (ScopeKind::Histogram, ScopeDrawKind::Histogram),
+        ];
+        for (k, gk) in kinds {
+            let cpu = ScopeImage::render(k, &c, 200, 120, 1.3);
+            let gpu_px = passes.draw_image(&c, gk, 200, 120, 1.3).unwrap_or_else(|e| panic!("{k:?}: {e}"));
+            assert_eq!(gpu_px.len(), cpu.pixels.len());
+            let worst = cpu.pixels.iter().zip(&gpu_px).map(|(a, b)| a.abs_diff(*b)).max().unwrap_or(0);
+            let off = cpu.pixels.iter().zip(&gpu_px).filter(|(a, b)| a.abs_diff(**b) > 3).count();
+            sq_os::errln!("{k:?}: worst {worst}, {off} of {} values differ by more than 3", gpu_px.len());
+            // The vectorscope map jumps at an empty bin (0 -> 0.34 floor), so a bilinear weight that rounds differently
+            // on the GPU flips single pixels at the edge of a trace; everything else stays within 3 steps.
+            let allowed = if k == ScopeKind::Vectorscope { gpu_px.len() / 200 } else { 0 };
+            assert!(off <= allowed, "{k:?}: worst channel difference {worst}, {off} values off");
+        }
+    }
 }

@@ -56,7 +56,11 @@ pub const TAIL_HOLD_FRAMES: usize = 32;
 /// picture to hold (the last one decoded near the end; a damaged tail may still hand out pictures after a hole, those
 /// stand in too) when every `missing` frame lies within [`TAIL_HOLD_FRAMES`] of the last of `count` frames; `None` for a
 /// hole in the middle of a file, or when nothing near the end decoded, which stays an error.
-pub fn tail_hold_source(missing: impl IntoIterator<Item = usize>, count: usize, last_decoded: Option<usize>) -> Option<usize> {
+pub fn tail_hold_source(
+    missing: impl IntoIterator<Item = usize>,
+    count: usize,
+    last_decoded: Option<usize>,
+) -> Option<usize> {
     let first_missing = missing.into_iter().min()?;
     let last = last_decoded?;
     (first_missing + TAIL_HOLD_FRAMES >= count).then_some(last)
@@ -204,7 +208,8 @@ mod tests {
             Time::new(5, 30),
             Arc::new(NoStorage),
         );
-        let held = DecodedFrame::new(Id::from_u128(1), Time::new(1, 30), frame).held_at(Time::new(7, 30), Time::new(2, 30));
+        let held =
+            DecodedFrame::new(Id::from_u128(1), Time::new(1, 30), frame).held_at(Time::new(7, 30), Time::new(2, 30));
         assert_eq!((held.pts(), held.duration), (Time::new(7, 30), Time::new(2, 30)));
     }
 

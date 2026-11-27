@@ -69,7 +69,10 @@ fn volume_with_two_keys_an_audio_effect_and_its_param_read_back_and_undo() {
     assert!(e.as_ref().is_some_and(|e| e.kind == TransactionErrorKind::Invalid && e.message().contains("keyframes")));
     assert_eq!(h.undo_depth(), depth);
     // Out of range and unknown paths are refused too.
-    assert!(commit(&mut h, &f, json!([{"op":"setKeyframe","clip":a,"param":"audio.volumeDb","at":t(1,1),"value":99}])).is_err());
+    assert!(
+        commit(&mut h, &f, json!([{"op":"setKeyframe","clip":a,"param":"audio.volumeDb","at":t(1,1),"value":99}]))
+            .is_err()
+    );
     assert!(commit(&mut h, &f, json!([{"op":"setParam","clip":a,"param":"motion.nope","value":1}])).is_err());
 
     // An audio effect from the Effects panel catalog, one parameter set.
@@ -80,9 +83,11 @@ fn volume_with_two_keys_an_audio_effect_and_its_param_read_back_and_undo() {
     let p = spec.params.iter().find(|p| matches!(p.kind, EffectParamKind::Slider)).unwrap_or_else(|| panic!("slider"));
     let target = (*p.range.start() + *p.range.end()) / 2.0;
     commit(&mut h, &f, json!([{"op":"addEffect","clip":a,"effect":spec.kind}])).unwrap_or_else(|e| panic!("{e}"));
-    let eff = h.current().timelines[0].tracks[1].clip(a).and_then(|c| c.effects.first().map(|e| e.id)).unwrap_or(Id::NIL);
+    let eff =
+        h.current().timelines[0].tracks[1].clip(a).and_then(|c| c.effects.first().map(|e| e.id)).unwrap_or(Id::NIL);
     let path = format!("effect.{eff}.{}", p.key);
-    commit(&mut h, &f, json!([{"op":"setParam","clip":a,"param":path,"value":target}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"setParam","clip":a,"param":path,"value":target}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     let j = clip_json(&h, a);
     assert_eq!(j["effects"][0]["kind"], json!(spec.kind));
     assert!(param(&j, &path)["value"].as_f64().is_some_and(|v| (v - target).abs() < 1e-9));
@@ -110,18 +115,17 @@ fn a_graphic_with_three_text_layers_one_animated_layer_and_undo() {
         ]}]),
     )
     .unwrap_or_else(|e| panic!("{e}"));
-    let gid = h.current().timelines[0].tracks[0]
-        .clips()
-        .iter()
-        .find(|c| c.is_graphics())
-        .map(|c| c.id)
-        .unwrap_or(Id::NIL);
+    let gid =
+        h.current().timelines[0].tracks[0].clips().iter().find(|c| c.is_graphics()).map(|c| c.id).unwrap_or(Id::NIL);
     // ONE clip holding the three layers.
     assert_eq!(h.current().timelines[0].tracks[0].clips().len(), 3);
     let j = clip_json(&h, gid);
     let layers = j["layers"].as_array().cloned().unwrap_or_default();
     assert_eq!(layers.len(), 3);
-    assert_eq!(layers.iter().map(|l| l["text"].as_str().unwrap_or("")).collect::<Vec<_>>(), ["Title", "Subtitle", "Footer"]);
+    assert_eq!(
+        layers.iter().map(|l| l["text"].as_str().unwrap_or("")).collect::<Vec<_>>(),
+        ["Title", "Subtitle", "Footer"]
+    );
     assert_eq!(layers[0]["style"]["size"], json!(96.0));
     assert_eq!(layers[0]["style"]["weight"], json!(700));
     assert_eq!(layers[0]["style"]["alignment"], json!("left"));
@@ -150,7 +154,8 @@ fn a_graphic_with_three_text_layers_one_animated_layer_and_undo() {
     // Edit, add and remove layers.
     commit(&mut h, &f, json!([{"op":"setTextLayer","clip":gid,"layer":l2,"text":"Sub 2","color":"#0000ff"}]))
         .unwrap_or_else(|e| panic!("{e}"));
-    commit(&mut h, &f, json!([{"op":"addTextLayer","clip":gid,"text":"Extra","size":20}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"addTextLayer","clip":gid,"text":"Extra","size":20}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     let j = clip_json(&h, gid);
     assert_eq!(j["layers"].as_array().map(Vec::len), Some(4));
     assert_eq!(j["layers"][1]["text"], json!("Sub 2"));
@@ -160,12 +165,18 @@ fn a_graphic_with_three_text_layers_one_animated_layer_and_undo() {
     commit(&mut h, &f, json!([{"op":"removeTextLayer","clip":gid,"layer":extra}])).unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(clip_json(&h, gid)["layers"].as_array().map(Vec::len), Some(3));
     // The position key goes again.
-    commit(&mut h, &f, json!([{"op":"removeKeyframe","clip":gid,"param":pos,"at":t(1,1)}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"removeKeyframe","clip":gid,"param":pos,"at":t(1,1)}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(param(&clip_json(&h, gid), &pos)["keyframes"].as_array().map(Vec::len), Some(1));
 
     // Refusals: unknown field, key outside the clip, text layer op on a video clip.
-    assert!(serde_json::from_value::<Vec<EditOperation>>(json!([{"op":"addTextLayer","clip":gid,"text":"x","fnt":1}])).is_err());
-    assert!(commit(&mut h, &f, json!([{"op":"setKeyframe","clip":gid,"param":pos,"at":t(99,1),"value":[0,0]}])).is_err());
+    assert!(
+        serde_json::from_value::<Vec<EditOperation>>(json!([{"op":"addTextLayer","clip":gid,"text":"x","fnt":1}]))
+            .is_err()
+    );
+    assert!(
+        commit(&mut h, &f, json!([{"op":"setKeyframe","clip":gid,"param":pos,"at":t(99,1),"value":[0,0]}])).is_err()
+    );
     assert!(commit(&mut h, &f, json!([{"op":"addTextLayer","clip":f.a,"text":"x"}])).is_err());
 
     while h.undo_depth() > 0 {
@@ -210,9 +221,11 @@ fn text_animators_on_two_layers_read_back_change_remove_and_undo() {
         json!([{"op":"addGraphic","track":f.v1,"at":t(10,1),"duration":t(3,1),"layers":[{"text":"Line one"},{"text":"Line two"}]}]),
     )
     .unwrap_or_else(|e| panic!("{e}"));
-    let gid = h.current().timelines[0].tracks[0].clips().iter().find(|c| c.is_graphics()).map(|c| c.id).unwrap_or(Id::NIL);
+    let gid =
+        h.current().timelines[0].tracks[0].clips().iter().find(|c| c.is_graphics()).map(|c| c.id).unwrap_or(Id::NIL);
     let layers = clip_json(&h, gid)["layers"].as_array().cloned().unwrap_or_default();
-    let (l1, l2) = (layers[0]["id"].as_str().unwrap_or("").to_string(), layers[1]["id"].as_str().unwrap_or("").to_string());
+    let (l1, l2) =
+        (layers[0]["id"].as_str().unwrap_or("").to_string(), layers[1]["id"].as_str().unwrap_or("").to_string());
     assert_eq!(layers[0]["animators"], json!({}));
     let depth = h.undo_depth();
 
@@ -228,20 +241,34 @@ fn text_animators_on_two_layers_read_back_change_remove_and_undo() {
     .unwrap_or_else(|e| panic!("{e}"));
     let j = clip_json(&h, gid);
     let a1 = &j["layers"][0]["animators"]["in"];
-    assert_eq!((a1["effect"].as_str(), a1["unit"].as_str(), a1["direction"].as_str()), (Some("slide"), Some("word"), Some("left")));
-    assert_eq!((a1["distance"].as_f64(), a1["stagger"].as_f64(), a1["duration"].as_f64()), (Some(120.0), Some(150.0), Some(300.0)));
+    assert_eq!(
+        (a1["effect"].as_str(), a1["unit"].as_str(), a1["direction"].as_str()),
+        (Some("slide"), Some("word"), Some("left"))
+    );
+    assert_eq!(
+        (a1["distance"].as_f64(), a1["stagger"].as_f64(), a1["duration"].as_f64()),
+        (Some(120.0), Some(150.0), Some(300.0))
+    );
     let a2 = &j["layers"][1]["animators"];
     // The panel's rules: pop eases with the overshoot, a line's untouched stagger is the line default (150 ms).
-    assert_eq!((a2["in"]["effect"].as_str(), a2["in"]["easing"].as_str(), a2["in"]["stagger"].as_f64()), (Some("pop"), Some("overshoot"), Some(150.0)));
+    assert_eq!(
+        (a2["in"]["effect"].as_str(), a2["in"]["easing"].as_str(), a2["in"]["stagger"].as_f64()),
+        (Some("pop"), Some("overshoot"), Some(150.0))
+    );
     assert_eq!((a2["out"]["effect"].as_str(), a2["out"]["duration"].as_f64()), (Some("fade"), Some(500.0)));
     assert_eq!(param(&j, &format!("layer.{l1}.animator.in"))["value"]["effect"], json!("slide"));
 
     // Change a field; the rest stays.
-    commit(&mut h, &f, json!([{"op":"setTextAnimator","clip":gid,"layer":l1,"unit":"character","order":"reverse"}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"setTextAnimator","clip":gid,"layer":l1,"unit":"character","order":"reverse"}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     let a1 = clip_json(&h, gid)["layers"][0]["animators"]["in"].clone();
-    assert_eq!((a1["unit"].as_str(), a1["order"].as_str(), a1["effect"].as_str(), a1["stagger"].as_f64()), (Some("character"), Some("reverse"), Some("slide"), Some(150.0)));
+    assert_eq!(
+        (a1["unit"].as_str(), a1["order"].as_str(), a1["effect"].as_str(), a1["stagger"].as_f64()),
+        (Some("character"), Some("reverse"), Some("slide"), Some(150.0))
+    );
 
-    commit(&mut h, &f, json!([{"op":"removeTextAnimator","clip":gid,"layer":l2,"side":"out"}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"removeTextAnimator","clip":gid,"layer":l2,"side":"out"}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     let a2 = clip_json(&h, gid)["layers"][1]["animators"].clone();
     assert!(a2.get("out").is_none() && a2.get("in").is_some());
 
@@ -256,7 +283,10 @@ fn text_animators_on_two_layers_read_back_change_remove_and_undo() {
         assert!(serde_json::from_value::<Vec<EditOperation>>(json!([bad])).is_err());
     }
     assert!(commit(&mut h, &f, json!([{"op":"addTextAnimator","clip":gid,"layer":l1,"effect":"fade"}])).is_err());
-    assert!(commit(&mut h, &f, json!([{"op":"setTextAnimator","clip":gid,"layer":l1,"side":"out","effect":"fade"}])).is_err());
+    assert!(
+        commit(&mut h, &f, json!([{"op":"setTextAnimator","clip":gid,"layer":l1,"side":"out","effect":"fade"}]))
+            .is_err()
+    );
     assert!(commit(&mut h, &f, json!([{"op":"removeTextAnimator","clip":gid,"layer":l1,"side":"out"}])).is_err());
 
     while h.undo_depth() > depth {
@@ -275,7 +305,8 @@ fn text_tracking_is_keyable_with_ease_reads_back_and_undoes() {
     let mut h = History::with_default_limit(f.project.clone());
     commit(&mut h, &f, json!([{"op":"addGraphic","track":f.v1,"at":t(10,1),"duration":t(3,1),"layers":[{"text":"Title","tracking":2}]}]))
         .unwrap_or_else(|e| panic!("{e}"));
-    let gid = h.current().timelines[0].tracks[0].clips().iter().find(|c| c.is_graphics()).map(|c| c.id).unwrap_or(Id::NIL);
+    let gid =
+        h.current().timelines[0].tracks[0].clips().iter().find(|c| c.is_graphics()).map(|c| c.id).unwrap_or(Id::NIL);
     let l = clip_json(&h, gid)["layers"][0]["id"].as_str().unwrap_or("").to_string();
     let path = format!("layer.{l}.tracking");
     assert_eq!(param(&clip_json(&h, gid), &path)["value"], json!(2.0));
@@ -357,7 +388,8 @@ fn explicit_handles_use_influence_percent_and_the_importers_speed_formula() {
         ]),
     )
     .unwrap_or_else(|e| panic!("{e}"));
-    let keys = h.current().timelines[0].tracks[1].clip(a).map(|c| c.animation.volume.track.keys.clone()).unwrap_or_default();
+    let keys =
+        h.current().timelines[0].tracks[1].clip(a).map(|c| c.animation.volume.track.keys.clone()).unwrap_or_default();
     assert!((keys[0].out_handle.dx - 0.5).abs() < 1e-9 && (keys[0].in_handle.dx - 0.2).abs() < 1e-9);
     let expect = sq_core_time::EaseHandle::from_speed(0.1, 0.5, 2.0, keys[1].value - keys[0].value);
     assert!((keys[0].out_handle.dy - expect.dy).abs() < 1e-12);
@@ -403,7 +435,12 @@ fn transitions_are_added_between_clips_on_an_edge_and_removed_and_presets_apply(
         assert!(serde_json::from_value::<EditOperation>(bad).is_err());
     }
     assert!(commit(&mut h, &f, json!([{"op":"applyPreset","clip":a,"preset":"Punch-In","at":"tail"}])).is_err());
-    assert_eq!(crate::transition_ops::transitions_json()["transitions"].as_array().map(|l| l.iter().any(|k| k["kind"] == "zoomIn")), Some(true));
+    assert_eq!(
+        crate::transition_ops::transitions_json()["transitions"]
+            .as_array()
+            .map(|l| l.iter().any(|k| k["kind"] == "zoomIn")),
+        Some(true)
+    );
     let listed = crate::transition_ops::presets_json(&[])["presets"].as_array().cloned().unwrap_or_default();
     assert!(listed.iter().any(|k| k["track"] == "video" && k["at"] == "head"), "{listed:?}");
     for (id, at) in [("tailZoom", "tail"), ("headZoom", "head"), ("overlayPop", "head"), ("talkPulse", "head")] {
@@ -429,7 +466,8 @@ fn shutter_angle_set_through_the_api_opens_the_motion_blur_samples_a_fast_scale_
     ]);
     commit(&mut h, &f, steps).unwrap_or_else(|e| panic!("{e}"));
     assert!(blur(&h).is_none(), "shutter 0: sharp");
-    commit(&mut h, &f, json!([{"op":"setParam","clip":a,"param":"motion.shutterAngle","value":180}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"setParam","clip":a,"param":"motion.shutterAngle","value":180}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     let mb = blur(&h).unwrap_or_else(|| panic!("shutter 180 must sample"));
     assert!(mb.transforms.first().map(|x| x.scale.x) > mb.transforms.last().map(|x| x.scale.x));
 }
@@ -438,16 +476,28 @@ fn shutter_angle_set_through_the_api_opens_the_motion_blur_samples_a_fast_scale_
 fn text_animator_overshoot_reads_back_and_is_validated() {
     let f = Fixture::new();
     let mut h = History::with_default_limit(f.project.clone());
-    commit(&mut h, &f, json!([{"op":"addGraphic","track":f.v1,"at":t(10,1),"duration":t(3,1),"layers":[{"text":"Pop"}]}]))
-        .unwrap_or_else(|e| panic!("{e}"));
-    let gid = h.current().timelines[0].tracks[0].clips().iter().find(|c| c.is_graphics()).map(|c| c.id).unwrap_or(Id::NIL);
+    commit(
+        &mut h,
+        &f,
+        json!([{"op":"addGraphic","track":f.v1,"at":t(10,1),"duration":t(3,1),"layers":[{"text":"Pop"}]}]),
+    )
+    .unwrap_or_else(|e| panic!("{e}"));
+    let gid =
+        h.current().timelines[0].tracks[0].clips().iter().find(|c| c.is_graphics()).map(|c| c.id).unwrap_or(Id::NIL);
     let l = clip_json(&h, gid)["layers"][0]["id"].as_str().unwrap_or("").to_string();
-    commit(&mut h, &f, json!([{"op":"addTextAnimator","clip":gid,"layer":l,"effect":"pop","overshoot":1.08}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"addTextAnimator","clip":gid,"layer":l,"effect":"pop","overshoot":1.08}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(clip_json(&h, gid)["layers"][0]["animators"]["in"]["overshoot"], json!(1.08));
-    commit(&mut h, &f, json!([{"op":"setTextAnimator","clip":gid,"layer":l,"overshoot":null}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"setTextAnimator","clip":gid,"layer":l,"overshoot":null}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(clip_json(&h, gid)["layers"][0]["animators"]["in"]["overshoot"], Value::Null);
     for bad in [json!(0.5), json!(4), json!("big")] {
-        assert!(serde_json::from_value::<Vec<EditOperation>>(json!([{"op":"setTextAnimator","clip":gid,"layer":l,"overshoot":bad}])).is_err());
+        assert!(
+            serde_json::from_value::<Vec<EditOperation>>(
+                json!([{"op":"setTextAnimator","clip":gid,"layer":l,"overshoot":bad}])
+            )
+            .is_err()
+        );
     }
 }
 
@@ -459,7 +509,8 @@ fn a_text_layer_background_can_follow_the_reveal_through_style() {
         "padding": {"horizontal": 30, "vertical": 14}, "cornerRadius": 35, "followReveal": true}});
     commit(&mut h, &f, json!([{"op":"addGraphic","track":f.v1,"at":t(10,1),"duration":t(3,1),"layers":[{"text":"Pill","style":style}]}]))
         .unwrap_or_else(|e| panic!("{e}"));
-    let gid = h.current().timelines[0].tracks[0].clips().iter().find(|c| c.is_graphics()).map(|c| c.id).unwrap_or(Id::NIL);
+    let gid =
+        h.current().timelines[0].tracks[0].clips().iter().find(|c| c.is_graphics()).map(|c| c.id).unwrap_or(Id::NIL);
     let bg = clip_json(&h, gid)["layers"][0]["style"]["background"].clone();
     assert_eq!((bg["followReveal"].as_bool(), bg["cornerRadius"].as_f64()), (Some(true), Some(35.0)));
 }
@@ -471,7 +522,8 @@ fn transitions_are_read_back_in_state_and_diff() {
     let mut h = History::with_default_limit(f.project.clone());
     let before = h.current().timelines[0].clone();
     assert!(SequenceState::new(&before).transitions.is_empty());
-    commit(&mut h, &f, json!([{"op":"addTransition","between":[f.a, f.b],"kind":"crossDissolve","duration":t(1,1)}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"addTransition","between":[f.a, f.b],"kind":"crossDissolve","duration":t(1,1)}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     let added = h.current().timelines[0].clone();
     let d = EditDiff::new(&before, &added);
     assert!(!d.is_empty() && d.transitions_removed.is_empty());
@@ -481,7 +533,10 @@ fn transitions_are_read_back_in_state_and_diff() {
     let id = x.id;
     commit(&mut h, &f, json!([{"op":"removeTransition","transition":id}])).unwrap_or_else(|e| panic!("{e}"));
     let gone = EditDiff::new(&added, &h.current().timelines[0]);
-    assert_eq!((gone.transitions_removed.len(), gone.transitions_removed[0].id, gone.transitions_added.len()), (1, id, 0));
+    assert_eq!(
+        (gone.transitions_removed.len(), gone.transitions_removed[0].id, gone.transitions_added.len()),
+        (1, id, 0)
+    );
 }
 
 fn keys_of(h: &History<Project>, clip: Id, path: &str) -> Vec<(i64, f64, String)> {
@@ -503,7 +558,8 @@ fn keys_of(h: &History<Project>, clip: Id, path: &str) -> Vec<(i64, f64, String)
 fn effect_param_keys_remove_move_and_shift_keep_value_and_ease_and_undo_in_one_step() {
     let f = Fixture::new();
     let mut h = History::with_default_limit(f.project.clone());
-    commit(&mut h, &f, json!([{"op":"addEffect","clip":f.a,"effect":"gaussianBlur"}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"addEffect","clip":f.a,"effect":"gaussianBlur"}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     let eff = clip_json(&h, f.a)["effects"][0]["id"].as_str().unwrap_or("").to_string();
     let path = format!("effect.{eff}.blurriness");
     let opacity = "opacity";
@@ -523,7 +579,8 @@ fn effect_param_keys_remove_move_and_shift_keep_value_and_ease_and_undo_in_one_s
 
     // move: value and handles stay; bare seconds work; a key at the target refuses and changes nothing.
     let depth = h.undo_depth();
-    commit(&mut h, &f, json!([{"op":"moveKeyframe","clip":f.a,"param":path,"from":0.5,"to":0.75}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"moveKeyframe","clip":f.a,"param":path,"from":0.5,"to":0.75}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(h.undo_depth(), depth + 1);
     let moved = keys_of(&h, f.a, &path);
     assert_eq!((moved[1].0, moved[1].1, &moved[1].2), (750, 10.0, &before[1].2));
@@ -533,18 +590,23 @@ fn effect_param_keys_remove_move_and_shift_keep_value_and_ease_and_undo_in_one_s
     assert_eq!(h.undo_depth(), depth + 1);
 
     // shift: only the keys at or after `after`; the whole move is refused when one would land on a stay key.
-    commit(&mut h, &f, json!([{"op":"shiftKeyframes","clip":f.a,"param":path,"by":-0.25,"after":0.75}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"shiftKeyframes","clip":f.a,"param":path,"by":-0.25,"after":0.75}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(keys_of(&h, f.a, &path).iter().map(|k| k.0).collect::<Vec<_>>(), vec![0, 500, 750]);
-    assert!(commit(&mut h, &f, json!([{"op":"shiftKeyframes","clip":f.a,"param":path,"by":-0.5,"after":0.5}])).is_err());
+    assert!(
+        commit(&mut h, &f, json!([{"op":"shiftKeyframes","clip":f.a,"param":path,"by":-0.5,"after":0.5}])).is_err()
+    );
     // no param: every keyed param shifts, the opacity key too.
-    commit(&mut h, &f, json!([{"op":"shiftKeyframes","clip":f.a,"by":{"value":1,"timescale":10}}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"shiftKeyframes","clip":f.a,"by":{"value":1,"timescale":10}}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(keys_of(&h, f.a, &path).iter().map(|k| k.0).collect::<Vec<_>>(), vec![100, 600, 850]);
     assert_eq!(keys_of(&h, f.a, opacity)[0].0, 350);
     // out of the clip is refused.
     assert!(commit(&mut h, &f, json!([{"op":"shiftKeyframes","clip":f.a,"by":1000}])).is_err());
 
     // remove on an effect param, until it is static again.
-    commit(&mut h, &f, json!([{"op":"removeKeyframe","clip":f.a,"param":path,"at":0.6}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut h, &f, json!([{"op":"removeKeyframe","clip":f.a,"param":path,"at":0.6}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     assert_eq!(keys_of(&h, f.a, &path).len(), 2);
     commit(&mut h, &f, json!([{"op":"removeKeyframe","clip":f.a,"param":path,"at":0.1},{"op":"removeKeyframe","clip":f.a,"param":path,"at":0.85}]))
         .unwrap_or_else(|e| panic!("{e}"));
@@ -552,7 +614,8 @@ fn effect_param_keys_remove_move_and_shift_keep_value_and_ease_and_undo_in_one_s
 }
 
 fn user_preset(id: &str, name: &str, built_in: &str) -> crate::transition_ops::UserEffectPreset {
-    let p = sq_core_effects::effect_stack_preset::EffectStackPresets::preset(built_in).unwrap_or_else(|| panic!("built-in"));
+    let p = sq_core_effects::effect_stack_preset::EffectStackPresets::preset(built_in)
+        .unwrap_or_else(|| panic!("built-in"));
     crate::transition_ops::UserEffectPreset { id: id.into(), name: name.into(), preset: p.preset() }
 }
 
@@ -573,22 +636,37 @@ fn a_user_preset_applies_like_the_same_built_in_one_by_name_or_id_and_keeps_its_
     let user = [user_preset("2DA03180-B3FA-4475-A816-D34ACF869945", "Zoom Out & In / BOT", "tailZoom")];
     let clip_of = |h: &History<Project>| h.current().timelines[0].tracks[0].clip(f.a).cloned();
     let mut built_in = History::with_default_limit(f.project.clone());
-    commit(&mut built_in, &f, json!([{"op":"applyPreset","clip":f.a,"preset":"tailZoom"}])).unwrap_or_else(|e| panic!("{e}"));
+    commit(&mut built_in, &f, json!([{"op":"applyPreset","clip":f.a,"preset":"tailZoom"}]))
+        .unwrap_or_else(|e| panic!("{e}"));
     for name in ["Zoom Out & In / BOT", "zoom out & in / bot", "2da03180-b3fa-4475-a816-d34acf869945"] {
         let mut h = History::with_default_limit(f.project.clone());
-        commit_user(&mut h, &f, json!([{"op":"applyPreset","clip":f.a,"preset":name}]), &user).unwrap_or_else(|e| panic!("{e}"));
+        commit_user(&mut h, &f, json!([{"op":"applyPreset","clip":f.a,"preset":name}]), &user)
+            .unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(clip_of(&h), clip_of(&built_in), "{name}");
         assert_ne!(clip_of(&h), f.project.timelines[0].tracks[0].clip(f.a).cloned(), "the clip changed");
     }
     // Its own anchor (the tail) is enforced like the panel's: `at: head` is refused, `at: tail` accepted.
     let mut h = History::with_default_limit(f.project.clone());
-    assert!(commit_user(&mut h, &f, json!([{"op":"applyPreset","clip":f.a,"preset":"Zoom Out & In / BOT","at":"head"}]), &user).is_err());
+    assert!(
+        commit_user(
+            &mut h,
+            &f,
+            json!([{"op":"applyPreset","clip":f.a,"preset":"Zoom Out & In / BOT","at":"head"}]),
+            &user
+        )
+        .is_err()
+    );
     commit_user(&mut h, &f, json!([{"op":"applyPreset","clip":f.a,"preset":"Zoom Out & In / BOT","at":"tail"}]), &user)
         .unwrap_or_else(|e| panic!("{e}"));
     // A built-in id wins; two user presets with one name are ambiguous but each id works; unknown stays unknown.
     let twins = [user_preset("A", "Twin", "tailZoom"), user_preset("B", "Twin", "headZoom")];
-    assert!(commit_user(&mut h, &f, json!([{"op":"applyPreset","clip":f.a,"preset":"Twin"}]), &twins).unwrap_err().contains("several"));
-    commit_user(&mut h, &f, json!([{"op":"applyPreset","clip":f.a,"preset":"B"}]), &twins).unwrap_or_else(|e| panic!("{e}"));
+    assert!(
+        commit_user(&mut h, &f, json!([{"op":"applyPreset","clip":f.a,"preset":"Twin"}]), &twins)
+            .unwrap_err()
+            .contains("several")
+    );
+    commit_user(&mut h, &f, json!([{"op":"applyPreset","clip":f.a,"preset":"B"}]), &twins)
+        .unwrap_or_else(|e| panic!("{e}"));
     let err = commit_user(&mut h, &f, json!([{"op":"applyPreset","clip":f.a,"preset":"Nope"}]), &user).unwrap_err();
     assert!(err.contains("unknown"), "{err}");
 }
@@ -598,7 +676,10 @@ fn the_preset_list_marks_user_presets() {
     let user = [user_preset("2DA03180", "Zoom In & Out / TOP", "headZoom")];
     let listed = crate::transition_ops::presets_json(&user)["presets"].as_array().cloned().unwrap_or_default();
     let mine = listed.iter().find(|k| k["user"] == true).unwrap_or_else(|| panic!("{listed:?}"));
-    assert_eq!((mine["name"].as_str(), mine["preset"].as_str(), mine["kind"].as_str()), (Some("Zoom In & Out / TOP"), Some("2DA03180"), Some("effect")));
+    assert_eq!(
+        (mine["name"].as_str(), mine["preset"].as_str(), mine["kind"].as_str()),
+        (Some("Zoom In & Out / TOP"), Some("2DA03180"), Some("effect"))
+    );
     assert!(mine["anchor"].is_string() && mine["at"].is_string() && mine["track"] == "video", "{mine}");
     assert!(listed.iter().filter(|k| k["user"] == true).count() == 1);
 }

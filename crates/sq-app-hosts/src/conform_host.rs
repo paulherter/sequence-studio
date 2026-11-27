@@ -172,7 +172,7 @@ mod tests {
             .arg(&src)
             .output();
         if !sq_media_ffmpeg::shim::AVAILABLE || !made.is_ok_and(|o| o.status.success()) {
-            eprintln!("skipped: no ffmpeg shim or command");
+            sq_os::errln!("skipped: no ffmpeg shim or command");
             return;
         }
         let mut item = probe_like_import(&src).unwrap();

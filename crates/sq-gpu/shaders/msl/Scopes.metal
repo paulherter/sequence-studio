@@ -21,7 +21,7 @@ struct ScopeU_0
     uint offset_0;
     uint count_0;
     uint maxIndex_0;
-    uint pad0_0;
+    uint gainBits_0;
     uint outW_0;
     uint outH_0;
     uint pad1_0;
@@ -533,6 +533,461 @@ uint levelOf_0(float v_0, uint levels_0)
 
 #line 93
     (&kernelContext_4)->out0_0.write(float4(_S26, 0.0f, 0.0f, 1.0f),_S25);
+    return;
+}
+
+
+#line 103
+float planeAt_0(int x_1, int y_1, float inv_0, KernelContext_0 thread* kernelContext_5)
+{
+    uint _S27 = as_type<uint>(kernelContext_5->counts_0[(uint(int((kernelContext_5->u_0->offset_0 + uint(clamp(y_1, int(0), int(kernelContext_5->u_0->waveL_0) - int(1))) * kernelContext_5->u_0->waveW_0 + uint(clamp(x_1, int(0), int(kernelContext_5->u_0->waveW_0) - int(1)))) * 4U)))>>2]);
+
+#line 105
+    return float(_S27) * inv_0;
+}
+
+float planeSample_0(float uu_0, float tt_0, float inv_1, KernelContext_0 thread* kernelContext_6)
+{
+
+#line 109
+    float fx_0 = uu_0 * float(kernelContext_6->u_0->waveW_0) - 0.5f;
+
+#line 109
+    float fy_0 = tt_0 * float(kernelContext_6->u_0->waveL_0) - 0.5f;
+    float x0f_0 = floor(fx_0);
+
+#line 110
+    float y0f_0 = floor(fy_0);
+    float ax_0 = fx_0 - x0f_0;
+
+#line 111
+    float ay_0 = fy_0 - y0f_0;
+    int x0_0 = int(x0f_0);
+
+#line 112
+    int y0_0 = int(y0f_0);
+
+#line 112
+    float _S28 = planeAt_0(x0_0, y0_0, inv_1, kernelContext_6);
+    float _S29 = 1.0f - ax_0;
+
+#line 113
+    float _S30 = _S28 * _S29;
+
+#line 113
+    int _S31 = x0_0 + int(1);
+
+#line 113
+    float _S32 = planeAt_0(_S31, y0_0, inv_1, kernelContext_6);
+
+#line 113
+    float top_0 = _S30 + _S32 * ax_0;
+    int _S33 = y0_0 + int(1);
+
+#line 114
+    float _S34 = planeAt_0(x0_0, _S33, inv_1, kernelContext_6);
+
+#line 114
+    float _S35 = _S34 * _S29;
+
+#line 114
+    float _S36 = planeAt_0(_S31, _S33, inv_1, kernelContext_6);
+    return top_0 * (1.0f - ay_0) + (_S35 + _S36 * ax_0) * ay_0;
+}
+
+
+float mapVector_0(float v_1, float gain_0)
+{
+
+#line 120
+    if(v_1 <= 0.0f)
+    {
+
+#line 120
+        return 0.0f;
+    }
+
+#line 121
+    return saturate((0.34000000357627869f + 0.6600000262260437f * saturate(1.0f + log2(v_1) * 0.30103000998497009f / 5.0f)) * gain_0);
+}
+
+
+#line 118
+float mapTrace_0(float v_2, float gain_1)
+{
+
+#line 118
+    return saturate(pow(max(v_2, 0.0f), 0.44999998807907104f) * 1.6000000238418579f * gain_1);
+}
+
+
+
+float mapOf_0(float v_3, float gain_2, bool vec_0)
+{
+
+#line 123
+    float _S37;
+
+#line 123
+    if(vec_0)
+    {
+
+#line 123
+        _S37 = mapVector_0(v_3, gain_2);
+
+#line 123
+    }
+    else
+    {
+
+#line 123
+        _S37 = mapTrace_0(v_3, gain_2);
+
+#line 123
+    }
+
+#line 123
+    return _S37;
+}
+
+
+#line 125
+float glowOf_0(float uu_1, float tt_1, float gain_3, float sx_0, float sy_0, bool vec_1, float inv_2, KernelContext_0 thread* kernelContext_7)
+{
+
+#line 126
+    float tx_0 = sx_0 / float(kernelContext_7->u_0->waveW_0);
+
+#line 126
+    float ty_0 = sy_0 / float(kernelContext_7->u_0->waveL_0);
+
+#line 126
+    float _S38 = planeSample_0(uu_1 + tx_0, tt_1, inv_2, kernelContext_7);
+    float _S39 = mapOf_0(_S38, gain_3, vec_1);
+
+#line 127
+    float _S40 = planeSample_0(uu_1 - tx_0, tt_1, inv_2, kernelContext_7);
+
+#line 127
+    float _S41 = _S39 + mapOf_0(_S40, gain_3, vec_1);
+
+#line 127
+    float _S42 = planeSample_0(uu_1, tt_1 + ty_0, inv_2, kernelContext_7);
+    float _S43 = _S41 + mapOf_0(_S42, gain_3, vec_1);
+
+#line 128
+    float _S44 = planeSample_0(uu_1, tt_1 - ty_0, inv_2, kernelContext_7);
+
+#line 128
+    float g_0 = _S43 + mapOf_0(_S44, gain_3, vec_1);
+
+#line 128
+    float _S45 = planeSample_0(uu_1, tt_1, inv_2, kernelContext_7);
+    return saturate(mapOf_0(_S45, gain_3, vec_1) + 0.18000000715255737f * g_0);
+}
+
+
+[[kernel]] void scopeDraw(uint3 tid_4 [[thread_position_in_grid]], ScopeU_0 constant* u_5 [[buffer(0)]], uint32_t device* counts_5 [[buffer(2)]], texture2d<float, access::sample> in0_5 [[texture(0)]], texture2d<float, access::write> out0_5 [[texture(25)]])
+{
+
+#line 133
+    thread KernelContext_0 kernelContext_8;
+
+#line 133
+    (&kernelContext_8)->u_0 = u_5;
+
+#line 133
+    (&kernelContext_8)->counts_0 = counts_5;
+
+#line 133
+    (&kernelContext_8)->in0_0 = in0_5;
+
+#line 133
+    (&kernelContext_8)->out0_0 = out0_5;
+
+#line 133
+    threadgroup array<uint, int(256)> groupMax_5;
+
+#line 133
+    (&kernelContext_8)->groupMax_0 = &groupMax_5;
+    uint _S46 = tid_4.x;
+
+#line 134
+    bool _S47;
+
+#line 134
+    if(_S46 >= (u_5->outW_0))
+    {
+
+#line 134
+        _S47 = true;
+
+#line 134
+    }
+    else
+    {
+
+#line 134
+        _S47 = (tid_4.y) >= ((&kernelContext_8)->u_0->outH_0);
+
+#line 134
+    }
+
+#line 134
+    if(_S47)
+    {
+
+#line 134
+        return;
+    }
+
+#line 135
+    float uu_2 = (float(_S46) + 0.5f) / float(u_5->outW_0);
+
+#line 135
+    float tt_2 = (float(tid_4.y) + 0.5f) / float((&kernelContext_8)->u_0->outH_0);
+    float gain_4 = (as_type<float>(((&kernelContext_8)->u_0->gainBits_0)));
+    uint _S48 = as_type<uint>((&kernelContext_8)->counts_0[(uint(int((&kernelContext_8)->u_0->maxIndex_0 * 4U)))>>2]);
+
+#line 137
+    float inv_3;
+    if(_S48 == 0U)
+    {
+
+#line 138
+        inv_3 = 0.0f;
+
+#line 138
+    }
+    else
+    {
+
+#line 138
+        inv_3 = 1.0f / float(_S48);
+
+#line 138
+    }
+
+#line 138
+    float3 col_0;
+
+
+    if(((&kernelContext_8)->u_0->flags_0) == 0U)
+    {
+
+#line 141
+        float _S49 = glowOf_0(uu_2, tt_2, gain_4, 1.5f, 1.5f, false, inv_3, &kernelContext_8);
+
+        if(tt_2 < 0.014999999664723873f)
+        {
+
+#line 143
+            col_0 = float3(0.047058824449777603f + _S49, 0.047058824449777603f + _S49 * 0.2199999988079071f, 0.047058824449777603f + _S49 * 0.20000000298023224f);
+
+#line 143
+        }
+        else
+        {
+
+#line 143
+            col_0 = float3(0.047058824449777603f + _S49 * 0.62000000476837158f, 0.047058824449777603f + _S49, 0.047058824449777603f + _S49 * 0.72000002861022949f);
+
+#line 143
+        }
+
+#line 141
+    }
+    else
+    {
+
+#line 141
+        float3 tint_0;
+
+
+        if(((&kernelContext_8)->u_0->flags_0) == 1U)
+        {
+
+#line 145
+            float _S50 = min(floor(uu_2 * 3.0f), 2.0f);
+
+#line 145
+            float _S51 = glowOf_0(uu_2, tt_2, gain_4, 1.0f, 1.5f, false, inv_3, &kernelContext_8);
+
+            if(tt_2 < 0.014999999664723873f)
+            {
+
+#line 147
+                tint_0 = float3(1.0f, 0.2199999988079071f, 0.20000000298023224f);
+
+#line 147
+            }
+            else
+            {
+
+#line 148
+                if(_S50 < 0.5f)
+                {
+
+#line 148
+                    col_0 = float3(1.0f, 0.30000001192092896f, 0.25999999046325684f);
+
+#line 148
+                }
+                else
+                {
+
+#line 148
+                    if(_S50 < 1.5f)
+                    {
+
+#line 148
+                        col_0 = float3(0.30000001192092896f, 1.0f, 0.41999998688697815f);
+
+#line 148
+                    }
+                    else
+                    {
+
+#line 148
+                        col_0 = float3(0.30000001192092896f, 0.51999998092651367f, 1.0f);
+
+#line 148
+                    }
+
+#line 148
+                }
+
+#line 148
+                tint_0 = col_0;
+
+#line 147
+            }
+
+#line 147
+            col_0 = float3(0.047058824449777603f, 0.047058824449777603f, 0.047058824449777603f) + float3(_S51)  * tint_0;
+
+#line 144
+        }
+        else
+        {
+
+
+
+            if(((&kernelContext_8)->u_0->flags_0) == 2U)
+            {
+
+#line 150
+                float _S52 = glowOf_0(uu_2, tt_2, gain_4, 1.5f, 1.5f, true, inv_3, &kernelContext_8);
+
+#line 150
+                col_0 = float3(0.047058824449777603f + _S52 * 0.69999998807907104f, 0.047058824449777603f + _S52, 0.047058824449777603f + _S52 * 0.80000001192092896f);
+
+#line 150
+            }
+            else
+            {
+
+                float _S53 = 1.0f - tt_2;
+                float3 _S54 = float3(0.0f, 0.0f, 0.0f);
+
+#line 155
+                int r_0 = int(0);
+
+#line 155
+                col_0 = _S54;
+                for(;;)
+                {
+
+#line 156
+                    if(r_0 < int(4))
+                    {
+                    }
+                    else
+                    {
+
+#line 156
+                        break;
+                    }
+
+#line 157
+                    if(r_0 == int(0))
+                    {
+
+#line 157
+                        tint_0 = float3(0.85000002384185791f, 0.11999999731779099f, 0.10000000149011612f);
+
+#line 157
+                    }
+                    else
+                    {
+
+#line 157
+                        if(r_0 == int(1))
+                        {
+
+#line 157
+                            tint_0 = float3(0.10000000149011612f, 0.75f, 0.2199999988079071f);
+
+#line 157
+                        }
+                        else
+                        {
+
+#line 157
+                            if(r_0 == int(2))
+                            {
+
+#line 157
+                                tint_0 = float3(0.11999999731779099f, 0.30000001192092896f, 0.94999998807907104f);
+
+#line 157
+                            }
+                            else
+                            {
+
+#line 157
+                                tint_0 = float3(0.2199999988079071f, 0.2199999988079071f, 0.2199999988079071f);
+
+#line 157
+                            }
+
+#line 157
+                        }
+
+#line 157
+                    }
+
+#line 157
+                    float _S55 = planeSample_0(uu_2, (float(r_0) + 0.5f) / 4.0f, inv_3, &kernelContext_8);
+                    if(_S53 <= (sqrt(max(_S55, 0.0f))))
+                    {
+
+#line 158
+                        col_0 = col_0 + tint_0;
+
+#line 158
+                    }
+
+#line 156
+                    r_0 = r_0 + int(1);
+
+#line 156
+                }
+
+#line 156
+                col_0 = float3(0.047058824449777603f, 0.047058824449777603f, 0.047058824449777603f) + col_0 * float3(gain_4) ;
+
+#line 150
+            }
+
+#line 144
+        }
+
+#line 141
+    }
+
+#line 162
+    (&kernelContext_8)->out0_0.write(float4(saturate(col_0), 1.0f),tid_4.xy);
     return;
 }
 

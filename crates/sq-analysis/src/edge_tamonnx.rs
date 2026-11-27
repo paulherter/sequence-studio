@@ -183,7 +183,12 @@ impl EdgeTAMOnnxModel {
 
     /// [`EdgeTAMOnnxModel::new`] with at most `threads` runtime threads per part (0 = the runtime's default); a background job
     /// passes `sq_os::thread::background_threads()` so playback keeps cores.
-    pub fn new_with_threads(directory: &Path, accelerate: bool, device: Option<i32>, threads: i32) -> Result<EdgeTAMOnnxModel> {
+    pub fn new_with_threads(
+        directory: &Path,
+        accelerate: bool,
+        device: Option<i32>,
+        threads: i32,
+    ) -> Result<EdgeTAMOnnxModel> {
         Self::with_provider_threads(directory, sq_onnx::onnx_model::Provider::choose(accelerate), device, threads)
     }
 
@@ -703,7 +708,7 @@ mod tests {
     #[test]
     fn a_disc_follows_the_click_and_moves() {
         let Some(dir) = EdgeTAMOnnxLocation::find(&process_environment()) else {
-            eprintln!("skipped: no EdgeTAM models (set SQ_SUBJECT_MASK_MODELS)");
+            sq_os::errln!("skipped: no EdgeTAM models (set SQ_SUBJECT_MASK_MODELS)");
             return;
         };
         // The runtime next to the exe or on PATH is found by default; `SQ_ONNX_RUNTIME` names a newer onnxruntime.dll.
@@ -736,26 +741,26 @@ mod tests {
             let mut session = model.make_session();
             let a = session.click(&frame(200), Vec2::new(200.0 / 640.0, 0.5), None).expect("click");
             let area = a.logits.iter().filter(|v| **v > 0.0).count();
-            eprintln!("onnx smoke {provider:?}: click area {area} of {}", a.logits.len());
+            sq_os::errln!("onnx smoke {provider:?}: click area {area} of {}", a.logits.len());
             assert!(area > 500);
             let mut masks = vec![a.logits.iter().map(|v| *v > 0.0).collect::<Vec<_>>()];
             let started = Instant::now();
             for k in 1..=6 {
                 let r = session.track(&frame(200 + k * 20)).expect("track");
                 session.commit().expect("commit");
-                eprintln!(
+                sq_os::errln!(
                     "onnx smoke {provider:?}: track {k} area {} score {}",
                     r.logits.iter().filter(|v| **v > 0.0).count(),
                     r.score
                 );
                 masks.push(r.logits.iter().map(|v| *v > 0.0).collect());
             }
-            eprintln!(
+            sq_os::errln!(
                 "onnx smoke {provider:?}: {:.0} ms per tracked frame",
                 started.elapsed().as_secs_f64() * 1000.0 / 6.0
             );
             for (name, (seconds, calls)) in model.take_timings() {
-                eprintln!("onnx smoke {provider:?}: {name} {calls}x avg {:.1} ms", seconds / calls as f64 * 1000.0);
+                sq_os::errln!("onnx smoke {provider:?}: {name} {calls}x avg {:.1} ms", seconds / calls as f64 * 1000.0);
             }
             masks
         };
@@ -765,7 +770,7 @@ mod tests {
             let both = f.iter().zip(c).filter(|(a, b)| **a && **b).count() as f64;
             let either = f.iter().zip(c).filter(|(a, b)| **a || **b).count() as f64;
             let iou = if either == 0.0 { 1.0 } else { both / either };
-            eprintln!("onnx smoke: frame {i} IoU accelerator vs CPU {iou:.4}");
+            sq_os::errln!("onnx smoke: frame {i} IoU accelerator vs CPU {iou:.4}");
             assert!(iou >= 0.95, "frame {i}: IoU {iou}");
         }
     }

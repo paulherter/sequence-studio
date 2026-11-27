@@ -498,8 +498,8 @@ impl OnnxModel {
         let provider = session.provider();
         let name = path.rsplit(['/', '\\']).next().unwrap_or(path);
         match session.fallback_reason() {
-            why if why.is_empty() => eprintln!("onnx: {name} runs on {provider}"),
-            why => eprintln!("onnx: {name} runs on {provider} ({asked:?} refused it: {why})"),
+            why if why.is_empty() => sq_os::errln!("onnx: {name} runs on {provider}"),
+            why => sq_os::errln!("onnx: {name} runs on {provider} ({asked:?} refused it: {why})"),
         }
         let input_names = session.input_names();
         let output_names = session.output_names();
@@ -656,13 +656,17 @@ mod tests {
             for _ in 0..5 {
                 out = m.run(&input).expect("run");
             }
-            eprintln!("{provider:?} (ran on {}): {:.1} ms per run", m.provider, start.elapsed().as_secs_f64() * 200.0);
+            sq_os::errln!(
+                "{provider:?} (ran on {}): {:.1} ms per run",
+                m.provider,
+                start.elapsed().as_secs_f64() * 200.0
+            );
             results.push(out);
         }
         for (c, a) in results[0].iter().zip(&results[1]) {
             let scale = c.data.iter().fold(1.0_f32, |m, v| m.max(v.abs()));
             let worst = c.data.iter().zip(&a.data).fold(0.0_f32, |m, (x, y)| m.max((x - y).abs()));
-            eprintln!("output {}: worst difference {:.5} of {scale:.3}", c.data.len(), worst);
+            sq_os::errln!("output {}: worst difference {:.5} of {scale:.3}", c.data.len(), worst);
             assert!(worst <= 1e-2 * scale, "outputs differ: {worst} of {scale}");
         }
     }

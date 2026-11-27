@@ -4690,6 +4690,7 @@ dependencies = [
  "sq-core-project",
  "sq-core-time",
  "sq-draw",
+ "sq-draw-monitor",
  "sq-draw-shell",
  "sq-editor-session",
  "sq-export",
@@ -5241,6 +5242,7 @@ dependencies = [
  "serde",
  "serde_json",
  "sq-core-time",
+ "unicode-segmentation",
  "workspace-hack",
 ]
 
@@ -5332,6 +5334,7 @@ dependencies = [
  "sq-core-time",
  "sq-draw",
  "sq-editor-session",
+ "sq-gpu",
  "sq-media",
  "sq-os",
  "sq-playback",
@@ -5459,6 +5462,7 @@ dependencies = [
  "sq-gpu",
  "sq-media",
  "sq-media-ffmpeg",
+ "sq-os",
  "sq-playback",
  "sq-premiere-import",
  "sq-render",
@@ -5589,6 +5593,7 @@ dependencies = [
  "sq-core-model",
  "sq-core-time",
  "sq-frame",
+ "sq-os",
  "sq-text",
  "tiny-skia",
  "workspace-hack",
@@ -5641,6 +5646,7 @@ dependencies = [
  "cc",
  "serde",
  "serde_json",
+ "sq-os",
  "workspace-hack",
 ]
 
@@ -5957,6 +5963,7 @@ dependencies = [
  "sq-gpu",
  "sq-media",
  "sq-media-ffmpeg",
+ "sq-os",
  "wgpu",
  "workspace-hack",
 ]

@@ -71,7 +71,7 @@ mod tests {
         let ok = shim::AVAILABLE
             && ffmpeg_commands().iter_mut().any(|c| c.arg("-version").output().is_ok_and(|o| o.status.success()));
         if !ok {
-            eprintln!("skipped: the FFmpeg shim is not linked or no ffmpeg command is available");
+            sq_os::errln!("skipped: the FFmpeg shim is not linked or no ffmpeg command is available");
         }
         ok
     }
@@ -215,7 +215,7 @@ mod tests {
                 })
                 .min()
                 .unwrap_or((Duration::MAX, String::new()));
-            eprintln!("seek probe of {} ({four_cc}): {best:?}", file.display());
+            sq_os::errln!("seek probe of {} ({four_cc}): {best:?}", file.display());
             assert!(best < Duration::from_millis(200), "{}: {best:?}", file.display());
         }
     }

@@ -112,7 +112,7 @@ fn the_default_microphone_records_a_file() {
     std::thread::sleep(std::time::Duration::from_millis(400));
     let frames = take.finish().unwrap();
     if frames == 0 {
-        eprintln!("skipped: the default input delivered no samples in 0.4 s");
+        sq_os::errln!("skipped: the default input delivered no samples in 0.4 s");
         return;
     }
     assert!(frames > 48_000 / 10, "{frames}");

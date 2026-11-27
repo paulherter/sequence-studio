@@ -530,7 +530,7 @@ mod tests {
             t.pump(all.iter());
         }
         let per_frame = start.elapsed().as_secs_f64() * 1000.0 / 60.0;
-        eprintln!("perf host pump 1500 media: {per_frame:.3} ms per frame");
+        sq_os::errln!("perf host pump 1500 media: {per_frame:.3} ms per frame");
         assert!(per_frame < 16.0, "a steady-state pump must not take a frame");
     }
 }

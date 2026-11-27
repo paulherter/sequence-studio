@@ -438,7 +438,7 @@ impl ColorGradeController {
                 if n == 1 { "step" } else { "steps" }
             ));
         }
-        if self.target_clip(session).is_none_or(|c| c.color_grade_effects().is_empty()) {
+        if self.target_clip(session).is_none_or(|c| !c.has_color_grade()) {
             "No Simple grade".to_string()
         } else {
             "Simple grade active".to_string()

@@ -1,7 +1,6 @@
 // Swift: TextTemplateTiles.swift
 //! One pickable text or graphic template of the Text panel's Templates tab, and placing a picked one.
 
-use sq_core_model::TitleTemplate;
 use sq_core_time::{Id, Time};
 use sq_editor_session::EditorSession;
 use sq_editor_session::{CTAEndCard, GraphicPresetCatalog};
@@ -248,7 +247,7 @@ impl TextTemplatePlacement {
             TileSource::User(id, kind) => {
                 let item = presets.iter().find(|p| p.id == *id)?;
                 if *kind == PresetKind::TitleBlock || *kind == PresetKind::TitleTemplate {
-                    return Some(Self::insert_title(item, None, session));
+                    return Some(Self::insert_title(item, None, None, session));
                 }
                 let Ok(template) = TextTemplate::decode_from(&item.payload) else {
                     return Some(SQL10n::string("The template could not be read."));
@@ -260,16 +259,19 @@ impl TextTemplatePlacement {
     }
 
     /// A saved title block or multi-layer title template at `time` (`None` = the playhead); returns the status line.
-    pub fn insert_title(item: &PresetItem, time: Option<Time>, session: &mut EditorSession) -> String {
+    pub fn insert_title(
+        item: &PresetItem,
+        time: Option<Time>,
+        track: Option<Id>,
+        session: &mut EditorSession,
+    ) -> String {
         if item.kind == PresetKind::TitleTemplate {
             let Ok(preset) = TitleTemplatePreset::from_preset(item) else {
                 return SQL10n::string("The template could not be read.");
             };
-            let Ok(template) = serde_json::from_value::<TitleTemplate>(preset.template) else {
-                return SQL10n::string("The template could not be read.");
-            };
+            let template = preset.template;
             session.stop_playback();
-            if session.insert_title_template(&template, time).is_none() {
+            if session.insert_title_template(&template, time, track).is_none() {
                 return session
                     .last_error()
                     .map_or_else(|| SQL10n::string("The template could not be placed."), str::to_string);

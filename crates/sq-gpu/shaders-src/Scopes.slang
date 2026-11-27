@@ -7,7 +7,7 @@ struct ScopeU {
     uint width, height, stride, flags;
     uint waveW, waveL, vecN, rowWidth;
     uint offWaveLuma, offParade, offVector, offHist;
-    uint offset, count, maxIndex, pad0;     // clear, max and resolve: the region and its maximum slot
+    uint offset, count, maxIndex, gainBits; // clear, max and resolve: the region and its maximum slot; draw: gain as float bits
     uint outW, outH, pad1, pad2;
 };
 ConstantBuffer<ScopeU> u : register(b0);
@@ -91,4 +91,73 @@ void scopeResolve(uint3 tid : SV_DispatchThreadID) {
     uint c = counts.Load((u.offset + tid.y * u.outW + tid.x) * 4);
     uint m = counts.Load((u.maxIndex) * 4);
     out0.Store(tid.xy, float4(m == 0 ? 0.0f : float(c) / float(m), 0.0f, 0.0f, 1.0f));
+}
+
+// scopeDraw: one scope picture (out0, Rgba8Unorm, outW x outH) straight from the counts: the GPU form of the CPU
+// `ScopeImage::render` (sq-draw-monitor). flags = kind (0 waveform, 1 parade, 2 vectorscope, 3 histogram); waveW x waveL =
+// the plane (count / max at offset, maximum at maxIndex); gainBits = the trace intensity. Bilinear clamp sampling,
+// compressive map, 4-tap cross glow, phosphor tints, additive histogram curves on 12/255 gray.
+static const float kBackground = 12.0f / 255.0f;
+static const float kOver100 = 0.015f;
+
+float planeAt(int x, int y, float inv) {
+    int xx = clamp(x, 0, int(u.waveW) - 1), yy = clamp(y, 0, int(u.waveL) - 1);
+    return float(counts.Load((u.offset + uint(yy) * u.waveW + uint(xx)) * 4)) * inv;
+}
+
+float planeSample(float uu, float tt, float inv) {
+    float fx = uu * float(u.waveW) - 0.5f, fy = tt * float(u.waveL) - 0.5f;
+    float x0f = floor(fx), y0f = floor(fy);
+    float ax = fx - x0f, ay = fy - y0f;
+    int x0 = int(x0f), y0 = int(y0f);
+    float top = planeAt(x0, y0, inv) * (1.0f - ax) + planeAt(x0 + 1, y0, inv) * ax;
+    float bottom = planeAt(x0, y0 + 1, inv) * (1.0f - ax) + planeAt(x0 + 1, y0 + 1, inv) * ax;
+    return top * (1.0f - ay) + bottom * ay;
+}
+
+float mapTrace(float v, float gain) { return saturate(pow(max(v, 0.0f), 0.45f) * 1.6f * gain); }
+float mapVector(float v, float gain) {
+    if (v <= 0.0f) { return 0.0f; }
+    return saturate((0.34f + 0.66f * saturate(1.0f + log2(v) * 0.30102999566f / 5.0f)) * gain);
+}
+float mapOf(float v, float gain, bool vec) { return vec ? mapVector(v, gain) : mapTrace(v, gain); }
+
+float glowOf(float uu, float tt, float gain, float sx, float sy, bool vec, float inv) {
+    float tx = sx / float(u.waveW), ty = sy / float(u.waveL);
+    float g = mapOf(planeSample(uu + tx, tt, inv), gain, vec) + mapOf(planeSample(uu - tx, tt, inv), gain, vec)
+        + mapOf(planeSample(uu, tt + ty, inv), gain, vec) + mapOf(planeSample(uu, tt - ty, inv), gain, vec);
+    return saturate(mapOf(planeSample(uu, tt, inv), gain, vec) + 0.18f * g);
+}
+
+[shader("compute")][numthreads(16, 16, 1)]
+void scopeDraw(uint3 tid : SV_DispatchThreadID) {
+    if (tid.x >= u.outW || tid.y >= u.outH) { return; }
+    float uu = (float(tid.x) + 0.5f) / float(u.outW), tt = (float(tid.y) + 0.5f) / float(u.outH);
+    float gain = asfloat(u.gainBits);
+    uint m = counts.Load(u.maxIndex * 4);
+    float inv = m == 0 ? 0.0f : 1.0f / float(m);
+    float bg = kBackground;
+    float3 col = float3(bg, bg, bg);
+    if (u.flags == 0) {
+        float i = glowOf(uu, tt, gain, 1.5f, 1.5f, false, inv);
+        col = tt < kOver100 ? float3(bg + i, bg + i * 0.22f, bg + i * 0.20f) : float3(bg + i * 0.62f, bg + i, bg + i * 0.72f);
+    } else if (u.flags == 1) {
+        float panel = min(floor(uu * 3.0f), 2.0f);
+        float i = glowOf(uu, tt, gain, 1.0f, 1.5f, false, inv);
+        float3 tint = tt < kOver100 ? float3(1.0f, 0.22f, 0.20f)
+            : (panel < 0.5f ? float3(1.0f, 0.30f, 0.26f) : (panel < 1.5f ? float3(0.30f, 1.0f, 0.42f) : float3(0.30f, 0.52f, 1.0f)));
+        col = float3(bg, bg, bg) + i * tint;
+    } else if (u.flags == 2) {
+        float i = glowOf(uu, tt, gain, 1.5f, 1.5f, true, inv);
+        col = float3(bg + i * 0.70f, bg + i, bg + i * 0.80f);
+    } else {
+        float h = 1.0f - tt;
+        float3 add = float3(0.0f, 0.0f, 0.0f);
+        for (int r = 0; r < 4; r++) {
+            float3 tint = r == 0 ? float3(0.85f, 0.12f, 0.10f) : (r == 1 ? float3(0.10f, 0.75f, 0.22f) : (r == 2 ? float3(0.12f, 0.30f, 0.95f) : float3(0.22f, 0.22f, 0.22f)));
+            if (h <= sqrt(max(planeSample(uu, (float(r) + 0.5f) / 4.0f, inv), 0.0f))) { add += tint; }
+        }
+        col = float3(bg, bg, bg) + add * gain;
+    }
+    out0.Store(tid.xy, float4(saturate(col), 1.0f));
 }

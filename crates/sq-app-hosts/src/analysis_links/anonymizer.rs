@@ -347,7 +347,8 @@ fn follow(
                 let done = if forward { p * forward_share } else { forward_share + p * (1.0 - forward_share) };
                 progress((i as f64 + done) / total);
             };
-            let d = follow_direction(src, pick, (&key, part_key.as_deref()), anchor, to, store, cancel, &mut report, hold)?;
+            let d =
+                follow_direction(src, pick, (&key, part_key.as_deref()), anchor, to, store, cancel, &mut report, hold)?;
             out.frames += d.frames;
             flags.extend(d.flags);
             if d.frames == 0 {

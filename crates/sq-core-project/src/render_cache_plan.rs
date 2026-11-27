@@ -276,4 +276,35 @@ pub(crate) mod tests {
         assert_ne!(key(&stamped), base);
         assert_eq!(key(&ctx), base);
     }
+    fn adjustment(start: i64, len: i64, effects: Vec<ClipEffect>) -> Clip {
+        let mut c = clip(start, len, 7, effects);
+        c.generator = Some(sq_core_model::GeneratorRef {
+            kind: "adjustment".to_string(),
+            payload: Vec::new(),
+            payload_version: 1,
+        });
+        c
+    }
+
+    /// A8: a cached segment is a render of the whole stack, adjustment layer included, so the key follows the layer and
+    /// whatever lies below it; segments the layer does not reach keep their key.
+    #[test]
+    fn an_adjustment_layer_is_part_of_the_key_of_every_segment_it_covers() {
+        let ctx = RenderCacheContext::new("r1", "rec709");
+        let below = || vec![clip(0, 6, 1, vec![])];
+        let keys =
+            |adj: Clip, lower: Vec<Clip>| RenderCachePlan::segments(&timeline(vec![lower, vec![adj]]), None, &ctx);
+        let plain = keys(adjustment(2, 2, vec![]), below());
+        // Segments: [0,2) alone, [2,4) under the layer, [4,6) alone.
+        assert_eq!(plain.iter().map(|g| g.is_heavy).collect::<Vec<_>>(), [false, true, false]);
+        let blurred = keys(adjustment(2, 2, vec![blur()]), below());
+        assert_eq!(blurred[0].key, plain[0].key);
+        assert_ne!(blurred[1].key, plain[1].key, "the layer's effect changes its own segment");
+        assert_eq!(blurred[2].key, plain[2].key);
+        // A change of the picture below, inside the layer's span, changes the key; outside it does not.
+        let mut lower = below();
+        lower[0].effects = vec![blur()];
+        let relooked = keys(adjustment(2, 2, vec![]), lower);
+        assert_ne!(relooked[1].key, plain[1].key);
+    }
 }

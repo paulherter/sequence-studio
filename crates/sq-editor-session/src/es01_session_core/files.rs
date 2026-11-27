@@ -555,7 +555,30 @@ impl EditorSession {
     /// Media whose file is not at its path.
     // Swift: EditorSession.swift:813
     pub fn missing_media(&self) -> Vec<MediaRef> {
-        self.project().missing_media()
+        self.with_missing_media(|m| m.to_vec())
+    }
+
+    /// How long a `stat()` pass over the media stays valid when nothing was notified (a file deleted outside the app).
+    pub(crate) const MISSING_MEDIA_TTL: std::time::Duration = std::time::Duration::from_secs(1);
+
+    /// Runs `f` on the offline media. The files are `stat()`ed again only after a project/media change or after
+    /// `MISSING_MEDIA_TTL`, never per call (the shell menus ask on every frame).
+    pub(crate) fn with_missing_media<T>(&self, f: impl FnOnce(&[MediaRef]) -> T) -> T {
+        let key = (self.version(crate::Change::PROJECT), self.version(crate::Change::MEDIA));
+        let id = self.project().id;
+        let mut slot = self.missing_media_cache.lock().unwrap_or_else(|e| e.into_inner());
+        let fresh = slot
+            .as_ref()
+            .is_some_and(|c| c.project == id && c.versions == key && c.at.elapsed() < Self::MISSING_MEDIA_TTL);
+        if !fresh {
+            *slot = Some(crate::session::MissingMediaCache {
+                project: id,
+                versions: key,
+                at: std::time::Instant::now(),
+                missing: self.project().missing_media(),
+            });
+        }
+        f(slot.as_ref().map(|c| c.missing.as_slice()).unwrap_or_default())
     }
 
     /// Points media at new files: one undo step. Media without probe info is probed afterwards.

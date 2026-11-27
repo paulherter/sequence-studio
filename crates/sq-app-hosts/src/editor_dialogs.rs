@@ -188,8 +188,7 @@ fn title_template(session: &mut EditorSession, answers: &Answers, out: &Shared) 
         move |name| {
             answers.borrow_mut().push(Box::new(move |s| {
                 let Some(template) = s.title_template_from_selection(&name) else { return };
-                let Ok(value) = serde_json::to_value(&template) else { return };
-                let pending = PendingTemplate { name, template: value };
+                let pending = PendingTemplate { name, template, folder: None };
                 // Inside the selected video the preview is the Program frame (the root renders it); elsewhere there is none.
                 if s.playhead_is_inside_selected_video() {
                     s.stop_playback();

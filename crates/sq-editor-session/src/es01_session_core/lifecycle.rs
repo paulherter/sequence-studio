@@ -51,7 +51,7 @@ impl FollowTiming {
     // Swift: EditorSession+FollowSelection.swift:135
     pub fn report(name: &str, since: Duration) {
         let ms = mono_now().saturating_sub(since).as_secs_f64() * 1000.0;
-        eprintln!("SQFOLLOW {name} {ms:.3} ms");
+        sq_os::errln!("SQFOLLOW {name} {ms:.3} ms");
     }
 }
 

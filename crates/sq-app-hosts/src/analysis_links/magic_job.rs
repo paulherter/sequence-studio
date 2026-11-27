@@ -2,6 +2,7 @@
 //! [`FrameMatteStore`], progress and the end come back as messages the UI thread polls (Swift `MacMagicMasks+Track`).
 //! The model and the frame reader sit behind two small traits, so the loop is tested without a model file.
 
+use super::pacing::yield_to_playback;
 use sq_analysis::analysis_turn::CancelToken;
 use sq_analysis::edge_tamonnx::{EdgeTAMOnnxLocation, EdgeTAMOnnxModel, EdgeTAMOnnxSession, SubjectFrame};
 use sq_analysis::frame_matte_store::FrameMatteStore;
@@ -12,7 +13,6 @@ use sq_core_masks::subject_track_rules::SubjectTrackRules;
 use sq_core_model::{Clip, ClipMask, MagicPoint};
 use sq_core_time::{Id, Time, Vec2};
 use sq_editor_session::EditorSession;
-use super::pacing::yield_to_playback;
 use sq_playback::engine::activity::PlayActivity;
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -705,7 +705,7 @@ mod tests {
     fn real_model_point_corrections_keep_the_iou_against_the_disk() {
         let env: HashMap<String, String> = std::env::vars().collect();
         let Ok(folder) = model_folder(&std::env::temp_dir(), &env) else {
-            eprintln!("skipped: no EdgeTAM models");
+            sq_os::errln!("skipped: no EdgeTAM models");
             return;
         };
         let mut tracker = match EdgeTamTracker::load(&folder) {
@@ -713,7 +713,7 @@ mod tests {
             // The models are there but this machine has no ONNX Runtime library on its loader path (put the folder of
             // `libonnxruntime.so` on LD_LIBRARY_PATH to run it): skipped like the missing models, not a failure.
             Err(e) if e.contains("cannot load the ONNX Runtime library") => {
-                eprintln!("skipped: {e}");
+                sq_os::errln!("skipped: {e}");
                 return;
             }
             Err(e) => panic!("model: {e}"),
@@ -734,7 +734,7 @@ mod tests {
         );
         assert_eq!(out.frames, 10, "{out:?}");
         let ious: Vec<f64> = rec.1.iter().enumerate().map(|(i, m)| iou(m, &Disks::truth(i))).collect();
-        eprintln!("IoU per frame {ious:?}");
+        sq_os::errln!("IoU per frame {ious:?}");
         assert!(ious.iter().all(|v| *v > 0.7), "{ious:?}");
     }
 }

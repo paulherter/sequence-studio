@@ -233,7 +233,7 @@ impl ShellStartScreen {
         let count = if n == 1 { "1 project".to_string() } else { format!("{n} projects") };
         let inner = r.inset_by(16.0, 0.0);
         let open = if env.open_name.is_empty() { "No project open" } else { env.open_name };
-        let version = format!("Sequence Studio {}", AppVersion::display());
+        let version = AppVersion::full_name();
         let width = |s: &str| env.measure.width(s, m::F_CAP, 0).ceil();
         let (folder_w, show_open) =
             Self::status_widths(inner.width, [width(&folder), width(&count), width(open), width(&version)]);

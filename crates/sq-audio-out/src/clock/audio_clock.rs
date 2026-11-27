@@ -261,7 +261,7 @@ impl AudioClock {
         }
         if !s.resynced {
             if !s.free_ran {
-                eprintln!(
+                sq_os::errln!(
                     "sq-audio: audio not consuming after {} ms, picture runs on the host clock",
                     s.free_lead / 1_000_000
                 );
@@ -360,7 +360,7 @@ impl AudioClock {
                 let last = s.last_returned.map_or(host_line, |l| if rev { l.min(host_line) } else { l.max(host_line) });
                 s.slew0 = if rev { raw - last } else { last - raw };
                 s.slew_e0 = elapsed;
-                eprintln!(
+                sq_os::errln!(
                     "sq-audio: clock host -> audio takeover at {} ms host time, picture {:+} ms vs audio",
                     nanos / 1_000_000,
                     ms(s.slew0)

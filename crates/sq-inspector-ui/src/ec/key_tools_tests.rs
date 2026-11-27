@@ -146,3 +146,40 @@ fn graph_snap_targets_clip_ends() {
     let Some(PropertyTrack::Scalar(t)) = m.track_of(&EffectProperty::Opacity) else { panic!("scalar track") };
     assert_eq!(t.keys.last().map(|k| k.time), Some(s(10)));
 }
+
+/// Shutter Angle typed in the inspector on a moving clip reaches the clip and opens the motion blur samples.
+#[test]
+fn a_shutter_angle_set_in_the_inspector_opens_the_motion_blur_of_a_moving_clip() {
+    use sq_core_effects::effect_transform_stage::ClipStageEval;
+    use sq_core_model::SequenceFormat;
+    let c = Clip::new(
+        Id::from_u128(900),
+        "c",
+        Id::from_u128(901),
+        TrackKind::Video,
+        TimeRange::new(Time::ZERO, s(10)),
+        s(5),
+    );
+    let mut m = EffectControlsModel::new(Box::new(SequentialIds::default()));
+    m.set_clip(Some(c), None, Vec::new(), None);
+    m.set_playhead(s(5));
+    m.set_value(&EffectProperty::Rotation, EffectComponent::All, 0.0);
+    pump(&mut m);
+    m.toggle_stopwatch(&EffectProperty::Rotation, false);
+    pump(&mut m);
+    m.set_playhead(s(7));
+    m.set_value(&EffectProperty::Rotation, EffectComponent::All, 90.0);
+    pump(&mut m);
+    m.set_value(&EffectProperty::ShutterAngle, EffectComponent::All, 180.0);
+    let mut edited = None;
+    for ev in m.take_events() {
+        if let EffectControlsEvent::Edit { clip, .. } = ev {
+            edited = Some(clip);
+        }
+    }
+    let clip = edited.expect("the shutter edit reaches the host");
+    assert_eq!(clip.animation.shutter_angle.value, 180.0);
+    let mut format = SequenceFormat::new(Time::new(1, 25));
+    (format.width, format.height) = (320, 180);
+    assert!(clip.motion_blur(s(6), Time::new(1, 25), &format, 1.0).is_some(), "180 degrees must blur");
+}

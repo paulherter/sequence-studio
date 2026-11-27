@@ -152,7 +152,9 @@ impl TextGenerator {
             .and_then(|s| s.animation_in.as_ref())
             .and_then(|t| t.text_animator.as_ref())
             .zip(units.as_ref())
-            .and_then(|(a, u)| u.typewriter_cursor(a, local_time).filter(|c| c.visible).map(|c| (c.after_character, a)));
+            .and_then(|(a, u)| {
+                u.typewriter_cursor(a, local_time).filter(|c| c.visible).map(|c| (c.after_character, a))
+            });
         let cursor_glyph = cursor.map(|(i, a)| (i, a.cursor.clone()));
         let cursor = cursor.map(|(i, _)| i);
         if let Some(p) = previous.filter(|p| {
@@ -236,14 +238,18 @@ mod tracking_tests {
     fn keyed_tracking_widens_the_text_early_and_tightens_it_later() {
         set_fonts_root(&test_fonts_root());
         let canvas = SequenceFormat { width: 1920, height: 1080, ..SequenceFormat::new(Time::new(1, 30)) };
-        let mut template = TextTemplate::new("t", "TRACKING", TextStyle { size: 90.0, tracking: 2.0, ..TextStyle::default() });
+        let mut template =
+            TextTemplate::new("t", "TRACKING", TextStyle { size: 90.0, tracking: 2.0, ..TextStyle::default() });
         let mut keys = AnimatedProperty::new(2.0);
         keys.track.insert(Keyframe::new(Id::from_u128(1), Time::ZERO, 40.0));
         keys.track.insert(Keyframe::new(Id::from_u128(2), Time::new(8, 30), 2.0));
         template.tracking_keys = Some(keys);
         let r = TextGenerator::make_ref(&template, None).unwrap_or_else(|e| panic!("{e}"));
         let at = |t: Time, prev: Option<&PortableTextFrame>| {
-            TextGenerator::portable_frame(&r, t, Time::new(3, 1), &canvas, 1.0, prev).ok().flatten().unwrap_or_else(|| panic!("frame"))
+            TextGenerator::portable_frame(&r, t, Time::new(3, 1), &canvas, 1.0, prev)
+                .ok()
+                .flatten()
+                .unwrap_or_else(|| panic!("frame"))
         };
         let (w0, w4, w8) = (at(Time::ZERO, None), at(Time::new(4, 30), None), at(Time::new(8, 30), None));
         assert!(w0.width > w4.width && w4.width > w8.width, "{} {} {}", w0.width, w4.width, w8.width);
@@ -283,7 +289,8 @@ mod pill_tests {
         bg.follow_reveal = follow;
         style.background = Some(bg);
         let template = TextTemplate::new("t", "AAAA BBBB CCCC", style);
-        let mut a = TextAnimator::new(TextAnimatorEffect::Fade, TextAnimatorUnit::Word, Time::new(1, 1), Time::new(1, 1));
+        let mut a =
+            TextAnimator::new(TextAnimatorEffect::Fade, TextAnimatorUnit::Word, Time::new(1, 1), Time::new(1, 1));
         a.easing = SegmentShape::Linear;
         let set = sq_core_model::anchored_animation::AnimationSet::new(None, None);
         let mut set = set;
@@ -298,7 +305,12 @@ mod pill_tests {
         let dur = Time::new(10, 1);
         let r = pill_ref(true, false);
         let w_at = |r: &GeneratorRef, t: Time| {
-            ink_width(&TextGenerator::portable_frame(r, t, dur, &canvas, 1.0, None).ok().flatten().unwrap_or_else(|| panic!("frame")))
+            ink_width(
+                &TextGenerator::portable_frame(r, t, dur, &canvas, 1.0, None)
+                    .ok()
+                    .flatten()
+                    .unwrap_or_else(|| panic!("frame")),
+            )
         };
         let (empty, mid, late, full) =
             (w_at(&r, Time::ZERO), w_at(&r, Time::new(3, 2)), w_at(&r, Time::new(5, 2)), w_at(&r, Time::new(5, 1)));

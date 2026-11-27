@@ -1188,7 +1188,7 @@ mod tests {
                     }
                     m
                 };
-                eprintln!(
+                sq_os::errln!(
                     "{name} seed {seed}: present slots {via_slots:.3} {:?}, display link ticks {via_link:.3} {:?}",
                     hist(&hs),
                     hist(&hl)

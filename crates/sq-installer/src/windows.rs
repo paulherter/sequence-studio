@@ -172,7 +172,7 @@ fn quiet_result(spec: &JobSpec, host: &WindowsHost) -> Result<(), ExitCode> {
     match run_job(spec, host, &mut Silent, &mut log) {
         Ok(_) => Ok(()),
         Err(e) => {
-            eprintln!("{e}");
+            sq_os::errln!("{e}");
             Err(ExitCode::from(u8::try_from(e.code.number() % 256).unwrap_or(1)))
         }
     }
@@ -203,7 +203,7 @@ fn error_context() -> ErrorContext {
 pub fn run(args: &Args, atlas: GlyphAtlas) -> ExitCode {
     let host = Arc::new(WindowsHost);
     let Ok(exe) = std::env::current_exe() else {
-        eprintln!("sq-installer: the program's own path is unknown");
+        sq_os::errln!("sq-installer: the program's own path is unknown");
         return ExitCode::FAILURE;
     };
     let folders = host.folders();
@@ -219,7 +219,7 @@ pub fn run(args: &Args, atlas: GlyphAtlas) -> ExitCode {
             return match start_uninstall_copy(&host, &exe, args) {
                 Ok(()) => ExitCode::SUCCESS,
                 Err(e) => {
-                    eprintln!("{e}");
+                    sq_os::errln!("{e}");
                     ExitCode::FAILURE
                 }
             };
@@ -264,11 +264,11 @@ pub fn run(args: &Args, atlas: GlyphAtlas) -> ExitCode {
         let payload = match payload::open(&exe) {
             Ok(Some(p)) => p,
             Ok(None) => {
-                eprintln!("sq-installer: this program carries no payload; use `--pack` to make a setup program");
+                sq_os::errln!("sq-installer: this program carries no payload; use `--pack` to make a setup program");
                 return ExitCode::FAILURE;
             }
             Err(e) => {
-                eprintln!("{e}");
+                sq_os::errln!("{e}");
                 return ExitCode::from(u8::try_from(e.code.number() % 256).unwrap_or(1));
             }
         };
@@ -301,7 +301,7 @@ pub fn run(args: &Args, atlas: GlyphAtlas) -> ExitCode {
                     || std::thread::sleep(crate::wait::POLL),
                 );
                 if !gone {
-                    eprintln!("sq-installer: the app did not end in time");
+                    sq_os::errln!("sq-installer: the app did not end in time");
                     return ExitCode::FAILURE;
                 }
             }
@@ -325,7 +325,7 @@ pub fn run(args: &Args, atlas: GlyphAtlas) -> ExitCode {
             if args.launch {
                 let app = spec.location.join(EXE_NAME);
                 if let Err(error) = Command::new(&app).current_dir(&spec.location).spawn() {
-                    eprintln!("sq-installer: the app could not start: {}", describe_io(&error));
+                    sq_os::errln!("sq-installer: the app could not start: {}", describe_io(&error));
                     return ExitCode::FAILURE;
                 }
             }
@@ -357,7 +357,7 @@ pub fn run(args: &Args, atlas: GlyphAtlas) -> ExitCode {
     match result {
         Ok(Exit::Closed | Exit::Declined | Exit::Added) => ExitCode::SUCCESS,
         Err(why) => {
-            eprintln!("sq-installer: {why}");
+            sq_os::errln!("sq-installer: {why}");
             ExitCode::FAILURE
         }
     }

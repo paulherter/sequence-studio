@@ -102,8 +102,9 @@ fn each_person_is_followed_both_ways_into_staged_mattes_that_commit_under_the_ma
     let picks: Vec<MagicSelection> =
         sightings.iter().map(|s| selection(&s.person, s.pts, AnonymizeTarget::Person)).collect();
     let mut seen = Vec::new();
-    let out = run(&fake, &picks, media, 0.0, 4.0, 0.1, &store, "t1", &CancelToken::new(), &mut |p| seen.push(p), &mut |_| {})
-        .expect("run");
+    let out =
+        run(&fake, &picks, media, 0.0, 4.0, 0.1, &store, "t1", &CancelToken::new(), &mut |p| seen.push(p), &mut |_| {})
+            .expect("run");
     // 21 frames each way, the pick frame twice.
     assert_eq!(out.frames, 2 * 42);
     assert!(out.checks.is_empty(), "{:?}", out.checks);
@@ -127,8 +128,20 @@ fn a_face_run_stores_the_narrowed_matte_and_lists_a_lost_person() {
     let sightings = find(&fake);
     let store = FrameMatteStore::new(None);
     let picks = vec![selection(&sightings[0].person, sightings[0].pts, AnonymizeTarget::Face)];
-    let out = run(&fake, &picks, Id::from_u128(7), 0.0, 4.0, 0.1, &store, "t2", &CancelToken::new(), &mut |_| {}, &mut |_| {})
-        .expect("run");
+    let out = run(
+        &fake,
+        &picks,
+        Id::from_u128(7),
+        0.0,
+        4.0,
+        0.1,
+        &store,
+        "t2",
+        &CancelToken::new(),
+        &mut |_| {},
+        &mut |_| {},
+    )
+    .expect("run");
     assert_eq!(out.staged.len(), 2, "the person and the face");
     assert!(out.staged.iter().all(|s| !store.times(&s.temp).is_empty()), "both are stored");
     let lost: Vec<&AnonymizeCheck> = out.checks.iter().filter(|c| c.reason == AnonymizeReason::Lost).collect();
@@ -144,11 +157,23 @@ fn a_canceled_run_leaves_no_staged_mattes() {
     let picks = vec![selection(&sightings[0].person, sightings[0].pts, AnonymizeTarget::Person)];
     let cancel = CancelToken::new();
     let c = cancel.clone();
-    let err = run(&fake, &picks, Id::from_u128(7), 0.0, 4.0, 0.1, &store, "t3", &cancel, &mut |p| {
-        if p > 0.2 {
-            c.cancel();
-        }
-    }, &mut |_| {})
+    let err = run(
+        &fake,
+        &picks,
+        Id::from_u128(7),
+        0.0,
+        4.0,
+        0.1,
+        &store,
+        "t3",
+        &cancel,
+        &mut |p| {
+            if p > 0.2 {
+                c.cancel();
+            }
+        },
+        &mut |_| {},
+    )
     .expect_err("canceled");
     assert_eq!(err, AnonymizeError::Canceled);
     let key = format!("staged-t3-{}", picks[0].cache_key(Id::from_u128(7)));

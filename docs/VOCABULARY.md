@@ -29,6 +29,7 @@ On branch keyframes-pre-easing the redesign is reverted (DECISIONS 2026-10-03); 
 | A named curve shared by many keys in one project | **Linked curve** ("Soft Landing") | Shared ease, Master curve |
 | Make a linked segment independent | **Unlink** | Detach, Break |
 | A curve saved for all projects (a copy) | **Preset** ("Save as preset") | Favorite, Template |
+| Several layers saved as one reusable title with editable fields (text, emoji, color, font, number, image, duration) | **Template** (code: `TitleTemplate`; "Save as Template") | Mogrt, Essential Graphic, Title block (a Title Block stays its own kind) |
 | The row of one-click curves | **Chips** (UI only; never user-facing text) | Quick curves |
 | Optional Library pack of the old cubic set (Sine, Quad, Cubic, Quart, Quint, Expo, Circ, Back; in, out, in-out) | **Classic** | Penner, Legacy |
 | Default curve for new keys | **Default ease** (Preferences) | Default interpolation |
@@ -202,6 +203,7 @@ Distort, Transform, Stylize. Render has no user-facing name (no change). Marker/
 | Replace clips by one clip holding them | **Combine...** (undo "Combine"; default name "Combined 01"; clip drawn as "combined") | Nest, Nested Sequence NN |
 | Several recordings of one event cut like one clip (F7.16) | **Angles clip** ("Create Angles Clip…", default name "Angles 01"; one recording = an **Angle**, "Switch to Angle 3", undo "Switch Angle") | Multicam, Multi-Camera Source Sequence, Multicam Clip, Camera 1 |
 | The sound of an Angles clip takes the angle of its picture | **Audio Follows Video** | Switch Audio, AFV |
+| A clip that applies its effects and Motion to everything on the tracks below (generator clip; New > Layer > New Adjustment Layer, Effects panel "Adjustment Layer") | **Adjustment Layer** (undo "Add Adjustment Layer") | Adjustment clip, Filter layer |
 | A flat color layer for when there is no video (solid generator; Project panel and timeline menus "New Color Matte…", Controls section "Color Matte" with one Color row; ordinary clip) | **Color Matte** (undo "Add Color Matte", "Edit Color Matte"; default name "Color Matte") | Solid, Solid Color, Color Layer, Matte (a matte is a mask elsewhere) |
 | Folder in the Project panel and SFX | **Folder** ("New Folder", "Untitled Folder", "SFX folder") | Bin, New Bin |
 | Saved filter of the Project panel | **Smart Folder** ("Save Filter as Smart Folder") | Smart Bin |

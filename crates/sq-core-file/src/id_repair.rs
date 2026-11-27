@@ -41,7 +41,7 @@ pub(crate) fn repair_duplicate_ids(project: &mut Value) -> Vec<String> {
                 && !seen_tracks.insert(old.to_uppercase())
             {
                 let new = fresh(&mut taken);
-                eprintln!("SQREPAIR track id {old} repeated in sequence \"{name}\": a later track now has {new}");
+                sq_os::errln!("SQREPAIR track id {old} repeated in sequence \"{name}\": a later track now has {new}");
                 notes.push(format!("track {old} -> {new}"));
                 track["id"] = Value::String(new);
             }
@@ -52,7 +52,7 @@ pub(crate) fn repair_duplicate_ids(project: &mut Value) -> Vec<String> {
                     continue;
                 }
                 let new = fresh(&mut taken);
-                eprintln!("SQREPAIR clip id {old} repeated in sequence \"{name}\": a later clip now has {new}");
+                sq_os::errln!("SQREPAIR clip id {old} repeated in sequence \"{name}\": a later clip now has {new}");
                 notes.push(format!("clip {old} -> {new}"));
                 clip["id"] = Value::String(new);
             }

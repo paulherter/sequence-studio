@@ -44,7 +44,7 @@ fn pack(args: &Args) -> Result<(), String> {
 fn main() -> std::process::ExitCode {
     let args: Vec<String> = std::env::args().skip(1).collect();
     if args.iter().any(|a| a == "--list-screens") {
-        println!("{}", shots::SCREENS.join("\n"));
+        sq_os::outln!("{}", shots::SCREENS.join("\n"));
         return std::process::ExitCode::SUCCESS;
     }
     let parsed = if args.iter().any(|a| a == "--shot") { Ok(Args::default()) } else { Args::parse(&args) };
@@ -56,7 +56,7 @@ fn main() -> std::process::ExitCode {
             return match GlyphAtlas::inter_bytes(INTER.to_vec()) {
                 Some(atlas) => sq_installer::windows::run(&a, atlas),
                 None => {
-                    eprintln!("sq-installer: the built-in font did not load");
+                    sq_os::errln!("sq-installer: the built-in font did not load");
                     std::process::ExitCode::FAILURE
                 }
             };
@@ -68,7 +68,7 @@ fn main() -> std::process::ExitCode {
     match result {
         Ok(()) => std::process::ExitCode::SUCCESS,
         Err(e) => {
-            eprintln!("sq-installer: {e}");
+            sq_os::errln!("sq-installer: {e}");
             std::process::ExitCode::FAILURE
         }
     }

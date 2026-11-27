@@ -4,7 +4,7 @@
 
 use serde_json::{Map, Value, json};
 use sq_core_model::anchored_animation::{
-    AnimationSet, SegmentShape, TextAnimator, TextAnimatorEffect, TextCursor, TextAnimatorOrder, TextSlideDirection,
+    AnimationSet, SegmentShape, TextAnimator, TextAnimatorEffect, TextAnimatorOrder, TextCursor, TextSlideDirection,
 };
 use sq_core_model::{GraphicsContent, GraphicsLayer};
 use sq_core_time::Time;
@@ -12,7 +12,19 @@ use sq_text::text_generator::TextGenerator;
 
 /// The fields of an animator request (besides the op's own `clip` / `layer`).
 pub const ANIMATOR_KEYS: [&str; 13] = [
-    "side", "effect", "unit", "order", "easing", "duration", "stagger", "direction", "distance", "blur", "loops", "overshoot", "cursor",
+    "side",
+    "effect",
+    "unit",
+    "order",
+    "easing",
+    "duration",
+    "stagger",
+    "direction",
+    "distance",
+    "blur",
+    "loops",
+    "overshoot",
+    "cursor",
 ];
 
 const MAX_MS: f64 = 60_000.0;
@@ -46,7 +58,11 @@ pub fn check_spec(v: &Value, need_effect: bool) -> Result<(), String> {
     }
     parse_side(m.get("side"))?;
     // Without an "effect" the real animator decides (in `apply`); the probe only checks the shape.
-    let mut probe = TextAnimator::starting(if m.contains_key("effect") { TextAnimatorEffect::Fade } else { TextAnimatorEffect::Typewriter });
+    let mut probe = TextAnimator::starting(if m.contains_key("effect") {
+        TextAnimatorEffect::Fade
+    } else {
+        TextAnimatorEffect::Typewriter
+    });
     patch(&mut probe, m)
 }
 
@@ -90,7 +106,11 @@ fn patch(a: &mut TextAnimator, m: &Map<String, Value>) -> Result<(), String> {
     if let Some(v) = m.get("overshoot") {
         a.overshoot = match v {
             Value::Null => None,
-            _ => Some(v.as_f64().filter(|n| (1.0..=3.0).contains(n)).ok_or("overshoot: a number 1...3 (1.08 = pop peaks at 108 %), null = the easing's own peak")?),
+            _ => Some(
+                v.as_f64()
+                    .filter(|n| (1.0..=3.0).contains(n))
+                    .ok_or("overshoot: a number 1...3 (1.08 = pop peaks at 108 %), null = the easing's own peak")?,
+            ),
         };
     }
     if let Some(v) = m.get("cursor") {
@@ -105,7 +125,11 @@ const CURSOR_KEYS: [&str; 4] = ["char", "blink", "color", "holdAfter"];
 /// animator's current cursor (or the defaults), so a partial update keeps the other fields.
 fn cursor(v: &Value, a: &TextAnimator) -> Result<Option<TextCursor>, String> {
     let Value::Object(m) = v else {
-        return if v.is_null() { Ok(None) } else { Err("cursor: an object {char?, blink?, color?, holdAfter?} or null".into()) };
+        return if v.is_null() {
+            Ok(None)
+        } else {
+            Err("cursor: an object {char?, blink?, color?, holdAfter?} or null".into())
+        };
     };
     if a.effect != TextAnimatorEffect::Typewriter {
         return Err("cursor: only the typewriter effect has a cursor".into());
@@ -141,7 +165,9 @@ fn with_animations(
     layer: &mut GraphicsLayer,
     f: impl FnOnce(&mut AnimationSet) -> Result<(), String>,
 ) -> Result<(), String> {
-    let GraphicsContent::Text { generator } = &layer.content else { return Err("the layer is not a text layer".into()) };
+    let GraphicsContent::Text { generator } = &layer.content else {
+        return Err("the layer is not a text layer".into());
+    };
     let (template, animations) = TextGenerator::decode(generator).map_err(|e| format!("text layer: {e}"))?;
     let mut set = animations.unwrap_or_else(|| AnimationSet::new(None, None));
     f(&mut set)?;
@@ -164,7 +190,8 @@ pub fn apply(layer: &mut GraphicsLayer, spec: &Value, fresh: bool) -> Result<(),
             (None, false) => return Err(format!("the layer has no {side} animator; use addTextAnimator")),
             (Some(a), false) => a,
             (None, true) => {
-                let effect = m.get("effect").map(|v| name("effect", v, "fade, pop, slide, typewriter, blur, wave, pulse"));
+                let effect =
+                    m.get("effect").map(|v| name("effect", v, "fade, pop, slide, typewriter, blur, wave, pulse"));
                 TextAnimator::starting(effect.ok_or("a new animator needs \"effect\"")??)
             }
         };

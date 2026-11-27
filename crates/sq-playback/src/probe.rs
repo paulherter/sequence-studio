@@ -237,7 +237,7 @@ impl PlayProbe {
 
     pub fn log_report(&self) {
         for l in self.report() {
-            eprintln!("{l}");
+            sq_os::errln!("{l}");
         }
     }
 }

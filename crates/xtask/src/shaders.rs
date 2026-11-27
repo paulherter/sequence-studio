@@ -324,9 +324,8 @@ fn summary(entries: &[Entry]) -> String {
     s
 }
 
-/// Entries whose `.dxil` was never generated (DXIL needs Windows). Windows gets an empty blob and the code never picks them
-/// there (`SCALED_GYRO_WARP`). Windows: run `cargo xtask shaders`, commit the dxil, remove the name here and enable the flag.
-const NO_DXIL_YET: &[&str] = &["gyroWarpScaled"];
+/// Entries whose `.dxil` was never generated (DXIL needs Windows); they get an empty blob on Windows. None today.
+const NO_DXIL_YET: &[&str] = &[];
 
 /// `entries.rs`, included by `sq-gpu`: one `ShaderEntry` per entry point; each backend's bytes only on its own target.
 fn table(entries: &[Entry]) -> String {

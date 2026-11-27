@@ -22,7 +22,7 @@ fn gpu() -> Option<Arc<Gpu>> {
     GPU.get_or_init(|| match Gpu::new() {
         Ok(g) => Some(g),
         Err(e) => {
-            eprintln!("skipping GPU tests: {e}");
+            sq_os::errln!("skipping GPU tests: {e}");
             None
         }
     })

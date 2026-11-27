@@ -139,8 +139,7 @@ fn a_title_template_tile_shows_its_thumbnail_pixels() {
         let mut w = enc.write_header().expect("header");
         w.write_image_data(&[[255u8, 0, 0, 255]; 8].concat()).expect("data");
     }
-    let template =
-        serde_json::json!({"name": "T", "formatVersion": 5, "content": {"tracks": [{"kind": "video"}]}, "slots": []});
+    let template = one_layer_template();
     let item = TitleTemplatePreset { template, thumbnail: Some(png_bytes) }
         .preset_item("T", Id::from_u128(4), Timestamp::from_unix_seconds(0.0))
         .expect("item");
@@ -148,10 +147,18 @@ fn a_title_template_tile_shows_its_thumbnail_pixels() {
     assert_eq!(still.len(), WIDTH * HEIGHT * 4);
     let mid = ((HEIGHT / 2) * WIDTH + WIDTH / 2) * 4;
     assert_eq!(&still[mid..mid + 4], &[255, 0, 0, 255], "the thumbnail's red shows in the middle");
-    let bad = TitleTemplatePreset {
-        template: serde_json::json!({"name": "T", "formatVersion": 5, "content": {"tracks": [{"kind": "video"}]}, "slots": []}),
-        thumbnail: None,
-    };
+    let bad = TitleTemplatePreset { template: one_layer_template(), thumbnail: None };
     let item = bad.preset_item("T", Id::from_u128(5), Timestamp::from_unix_seconds(0.0)).expect("item");
     assert!(preset_still(&item).is_none(), "no thumbnail, no picture");
+}
+
+fn one_layer_template() -> sq_core_model::TitleTemplate {
+    use sq_core_model::{SequenceFormat, Timeline, Track, TrackKind};
+    let content = Timeline::new(
+        Id::from_u128(11),
+        "T",
+        SequenceFormat::new(sq_core_time::Time::new(1, 30)),
+        vec![Track::new(Id::from_u128(12), TrackKind::Video)],
+    );
+    sq_core_model::TitleTemplate::new(Id::from_u128(13), "T", None, content, Vec::new(), None)
 }

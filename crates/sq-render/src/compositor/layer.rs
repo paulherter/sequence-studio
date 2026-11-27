@@ -267,9 +267,9 @@ impl AdjustmentNode {
     pub fn covers_base(&self) -> bool {
         if self.opacity < 1.0
             || self.blend_mode != BlendMode::Normal
-            || self.transform != ClipTransform::IDENTITY
+            || !covers_canvas(&self.transform)
             || self.corner_radius != 0.0
-            || !self.motion_samples.is_empty()
+            || !self.motion_samples.iter().all(covers_canvas)
             || !self.effects.masks.is_empty()
         {
             return false;
@@ -287,6 +287,18 @@ impl AdjustmentNode {
                 )
         })
     }
+}
+
+/// Motion that still fills the canvas: centered, scale 1 or more on both axes, no rotation, tilt or anchor shift, so the
+/// scaled picture's edges lie outside the frame. Opacity is checked by the caller.
+// shortcut: a moved or off-anchor zoom is not recognized (needs the canvas size), upgrade when a zoom layer pans.
+fn covers_canvas(t: &ClipTransform) -> bool {
+    t.position == sq_core_time::Vec2::ZERO
+        && t.anchor == sq_core_time::Vec2::ZERO
+        && t.rotation == 0.0
+        && !t.is_tilted()
+        && t.scale.x >= 1.0
+        && t.scale.y >= 1.0
 }
 
 /// Tree form of a display frame: a leaf layer, or a nested-sequence group whose children are composited offscreen
@@ -589,7 +601,13 @@ fn build(all: &[Item], depth: usize, force_normal: bool, under: &[RenderNode]) -
             && g.effects.masks.is_empty();
         let group_node = |t: ClipTransform, opacity: f64, children: Vec<RenderNode>, blend_mode: BlendMode| {
             if plain {
-                RenderNode::Group { format: g.format.clone(), transform: t, opacity, corner_radius: g.corner_radius, children }
+                RenderNode::Group {
+                    format: g.format.clone(),
+                    transform: t,
+                    opacity,
+                    corner_radius: g.corner_radius,
+                    children,
+                }
             } else {
                 RenderNode::StyledGroup {
                     format: g.format.clone(),
@@ -619,7 +637,11 @@ fn build(all: &[Item], depth: usize, force_normal: bool, under: &[RenderNode]) -
                     .collect();
                 let first = copies.remove(0);
                 let node = RenderNode::Pair { format: mb.format.clone(), first: vec![first], second: copies };
-                out.push(if group_blend == BlendMode::Normal { node } else { RenderNode::Blended(Box::new(node), group_blend) });
+                out.push(if group_blend == BlendMode::Normal {
+                    node
+                } else {
+                    RenderNode::Blended(Box::new(node), group_blend)
+                });
             }
             None => out.push(group_node(t, opacity, kids, group_blend)),
         }
@@ -799,13 +821,17 @@ mod tests {
         g.transform.opacity = 1.0;
         let mut moved = g.transform;
         moved.position = Vec2::new(10.0, 0.0);
-        g.motion_blur =
-            Some(MotionBlurSamples { format: format(64, 48), transforms: vec![g.transform, moved], local_times: vec![] });
+        g.motion_blur = Some(MotionBlurSamples {
+            format: format(64, 48),
+            transforms: vec![g.transform, moved],
+            local_times: vec![],
+        });
         a.groups = vec![g];
         let tree = RenderNode::tree(&[a], &[layer()]);
         assert_eq!(kinds(&tree), ["pair"]);
         let RenderNode::Pair { first, second, .. } = &tree[0] else { panic!("pair expected") };
-        let (RenderNode::Group { opacity: o1, .. }, RenderNode::Group { transform, opacity: o2, .. }) = (&first[0], &second[0])
+        let (RenderNode::Group { opacity: o1, .. }, RenderNode::Group { transform, opacity: o2, .. }) =
+            (&first[0], &second[0])
         else {
             panic!("groups expected")
         };
@@ -931,6 +957,83 @@ mod tests {
         let mut moved = node(ClipEffects::none());
         moved.transform.position = Vec2::new(1.0, 0.0);
         assert!(!moved.covers_base());
+    }
+
+    fn zoom(scale: f64) -> ClipTransform {
+        let mut t = ClipTransform::IDENTITY;
+        t.scale = Vec2::new(scale, scale);
+        t
+    }
+
+    fn zoom_request(n: u128, scale: f64) -> LayerRequest {
+        let mut r = adjustment_request(n, ClipEffects::none());
+        r.transform = zoom(scale);
+        r
+    }
+
+    fn adj_layer() -> RenderLayer {
+        RenderLayer::adjustment(ClipTransform::IDENTITY, None)
+    }
+
+    #[test]
+    fn a_motion_only_adjustment_over_broll_and_text_is_one_node_with_both_below() {
+        let tree = RenderNode::tree(&[request(1), request(2), zoom_request(3, 1.1)], &[layer(), layer(), adj_layer()]);
+        assert_eq!(kinds(&tree), ["adjustment"]);
+        let RenderNode::Adjustment(a, under) = &tree[0] else { panic!("adjustment expected") };
+        assert_eq!(under.len(), 2);
+        assert!(!a.draws_base, "a 110 % zoom covers the canvas: one draw");
+        let tree = RenderNode::tree(&[request(1), zoom_request(3, 0.9)], &[layer(), adj_layer()]);
+        let RenderNode::Adjustment(a, _) = &tree[0] else { panic!("adjustment expected") };
+        assert!(a.draws_base, "90 % leaves the edges open: the base shows through");
+    }
+
+    /// A7: an Adjustment Layer inside a nested clip adjusts only the layers of that nested sequence; the outer layer
+    /// below the nested clip stays outside of its `below`. An outer layer above a nested one never reaches into it.
+    #[test]
+    fn an_adjustment_inside_a_nested_clip_reaches_only_the_inner_layers() {
+        let outer = request(1);
+        let mut inner = request(2);
+        inner.groups = vec![group(50)];
+        let mut adj = adjustment_request(3, blur());
+        adj.groups = vec![group(50)];
+        let tree = RenderNode::tree(&[outer, inner, adj], &[layer(), layer(), adj_layer()]);
+        assert_eq!(kinds(&tree), ["layer", "group"]);
+        let RenderNode::Group { children, .. } = &tree[1] else { panic!("group expected") };
+        assert_eq!(kinds(children), ["adjustment"]);
+        let RenderNode::Adjustment(_, under) = &children[0] else { panic!("adjustment expected") };
+        assert_eq!(under.len(), 1, "only the inner layer");
+        // The same layer on the outer level adjusts the nested clip and the outer layer together.
+        let mut inner = request(2);
+        inner.groups = vec![group(50)];
+        let flat =
+            RenderNode::tree(&[request(1), inner, adjustment_request(3, blur())], &[layer(), layer(), adj_layer()]);
+        assert_eq!(kinds(&flat), ["adjustment"]);
+        let RenderNode::Adjustment(_, under) = &flat[0] else { panic!("adjustment expected") };
+        assert_eq!(kinds(under), ["layer", "group"]);
+    }
+
+    #[test]
+    fn a_motion_adjustment_at_rest_is_no_node_and_samples_must_all_cover() {
+        let tree = RenderNode::tree(&[request(1), zoom_request(3, 1.0)], &[layer(), adj_layer()]);
+        assert_eq!(kinds(&tree), ["layer"]);
+        let mut a = AdjustmentNode {
+            transform: zoom(1.1),
+            opacity: 1.0,
+            corner_radius: 0.0,
+            effects: ClipEffects::none(),
+            blend_mode: BlendMode::Normal,
+            color_pipeline: None,
+            motion_samples: vec![zoom(1.0), zoom(1.2)],
+            draws_base: false,
+        };
+        assert!(a.covers_base());
+        a.motion_samples.push(zoom(0.95));
+        assert!(!a.covers_base());
+        let mut rotated = zoom(1.5);
+        rotated.rotation = 5.0;
+        a.motion_samples.clear();
+        a.transform = rotated;
+        assert!(!a.covers_base());
     }
 
     #[test]

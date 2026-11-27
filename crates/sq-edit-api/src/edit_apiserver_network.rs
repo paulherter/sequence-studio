@@ -175,7 +175,10 @@ fn serve(mut stream: TcpStream, router: &Arc<EditAPIRouter>) {
                     Err(_) => {
                         cancel.store(true, Ordering::SeqCst);
                         // Never close without a reply: the caller learns the call was canceled.
-                        send(&mut stream, &HTTPResponse::error(503, "request deadline passed; the call was canceled", None));
+                        send(
+                            &mut stream,
+                            &HTTPResponse::error(503, "request deadline passed; the call was canceled", None),
+                        );
                     }
                 }
                 return;

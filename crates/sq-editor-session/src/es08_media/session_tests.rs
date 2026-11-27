@@ -428,6 +428,7 @@ struct ProxyFixture {
     /// Free bytes the fixture's disk reader reports; -1 = unknown.
     free: Arc<std::sync::atomic::AtomicI64>,
     dir: TempDir,
+    cache: Arc<ProxyCache>,
 }
 
 fn proxy_fixture(mode: Option<ProxyMode>) -> ProxyFixture {
@@ -457,7 +458,7 @@ fn proxy_fixture_on(mode: Option<ProxyMode>, machine: MachineProfile) -> ProxyFi
         clock: Box::new(move || Timestamp::from_unix_seconds(n.get())),
         ids: Box::new(SequentialIds::default()),
     };
-    ProxyFixture { service: AutoProxyService::new(cache, settings, deps), busy, now, free, dir }
+    ProxyFixture { service: AutoProxyService::new(Arc::clone(&cache), settings, deps), busy, now, free, dir, cache }
 }
 
 fn video_media(n: u128, path: &Path) -> MediaRef {
@@ -519,7 +520,7 @@ fn a_changed_source_is_decided_once_and_an_offline_one_not_at_all() {
     f.service.sync(&media, None, None);
     assert_eq!(f.service.take_decision_work().len(), 1, "a changed file starts over");
     // The first answer is stale now (a new ticket): ignored.
-    f.service.decision_finished(&work[0], ProxyOutcome::Ready { record: None });
+    f.service.decision_finished(&work[0], ProxyOutcome::Ready { record: None, software: false });
     assert!(f.service.ready_media().is_empty());
 }
 
@@ -531,7 +532,7 @@ fn a_cached_proxy_makes_the_media_ready_and_tells_the_monitors() {
     let work = f.service.take_decision_work();
     f.service.take_effects();
     assert_eq!(work[0].run(), ProxyOutcome::Skipped, "the failing prober decides nothing");
-    f.service.decision_finished(&work[0], ProxyOutcome::Ready { record: None });
+    f.service.decision_finished(&work[0], ProxyOutcome::Ready { record: None, software: false });
     assert_eq!(f.service.ready_media(), BTreeSet::from([id(1)]));
     assert_eq!(f.service.take_effects(), vec![ProxyEffect::ProxiesChanged(BTreeSet::from([id(1)]))]);
     assert!(!f.service.wants_tick());
@@ -540,6 +541,23 @@ fn a_cached_proxy_makes_the_media_ready_and_tells_the_monitors() {
     f.service.sync(&[video_media(1, &file)], None, None);
     assert!(f.service.ready_media().is_empty());
     assert!(f.service.take_effects().contains(&ProxyEffect::ProxiesChanged(BTreeSet::from([id(1)]))));
+}
+
+/// The playback set follows the live decoder fact of the resolver, not a flag stored once: a clip whose original is not
+/// open (or was opened in hardware after a transient failure) is not in the set, whatever the first decision said.
+#[test]
+fn auto_playback_set_follows_the_live_decoder_fact() {
+    let strong = MachineProfile { memory_bytes: 32 << 30, cores: 10, is_apple_silicon: true };
+    let mut f = proxy_fixture_on(Some(ProxyMode::Always), strong);
+    let (a, b) = (f.dir.file("a.mov", 100), f.dir.file("b.mov", 100));
+    f.service.sync(&[video_media(1, &a), video_media(2, &b)], None, None);
+    let work = f.service.take_decision_work();
+    f.service.take_effects();
+    let by = |m: u128| work.iter().find(|w| w.media == id(m)).unwrap();
+    f.service.decision_finished(by(1), ProxyOutcome::Ready { record: None, software: true });
+    f.service.decision_finished(by(2), ProxyOutcome::Ready { record: None, software: false });
+    let effects = f.service.take_effects();
+    assert!(!effects.iter().any(|e| matches!(e, ProxyEffect::PlaybackMediaChanged(_))), "no live fact: {effects:?}");
 }
 
 #[test]
@@ -816,4 +834,48 @@ fn a_far_unfinished_running_job_makes_way_for_a_near_one_but_a_near_one_never_do
     };
     assert_eq!(run(1005), 1, "A is 995 s away and B waits under the playhead: A is dropped and decided again");
     assert_eq!(run(5), 0, "the running A is under the playhead: it keeps going");
+}
+
+/// A ready proxy the opener refused for its frame times is made again: the service decides the media anew, once.
+#[test]
+fn a_proxy_refused_for_its_frame_times_is_queued_again_once() {
+    use sq_proxy::model::{ProxyDimensions, ProxyRecord, SourceFingerprint};
+    let mut f = proxy_fixture(Some(ProxyMode::Always));
+    let file = f.dir.file("a.mov", 100);
+    let fp = SourceFingerprint::compute(&file).unwrap();
+    let kind = ProxyKind::ProxyHalf;
+    let commit = |f: &ProxyFixture| {
+        let r = ProxyRecord::new(
+            fp.clone(),
+            kind,
+            ProxyCache::file_name(&fp, kind),
+            ProxyDimensions { width: 1920, height: 1080 },
+            Timestamp::from_unix_seconds(1.0),
+            Time::new(10, 1),
+        );
+        let partial = f.cache.partial_url(&fp, kind);
+        std::fs::write(&partial, b"x").unwrap();
+        f.cache.commit(&partial, &r).unwrap();
+        sq_proxy::proxy_cache::ProxyRecordID::new(&r)
+    };
+    let ready = |f: &mut ProxyFixture, record| {
+        f.service.sync(&[video_media(1, &file)], None, None);
+        let work = f.service.take_decision_work();
+        assert_eq!(work.len(), 1);
+        f.service.decision_finished(&work[0], ProxyOutcome::Ready { record: Some(record), software: false });
+        f.service.take_effects();
+    };
+    let record = commit(&f);
+    ready(&mut f, record);
+    assert!(f.cache.retire_mismatched(&fp, kind), "first refusal");
+    f.service.tick();
+    let work = f.service.take_decision_work();
+    assert_eq!(work.len(), 1, "the media is decided anew");
+    // The new proxy differs too: no second removal, nothing queued.
+    let record = commit(&f);
+    f.service.decision_finished(&work[0], ProxyOutcome::Ready { record: Some(record), software: false });
+    f.service.take_effects();
+    assert!(!f.cache.retire_mismatched(&fp, kind), "second refusal");
+    f.service.tick();
+    assert!(f.service.take_decision_work().is_empty(), "no loop");
 }

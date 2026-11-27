@@ -11,8 +11,22 @@ use sq_text::text_template::TextTemplate;
 
 /// The fields of one text layer.
 pub const LAYER_KEYS: [&str; 16] = [
-    "name", "text", "font", "size", "color", "weight", "align", "position", "scale", "rotation", "opacity", "italic",
-    "tracking", "lineSpacing", "allCaps", "style",
+    "name",
+    "text",
+    "font",
+    "size",
+    "color",
+    "weight",
+    "align",
+    "position",
+    "scale",
+    "rotation",
+    "opacity",
+    "italic",
+    "tracking",
+    "lineSpacing",
+    "allCaps",
+    "style",
 ];
 
 /// Layers one `addGraphic` may carry.
@@ -39,11 +53,9 @@ pub(crate) fn weight(v: &Value) -> Result<i64, String> {
         ("black", 900),
     ];
     let s = v.as_str().ok_or("weight: a number (100...900) or a name")?;
-    names
-        .iter()
-        .find(|(n, _)| n.eq_ignore_ascii_case(s))
-        .map(|(_, w)| *w)
-        .ok_or_else(|| format!("weight: unknown '{s}'; known: thin, light, regular, medium, semibold, bold, heavy, black"))
+    names.iter().find(|(n, _)| n.eq_ignore_ascii_case(s)).map(|(_, w)| *w).ok_or_else(|| {
+        format!("weight: unknown '{s}'; known: thin, light, regular, medium, semibold, bold, heavy, black")
+    })
 }
 
 /// Applies `spec` to `layer`. A new layer (`fresh`) must say its text. Position, scale, rotation and opacity are the layer's
@@ -84,7 +96,8 @@ pub fn apply(layer: &mut GraphicsLayer, spec: &Value, fresh: bool, duration: Tim
     if let Some(v) = m.get("align") {
         put("alignment", v.clone());
     }
-    for (from, to) in [("italic", "italic"), ("tracking", "tracking"), ("lineSpacing", "lineSpacing"), ("allCaps", "allCaps")]
+    for (from, to) in
+        [("italic", "italic"), ("tracking", "tracking"), ("lineSpacing", "lineSpacing"), ("allCaps", "allCaps")]
     {
         if let Some(v) = m.get(from) {
             put(to, v.clone());
@@ -104,7 +117,8 @@ pub fn apply(layer: &mut GraphicsLayer, spec: &Value, fresh: bool, duration: Tim
         layer.name = n.as_str().ok_or("name must be a string")?.to_string();
     }
     let mut host = Host::of_layer(layer, duration);
-    for (key, anim) in [("position", Anim::Position), ("scale", Anim::Scale), ("rotation", Anim::Rotation), ("opacity", Anim::Opacity)]
+    for (key, anim) in
+        [("position", Anim::Position), ("scale", Anim::Scale), ("rotation", Anim::Rotation), ("opacity", Anim::Opacity)]
     {
         if let Some(v) = m.get(key) {
             host.set(&Addr::Anim(anim), v)?;
@@ -114,9 +128,15 @@ pub fn apply(layer: &mut GraphicsLayer, spec: &Value, fresh: bool, duration: Tim
 }
 
 /// A new text layer; `fallback_name` names it when the spec does not.
-pub fn new_layer(spec: &Value, fallback_name: &str, ids: &mut dyn IdSource, duration: Time) -> Result<GraphicsLayer, String> {
+pub fn new_layer(
+    spec: &Value,
+    fallback_name: &str,
+    ids: &mut dyn IdSource,
+    duration: Time,
+) -> Result<GraphicsLayer, String> {
     check_spec(spec)?;
-    let blank = TextGenerator::make_ref(&TextTemplate::new("Text", "", TextStyle::default()), None).map_err(|e| e.to_string())?;
+    let blank = TextGenerator::make_ref(&TextTemplate::new("Text", "", TextStyle::default()), None)
+        .map_err(|e| e.to_string())?;
     let mut l = GraphicsLayer::text(ids.next_id(), blank, fallback_name);
     apply(&mut l, spec, true, duration)?;
     Ok(l)

@@ -93,6 +93,8 @@ pub enum ProxyEffect {
     UseChanged(ProxyUse),
     /// The proxies of these media changed or went away: engines drop frames and decoders, the resolver reopens them.
     ProxiesChanged(BTreeSet<Id>),
+    /// These media play their ready proxy at any quality (software-decoded here, playback setting Auto); sent when the set changes.
+    PlaybackMediaChanged(BTreeSet<Id>),
 }
 
 /// The disk reading of the cache volume.
@@ -124,7 +126,7 @@ pub enum ProxyOutcome {
     /// No proxy is made (probe failed, light source, edit list, mode off...).
     Skipped,
     /// A proxy of the current file is in the cache already.
-    Ready { record: Option<ProxyRecordID> },
+    Ready { record: Option<ProxyRecordID>, software: bool },
     /// A job is needed.
     NeedsJob { kind: ProxyKind, software: bool, estimate: i64, disk: DiskSpace },
 }
@@ -173,13 +175,15 @@ impl ProxyDecisionWork {
         let Some(original) = self.resolver.opened_demuxer(self.media) else {
             return self.skip("the original cannot be opened");
         };
+        // The fact per media (not only for light sources): heavy media decoded in software play their proxy too.
+        software = software || self.resolver.decodes_in_hardware(self.media) == Some(false);
         if !AutoProxyService::<NoDefaults>::proxy_can_match(original.index()) {
             return self.skip("a proxy would not match the original");
         }
         // Fingerprint of the current file, for the stat-only lookup.
         self.provider.warm(path);
         if let Some(hit) = self.provider.cached_lookup(path, &ProxyProvider::SCRUB_PREFERENCE, self.now) {
-            return ProxyOutcome::Ready { record: hit.record };
+            return ProxyOutcome::Ready { record: hit.record, software };
         }
         let estimate = ProxySizeEstimate::bytes(
             kind,
@@ -271,6 +275,8 @@ pub struct AutoProxyService<D: ProxyDefaults> {
     mode: ProxyMode,
     /// The playback setting last applied (with `mode`), to tell a real settings change from any other write.
     applied_playback: ProxyPlaybackMode,
+    /// The media set last sent as `PlaybackMediaChanged`.
+    sent_playback_media: BTreeSet<Id>,
     is_held: bool,
     queue_held: bool,
     work: Vec<ProxyDecisionWork>,
@@ -343,6 +349,7 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
             last_timeline: None,
             mode: ProxyMode::Auto,
             applied_playback: ProxyPlaybackMode::Auto,
+            sent_playback_media: BTreeSet::new(),
             is_held: false,
             queue_held: false,
             work: Vec::new(),
@@ -431,7 +438,7 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
 
     /// Any tracked media still has a live decision or a queued/running job: a playback or export that starts now must
     /// still be seen (probe, warm and enqueue happen before `job` is set).
-    pub(crate) fn needs_busy_polling(&self) -> bool {
+    pub fn needs_busy_polling(&self) -> bool {
         self.tracked.values().any(|t| t.state.is_active())
     }
 
@@ -767,7 +774,12 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
                 self.report_case(id, ProxyCase::Skipped);
                 self.apply(id, ProxyEvent::Skipped);
             }
-            ProxyOutcome::Ready { record } => self.became_ready(id, file, ProxyEvent::FoundReady { record }),
+            ProxyOutcome::Ready { record, software } => {
+                if software && let Some(t) = self.tracked.get_mut(&id) {
+                    t.software = true;
+                }
+                self.became_ready(id, file, ProxyEvent::FoundReady { record });
+            }
             ProxyOutcome::NeedsJob { kind, software, estimate, disk } => {
                 if self.cache_full_of_proxies_in_use() {
                     self.apply(id, ProxyEvent::CapReached);
@@ -921,14 +933,18 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
         let rid = ProxyRecordID::new(record);
         let hit: BTreeSet<Id> =
             self.tracked.iter().filter(|(_, t)| t.state.record() == Some(&rid)).map(|(id, _)| *id).collect();
-        if hit.is_empty() {
-            return;
+        // A proxy refused for its frame times was thrown away to be made again: decide the media anew (once).
+        let again = self.cache.take_retired(&rid);
+        if !hit.is_empty() {
+            for id in &hit {
+                self.tracked.remove(id);
+            }
+            self.update_protected();
+            self.notify(hit);
         }
-        for id in &hit {
-            self.tracked.remove(id);
+        if again {
+            self.refresh();
         }
-        self.update_protected();
-        self.notify(hit);
     }
 
     /// The proxies of these media changed or went away: the resolver reopens them, the engines drop frames and decoders.
@@ -937,8 +953,33 @@ impl<D: ProxyDefaults> AutoProxyService<D> {
         self.effects.push(ProxyEffect::ProxiesChanged(ids));
     }
 
+    /// The media whose proxy plays at any quality: software-decoded ones, only under playback Auto on a machine that
+    /// is not weak (a weak machine or `On` already plays every proxy; `Off` and project mode Off play none).
+    fn playback_media(&self) -> BTreeSet<Id> {
+        if self.mode == ProxyMode::Off {
+            return BTreeSet::new();
+        }
+        self.tracked
+            .iter()
+            .filter(|(id, _)| {
+                // Live fact: every (re)open of the original refreshes it, so a transient hardware failure does not stick.
+                AutoProxyRule::plays_proxy_for_media(
+                    self.applied_playback,
+                    &self.machine,
+                    self.resolver.decodes_in_hardware(**id) == Some(false),
+                ) && !AutoProxyRule::uses_proxies_for_playback(self.applied_playback, &self.machine)
+            })
+            .map(|(id, _)| *id)
+            .collect()
+    }
+
     /// What the monitors must be told, in order. The session applies it to every engine it owns.
     pub fn take_effects(&mut self) -> Vec<ProxyEffect> {
+        let media = self.playback_media();
+        if media != self.sent_playback_media {
+            self.sent_playback_media = media.clone();
+            self.effects.push(ProxyEffect::PlaybackMediaChanged(media));
+        }
         std::mem::take(&mut self.effects)
     }
 

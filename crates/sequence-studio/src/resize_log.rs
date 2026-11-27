@@ -37,7 +37,7 @@ impl ResizeLog {
     pub fn frame(&mut self, layout: Duration, timing: PresentTiming, drawn: bool) {
         let Some(first) = self.first_event.take() else { return };
         let ms = |d: Duration| d.as_secs_f64() * 1e3;
-        eprintln!(
+        sq_os::errln!(
             "resize-step events={} configure={:.1} layout={:.1} acquire={:.1} draw={:.1} present={:.1} event_to_done={:.1} drawn={drawn}",
             std::mem::take(&mut self.events),
             ms(timing.configure),

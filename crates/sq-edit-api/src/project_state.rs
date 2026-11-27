@@ -21,6 +21,8 @@ pub struct ProjectState {
     pub media: Vec<MediaState>,
     /// Sequences.
     pub sequences: Vec<SequenceState>,
+    /// The Project panel's folder tree: the root folder with its children in panel order (sequences, media, folders).
+    pub folders: FolderState,
     /// The playhead of the open sequence.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub playhead: Option<Time>,
@@ -58,9 +60,54 @@ impl ProjectState {
                 })
                 .collect(),
             sequences: p.timelines.iter().map(SequenceState::new).collect(),
+            folders: FolderState::new(&p.root_bin),
             playhead: None,
             file: None,
             dirty: None,
+        }
+    }
+}
+
+/// A folder (bin) of the Project panel with its children in panel order; `moveSequence` and `createFolder` address these ids.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct FolderState {
+    /// Folder id.
+    pub id: Id,
+    /// Shown name.
+    pub name: String,
+    /// Children in order.
+    pub children: Vec<FolderChild>,
+}
+
+/// One child of a folder: a sequence or a media item (by id), or a sub-folder.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(tag = "type", rename_all = "camelCase")]
+pub enum FolderChild {
+    /// A sequence.
+    Sequence { id: Id },
+    /// A media item.
+    Media { id: Id },
+    /// A sub-folder.
+    Folder(FolderState),
+}
+
+impl FolderState {
+    /// The read model of `b`.
+    pub fn new(b: &sq_core_model::Bin) -> FolderState {
+        use sq_core_model::BinItem;
+        FolderState {
+            id: b.id,
+            name: b.name.clone(),
+            children: b
+                .children
+                .iter()
+                .map(|c| match c {
+                    BinItem::Sequence(id) => FolderChild::Sequence { id: *id },
+                    BinItem::Media(id) => FolderChild::Media { id: *id },
+                    BinItem::Bin(sub) => FolderChild::Folder(FolderState::new(sub)),
+                })
+                .collect(),
         }
     }
 }

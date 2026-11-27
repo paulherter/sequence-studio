@@ -108,12 +108,12 @@ pub fn run(project: &Path, args: &ExportArgs) -> Result<(), String> {
                 "encoder": r.encoder,
                 "size_bytes": r.size_bytes,
             });
-            println!("{line}");
+            sq_os::outln!("{line}");
             Ok(())
         }
         Err(Stop::Error(e)) => Err(e),
         Err(Stop::Canceled(text)) => {
-            eprintln!("{text}");
+            sq_os::errln!("{text}");
             sq_media_ffmpeg::encode::finish_warm_up();
             std::process::exit(CANCELED_EXIT)
         }
@@ -168,7 +168,7 @@ pub fn execute(project: &Path, args: &ExportArgs, interrupted: &AtomicBool) -> R
         }
         // The sheet lets SDR pictures be conformed to HLG/PQ (an SDR to HDR conform); it adds no HDR range.
         if ExportDialogModel::hdr_target(&timeline).is_none() {
-            eprintln!(
+            sq_os::errln!(
                 "note: the clips do not target HDR; --hdr {h} tags the file and converts SDR pictures, it adds no HDR range."
             );
         }
@@ -220,9 +220,9 @@ pub fn execute(project: &Path, args: &ExportArgs, interrupted: &AtomicBool) -> R
     job.replace_existing = args.overwrite;
     let id = queue.enqueue(job);
     if let Some(planned) = queue.status(id).map(|s| s.output_url).filter(|p| p.file_name() != out.file_name()) {
-        eprintln!("note: {} exists; writing {} (--overwrite replaces it).", out.display(), planned.display());
+        sq_os::errln!("note: {} exists; writing {} (--overwrite replaces it).", out.display(), planned.display());
     }
-    println!("export {} frames, preset {}, {codec}", frames, preset.name());
+    sq_os::outln!("export {} frames, preset {}, {codec}", frames, preset.name());
     let start = Instant::now();
     let finished = AtomicBool::new(false);
     let finished = &finished;
@@ -239,7 +239,7 @@ pub fn execute(project: &Path, args: &ExportArgs, interrupted: &AtomicBool) -> R
                 if let Ok(s) = updates.recv_timeout(Duration::from_millis(100)) {
                     let pct = (s.progress * 100.0) as i32;
                     if pct != last && matches!(s.state, ExportJobState::Running) {
-                        println!("progress {pct}%");
+                        sq_os::outln!("progress {pct}%");
                         last = pct;
                     }
                 }
@@ -265,7 +265,7 @@ pub fn execute(project: &Path, args: &ExportArgs, interrupted: &AtomicBool) -> R
             // The proof of hardware or software encoding, on every system (also in the app log: "export: video encoder ...").
             let encoder = encoder.last_video_encoder();
             if !encoder.is_empty() {
-                println!("video encoder {encoder}");
+                sq_os::outln!("video encoder {encoder}");
             }
             Ok(Report { file, frames, codec, encoder, size_bytes, seconds })
         }
@@ -311,7 +311,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("sq-export-cli-{}", std::process::id()));
         std::fs::create_dir_all(&dir).expect("temp folder");
         let Some(project) = project_in(&dir) else {
-            eprintln!("skipped: no ffmpeg or no graphics device");
+            sq_os::errln!("skipped: no ffmpeg or no graphics device");
             return;
         };
         let by_codec = |c: sq_export::core::settings::VideoCodec| {
@@ -330,7 +330,7 @@ mod tests {
             match run(&project, &args(&out, &preset)) {
                 Ok(()) => assert!(std::fs::metadata(&out).is_ok_and(|m| m.len() > 500), "no file for {preset}"),
                 // An encoder this FFmpeg build lacks (the LGPL build has no libx264/x265).
-                Err(e) => eprintln!("{preset}: {e}"),
+                Err(e) => sq_os::errln!("{preset}: {e}"),
             }
         }
         // At least the first available codec must have worked.
@@ -393,7 +393,7 @@ mod tests {
         let r = execute(&project, &args(&out, &preset_of(sq_export::core::settings::VideoCodec::H264)), &flag);
         match r {
             Err(Stop::Canceled(t)) => assert!(t.ends_with("canceled"), "{t}"),
-            Err(Stop::Error(e)) => eprintln!("skipped: {e}"),
+            Err(Stop::Error(e)) => sq_os::errln!("skipped: {e}"),
             Ok(_) => panic!("an interrupted run must not finish"),
         }
         assert!(!out.exists(), "the partial file is gone");
@@ -408,7 +408,7 @@ mod tests {
         let out = dir.join("same.mov");
         let flag = AtomicBool::new(false);
         let first = execute(&project, &args(&out, &preset), &flag);
-        let Ok(first) = first else { return eprintln!("skipped: {first:?}") };
+        let Ok(first) = first else { return sq_os::errln!("skipped: {first:?}") };
         assert_eq!(first.file, out);
         assert!(first.encoder.contains("prores"), "the report names the video encoder: {:?}", first.encoder);
         let second = execute(&project, &args(&out, &preset), &flag).expect("second");
@@ -546,7 +546,7 @@ mod tests {
                 match execute(&project, &args(&out, preset), &flag) {
                     Ok(r) => assert!(r.size_bytes > 100, "{label} {preset}: empty file"),
                     // An encoder this FFmpeg build lacks (the LGPL build has no libx264/x265).
-                    Err(Stop::Error(e)) if e.contains("encoder") => eprintln!("{label} {preset}: {e}"),
+                    Err(Stop::Error(e)) if e.contains("encoder") => sq_os::errln!("{label} {preset}: {e}"),
                     Err(e) => panic!("{label} {preset}: {e:?}"),
                 }
             }

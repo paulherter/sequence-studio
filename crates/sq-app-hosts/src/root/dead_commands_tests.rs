@@ -25,7 +25,7 @@ const KNOWN_DEAD: [&str; 0] = [];
 /// Commands the three demo scenarios never enable. Each has its state in `disabled_commands_tests.rs` (the Swift enabling
 /// rule, enabled and run). A different count means a command was newly disabled everywhere (a lost fact) or the demo grew:
 /// update the number together with the state tests.
-const DISABLED_IN_DEMO: usize = 81;
+const DISABLED_IN_DEMO: usize = 82;
 
 /// What the demo project looks like: a plain sequence, one with In and Out set, or a Fast Cut (magnetic) one.
 #[derive(Clone, Copy, PartialEq, Debug)]
@@ -125,7 +125,7 @@ fn no_audited_command_is_dead_with_the_demo_project() {
             dead.push(format!("{c:?}"));
         }
     }
-    eprintln!(
+    sq_os::errln!(
         "commands: {}, unwired: {unwired}, disabled in every scenario: {}, dead: {}\ndisabled: {disabled_everywhere:?}",
         commands.len(),
         disabled_everywhere.len(),

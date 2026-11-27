@@ -166,7 +166,19 @@ impl AutoProxyRule {
         if software_decode && rank != i64::MAX { rank - media_count } else { rank }
     }
 
-    /// Whether playback reads proxies under `mode`.
+    /// Whether playback reads the proxy of ONE media under `mode`: Auto reads it on a weak machine, or when this
+    /// machine decodes that media in software (`software_decode`: a hardware-decodable media keeps full quality).
+    /// Paused frames, scrubbing stills and export read the original regardless.
+    pub fn plays_proxy_for_media(mode: ProxyPlaybackMode, machine: &MachineProfile, software_decode: bool) -> bool {
+        match mode {
+            ProxyPlaybackMode::Auto => machine.is_weak() || software_decode,
+            ProxyPlaybackMode::On => true,
+            ProxyPlaybackMode::Off => false,
+        }
+    }
+
+    /// Whether playback reads proxies under `mode` for every media (the global switch; `Auto` here means weak only,
+    /// per-media software decode is [`Self::plays_proxy_for_media`]).
     pub fn uses_proxies_for_playback(mode: ProxyPlaybackMode, machine: &MachineProfile) -> bool {
         match mode {
             ProxyPlaybackMode::Auto => machine.is_weak(),
@@ -649,6 +661,13 @@ mod tests {
         assert!(!AutoProxyRule::uses_proxies_for_playback(ProxyPlaybackMode::Auto, &strong()));
         assert!(AutoProxyRule::uses_proxies_for_playback(ProxyPlaybackMode::On, &strong()));
         assert!(!AutoProxyRule::uses_proxies_for_playback(ProxyPlaybackMode::Off, &weak()));
+        // Per media: software-decoded heavy media play their proxy on a strong machine, hardware ones keep the original.
+        let (auto, strong) = (ProxyPlaybackMode::Auto, strong());
+        assert!(AutoProxyRule::plays_proxy_for_media(auto, &strong, true));
+        assert!(!AutoProxyRule::plays_proxy_for_media(auto, &strong, false));
+        assert!(AutoProxyRule::plays_proxy_for_media(auto, &weak(), false));
+        assert!(!AutoProxyRule::plays_proxy_for_media(ProxyPlaybackMode::Off, &strong, true));
+        assert!(AutoProxyRule::plays_proxy_for_media(ProxyPlaybackMode::On, &strong, false));
     }
 
     #[derive(Default)]

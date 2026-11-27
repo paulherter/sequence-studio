@@ -169,7 +169,10 @@ impl TemplateSlotsDraw {
             Control::Slot(i) => {
                 let y = Self::row_y(i);
                 match self.slots[i].kind {
-                    TemplateSlotKind::Text | TemplateSlotKind::Font => {
+                    TemplateSlotKind::Text
+                    | TemplateSlotKind::Font
+                    | TemplateSlotKind::Emoji
+                    | TemplateSlotKind::Image => {
                         CGRect::new(ControlsGrid::VALUE_X, y + ((h - ch) / 2.0).round(), wide, ch)
                     }
                     TemplateSlotKind::Color => CGRect::new(
@@ -248,6 +251,8 @@ impl TemplateSlotsDraw {
                         fd.draw(c, f, &t, self.focused == Some(s.id), cx);
                     }
                 }
+                // Emoji and Image rows get their controls in part B; until then the row shows only its label.
+                SlotValue::Media { .. } => {}
             }
         }
         // Keep intro and outro: a checkbox with its title, then Middle while the zones are on.
@@ -371,7 +376,8 @@ impl TemplateSlotsDraw {
                     self.menu = Some(MenuRequest { items, anchor: self.frame(Control::Slot(i)) });
                 }
             }
-            TemplateSlotKind::Color => {}
+            // Part B: the system emoji picker and the file chooser.
+            TemplateSlotKind::Color | TemplateSlotKind::Emoji | TemplateSlotKind::Image => {}
         }
     }
 

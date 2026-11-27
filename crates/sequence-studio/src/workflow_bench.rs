@@ -88,6 +88,18 @@ pub fn script(name: &str) -> Option<Vec<Phase>> {
     let mut scrub = burst(&mut seed, 500, 30);
     scrub.push((1700, Action::Play));
     want(play("pause_scrub_play", 3500, scrub), "scrub");
+    // A drag of the playhead across the sequence: slow (one step per 100 ms), fast (one step per 16 ms), both there and back.
+    let sweep = |from: u64, n: u64, every: u64, step: u32| -> Vec<(u64, Action)> {
+        let mut v = vec![(from, Action::Pause), (from + 20, Action::BeginScrub)];
+        v.extend((0..n).map(|i| {
+            let k = if i < n / 2 { i } else { n - i } as u32;
+            (from + 40 + i * every, Action::ScrubTo(100 + k * step))
+        }));
+        v.push((from + 40 + n * every + 16, Action::EndScrub));
+        v
+    };
+    want(play("scrub_slow", 7000, sweep(500, 60, 100, 2)), "scrub_slow");
+    want(play("scrub_fast", 3500, sweep(500, 120, 16, 12)), "scrub_fast");
     // Pause, scrub, Play three times in a row without a break, then a last Play that has to start at once.
     let mut quick = Vec::new();
     for round in 0..3u64 {
@@ -227,7 +239,11 @@ mod tests {
     fn the_script_is_deterministic_and_every_action_fits_in_its_phase() {
         let a = script("all").expect("all");
         assert_eq!(a, script("all").expect("all"));
-        assert_eq!(a.len(), 8);
+        assert_eq!(
+            a.len(),
+            10,
+            "play, drag, effect, stabilizer, subject mask, undo, scrub, scrub_slow, scrub_fast, quick"
+        );
         for p in &a {
             assert!(p.actions.windows(2).all(|w| w[0].0 <= w[1].0), "{} is not in time order", p.name);
             assert!(p.actions.iter().all(|(at, _)| *at < p.total_ms), "{} has an action after its end", p.name);

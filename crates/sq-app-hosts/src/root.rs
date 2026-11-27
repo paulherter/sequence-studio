@@ -807,7 +807,7 @@ impl AppRoot {
                 LibraryDrawServices::persist_folders(&folders, &mut store);
             }
             LibraryModelEvent::InsertTitleBlock(item, time) => {
-                lines.push(TextTemplatePlacement::insert_title(&item, time, cx.session));
+                lines.push(TextTemplatePlacement::insert_title(&item, time, None, cx.session));
             }
             LibraryModelEvent::ImportWorkspaces(w) => lines.extend(self.import_workspaces(&w)),
             LibraryModelEvent::ApplyPreset(..) => {}
@@ -1585,15 +1585,16 @@ impl AppRoot {
             sq_platform::physical_memory().unwrap_or(16 << 30),
         );
         model.set_auto_base(sq_editor_session::MonitorQuality::from_scale(start));
-        sq_media_ffmpeg::shim::set_weak_machine(
-            sq_core_project::work_limits::MachineResources::current(
-                |k| std::env::var(k).ok(),
-                sq_platform::physical_memory().unwrap_or(16 << 30),
-                std::thread::available_parallelism().map_or(8, |n| n.get() as i64),
-                cfg!(all(target_os = "macos", target_arch = "x86_64")),
-            )
-            .is_weak_for_decode(),
+        let machine = sq_core_project::work_limits::MachineResources::current(
+            |k| std::env::var(k).ok(),
+            sq_platform::physical_memory().unwrap_or(16 << 30),
+            std::thread::available_parallelism().map_or(8, |n| n.get() as i64),
+            cfg!(all(target_os = "macos", target_arch = "x86_64")),
         );
+        if std::env::var_os("SQ_SCRUB_TRACE").is_some() {
+            sq_os::errln!("[scrub-trace] machine {machine:?} weak {}", machine.is_weak_for_decode());
+        }
+        sq_media_ffmpeg::shim::set_weak_machine(machine.is_weak_for_decode());
         if model.quality() != wanted || model.quality() == sq_editor_session::MonitorQuality::Auto {
             model.set_quality(wanted);
         }
@@ -2379,7 +2380,7 @@ impl AppRoot {
                 }
                 DropKind::Title(id) => {
                     let item = self.library.panel_host().panel.model.presets().iter().find(|p| p.id == *id).cloned();
-                    line = item.map(|i| TextTemplatePlacement::insert_title(&i, Some(time), cx.session));
+                    line = item.map(|i| TextTemplatePlacement::insert_title(&i, Some(time), None, cx.session));
                 }
                 DropKind::Template(id) => {
                     let entries = self.library.panel_host().panel.model.template_entries();
@@ -2522,6 +2523,7 @@ impl AppRoot {
                                 .iter()
                                 .filter(|i| {
                                     !i.starts_with("preset.")
+                                        && !sq_editor_session::EffectDragPayload::is_adjustment_layer(i)
                                         && sq_editor_session::EffectDragPayload::transition_kind(i).is_none()
                                 })
                                 .cloned()

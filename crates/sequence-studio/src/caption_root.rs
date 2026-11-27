@@ -83,7 +83,7 @@ fn install_chrome(window: &Arc<Window>, state: &Shared) {
         }),
     };
     if !sq_platform_win::install_chrome(window, chrome) {
-        eprintln!("window chrome could not be installed");
+        sq_os::errln!("window chrome could not be installed");
     }
 }
 

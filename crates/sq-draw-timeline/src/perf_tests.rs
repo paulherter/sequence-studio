@@ -72,7 +72,7 @@ fn report(name: &str, mut ms: Vec<f64>) -> (f64, f64) {
     let max = ms.iter().cloned().fold(0.0, f64::max);
     ms.sort_by(|a, b| a.partial_cmp(b).unwrap());
     let p95 = ms[(ms.len() * 95 / 100).min(ms.len() - 1)];
-    eprintln!("perf {name}: n={} p95={p95:.2} ms max={max:.2} ms", ms.len());
+    sq_os::errln!("perf {name}: n={} p95={p95:.2} ms max={max:.2} ms", ms.len());
     (p95, max)
 }
 
@@ -83,7 +83,7 @@ fn perf_first_30_scroll_and_zoom_steps() {
     let mut cv = sq_draw::Canvas::with_size(1600.0, 700.0, None, 1.0);
     let t0 = Instant::now();
     r.p.draw_timeline(&mut cv); // the very first frame builds fonts and layers
-    eprintln!("perf first frame: {:.2} ms", t0.elapsed().as_secs_f64() * 1000.0);
+    sq_os::errln!("perf first frame: {:.2} ms", t0.elapsed().as_secs_f64() * 1000.0);
     r.p.set_zoom(40.0, None);
     let mut scroll = Vec::new();
     for i in 0..30 {
@@ -104,7 +104,7 @@ fn perf_first_30_scroll_and_zoom_steps() {
     let mut cv = sq_draw::Canvas::with_size(1600.0, 700.0, None, 1.0);
     r.p.draw_timeline(&mut cv);
     let quads = cv.list.quads().len();
-    eprintln!("perf quads in last frame: {quads}");
+    sq_os::errln!("perf quads in last frame: {quads}");
     assert!(quads > 500, "the busy timeline must draw clips and waveforms");
     let (_, smax) = report("scroll", scroll);
     let (_, zmax) = report("zoom", zoom);

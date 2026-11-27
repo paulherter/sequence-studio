@@ -335,17 +335,25 @@ impl EffectCatalog {
         SPECS.get_or_init(stage_specs::generators)
     }
 
+    /// The listed spec of a kind without a copy (the video, audio and generator tables); `None` for the retired motion
+    /// kinds and the stage kinds that `spec_for` builds on demand. Per-frame callers use this, not `spec_for`.
+    pub fn spec_ref(kind: &str) -> Option<&'static EffectSpec> {
+        if motion_specs::is_retired(kind) {
+            return None;
+        }
+        Self::every_spec()
+            .iter()
+            .chain(Self::every_audio_spec())
+            .chain(Self::generator_specs())
+            .find(|s| s.kind == kind)
+    }
+
     /// Every known kind, including the generator-owned and written-by-tool ones the Effects panel does not offer.
     pub fn spec_for(kind: &str) -> Option<EffectSpec> {
         if motion_specs::is_retired(kind) {
             return motion_specs::specs().into_iter().find(|s| s.kind == kind);
         }
-        let found = Self::every_spec()
-            .iter()
-            .chain(Self::every_audio_spec())
-            .chain(Self::generator_specs())
-            .find(|s| s.kind == kind);
-        if let Some(s) = found {
+        if let Some(s) = Self::spec_ref(kind) {
             return Some(s.clone());
         }
         match kind {
@@ -366,6 +374,9 @@ impl EffectCatalog {
 
     /// One parameter of a kind.
     pub fn param(kind: &str, key: &str) -> Option<EffectParamSpec> {
+        if let Some(s) = Self::spec_ref(kind) {
+            return s.params.iter().find(|p| p.key == key).cloned();
+        }
         Self::spec_for(kind)?.params.into_iter().find(|p| p.key == key)
     }
 
@@ -566,6 +577,19 @@ mod tests {
             keys.dedup();
             assert_eq!(keys.len(), s.params.len(), "{}", s.kind);
         }
+    }
+
+    #[test]
+    fn spec_ref_is_the_listed_spec_without_a_copy_and_param_agrees_with_spec_for() {
+        for s in EffectCatalog::every_spec().iter().chain(EffectCatalog::every_audio_spec()) {
+            assert_eq!(EffectCatalog::spec_ref(&s.kind), Some(s));
+            for p in &s.params {
+                assert_eq!(EffectCatalog::param(&s.kind, &p.key).map(|x| x.key), Some(p.key.clone()));
+            }
+        }
+        assert!(EffectCatalog::spec_ref("noSuchEffect").is_none());
+        assert!(EffectCatalog::spec_ref(ClipEffect::REFRAME_KIND).is_none());
+        assert!(EffectCatalog::param(ClipEffect::REFRAME_KIND, "noSuchKey").is_none());
     }
 
     #[test]

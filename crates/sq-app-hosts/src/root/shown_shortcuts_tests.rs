@@ -631,7 +631,7 @@ fn check_allowed(expect: Expect, by_key: &mut World, row: &Row, taken: bool) -> 
 }
 
 fn assert_clean(label: &str, focus: PanelID, r: &Report, main_menu: bool) {
-    eprintln!(
+    sq_os::errln!(
         "{label} {focus:?}: shown {}, ran same {}, allowed {}, not in this focus {}, never enabled {}, FAILED {}",
         r.shown.len(),
         r.ran.len(),
@@ -640,7 +640,7 @@ fn assert_clean(label: &str, focus: PanelID, r: &Report, main_menu: bool) {
         r.never_enabled.len(),
         r.failures.len()
     );
-    eprintln!("never enabled: {:?}", r.never_enabled);
+    sq_os::errln!("never enabled: {:?}", r.never_enabled);
     if main_menu && focus == PanelID::Timeline && std::env::var("SQ_SHOWN_KEYS_ONLY").is_err() {
         let expected: BTreeSet<String> =
             UNCOVERED.iter().map(|(id, _)| id.to_string()).filter(|id| r.shown.contains(id)).collect();

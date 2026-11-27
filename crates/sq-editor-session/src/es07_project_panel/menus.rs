@@ -19,6 +19,7 @@ use super::Column;
 pub enum ProjectMenuAction {
     NewFolder,
     NewColorMatte,
+    NewAdjustmentLayer,
     NewSequence,
     ImportMedia,
     Find,
@@ -165,6 +166,7 @@ impl ProjectPanelMenus {
             add(&mut rows, "New Folder", A::NewFolder, true, Some(EditorCommand::NewBin));
             add(&mut rows, "New Sequence…", A::NewSequence, true, Some(EditorCommand::NewSequence));
             add(&mut rows, "New Color Matte…", A::NewColorMatte, true, None);
+            add(&mut rows, "New Adjustment Layer", A::NewAdjustmentLayer, true, None);
             rows.push(SQMenuItem::separator());
             add(&mut rows, "Import…", A::ImportMedia, true, Some(EditorCommand::ImportMedia));
             rows.push(SQMenuItem::separator());

@@ -45,6 +45,12 @@ struct State {
     settings: ProxySettings,
     /// Records in use (e.g. open in a monitor): eviction never removes them.
     protected: BTreeSet<ProxyRecordID>,
+    /// (source, kind) pairs whose proxy was refused for wrong frame times and thrown away once; kept in `retired.json`
+    /// (the key holds the source fingerprint, so a changed source starts over). shortcut: the file only grows, a few bytes
+    /// per refused source; prune it with the records if it ever matters.
+    retired: BTreeSet<Key>,
+    /// Retired pairs whose removal the auto-proxy service has not turned into a new job yet.
+    retired_pending: BTreeSet<Key>,
 }
 
 /// On-disk proxy store keyed by (fingerprint, kind). Thread-safe; all methods are synchronous and cheap.
@@ -121,6 +127,11 @@ impl ProxyCache {
             for r in list {
                 state.records.insert((r.fingerprint.id(), r.kind), r);
             }
+        }
+        if let Some(list) =
+            fs::read(directory.join("retired.json")).ok().and_then(|d| serde_json::from_slice::<Vec<Key>>(&d).ok())
+        {
+            state.retired.extend(list);
         }
         if let Some(s) = fs::read(directory.join("settings.json"))
             .ok()
@@ -262,6 +273,33 @@ impl ProxyCache {
         self.write_index()?;
         broadcast(&mut self.lock().listeners, record);
         Ok(())
+    }
+
+    /// A ready proxy was refused because its frame times differ from the original's: throws it away so the automatic
+    /// flow makes a new one, but only once per (source, kind), also across app starts. `false` (nothing removed) when
+    /// this pair was retired before (the new proxy differs too, a loop of encodes must not start). `protected` is
+    /// ignored on purpose: the auto-proxy service protects every ready proxy it tracks, which is the very record being
+    /// replaced; a monitor that still has the file open keeps reading it (Unix) until it reopens.
+    pub fn retire_mismatched(&self, fingerprint: &SourceFingerprint, kind: ProxyKind) -> bool {
+        let key = (fingerprint.id(), kind);
+        let list = {
+            let mut st = self.lock();
+            if !st.records.contains_key(&key) || !st.retired.insert(key.clone()) {
+                return false;
+            }
+            st.retired_pending.insert(key);
+            st.retired.iter().cloned().collect::<Vec<Key>>()
+        };
+        if let Ok(bytes) = sorted_json(&list) {
+            write_atomic(&self.directory.join("retired.json"), &bytes).ok();
+        }
+        self.remove(fingerprint, kind);
+        true
+    }
+
+    /// Whether `record` was retired by `retire_mismatched` and nobody asked for its replacement yet (asking clears it).
+    pub fn take_retired(&self, record: &ProxyRecordID) -> bool {
+        self.lock().retired_pending.remove(&(record.fingerprint_id.clone(), record.kind))
     }
 
     /// Deletes the proxy file and its record and reports the removal.

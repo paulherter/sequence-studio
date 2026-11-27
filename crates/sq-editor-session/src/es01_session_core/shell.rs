@@ -101,7 +101,7 @@ impl EditorSession {
     /// Whether any media is missing.
     // Swift: EditorSession+Shell.swift:59
     pub fn can_relink(&self) -> bool {
-        !self.missing_media().is_empty()
+        self.with_missing_media(|m| !m.is_empty())
     }
 
     /// Searches `folder` for the missing media by file name and relinks what matches.
@@ -251,5 +251,27 @@ mod tests {
         assert_eq!((s.project().name.as_str(), s.undo_name()), ("Old", Some("Restore Autosave Version")));
         assert!(!s.can_relink());
         assert!(!s.locate_media(Id::from_u128(5), Path::new("/x")));
+    }
+
+    #[test]
+    fn offline_check_does_not_stat_per_call() {
+        let mut s = session("stat-cache");
+        let path = std::env::temp_dir().join(format!("sq-stat-cache-{}.bin", std::process::id()));
+        std::fs::write(&path, b"x").unwrap();
+        let p = path.to_string_lossy().to_string();
+        s.perform("Add", None, |pr| {
+            let fp = sq_core_model::MediaFingerprint { size: 1, modified: None, head_hash: None };
+            pr.media.push(sq_core_model::MediaRef::new(Id::from_u128(77), "a", &p, fp));
+        });
+        // Counts as one stat pass: online.
+        assert!(!s.can_relink());
+        std::fs::remove_file(&path).unwrap();
+        // The file is gone, but nothing was notified and the TTL has not run out: no new stat() pass.
+        for _ in 0..100 {
+            assert!(!s.can_relink());
+        }
+        // A project change invalidates the cache.
+        s.notify(crate::Change::PROJECT);
+        assert!(s.can_relink());
     }
 }

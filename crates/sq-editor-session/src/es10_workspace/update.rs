@@ -109,27 +109,17 @@ impl ReleaseChannel {
         )
     }
 
-    /// [`Self::about_line`] from its inputs: a nightly build adds its date from the build string's pre-release
-    /// ("0.2.1-nightly.20261121" gives " Nightly 2026-11-21").
+    /// [`Self::about_line`] from its inputs: a nightly build shows its packager version, the same text as the status bar
+    /// ("Version 0.2.1-nightly.20261121"); without a build string it adds " Nightly" to the line.
     pub fn about_line_of(channel: Self, line: &str, build_version: Option<&str>) -> String {
         if channel != Self::Nightly {
             return line.to_string();
         }
-        match build_version.and_then(nightly_date) {
-            Some(date) => format!("{line} Nightly {date}"),
-            None => format!("{line} Nightly"),
+        match build_version.map(str::trim) {
+            Some(v) if !v.is_empty() => format!("Version {v}"),
+            _ => format!("{line} Nightly"),
         }
     }
-}
-
-/// "2026-11-21" from "0.2.1-nightly.20261121"; `None` when the pre-release has no eight-digit date.
-fn nightly_date(version: &str) -> Option<String> {
-    let tail = version.trim().split_once("-nightly.")?.1;
-    let d: String = tail.chars().take_while(char::is_ascii_digit).collect();
-    if d.len() != 8 {
-        return None;
-    }
-    Some(format!("{}-{}-{}", &d[..4], &d[4..6], &d[6..]))
 }
 
 /// What the app needs to install a release in place: the installer asset with the hash the feed publishes for it and the
@@ -394,11 +384,11 @@ mod about_line_tests {
     use super::*;
 
     #[test]
-    fn about_names_the_nightly_date_and_leaves_stable_alone() {
+    fn about_names_the_nightly_version_and_leaves_stable_alone() {
         let line = "Version 0.2.1 Alpha";
         assert_eq!(
             ReleaseChannel::about_line_of(ReleaseChannel::Nightly, line, Some("0.2.1-nightly.20261121")),
-            "Version 0.2.1 Alpha Nightly 2026-11-21"
+            "Version 0.2.1-nightly.20261121"
         );
         assert_eq!(ReleaseChannel::about_line_of(ReleaseChannel::Nightly, line, None), "Version 0.2.1 Alpha Nightly");
         assert_eq!(ReleaseChannel::about_line_of(ReleaseChannel::Stable, line, Some("0.2.1-nightly.20261121")), line);

@@ -170,7 +170,7 @@ fn load_images(root: &Value) -> HashMap<String, Pixmap> {
             Some(pm) => {
                 out.insert(id.to_owned(), pm);
             }
-            None => eprintln!("sq-lottie: image asset {id} is missing or not a PNG or JPEG, layer skipped"),
+            None => sq_os::errln!("sq-lottie: image asset {id} is missing or not a PNG or JPEG, layer skipped"),
         }
     }
     out
@@ -494,7 +494,7 @@ fn draw_content(cx: &Ctx, l: &Value, t: f64, world: Transform, alpha: f32, targe
 fn draw_text(cx: &Ctx, l: &Value, t: f64, world: Transform, alpha: f32, target: &mut Pixmap) {
     let Some(doc) = crate::lottie_text::document(l, cx.fonts, t) else { return };
     let Some((font, coords)) = cx.font.clone().or_else(|| crate::lottie_text::choose_font(&doc)) else {
-        eprintln!("sq-lottie: no font for text layer, skipped");
+        sq_os::errln!("sq-lottie: no font for text layer, skipped");
         return;
     };
     let Some(path) = crate::lottie_text::text_path(&doc, &font, &coords) else { return };

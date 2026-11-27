@@ -229,7 +229,7 @@ mod tests {
         use sq_onnx::onnx_model::Provider;
         let Some(folder) = std::env::var("SQ_TRANSLATE_MODELS").ok() else { return };
         if !runtime_available() {
-            println!("no ONNX runtime here: skipped");
+            sq_os::outln!("no ONNX runtime here: skipped");
             return;
         }
         let src: Vec<String> =
@@ -247,7 +247,7 @@ mod tests {
             let start = std::time::Instant::now();
             let de = t.translate(&src, "en", "de", &CurlFetcher, &mut |_| {}, &Cancel::default());
             let per = start.elapsed().as_secs_f64() / src.len() as f64;
-            println!("opus-mt {provider:?}: {per:.3} s per sentence (first run ok: {}): {de:?}", warm.is_ok());
+            sq_os::outln!("opus-mt {provider:?}: {per:.3} s per sentence (first run ok: {}): {de:?}", warm.is_ok());
             results.push(de.unwrap_or_default());
         }
         Provider::force(None);
@@ -262,20 +262,20 @@ mod tests {
         let download = std::env::var("SQ_TRANSLATE_DOWNLOAD").is_ok();
         let Some(folder) = folder.filter(|_| download || std::env::var("SQ_TRANSLATE_MODELS").is_ok()) else { return };
         if !runtime_available() {
-            println!("no ONNX runtime here: skipped");
+            sq_os::outln!("no ONNX runtime here: skipped");
             return;
         }
         let t = Translator::new(TranslateStore::new(folder.into()));
         let src = vec!["Hello, how are you today?".to_string(), "The weather is nice.".to_string()];
         let mut log = Vec::new();
         let de = t.translate(&src, "en", "de", &CurlFetcher, &mut |p| log.push(p), &Cancel::default()).unwrap();
-        println!("en->de: {de:?}");
+        sq_os::outln!("en->de: {de:?}");
         assert_eq!(de.len(), 2);
         assert!(de.iter().zip(&src).all(|(d, s)| !d.is_empty() && d != s));
         assert_eq!(detect(&de), Some("de"));
         if t.store.is_installed("de-en") || download {
             let back = t.translate(&de, "de", "en", &CurlFetcher, &mut |_| {}, &Cancel::default()).unwrap();
-            println!("de->en: {back:?}");
+            sq_os::outln!("de->en: {back:?}");
             assert!(back.iter().all(|b| !b.is_empty()));
         }
     }

@@ -78,7 +78,7 @@ impl FileDefaults {
         let Some(path) = &self.path else { return };
         let bytes = serde_json::to_vec_pretty(&self.to_json()).unwrap_or_default();
         if let Err(e) = write_atomic(path, &bytes) {
-            eprintln!("sq: the preferences could not be saved: {e}");
+            sq_os::errln!("sq: the preferences could not be saved: {e}");
         }
     }
 
@@ -457,7 +457,7 @@ impl Persist {
         let was_dirty = self.defaults.borrow().dirty;
         if was_dirty && let Err(e) = self.defaults.borrow_mut().save(&self.prefs_path) {
             // Swift `ShellPreferences` says only this; the reason goes to the app log.
-            eprintln!("sq: the preferences could not be saved: {e}");
+            sq_os::errln!("sq: the preferences could not be saved: {e}");
             cx.emit(AppEvent::Status("Your defaults could not be saved.".to_string()));
         }
         if !first && !was_dirty {

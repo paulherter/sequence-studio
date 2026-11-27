@@ -242,7 +242,10 @@ impl EffectFolderOutline {
     /// carry nothing and cannot be dragged.
     pub fn effect_ids(folder_id: &str, entries: &[EffectsEntry], store: &EffectFolderStore) -> Vec<String> {
         fn applicable(id: &str) -> bool {
-            !id.starts_with("preset.") && !id.starts_with("transition.") && !TextPresetCatalog::is_text_preset_id(id)
+            !id.starts_with("preset.")
+                && !id.starts_with("transition.")
+                && !EffectDragPayload::is_adjustment_layer(id)
+                && !TextPresetCatalog::is_text_preset_id(id)
         }
         if let Some(rest) = folder_id.strip_prefix("folder.user.") {
             let Some(f) = Id::parse(rest).and_then(|u| store.folder(u)) else { return Vec::new() };

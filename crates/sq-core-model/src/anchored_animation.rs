@@ -8,7 +8,9 @@
 
 mod text_animator;
 
-pub use text_animator::{TextAnimator, TextCursor, TextAnimatorEffect, TextAnimatorOrder, TextAnimatorUnit, TextSlideDirection};
+pub use text_animator::{
+    TextAnimator, TextAnimatorEffect, TextAnimatorOrder, TextAnimatorUnit, TextCursor, TextSlideDirection,
+};
 
 use serde::{Deserialize, Serialize};
 use sq_core_time::{EaseHandle, Id, Interpolation, Keyframe, KeyframeTrack, Time, Vec2};

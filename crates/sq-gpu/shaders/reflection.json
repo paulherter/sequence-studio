@@ -96,7 +96,8 @@
       "scopeClear": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [80, 0], "out_read": false},
       "scopeAccumulate": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [80, 0], "out_read": false},
       "scopeFindMax": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [80, 0], "out_read": false},
-      "scopeResolve": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [80, 0], "out_read": false}
+      "scopeResolve": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [80, 0], "out_read": false},
+      "scopeDraw": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [80, 0], "out_read": false}
     },
     "SourceConvert": {
       "convertToRGB": {"stage": "compute", "workgroup": [16, 16, 1], "cbuffers": [368, 16], "out_read": false},

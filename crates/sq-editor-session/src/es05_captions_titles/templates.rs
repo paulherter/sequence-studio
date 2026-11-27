@@ -372,9 +372,15 @@ impl EditorSession {
         }
     }
 
-    /// Places `template` at `time` on a free video track above whatever plays there, as one undo step.
+    /// Places `template` at `time` as one undo step: on `track` when given (video, unlocked; `apply_title_template` refuses
+    /// others), else on a free video track above whatever plays there.
     // Swift: EditorSession+TitleTemplate.swift:89
-    pub fn insert_title_template(&mut self, template: &TitleTemplate, at: Option<Time>) -> Option<Id> {
+    pub fn insert_title_template(
+        &mut self,
+        template: &TitleTemplate,
+        at: Option<Time>,
+        track: Option<Id>,
+    ) -> Option<Id> {
         let (Some(tl), Some(fd)) = (self.active_timeline_id, self.active_timeline().map(Timeline::frame_duration))
         else {
             self.set_error("Open a sequence first.");
@@ -385,13 +391,15 @@ impl EditorSession {
         let mut placed: Option<Id> = None;
         let result = self.with_ids(|s, ids| {
             s.try_perform("Insert Title Template", None, |p| {
-                let mut track: Option<Id> = None;
-                p.edit(tl, |t| {
-                    track = t.stacked_title_tracks(1, range, ids).first().copied();
-                    Ok(())
-                })?;
-                let track = track.ok_or(EditError::ClipNotFound)?;
-                placed = Some(p.apply_title_template(template, tl, track, start, None, &BTreeMap::new(), ids)?);
+                let mut target: Option<Id> = track;
+                if target.is_none() {
+                    p.edit(tl, |t| {
+                        target = t.stacked_title_tracks(1, range, ids).first().copied();
+                        Ok(())
+                    })?;
+                }
+                let target = target.ok_or(EditError::ClipNotFound)?;
+                placed = Some(p.apply_title_template(template, tl, target, start, None, &BTreeMap::new(), ids)?);
                 Ok::<(), TemplateEditError>(())
             })
         });

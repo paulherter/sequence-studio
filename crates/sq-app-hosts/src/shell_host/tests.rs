@@ -334,6 +334,7 @@ fn an_idle_frame_does_not_build_the_menu_bar_again() {
         assert!(host.inner.refresh_menus(&s, host.hooks.as_ref()).is_none(), "nothing changed");
     }
     assert_eq!(host.inner.menu_builds(), 1);
+    assert_eq!(host.inner.angles_scans.get(), 1, "the clip scan runs once, not per frame");
 }
 
 #[test]
@@ -357,4 +358,39 @@ fn a_focus_change_builds_the_menu_bar_again() {
     host.inner.refresh_menus(&s, host.hooks.as_ref());
     host.inner.focus = Some(sq_uikit::panel_id::PanelID::Project);
     assert!(host.inner.refresh_menus(&s, host.hooks.as_ref()).is_some(), "Cut, Copy and Paste follow the focus");
+}
+
+/// The playhead counter bumps on every seek and play tick; no row reads that counter, so the bar stays as it is.
+#[test]
+fn scrubbing_and_stepping_do_not_build_the_menu_bar_again() {
+    let (mut s, host) = (session_with_clips(5), ShellHost::new(shell(), None));
+    host.inner.refresh_menus(&s, host.hooks.as_ref());
+    // Seeks that stay inside one clip or one gap: no playhead row flips (a seek over a clip edge flips Jump Cut, which
+    // must build; `a_row_that_reads_the_playhead_still_follows_it`).
+    s.seek(sq_core_time::Time::seconds(2));
+    host.inner.refresh_menus(&s, host.hooks.as_ref());
+    let builds = host.inner.menu_builds();
+    for i in 0..100 {
+        s.seek(sq_core_time::Time::seconds(2 + (i * 7) % 6));
+        assert!(host.inner.refresh_menus(&s, host.hooks.as_ref()).is_none(), "seek {i} rebuilt the bar");
+    }
+    s.seek(sq_core_time::Time::seconds(3));
+    host.inner.refresh_menus(&s, host.hooks.as_ref());
+    for i in 0..100 {
+        s.step_frames(1);
+        assert!(host.inner.refresh_menus(&s, host.hooks.as_ref()).is_none(), "step {i} rebuilt the bar");
+    }
+    assert_eq!(host.inner.menu_builds(), builds, "100 seeks and 100 steps build the bar 0 times");
+    assert_eq!(host.inner.angles_scans.get(), 1, "the clip scan does not rerun per seek");
+}
+
+#[test]
+fn a_row_that_reads_the_playhead_still_follows_it() {
+    let (mut s, host) = (session_with_clips(2), ShellHost::new(shell(), None));
+    s.seek(sq_core_time::Time::seconds(30));
+    s.add_marker_at_playhead();
+    s.seek(sq_core_time::Time::seconds(5));
+    host.inner.refresh_menus(&s, host.hooks.as_ref());
+    s.seek(sq_core_time::Time::seconds(30));
+    assert!(host.inner.refresh_menus(&s, host.hooks.as_ref()).is_some(), "Edit Marker becomes enabled on the marker");
 }

@@ -99,6 +99,8 @@ pub trait ClipGradeExt {
     fn can_accept_pasted_effect(&self, e: &ClipEffect) -> bool;
     /// The Color effects as stored (keys, the effect switch and all), in order.
     fn color_grade_effects(&self) -> Vec<ClipEffect>;
+    /// True when the clip has any Color effect; borrows, never clones (per-frame UI code uses this, not `color_grade_effects`).
+    fn has_color_grade(&self) -> bool;
     /// Replaces every Color effect with copies of `fx` (new ids, keys and switches kept), first in the list. The
     /// footage interpretation stays. Empty = no grade (Reset). Ignored on clips that take no color.
     fn replace_color_grade(&mut self, fx: &[ClipEffect], ids: &mut dyn IdSource);
@@ -166,6 +168,8 @@ pub trait ClipGradeExt {
 
     /// The Pro grade of the clip (the Color Graph effect).
     fn color_graph(&self) -> Option<ColorGraph>;
+    /// `Some(is_active)` of the clip's Pro graph, `None` without one; borrows, never clones the graph.
+    fn color_graph_is_active(&self) -> Option<bool>;
     /// Sets (`Some`), replaces or removes (`None`) the Color Graph effect. A new one goes behind the Color effects.
     fn set_color_graph(&mut self, g: Option<ColorGraph>, ids: &mut dyn IdSource);
     /// Applies a copied Pro grade; without one the Pro grade switches off.
@@ -297,6 +301,18 @@ impl ClipGradeExt for Clip {
             return self.generator.as_ref().is_some_and(|g| g.kind == owner);
         }
         true
+    }
+
+    fn has_color_grade(&self) -> bool {
+        self.effects.iter().any(|e| e.is_color())
+    }
+
+    fn color_graph_is_active(&self) -> Option<bool> {
+        let e = self.effects.iter().find(|e| e.kind == COLOR_GRAPH_KIND)?;
+        Some(match &e.color_graph {
+            Some(g) => g.is_active,
+            None => ColorGraph::new(Vec::new(), Some(LUTRef::Automatic), None, Id::NIL).is_active,
+        })
     }
 
     fn color_grade_effects(&self) -> Vec<ClipEffect> {

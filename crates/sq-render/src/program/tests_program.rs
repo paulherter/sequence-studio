@@ -174,6 +174,56 @@ fn an_adjustment_layer_blurs_what_is_below_it() {
     assert_eq!(s.at(2, 2)[0], 0, "far corner");
 }
 
+/// An Adjustment Layer request with `effects` over a half-size white square.
+fn adjusted(effects: ClipEffects, zoom: f64) -> [LayerRequest; 2] {
+    let mut adj = request(2);
+    adj.generator = Some(GeneratorRef { kind: ADJUSTMENT_KIND.into(), payload: Vec::new(), payload_version: 1 });
+    adj.effects = effects;
+    adj.transform.scale = Vec2::new(zoom, zoom);
+    [scaled(solid(1, [255, 255, 255]), 0.5), adj]
+}
+
+#[test]
+fn a_zoom_adjustment_enlarges_the_picture_below_it() {
+    let Some(gpu) = gpu() else { return };
+    let mut pc = ProgramCompositor::new(&gpu).expect("compositor");
+    let f = format(128, 96);
+    let reqs = adjusted(ClipEffects::none(), 2.0);
+    let s = shoot(&mut pc, &reqs, &f, &no_grade, &nothing);
+    // The half-size square doubled fills the frame; without the layer the corner stays black.
+    near(s.at(3, 3), [255, 255, 255, 255], 1, "corner under the zoom");
+    let plain = shoot(&mut pc, &reqs[..1], &f, &no_grade, &nothing);
+    near(plain.at(3, 3), [0, 0, 0, 255], 0, "corner without the layer");
+}
+
+/// A4: full-frame intermediates per frame. Pinned so a change that adds a pass shows up.
+#[test]
+fn an_adjustment_layer_costs_a_known_number_of_offscreens() {
+    let Some(gpu) = gpu() else { return };
+    let mut pc = ProgramCompositor::new(&gpu).expect("compositor");
+    let f = format(128, 96);
+    let mut count =
+        |reqs: &[LayerRequest], grade: &dyn Fn(&LayerRequest) -> Option<Arc<crate::color::pipeline::ColorPipeline>>| {
+            shoot(&mut pc, reqs, &f, grade, &nothing);
+            pc.offscreens()
+        };
+    let without = count(&adjusted(ClipEffects::none(), 1.0)[..1], &no_grade);
+    // A layer with nothing to do is dropped: no extra intermediate.
+    assert_eq!(count(&adjusted(ClipEffects::none(), 1.0), &no_grade), without, "no effect, no cost");
+    let zoom = count(&adjusted(ClipEffects::none(), 1.1), &no_grade);
+    let blur =
+        count(&adjusted(ClipEffects::simple(EffectMasks::NONE, 6.0, EffectMasks::NONE, Vec::new()), 1.0), &no_grade);
+    assert!(zoom > without, "a zoom composites what is below into one image first");
+    assert_eq!((without, zoom, blur), (0, 1, 1), "plain, zoom, blur");
+    let mut effect = ColorEffect::new(1, None);
+    effect.basic = BasicCorrection { exposure: 1.0, ..BasicCorrection::default() };
+    let color = ClipColor::new(Some(ColorSpaceID::Rec709), false, vec![effect]);
+    let pipeline = Arc::new(pipeline_from_clip_color(&color, Id::NIL, None, None));
+    let graded =
+        count(&adjusted(ClipEffects::none(), 1.1), &|r| (r.clip == Id::from_u128(2)).then(|| Arc::clone(&pipeline)));
+    assert_eq!(graded, 2, "a grade on the layer needs its own BT.709 intermediate");
+}
+
 #[test]
 fn a_grade_changes_the_layer() {
     let Some(gpu) = gpu() else { return };
@@ -332,7 +382,7 @@ fn the_full_scene_matches_the_other_backend() {
     if let Ok(dir) = std::env::var("SQ_GPU_GOLDEN") {
         let other = std::fs::read(PathBuf::from(dir).join(name)).expect("golden dump of the other backend");
         let (max8, over) = diff8(&first.px, &other);
-        eprintln!("{name}: max {max8}/255, channels over 1: {:.3} %", over * 100.0);
+        sq_os::errln!("{name}: max {max8}/255, channels over 1: {:.3} %", over * 100.0);
         assert!(max8 <= 1 && over == 0.0, "{name}: max {max8}/255, {:.3} % of channels over 1", over * 100.0);
     }
 }
@@ -482,7 +532,7 @@ fn a_half_size_preview_of_blur_shadow_rounded_card_and_title_matches_the_downsca
         }
     }
     let (good, bad) = (psnr(&half.px, &down), psnr(&wrong.px, &down));
-    eprintln!("preview 1/2 vs downscaled full: {good:.1} dB (unscaled requests: {bad:.1} dB)");
+    sq_os::errln!("preview 1/2 vs downscaled full: {good:.1} dB (unscaled requests: {bad:.1} dB)");
     assert!(good >= 35.0, "{good} dB");
     assert!(bad < good - 3.0, "the control must be clearly worse: {bad} dB");
 }
@@ -564,7 +614,7 @@ fn a_graded_media_layer_in_a_quarter_size_preview_matches_the_downscaled_full_re
         }
     }
     let (good, bad) = (psnr(&preview.px, &down), psnr(&point.px, &down));
-    eprintln!("graded media 1/4 preview vs downscaled full: {good:.1} dB (point sampled: {bad:.1} dB)");
+    sq_os::errln!("graded media 1/4 preview vs downscaled full: {good:.1} dB (point sampled: {bad:.1} dB)");
     assert!(good >= 30.0, "{good} dB");
     assert!(bad < good - 3.0, "the control must be clearly worse: {bad} dB");
 }
@@ -617,7 +667,7 @@ fn a_media_layer_inside_a_nested_clip_in_a_quarter_size_preview_matches_the_down
         }
     }
     let good = psnr(&preview.px, &down);
-    eprintln!("nested media 1/4 preview vs downscaled full: {good:.1} dB");
+    sq_os::errln!("nested media 1/4 preview vs downscaled full: {good:.1} dB");
     assert!(good >= 28.0, "{good} dB");
 }
 
@@ -686,7 +736,7 @@ fn blur_shadow_and_a_pixel_filter_on_a_media_layer_keep_their_strength_in_a_scal
                 }
             }
             let db = psnr(&preview.px, &down);
-            eprintln!("media effects 1/{k} graded {graded}: {db:.1} dB");
+            sq_os::errln!("media effects 1/{k} graded {graded}: {db:.1} dB");
             assert!(db >= 38.0, "1/{k} graded {graded}: {db} dB");
         }
     }
@@ -738,7 +788,7 @@ fn a_graded_media_layer_at_one_twelfth_matches_the_box_downscaled_full_render() 
         }
     }
     let db = psnr(&preview.px, &down);
-    eprintln!("graded media 1/12 preview vs box downscaled full: {db:.1} dB");
+    sq_os::errln!("graded media 1/12 preview vs box downscaled full: {db:.1} dB");
     assert!(db >= 38.0, "{db} dB");
 }
 
@@ -818,7 +868,7 @@ fn a_coloured_hard_edged_nv12_frame_scaled_matches_the_box_downscaled_full_rende
             }
         }
         let db = psnr(&preview.px, &down);
-        eprintln!("coloured nv12 1/{k}: {db:.1} dB");
+        sq_os::errln!("coloured nv12 1/{k}: {db:.1} dB");
         assert!(db >= 38.0, "1/{k}: {db} dB");
     }
 }
@@ -846,10 +896,8 @@ fn card_row_spread(shutter: f64, media: bool, preview: Option<f64>, nested: bool
     let mut e = ClipEffect::make(Id::from_u128(7), ClipEffect::TRANSFORM_KIND).expect("transform");
     e.parameters.insert(ClipEffect::STAGE_SCALE_KEY.to_string(), AnimatedProperty::new(20.0));
     e.parameters.insert(ClipEffect::STAGE_SHUTTER_ANGLE_KEY.to_string(), AnimatedProperty::new(shutter));
-    let keys = vec![
-        Keyframe::new(ids.next_id(), Time::ZERO, 0.0),
-        Keyframe::new(ids.next_id(), Time::new(2, 5), 250.0),
-    ];
+    let keys =
+        vec![Keyframe::new(ids.next_id(), Time::ZERO, 0.0), Keyframe::new(ids.next_id(), Time::new(2, 5), 250.0)];
     e.parameters.insert(
         ClipEffect::STAGE_POSITION_X_KEY.to_string(),
         AnimatedProperty { value: 0.0, track: KeyframeTrack::with_keys(keys) },
@@ -904,7 +952,11 @@ fn card_row_spread(shutter: f64, media: bool, preview: Option<f64>, nested: bool
         }
         None => (reqs, f),
     };
-    let s = if media { shoot(&mut pc, &reqs, &f, &no_grade, &source) } else { shoot(&mut pc, &reqs, &f, &no_grade, &nothing) };
+    let s = if media {
+        shoot(&mut pc, &reqs, &f, &no_grade, &source)
+    } else {
+        shoot(&mut pc, &reqs, &f, &no_grade, &nothing)
+    };
     let k = preview.unwrap_or(1.0);
     let row: Vec<i32> = (0..f.width as usize).map(|x| s.at(x, (180.0 * k) as usize)[0]).collect();
     (row.iter().filter(|v| (10..245).contains(*v)).count(), row.iter().filter(|v| **v > 10).count())
@@ -912,12 +964,18 @@ fn card_row_spread(shutter: f64, media: bool, preview: Option<f64>, nested: bool
 
 #[test]
 fn a_transform_effect_shutter_angle_smears_a_moving_card_in_the_render() {
-    for (media, preview, nested) in
-        [(false, None, false), (true, None, false), (true, Some(0.5), false), (false, Some(0.5), false), (false, None, true)]
-    {
+    for (media, preview, nested) in [
+        (false, None, false),
+        (true, None, false),
+        (true, Some(0.5), false),
+        (false, Some(0.5), false),
+        (false, None, true),
+    ] {
         let (soft0, lit0) = card_row_spread(0.0, media, preview, nested);
         let (soft360, lit360) = card_row_spread(360.0, media, preview, nested);
-        eprintln!("media {media} nested {nested} preview {preview:?}: shutter 0: soft {soft0} lit {lit0}; shutter 360: soft {soft360} lit {lit360}");
+        sq_os::errln!(
+            "media {media} nested {nested} preview {preview:?}: shutter 0: soft {soft0} lit {lit0}; shutter 360: soft {soft360} lit {lit360}"
+        );
         if soft0 == usize::MAX {
             return;
         }

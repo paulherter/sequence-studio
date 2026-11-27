@@ -61,7 +61,7 @@ fn shoot_until(
     color: Option<Arc<LayerColorResolver>>,
     ready: &dyn Fn(&[u8]) -> bool,
 ) -> Option<Vec<u8>> {
-    let gpu = Gpu::new().map_err(|e| eprintln!("skipped: no GPU adapter ({e})")).ok()?;
+    let gpu = Gpu::new().map_err(|e| sq_os::errln!("skipped: no GPU adapter ({e})")).ok()?;
     let root =
         std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../Packages/SQText/Sources/SQText/Resources/Fonts");
     sq_text::portable_font_match::set_fonts_root(&root);

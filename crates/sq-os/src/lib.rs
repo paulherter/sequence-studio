@@ -4,6 +4,7 @@ pub mod app_folders;
 pub mod appearance;
 pub mod keyboard;
 pub mod paths;
+pub mod stdio;
 pub mod thread;
 pub mod trace;
 

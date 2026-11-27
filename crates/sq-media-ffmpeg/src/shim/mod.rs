@@ -297,6 +297,8 @@ pub struct DecoderConfig<'a> {
     /// Threads of a software decoder; 0 = the share of the cores left by the software decoders already open
     /// (`software_thread_budget`).
     pub sw_threads: i32,
+    /// `sw_threads` is a `ThreadPlan::Scrub` count: counted in the shared budget (`OPEN_BIG_THREADS`) like a budgeted decoder.
+    pub scrub: bool,
 }
 
 /// One compressed picture to send, timing in stream ticks.
@@ -330,6 +332,8 @@ pub struct Decoder {
     software: bool,
     /// Threads this big software decoder adds to `OPEN_BIG_THREADS` (0 = not counted).
     big_threads: usize,
+    /// A software decoder of a big picture: it counts in `OPEN_BIG_SOFTWARE` until dropped.
+    big_software: bool,
 }
 
 /// Threads of all open big software decoders. Frame threading keeps about `threads - 1` extra 4K pictures per decoder
@@ -386,6 +390,87 @@ pub fn set_weak_machine(weak: bool) {
 /// Open software decoders (they share the machine's cores). Counted from open to drop, not only while inside a decode call:
 /// decoders open at project load, when none decodes yet, so a count of running calls is always empty at open time.
 static OPEN_SOFTWARE: AtomicUsize = AtomicUsize::new(0);
+
+/// Open big (4K and up) software decoders, budgeted or not: the scrub plan wants to be the only one.
+static OPEN_BIG_SOFTWARE: AtomicUsize = AtomicUsize::new(0);
+
+/// Big software decoders inside a decode call right now (`BusyBig`). The scrub plan counts these, not the open ones: a real
+/// project keeps a decoder open for every clip near the playhead (the same file twice on two lanes, cut-in warm-ups), idle
+/// while one clip scrubs, and the open count denied `Scrub` for all of them (app trace 2026-11-27: open 2..6, plan always `Playback`).
+static BUSY_BIG_SOFTWARE: AtomicUsize = AtomicUsize::new(0);
+
+/// Marks the calling decode as running on a big software decoder until dropped (`BUSY_BIG_SOFTWARE`).
+pub struct BusyBig(bool);
+
+impl BusyBig {
+    pub fn enter(big_software: bool) -> BusyBig {
+        if big_software {
+            BUSY_BIG_SOFTWARE.fetch_add(1, Ordering::Relaxed);
+        }
+        BusyBig(big_software)
+    }
+}
+
+impl Drop for BusyBig {
+    fn drop(&mut self) {
+        if self.0 {
+            BUSY_BIG_SOFTWARE.fetch_sub(1, Ordering::Relaxed);
+        }
+    }
+}
+
+/// How many threads a software decoder decodes with: what the shared budget gave it at open (`Playback`), or a fixed larger
+/// count while the playhead scrubs and no other big decoder competes (`Scrub`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ThreadPlan {
+    Playback,
+    Scrub(i32),
+}
+
+/// Frame+slice threads of a lone big decoder while scrubbing. Measured on a 16-core PC, 4K H.264 jumps: 4 threads 245 / 355 ms
+/// p50, 8 threads 156 / 218 ms, 16 threads 151 / 196 ms: the last doubling gains little and holds ~33 MB a thread.
+const SCRUB_THREADS: usize = 8;
+
+/// The plan for a decoder: `Scrub` only for a big software decoder while scrubbing, when it is the only big software
+/// decoder at work (`open_big` = those decoding now, the caller included) (a layered project keeps the shared budget) and the machine is not weak; never more threads than cores.
+pub fn thread_plan(scrubbing: bool, big_software: bool, open_big: usize, cores: usize, weak: bool) -> ThreadPlan {
+    if !scrubbing || !big_software || open_big >= 2 || weak || cores < 4 {
+        return ThreadPlan::Playback;
+    }
+    ThreadPlan::Scrub(cores.min(SCRUB_THREADS) as i32)
+}
+
+/// How long a decoder keeps a plan chosen while the playhead still scrubs, before the open decoder count may demote it.
+pub const PLAN_DWELL: std::time::Duration = std::time::Duration::from_secs(1);
+
+/// Whether the decoder may switch from `from` to `to` now: the end of a scrub (`scrubbing` false) always; while scrubbing
+/// only `Playback` -> `Scrub`, and only after `PLAN_DWELL`. A `Scrub` decoder keeps its threads until the scrub ends: another
+/// decoder working for a moment (a key strip fill, the same clip on a second lane) flipped it back to the shared budget, and
+/// every flip reopened the decoder and restarted the GOP (app run 2026-11-27: 4 of 24 cold jumps 200 ms slower than before).
+pub fn plan_switch_allowed(scrubbing: bool, from: ThreadPlan, to: ThreadPlan, since: std::time::Duration) -> bool {
+    from != to && (!scrubbing || (since >= PLAN_DWELL && to != ThreadPlan::Playback))
+}
+
+/// Big software decoders decoding now, this one included (the plan's input; trace).
+pub fn busy_big_software() -> usize {
+    BUSY_BIG_SOFTWARE.load(Ordering::Relaxed)
+}
+
+/// The machine inputs of the plan (trace only).
+pub fn plan_inputs() -> String {
+    format!("cores {} weak {} busy_big {}", logical_cores(), WEAK_MACHINE.load(Ordering::Relaxed), busy_big_software())
+}
+
+/// `thread_plan` for this process: the open decoder count and the machine from the shim's own state.
+pub fn current_thread_plan(scrubbing: bool, big_software: bool) -> ThreadPlan {
+    thread_plan(
+        scrubbing,
+        big_software,
+        BUSY_BIG_SOFTWARE.load(Ordering::Relaxed),
+        logical_cores(),
+        WEAK_MACHINE.load(Ordering::Relaxed),
+    )
+}
 
 /// Open software decoders and the frame threads the big ones hold (for the memory trace).
 pub fn open_software_decoders() -> (usize, usize) {
@@ -450,8 +535,21 @@ impl Decoder {
         } else {
             cfg.sw_threads
         };
-        let big_threads = if budgeted && big { threads.max(0) as usize } else { 0 };
+        // A scrub decoder's threads count in the budget (a second big decoder opening meanwhile sees them); other fixed-thread
+        // decoders (throw-away `once`, posters) are transient and count nowhere, so they do not flip a scrub plan.
+        let counted = budgeted || cfg.scrub;
+        let big_threads = if counted && big { threads.max(0) as usize } else { 0 };
+        if cfg.scrub && big {
+            OPEN_BIG_THREADS.fetch_add(big_threads, Ordering::Relaxed);
+        }
+        let big_software = big && !cfg.hardware && counted;
+        if big_software {
+            OPEN_BIG_SOFTWARE.fetch_add(1, Ordering::Relaxed);
+        }
         let give_back = || {
+            if big_software {
+                OPEN_BIG_SOFTWARE.fetch_sub(1, Ordering::Relaxed);
+            }
             OPEN_BIG_THREADS.fetch_sub(big_threads, Ordering::Relaxed);
             if !cfg.hardware {
                 OPEN_SOFTWARE.fetch_sub(1, Ordering::Relaxed);
@@ -478,7 +576,7 @@ impl Decoder {
             )
         };
         match NonNull::new(raw) {
-            Some(raw) if r == 0 => Ok(Decoder { raw, software: !cfg.hardware, big_threads }),
+            Some(raw) if r == 0 => Ok(Decoder { raw, software: !cfg.hardware, big_threads, big_software }),
             _ => {
                 give_back();
                 Err(ShimError::new("decoder", if r == 0 { -1 } else { r }, &err))
@@ -547,6 +645,9 @@ impl Decoder {
 impl Drop for Decoder {
     fn drop(&mut self) {
         OPEN_BIG_THREADS.fetch_sub(self.big_threads, Ordering::Relaxed);
+        if self.big_software {
+            OPEN_BIG_SOFTWARE.fetch_sub(1, Ordering::Relaxed);
+        }
         if self.software {
             OPEN_SOFTWARE.fetch_sub(1, Ordering::Relaxed);
         }
@@ -940,6 +1041,50 @@ mod thread_budget_tests {
         }
         assert!(open <= 12 + 2 * 17, "{open}");
         assert!(open < 17 * 4);
+    }
+
+    #[test]
+    fn a_lone_big_software_decoder_scrubs_on_more_threads_and_playback_keeps_the_budget() {
+        use super::{ThreadPlan::*, thread_plan as p};
+        assert_eq!(p(true, true, 1, 16, false), Scrub(8));
+        assert_eq!(p(true, true, 1, 6, false), Scrub(6), "never more threads than cores");
+        assert_eq!(p(false, true, 1, 16, false), Playback, "playing or paused: the shared budget");
+        assert_eq!(p(true, true, 2, 16, false), Playback, "a second big decoder competes");
+        assert_eq!(p(true, false, 1, 16, false), Playback, "hardware or small pictures");
+        assert_eq!(p(true, true, 1, 16, true), Playback, "weak machine");
+        assert_eq!(p(true, true, 1, 2, false), Playback, "2 cores");
+    }
+
+    #[test]
+    fn only_big_software_decodes_at_work_count_for_the_scrub_plan() {
+        use super::{BusyBig, ThreadPlan::Playback, busy_big_software, current_thread_plan};
+        // Other tests may decode at the same time, so only bounds that hold whatever they do.
+        let a = BusyBig::enter(true);
+        let _small = BusyBig::enter(false);
+        assert!(busy_big_software() >= 1);
+        let b = BusyBig::enter(true);
+        assert!(busy_big_software() >= 2);
+        assert_eq!(current_thread_plan(true, true), Playback, "a second big decoder at work keeps the shared budget");
+        drop((a, b));
+    }
+
+    #[test]
+    fn a_plan_switch_while_scrubbing_waits_for_the_dwell_time() {
+        use super::{PLAN_DWELL, ThreadPlan::*, plan_switch_allowed as ok};
+        let short = PLAN_DWELL / 2;
+        assert!(!ok(true, Scrub(8), Playback, short), "another decoder opened a moment ago");
+        assert!(!ok(true, Scrub(8), Playback, PLAN_DWELL), "a scrub decoder keeps its threads until the scrub ends");
+        assert!(!ok(true, Playback, Scrub(8), short));
+        assert!(ok(true, Playback, Scrub(8), PLAN_DWELL));
+        assert!(ok(false, Scrub(8), Playback, short), "the end of the scrub switches at once");
+        assert!(!ok(true, Playback, Playback, PLAN_DWELL), "no change, no switch");
+    }
+
+    #[test]
+    fn a_scrub_decoder_counts_in_the_big_decoder_budget_and_transient_ones_do_not() {
+        // 8 scrub threads of the pool of 12 leave 4 for a second big decoder (it keeps its floor of 4 anyway).
+        assert_eq!(super::cap_big_threads_with(4, 8, 2), 4);
+        assert_eq!(super::cap_big_threads_with(4, 11, 2), 2, "pool nearly spent: the second decoder gets the floor");
     }
 
     #[test]

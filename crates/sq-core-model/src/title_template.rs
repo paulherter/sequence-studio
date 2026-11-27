@@ -20,6 +20,10 @@ pub enum TemplateSlotKind {
     Font,
     /// A number.
     Number,
+    /// A text holding one emoji (one grapheme cluster). Format 6.
+    Emoji,
+    /// An image file. Format 6.
+    Image,
 }
 
 /// A value a slot can hold. Coded like a Swift enum with payloads: `{"text": {"_0": "..."}}`,
@@ -44,15 +48,32 @@ pub enum SlotValue {
     Font(String),
     /// A number.
     Number(f64),
+    /// An image file: the path, and an optional macOS security-scoped bookmark so the file stays reachable. Format 6.
+    Media {
+        /// File path.
+        path: String,
+        /// Bookmark bytes (`None` on other systems).
+        bookmark: Option<Vec<u8>>,
+    },
 }
 
 #[derive(Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 enum SlotValueWire {
     Text(Underscore0<String>),
-    Color { red: f64, green: f64, blue: f64, alpha: f64 },
+    Color {
+        red: f64,
+        green: f64,
+        blue: f64,
+        alpha: f64,
+    },
     Font(Underscore0<String>),
     Number(Underscore0<f64>),
+    Media {
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none", with = "sq_core_time::base64::option")]
+        bookmark: Option<Vec<u8>>,
+    },
 }
 
 impl From<SlotValueWire> for SlotValue {
@@ -62,6 +83,7 @@ impl From<SlotValueWire> for SlotValue {
             SlotValueWire::Color { red, green, blue, alpha } => SlotValue::Color { red, green, blue, alpha },
             SlotValueWire::Font(s) => SlotValue::Font(s.value),
             SlotValueWire::Number(n) => SlotValue::Number(n.value),
+            SlotValueWire::Media { path, bookmark } => SlotValue::Media { path, bookmark },
         }
     }
 }
@@ -73,6 +95,7 @@ impl From<SlotValue> for SlotValueWire {
             SlotValue::Color { red, green, blue, alpha } => SlotValueWire::Color { red, green, blue, alpha },
             SlotValue::Font(s) => SlotValueWire::Font(Underscore0 { value: s }),
             SlotValue::Number(n) => SlotValueWire::Number(Underscore0 { value: n }),
+            SlotValue::Media { path, bookmark } => SlotValueWire::Media { path, bookmark },
         }
     }
 }
@@ -203,6 +226,7 @@ impl SlotValue {
     pub fn json(&self) -> Value {
         match self {
             SlotValue::Text(s) | SlotValue::Font(s) => Value::String(s.clone()),
+            SlotValue::Media { path, .. } => Value::String(path.clone()),
             SlotValue::Number(n) => serde_json::Number::from_f64(*n).map_or(Value::Null, Value::Number),
             SlotValue::Color { red, green, blue, alpha } => {
                 let mut m = serde_json::Map::new();
@@ -213,6 +237,57 @@ impl SlotValue {
             }
         }
     }
+}
+
+/// Whether `text` is exactly one emoji (one grapheme cluster that starts with an emoji code point): a capture then makes
+/// an Emoji slot instead of a Text slot.
+pub fn is_single_emoji(text: &str) -> bool {
+    use unicode_segmentation::UnicodeSegmentation;
+    let mut g = text.trim().graphemes(true);
+    let (Some(first), None) = (g.next(), g.next()) else { return false };
+    let Some(c) = first.chars().next() else { return false };
+    let u = c as u32;
+    let pictographic = matches!(u,
+        0x1F000..=0x1FAFF | 0x2600..=0x27BF | 0x2B50 | 0x2B55 | 0x2B1B | 0x2B1C | 0x2300..=0x23FF | 0x2190..=0x21FF
+        | 0x2934 | 0x2935 | 0x3030 | 0x303D | 0x3297 | 0x3299 | 0xA9 | 0xAE | 0x203C | 0x2049 | 0x2122 | 0x2139);
+    // A digit, # or * is an emoji only as a keycap sequence (with U+FE0F U+20E3).
+    let keycap = matches!(c, '0'..='9' | '#' | '*') && first.contains('\u{20E3}');
+    (pictographic && !(c.is_ascii() && !keycap)) || keycap
+}
+
+/// What kind of value a [`TemplateField`] holds.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub enum TemplateFieldKind {
+    /// A text.
+    Text,
+    /// One emoji.
+    Emoji,
+    /// A color.
+    Color,
+    /// A font name.
+    Font,
+    /// A number.
+    Number,
+    /// An image file.
+    Image,
+    /// The template length (synthetic; intro and outro are read-only).
+    Duration,
+}
+
+/// One editable field of a template, typed view for the Library, the inspector and the Edit API.
+#[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct TemplateField {
+    /// The slot id (the template id for Duration).
+    pub id: Id,
+    /// Shown name.
+    pub name: String,
+    /// The kind.
+    pub kind: TemplateFieldKind,
+    /// Text/Emoji/Font: string; Number: number; Color: `{red,green,blue,alpha}`; Image: path string;
+    /// Duration: `{seconds, intro, outro}`.
+    pub value: Value,
 }
 
 /// A title template: several layers saved as ONE template (see the Swift file comment).
@@ -234,7 +309,7 @@ pub struct TitleTemplate {
 
 impl TitleTemplate {
     /// On-disk format of a template (PresetStore payload, packs). Raise when a field changes meaning.
-    pub const FORMAT_VERSION: i64 = 5;
+    pub const FORMAT_VERSION: i64 = 6;
 
     /// A template; `zones` get the content's length as `design_duration`.
     pub fn new(
@@ -255,8 +330,11 @@ impl TitleTemplate {
     /// Format 3 when a graphics layer of the content follows another (G11, `GraphicsLayer.follow`); 2 when some slot
     /// addresses a graphics layer (`TemplateSlot.graphics_layer`). An older build then refuses the template
     /// (`NewerFormat`) instead of dropping the field. Format 4 when layers carry Fast Cut attachments (v67 field). Format
-    /// 5 when an item of a Graphic has a range (`GraphicsLayer.range`, v74 field). Plain templates stay format 1.
+    /// 5 when an item of a Graphic has a range (`GraphicsLayer.range`, v74 field). Format 6 when a slot is an Emoji or Image. Plain templates stay format 1.
     pub fn written_format_version(&self) -> i64 {
+        if self.slots.iter().any(|s| matches!(s.kind, TemplateSlotKind::Emoji | TemplateSlotKind::Image)) {
+            return 6;
+        }
         if self.content.contains_item_ranges() {
             return 5;
         }
@@ -272,6 +350,43 @@ impl TitleTemplate {
     /// Default length: the content's.
     pub fn duration(&self) -> Time {
         self.content.duration()
+    }
+
+    /// The fields a user edits, as one typed list: every slot, then a synthetic Duration field (id = the template's id,
+    /// value = `design_duration` in seconds; `intro` and `outro` in seconds ride along as read-only context).
+    pub fn fields(&self) -> Vec<TemplateField> {
+        let mut out: Vec<TemplateField> = self
+            .slots
+            .iter()
+            .map(|s| TemplateField {
+                id: s.id,
+                name: s.name.clone(),
+                kind: match s.kind {
+                    TemplateSlotKind::Text => TemplateFieldKind::Text,
+                    TemplateSlotKind::Emoji => TemplateFieldKind::Emoji,
+                    TemplateSlotKind::Color => TemplateFieldKind::Color,
+                    TemplateSlotKind::Font => TemplateFieldKind::Font,
+                    TemplateSlotKind::Number => TemplateFieldKind::Number,
+                    TemplateSlotKind::Image => TemplateFieldKind::Image,
+                },
+                value: match &s.value {
+                    SlotValue::Media { path, .. } => Value::String(path.clone()),
+                    v => v.json(),
+                },
+            })
+            .collect();
+        let seconds = |t: Time| t.value() as f64 / t.timescale() as f64;
+        out.push(TemplateField {
+            id: self.id,
+            name: "Duration".to_string(),
+            kind: TemplateFieldKind::Duration,
+            value: serde_json::json!({
+                "seconds": seconds(self.zones.design_duration.unwrap_or_else(|| self.duration())),
+                "intro": seconds(self.zones.intro_end),
+                "outro": seconds(self.zones.outro_length),
+            }),
+        });
+        out
     }
 
     /// Every layer, bottom track first.
@@ -408,6 +523,18 @@ impl Timeline {
         self.tracks.iter().any(|t| t.clips().iter().any(|c| c.graphics().is_some_and(|g| g.has_item_ranges())))
     }
 
+    /// Points the media layer `layer` (an image of a template) at `media`. Errors: `SlotPathNotFound` (no such layer).
+    pub fn point_layer_at_media(&mut self, layer: Id, media: Id) -> Result<(), TitleTemplateError> {
+        for t in self.tracks.iter_mut() {
+            if let Some(mut c) = t.clip(layer).cloned() {
+                c.media = media;
+                t.replace(c);
+                return Ok(());
+            }
+        }
+        Err(TitleTemplateError::SlotPathNotFound("media".to_string()))
+    }
+
     /// Writes `value` into the payload of the generator layer `layer` at `path`. Errors: `SlotPathNotFound`.
     pub fn set_slot(
         &mut self,
@@ -473,6 +600,30 @@ mod tests {
         assert_eq!(PayloadPath::value("template.style.size", &out), Ok(json!(80)));
         assert!(PayloadPath::setting(json!("b"), "template.missing", payload).is_err());
         assert!(PayloadPath::setting(json!("b"), "", payload).is_err());
+    }
+
+    #[test]
+    fn single_emoji_detection() {
+        for yes in [
+            "\u{1F600}",
+            "\u{2764}\u{FE0F}",
+            "\u{1F468}\u{200D}\u{1F469}\u{200D}\u{1F467}",
+            "\u{1F1E9}\u{1F1EA}",
+            "1\u{FE0F}\u{20E3}",
+            " \u{1F44D} ",
+        ] {
+            assert!(is_single_emoji(yes), "{yes:?}");
+        }
+        for no in ["", "A", "7", "Hello", "\u{1F600}\u{1F600}", "\u{1F600}x", "#"] {
+            assert!(!is_single_emoji(no), "{no:?}");
+        }
+    }
+
+    #[test]
+    fn media_slot_round_trips_and_text_slots_are_unchanged() {
+        assert_round_trip::<SlotValue>(json!({"media": {"path": "/a/b.png"}}));
+        assert_round_trip::<SlotValue>(json!({"media": {"path": "/a/b.png", "bookmark": "AQI="}}));
+        assert_round_trip::<SlotValue>(json!({"text": {"_0": "Hello"}}));
     }
 
     #[test]

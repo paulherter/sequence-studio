@@ -86,6 +86,23 @@ impl EffectControlsModel {
     }
 
     pub fn summary_keys(&self, section: &EffectSection) -> Vec<SummaryKey> {
+        let stamp = (self.clip_revision, self.magic_frames.revision(), self.frame_duration);
+        {
+            let mut cache = self.summary_cache.borrow_mut();
+            if cache.stamp != Some(stamp) {
+                cache.by_section.clear();
+                cache.stamp = Some(stamp);
+            }
+            if let Some(hit) = cache.by_section.get(section) {
+                return hit.clone();
+            }
+        }
+        let built = self.build_summary_keys(section);
+        self.summary_cache.borrow_mut().by_section.insert(section.clone(), built.clone());
+        built
+    }
+
+    fn build_summary_keys(&self, section: &EffectSection) -> Vec<SummaryKey> {
         let Some(c) = &self.clip else { return Vec::new() };
         let props: BTreeSet<PropertyID> = section.key_properties().iter().map(|p| p.id()).collect();
         Self::merging_magic(

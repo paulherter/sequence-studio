@@ -124,11 +124,29 @@ impl TitleTemplateExt for TitleTemplate {
                 slots.push(TemplateSlot {
                     id: ids.next_id(),
                     name: format!("Text {}", slots.len() + 1),
-                    kind: TemplateSlotKind::Text,
+                    kind: if sq_core_model::is_single_emoji(&text) {
+                        TemplateSlotKind::Emoji
+                    } else {
+                        TemplateSlotKind::Text
+                    },
                     layer: c.id,
                     graphics_layer: None,
                     path: path.to_string(),
                     value: SlotValue::Text(text),
+                });
+            } else if c.is_still
+                && !c.is_graphics()
+                && let Some(m) = project.media(c.media)
+            {
+                // An image layer: the slot keeps the file path; applying imports the file when the project lacks it.
+                slots.push(TemplateSlot {
+                    id: ids.next_id(),
+                    name: format!("Image {}", slots.len() + 1),
+                    kind: TemplateSlotKind::Image,
+                    layer: c.id,
+                    graphics_layer: None,
+                    path: String::new(),
+                    value: SlotValue::Media { path: m.path.clone(), bookmark: m.bookmark.clone() },
                 });
             } else if c.is_graphics()
                 && let Some(doc) = c.graphics()
@@ -212,16 +230,25 @@ impl ProjectTitleTemplateExt for Project {
         if template.duration() <= Time::ZERO || start < Time::ZERO {
             return Err(EditError::EmptyClip.into());
         }
-        let len = duration.unwrap_or(template.duration()).snapped(fd).max(fd);
+        // Never shorter than intro + outro + one frame, so a short clip cannot cut the intro (animation_zones content_time).
+        let floor = (template.zones.intro_end + template.zones.outro_length + fd).snapped(fd).max(fd);
+        let len = duration.unwrap_or(template.duration()).snapped(fd).max(floor);
 
         let (mut inner, mut slots) = instantiated(template, ids);
+        let mut work_media = self.media.clone();
         for (s, original) in slots.iter_mut().zip(&template.slots) {
             let given = values.get(&s.id);
             if let Some(v) = given {
                 s.value = v.clone();
             }
-            if given.is_some() || s.value != original.value {
-                inner.set_slot(s.layer, s.graphics_layer, &s.path, &s.value)?;
+            // An image is always imported: the saved path names a file the project may not have yet.
+            if given.is_some() || s.value != original.value || matches!(s.value, SlotValue::Media { .. }) {
+                if let SlotValue::Media { path, bookmark } = &s.value {
+                    let media_id = import_media(&mut work_media, path, bookmark.as_ref(), ids);
+                    inner.point_layer_at_media(s.layer, media_id)?;
+                } else {
+                    inner.set_slot(s.layer, s.graphics_layer, &s.path, &s.value)?;
+                }
             }
         }
         let mut c = Clip::new(
@@ -238,6 +265,7 @@ impl ProjectTitleTemplateExt for Project {
         c.template_slots = Some(slots);
         let clip_id = c.id;
         let mut work = self.clone();
+        work.media = work_media;
         work.timelines.push(inner);
         work.edit(timeline, |t| t.tracks[tr].overwrite(c, ids))?;
         *self = work;
@@ -299,7 +327,12 @@ impl ProjectTitleTemplateExt for Project {
         let Some(ti) = work.timelines.iter().position(|t| t.id == seq) else {
             return Err(TitleTemplateError::SlotNotFound.into());
         };
-        work.timelines[ti].set_slot(s.layer, s.graphics_layer, &s.path, &value)?;
+        if let SlotValue::Media { path, bookmark } = &value {
+            let media_id = import_media(&mut work.media, path, bookmark.as_ref(), ids);
+            work.timelines[ti].point_layer_at_media(s.layer, media_id)?;
+        } else {
+            work.timelines[ti].set_slot(s.layer, s.graphics_layer, &s.path, &value)?;
+        }
         *self = work;
         Ok(())
     }
@@ -315,6 +348,25 @@ impl ProjectTitleTemplateExt for Project {
             Ok::<(), TemplateEditError>(())
         })
     }
+}
+
+/// The media item for the file at `path` (already in the project: that one; else a new item, named after the file).
+fn import_media(
+    media: &mut sq_core_model::CowVec<sq_core_model::MediaRef>,
+    path: &str,
+    bookmark: Option<&Vec<u8>>,
+    ids: &mut dyn IdSource,
+) -> Id {
+    if let Some(m) = media.iter().find(|m| m.path == path) {
+        return m.id;
+    }
+    let name =
+        std::path::Path::new(path).file_stem().map_or_else(|| path.to_string(), |n| n.to_string_lossy().into_owned());
+    let mut item = sq_core_model::MediaRef::new(ids.next_id(), &name, path, sq_core_model::MediaFingerprint::new(0));
+    item.bookmark = bookmark.cloned();
+    let id = item.id;
+    media.push(item);
+    id
 }
 
 /// The content with fresh ids for the inner sequence, every track, clip, transition, link and bundle, and the slots
@@ -489,7 +541,7 @@ mod tests {
         }
         let back: TitleTemplate = serde_json::from_slice(&serde_json::to_vec(&t).unwrap()).unwrap();
         assert_eq!(back, t);
-        assert_eq!(TitleTemplate::FORMAT_VERSION, 5);
+        assert_eq!(TitleTemplate::FORMAT_VERSION, 6);
     }
 
     #[test]
@@ -830,5 +882,107 @@ mod tests {
         assert_eq!(p.auto_detect_animation_zones(ids[2]), Err(TitleTemplateError::NoKeyframes.into()));
         assert_eq!(p.auto_detect_animation_zones(cid(777)), Err(EditError::ClipNotFound.into()));
         let _ = (tl, SequentialIds::default());
+    }
+
+    fn fd() -> Time {
+        Time::new(1, 30)
+    }
+
+    #[test]
+    fn a_longer_or_shorter_placement_keeps_intro_and_outro_at_their_own_speed() {
+        let t = template(); // design 5 s, intro 1 s, outro 0.5 s
+        assert_eq!((t.duration(), t.zones.outro_length), (s(5), ms(500)));
+        for len in [s(10), ms(2500)] {
+            let (mut p, tl, _, v4) = host();
+            let id = p.apply_title_template(&t, tl, v4, s(20), Some(len), &BTreeMap::new(), &mut fresh()).unwrap();
+            let c = placed(&p, id);
+            assert_eq!(c.duration(), len);
+            assert_eq!(c.inner_time(len - ms(500), fd()), s(5) - ms(500), "outro starts 0.5 s before the end, 1:1");
+            assert_eq!(c.inner_time(len - ms(100), fd()), s(5) - ms(100));
+            assert_eq!(c.inner_time(ms(300), fd()), ms(300), "intro 1:1 from the start");
+        }
+    }
+
+    #[test]
+    fn a_text_animator_intro_keeps_its_length_when_the_clip_is_stretched() {
+        let (p, tl, ids, v4) = host();
+        let only_text = [ids[1]]; // "Subtitle", keys at 0 and 1 s: intro 1 s
+        let t = TitleTemplate::capture(&only_text, tl, &p, "Anim", &[ms(800)], &mut fresh()).unwrap();
+        assert_eq!(t.zones.intro_end, s(1));
+        let mut p = p;
+        let id =
+            p.apply_title_template(&t, tl, v4, s(20), Some(t.duration() * 2), &BTreeMap::new(), &mut fresh()).unwrap();
+        let c = placed(&p, id);
+        assert_eq!(c.inner_time(ms(800), fd()), ms(800));
+        assert_eq!(c.inner_time(s(1), fd()), s(1));
+    }
+
+    #[test]
+    fn a_requested_duration_is_clamped_to_intro_plus_outro_plus_one_frame() {
+        let t = template();
+        let (mut p, tl, _, v4) = host();
+        let id = p.apply_title_template(&t, tl, v4, s(20), Some(ms(100)), &BTreeMap::new(), &mut fresh()).unwrap();
+        assert_eq!(placed(&p, id).duration(), s(1) + ms(500) + fd());
+    }
+
+    #[test]
+    fn a_single_emoji_text_layer_becomes_an_emoji_slot() {
+        let (mut p, tl, ids, _) = host();
+        let e = layer(20, "text", text_payload("\u{1F600}"), s(10), s(5), &[]);
+        let mut track = Track::new(cid(70), TrackKind::Video);
+        track.overwrite(e, &mut fresh()).unwrap();
+        p.edit(tl, |t| {
+            t.tracks.push(track);
+            Ok(())
+        })
+        .unwrap();
+        let mut all = ids[..2].to_vec();
+        all.push(cid(20));
+        let t = TitleTemplate::capture(&all, tl, &p, "E", &[], &mut fresh()).unwrap();
+        let kinds: Vec<_> = t.slots.iter().map(|x| x.kind).collect();
+        assert_eq!(kinds, [TemplateSlotKind::Text, TemplateSlotKind::Text, TemplateSlotKind::Emoji]);
+        assert_eq!(t.written_format_version(), 6);
+        let kinds: Vec<_> = t.fields().iter().map(|f| f.kind).collect();
+        assert_eq!(kinds.last(), Some(&sq_core_model::TemplateFieldKind::Duration));
+        assert_eq!(kinds.iter().filter(|k| **k == sq_core_model::TemplateFieldKind::Text).count(), 2);
+    }
+
+    #[test]
+    fn an_image_layer_is_saved_by_path_and_imported_on_apply() {
+        let (mut p, tl, _, _) = host();
+        let media =
+            sq_core_model::MediaRef::new(cid(300), "logo", "/art/logo.png", sq_core_model::MediaFingerprint::new(1));
+        p.media.push(media);
+        let mut img = Clip::new(cid(30), "logo", cid(300), TrackKind::Video, TimeRange::new(Time::ZERO, s(5)), s(10));
+        img.is_still = true;
+        let mut track = Track::new(cid(71), TrackKind::Video);
+        track.overwrite(img, &mut fresh()).unwrap();
+        p.edit(tl, |t| {
+            t.tracks.push(track);
+            Ok(())
+        })
+        .unwrap();
+        let t = TitleTemplate::capture(&[cid(30)], tl, &p, "Logo", &[], &mut fresh()).unwrap();
+        assert_eq!(t.slots.len(), 1);
+        assert_eq!(t.slots[0].kind, TemplateSlotKind::Image);
+        assert_eq!(t.slots[0].value, SlotValue::Media { path: "/art/logo.png".into(), bookmark: None });
+        // Another project that does not have the file.
+        let (mut other, otl, _, ov4) = host();
+        assert!(other.media.is_empty());
+        let id = other.apply_title_template(&t, otl, ov4, s(0), None, &BTreeMap::new(), &mut fresh()).unwrap();
+        let imported = other.media.iter().find(|m| m.path == "/art/logo.png").expect("imported").id;
+        let inner = other.timeline(placed(&other, id).sequence.unwrap()).unwrap();
+        assert_eq!(inner.tracks[0].clips()[0].media, imported);
+        // Swapping the image later reuses an existing item or imports a new one.
+        let slot = placed(&other, id).template_slots.unwrap()[0].id;
+        other
+            .set_template_slot(
+                slot,
+                SlotValue::Media { path: "/art/other.png".into(), bookmark: None },
+                id,
+                &mut fresh(),
+            )
+            .unwrap();
+        assert_eq!(other.media.len(), 2);
     }
 }

@@ -172,11 +172,11 @@ fn a_second_request_cancels_a_running_reframe_and_changes_nothing() {
 #[test]
 fn a_real_clip_with_a_person_is_reframed_through_the_real_models() {
     let Ok(path) = std::env::var("SQ_REAL_PERSON_CLIP") else {
-        eprintln!("skipped: SQ_REAL_PERSON_CLIP is not set");
+        sq_os::errln!("skipped: SQ_REAL_PERSON_CLIP is not set");
         return;
     };
     if !sq_translate::translator::runtime_available() {
-        eprintln!("skipped: no ONNX Runtime (put it on PATH or set SQ_ONNXRUNTIME to its folder)");
+        sq_os::errln!("skipped: no ONNX Runtime (put it on PATH or set SQ_ONNXRUNTIME to its folder)");
         return;
     }
     let (mut s, id) = session_of(&path);
@@ -189,7 +189,7 @@ fn a_real_clip_with_a_person_is_reframed_through_the_real_models() {
         .into_iter()
         .filter_map(|e| if let AnalysisFlowsEvent::Flash { message, .. } = e { Some(message) } else { None })
         .collect();
-    eprintln!("real run: {lines:?}");
+    sq_os::errln!("real run: {lines:?}");
     let clip = s.active_timeline().and_then(|t| t.tracks.iter().find_map(|tr| tr.clip(id))).cloned().expect("clip");
     assert!(clip.effects.iter().any(|e| e.kind == ClipEffect::REFRAME_KIND), "{lines:?}");
 }

@@ -532,7 +532,14 @@ impl AnonymizeSources for SystemAnonymizeSources {
             .get_or_init(|| {
                 let environment: HashMap<String, String> = std::env::vars().collect();
                 let folder = model_folder(&self.support, &environment)?;
-                EdgeTAMOnnxModel::new_with_threads(&folder, true, None, i32::try_from(sq_os::thread::background_threads()).unwrap_or(0)).map(Arc::new).map_err(|e| e.to_string())
+                EdgeTAMOnnxModel::new_with_threads(
+                    &folder,
+                    true,
+                    None,
+                    i32::try_from(sq_os::thread::background_threads()).unwrap_or(0),
+                )
+                .map(Arc::new)
+                .map_err(|e| e.to_string())
             })
             .as_ref()
             .map_err(Clone::clone)?;

@@ -621,7 +621,7 @@ fn exact_composite(gpu: &Arc<sq_gpu::gpu::Gpu>, from: Option<i64>, to: i64) -> O
 #[test]
 fn the_exact_picture_after_a_scrub_stand_in_shows_the_wanted_frame() {
     let Ok(gpu) = sq_gpu::gpu::Gpu::new() else {
-        eprintln!("skipped: no GPU adapter");
+        sq_os::errln!("skipped: no GPU adapter");
         return;
     };
     let after_scrub = exact_composite(&gpu, Some(20), 60).expect("scrub composite");
@@ -828,4 +828,29 @@ fn the_lane_warmed_for_a_clip_between_two_sample_points_is_not_taken_before_its_
     let ranges = log.ranges();
     let n = ranges.iter().filter(|r| (300..=303).contains(&r.0)).count();
     assert!(n <= 1, "the lane warmed at frame 300 was taken and decoded again {n} times: {ranges:?}");
+}
+
+#[test]
+fn a_lane_warmed_for_a_future_cut_is_not_closed_as_idle() {
+    use super::core::keeps_lane;
+    let (now, cut) = (Time::seconds(16), Some(Time::seconds(17)));
+    assert!(keeps_lane(10, None, now), "read lately");
+    assert!(keeps_lane(102, cut, now), "idle for 102 refreshes but its cut is still ahead");
+    assert!(!keeps_lane(102, cut, Time::seconds(18)), "the cut has passed");
+    assert!(!keeps_lane(102, None, now), "never warmed for a cut");
+}
+
+#[test]
+fn a_hold_ends_with_a_seek_back_a_far_cut_or_a_removed_cut() {
+    use super::core::{hold_active, hold_survives, keeps_lane};
+    let cut = Some(Time::seconds(17));
+    assert!(hold_active(cut, Time::seconds(16)));
+    // Seek back: the cut is 12 s ahead, outside the 4 s window, so the lane is no longer held or wanted.
+    assert!(!hold_active(cut, Time::seconds(5)), "seek back");
+    assert!(!keeps_lane(102, cut, Time::seconds(5)), "a stale hold must not keep an idle lane");
+    // A removed cut inside the plan releases; one beyond the plan, or still planned, stays.
+    let (pos, ahead) = (Time::seconds(16), Time::seconds(4));
+    assert!(!hold_survives(Time::seconds(17), &[], pos, ahead), "cut removed");
+    assert!(hold_survives(Time::seconds(17), &[Time::seconds(17)], pos, ahead), "cut still there");
+    assert!(hold_survives(Time::seconds(30), &[], pos, ahead), "cut beyond the plan");
 }

@@ -4,7 +4,7 @@ Sequence Studio is an open-source video editor for Mac, Windows and Linux, writt
 This page lists everything that is still planned, small things included, in one table sorted by priority.
 It has no dates and no version numbers: we ship when it works, and 1.0 comes only when the app is really finished.
 
-Last reviewed: 2026-11-26
+Last reviewed: 2026-11-27
 
 ## How to read the table
 
@@ -19,7 +19,7 @@ The priorities are:
 6. Platform work: zero-copy video on Windows and Linux, signed installers, self-update, render cache.
 7. Later: plugins, node-based color, motion design.
 
-Status is one of `in progress`, `not started` or `done`. Good machines always play at full preview quality; a reduced
+Status is `in progress` or `not started`; finished items leave the list and appear in What's New. Good machines always play at full preview quality; a reduced
 preview is meant only for very weak machines. The app collects no telemetry.
 
 ## Give feedback
@@ -35,10 +35,12 @@ preview is meant only for very weak machines. The app collects no telemetry.
 
 | ID | Priority | Area | Item | Status |
 | --- | --- | --- | --- | --- |
-| SQ-203 | 1 | Playback | Gyroflow stabilization is applied from the very first frame when playback starts or jumps, so the unstabilized picture never shows for a moment before the stabilized crop takes over. | not started |
+| SQ-207 | 1 | Playback | Scrubbing 4K clips without hardware decoding shows a picture at once when jumping to a new spot, and the exact frame follows quickly. | in progress |
+| SQ-208 | 1 | Playback | The interface is redrawn only where it changes, so playback keeps an even frame rhythm in a large or maximized window. | in progress |
+| SQ-203 | 1 | Playback | Gyroflow stabilization is applied from the very first frame when playback starts or jumps, so the unstabilized picture never shows for a moment before the stabilized crop takes over. | in progress |
 | SQ-204 | 1 | Playback | Clips with Gyroflow stabilization play as smoothly as clips without it; the stabilization cost per frame is measured and kept off the playback path. | not started |
-| SQ-205 | 1 | Playback | Real phone footage (the Oppo Enco Buds and Oppo Reno 16F TikTok projects) plays butter-smooth in the Edit page at full quality: no dropped frames and even frame pacing, so it feels like normal footage. | not started |
-| SQ-206 | 1 | Color | Playback stays smooth on the Color page while grading the same projects, also at full quality; today it stutters even at half quality. | not started |
+| SQ-205 | 1 | Playback | Real phone footage (the Oppo Enco Buds and Oppo Reno 16F TikTok projects) plays butter-smooth in the Edit page at full quality: no dropped frames and even frame pacing, so it feels like normal footage. | in progress |
+| SQ-206 | 1 | Color | Playback stays smooth on the Color page while grading the same projects, also at full quality; today it stutters even at half quality. | in progress |
 | SQ-001 | 1 | Playback | A benchmark suite measures frame spacing, dropped frames, audio dropouts and start times, and rejects speed changes that slow playback. | in progress |
 | SQ-002 | 1 | Playback | A video with a graded 4K clip on top plays smoothly on the Mac, as the earlier Swift version did. | in progress |
 | SQ-003 | 1 | Playback | 4K clips shown small are decoded at reduced size on the Mac, so memory use and dropped frames fall. | in progress |
@@ -92,10 +94,6 @@ preview is meant only for very weak machines. The app collects no telemetry.
 | SQ-200 | 1 | Color | The Program and Source viewers set the area around the picture apart from black video (a gray or checkerboard backdrop, switchable), so the frame edge is always visible. | not started |
 | SQ-201 | 1 | Platform | On Linux the main window keeps its rounded corners at small window sizes. | not started |
 | SQ-202 | 1 | Platform | On Linux (KDE Plasma) the installer and update window shows no gray veil outside its rounded corners. | not started |
-| SQ-051 | 1 | Playback | Heavy clips get a proxy automatically. | done |
-| SQ-052 | 1 | Export | Hardware encoding works on Mac, Windows and Linux (VideoToolbox, NVENC, AMF, QSV, VAAPI), with an honest warning when 10-bit is missing. | done |
-| SQ-053 | 1 | Reliability | The 22 commands that did nothing are now wired up; a Mac export crash, the Linux file dialog and an EQ error are fixed. | done |
-| SQ-054 | 1 | Reliability | Crashes write a local report on Mac, Windows and Linux, and a first-run tour explains the basics. | done |
 | SQ-055 | 2 | Transcription | The speech model is chosen from measurements on real clips on Mac, Windows and Linux, not from guesses. | not started |
 | SQ-056 | 2 | Transcription | Transcription uses the GPU on Mac and PC, and a faster, more accurate model than the small default. | not started |
 | SQ-057 | 2 | Transcription | Word times are accurate to about one frame, with voice activity detection. | not started |
@@ -114,8 +112,7 @@ preview is meant only for very weak machines. The app collects no telemetry.
 | SQ-070 | 2 | Text & Captions | Add Title starts with empty text, the length setting works, and the look row shows a preview. | not started |
 | SQ-071 | 2 | Text & Captions | A smaller set of redesigned caption animations replaces the current large list. | not started |
 | SQ-072 | 2 | Text & Captions | You can type, drag and resize text and captions in the monitor, and edit their keyframes in the Graphics panel. | not started |
-| SQ-073 | 2 | Transcription | Whisper transcription with word times runs inside the app on CPU. | done |
-| SQ-074 | 2 | Text & Captions | The Captions panel has Transcript, Captions and Style tabs with look, layout and motion, and imports and exports SRT. | done |
+| SQ-214 | 3 | AI Assistant | The local edit interface can delete and rename sequences, sort them into folders, Combine and leave a Combine, add adjustment layers, and save and insert templates. | in progress |
 | SQ-075 | 3 | AI Assistant | A local MCP server on Mac, Windows and Linux with one button to connect an AI assistant, ideally served by the existing local server. | not started |
 | SQ-076 | 3 | AI Assistant | Menus, shortcuts, panels and the assistant share one command list, and every refused command says why. | not started |
 | SQ-077 | 3 | AI Assistant | Unknown keys, tracks or out-of-range values return an error with the valid choices, never a silent default. | not started |
@@ -132,7 +129,6 @@ preview is meant only for very weak machines. The app collects no telemetry.
 | SQ-088 | 3 | AI Assistant | A style profile learned from your own projects lets the assistant cut the way you do. | not started |
 | SQ-089 | 3 | AI Assistant | The assistant can build a short clip from raw footage, using only operations a person also needs. | not started |
 | SQ-090 | 3 | AI Assistant | An optional chat panel inside the app, after the assistant is measured to work well. | not started |
-| SQ-091 | 3 | AI Assistant | The local edit API with 14 cut operations works with a token on localhost, is off by default, and undoes as one step. | done |
 | SQ-092 | 4 | Masks & Tracking | Magic Mask shows the mask on click, tracks with Enter, smooths edges, and runs on the GPU or Neural Engine on the Mac. | not started |
 | SQ-093 | 4 | Masks & Tracking | Drag a box to select an object for Magic Mask, like other editors. | not started |
 | SQ-094 | 4 | Masks & Tracking | Person and face detection as a starting point works on Windows and Linux without Apple Vision. | not started |
@@ -147,9 +143,10 @@ preview is meant only for very weak machines. The app collects no telemetry.
 | SQ-103 | 4 | Masks & Tracking | Stabilize from the Clip menu can queue several clips at once. | not started |
 | SQ-104 | 4 | Masks & Tracking | Stabilization says whether it worked, for example 'Partly stabilized'. | not started |
 | SQ-105 | 4 | Masks & Tracking | Green-screen keying keeps colored edges such as red hair or flames free of green. | not started |
-| SQ-106 | 4 | Masks & Tracking | Magic Mask has a click flow with EdgeTAM; it is marked experimental. | done |
-| SQ-107 | 4 | Masks & Tracking | Masks follow footage in position, scale, rotation and perspective. | done |
-| SQ-108 | 4 | Masks & Tracking | Gyroflow stabilization, auto reframe and face anonymize are available on all three systems. | done |
+| SQ-210 | 5 | Editing | Each sequence can be its own timeline panel: drag it anywhere, dock two timelines stacked, and drag clips from one into the other. An empty timeline panel stays open. | in progress |
+| SQ-211 | 5 | Editing | Adjustment layers: a clip whose effects apply to everything below it, for example one zoom over B-roll and text together. | in progress |
+| SQ-212 | 5 | Editing | Transitions as their own layer, for example a zoom in/out preset laid over a cut. | not started |
+| SQ-213 | 5 | Library & Packs | Templates for titles and graphics with their animation: save them in library folders, drag them in, then change text and emoji. | in progress |
 | SQ-109 | 5 | Import | The Premiere project import report lists, per clip, what was skipped and is saved with the project. | not started |
 | SQ-110 | 5 | Import | Premiere import is checked against many real projects; text style, layer order, folders, audio faders and pan, Lumetri color and time remapping come across. | not started |
 | SQ-111 | 5 | Import | You can import one project into the open project to merge two projects. | not started |
@@ -165,7 +162,7 @@ preview is meant only for very weak machines. The app collects no telemetry.
 | SQ-121 | 5 | Editing | In a format variant, text stays inside the picture, each clip can use fill, fit or blur, and the list shows which clips differ. | not started |
 | SQ-122 | 5 | Editing | Transform and crop handles, mask tools and zoom keys work directly in the monitor. | not started |
 | SQ-123 | 5 | Editing | Speed ramps are easy to find: the speed band appears by itself and presets sit in one row. | not started |
-| SQ-124 | 5 | Editing | You can leave a nested group or Combine again with one command. | not started |
+| SQ-124 | 5 | Editing | You can leave a nested group or Combine again with one command. | in progress |
 | SQ-125 | 5 | Editing | A four-point edit asks before silently cutting clips, and Append to the end of the timeline has its own shortcut. | not started |
 | SQ-126 | 5 | Editing | Hidden tool variants such as Ripple, Roll and Slide are easy to discover in the toolbar. | not started |
 | SQ-127 | 5 | Export | Export offers Fit, Fill and Stretch, and warns when the picture shape changes. | not started |
@@ -189,11 +186,6 @@ preview is meant only for very weak machines. The app collects no telemetry.
 | SQ-145 | 5 | Community | About five newcomers per release try the first five minutes: import, cut, caption, export. | not started |
 | SQ-146 | 5 | Community | People coming from Premiere, Resolve and Final Cut each edit a fixed test project, and results are published. | not started |
 | SQ-147 | 5 | Community | A short public yearly survey asks what blocks you. | not started |
-| SQ-148 | 5 | Effects | Quick Apply finds every command by name from the keyboard. | done |
-| SQ-149 | 5 | Library & Packs | Packs (.sqpack) and Lottie and MOGRT import are available. | done |
-| SQ-150 | 5 | Import | Premiere Pro projects import with a report, and FCPXML, OTIO, EDL and XMEML are read and written. | done |
-| SQ-151 | 5 | Color | The color picker works in the color panel, and scopes are available. | done |
-| SQ-152 | 5 | Audio | Clean Voice, noise reduction, live ducking and Match Loudness are available. | done |
 | SQ-153 | 6 | Platform | Zero-copy video on Windows (Direct3D 11 to 12) and Linux (VA-API to Vulkan), with a CPU fallback. | not started |
 | SQ-154 | 6 | Platform | Linux uses hardware decoding where the driver offers it. | not started |
 | SQ-155 | 6 | Platform | Frames are timed against real display timestamps. | not started |
@@ -205,7 +197,6 @@ preview is meant only for very weak machines. The app collects no telemetry.
 | SQ-161 | 6 | Export | AV1 export through hardware encoders where available. | not started |
 | SQ-162 | 6 | Export | A bundled software HEVC encoder, once the license question is settled. | not started |
 | SQ-163 | 6 | Platform | Installers and packages are checked automatically before release: Mac signature, a fresh Windows machine, and the Linux AppImage on an older system. | not started |
-| SQ-164 | 6 | Platform | The Windows installer and the Linux AppImage are available. | done |
 | SQ-165 | 7 | Plugins | A documented plugin interface, starting with packs and plugins that run as separate programs, with clear license terms for authors. | not started |
 | SQ-166 | 7 | Plugins | Plugin authors get wiki pages and a check command, and an Extensions page in the settings lists, starts and stops plugins. | not started |
 | SQ-167 | 7 | Plugins | A throw-away trial shows whether OpenFX effects can run in the app; OpenFX and shader packs follow only if fixed thresholds are met. | not started |

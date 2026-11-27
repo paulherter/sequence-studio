@@ -248,7 +248,7 @@ impl ColorSourceListItem {
         for (_, _, c) in cuts {
             if let Some(&i) = index.get(&c.media) {
                 out[i].clips.push(c.id);
-                if !c.color_grade_effects().is_empty() {
+                if c.has_color_grade() {
                     out[i].graded = true;
                 }
                 if Self::grade_text_of(c) != out[i].grade_text {
@@ -266,7 +266,7 @@ impl ColorSourceListItem {
                 media: c.media,
                 name: file.unwrap_or_else(|| c.name.clone()),
                 clips: vec![c.id],
-                graded: !c.color_grade_effects().is_empty(),
+                graded: c.has_color_grade(),
                 is_adjustment: c.is_adjustment(),
                 grade_text: Self::grade_text_of(c),
             });
@@ -275,7 +275,7 @@ impl ColorSourceListItem {
     }
 
     pub(crate) fn grade_text_of(c: &Clip) -> String {
-        ColorClipRow::grade_text(!c.color_grade_effects().is_empty(), c.color_graph().as_ref()).to_string()
+        ColorClipRow::grade_text_active(c.has_color_grade(), c.color_graph_is_active()).to_string()
     }
 
     /// The cut a pick of this row grades: `picked` when it is one of them, else the first cut that is "Linked" (its grade
@@ -285,6 +285,38 @@ impl ColorSourceListItem {
             return p;
         }
         self.clips.iter().copied().find(|c| project.is_grade_linked_to_source(*c)).unwrap_or(self.clips[0])
+    }
+}
+
+/// The Clips list, rebuilt only when the project changed (`Change::PROJECT` version), the active sequence switched or a
+/// different project object is shown. The Color page asks for it several times per frame; building it walks every clip.
+#[derive(Default)]
+pub struct ColorSourceListCache {
+    key: Option<(u64, Option<Id>)>,
+    items: std::rc::Rc<Vec<ColorSourceListItem>>,
+    /// Leave the adjustment layers out (the Clips strip shows picture sources only).
+    tiles_only: bool,
+    /// How often the list was built (tests).
+    pub builds: u32,
+}
+
+impl ColorSourceListCache {
+    pub fn new(tiles_only: bool) -> Self {
+        ColorSourceListCache { tiles_only, ..Default::default() }
+    }
+
+    pub fn items(&mut self, session: &sq_editor_session::EditorSession) -> std::rc::Rc<Vec<ColorSourceListItem>> {
+        let key = (session.version(sq_editor_session::Change::PROJECT), session.active_timeline().map(|t| t.id));
+        if self.key != Some(key) {
+            let mut v = ColorSourceListItem::items(session.active_timeline(), Some(session.project()));
+            if self.tiles_only {
+                v.retain(|i| !i.is_adjustment);
+            }
+            self.items = std::rc::Rc::new(v);
+            self.key = Some(key);
+            self.builds += 1;
+        }
+        std::rc::Rc::clone(&self.items)
     }
 }
 
@@ -332,6 +364,26 @@ impl ColorGradeOutline {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn source_list_is_rebuilt_only_when_the_project_changes() {
+        let project = Project::new(Id::from_u128(1), "P", Vec::new(), Vec::new());
+        let mut session = sq_editor_session::EditorSession::new(
+            project,
+            sq_editor_session::SessionDeps::headless(std::env::temp_dir().join("sq-color-list-cache-tests")),
+        );
+        let mut cache = ColorSourceListCache::new(false);
+        for _ in 0..50 {
+            cache.items(&session);
+        }
+        assert_eq!(cache.builds, 1, "50 draws of an unchanged project build the list once");
+        session.notify(sq_editor_session::Change::PLAYHEAD);
+        cache.items(&session);
+        assert_eq!(cache.builds, 1, "playhead moves do not rebuild it");
+        session.notify(sq_editor_session::Change::PROJECT);
+        cache.items(&session);
+        assert_eq!(cache.builds, 2, "a project change rebuilds it");
+    }
 
     #[test]
     fn no_timeline_asks_to_open_a_sequence() {

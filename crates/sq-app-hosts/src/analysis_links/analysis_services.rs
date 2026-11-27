@@ -58,7 +58,7 @@ impl AnalysisLauncher for ThreadLauncher {
             work(&mut ids);
         });
         if let Err(e) = spawned {
-            eprintln!("analysis worker did not start: {e}");
+            sq_os::errln!("analysis worker did not start: {e}");
         }
     }
 }
@@ -252,7 +252,7 @@ impl ShellServices for AnalysisServices {
             Some(pool) => pool.execute(work),
             None => {
                 if let Err(e) = std::thread::Builder::new().name("sq-probe".into()).spawn(work) {
-                    eprintln!("probe worker did not start: {e}");
+                    sq_os::errln!("probe worker did not start: {e}");
                     answer.answer(None);
                     return Some(ask);
                 }

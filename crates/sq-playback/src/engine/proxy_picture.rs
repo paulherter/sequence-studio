@@ -23,10 +23,17 @@ impl ProxyUse {
 }
 
 /// The one playback source rule. Playing at Full (explicit Full, or Auto that has not stepped down) reads originals;
-/// below Full (explicit Half/Quarter, or Auto stepped down after sustained lateness) a ready proxy is read. Scrubbing keeps
-/// its own switch. Paused and warming frames never ask (they are originals), export has no proxy lookup.
-pub fn proxy_read_allowed(scrubbing: bool, playing: bool, u: ProxyUse, quality: DecodeScale) -> bool {
-    (scrubbing && u.scrubbing) || (playing && u.playback && quality != DecodeScale::Full)
+/// below Full (explicit Half/Quarter, or Auto stepped down after sustained lateness) a ready proxy is read. A media the
+/// session marked `media_playback` (software-decoded here) reads its ready proxy while playing even at Full. Scrubbing
+/// keeps its own switch. Paused and warming frames never ask (they are originals), export has no proxy lookup.
+pub fn proxy_read_allowed(
+    scrubbing: bool,
+    playing: bool,
+    u: ProxyUse,
+    quality: DecodeScale,
+    media_playback: bool,
+) -> bool {
+    (scrubbing && u.scrubbing) || (playing && ((u.playback && quality != DecodeScale::Full) || media_playback))
 }
 
 /// A proxy may stand in for the original only when it has the same frames: same count and same first and last
@@ -48,12 +55,20 @@ mod tests {
     #[test]
     fn playback_source_rule() {
         let u = ProxyUse { scrubbing: true, playback: true };
-        assert!(!proxy_read_allowed(false, true, u, DecodeScale::Full), "Full plays originals");
-        assert!(proxy_read_allowed(false, true, u, DecodeScale::Half));
-        assert!(proxy_read_allowed(false, true, u, DecodeScale::Quarter));
-        assert!(!proxy_read_allowed(false, false, u, DecodeScale::Quarter), "paused: original");
-        assert!(proxy_read_allowed(true, false, u, DecodeScale::Full), "scrubbing unchanged");
-        assert!(!proxy_read_allowed(false, true, ProxyUse::OFF, DecodeScale::Half));
+        assert!(!proxy_read_allowed(false, true, u, DecodeScale::Full, false), "Full plays originals");
+        assert!(proxy_read_allowed(false, true, u, DecodeScale::Half, false));
+        assert!(proxy_read_allowed(false, true, u, DecodeScale::Quarter, false));
+        assert!(!proxy_read_allowed(false, false, u, DecodeScale::Quarter, false), "paused: original");
+        assert!(proxy_read_allowed(true, false, u, DecodeScale::Full, false), "scrubbing unchanged");
+        assert!(!proxy_read_allowed(false, true, ProxyUse::OFF, DecodeScale::Half, false));
+    }
+
+    #[test]
+    fn software_decoded_media_plays_its_proxy_at_full() {
+        let auto = ProxyUse::DEFAULT; // playback off globally (strong machine)
+        assert!(proxy_read_allowed(false, true, auto, DecodeScale::Full, true), "software media: proxy while playing");
+        assert!(!proxy_read_allowed(false, true, auto, DecodeScale::Full, false), "hardware media: original");
+        assert!(!proxy_read_allowed(false, false, auto, DecodeScale::Full, true), "paused: original");
     }
 
     fn index(n: i64) -> SampleIndex {

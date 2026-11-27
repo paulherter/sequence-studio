@@ -40,6 +40,14 @@ mod tests {
     use super::*;
     use sq_core_time::Time;
 
+    /// The cut a hold waits for must not depend on how far ahead the sample looks.
+    #[test]
+    fn the_first_visible_frame_is_the_same_for_every_look_ahead() {
+        let shows = |f: i64| f >= 510;
+        let found: Vec<i64> = [600, 900, 1500, 2400].iter().map(|to| earliest_visible(0, *to, 15, shows)).collect();
+        assert!(found.iter().all(|f| *f == 510), "{found:?}");
+    }
+
     /// The search this replaces: halving over the whole range.
     fn halving_only(from: i64, to: i64, shows: impl Fn(i64) -> bool) -> i64 {
         let (mut lo, mut hi) = (from, to);

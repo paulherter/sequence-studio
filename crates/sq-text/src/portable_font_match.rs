@@ -315,7 +315,7 @@ impl PortableFontMatch {
         let loaded = if url == Path::new(EMBEDDED_INTER) {
             static WARNED: OnceLock<()> = OnceLock::new();
             WARNED.get_or_init(|| {
-                eprintln!("bundled fonts folder not found: text uses the Inter face built into the program")
+                sq_os::errln!("bundled fonts folder not found: text uses the Inter face built into the program")
             });
             GlyphRasterFont::new(EMBEDDED_INTER_BYTES.to_vec())
         } else {

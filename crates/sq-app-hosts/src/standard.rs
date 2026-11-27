@@ -220,7 +220,9 @@ fn build_root(
         crate::desktop_entry::startup_row(sq_platform::desktop_integration::DesktopEnv::current().as_ref());
     let looks = Arc::new(sq_editor_session::LookStore::new(
         Some(sq_editor_session::LookStore::default_url(&sq_editor_session::LookStore::library_directory(support))),
-        Some(sq_editor_session::LookStore::legacy_text_styles_url(&sq_editor_session::LookStore::library_directory(support))),
+        Some(sq_editor_session::LookStore::legacy_text_styles_url(&sq_editor_session::LookStore::library_directory(
+            support,
+        ))),
         None,
         None,
     ));

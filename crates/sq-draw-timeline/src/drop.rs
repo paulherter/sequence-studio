@@ -205,6 +205,14 @@ impl TimelinePanel {
                         layer_duration,
                     );
                 }
+            } else if ids.first().is_some_and(|id| sq_editor_session::EffectDragPayload::is_adjustment_layer(id)) {
+                layer = TransitionLayerLayout::adjustment_drop_target(
+                    p,
+                    &self.timeline,
+                    &self.geometry,
+                    self.playhead,
+                    layer_duration,
+                );
             } else {
                 clip_target = self.effect_drop_clip(p, ids);
             }
@@ -245,7 +253,16 @@ impl TimelinePanel {
         }
         if let Some(l) = &self.transition_layer_drop_target {
             box_(cv, l.rect);
-            crate::bands::draw_cut_marker(cv, &self.theme, self.geometry.x(l.cut), l.rect.min_y(), l.rect.height, true);
+            if !l.adjustment {
+                crate::bands::draw_cut_marker(
+                    cv,
+                    &self.theme,
+                    self.geometry.x(l.cut),
+                    l.rect.min_y(),
+                    l.rect.height,
+                    true,
+                );
+            }
         }
         if let Some(t) = &self.transition_drop_target {
             for r in std::iter::once(t.rect).chain(t.tail_rect) {

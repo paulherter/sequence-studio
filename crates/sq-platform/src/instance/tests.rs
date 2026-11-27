@@ -72,9 +72,9 @@ fn child_launch_for_the_process_tests() {
     let Some(dir) = std::env::var_os("SQ_INSTANCE_CHILD_DIR") else { return };
     let (tx, _rx) = channel();
     match claim(Path::new(&dir), Some(Path::new("/from-child.sqproj")), tx).unwrap() {
-        Claim::Forwarded => println!("CHILD-FORWARDED"),
+        Claim::Forwarded => sq_os::outln!("CHILD-FORWARDED"),
         Claim::Primary(_p) => {
-            println!("CHILD-PRIMARY");
+            sq_os::outln!("CHILD-PRIMARY");
             std::thread::sleep(Duration::from_secs(60));
         }
     }

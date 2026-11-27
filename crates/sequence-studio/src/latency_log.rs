@@ -40,7 +40,7 @@ impl LatencyLog {
         }
         let ms = |d: Duration| d.as_secs_f64() * 1e3;
         let age = |at: Option<Instant>| at.map_or(0.0, |t| ms(t.elapsed()));
-        eprintln!(
+        sq_os::errln!(
             "latency-frame events={events} oldest={:.1} newest={:.1} layout={:.1} acquire={:.1} draw={:.1} present={:.1} down={} drawn={drawn} shape={shape}",
             age(oldest),
             age(newest),

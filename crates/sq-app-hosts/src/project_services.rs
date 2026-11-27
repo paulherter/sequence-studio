@@ -87,7 +87,7 @@ impl FileManager for SystemPlatform {
     fn reveal(&self, path: &Path) -> Result<(), String> {
         if !external_open_allowed() {
             BLOCKED_OPENS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            eprintln!("sq: external reveal skipped (tests or offscreen run): {}", path.display());
+            sq_os::errln!("sq: external reveal skipped (tests or offscreen run): {}", path.display());
             return Ok(());
         }
         // Explorer exits with 1 even when it worked, so only a failed start is an error.
@@ -106,7 +106,7 @@ impl FileManager for SystemPlatform {
     fn open(&self, path: &Path) -> Result<(), String> {
         if !external_open_allowed() {
             BLOCKED_OPENS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            eprintln!("sq: external open skipped (tests or offscreen run): {}", path.display());
+            sq_os::errln!("sq: external open skipped (tests or offscreen run): {}", path.display());
             return Ok(());
         }
         #[cfg(windows)]
@@ -195,7 +195,8 @@ fn poster_decoder(path: &Path) -> Option<(Arc<FFmpegDemuxer>, Arc<FFmpegVideoDec
             return Some(out);
         }
     }
-    let decoder = Arc::new(FFmpegVideoDecoder::new_background(Arc::clone(&demuxer), Id::from_u128(0), POSTER_THREADS).ok()?);
+    let decoder =
+        Arc::new(FFmpegVideoDecoder::new_background(Arc::clone(&demuxer), Id::from_u128(0), POSTER_THREADS).ok()?);
     let mut kept = KEPT.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     kept.retain(|(p, _, _)| p != path);
     if kept.len() >= KEPT_DECODERS {
@@ -219,14 +220,18 @@ pub fn poster_pool(threads: usize) -> sq_runtime::WorkerPool {
 /// One picture of `path` at `at`, `height` tall, decoded with FFmpeg (blocking). Background work (run it on a `poster_pool`):
 /// one decoder thread, and it waits while the timeline plays or is scrubbed (`thumbnail_gate`).
 pub fn decode_thumbnail(path: &Path, at: Time, height: i64, aspect: Option<PixelAspect>) -> Option<Thumbnail> {
-    crate::thumbnail_gate::wait_until_clear();
-    let (demuxer, decoder) = poster_decoder(path)?;
-    let index = demuxer.index().frame_at(at).unwrap_or(0);
-    let frames = decoder.decode_blocking(index..=index, None, None).ok()?;
-    let decoded = frames.first()?;
-    let rgba = decoded.frame.storage_as::<FFmpegFrame>()?.download_rgba().ok()?;
-    let (w, h) = (decoded.frame.width, decoded.frame.height);
-    Some(upright_thumbnail(&rgba, w, h, demuxer.rotation(), height, aspect))
+    let (decoded, _waited) = crate::thumbnail_gate::run_when_clear(|stop| {
+        let _span = sq_os::trace::span_args("thumb", "decode", || format!("path={}", path.display()));
+        let (demuxer, decoder) = poster_decoder(path)?;
+        let index = demuxer.index().frame_at(at).unwrap_or(0);
+        // `stop` ends the decode between pictures when Play or a scrub starts: the thumbnail then waits and starts over.
+        let frames = decoder.decode_blocking_until(index..=index, None, None, Some(stop)).ok()?;
+        let decoded = frames.into_iter().next()?;
+        let rgba = decoded.frame.storage_as::<FFmpegFrame>()?.download_rgba().ok()?;
+        Some((rgba, decoded.frame.width, decoded.frame.height, demuxer.rotation()))
+    });
+    let (rgba, w, h, rotation) = decoded?;
+    Some(upright_thumbnail(&rgba, w, h, rotation, height, aspect))
 }
 
 /// A picture stored `width` x `source_height` and tagged with `rotation` (clockwise degrees, the display matrix) as the
@@ -374,7 +379,7 @@ mod tests {
                 .args(["-c", "copy"])
                 .arg(&rot));
         if !turned {
-            eprintln!("skipped: ffmpeg cannot write the rotated clip");
+            sq_os::errln!("skipped: ffmpeg cannot write the rotated clip");
             return;
         }
         let t = decode_thumbnail(&rot, Time::ZERO, 120, None).expect("a poster");
@@ -401,7 +406,7 @@ mod tests {
                 .output()
                 .is_ok_and(|o| o.status.success());
             if !ok {
-                eprintln!("skipped: ffmpeg cannot write a clip");
+                sq_os::errln!("skipped: ffmpeg cannot write a clip");
                 return;
             }
             files.push(f);

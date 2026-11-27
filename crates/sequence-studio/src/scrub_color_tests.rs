@@ -207,11 +207,11 @@ fn compare(a: &[u8], b: &[u8]) -> (f64, f64, f64) {
 /// opener gets the GPU like the app's, so the platform decoder (VideoToolbox on the Mac) reads the clip.
 fn mismatch(kind: &Kind, with_proxy: bool, hardware: bool) -> Option<(f64, f64, f64, bool)> {
     let Some(tool) = ffmpeg_tool() else {
-        eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+        sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
         return None;
     };
     let Ok(gpu) = sq_gpu::gpu::Gpu::new() else {
-        eprintln!("skipped: no GPU adapter");
+        sq_os::errln!("skipped: no GPU adapter");
         return None;
     };
     let dir = std::env::temp_dir().join(format!(
@@ -238,10 +238,10 @@ fn mismatch(kind: &Kind, with_proxy: bool, hardware: bool) -> Option<(f64, f64, 
                 .iter()
                 .map(|x| format!("x{x} {} vs {}", at(&scrubbed, *x), at(&paused, *x)))
                 .collect();
-            eprintln!("  row {row} (scrub vs paused): {}", points.join(" | "));
+            sq_os::errln!("  row {row} (scrub vs paused): {}", points.join(" | "));
         }
     }
-    eprintln!(
+    sq_os::errln!(
         "scrub vs paused {} proxy={with_proxy} hardware={hardware}: mean diff {diff:.2}, mean sample scrub {a:.1} paused {b:.1}",
         kind.name
     );
@@ -351,7 +351,7 @@ fn picture(
 #[test]
 fn every_download_route_hands_out_the_same_codes() {
     let Some(tool) = ffmpeg_tool() else {
-        eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+        sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
         return;
     };
     for kind in [&LIMITED, &FULL, &FLAGGED, &DEEP_420] {
@@ -404,7 +404,7 @@ fn every_download_route_hands_out_the_same_codes() {
 fn a_deep_422_frame_keeps_its_chroma_height_on_the_playing_route() {
     use sq_frame::sqframe::SQFramePixelFormat::{P010, P210};
     let Some(tool) = ffmpeg_tool() else {
-        eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+        sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
         return;
     };
     let dir = std::env::temp_dir().join(format!("sq-422-routes-{}", std::process::id()));
@@ -438,7 +438,7 @@ fn a_proxy_is_read_with_the_range_of_its_original() {
     use sq_frame::sqframe::SQFramePixelFormat::{Nv12, Nv12FullRange, P010, P010FullRange};
     use sq_media::media_opener::MonitorUse;
     let Some(tool) = ffmpeg_tool() else {
-        eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+        sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
         return;
     };
     for (kind, full) in [(&LIMITED, false), (&FLAGGED, true), (&FULL, true)] {

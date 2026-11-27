@@ -121,7 +121,7 @@ fn without_a_runner_the_command_is_not_offered() {
 #[test]
 fn a_real_clip_with_a_person_is_anonymized_through_the_real_models() {
     let Ok(path) = std::env::var("SQ_REAL_PERSON_CLIP") else {
-        eprintln!("skipped: SQ_REAL_PERSON_CLIP is not set");
+        sq_os::errln!("skipped: SQ_REAL_PERSON_CLIP is not set");
         return;
     };
     let support = std::env::temp_dir().join("sq-anonymize-real-support");
@@ -133,7 +133,7 @@ fn a_real_clip_with_a_person_is_anonymized_through_the_real_models() {
         AnonymizeEvent::Info(..) | AnonymizeEvent::Warn(..) => Some(0),
         _ => None,
     });
-    eprintln!("real search: {people} people, {events:?}");
+    sq_os::errln!("real search: {people} people, {events:?}");
     assert!(people >= 1, "{events:?}");
     services
         .anonymize_answer(&mut s, Some(AnonymizeChoice::new(AnonymizeTarget::Face, AnonymizeCover::Mosaic, vec![0])));
@@ -142,7 +142,7 @@ fn a_real_clip_with_a_person_is_anonymized_through_the_real_models() {
         AnonymizeEvent::Checks(_) => Some(()),
         _ => None,
     });
-    eprintln!("real run: {events:?}");
+    sq_os::errln!("real run: {events:?}");
     let clip = clip_of(&s, id);
     assert_eq!(clip.masks().len(), 1, "{events:?}");
     assert!(clip.effects.iter().any(|e| e.kind == ClipEffect::MOSAIC_KIND), "{events:?}");

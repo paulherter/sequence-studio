@@ -24,5 +24,5 @@ pub use layer::{
 pub use uniforms::{ConvertUniforms, PreBlurUniforms, TransitionSideUniforms, TransitionUniforms, Uniforms};
 
 pub use color_chain::GpuColorChain;
-pub use gpu_compositor::{Draw, preview_shown_size, EffectHooks, GpuCompositor, Picture, PictureKind, PictureSource};
+pub use gpu_compositor::{Draw, EffectHooks, GpuCompositor, Picture, PictureKind, PictureSource, preview_shown_size};
 pub use resolver::LayerColorResolver;

@@ -14,12 +14,7 @@ mod ffi {
         fn rnnoise_destroy(st: *mut c_void);
         fn rnnoise_reset(st: *mut c_void);
         fn rnnoise_process_frame(st: *mut c_void, out: *mut f32, input: *const f32) -> f32;
-        fn rnnoise_process_frame_floor(
-            st: *mut c_void,
-            out: *mut f32,
-            input: *const f32,
-            floors: *const f32,
-        ) -> f32;
+        fn rnnoise_process_frame_floor(st: *mut c_void, out: *mut f32, input: *const f32, floors: *const f32) -> f32;
     }
 
     /// Samples per RNNoise frame (480 at 48 kHz).

@@ -30,6 +30,7 @@ fn preset(kind: PresetKind) -> PresetItem {
         payload: Vec::new(),
         payload_version: 1,
         pack: None,
+        folder: None,
     }
 }
 

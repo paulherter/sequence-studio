@@ -232,7 +232,7 @@ mod tests {
         let src = vec![77u8; 3840 * 2160 * 4];
         let t = std::time::Instant::now();
         let out = resample(&src, 4, (3840, 2160), (1920, 1080));
-        println!("3840x2160 -> 1920x1080 8-bit: {:?}", t.elapsed());
+        sq_os::outln!("3840x2160 -> 1920x1080 8-bit: {:?}", t.elapsed());
         assert_eq!(out.len(), 1920 * 1080 * 4);
     }
 

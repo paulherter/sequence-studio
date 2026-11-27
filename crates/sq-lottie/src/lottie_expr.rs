@@ -689,7 +689,7 @@ pub fn run(src: &str, p: &Value, t: f64) -> Option<Vec<f64>> {
 #[allow(clippy::print_stderr)]
 fn log_unsupported(src: &str) {
     let short: String = src.chars().take(80).collect();
-    eprintln!("sq-lottie: unsupported expression, using the static value: {short}");
+    sq_os::errln!("sq-lottie: unsupported expression, using the static value: {short}");
 }
 
 #[cfg(test)]

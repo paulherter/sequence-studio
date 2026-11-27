@@ -74,7 +74,17 @@ Building a cut (ids come from `/v1/state`, media from `/v1/import`):
 - `createSequence{name, width, height, fps, sampleRate?}` (the new sequence becomes the open one; `fps` = 24, 25, 30, 60,
   23.976, 29.97, 59.94, 119.88 or `{num, den}`; 1080x1920 at 30 works), `setActiveSequence{sequence}`,
   `setSequenceSettings{sequence?, width?, height?, fps?, sampleRate?}`. The answer carries `sequencesAdded` and `activeSequence`.
-- A batch with `addClip`, `createSequence` or `setActiveSequence` runs operation by operation through the session
+- Sequences and folders (Project panel paths, each op one undo step, `GET /v1/state` has `folders`: the root folder tree
+  `{id, name, children: [{type: "sequence"|"media", id} | {type: "folder", id, name, children}]}`):
+  `deleteSequence{sequence}` (422 for the last sequence or one another sequence nests), `renameSequence{sequence, name}`,
+  `createFolder{name, parent?}` (answer `foldersAdded`), `moveSequence{sequence, folder?, index?}` (`folder` default = root,
+  `index` = child position, default the end; the same folder reorders).
+- `combine{clips, name?}`: the Combine command on `clips` of the sequence (also across tracks; linked partners go along) -> new
+  sequence "Combined NN" or `name`, one clip plays it; the answer's `clipsAdded` has the combined clip (video first, then
+  its linked sound clip) and `sequencesAdded` the inner sequence, whose content is in `GET /v1/state` `sequences`. `setParam`,
+  keyframes and effects work on the combined clip like on any clip. `uncombine{clips}`: the Unnest command, puts the content of
+  each combined clip back; `clipsAdded` = the restored clips. A group or a plain clip is a 422.
+- A batch with `addClip`, `createSequence`, `setActiveSequence`, the sequence/folder ops or `combine`/`uncombine` runs operation by operation through the session
   commands and is still ONE undo step "Agent: <name>"; any failure rolls all of it back. No `dryRun` for such a batch (422).
 
 ## Parameters, effects and text graphics
@@ -128,6 +138,10 @@ Effect presets: `GET /v1/effectPresets` lists the built-in presets (motion, keyi
 runs the Effects panel's apply (one clip); `at` must match the preset's anchor. (`GET /v1/presets` stays the export presets.) Your own presets (saved or imported, Library > Presets, effect kind) are listed in the same call with `"user": true`, `kind`, `anchor` (start|end|stretch) and `at`; `applyPreset` takes their id or name (case-insensitive; a built-in name wins; two with one name need the id) through the same code as the panel and keeps the preset's own anchor (`at` must match it). Example: `{"op":"applyPreset","clip":"<clip>","preset":"Zoom Out & In / BOT"}`.
 Keyed motion presets (ids as `applyPreset` takes them): `tailZoom` (last 19.4 f, 100 -> 110 %, single-sided: one clip), `headZoom` (130 -> 100 % over 19.4 f, single-sided: one clip), `overlayPop` (opacity pop + scale swell, keys scale with the clip length; not a cut transition), `talkPulse` (100 -> 110 -> 100 % over 110.1 f; not a cut transition); frames at 29.97 fps. Example: `{"op":"applyPreset","clip":"<clip>","preset":"tailZoom"}`.
 `addZoomCut{outgoing, incoming, direction: in|out, outFrames?, inFrames?, fadeFrames?: 2}` (touching video clips) is the two-sided zoom transition at a cut, written as `setKeyframe` keys (`motion.scale`, `opacity`; a key at the same time is replaced, other keys stay): both pictures zoom the same way (in = 100 -> 110 %, out = 110 -> 100 %), the leaving clip eases in and the arriving one eases out (fastest at the cut), only the picture on the higher track fades `fadeFrames` (same track = hard cut, no fade). Default lengths: upper leaving 19 f, lower arriving 33 f, lower leaving 29 f, upper arriving 18 f, each capped at half the clip; a clip under 0.5 s gets no zoom. ONE undo step "Agent: Zoom cut" (when the batch has no `name`); `diff.paramChanges` reads the keys back. Example: `{"op":"addZoomCut","outgoing":"<clip>","incoming":"<clip>","direction":"in"}`.
+
+`addZoomCut` with `asLayer: true` (and optional `track`) lays the zoom as ONE Adjustment Layer ("Zoom Layer") over the cut instead of keys on both clips; undo step "Agent: Zoom Layer". Curves and lengths come from the transition profile (`zoom_profile.json`): two keys per move, the cut-side key is the fastest point (handle 4 % influence), the calm side 100 %, both moves run at the same speed at the cut (the longer one sets it, the shorter zooms less), never below 100 %; lengths 28 / 48 / 42 / 26 frames (upper leaving / lower arriving / lower leaving / upper arriving), shortened to leave a 30 % hold; a clip that cannot hold a 9 frame move is refused. `direction` alternates from cut to cut (the caller's job). The layer sits on `track`, else on the first free video track above both clips, else a new top track. The upper picture's 2 frame fade stays an opacity key on that clip. Example: `{"op":"addZoomCut","outgoing":"<clip>","incoming":"<clip>","direction":"in","asLayer":true}`.
+
+`addAdjustmentLayer{track, at, duration, name?}` places an Adjustment Layer clip on a video track (overwrite, like any generator). The new clip's id is in `diff.added`. `setParam`, `addEffect`, `setKeyframe` (e.g. `motion.scale`, a Blur or Color effect) work on it like on any clip and act on everything below it. Example: `{"op":"addAdjustmentLayer","track":"<video track>","at":{"value":1,"timescale":1},"duration":{"value":2,"timescale":1}}`.
 Motion blur: `motion.shutterAngle` > 0 on a moving clip gives the compositor its sub-frame samples (test `shutter_angle_set_through_the_api...`).
 Not covered yet: effects on a single layer (`addEffect` acts on the clip).
 
@@ -153,6 +167,15 @@ Not covered yet: effects on a single layer (`addEffect` acts on the clip).
   the commit (can take a few seconds). 422 with the reason when nothing matches.
 - A commit without `sequence` is accepted only while no sequence is open: its `createSequence` is the first step; the answer's
   `sequence` is the new one. With a sequence open `sequence` stays required (400).
+- `GET /v1/templates` -> `{folders: [...], templates: [{id, name, folder?, fields: [{id, name, kind, value}]}]}`: the title templates of the Library (Titles).
+  `kind` = text | emoji | color | font | number | image | duration; `value` = a string (text, emoji, font, image path), a number, `{red, green, blue, alpha}` (0...1)
+  or, for the one `duration` field, `{seconds, intro, outro}` (read-only context). `POST /v1/templates {clips, name, folder?}` -> `{id}`: Save as Template on
+  video clips of the open sequence (422 with the reason when the clips are no title layers; no preview image, the Library row shows an icon; the clips become the selection).
+- `insertTemplate{template, track, at, duration?, fields?}` (commit operation, one clip, dry run works): `template` = Library id or name (case-insensitive, 404 when unknown),
+  `track` = an unlocked video track, `at` is frame-snapped, `duration` default = the template's length (never shorter than its intro + outro + one frame),
+  `fields` = `{<field id or name>: value}` in the shapes above (an image is an absolute path of an existing file; the length is not a field). An unknown field or a
+  value of the wrong shape is a 400 that names the field and lists the known ones. The new clip is in `diff.added` and `clipsAdded`; its inner sequence in `sequencesAdded`.
+  It runs before the other operations of the batch (the track must exist already). Tests: `template_tests` (sq-edit-api), `a_template_is_saved_listed_and_inserted_through_the_api`.
 - `POST /v1/save {path?, overwrite?}`: with `path` it behaves like Save As: the project is bound to that file afterwards. An
   existing file that is not the project's own is refused (409) unless `overwrite: true`. All paths: absolute, no `..`.
 - A failing session batch also puts the playhead back (the selection is not restored).

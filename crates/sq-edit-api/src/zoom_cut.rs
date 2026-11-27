@@ -27,6 +27,10 @@ pub struct ZoomCut {
     pub out_frames: Option<i64>,
     pub in_frames: Option<i64>,
     pub fade_frames: Option<i64>,
+    /// Lay the zoom as ONE adjustment layer over the cut instead of keys on both clips.
+    pub as_layer: bool,
+    /// Track of the layer (asLayer only); default: the first free video track above both clips, else a new top track.
+    pub track: Option<sq_core_time::Id>,
 }
 
 impl ZoomCut {
@@ -50,11 +54,13 @@ impl ZoomCut {
             out_frames: frames("outFrames", 1)?,
             in_frames: frames("inFrames", 1)?,
             fade_frames: frames("fadeFrames", 0)?,
+            as_layer: crate::edit_operation::optional(c, "asLayer")?.unwrap_or(false),
+            track: crate::edit_operation::optional(c, "track")?,
         })
     }
 }
 
-fn find(t: &Timeline, id: sq_core_time::Id) -> Result<(usize, Clip), OpFailure> {
+pub(crate) fn find(t: &Timeline, id: sq_core_time::Id) -> Result<(usize, Clip), OpFailure> {
     for (i, tr) in t.tracks.iter().enumerate() {
         if let Some(c) = tr.clip(id) {
             return Ok((i, c.clone()));
@@ -64,6 +70,9 @@ fn find(t: &Timeline, id: sq_core_time::Id) -> Result<(usize, Clip), OpFailure> 
 }
 
 pub(crate) fn add_zoom_cut(t: &mut Timeline, z: &ZoomCut, ids: &mut dyn IdSource) -> Result<(), OpFailure> {
+    if z.as_layer {
+        return crate::zoom_layer::add_zoom_layer(t, z, ids);
+    }
     let (out_track, out) = find(t, z.outgoing)?;
     let (in_track, inc) = find(t, z.incoming)?;
     if out.kind != TrackKind::Video || inc.kind != TrackKind::Video {

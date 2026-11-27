@@ -20,7 +20,6 @@ use sq_draw_library::library::text_templates::TextTemplateEntry;
 use sq_editor_session::{Change, EditorSession};
 use sq_library::library_item_kind::LibraryItemKind;
 use sq_library::watched_folder::LibraryEntryID;
-use sq_runtime::WorkerPool;
 use sq_uikit::controls_grid::CGRect;
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -96,7 +95,11 @@ impl LibraryHost {
         self.live.share_atlas(SharedAtlas::clone(&atlas));
         self.stills.share_atlas(SharedAtlas::clone(&atlas));
         self.posters.get_or_insert_with(|| {
-            PosterPump::new(Arc::new(FfmpegPosters), Arc::new(crate::project_services::poster_pool(1)), SharedAtlas::clone(&atlas))
+            PosterPump::new(
+                Arc::new(FfmpegPosters),
+                Arc::new(crate::project_services::poster_pool(1)),
+                SharedAtlas::clone(&atlas),
+            )
         });
     }
 

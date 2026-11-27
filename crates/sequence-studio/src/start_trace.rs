@@ -78,7 +78,7 @@ pub fn slow_turn(took: Duration, times: sq_app_shell::TurnTimes, hosts: &[(&'sta
         applog::info(&line);
     }
     if crate::latency_log::on() {
-        eprintln!("{line}");
+        sq_os::errln!("{line}");
     }
 }
 

@@ -153,6 +153,9 @@ impl ProgramEngine for HandleProgramEngine {
             playback: proxy_use.playback,
         });
     }
+    fn set_proxy_playback_media(&mut self, ids: &BTreeSet<Id>) {
+        self.handle.set_proxy_playback_media(ids.iter().copied().collect::<HashSet<Id>>());
+    }
     fn proxies_changed(&mut self, ids: &BTreeSet<Id>) {
         self.handle.proxies_changed(ids.iter().copied().collect::<HashSet<Id>>());
     }

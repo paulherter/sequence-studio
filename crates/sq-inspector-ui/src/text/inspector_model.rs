@@ -1248,9 +1248,11 @@ impl TextInspectorModel {
             };
             body(&mut a);
             if side == AnimatorSide::In {
-                set.animation_in = KeyframeTemplate::combined_with_animator(set.animation_in.as_ref(), a, AnimationAnchor::Start);
+                set.animation_in =
+                    KeyframeTemplate::combined_with_animator(set.animation_in.as_ref(), a, AnimationAnchor::Start);
             } else {
-                set.animation_out = KeyframeTemplate::combined_with_animator(set.animation_out.as_ref(), a, AnimationAnchor::End);
+                set.animation_out =
+                    KeyframeTemplate::combined_with_animator(set.animation_out.as_ref(), a, AnimationAnchor::End);
             }
         });
     }

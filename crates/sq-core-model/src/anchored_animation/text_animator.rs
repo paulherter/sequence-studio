@@ -341,7 +341,10 @@ mod tests {
     #[test]
     fn starting_animators_and_unit_changes_follow_the_panel_rules() {
         let mut a = TextAnimator::starting(TextAnimatorEffect::Pop);
-        assert_eq!((a.unit, a.duration, a.stagger, a.easing), (TextAnimatorUnit::Word, Time::new(3, 10), Time::new(2, 25), SegmentShape::Overshoot));
+        assert_eq!(
+            (a.unit, a.duration, a.stagger, a.easing),
+            (TextAnimatorUnit::Word, Time::new(3, 10), Time::new(2, 25), SegmentShape::Overshoot)
+        );
         a.set_effect(TextAnimatorEffect::Fade);
         assert_eq!(a.easing, SegmentShape::EaseOut);
         a.set_unit(TextAnimatorUnit::Line);
@@ -355,7 +358,8 @@ mod tests {
     fn a_cursor_belongs_to_the_typewriter_and_round_trips() {
         let mut a = TextAnimator::starting(TextAnimatorEffect::Typewriter);
         a.cursor = Some(TextCursor { color: Some("#ff8000".into()), ..TextCursor::standard() });
-        let back: TextAnimator = serde_json::from_value(serde_json::to_value(&a).unwrap_or_default()).unwrap_or_else(|e| panic!("{e}"));
+        let back: TextAnimator =
+            serde_json::from_value(serde_json::to_value(&a).unwrap_or_default()).unwrap_or_else(|e| panic!("{e}"));
         assert_eq!(back, a);
         assert_eq!(a.cursor.as_ref().and_then(TextCursor::rgb).map(|c| (c[0], c[2])), Some((1.0, 0.0)));
         a.set_effect(TextAnimatorEffect::Fade);

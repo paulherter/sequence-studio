@@ -216,6 +216,13 @@ pub(crate) enum Msg {
         scale: DecodeScale,
         preview: bool,
     },
+    /// A background job decoded the key picture of a GOP (`None`: it failed); `generation` is the media's at submit.
+    Strip {
+        media: Id,
+        gop: i64,
+        generation: u64,
+        outcome: super::key_strip::StripOutcome,
+    },
     Finished {
         keys: Vec<Key>,
         error: Option<String>,
@@ -253,6 +260,7 @@ pub enum Command {
     MediaChanged(HashSet<Id>),
     SetProxyUse(super::proxy_picture::ProxyUse),
     ProxiesChanged(HashSet<Id>),
+    SetProxyPlaybackMedia(HashSet<Id>),
     Play(PlaybackRate),
     Pause,
     Seek(Time),
@@ -324,6 +332,10 @@ impl ProgramHandle {
     /// Which monitor states read proxies (scrubbing, playing); a paused frame always reads the original.
     pub fn set_proxy_use(&self, proxy_use: super::proxy_picture::ProxyUse) {
         self.command(Command::SetProxyUse(proxy_use));
+    }
+    /// Media whose ready proxy is read while playing at any quality (software-decoded on this machine).
+    pub fn set_proxy_playback_media(&self, ids: HashSet<Id>) {
+        self.command(Command::SetProxyPlaybackMedia(ids));
     }
     /// The proxies of these media changed or went away: pictures and decoders of them are dropped, then reopened.
     pub fn proxies_changed(&self, ids: HashSet<Id>) {

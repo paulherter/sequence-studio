@@ -32,11 +32,7 @@ impl From<String> for OpFailure {
     }
 }
 
-fn with_clip<R>(
-    t: &mut Timeline,
-    id: Id,
-    f: impl FnOnce(&mut Clip) -> Result<R, OpFailure>,
-) -> Result<R, OpFailure> {
+fn with_clip<R>(t: &mut Timeline, id: Id, f: impl FnOnce(&mut Clip) -> Result<R, OpFailure>) -> Result<R, OpFailure> {
     let ti = t.tracks.iter().position(|tr| tr.clip(id).is_some()).ok_or(EditError::ClipNotFound)?;
     if t.tracks[ti].is_locked {
         return Err(EditError::TrackLocked.into());
@@ -58,7 +54,8 @@ fn with_host<R>(
         None => Ok(f(&mut Host::of_clip(c))?),
         Some(l) => {
             let doc = c.graphics_store.as_mut().ok_or("the clip has no layers (not a graphics clip)")?;
-            let layer = doc.layers.iter_mut().find(|x| x.id == l).ok_or_else(|| format!("no layer {l} on this clip"))?;
+            let layer =
+                doc.layers.iter_mut().find(|x| x.id == l).ok_or_else(|| format!("no layer {l} on this clip"))?;
             Ok(f(&mut Host::of_layer(layer, duration))?)
         }
     }
@@ -139,7 +136,13 @@ pub(crate) fn move_keyframe(t: &mut Timeline, clip: Id, param: &str, from: Time,
 }
 
 /// Shifts the keys of one param, or of every keyed param of the clip (its own, its effects', its layers').
-pub(crate) fn shift_keyframes(t: &mut Timeline, clip: Id, param: Option<&str>, by: Time, after: Option<Time>) -> Result<(), OpFailure> {
+pub(crate) fn shift_keyframes(
+    t: &mut Timeline,
+    clip: Id,
+    param: Option<&str>,
+    by: Time,
+    after: Option<Time>,
+) -> Result<(), OpFailure> {
     let n = with_clip(t, clip, |c| {
         let d = c.duration();
         if let Some(param) = param {
@@ -155,7 +158,8 @@ pub(crate) fn shift_keyframes(t: &mut Timeline, clip: Id, param: Option<&str>, b
         for a in addrs {
             n += Host::of_clip(c).shift_keys(&a, by, after)?;
         }
-        let ids: Vec<Id> = c.graphics_store.as_ref().map(|g| g.layers.iter().map(|l| l.id).collect()).unwrap_or_default();
+        let ids: Vec<Id> =
+            c.graphics_store.as_ref().map(|g| g.layers.iter().map(|l| l.id).collect()).unwrap_or_default();
         for id in ids {
             let l = layer_of(c, id)?;
             let mut h = Host::of_layer(l, d);

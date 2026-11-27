@@ -144,6 +144,8 @@ pub trait ProgramEngine {
     }
     fn set_proxy_use(&mut self, _use: ProxyUse) {}
     fn proxies_changed(&mut self, _ids: &BTreeSet<Id>) {}
+    /// Media whose ready proxy plays while playing at any quality (software-decoded on this machine).
+    fn set_proxy_playback_media(&mut self, _ids: &BTreeSet<Id>) {}
     fn set_project_live_ducking(&mut self, _setting: Option<ProjectLiveDucking>) {}
     fn set_dialogue_silences(&mut self, _provider: Option<Arc<dyn DialogueSilenceProvider + Send + Sync>>) {}
     fn power_policy(&self) -> PowerPolicy {
@@ -187,6 +189,8 @@ pub struct StubProgramEngine {
     pub monitor_gain: Option<sq_audiofx::monitor_gain::MonitorSetting>,
     pub channel_monitor: Option<sq_audiofx::channel_monitor::ChannelMonitor>,
     pub proxy_use: Option<ProxyUse>,
+    /// The last media set handed to `set_proxy_playback_media`.
+    pub proxy_playback_media: Option<BTreeSet<Id>>,
     /// View > Audio Scrubbing and Show Captions in Program Monitor, as a real engine keeps them.
     pub audio_scrubbing: bool,
     pub shows_captions: bool,
@@ -221,6 +225,7 @@ impl StubProgramEngine {
             monitor_gain: None,
             channel_monitor: None,
             proxy_use: None,
+            proxy_playback_media: None,
             audio_scrubbing: false,
             shows_captions: true,
             proxy_changes: Vec::new(),
@@ -379,6 +384,9 @@ impl ProgramEngine for StubProgramEngine {
     fn proxies_changed(&mut self, ids: &BTreeSet<Id>) {
         self.proxy_changes.push(ids.clone());
     }
+    fn set_proxy_playback_media(&mut self, ids: &BTreeSet<Id>) {
+        self.proxy_playback_media = Some(ids.clone());
+    }
     fn set_project_live_ducking(&mut self, setting: Option<ProjectLiveDucking>) {
         self.project_duckings.push(setting);
     }
@@ -429,6 +437,10 @@ pub trait SessionProxyServing {
     fn set_held(&mut self, _held: bool) {}
     /// Takes what the workers finished and hands them new work (the app calls it every frame). The default does nothing.
     fn pump(&mut self) {}
+    /// No proxy decision or transcode is live any more (the headless `--wait-proxies` bench waits for it). Default: settled.
+    fn proxies_settled(&self) -> bool {
+        true
+    }
     /// The unfinished transcodes, for the export queue's background list. The default has none.
     fn background_jobs(&self) -> Vec<BackgroundProxyJob> {
         Vec::new()

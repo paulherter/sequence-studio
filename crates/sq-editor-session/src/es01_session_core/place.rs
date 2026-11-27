@@ -260,7 +260,8 @@ impl EditorSession {
                     .ok_or(EditError::EmptyClip)?;
                 // A still has no media length: its default is `total`; the edit API's `sourceOut` / `duration` sets its
                 // length (the marks of a still stay ignored, as in the UI).
-                let still_length = options.source.and_then(|(_, out)| out).unwrap_or(total).snapped(tl.frame_duration());
+                let still_length =
+                    options.source.and_then(|(_, out)| out).unwrap_or(total).snapped(tl.frame_duration());
                 if still && still_length <= Time::ZERO {
                     return Err(EditError::EmptyClip);
                 }
@@ -350,21 +351,7 @@ impl EditorSession {
             return None;
         }
         let clips: Vec<Id> = self.selection.iter().copied().collect();
-        let trimmed = name.trim();
-        // Fast Cut: the attached clips inside the span go into the nest too; Normal: `nest`.
-        let mut seq = None;
-        let lease = self.lend_ids();
-        let ids = &mut lease.source();
-        let result = self.try_perform("Combine", None, |p| {
-            seq = Some(p.magnetic_nest(&clips, id, (!trimmed.is_empty()).then_some(trimmed), &mut *ids)?);
-            Ok::<(), EditError>(())
-        });
-        self.return_ids(lease);
-        if let Err(e) = result {
-            self.set_error(Self::message_for(&e));
-            return None;
-        }
-        let seq = seq?;
+        let seq = self.nest_clips(id, &clips, name)?;
         if let Some(t) = self.active_timeline() {
             let nested: BTreeSet<Id> = t
                 .tracks
@@ -376,6 +363,26 @@ impl EditorSession {
             self.set_selection(nested, BTreeSet::new());
         }
         Some(seq)
+    }
+
+    /// Nest (Combine) of `clips` of `timeline` into a new sequence, one undo step "Combine"; the selection is left alone.
+    /// The one path of the Combine command and the edit API's `combine`. Failure sets the error line.
+    pub fn nest_clips(&mut self, timeline: Id, clips: &[Id], name: &str) -> Option<Id> {
+        let trimmed = name.trim();
+        // Fast Cut: the attached clips inside the span go into the nest too; Normal: `nest`.
+        let mut seq = None;
+        let lease = self.lend_ids();
+        let ids = &mut lease.source();
+        let result = self.try_perform("Combine", None, |p| {
+            seq = Some(p.magnetic_nest(clips, timeline, (!trimmed.is_empty()).then_some(trimmed), &mut *ids)?);
+            Ok::<(), EditError>(())
+        });
+        self.return_ids(lease);
+        if let Err(e) = result {
+            self.set_error(Self::message_for(&e));
+            return None;
+        }
+        seq
     }
 
     /// Group of the selected clips.
@@ -473,13 +480,60 @@ impl EditorSession {
         name: &str,
         timeline: Id,
         clips: &[Clip],
-        mut restore: impl FnMut(
+        restore: impl FnMut(
             &mut sq_core_model::Project,
             Id,
             Id,
             &mut dyn sq_core_time::IdSource,
         ) -> Result<Vec<Id>, EditError>,
     ) -> bool {
+        match self.restore_content(name, timeline, clips, restore) {
+            Some(restored) => {
+                self.set_selection(restored.into_iter().collect(), BTreeSet::new());
+                true
+            }
+            None => false,
+        }
+    }
+
+    /// Unnest of the nested-sequence clips among `clips` of `timeline` (the edit API's `uncombine`), one undo step
+    /// "Unnest"; the selection is left alone. Returns the ids of the restored clips; failure sets the error line.
+    pub fn unnest_clips(&mut self, timeline: Id, clips: &[Id]) -> Option<Vec<Id>> {
+        let nested: Vec<Clip> = self
+            .project()
+            .timeline(timeline)
+            .map(|t| {
+                t.tracks
+                    .iter()
+                    .flat_map(|tr| tr.clips().iter())
+                    .filter(|c| {
+                        clips.contains(&c.id)
+                            && c.angle.is_none()
+                            && c.sequence.and_then(|s| self.project().timeline(s)).is_some_and(|s| !s.is_group())
+                    })
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
+        if nested.is_empty() {
+            self.set_error(Self::message_for(&EditError::NotNested));
+            return None;
+        }
+        self.restore_content("Unnest", timeline, &nested, |p, clip, tl, ids| p.unnest(clip, tl, ids))
+    }
+
+    fn restore_content(
+        &mut self,
+        name: &str,
+        timeline: Id,
+        clips: &[Clip],
+        mut restore: impl FnMut(
+            &mut sq_core_model::Project,
+            Id,
+            Id,
+            &mut dyn sq_core_time::IdSource,
+        ) -> Result<Vec<Id>, EditError>,
+    ) -> Option<Vec<Id>> {
         let mut restored: Vec<Id> = Vec::new();
         let result = self.with_ids(|s, ids| {
             s.try_perform(name, None, |p| {
@@ -503,10 +557,9 @@ impl EditorSession {
         });
         if let Err(e) = result {
             self.set_error(Self::message_for(&e));
-            return false;
+            return None;
         }
-        self.set_selection(restored.into_iter().collect(), BTreeSet::new());
-        true
+        Some(restored)
     }
 
     /// Marks the placement changed (for callers that edit the media list directly).

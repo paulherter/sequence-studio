@@ -5,8 +5,8 @@
 //! unit is unclear) returns `None`: the caller then composes that frame at the full size.
 //! shortcut: filters not listed in `scale_filter` are refused, not scaled; list more when a preview needs them.
 
-use crate::effects_evaluation::{ClipEffects, DropShadow, EffectMasks, EffectSegment, ImageFilter};
 use crate::effect_transform_stage::MotionBlurSamples;
+use crate::effects_evaluation::{ClipEffects, DropShadow, EffectMasks, EffectSegment, ImageFilter};
 use crate::evaluation::{LayerGroup, LayerRequest};
 use sq_core_masks::MaskShape;
 use sq_core_model::ClipTransform;
@@ -125,11 +125,7 @@ impl LayerRequest {
         if (f - 1.0).abs() < f64::EPSILON {
             return Some(self.clone());
         }
-        if !(f > 0.0 && f < 1.0)
-            || self.shape.is_some()
-            || self.pair.is_some()
-            || !self.stack_transitions.is_empty()
-        {
+        if !(f > 0.0 && f < 1.0) || self.shape.is_some() || self.pair.is_some() || !self.stack_transitions.is_empty() {
             return None;
         }
         let mut o = self.clone();
@@ -315,7 +311,10 @@ mod tests {
         let o = r.scaled(0.5).expect("a nested clip scales");
         let g = &o.groups[0];
         assert_eq!((g.format.width, g.format.height), (4, 4));
-        assert_eq!((g.transform.position, g.transform.scale, g.corner_radius), (Vec2::new(20.0, 10.0), Vec2::new(0.8, 0.8), 2.0));
+        assert_eq!(
+            (g.transform.position, g.transform.scale, g.corner_radius),
+            (Vec2::new(20.0, 10.0), Vec2::new(0.8, 0.8), 2.0)
+        );
         assert_eq!(g.effects.segments[0].blur_after, 3.0);
         // A group effect the module cannot scale still refuses the whole frame.
         r.groups[0].effects = ClipEffects { anti_flicker: 1.0, ..ClipEffects::default() };

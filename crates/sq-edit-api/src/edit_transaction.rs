@@ -6,13 +6,13 @@ use crate::edit_operation::EditOperation;
 use crate::param_ops::{self, OpFailure};
 use crate::time_limits::TimeLimits;
 use sq_core_edit::timeline_add_track::AddTrackExt;
-use sq_core_edit::timeline_edits::{SlipKeyframes, TimelineEditsExt};
 use sq_core_edit::timeline_clipboard::TimelineClipboardExt;
+use sq_core_edit::timeline_edits::{SlipKeyframes, TimelineEditsExt};
 use sq_core_edit::timeline_enable::TimelineEnableExt;
-use sq_core_edit::timeline_solo::SoloExt;
 use sq_core_edit::timeline_markers::TimelineMarkersExt;
 use sq_core_edit::timeline_range_edits::TimelineRangeEditsExt;
 use sq_core_edit::timeline_replace::TimelineReplaceExt;
+use sq_core_edit::timeline_solo::SoloExt;
 use sq_core_edit::timeline_three_point::TimelineThreePointExt;
 use sq_core_model::{EditError, Project, Timeline};
 use sq_core_time::{Id, IdSource, Time};
@@ -69,10 +69,15 @@ impl TransactionError {
 
     /// A refusal with a reason, tied to no operation.
     pub fn invalid(why: &str) -> TransactionError {
-        TransactionError { kind: TransactionErrorKind::Invalid, operation_index: None, operation: None, detail: Some(why.to_string()) }
+        TransactionError {
+            kind: TransactionErrorKind::Invalid,
+            operation_index: None,
+            operation: None,
+            detail: Some(why.to_string()),
+        }
     }
 
-    fn at(kind: TransactionErrorKind, index: usize, operation: &str) -> TransactionError {
+    pub(crate) fn at(kind: TransactionErrorKind, index: usize, operation: &str) -> TransactionError {
         TransactionError { kind, operation_index: Some(index), operation: Some(operation.to_string()), detail: None }
     }
 
@@ -167,7 +172,11 @@ impl EditTransaction {
             };
             let target = own.unwrap_or(sequence);
             let Some(t) = work.timeline(target) else {
-                return Err(TransactionError::at(TransactionErrorKind::Edit(EditError::TimelineNotFound), i, op.name()));
+                return Err(TransactionError::at(
+                    TransactionErrorKind::Edit(EditError::TimelineNotFound),
+                    i,
+                    op.name(),
+                ));
             };
             let mut settings = t.settings();
             let f = &mut settings.format;
@@ -188,6 +197,12 @@ impl EditTransaction {
             }
             work.set_settings(&settings, target)
                 .map_err(|e| TransactionError::at(TransactionErrorKind::Edit(e), i, op.name()))?;
+        }
+        // Templates: a project-level edit (a new inner sequence), so it runs here, before the timeline operations.
+        for (i, op) in ops.iter().enumerate() {
+            if matches!(op, EditOperation::InsertTemplate { .. }) {
+                crate::template_ops::insert(&mut work, sequence, i, op, ids)?;
+            }
         }
         if let Some(i) = ops.iter().position(EditOperation::is_session_operation) {
             return Err(TransactionError::at(TransactionErrorKind::NeedsSession, i, ops[i].name()));
@@ -329,7 +344,10 @@ impl EditTransaction {
                             "a clip on track {} right behind the edit leaves no room to close the gap (move or remove it first)",
                             i + 1
                         ),
-                        None => "the media, a caption inside the closed span or the clip's own length stops the edge there".into(),
+                        None => {
+                            "the media, a caption inside the closed span or the clip's own length stops the edge there"
+                                .into()
+                        }
                     };
                     return Err(OpFailure::Invalid(format!("rippleTrim moved nothing: {why}")));
                 }
@@ -380,6 +398,12 @@ impl EditTransaction {
             EditOperation::AddClip { .. }
             | EditOperation::CreateSequence { .. }
             | EditOperation::SetActiveSequence { .. }
+            | EditOperation::DeleteSequence { .. }
+            | EditOperation::RenameSequence { .. }
+            | EditOperation::CreateFolder { .. }
+            | EditOperation::MoveSequence { .. }
+            | EditOperation::Combine { .. }
+            | EditOperation::Uncombine { .. }
             | EditOperation::SyncAudio { .. } => return Err(EditError::NotConvertible.into()),
             EditOperation::SetParam { clip, param, value } => param_ops::set_param(t, *clip, param, value)?,
             EditOperation::AddEffect { clip, effect, index } => param_ops::add_effect(t, *clip, effect, *index, ids)?,
@@ -404,8 +428,15 @@ impl EditTransaction {
                 param_ops::set_keyframe(t, *clip, param, *at, value, &shape, ids)?;
             }
             EditOperation::AddZoomCut(z) => crate::zoom_cut::add_zoom_cut(t, z, ids)?,
+            // Done by `apply` on the project before the timeline operations.
+            EditOperation::InsertTemplate { .. } => {}
+            EditOperation::AddAdjustmentLayer { track, at, duration, name } => {
+                crate::zoom_layer::place_adjustment(t, *track, *at, *duration, name.as_deref(), ids)?;
+            }
             EditOperation::RemoveKeyframe { clip, param, at } => param_ops::remove_keyframe(t, *clip, param, *at)?,
-            EditOperation::MoveKeyframe { clip, param, from, to } => param_ops::move_keyframe(t, *clip, param, *from, *to)?,
+            EditOperation::MoveKeyframe { clip, param, from, to } => {
+                param_ops::move_keyframe(t, *clip, param, *from, *to)?
+            }
             EditOperation::ShiftKeyframes { clip, param, by, after } => {
                 param_ops::shift_keyframes(t, *clip, param.as_deref(), *by, *after)?;
             }
@@ -550,7 +581,13 @@ mod tests {
         let tracks_before = p.timelines[0].tracks.len();
         let ops = [
             EditOperation::AddTrack { kind: TrackKind::Audio },
-            EditOperation::SetTrackState { track: f.a1, mute: Some(true), solo: None, lock: None, visible: Some(false) },
+            EditOperation::SetTrackState {
+                track: f.a1,
+                mute: Some(true),
+                solo: None,
+                lock: None,
+                visible: Some(false),
+            },
             EditOperation::SetClipSpeed { clip: f.b, speed: sq_core_model::ClipSpeed::new(2, 1) },
             EditOperation::RemoveClip { clips: vec![f.a], ripple: false },
             EditOperation::SetSequenceSettings {
@@ -571,10 +608,22 @@ mod tests {
         assert!(t.track(f.v1).is_some_and(|v| v.clips().iter().all(|c| c.id != f.a)), "a is lifted");
         // A refusal changes nothing.
         let mut q = f.project.clone();
-        let bad = [EditOperation::SetTrackState { track: Id::from_u128(77), mute: Some(true), solo: None, lock: None, visible: None }];
-        assert_eq!(EditTransaction::apply(&bad, &mut q, f.seq, &mut ids()).map_err(|e| e.kind), Err(TransactionErrorKind::TrackNotFound));
+        let bad = [EditOperation::SetTrackState {
+            track: Id::from_u128(77),
+            mute: Some(true),
+            solo: None,
+            lock: None,
+            visible: None,
+        }];
+        assert_eq!(
+            EditTransaction::apply(&bad, &mut q, f.seq, &mut ids()).map_err(|e| e.kind),
+            Err(TransactionErrorKind::TrackNotFound)
+        );
         let session_op = [EditOperation::SetActiveSequence { sequence: f.seq }];
-        assert_eq!(EditTransaction::apply(&session_op, &mut q, f.seq, &mut ids()).map_err(|e| e.kind), Err(TransactionErrorKind::NeedsSession));
+        assert_eq!(
+            EditTransaction::apply(&session_op, &mut q, f.seq, &mut ids()).map_err(|e| e.kind),
+            Err(TransactionErrorKind::NeedsSession)
+        );
         assert_eq!(q, f.project);
     }
 
@@ -638,7 +687,8 @@ mod tests {
         // An unlinked audio clip [4 s, 8 s) and one right behind it [8 s, 12 s): nothing can close under b's tail at 8 s.
         let media = p.media[0].id;
         let mk = |n: u128, at: i64| {
-            let mut c = Clip::new(Id::from_u128(2000 + n), "x", media, TrackKind::Audio, TimeRange::new(s(0), s(4)), s(at));
+            let mut c =
+                Clip::new(Id::from_u128(2000 + n), "x", media, TrackKind::Audio, TimeRange::new(s(0), s(4)), s(at));
             c.media_duration = Some(s(20));
             c
         };
@@ -866,7 +916,8 @@ mod tests {
         use sq_core_model::ClipEdge::Tail;
         let f = Fixture::new();
         let by = Time::new(8, 25);
-        let clip_end = |p: &Project, id: Id| p.timeline(f.seq).and_then(|t| t.find(id)).map(|m| m.clip.timeline().end());
+        let clip_end =
+            |p: &Project, id: Id| p.timeline(f.seq).and_then(|t| t.find(id)).map(|m| m.clip.timeline().end());
         let mut p = f.project.clone();
         let op = EditOperation::Trim { clip: f.a_audio, edge: Tail, by, linked: false };
         assert!(EditTransaction::apply(&[op], &mut p, f.seq, &mut ids()).is_ok());
@@ -886,7 +937,9 @@ mod tests {
         let f = Fixture::new();
         let mut p = f.project.clone();
         let both = vec![f.a, f.a_audio];
-        assert!(EditTransaction::apply(&[EditOperation::Unlink { clips: both.clone() }], &mut p, f.seq, &mut ids()).is_ok());
+        assert!(
+            EditTransaction::apply(&[EditOperation::Unlink { clips: both.clone() }], &mut p, f.seq, &mut ids()).is_ok()
+        );
         let link = |p: &Project, id: Id| p.timeline(f.seq).and_then(|t| t.find(id)).and_then(|m| m.clip.link);
         assert_eq!((link(&p, f.a), link(&p, f.a_audio)), (None, None));
         let by = Time::new(-8, 25);

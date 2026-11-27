@@ -27,3 +27,7 @@ clone_on_ref_ptr = "deny"
 dbg_macro = "deny"
 todo = "deny"
 unimplemented = "deny"
+
+[[test]]
+name = "closed_stdout"
+harness = false

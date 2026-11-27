@@ -19,6 +19,17 @@ const PIXELS: &[u8] = include_bytes!("app_icon_pixels.rgba");
 /// The 256 px picture the card scales from.
 const SOURCE: &[u8] = include_bytes!("app_icon_256.rgba");
 const SOURCE_SIDE: usize = 256;
+/// The Nightly channel's icon (Pip on the blue plate, `packaging/linux/sequence-studio-nightly.png`), same sizes.
+const NIGHTLY_PIXELS: &[u8] = include_bytes!("app_icon_nightly_pixels.rgba");
+const NIGHTLY_SOURCE: &[u8] = include_bytes!("app_icon_nightly_256.rgba");
+
+/// The (128 px, 256 px) pictures of a channel: the card, the title bar and the window icon follow the build's channel.
+fn pictures(channel: sq_editor_session::ReleaseChannel) -> (&'static [u8], &'static [u8]) {
+    match channel {
+        sq_editor_session::ReleaseChannel::Nightly => (NIGHTLY_PIXELS, NIGHTLY_SOURCE),
+        sq_editor_session::ReleaseChannel::Stable => (PIXELS, SOURCE),
+    }
+}
 
 /// A run of equal pixels in one row.
 struct Run {
@@ -48,7 +59,7 @@ impl ShellAppIcon {
 
     /// The real icon as 128 x 128 RGBA (from `Windows/Resources/SequenceStudio.ico`): the window icon of the hosts.
     pub fn rgba() -> (&'static [u8], u32) {
-        (PIXELS, SIZE as u32)
+        (pictures(sq_editor_session::ReleaseChannel::build()).0, SIZE as u32)
     }
 
     /// The real icon (128 px) as one quad per run of equal pixels: the draw list has no spare image slot for a picture.
@@ -154,7 +165,7 @@ fn runs(side: usize) -> Arc<Vec<Run>> {
     if let Some((_, r)) = cache.iter().find(|(n, _)| *n == side) {
         return Arc::clone(r);
     }
-    let made = Arc::new(scaled_runs(SOURCE, SOURCE_SIDE, side));
+    let made = Arc::new(scaled_runs(pictures(sq_editor_session::ReleaseChannel::build()).1, SOURCE_SIDE, side));
     cache.truncate(7);
     cache.push((side, Arc::clone(&made)));
     made
@@ -214,6 +225,15 @@ fn scaled_runs(src: &[u8], n: usize, side: usize) -> Vec<Run> {
 mod tests {
     use super::*;
 
+    #[test]
+    fn the_nightly_channel_has_its_own_icon_of_the_same_size() {
+        use sq_editor_session::ReleaseChannel::{Nightly, Stable};
+        assert_ne!(pictures(Nightly).0, pictures(Stable).0);
+        assert_ne!(pictures(Nightly).1, pictures(Stable).1);
+        assert_eq!(pictures(Nightly).0.len(), SIZE * SIZE * 4);
+        assert_eq!(pictures(Nightly).1.len(), SOURCE_SIDE * SOURCE_SIDE * 4);
+    }
+
     /// The ink of the icon starts left of the layout rect's edge by exactly its measured margin (about 1.5 pt at 18 pt, 2x).
     #[test]
     fn the_icon_has_a_measured_transparent_margin_that_draw_ink_flush_removes() {
@@ -230,7 +250,7 @@ mod tests {
     #[test]
     fn the_scaled_icon_is_clean_at_one_and_two_times() {
         for side in [72_usize, 144, 216] {
-            let runs = scaled_runs(SOURCE, SOURCE_SIDE, side);
+            let runs = scaled_runs(pictures(sq_editor_session::ReleaseChannel::build()).1, SOURCE_SIDE, side);
             assert!(!runs.is_empty());
             // Every row's runs tile without overlap, so nothing is painted twice (no stripes), and stay inside the square.
             for y in 0..side {

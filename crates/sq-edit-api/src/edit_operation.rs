@@ -59,7 +59,13 @@ pub enum EditOperation {
     /// Track header toggles; absent fields stay as they are.
     SetTrackState { track: Id, mute: Option<bool>, solo: Option<bool>, lock: Option<bool>, visible: Option<bool> },
     /// Sequence Settings of `sequence` (None = the one the commit names); absent fields stay as they are.
-    SetSequenceSettings { sequence: Option<Id>, width: Option<i64>, height: Option<i64>, fps: Option<Fps>, sample_rate: Option<i64> },
+    SetSequenceSettings {
+        sequence: Option<Id>,
+        width: Option<i64>,
+        height: Option<i64>,
+        fps: Option<Fps>,
+        sample_rate: Option<i64>,
+    },
     /// Session operation. Places an imported media item (video with its linked audio, or video only) like the Overwrite /
     /// Insert commands; `source_in`/`source_out` pick the part of the media (default: all of it).
     AddClip {
@@ -79,6 +85,21 @@ pub enum EditOperation {
     CreateSequence { name: String, width: i64, height: i64, fps: Fps, sample_rate: Option<i64> },
     /// Session operation. Opens `sequence` in the timeline; later operations of the batch act on it.
     SetActiveSequence { sequence: Id },
+    /// Session operation. Deletes a sequence like the Project panel's Delete; refused for the last sequence and for one
+    /// that another sequence still nests.
+    DeleteSequence { sequence: Id },
+    /// Session operation. Renames a sequence like the Project panel's Rename.
+    RenameSequence { sequence: Id, name: String },
+    /// Session operation. A new empty folder (bin) inside `parent` (default: the root folder).
+    CreateFolder { name: String, parent: Option<Id> },
+    /// Session operation. Files `sequence` in `folder` (default: the root folder) at child position `index` (default: the
+    /// end); inside one folder this reorders. Same path as dragging in the Project panel.
+    MoveSequence { sequence: Id, folder: Option<Id>, index: Option<i64> },
+    /// Session operation. The Combine command: nests `clips` (and their linked partners) of the open sequence into a new
+    /// sequence "Combined NN" (or `name`), replaced by one clip that plays it.
+    Combine { clips: Vec<Id>, name: Option<String> },
+    /// Session operation. Leaves a combine: replaces each nested-sequence clip of `clips` by its content (the Unnest command).
+    Uncombine { clips: Vec<Id> },
     /// Session operation. Sync Audio to Reference for one clip: lines `clip` (with its linked partners) up with the
     /// reference clip `to` by start timecode, else by the shared sound (waveform fit), else by capture date, and with
     /// `retime` (default true) corrects drift by a constant speed. Both clips must be in the active sequence.
@@ -98,7 +119,13 @@ pub enum EditOperation {
     ApplyPreset { clip: Id, preset: String, at: Option<ClipEdge>, mode: Option<String> },
     /// `applyPreset` of a preset the user saved (or imported): the router resolves the name against the host's user
     /// presets and swaps in the decoded preset; never parsed from a request.
-    ApplyUserPreset { clip: Id, name: String, preset: Box<sq_core_effects::effect_preset::EffectPreset>, at: Option<ClipEdge>, mode: Option<String> },
+    ApplyUserPreset {
+        clip: Id,
+        name: String,
+        preset: Box<sq_core_effects::effect_preset::EffectPreset>,
+        at: Option<ClipEdge>,
+        mode: Option<String>,
+    },
     /// Adds or replaces a key at clip-local time `at`.
     SetKeyframe {
         clip: Id,
@@ -126,6 +153,19 @@ pub enum EditOperation {
     RemoveTextLayer { clip: Id, layer: Id },
     /// A zoom transition at a cut: scale keys on both clips (plus a short fade of the upper picture), as `setKeyframe`.
     AddZoomCut(crate::zoom_cut::ZoomCut),
+    /// Places a saved title template (`GET /v1/templates`) as ONE clip on a video track at `at`. `template` = id or name;
+    /// `duration` None = the template's own length; `fields` = `{<field id or name>: value}` (kinds and shapes as in
+    /// `GET /v1/templates`). `resolved` is filled by the router (never parsed from a request).
+    InsertTemplate {
+        template: String,
+        track: Id,
+        at: Time,
+        duration: Option<Time>,
+        fields: Value,
+        resolved: Option<Box<crate::template_ops::ResolvedTemplate>>,
+    },
+    /// An Adjustment Layer on a video track: effects and keys on it act on everything below, like on any clip.
+    AddAdjustmentLayer { track: Id, at: Time, duration: Time, name: Option<String> },
     /// Adds the text animator of a side (`in` / `out`) of a text layer.
     AddTextAnimator { clip: Id, layer: Id, fields: Value },
     /// Changes fields of a layer's text animator.
@@ -183,7 +223,9 @@ impl Fps {
             } else if let Some((_, n, d)) = ntsc.iter().find(|(r, _, _)| (r - f).abs() < 0.006) {
                 (*n, *d)
             } else {
-                return Err(format!("fps: {f} is not a whole rate or 23.976 / 29.97 / 59.94 / 119.88; pass {{\"num\", \"den\"}}"));
+                return Err(format!(
+                    "fps: {f} is not a whole rate or 23.976 / 29.97 / 59.94 / 119.88; pass {{\"num\", \"den\"}}"
+                ));
             }
         } else if let Some(o) = v.as_object() {
             check_strict_keys(o, &["num", "den"], "fps")?;
@@ -230,6 +272,12 @@ impl EditOperation {
             Self::AddClip { .. } => "addClip",
             Self::CreateSequence { .. } => "createSequence",
             Self::SetActiveSequence { .. } => "setActiveSequence",
+            Self::DeleteSequence { .. } => "deleteSequence",
+            Self::RenameSequence { .. } => "renameSequence",
+            Self::CreateFolder { .. } => "createFolder",
+            Self::MoveSequence { .. } => "moveSequence",
+            Self::Combine { .. } => "combine",
+            Self::Uncombine { .. } => "uncombine",
             Self::SyncAudio { .. } => "syncAudio",
             Self::SetParam { .. } => "setParam",
             Self::AddEffect { .. } => "addEffect",
@@ -246,6 +294,8 @@ impl EditOperation {
             Self::AddTextLayer { .. } => "addTextLayer",
             Self::RemoveTextLayer { .. } => "removeTextLayer",
             Self::AddZoomCut(_) => "addZoomCut",
+            Self::InsertTemplate { .. } => "insertTemplate",
+            Self::AddAdjustmentLayer { .. } => "addAdjustmentLayer",
             Self::AddTextAnimator { .. } => "addTextAnimator",
             Self::SetTextAnimator { .. } => "setTextAnimator",
             Self::SetTextAccent { .. } => "setTextAccent",
@@ -259,7 +309,16 @@ impl EditOperation {
     pub fn is_session_operation(&self) -> bool {
         matches!(
             self,
-            Self::AddClip { .. } | Self::CreateSequence { .. } | Self::SetActiveSequence { .. } | Self::SyncAudio { .. }
+            Self::AddClip { .. }
+                | Self::CreateSequence { .. }
+                | Self::SetActiveSequence { .. }
+                | Self::DeleteSequence { .. }
+                | Self::RenameSequence { .. }
+                | Self::CreateFolder { .. }
+                | Self::MoveSequence { .. }
+                | Self::Combine { .. }
+                | Self::Uncombine { .. }
+                | Self::SyncAudio { .. }
         )
     }
 
@@ -280,6 +339,12 @@ impl EditOperation {
             | Self::SetSequenceSettings { .. }
             | Self::CreateSequence { .. }
             | Self::SetActiveSequence { .. }
+            | Self::DeleteSequence { .. }
+            | Self::RenameSequence { .. }
+            | Self::CreateFolder { .. }
+            | Self::MoveSequence { .. }
+            | Self::Combine { .. }
+            | Self::Uncombine { .. }
             | Self::SetParam { .. }
             | Self::AddEffect { .. }
             | Self::RemoveEffect { .. }
@@ -302,7 +367,10 @@ impl EditOperation {
             Self::MoveKeyframe { from, to, .. } => vec![*from, *to],
             Self::ShiftKeyframes { by, after, .. } => std::iter::once(*by).chain(*after).collect(),
             Self::AddTransition { duration, .. } => vec![*duration],
-            Self::AddGraphic { at, duration, .. } => vec![*at, *duration],
+            Self::AddGraphic { at, duration, .. } | Self::AddAdjustmentLayer { at, duration, .. } => {
+                vec![*at, *duration]
+            }
+            Self::InsertTemplate { at, duration, .. } => std::iter::once(*at).chain(*duration).collect(),
             Self::AddClip { at, source_in, source_out, duration, .. } => {
                 std::iter::once(*at).chain(*source_in).chain(*source_out).chain(*duration).collect()
             }
@@ -317,7 +385,7 @@ impl EditOperation {
     }
 
     /// Every wire name, in documentation order.
-    pub const ALL_NAMES: [&'static str; 45] = [
+    pub const ALL_NAMES: [&'static str; 53] = [
         "razor",
         "rippleDelete",
         "lift",
@@ -342,6 +410,12 @@ impl EditOperation {
         "addClip",
         "createSequence",
         "setActiveSequence",
+        "deleteSequence",
+        "renameSequence",
+        "createFolder",
+        "moveSequence",
+        "combine",
+        "uncombine",
         "syncAudio",
         "setParam",
         "addEffect",
@@ -363,6 +437,8 @@ impl EditOperation {
         "addMask",
         "removeTextAnimator",
         "addZoomCut",
+        "addAdjustmentLayer",
+        "insertTemplate",
     ];
 }
 
@@ -429,14 +505,33 @@ impl EditOperation {
             "setClipSpeed" => Some(&["op", "clip", "speed"]),
             "setTrackState" => Some(&["op", "track", "mute", "solo", "lock", "visible"]),
             "setSequenceSettings" => Some(&["op", "sequence", "width", "height", "fps", "sampleRate"]),
-            "addClip" => Some(&["op", "media", "track", "at", "sourceIn", "sourceOut", "linkAudio", "mode", "streams", "duration"]),
+            "addClip" => Some(&[
+                "op",
+                "media",
+                "track",
+                "at",
+                "sourceIn",
+                "sourceOut",
+                "linkAudio",
+                "mode",
+                "streams",
+                "duration",
+            ]),
             "createSequence" => Some(&["op", "name", "width", "height", "fps", "sampleRate"]),
             "setActiveSequence" => Some(&["op", "sequence"]),
+            "deleteSequence" => Some(&["op", "sequence"]),
+            "renameSequence" => Some(&["op", "sequence", "name"]),
+            "createFolder" => Some(&["op", "name", "parent"]),
+            "moveSequence" => Some(&["op", "sequence", "folder", "index"]),
+            "combine" => Some(&["op", "clips", "name"]),
+            "uncombine" => Some(&["op", "clips"]),
             "syncAudio" => Some(&["op", "clip", "to", "retime"]),
             "setParam" => Some(&["op", "clip", "param", "value"]),
             "addEffect" => Some(&["op", "clip", "effect", "index"]),
             "removeEffect" => Some(&["op", "clip", "effect"]),
-            "setKeyframe" => Some(&["op", "clip", "param", "at", "value", "interpolation", "ease", "inHandle", "outHandle"]),
+            "setKeyframe" => {
+                Some(&["op", "clip", "param", "at", "value", "interpolation", "ease", "inHandle", "outHandle"])
+            }
             "removeKeyframe" => Some(&["op", "clip", "param", "at"]),
             "moveKeyframe" => Some(&["op", "clip", "param", "from", "to"]),
             "shiftKeyframes" => Some(&["op", "clip", "param", "by", "after"]),
@@ -444,8 +539,20 @@ impl EditOperation {
             "removeTransition" => Some(&["op", "transition"]),
             "applyPreset" => Some(&["op", "clip", "preset", "at", "mode"]),
             "addGraphic" => Some(&["op", "track", "at", "duration", "name", "layers"]),
+            "insertTemplate" => Some(&["op", "template", "track", "at", "duration", "fields"]),
             "removeTextLayer" => Some(&["op", "clip", "layer"]),
-            "addZoomCut" => Some(&["op", "outgoing", "incoming", "direction", "outFrames", "inFrames", "fadeFrames"]),
+            "addZoomCut" => Some(&[
+                "op",
+                "outgoing",
+                "incoming",
+                "direction",
+                "outFrames",
+                "inFrames",
+                "fadeFrames",
+                "asLayer",
+                "track",
+            ]),
+            "addAdjustmentLayer" => Some(&["op", "track", "at", "duration", "name"]),
             "removeTextAnimator" => Some(&["op", "clip", "layer", "side"]),
             _ => None,
         };
@@ -541,13 +648,31 @@ impl EditOperation {
                 sample_rate: optional(c, "sampleRate")?,
             },
             "setActiveSequence" => Self::SetActiveSequence { sequence: required(c, "sequence")? },
+            "deleteSequence" => Self::DeleteSequence { sequence: required(c, "sequence")? },
+            "renameSequence" => Self::RenameSequence { sequence: required(c, "sequence")?, name: required(c, "name")? },
+            "createFolder" => Self::CreateFolder { name: required(c, "name")?, parent: optional(c, "parent")? },
+            "moveSequence" => Self::MoveSequence {
+                sequence: required(c, "sequence")?,
+                folder: optional(c, "folder")?,
+                index: optional(c, "index")?,
+            },
+            "combine" => Self::Combine { clips: required(c, "clips")?, name: optional(c, "name")? },
+            "uncombine" => Self::Uncombine { clips: required(c, "clips")? },
             "syncAudio" => Self::SyncAudio {
                 clip: required(c, "clip")?,
                 to: required(c, "to")?,
                 retime: optional::<bool>(c, "retime")?.unwrap_or(true),
             },
-            "setParam" => Self::SetParam { clip: required(c, "clip")?, param: required(c, "param")?, value: required(c, "value")? },
-            "addEffect" => Self::AddEffect { clip: required(c, "clip")?, effect: required(c, "effect")?, index: optional(c, "index")? },
+            "setParam" => Self::SetParam {
+                clip: required(c, "clip")?,
+                param: required(c, "param")?,
+                value: required(c, "value")?,
+            },
+            "addEffect" => Self::AddEffect {
+                clip: required(c, "clip")?,
+                effect: required(c, "effect")?,
+                index: optional(c, "index")?,
+            },
             "removeEffect" => Self::RemoveEffect { clip: required(c, "clip")?, effect: required(c, "effect")? },
             "setKeyframe" => {
                 let interpolation: Option<String> = optional(c, "interpolation")?;
@@ -593,9 +718,16 @@ impl EditOperation {
                     Some("tail") => Some(ClipEdge::Tail),
                     Some(o) => return Err(format!("at: unknown '{o}'; known: head, tail")),
                 };
-                Self::ApplyPreset { clip: required(c, "clip")?, preset: required(c, "preset")?, at, mode: optional(c, "mode")? }
+                Self::ApplyPreset {
+                    clip: required(c, "clip")?,
+                    preset: required(c, "preset")?,
+                    at,
+                    mode: optional(c, "mode")?,
+                }
             }
-            "removeKeyframe" => Self::RemoveKeyframe { clip: required(c, "clip")?, param: required(c, "param")?, at: time(c, "at")? },
+            "removeKeyframe" => {
+                Self::RemoveKeyframe { clip: required(c, "clip")?, param: required(c, "param")?, at: time(c, "at")? }
+            }
             "moveKeyframe" => Self::MoveKeyframe {
                 clip: required(c, "clip")?,
                 param: required(c, "param")?,
@@ -624,8 +756,27 @@ impl EditOperation {
                     layers,
                 }
             }
+            "insertTemplate" => {
+                let fields: Value = optional(c, "fields")?.unwrap_or_else(|| json!({}));
+                if !fields.is_object() {
+                    return Err("fields: expected an object {<field id or name>: value}".into());
+                }
+                let template: String = required(c, "template")?;
+                if template.trim().is_empty() {
+                    return Err("template: the id or name of a template (GET /v1/templates)".into());
+                }
+                Self::InsertTemplate {
+                    template,
+                    track: required(c, "track")?,
+                    at: time(c, "at")?,
+                    duration: optional::<WireTime>(c, "duration")?.map(|w| w.time),
+                    fields,
+                    resolved: None,
+                }
+            }
             "setTextLayer" | "addTextLayer" => {
-                let own: &[&str] = if op == "setTextLayer" { &["op", "clip", "layer"] } else { &["op", "clip", "index"] };
+                let own: &[&str] =
+                    if op == "setTextLayer" { &["op", "clip", "layer"] } else { &["op", "clip", "index"] };
                 let fields = crate::text_layers::spec_from(c, own);
                 crate::text_layers::check_spec(&fields)?;
                 if op == "setTextLayer" {
@@ -660,9 +811,19 @@ impl EditOperation {
             }
             "removeTextAnimator" => {
                 crate::text_animators::parse_side(c.get("side"))?;
-                Self::RemoveTextAnimator { clip: required(c, "clip")?, layer: required(c, "layer")?, side: optional(c, "side")? }
+                Self::RemoveTextAnimator {
+                    clip: required(c, "clip")?,
+                    layer: required(c, "layer")?,
+                    side: optional(c, "side")?,
+                }
             }
             "addZoomCut" => Self::AddZoomCut(crate::zoom_cut::ZoomCut::parse(c)?),
+            "addAdjustmentLayer" => Self::AddAdjustmentLayer {
+                track: required(c, "track")?,
+                at: time(c, "at")?,
+                duration: time(c, "duration")?,
+                name: optional(c, "name")?,
+            },
             "removeTextLayer" => Self::RemoveTextLayer { clip: required(c, "clip")?, layer: required(c, "layer")? },
             _ => {
                 return Err(format!("op: unknown op '{op}'; known: {}", Self::ALL_NAMES.join(", ")));
@@ -758,7 +919,27 @@ impl EditOperation {
                 put("fps", fps.to_value());
                 sample_rate.iter().for_each(|v| put("sampleRate", json!(v)));
             }
-            Self::SetActiveSequence { sequence } => put("sequence", json!(sequence)),
+            Self::SetActiveSequence { sequence } | Self::DeleteSequence { sequence } => {
+                put("sequence", json!(sequence))
+            }
+            Self::RenameSequence { sequence, name } => {
+                put("sequence", json!(sequence));
+                put("name", json!(name));
+            }
+            Self::CreateFolder { name, parent } => {
+                put("name", json!(name));
+                parent.iter().for_each(|v| put("parent", json!(v)));
+            }
+            Self::MoveSequence { sequence, folder, index } => {
+                put("sequence", json!(sequence));
+                folder.iter().for_each(|v| put("folder", json!(v)));
+                index.iter().for_each(|v| put("index", json!(v)));
+            }
+            Self::Combine { clips, name } => {
+                put("clips", json!(clips));
+                name.iter().for_each(|v| put("name", json!(v)));
+            }
+            Self::Uncombine { clips } => put("clips", json!(clips)),
             Self::SyncAudio { clip, to, retime } => {
                 put("clip", json!(clip));
                 put("to", json!(to));
@@ -837,6 +1018,13 @@ impl EditOperation {
                 name.iter().for_each(|n| put("name", json!(n)));
                 put("layers", json!(layers));
             }
+            Self::InsertTemplate { template, track, at, duration, fields, .. } => {
+                put("template", json!(template));
+                put("track", json!(track));
+                put("at", json!(at));
+                duration.iter().for_each(|d| put("duration", json!(d)));
+                put("fields", fields.clone());
+            }
             Self::SetTextLayer { clip, layer, fields } => {
                 put("clip", json!(clip));
                 put("layer", json!(layer));
@@ -862,6 +1050,16 @@ impl EditOperation {
                 z.out_frames.iter().for_each(|n| put("outFrames", json!(n)));
                 z.in_frames.iter().for_each(|n| put("inFrames", json!(n)));
                 z.fade_frames.iter().for_each(|n| put("fadeFrames", json!(n)));
+                if z.as_layer {
+                    put("asLayer", json!(true));
+                }
+                z.track.iter().for_each(|t| put("track", json!(t)));
+            }
+            Self::AddAdjustmentLayer { track, at, duration, name } => {
+                put("track", json!(track));
+                put("at", json!(at));
+                put("duration", json!(duration));
+                name.iter().for_each(|n| put("name", json!(n)));
             }
             Self::AddTextAnimator { clip, layer, fields } | Self::SetTextAnimator { clip, layer, fields } => {
                 put("clip", json!(clip));
@@ -966,6 +1164,31 @@ mod tests {
     }
 
     #[test]
+    fn sequence_folder_and_combine_operations_decode_and_round_trip() {
+        let (a, b) = (Id::from_u128(5), Id::from_u128(6));
+        let json = format!(
+            r#"[{{"op":"deleteSequence","sequence":"{a}"}},
+             {{"op":"renameSequence","sequence":"{a}","name":"Cut"}},
+             {{"op":"createFolder","name":"Shots","parent":"{b}"}},
+             {{"op":"createFolder","name":"Top"}},
+             {{"op":"moveSequence","sequence":"{a}","folder":"{b}","index":0}},
+             {{"op":"moveSequence","sequence":"{a}"}},
+             {{"op":"combine","clips":["{a}","{b}"],"name":"Intro"}},
+             {{"op":"uncombine","clips":["{a}"]}}]"#
+        );
+        let ops = decode(&json).unwrap_or_default();
+        assert_eq!(ops.len(), 8);
+        assert_eq!(ops[2], EditOperation::CreateFolder { name: "Shots".into(), parent: Some(b) });
+        assert_eq!(ops[5], EditOperation::MoveSequence { sequence: a, folder: None, index: None });
+        assert_eq!(ops[6], EditOperation::Combine { clips: vec![a, b], name: Some("Intro".into()) });
+        assert!(ops.iter().all(EditOperation::is_session_operation));
+        let again = serde_json::to_string(&ops).and_then(|s| serde_json::from_str::<Vec<EditOperation>>(&s));
+        assert_eq!(again.ok(), Some(ops));
+        assert!(decode(r#"[{"op":"renameSequence","sequence":"x"}]"#).is_err());
+        assert!(decode(&format!(r#"[{{"op":"combine","clip":"{a}"}}]"#)).is_err());
+    }
+
+    #[test]
     fn unknown_keys_are_named_in_the_error() {
         let e = decode(r#"[{"op":"razor","at":{"value":1,"timescale":1},"clip":"x","zzz":1}]"#)
             .err()
@@ -1022,7 +1245,7 @@ mod tests {
         assert_eq!(ops.iter().filter(|o| o.is_session_operation()).count(), 5);
         let again = serde_json::to_string(&ops).and_then(|s| serde_json::from_str::<Vec<EditOperation>>(&s));
         assert_eq!(again.ok(), Some(ops));
-        assert_eq!(EditOperation::ALL_NAMES.len(), 45);
+        assert_eq!(EditOperation::ALL_NAMES.len(), 53);
     }
 
     #[test]

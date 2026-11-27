@@ -181,18 +181,19 @@ fn a_project_shows_its_first_picture_without_any_input() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("temp folder");
     let Some(file) = project_with_clip(&dir) else {
-        eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+        sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
         return;
     };
     if crate::surface::shared_gpu().is_none() {
-        eprintln!("skipped: no GPU adapter");
+        sq_os::errln!("skipped: no GPU adapter");
         return;
     }
     let opened = open_and_wait(&file, &dir.join("support"), Duration::from_secs(10));
     let _ = std::fs::remove_dir_all(&dir);
-    eprintln!(
+    sq_os::errln!(
         "first picture drawn after {:?}; frames drawn with generations {:?}",
-        opened.first_picture, opened.drawn_generations
+        opened.first_picture,
+        opened.drawn_generations
     );
     let at = opened.first_picture.expect("no frame with a monitor picture was drawn within 10 s without any input");
     assert!(at < Duration::from_secs(5), "the first picture took {at:?} without any input");
@@ -215,9 +216,10 @@ fn a_heavy_clip_shows_its_first_picture_without_any_input() {
     }
     let opened = open_and_wait(&file, &dir.join("support"), Duration::from_secs(30));
     let _ = std::fs::remove_dir_all(&dir);
-    eprintln!(
+    sq_os::errln!(
         "first picture drawn after {:?}; frames drawn with generations {:?}",
-        opened.first_picture, opened.drawn_generations
+        opened.first_picture,
+        opened.drawn_generations
     );
     let at = opened.first_picture.expect("no frame with a monitor picture was drawn within 30 s without any input");
     assert!(at < Duration::from_secs(25), "the first picture took {at:?} without any input");
@@ -229,18 +231,19 @@ fn a_project_opened_in_the_running_app_shows_its_first_picture_without_any_input
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("temp folder");
     let Some(file) = project_with_clip(&dir) else {
-        eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+        sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
         return;
     };
     if crate::surface::shared_gpu().is_none() {
-        eprintln!("skipped: no GPU adapter");
+        sq_os::errln!("skipped: no GPU adapter");
         return;
     }
     let opened = open_with(&file, &dir.join("support"), Duration::from_secs(10), OpenPath::SessionOpen);
     let _ = std::fs::remove_dir_all(&dir);
-    eprintln!(
+    sq_os::errln!(
         "in-app open: first picture after {:?}; generations {:?}",
-        opened.first_picture, opened.drawn_generations
+        opened.first_picture,
+        opened.drawn_generations
     );
     let at = opened.first_picture.expect("no frame with a monitor picture was drawn within 10 s without any input");
     assert!(at < Duration::from_secs(5), "the first picture took {at:?} without any input");
@@ -252,18 +255,19 @@ fn a_project_opened_by_the_shell_flow_shows_its_first_picture_without_any_input(
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("temp folder");
     let Some(file) = project_with_clip(&dir) else {
-        eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+        sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
         return;
     };
     if crate::surface::shared_gpu().is_none() {
-        eprintln!("skipped: no GPU adapter");
+        sq_os::errln!("skipped: no GPU adapter");
         return;
     }
     let opened = open_with(&file, &dir.join("support"), Duration::from_secs(10), OpenPath::ShellFlow);
     let _ = std::fs::remove_dir_all(&dir);
-    eprintln!(
+    sq_os::errln!(
         "shell flow open: first picture after {:?}; generations {:?}",
-        opened.first_picture, opened.drawn_generations
+        opened.first_picture,
+        opened.drawn_generations
     );
     let at = opened.first_picture.expect("no frame with a monitor picture was drawn within 10 s without any input");
     assert!(at < Duration::from_secs(5), "the first picture took {at:?} without any input");
@@ -277,11 +281,11 @@ fn a_project_opens_each_of_its_files_once() {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("temp folder");
     let Some(file) = project_with_clip(&dir) else {
-        eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+        sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
         return;
     };
     if crate::surface::shared_gpu().is_none() {
-        eprintln!("skipped: no GPU adapter");
+        sq_os::errln!("skipped: no GPU adapter");
         return;
     }
     let opened = open_and_wait(&file, &dir.join("support"), Duration::from_secs(10));
@@ -323,7 +327,7 @@ fn a_big_camera_clip_shows_its_first_real_picture_after_a_quick_open() {
             .is_ok_and(|s| s.success())
     });
     if !encoded || crate::surface::shared_gpu().is_none() {
-        eprintln!("skipped: no ffmpeg with libx264 or no GPU adapter");
+        sq_os::errln!("skipped: no ffmpeg with libx264 or no GPU adapter");
         let _ = std::fs::remove_dir_all(&dir);
         return;
     }
@@ -334,7 +338,7 @@ fn a_big_camera_clip_shows_its_first_real_picture_after_a_quick_open() {
     let shared = FFmpegDemuxer::open_shared(&clip).expect("the shared open");
     let opens = FFmpegDemuxer::opens_of(&clip);
     let _ = std::fs::remove_dir_all(&dir);
-    eprintln!("camera clip: first real picture after {:?}, opened {opens} time(s)", opened.first_picture);
+    sq_os::errln!("camera clip: first real picture after {:?}, opened {opens} time(s)", opened.first_picture);
     assert!(opened.first_picture.is_some(), "no video picture within 90 s without any input");
     assert!(shared.index_without_payload(), "the open read the whole file to index it");
     assert!(shared.facts_from_sps(), "the open decoded a picture to learn the pixel format");
@@ -347,11 +351,11 @@ fn fixture(name: &str) -> Option<(std::path::PathBuf, std::path::PathBuf)> {
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(&dir).expect("temp folder");
     let Some(file) = project_with_clip(&dir) else {
-        eprintln!("skipped: no ffmpeg command or no linked FFmpeg shim");
+        sq_os::errln!("skipped: no ffmpeg command or no linked FFmpeg shim");
         return None;
     };
     if crate::surface::shared_gpu().is_none() {
-        eprintln!("skipped: no GPU adapter");
+        sq_os::errln!("skipped: no GPU adapter");
         return None;
     }
     Some((dir, file))
@@ -468,7 +472,7 @@ fn a_clip_after_a_gap_shows_its_picture_when_the_playhead_reaches_it_without_any
     std::fs::create_dir_all(&dir).expect("temp folder");
     let clip = ffmpeg_tool().and_then(|tool| crate::export::tests::make_clip(&tool, &dir));
     let (Some(clip), Some(_)) = (clip, crate::surface::shared_gpu()) else {
-        eprintln!("skipped: no ffmpeg command, no linked FFmpeg shim or no GPU adapter");
+        sq_os::errln!("skipped: no ffmpeg command, no linked FFmpeg shim or no GPU adapter");
         let _ = std::fs::remove_dir_all(&dir);
         return;
     };
@@ -480,7 +484,10 @@ fn a_clip_after_a_gap_shows_its_picture_when_the_playhead_reaches_it_without_any
     assert!(app.with(|a| a.session_mut().seek(inside)).is_some(), "the app was busy");
     let reached = run_loop(&app, &picture, &wakes, Instant::now(), Duration::from_secs(10));
     let _ = std::fs::remove_dir_all(&dir);
-    eprintln!("gap project: black at zero, picture {:?} after the playhead reached the clip", reached.first_picture);
+    sq_os::errln!(
+        "gap project: black at zero, picture {:?} after the playhead reached the clip",
+        reached.first_picture
+    );
     let at = reached.first_picture.expect("no picture after the playhead moved into the clip, without any input");
     assert!(at < Duration::from_secs(5), "the picture took {at:?} after the playhead reached the clip");
 }

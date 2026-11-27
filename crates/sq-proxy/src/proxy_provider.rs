@@ -145,6 +145,12 @@ impl ProxyProvider {
         }
     }
 
+    /// The ready proxy `lookup` of `source` has other frame times than the original: see
+    /// `ProxyCache::retire_mismatched`. `true` when it was thrown away and a new one will be made.
+    pub fn retire_mismatched(&self, source: &Path, lookup: &ProxyLookup) -> bool {
+        self.fingerprint(source, false).is_some_and(|fp| self.cache.retire_mismatched(&fp, lookup.kind))
+    }
+
     /// Fires when any proxy becomes ready (the record's fingerprint identifies the source).
     pub fn ready_events(&self) -> Receiver<ProxyRecord> {
         self.cache.ready_records()
@@ -196,6 +202,7 @@ mod tests {
     use super::*;
     use crate::model::test_support::*;
     use sq_core_time::Time;
+    use std::collections::BTreeSet;
     use std::sync::atomic::{AtomicBool, Ordering};
     use std::time::Duration;
 
@@ -323,6 +330,47 @@ mod tests {
         let ev = rx.recv_timeout(Duration::from_secs(5)).unwrap();
         assert_eq!(ev.kind, ProxyKind::Optimized);
         assert_eq!(ev.fingerprint, SourceFingerprint::compute(&src).unwrap());
+    }
+
+    #[test]
+    fn a_refused_proxy_is_thrown_away_once() {
+        let dir = TempDir::new();
+        let src = source(&dir);
+        let cache = Arc::new(ProxyCache::new(dir.join("c")));
+        let provider = ProxyProvider::with_interlaced(Arc::clone(&cache), Box::new(|_| false));
+        let removed = cache.removed_records();
+        let kinds = [ProxyKind::ProxyHalf];
+        commit(&cache, &src, ProxyKind::ProxyHalf, ProxyRecord::CURRENT_BUILD);
+        let hit = provider.optimized_file(&src, &kinds, now()).unwrap();
+        assert!(provider.retire_mismatched(&src, &hit), "first refusal: thrown away");
+        assert!(provider.optimized_file(&src, &kinds, now()).is_none());
+        assert_eq!(removed.try_iter().count(), 1);
+        assert!(cache.take_retired(&hit.record.clone().unwrap()), "the service is told once");
+        assert!(!cache.take_retired(&hit.record.clone().unwrap()));
+        // The new proxy differs too: it stays, nothing is made a third time.
+        commit(&cache, &src, ProxyKind::ProxyHalf, ProxyRecord::CURRENT_BUILD);
+        let hit = provider.optimized_file(&src, &kinds, now()).unwrap();
+        assert!(!provider.retire_mismatched(&src, &hit), "second refusal: kept");
+        assert!(provider.optimized_file(&src, &kinds, now()).is_some());
+        assert_eq!(removed.try_iter().count(), 0);
+    }
+
+    #[test]
+    fn the_once_marker_survives_a_restart() {
+        let dir = TempDir::new();
+        let src = source(&dir);
+        let fp = SourceFingerprint::compute(&src).unwrap();
+        let kind = ProxyKind::ProxyHalf;
+        let cache = ProxyCache::new(dir.join("c"));
+        commit(&cache, &src, kind, ProxyRecord::CURRENT_BUILD);
+        // The service protects its ready proxy; the replacement still goes ahead.
+        cache.set_protected(BTreeSet::from([ProxyRecordID::of(&fp, kind)]));
+        assert!(cache.retire_mismatched(&fp, kind));
+        // A new app start: the new proxy differs too and stays.
+        let cache = ProxyCache::new(dir.join("c"));
+        commit(&cache, &src, kind, ProxyRecord::CURRENT_BUILD);
+        assert!(!cache.retire_mismatched(&fp, kind), "once across a reload");
+        assert!(cache.lookup(&fp, kind, now()).is_some());
     }
 
     #[test]

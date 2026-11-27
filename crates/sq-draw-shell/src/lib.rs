@@ -29,6 +29,7 @@ mod shell_clip_dialogs;
 mod shell_collect;
 mod shell_outside_media;
 pub use shell_outside_media::OutsideMediaState;
+mod shell_api_export;
 mod shell_commands;
 mod shell_defaults;
 mod shell_dialog;
@@ -36,7 +37,6 @@ mod shell_dialog_samples;
 mod shell_dock;
 mod shell_dock_shell;
 mod shell_edit_api;
-mod shell_api_export;
 mod shell_export;
 mod shell_export_content;
 mod shell_export_items;
@@ -116,6 +116,7 @@ pub use project_list_view::{
 pub use shared_command_coverage::{Route, SharedCommandCoverage};
 pub use shell_about::{AboutPage, ShellAboutContent};
 pub use shell_access::{DialogFacts, StartSpot};
+pub use shell_api_export::{ApiExportRange, ApiExportRequest};
 pub use shell_app_icon::ShellAppIcon;
 pub use shell_audio_tools::ShellSyncFacts;
 pub use shell_background_offers::ShellRelinkOffer;
@@ -130,7 +131,6 @@ pub use shell_dialog::{
 };
 pub use shell_dock::{Divider, DockEvent, DropAction, DropTarget, Group, ShellDock, TabAction};
 pub use shell_edit_api::{EditApiState, ShellEditApi};
-pub use shell_api_export::{ApiExportRange, ApiExportRequest};
 pub use shell_export::{ExportHost, ExportKind, ExportSubmit, FramePixels, MagicFrameCounter, ShellExport};
 pub use shell_export_content::ShellExportSheet;
 pub use shell_export_queue_menu::ExportQueueJob;
@@ -149,7 +149,8 @@ pub use shell_form::{
 };
 pub use shell_format::{ChangeFormatAnswer, ShellChangeFormat};
 pub use shell_host::{
-    ApiImported, FlowReply, NoHooks, SettingValue, ShellCx, ShellEvent, ShellFlow, ShellHooks, ShellHost, StartSettings, WindowOp,
+    ApiImported, FlowReply, NoHooks, SettingValue, ShellCx, ShellEvent, ShellFlow, ShellHooks, ShellHost,
+    StartSettings, WindowOp,
 };
 pub use shell_import::ShellImportKind;
 pub use shell_import_report_content::{ReportRow, ReportTone, ShellImportReportContent};

@@ -24,9 +24,9 @@ pub use error::media_error;
 pub use frame::{FFmpegFrame, MemoryFrame};
 pub use hardware::{
     DEFAULT_MAX_HARDWARE_SESSIONS, DOWNLOAD_FAILURES_BEFORE_SOFTWARE, DecodePath, DownloadWatch, HardwareSessions,
-    SessionGuard, acquire_hardware_session, acquire_hardware_session_for, decode_path, hardware_hold_limit,
-    default_extra_hw_frames, default_session_limit, machine_memory, set_machine_memory, tier_memory,
-    supports_hardware_decode,
+    SessionGuard, acquire_hardware_session, acquire_hardware_session_for, decode_path, default_extra_hw_frames,
+    default_session_limit, hardware_hold_limit, machine_memory, set_machine_memory, supports_hardware_decode,
+    tier_memory,
 };
 pub use timing::{DecodeCursor, DecodePlan, FrameTable, PacketTiming, TimeBase};
-pub use video_decoder::{DEFAULT_EXTRA_HW_FRAMES, extra_hw_frames, FFmpegVideoDecoder, set_fallback_hook};
+pub use video_decoder::{DEFAULT_EXTRA_HW_FRAMES, FFmpegVideoDecoder, extra_hw_frames, set_fallback_hook};

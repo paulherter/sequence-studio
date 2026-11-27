@@ -151,7 +151,7 @@ fn run(case: &Case, probe_of: &Probe) {
         )
         .unwrap();
     let used = encoder.last_video_encoder();
-    eprintln!("{}: encoder {used}, {} bytes", case.name, std::fs::metadata(&path).unwrap().len());
+    sq_os::errln!("{}: encoder {used}, {} bytes", case.name, std::fs::metadata(&path).unwrap().len());
     assert_eq!(used, probe_of.name, "{}: the export used another encoder than the probe", case.name);
 
     let info = ffprobe(
@@ -179,7 +179,7 @@ fn run(case: &Case, probe_of: &Probe) {
     assert!((duration - want).abs() < 0.05, "{}: duration {duration} against {want}", case.name);
     let bits = number(format, "size") * 8.0 / duration;
     let target = case.kbps as f64 * 1e3;
-    eprintln!(
+    sq_os::errln!(
         "{}: {:.2} Mbit/s for a {:.2} target, has_b_frames {}",
         case.name,
         bits / 1e6,
@@ -216,7 +216,7 @@ fn run(case: &Case, probe_of: &Probe) {
 
 fn ready() -> bool {
     if !shim::AVAILABLE || tool("ffprobe").is_none() || tool("ffmpeg").is_none() {
-        eprintln!("skipped: FFmpeg is not linked or SQ_FFMPEG has no ffprobe / ffmpeg");
+        sq_os::errln!("skipped: FFmpeg is not linked or SQ_FFMPEG has no ffprobe / ffmpeg");
         return false;
     }
     true
@@ -250,17 +250,17 @@ fn hardware_exports_of_a_10_second_1080p_sequence_hold_codec_profile_bitrate_and
     for hardware in [true, false] {
         for (hevc, ten_bit) in [(false, false), (true, false), (true, true)] {
             let kind = ProbeKind { hevc, ten_bit, hardware };
-            eprintln!("probe {kind:?} -> {:?}", probe(kind));
+            sq_os::errln!("probe {kind:?} -> {:?}", probe(kind));
         }
     }
     let only = std::env::var("SQ_PROOF_ONLY").unwrap_or_default();
     for case in cases.into_iter().filter(|c| only.is_empty() || c.name.contains(only.as_str())) {
         let Some(found) = probe(case.kind()).filter(|p| p.caps.hardware) else {
-            eprintln!("skipped {}: this computer has no hardware encoder for it", case.name);
+            sq_os::errln!("skipped {}: this computer has no hardware encoder for it", case.name);
             continue;
         };
         if case.ten_bit && !found.caps.ten_bit {
-            eprintln!("skipped {}: {} does not take 10-bit here", case.name, found.name);
+            sq_os::errln!("skipped {}: {} does not take 10-bit here", case.name, found.name);
             continue;
         }
         run(&case, &found);
@@ -289,9 +289,10 @@ fn the_h264_profile_of_the_sheet_is_the_profile_of_the_file() {
         };
         let Some(found) = probe(case.kind()) else { continue };
         if found.caps.hardware != hardware || !found.caps.profile {
-            eprintln!(
+            sq_os::errln!(
                 "skipped hardware {hardware}: the encoder here is {} (profile {})",
-                found.name, found.caps.profile
+                found.name,
+                found.caps.profile
             );
             continue;
         }
@@ -308,7 +309,11 @@ fn the_h264_profile_of_the_sheet_is_the_profile_of_the_file() {
             let info = ffprobe(&path, &["-select_streams", "v:0", "-show_entries", "stream=profile,has_b_frames"]);
             let stream = &info["streams"][0];
             let got = text(stream, "profile");
-            eprintln!("{} {profile:?}: ffprobe says {got}, has_b_frames {}", found.name, text(stream, "has_b_frames"));
+            sq_os::errln!(
+                "{} {profile:?}: ffprobe says {got}, has_b_frames {}",
+                found.name,
+                text(stream, "has_b_frames")
+            );
             let want: &[&str] = match profile {
                 VideoProfile::Baseline => &["Baseline", "Constrained Baseline"],
                 VideoProfile::Main => &["Main"],
@@ -344,7 +349,7 @@ fn software_exports_hold_the_bitrate_and_decode_clean() {
     for case in [sw("sw-h264-1m", VideoCodec::H264, 1000), sw("sw-hevc-1m", VideoCodec::Hevc, 1000)] {
         let Some(found) = probe(case.kind()) else { continue };
         if !["libopenh264", "libkvazaar", "libx264", "libx265"].contains(&found.name.as_str()) {
-            eprintln!("skipped {}: the software encoder here is {}", case.name, found.name);
+            sq_os::errln!("skipped {}: the software encoder here is {}", case.name, found.name);
             continue;
         }
         run(&case, &found);
