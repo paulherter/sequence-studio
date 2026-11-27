@@ -256,5 +256,3 @@ preview is meant only for very weak machines. The app collects no telemetry.
 - Intel Macs, Windows on ARM and Linux on ARM, until someone who uses them every day helps with a port.
 - DNx export and Resolve `.drp` or AAF import, unless enough people ask for them.
 - Subscriptions, accounts and telemetry: never.
-
-<!-- test -->
